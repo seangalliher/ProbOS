@@ -35,6 +35,8 @@ class ProbOSShell:
         "/gossip":  "Show gossip protocol view",
         "/log":     "Show recent event log entries (/log [category])",
         "/memory":  "Show working memory snapshot",
+        "/history": "Show recent episodic memory entries",
+        "/recall":  "Semantic recall from episodic memory (/recall <query>)",
         "/model":   "Show LLM client type, endpoint, and tier config",
         "/tier":    "Switch LLM tier (/tier fast|standard|deep)",
         "/debug":   "Toggle debug mode (/debug on|off)",
@@ -118,6 +120,8 @@ class ProbOSShell:
             "/gossip":  self._cmd_gossip,
             "/log":     self._cmd_log,
             "/memory":  self._cmd_memory,
+            "/history": self._cmd_history,
+            "/recall":  self._cmd_recall,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
             "/debug":   self._cmd_debug,
@@ -141,6 +145,12 @@ class ProbOSShell:
 
     async def _cmd_status(self, arg: str) -> None:
         status = self.runtime.status()
+        # Augment with episodic stats if available
+        if self.runtime.episodic_memory:
+            try:
+                status["episodic_stats"] = await self.runtime.episodic_memory.get_stats()
+            except Exception:
+                pass
         self.console.print(panels.render_status_panel(status))
 
     async def _cmd_agents(self, arg: str) -> None:
@@ -168,6 +178,57 @@ class ProbOSShell:
             hebbian_router=self.runtime.hebbian_router,
         )
         self.console.print(panels.render_working_memory_panel(snapshot))
+
+    async def _cmd_history(self, arg: str) -> None:
+        mem = self.runtime.episodic_memory
+        if not mem:
+            self.console.print("[yellow]Episodic memory is not enabled.[/yellow]")
+            return
+        episodes = await mem.recent(k=10)
+        if not episodes:
+            self.console.print("[dim]No episodes recorded yet.[/dim]")
+            return
+        from datetime import datetime
+        table = Table(title="Recent Episodes")
+        table.add_column("Time", style="dim")
+        table.add_column("Input")
+        table.add_column("Intents", justify="right")
+        table.add_column("Success", justify="right")
+        for ep in episodes:
+            ts = datetime.fromtimestamp(ep.timestamp).strftime("%H:%M:%S") if ep.timestamp else "?"
+            total = len(ep.outcomes)
+            ok = sum(1 for o in ep.outcomes if o.get("success"))
+            rate = f"{ok}/{total}" if total else "-"
+            intents = ", ".join(o.get("intent", "?") for o in ep.outcomes) or "-"
+            table.add_row(ts, ep.user_input[:60], intents, rate)
+        self.console.print(table)
+
+    async def _cmd_recall(self, arg: str) -> None:
+        mem = self.runtime.episodic_memory
+        if not mem:
+            self.console.print("[yellow]Episodic memory is not enabled.[/yellow]")
+            return
+        if not arg:
+            self.console.print("[yellow]Usage: /recall <query>[/yellow]")
+            return
+        episodes = await mem.recall(arg, k=3)
+        if not episodes:
+            self.console.print("[dim]No similar episodes found.[/dim]")
+            return
+        from datetime import datetime
+        table = Table(title=f"Recall: {arg}")
+        table.add_column("Time", style="dim")
+        table.add_column("Input")
+        table.add_column("Intents")
+        table.add_column("Success", justify="right")
+        for ep in episodes:
+            ts = datetime.fromtimestamp(ep.timestamp).strftime("%H:%M:%S") if ep.timestamp else "?"
+            total = len(ep.outcomes)
+            ok = sum(1 for o in ep.outcomes if o.get("success"))
+            rate = f"{ok}/{total}" if total else "-"
+            intents = ", ".join(o.get("intent", "?") for o in ep.outcomes) or "-"
+            table.add_row(ts, ep.user_input[:60], intents, rate)
+        self.console.print(table)
 
     async def _cmd_model(self, arg: str) -> None:
         client = self.runtime.llm_client

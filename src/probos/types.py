@@ -225,6 +225,7 @@ class TaskDAG:
     nodes: list[TaskNode] = field(default_factory=list)
     source_text: str = ""
     response: str = ""  # Conversational reply from LLM for non-actionable inputs
+    reflect: bool = False  # Whether to send results back to LLM for synthesis
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def get_ready_nodes(self) -> list[TaskNode]:
@@ -243,3 +244,23 @@ class TaskDAG:
             if n.id == node_id:
                 return n
         return None
+
+
+# ------------------------------------------------------------------
+# Phase 3b: Episodic memory types
+# ------------------------------------------------------------------
+
+
+@dataclass
+class Episode:
+    """A recorded episode from the cognitive pipeline."""
+
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    timestamp: float = 0.0
+    user_input: str = ""
+    dag_summary: dict[str, Any] = field(default_factory=dict)
+    outcomes: list[dict[str, Any]] = field(default_factory=list)
+    reflection: str | None = None
+    agent_ids: list[str] = field(default_factory=list)
+    duration_ms: float = 0.0
+    embedding: list[float] = field(default_factory=list)

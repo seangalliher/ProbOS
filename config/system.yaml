@@ -39,3 +39,8 @@ cognitive:
   decomposition_timeout_seconds: 30
   dag_execution_timeout_seconds: 60
   use_consensus_for_writes: true
+
+memory:
+  collection_name: "probos_episodes"
+  max_episodes: 100000
+  relevance_threshold: 0.7

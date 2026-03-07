@@ -56,6 +56,14 @@ class CognitiveConfig(BaseModel):
     use_consensus_for_writes: bool = True
 
 
+class MemoryConfig(BaseModel):
+    """Episodic memory configuration."""
+
+    collection_name: str = "probos_episodes"
+    max_episodes: int = 100000
+    relevance_threshold: float = 0.7
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
@@ -72,6 +80,7 @@ class SystemConfig(BaseModel):
     mesh: MeshConfig = MeshConfig()
     consensus: ConsensusConfig = ConsensusConfig()
     cognitive: CognitiveConfig = CognitiveConfig()
+    memory: MemoryConfig = MemoryConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

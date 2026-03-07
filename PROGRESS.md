@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 4+ — LLM JSON Hardening Complete (277/277 tests)
+## Current Status: Phase 3b-1 — Episodic Memory Complete (351/351 tests)
 
 ---
 
@@ -11,10 +11,10 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `pyproject.toml` | done | Project config, deps (pydantic, pyyaml, aiosqlite, rich, pytest) |
-| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config |
+| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config |
 | `src/probos/__init__.py` | done | Package root, version 0.1.0 |
-| `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `TaskNode`, `TaskDAG` (with `response` field for conversational LLM replies) |
-| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig`, `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
+| `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `TaskNode`, `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record) |
+| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig`, `MemoryConfig`, `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
 | `src/probos/substrate/agent.py` | done | `BaseAgent` ABC — `perceive/decide/act/report` lifecycle, confidence tracking, state transitions, async start/stop |
 | `src/probos/substrate/registry.py` | done | `AgentRegistry` — in-memory index, lookup by ID/pool/capability, async-safe |
 | `src/probos/substrate/spawner.py` | done | `AgentSpawner` — template registration, `spawn()`, `recycle()` with optional respawn |
@@ -46,9 +46,11 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `src/probos/cognitive/__init__.py` | done | Package root |
-| `src/probos/cognitive/llm_client.py` | done | `BaseLLMClient` ABC, `OpenAICompatibleClient` (httpx, tiered routing fast/standard/deep, response cache, fallback chain: live → cache → error, connectivity check, specific error handling for connect/timeout/HTTP errors), `MockLLMClient` (regex pattern matching, canned responses for deterministic testing) |
+| `src/probos/cognitive/llm_client.py` | done | `BaseLLMClient` ABC, `OpenAICompatibleClient` (httpx, tiered routing fast/standard/deep, response cache, fallback chain: live → cache → error, connectivity check, specific error handling for connect/timeout/HTTP errors), `MockLLMClient` (regex pattern matching, canned responses for deterministic testing — supports read_file, write_file, list_directory, search_files, run_command, http_fetch patterns) |
 | `src/probos/cognitive/working_memory.py` | done | `WorkingMemorySnapshot` (serializable system state), `WorkingMemoryManager` (bounded context assembly from registry/trust/Hebbian/capabilities, token budget eviction) |
-| `src/probos/cognitive/decomposer.py` | done | `IntentDecomposer` (NL text + working memory → LLM → `TaskDAG`, aggressive JSON-only system prompt with `response` field for conversational replies, markdown code fence extraction, available intents, examples), `DAGExecutor` (parallel/sequential DAG execution through mesh + consensus, dependency resolution, deadlock detection, `on_event` callback for real-time progress) |
+| `src/probos/cognitive/decomposer.py` | done | `IntentDecomposer` (NL text + working memory + similar episodes → LLM → `TaskDAG`, aggressive JSON-only system prompt with `response` and `reflect` fields, markdown code fence extraction, available intents: read_file, stat_file, write_file, list_directory, search_files, run_command, http_fetch, `REFLECT_PROMPT` for post-execution synthesis, `reflect()` method sends results back to LLM with payload cap ~8000 chars and truncation, PAST EXPERIENCE section for episodic context), `DAGExecutor` (parallel/sequential DAG execution through mesh + consensus, dependency resolution, deadlock detection, `on_event` callback for real-time progress) |
+| `src/probos/cognitive/episodic.py` | done | `EpisodicMemory` — SQLite-backed long-term memory, `Episode` storage/recall, keyword-overlap similarity search (cosine over bag-of-words), `recall_by_intent()`, `recent()`, `get_stats()`, max_episodes eviction |
+| `src/probos/cognitive/episodic_mock.py` | done | `MockEpisodicMemory` — in-memory episodic memory for testing, substring/keyword matching recall, no SQLite dependency |
 
 ### Experience Layer (complete — new in Phase 4)
 
@@ -57,7 +59,7 @@
 | `src/probos/experience/__init__.py` | done | Package root |
 | `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()`, `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_dag_result()` (displays `response` field for conversational replies), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
 | `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — real-time DAG execution display with Rich spinners and Live updates, `on_event` callback integration, conversational response display when LLM returns `response` field, debug mode (raw DAG JSON, individual agent responses, consensus details) |
-| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, graceful error handling |
+| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/history`, `/recall`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, graceful error handling |
 
 ### Agents
 
@@ -65,14 +67,18 @@
 |------|--------|-------------|
 | `src/probos/agents/file_reader.py` | done | `FileReaderAgent` — `read_file` and `stat_file` capabilities, full lifecycle, self-selects on intent match |
 | `src/probos/agents/file_writer.py` | done | `FileWriterAgent` — `write_file` capability, proposes writes without committing, `commit_write()` called after consensus approval |
-| `src/probos/agents/red_team.py` | done | `RedTeamAgent` — independently verifies other agents' results (re-reads files, compares), does NOT subscribe to intent bus |
+| `src/probos/agents/directory_list.py` | done | `DirectoryListAgent` — `list_directory` capability, lists dir entries with name/type/size, no consensus required |
+| `src/probos/agents/file_search.py` | done | `FileSearchAgent` — `search_files` capability, recursive glob via `Path.rglob()`, no consensus required |
+| `src/probos/agents/shell_command.py` | done | `ShellCommandAgent` — `run_command` capability, `asyncio.create_subprocess_shell()`, 30s timeout, 64KB output cap, consensus required. Returns success=True even for nonzero exit codes |
+| `src/probos/agents/http_fetch.py` | done | `HttpFetchAgent` — `http_fetch` capability, `httpx.AsyncClient` per-request, 15s timeout, 1MB body cap, header whitelist, consensus required |
+| `src/probos/agents/red_team.py` | done | `RedTeamAgent` — independently verifies other agents' results (re-reads files, re-runs commands, re-fetches URLs), does NOT subscribe to intent bus |
 | `src/probos/agents/corrupted.py` | done | `CorruptedFileReaderAgent` — deliberately returns fabricated data, used to test consensus layer catching corruption |
 
 ### Runtime
 
 | File | Status | Description |
 |------|--------|-------------|
-| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive, spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), red_team (2 verifiers). `process_natural_language(text, on_event=None)` with event callback support |
+| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory, spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), red_team (2 verifiers). 22 agents total. `process_natural_language(text, on_event=None)` with event callback support, post-execution reflect step (hardened with `asyncio.wait_for()` timeout and graceful fallback), episodic episode storage (fire-and-forget), `recall_similar()` for semantic search |
 | `src/probos/__main__.py` | done | Entry point: `uv run python -m probos` — boot sequence display, LLM connectivity check with fallback to MockLLMClient, interactive shell launch |
 | `demo.py` | done | Full Rich demo: consensus reads, corrupted agent injection, trust/Hebbian display, NL pipeline with visual feedback, event log |
 
@@ -80,7 +86,7 @@
 
 ## What's Working
 
-**277/277 tests pass.** Test suite covers:
+**351/351 tests pass.** Test suite covers:
 
 ### Substrate tests (50 tests — unchanged)
 - Agent creation, lifecycle, confidence tracking (16 tests)
@@ -122,7 +128,7 @@
 - Submit with consensus: correct read approved, trust updated, agent-to-agent weights recorded, consensus events logged
 - Corrupted agent caught, majority corrupted detected, write with consensus committed
 
-### Cognitive tests (65 tests)
+### Cognitive tests (69 tests)
 
 #### LLM Client (10 tests)
 - MockLLMClient: single read, parallel reads, write with consensus, unmatched default, call count, last request, custom default, token estimate, tier passthrough
@@ -132,17 +138,19 @@
 - WorkingMemorySnapshot: empty to_text, with agents, with capabilities, with trust, with connections, token estimate, token scales with content
 - WorkingMemoryManager: record intent, record result removes from active, bounded intents, bounded results, assemble without sources, eviction under budget, assemble returns copy
 
-#### Decomposer + TaskDAG (33 tests)
+#### Decomposer + TaskDAG (44 tests)
 - IntentDecomposer: single read, parallel reads, write with consensus, source text preserved, with context, unrecognized input, malformed JSON, missing intents key, intents not a list, empty intent filtered
 - ParseResponse: raw JSON, code block, preamble, invalid JSON, non-dict items skipped
 - ExtractJson: raw JSON, code block, embedded JSON, no JSON raises
 - TaskDAG: ready nodes all independent, ready nodes with dependency, ready after completion, is_complete, is_not_complete, get_node, empty DAG is complete, response field default empty, response field set
 - ResponseFieldParsing: response field extracted, response with intents, response missing defaults empty, non-string response ignored, JSON in code fences with response
+- ReflectFieldParsing: reflect field default false, reflect field set true, reflect extracted true, reflect extracted false, reflect missing defaults false, non-bool coerced, reflect method returns text
+- ReflectHardening: payload truncated beyond budget, timeout returns empty string, exception fallback sets fallback string in runtime, success unchanged after hardening
 
 #### Cognitive integration (8 tests)
 - NL single read, parallel reads, write with consensus, unrecognized returns empty, read missing file, working memory updated, status includes cognitive, multiple NL requests
 
-### Experience tests (47 tests)
+### Experience tests (63 tests)
 
 #### Panels (13 tests)
 - render_status_panel: shows ProbOS system info (1 test)
@@ -200,6 +208,94 @@
 #### Event Callback (2 tests)
 - on_event callback fires decompose_start, decompose_complete, node_start, node_complete (1 test)
 - Without on_event, process_natural_language works as before (1 test)
+
+#### Reflect Capability (4 tests)
+- render_dag_result with reflection text displays it (1 test)
+- render_dag_result without reflection works normally (1 test)
+- NL with reflect:true produces reflection key in result (1 test)
+- NL without reflect has no reflection key (1 test)
+
+#### Episodic Memory Integration (4 tests)
+- NL stores episode in memory with correct outcomes (1 test)
+- Second request can recall first via recall_similar (1 test)
+- Episode includes agent IDs and outcomes (1 test)
+- Empty DAG produces no episode (1 test)
+
+#### Episodic Shell Commands (6 tests)
+- /history shows episodes after NL processing (1 test)
+- /recall with query shows matching results (1 test)
+- /status works with episodic memory enabled (1 test)
+- /history without memory says not enabled (1 test)
+- /recall without memory says not enabled (1 test)
+- /help includes /history and /recall (1 test)
+
+### Episodic memory tests (16 tests — new in Phase 3b-1)
+
+#### MockEpisodicMemory (7 tests)
+- Store and recall single episode (1 test)
+- Store multiple, recall returns ranked results (1 test)
+- Recall with no matches returns empty (1 test)
+- recall_by_intent filters correctly (1 test)
+- get_stats returns correct distribution (1 test)
+- Max episodes eviction (1 test)
+- recent returns most recent first (1 test)
+
+#### EpisodicMemory SQLite (5 tests)
+- Store and recall with persistence (1 test)
+- recall_by_intent filters correctly (1 test)
+- get_stats on empty returns zero (1 test)
+- Eviction beyond max_episodes (1 test)
+- Episode round-trip (all fields survive store → recall) (1 test)
+
+#### Keyword Embedding (4 tests)
+- Embedding non-empty for text (1 test)
+- Identical text similarity ≈ 1.0 (1 test)
+- Different text similarity < 0.5 (1 test)
+- Empty embedding similarity = 0.0 (1 test)
+
+### Expansion agent tests (33 tests — new in Phase 5)
+
+#### DirectoryListAgent (7 tests)
+- Agent type and capabilities (1 test)
+- List populated directory with files and subdirs (1 test)
+- List nonexistent directory (1 test)
+- List empty directory (1 test)
+- List path that is a file, not a directory (1 test)
+- Missing path param (1 test)
+- Declines unhandled intent (1 test)
+
+#### FileSearchAgent (5 tests)
+- Agent type and capabilities (1 test)
+- Search matching glob with recursive results (1 test)
+- Search with no matches (1 test)
+- Search nonexistent base dir (1 test)
+- Missing params (1 test)
+
+#### ShellCommandAgent (4 tests)
+- Agent type and capabilities (1 test)
+- echo hello succeeds with exit_code=0 (1 test)
+- Failing command (exit 42) returns success=True with nonzero exit_code (1 test)
+- Empty command (1 test)
+
+#### HttpFetchAgent (4 tests)
+- Agent type and capabilities (1 test)
+- Fetch with mocked httpx returns 200 and body (1 test)
+- Fetch with mocked connection error (1 test)
+- Missing URL (1 test)
+
+#### Expansion integration (7 tests)
+- All 4 new pools created at boot (1 test)
+- NL "what files are in <path>" → list_directory (1 test)
+- NL "find files named *.txt in <path>" → search_files (1 test)
+- NL "run the command echo hello" → run_command with consensus (1 test)
+- NL "fetch https://..." → http_fetch with consensus via mocked httpx (1 test)
+- Direct submit_intent for list_directory returns 3 results (1 test)
+- Direct submit_intent_with_consensus for run_command returns consensus (1 test)
+
+#### Expansion error cases (3 tests)
+- Nonexistent directory via runtime list_directory (1 test)
+- Nonexistent directory via runtime search_files (1 test)
+- Failing command (exit 42) via runtime — success=True with nonzero exit code (1 test)
 
 ### Phase 4 Milestone — Achieved
 
@@ -367,6 +463,44 @@ The `SYSTEM_PROMPT` opens with "You MUST respond with ONLY a JSON object" and re
 
 `TaskDAG` gained a `response: str = ""` field that carries the LLM's optional conversational text through the entire pipeline: `_parse_response()` extracts it from the JSON → stored on `TaskDAG` → included in the result dict from `process_natural_language()` and `ExecutionRenderer.process_with_feedback()` → displayed by the renderer (cyan text) and `render_dag_result()` panel. When empty, the existing "No actionable intents" / "No intents were executed" fallback message is shown.
 
+### AD-42: Non-consensus agents execute directly through mesh
+
+DirectoryListAgent and FileSearchAgent are low-risk read-only operations. They execute through the mesh without quorum overhead — `use_consensus: false` in the DAG, which routes through the simple `submit_intent()` path. This keeps response times fast for read operations while reserving consensus for destructive or external operations.
+
+### AD-43: ShellCommandAgent returns success=True for nonzero exit codes
+
+The ShellCommandAgent always returns `success=True` as long as the command executed (even with nonzero exit code). The exit code, stdout, and stderr are included in the result data. This places interpretation responsibility on the consumer — a nonzero exit code is not necessarily an error (e.g., `grep` returns 1 for "no matches").
+
+### AD-44: HttpFetchAgent creates fresh httpx client per request
+
+The HttpFetchAgent creates a fresh `httpx.AsyncClient` with `async with` for each request, keeping agent state minimal. This avoids connection pool management, stale connections, and shared mutable state between concurrent fetch operations. The timeout and body cap are configurable via class constants.
+
+### AD-45: Red team re-execution limitation for non-deterministic commands
+
+Red team verification for `run_command` re-executes the same command and compares exit codes and stdout. This works well for deterministic commands like `echo hello` but may produce false mismatches for time-dependent or stateful commands (e.g., `date`, `ls` with changing files). This is a known limitation documented as an architectural decision rather than a bug.
+
+### AD-46: Post-execution reflection via REFLECT_PROMPT
+
+When the decomposition LLM sets `reflect: true` in the JSON response, the pipeline adds a second LLM call after DAG execution completes. The `IntentDecomposer.reflect()` method sends the original user request plus serialized agent results to the LLM with a separate `REFLECT_PROMPT` system prompt. The reflection prompt instructs the LLM to synthesize a plain-text answer rather than JSON. The reflection output is stored in `execution_result["reflection"]` and displayed as cyan text in both the `render_dag_result()` panel and the renderer output. The `MockLLMClient` detects reflection requests by checking for the substring "analyzing results returned by ProbOS agents" in the system prompt, enabling deterministic testing without a live LLM.
+
+---
+
+### AD-47: Reflect hardening — timeout, payload cap, graceful fallback
+
+The reflect step (post-execution LLM synthesis) is hardened against three failure modes: (1) The `decomposer.reflect()` call in `runtime.py` and `renderer.py` is wrapped in `asyncio.wait_for()` using `config.cognitive.decomposition_timeout_seconds`. (2) The serialized payload sent to the LLM is capped at ~8000 characters (~2000 tokens) with a trailing `[... results truncated ...]` note. (3) If reflect times out or raises any exception, the execution results are preserved and `execution_result["reflection"]` is set to a fallback string `"(Reflection unavailable — results shown above)"` rather than losing the entire result or crashing.
+
+### AD-48: Keyword-overlap embedding for episodic recall
+
+Episodic memory uses a lightweight keyword-overlap similarity approach instead of a heavyweight embedding model (ChromaDB + Sentence Transformers). Text is tokenized into lowercase alphanumeric tokens with stop words removed, producing a sparse bag-of-words vector. Cosine similarity over these vectors provides recall. This trades recall precision for zero additional dependencies and fast startup. The `EpisodicMemory` class uses SQLite for persistence; `MockEpisodicMemory` uses an in-memory list with substring matching.
+
+### AD-49: MockEpisodicMemory for testing
+
+Same pattern as `MockLLMClient`: `MockEpisodicMemory` implements the same interface as `EpisodicMemory` but stores episodes in a plain list. Recall uses keyword-set overlap instead of cosine similarity over embeddings. This keeps the test suite deterministic and fast — no SQLite, no embedding computation.
+
+### AD-50: Episode storage is fire-and-forget
+
+Episode storage in `runtime.py` is wrapped in a try/except. If storage fails (SQLite error, serialization error, etc.), the failure is logged as a warning but never blocks the user's result. The execution result is always returned regardless of whether the episode was successfully stored.
+
 ---
 
 ## What's Next
@@ -396,8 +530,17 @@ The `SYSTEM_PROMPT` opens with "You MUST respond with ONLY a JSON object" and re
 - [x] ~~Harden system prompt for JSON-only output, add response field for conversational replies~~
 - [x] ~~277/277 tests pass~~
 - [x] ~~Spawn FileWriterAgent pool so write intents reach consensus quorum~~
-- [ ] **Phase 3b (Cognitive continued):** Episodic memory, attention mechanism, richer NL understanding
-- [ ] **Phase 5 (Expansion):** Network agents, process management, calendar, email, code execution
+- [x] ~~Build Phase 5 expansion agents (DirectoryListAgent, FileSearchAgent, ShellCommandAgent, HttpFetchAgent)~~
+- [x] ~~Extend red team verification for run_command and http_fetch~~
+- [x] ~~310/310 tests pass~~
+- [x] ~~Add reflect capability — post-execution LLM synthesis~~
+- [x] ~~325/325 tests pass~~
+- [x] ~~Harden reflect step — timeout, payload cap, graceful fallback~~
+- [x] ~~325/325 tests pass~~
+- [x] ~~Phase 3b-1: Episodic memory (Episode type, EpisodicMemory with SQLite, MockEpisodicMemory, runtime wiring, decomposer context, /history + /recall commands)~~
+- [x] ~~351/351 tests pass~~
+- [ ] **Phase 3b (Cognitive continued):** Attention mechanism, richer NL understanding
+- [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
 
 ---
 

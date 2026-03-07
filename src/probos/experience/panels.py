@@ -328,6 +328,12 @@ def render_dag_result(result: dict[str, Any], debug: bool = False) -> Panel:
                             lines.append(f"      {preview}")
                             break
 
+    # Show reflection if present
+    reflection = result.get("reflection", "")
+    if reflection:
+        lines.append("")
+        lines.append(f"[cyan]{reflection}[/cyan]")
+
     if debug:
         lines.append("")
         lines.append("[dim]--- DEBUG ---[/dim]")
