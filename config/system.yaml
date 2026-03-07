@@ -2,7 +2,7 @@
 system:
   name: "ProbOS"
   version: "0.1.0"
-  log_level: "DEBUG"
+  log_level: "INFO"
 
 pools:
   default_pool_size: 3
@@ -27,3 +27,15 @@ consensus:
   trust_prior_alpha: 2.0
   trust_prior_beta: 2.0
   trust_decay_rate: 0.999
+
+cognitive:
+  llm_base_url: "http://127.0.0.1:8080/v1"
+  llm_api_key: ""
+  llm_model_fast: "gpt-4o-mini"
+  llm_model_standard: "claude-sonnet-4"
+  llm_model_deep: "claude-sonnet-4"
+  llm_timeout_seconds: 30
+  working_memory_token_budget: 4000
+  decomposition_timeout_seconds: 30
+  dag_execution_timeout_seconds: 60
+  use_consensus_for_writes: true
