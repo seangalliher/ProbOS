@@ -742,3 +742,124 @@ class TestShellEpisodicCommands:
         output = get_output(console)
         assert "/history" in output
         assert "/recall" in output
+
+
+# ---------------------------------------------------------------------------
+# Attention integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestAttentionIntegration:
+
+    @pytest.mark.asyncio
+    async def test_dag_executor_respects_attention_budget(self, tmp_path):
+        """DAG with 5 independent nodes and budget=2 executes in batches."""
+        import json
+        from probos.cognitive.attention import AttentionManager
+
+        llm = MockLLMClient()
+        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=llm)
+        # Set attention budget to 2
+        rt.attention = AttentionManager(max_concurrent=2)
+        rt.dag_executor.attention = rt.attention
+        await rt.start()
+        try:
+            # Create 5 files so we can read them all
+            for i in range(5):
+                (tmp_path / f"f{i}.txt").write_text(f"content {i}")
+
+            llm.set_default_response(json.dumps({
+                "intents": [
+                    {
+                        "id": f"t{i}",
+                        "intent": "read_file",
+                        "params": {"path": str(tmp_path / f"f{i}.txt")},
+                        "depends_on": [],
+                        "use_consensus": False,
+                    }
+                    for i in range(5)
+                ],
+            }))
+
+            result = await rt.process_natural_language("read all 5 files")
+            assert result["node_count"] == 5
+            assert result["completed_count"] == 5
+        finally:
+            await rt.stop()
+
+    @pytest.mark.asyncio
+    async def test_attention_scores_in_event_callback(self, runtime, tmp_path):
+        """on_event payloads include attention_score when attention is active."""
+        test_file = tmp_path / "attn_event.txt"
+        test_file.write_text("attention event test")
+
+        events_received: list[dict] = []
+
+        async def capture(name: str, data: dict) -> None:
+            events_received.append({"name": name, "data": data})
+
+        await runtime.process_natural_language(
+            f"read the file at {test_file}",
+            on_event=capture,
+        )
+
+        node_starts = [e for e in events_received if e["name"] == "node_start"]
+        assert len(node_starts) >= 1
+        # attention_score should be in the event data
+        assert "attention_score" in node_starts[0]["data"]
+
+    @pytest.mark.asyncio
+    async def test_nl_updates_focus(self, runtime):
+        """process_natural_language() stores focus keywords in attention manager."""
+        await runtime.process_natural_language("read the file at /tmp/test.txt")
+        focus = runtime.attention.current_focus
+        assert focus["keywords"]  # should have keywords from the input
+        assert "read" in focus["keywords"] or "file" in focus["keywords"]
+
+
+class TestAttentionExperience:
+
+    @pytest.mark.asyncio
+    async def test_attention_command(self, shell, console):
+        """/attention renders the attention panel."""
+        await shell.execute_command("/attention")
+        output = get_output(console)
+        assert "Attention Queue" in output
+
+    @pytest.mark.asyncio
+    async def test_render_attention_panel_with_entries(self):
+        """render_attention_panel renders queued tasks with scores."""
+        from probos.types import AttentionEntry
+        from datetime import datetime, timezone
+
+        entries = [
+            AttentionEntry(
+                task_id="abc12345", intent="read_file",
+                urgency=0.8, score=1.5, dependency_depth=1,
+                created_at=datetime.now(timezone.utc),
+            ),
+            AttentionEntry(
+                task_id="def67890", intent="list_directory",
+                urgency=0.5, score=0.9, dependency_depth=0,
+                created_at=datetime.now(timezone.utc),
+            ),
+        ]
+        focus = {"keywords": ["read", "file"], "context": "read a file"}
+        panel = panels.render_attention_panel(entries, focus)
+
+        con = Console(file=StringIO(), force_terminal=True, width=120)
+        con.print(panel)
+        output = get_output(con)
+        assert "abc12345" in output
+        assert "read_file" in output
+        assert "score=" in output
+        assert "Focus:" in output
+
+    @pytest.mark.asyncio
+    async def test_render_attention_panel_empty(self):
+        """render_attention_panel renders empty state."""
+        panel = panels.render_attention_panel([], focus=None)
+        con = Console(file=StringIO(), force_terminal=True, width=120)
+        con.print(panel)
+        output = get_output(con)
+        assert "empty" in output.lower()
