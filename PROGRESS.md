@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 3b-1 — Episodic Memory Complete (351/351 tests)
+## Current Status: Phase 3b-2 — Attention Mechanism Complete (369/369 tests)
 
 ---
 
@@ -13,8 +13,8 @@
 | `pyproject.toml` | done | Project config, deps (pydantic, pyyaml, aiosqlite, rich, pytest) |
 | `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config |
 | `src/probos/__init__.py` | done | Package root, version 0.1.0 |
-| `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `TaskNode`, `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record) |
-| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig`, `MemoryConfig`, `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
+| `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `TaskNode`, `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record), `AttentionEntry` (priority scoring for task scheduling) |
+| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`), `MemoryConfig`, `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
 | `src/probos/substrate/agent.py` | done | `BaseAgent` ABC — `perceive/decide/act/report` lifecycle, confidence tracking, state transitions, async start/stop |
 | `src/probos/substrate/registry.py` | done | `AgentRegistry` — in-memory index, lookup by ID/pool/capability, async-safe |
 | `src/probos/substrate/spawner.py` | done | `AgentSpawner` — template registration, `spawn()`, `recycle()` with optional respawn |
@@ -48,18 +48,19 @@
 | `src/probos/cognitive/__init__.py` | done | Package root |
 | `src/probos/cognitive/llm_client.py` | done | `BaseLLMClient` ABC, `OpenAICompatibleClient` (httpx, tiered routing fast/standard/deep, response cache, fallback chain: live → cache → error, connectivity check, specific error handling for connect/timeout/HTTP errors), `MockLLMClient` (regex pattern matching, canned responses for deterministic testing — supports read_file, write_file, list_directory, search_files, run_command, http_fetch patterns) |
 | `src/probos/cognitive/working_memory.py` | done | `WorkingMemorySnapshot` (serializable system state), `WorkingMemoryManager` (bounded context assembly from registry/trust/Hebbian/capabilities, token budget eviction) |
-| `src/probos/cognitive/decomposer.py` | done | `IntentDecomposer` (NL text + working memory + similar episodes → LLM → `TaskDAG`, aggressive JSON-only system prompt with `response` and `reflect` fields, markdown code fence extraction, available intents: read_file, stat_file, write_file, list_directory, search_files, run_command, http_fetch, `REFLECT_PROMPT` for post-execution synthesis, `reflect()` method sends results back to LLM with payload cap ~8000 chars and truncation, PAST EXPERIENCE section for episodic context), `DAGExecutor` (parallel/sequential DAG execution through mesh + consensus, dependency resolution, deadlock detection, `on_event` callback for real-time progress) |
+| `src/probos/cognitive/decomposer.py` | done | `IntentDecomposer` (NL text + working memory + similar episodes → LLM → `TaskDAG`, aggressive JSON-only system prompt with `response` and `reflect` fields, markdown code fence extraction, available intents: read_file, stat_file, write_file, list_directory, search_files, run_command, http_fetch, `REFLECT_PROMPT` for post-execution synthesis, `reflect()` method sends results back to LLM with payload cap ~8000 chars and truncation, PAST EXPERIENCE section for episodic context), `DAGExecutor` (parallel/sequential DAG execution through mesh + consensus, dependency resolution, deadlock detection, `on_event` callback for real-time progress, attention-based priority batching when `AttentionManager` is provided) |
 | `src/probos/cognitive/episodic.py` | done | `EpisodicMemory` — SQLite-backed long-term memory, `Episode` storage/recall, keyword-overlap similarity search (cosine over bag-of-words), `recall_by_intent()`, `recent()`, `get_stats()`, max_episodes eviction |
 | `src/probos/cognitive/episodic_mock.py` | done | `MockEpisodicMemory` — in-memory episodic memory for testing, substring/keyword matching recall, no SQLite dependency |
+| `src/probos/cognitive/attention.py` | done | `AttentionManager` — priority scorer and budgeter for task execution, scores = urgency × relevance × deadline_factor × dependency_depth_bonus, configurable concurrency limit (`max_concurrent_tasks`), focus tracking (infrastructure for cross-request attention), queue introspection |
 
 ### Experience Layer (complete — new in Phase 4)
 
 | File | Status | Description |
 |------|--------|-------------|
 | `src/probos/experience/__init__.py` | done | Package root |
-| `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()`, `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_dag_result()` (displays `response` field for conversational replies), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
+| `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()`, `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_attention_panel()`, `render_dag_result()` (displays `response` field for conversational replies), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
 | `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — real-time DAG execution display with Rich spinners and Live updates, `on_event` callback integration, conversational response display when LLM returns `response` field, debug mode (raw DAG JSON, individual agent responses, consensus details) |
-| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/history`, `/recall`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, graceful error handling |
+| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, graceful error handling |
 
 ### Agents
 
@@ -78,7 +79,7 @@
 
 | File | Status | Description |
 |------|--------|-------------|
-| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory, spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), red_team (2 verifiers). 22 agents total. `process_natural_language(text, on_event=None)` with event callback support, post-execution reflect step (hardened with `asyncio.wait_for()` timeout and graceful fallback), episodic episode storage (fire-and-forget), `recall_similar()` for semantic search |
+| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention, spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), red_team (2 verifiers). 22 agents total. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, post-execution reflect step (hardened with `asyncio.wait_for()` timeout and graceful fallback), episodic episode storage (fire-and-forget), `recall_similar()` for semantic search |
 | `src/probos/__main__.py` | done | Entry point: `uv run python -m probos` — boot sequence display, LLM connectivity check with fallback to MockLLMClient, interactive shell launch |
 | `demo.py` | done | Full Rich demo: consensus reads, corrupted agent injection, trust/Hebbian display, NL pipeline with visual feedback, event log |
 
@@ -86,7 +87,7 @@
 
 ## What's Working
 
-**351/351 tests pass.** Test suite covers:
+**369/369 tests pass.** Test suite covers:
 
 ### Substrate tests (50 tests — unchanged)
 - Agent creation, lifecycle, confidence tracking (16 tests)
@@ -128,7 +129,7 @@
 - Submit with consensus: correct read approved, trust updated, agent-to-agent weights recorded, consensus events logged
 - Corrupted agent caught, majority corrupted detected, write with consensus committed
 
-### Cognitive tests (69 tests)
+### Cognitive tests (81 tests)
 
 #### LLM Client (10 tests)
 - MockLLMClient: single read, parallel reads, write with consensus, unmatched default, call count, last request, custom default, token estimate, tier passthrough
@@ -150,7 +151,7 @@
 #### Cognitive integration (8 tests)
 - NL single read, parallel reads, write with consensus, unrecognized returns empty, read missing file, working memory updated, status includes cognitive, multiple NL requests
 
-### Experience tests (63 tests)
+### Experience tests (69 tests)
 
 #### Panels (13 tests)
 - render_status_panel: shows ProbOS system info (1 test)
@@ -229,6 +230,16 @@
 - /recall without memory says not enabled (1 test)
 - /help includes /history and /recall (1 test)
 
+#### Attention Integration (3 tests)
+- DAG executor respects attention budget (1 test)
+- on_event payloads include attention_score (1 test)
+- process_natural_language updates focus keywords (1 test)
+
+#### Attention Experience (3 tests)
+- /attention command renders panel (1 test)
+- render_attention_panel with entries shows scores (1 test)
+- render_attention_panel empty shows empty state (1 test)
+
 ### Episodic memory tests (16 tests — new in Phase 3b-1)
 
 #### MockEpisodicMemory (7 tests)
@@ -252,6 +263,20 @@
 - Identical text similarity ≈ 1.0 (1 test)
 - Different text similarity < 0.5 (1 test)
 - Empty embedding similarity = 0.0 (1 test)
+
+### Attention mechanism tests (12 tests — new in Phase 3b-2)
+- Submit 3 tasks, get_next_batch returns sorted by score (1 test)
+- Budget=3 limits batch to top 3 of 10 (1 test)
+- Higher urgency → higher score (1 test)
+- Task near TTL expiry gets boosted deadline factor (1 test)
+- Higher dependency depth gets bonus (1 test)
+- update_focus stores keywords, retrievable via current_focus (1 test)
+- is_background flag stored but inert this phase (1 test)
+- mark_completed removes from queue (1 test)
+- mark_failed removes from queue (1 test)
+- Empty queue returns empty batch (1 test)
+- Focus update stores state without affecting scores (1 test)
+- Queue snapshot returns all tasks sorted by score (1 test)
 
 ### Expansion agent tests (33 tests — new in Phase 5)
 
@@ -501,6 +526,10 @@ Same pattern as `MockLLMClient`: `MockEpisodicMemory` implements the same interf
 
 Episode storage in `runtime.py` is wrapped in a try/except. If storage fails (SQLite error, serialization error, etc.), the failure is logged as a warning but never blocks the user's result. The execution result is always returned regardless of whether the episode was successfully stored.
 
+### AD-51: Attention mechanism — priority-based task scheduling
+
+The `AttentionManager` is a priority scorer and budgeter, not an execution engine. It scores tasks using `urgency × relevance × deadline_factor × dependency_depth_bonus` and returns batches capped at `max_concurrent_tasks`. The `DAGExecutor` asks "which nodes should I run next?" instead of running all ready nodes simultaneously. Focus tracking (`update_focus()`) stores the current request's keywords as infrastructure for future cross-request attention (Phase 3b-3) but does not affect scoring this phase. Background demotion and preemption are deferred to Phase 3b-3. The mechanism is backward compatible — `DAGExecutor` works without an `AttentionManager` (guarded by `if self.attention`).
+
 ---
 
 ## What's Next
@@ -539,7 +568,9 @@ Episode storage in `runtime.py` is wrapped in a try/except. If storage fails (SQ
 - [x] ~~325/325 tests pass~~
 - [x] ~~Phase 3b-1: Episodic memory (Episode type, EpisodicMemory with SQLite, MockEpisodicMemory, runtime wiring, decomposer context, /history + /recall commands)~~
 - [x] ~~351/351 tests pass~~
-- [ ] **Phase 3b (Cognitive continued):** Attention mechanism, richer NL understanding
+- [x] ~~Phase 3b-2: Attention mechanism (AttentionEntry type, AttentionManager, DAGExecutor priority batching, /attention command, focus tracking infrastructure)~~
+- [x] ~~369/369 tests pass~~
+- [ ] **Phase 3b-3 (Cognitive continued):** Cross-request attention, preemption, background demotion, richer NL understanding
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
 
 ---

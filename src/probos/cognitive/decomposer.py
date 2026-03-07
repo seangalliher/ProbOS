@@ -10,7 +10,7 @@ from typing import Any, TYPE_CHECKING
 
 from probos.cognitive.llm_client import BaseLLMClient
 from probos.cognitive.working_memory import WorkingMemoryManager, WorkingMemorySnapshot
-from probos.types import LLMRequest, TaskDAG, TaskNode, Episode
+from probos.types import LLMRequest, TaskDAG, TaskNode, Episode, AttentionEntry
 
 if TYPE_CHECKING:
     pass
@@ -343,9 +343,11 @@ class DAGExecutor:
         self,
         runtime: Any,  # ProbOSRuntime (avoid circular import)
         timeout: float = 60.0,
+        attention: Any | None = None,  # AttentionManager (optional)
     ) -> None:
         self.runtime = runtime
         self.timeout = timeout
+        self.attention = attention
 
     async def execute(
         self,
@@ -400,12 +402,47 @@ class DAGExecutor:
                         results[node.id] = {"error": "Dependency deadlock"}
                 break
 
-            # Execute all ready nodes in parallel
+            # Use attention manager for priority batching if available
+            if self.attention and len(ready) > 1:
+                batch_nodes = self._attention_batch(ready, dag)
+            else:
+                batch_nodes = ready
+
+            # Execute batch in parallel
             tasks = [
                 self._execute_node(node, dag, results, on_event=on_event)
-                for node in ready
+                for node in batch_nodes
             ]
             await asyncio.gather(*tasks)
+
+    def _attention_batch(
+        self, ready: list[TaskNode], dag: TaskDAG
+    ) -> list[TaskNode]:
+        """Submit ready nodes to attention manager and return prioritized batch."""
+        # Compute dependency depth: how many downstream nodes depend on this one
+        dep_depth: dict[str, int] = {}
+        for node in dag.nodes:
+            for dep_id in node.depends_on:
+                dep_depth[dep_id] = dep_depth.get(dep_id, 0) + 1
+
+        for node in ready:
+            entry = AttentionEntry(
+                task_id=node.id,
+                intent=node.intent,
+                urgency=0.5,
+                dependency_depth=dep_depth.get(node.id, 0),
+            )
+            self.attention.submit(entry)
+
+        batch = self.attention.get_next_batch()
+        batch_ids = {e.task_id for e in batch}
+
+        # Clean up: remove from queue regardless (they'll be re-submitted
+        # next cycle if still ready)
+        for node in ready:
+            self.attention.mark_completed(node.id)
+
+        return [n for n in ready if n.id in batch_ids]
 
     async def _execute_node(
         self,
@@ -417,7 +454,13 @@ class DAGExecutor:
         """Execute a single node."""
         node.status = "running"
         if on_event:
-            await on_event("node_start", {"node": node})
+            event_data: dict[str, Any] = {"node": node}
+            if self.attention:
+                # Include attention info in event
+                snapshot = self.attention.get_queue_snapshot()
+                scores = {e.task_id: e.score for e in snapshot}
+                event_data["attention_score"] = scores.get(node.id, 0.0)
+            await on_event("node_start", event_data)
 
         # Substitute dependency results into params if needed
         params = dict(node.params)

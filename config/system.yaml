@@ -39,6 +39,8 @@ cognitive:
   decomposition_timeout_seconds: 30
   dag_execution_timeout_seconds: 60
   use_consensus_for_writes: true
+  max_concurrent_tasks: 8
+  attention_decay_rate: 0.95
 
 memory:
   collection_name: "probos_episodes"

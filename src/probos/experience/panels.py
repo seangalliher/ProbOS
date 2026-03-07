@@ -287,6 +287,34 @@ def render_working_memory_panel(snapshot: Any) -> Panel:
     )
 
 
+def render_attention_panel(
+    queue: list[Any],
+    focus: dict[str, Any] | None = None,
+) -> Panel:
+    """Rich Panel showing the attention queue with scores and current focus."""
+    lines: list[str] = []
+
+    if focus:
+        keywords = focus.get("keywords", [])
+        if keywords:
+            lines.append(f"[bold]Focus:[/bold] {', '.join(keywords[:8])}")
+        else:
+            lines.append("[bold]Focus:[/bold] [dim]none[/dim]")
+        lines.append("")
+
+    if not queue:
+        lines.append("[dim]Attention queue is empty.[/dim]")
+    else:
+        for entry in queue:
+            lines.append(
+                f"  [cyan]{entry.task_id[:8]}[/cyan] {entry.intent:16s} "
+                f"urgency={entry.urgency:.2f} deadline={entry.deadline_factor:.2f} "
+                f"depth={entry.dependency_depth} [bold]score={entry.score:.3f}[/bold]"
+            )
+
+    return Panel("\n".join(lines), title="Attention Queue", border_style="yellow")
+
+
 def render_dag_result(result: dict[str, Any], debug: bool = False) -> Panel:
     """Render the result of ``process_natural_language()``."""
     lines: list[str] = []

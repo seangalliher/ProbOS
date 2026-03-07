@@ -54,6 +54,8 @@ class CognitiveConfig(BaseModel):
     decomposition_timeout_seconds: float = 30.0
     dag_execution_timeout_seconds: float = 60.0
     use_consensus_for_writes: bool = True
+    max_concurrent_tasks: int = 8
+    attention_decay_rate: float = 0.95  # Per-second decay for stale tasks
 
 
 class MemoryConfig(BaseModel):

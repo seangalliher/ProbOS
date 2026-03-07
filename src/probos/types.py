@@ -264,3 +264,24 @@ class Episode:
     agent_ids: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
     embedding: list[float] = field(default_factory=list)
+
+
+# ------------------------------------------------------------------
+# Phase 3b-2: Attention types
+# ------------------------------------------------------------------
+
+
+@dataclass
+class AttentionEntry:
+    """A task competing for attention resources."""
+
+    task_id: str
+    intent: str
+    urgency: float = 0.5
+    relevance: float = 1.0
+    deadline_factor: float = 1.0
+    dependency_depth: int = 0
+    is_background: bool = False
+    score: float = 0.0  # Computed by AttentionManager
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    ttl_seconds: float = 30.0

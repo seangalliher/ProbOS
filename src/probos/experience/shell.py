@@ -29,19 +29,20 @@ class ProbOSShell:
     """
 
     COMMANDS: dict[str, str] = {
-        "/status":  "Show system status overview",
-        "/agents":  "List all agents with trust scores",
-        "/weights": "Show Hebbian connection weights",
-        "/gossip":  "Show gossip protocol view",
-        "/log":     "Show recent event log entries (/log [category])",
-        "/memory":  "Show working memory snapshot",
-        "/history": "Show recent episodic memory entries",
-        "/recall":  "Semantic recall from episodic memory (/recall <query>)",
-        "/model":   "Show LLM client type, endpoint, and tier config",
-        "/tier":    "Switch LLM tier (/tier fast|standard|deep)",
-        "/debug":   "Toggle debug mode (/debug on|off)",
-        "/help":    "Show this help message",
-        "/quit":    "Exit ProbOS",
+        "/status":    "Show system status overview",
+        "/agents":    "List all agents with trust scores",
+        "/weights":   "Show Hebbian connection weights",
+        "/gossip":    "Show gossip protocol view",
+        "/log":       "Show recent event log entries (/log [category])",
+        "/memory":    "Show working memory snapshot",
+        "/attention": "Show attention queue and current focus",
+        "/history":   "Show recent episodic memory entries",
+        "/recall":    "Semantic recall from episodic memory (/recall <query>)",
+        "/model":     "Show LLM client type, endpoint, and tier config",
+        "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
+        "/debug":     "Toggle debug mode (/debug on|off)",
+        "/help":      "Show this help message",
+        "/quit":      "Exit ProbOS",
     }
 
     def __init__(
@@ -118,10 +119,11 @@ class ProbOSShell:
             "/agents":  self._cmd_agents,
             "/weights": self._cmd_weights,
             "/gossip":  self._cmd_gossip,
-            "/log":     self._cmd_log,
-            "/memory":  self._cmd_memory,
-            "/history": self._cmd_history,
-            "/recall":  self._cmd_recall,
+            "/log":       self._cmd_log,
+            "/memory":    self._cmd_memory,
+            "/attention": self._cmd_attention,
+            "/history":   self._cmd_history,
+            "/recall":    self._cmd_recall,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
             "/debug":   self._cmd_debug,
@@ -178,6 +180,11 @@ class ProbOSShell:
             hebbian_router=self.runtime.hebbian_router,
         )
         self.console.print(panels.render_working_memory_panel(snapshot))
+
+    async def _cmd_attention(self, arg: str) -> None:
+        queue = self.runtime.attention.get_queue_snapshot()
+        focus = self.runtime.attention.current_focus
+        self.console.print(panels.render_attention_panel(queue, focus))
 
     async def _cmd_history(self, arg: str) -> None:
         mem = self.runtime.episodic_memory

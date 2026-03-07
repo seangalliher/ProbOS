@@ -20,6 +20,7 @@ from probos.agents.shell_command import ShellCommandAgent
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
 from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient, OpenAICompatibleClient
 from probos.cognitive.working_memory import WorkingMemoryManager
+from probos.cognitive.attention import AttentionManager
 from probos.config import SystemConfig, load_config
 from probos.consensus.quorum import QuorumEngine
 from probos.consensus.trust import TrustNetwork
@@ -112,9 +113,14 @@ class ProbOSRuntime:
             working_memory=self.working_memory,
             timeout=cog_cfg.decomposition_timeout_seconds,
         )
+        self.attention = AttentionManager(
+            max_concurrent=cog_cfg.max_concurrent_tasks,
+            decay_rate=cog_cfg.attention_decay_rate,
+        )
         self.dag_executor = DAGExecutor(
             runtime=self,
             timeout=cog_cfg.dag_execution_timeout_seconds,
+            attention=self.attention,
         )
 
         # --- Episodic memory ---
@@ -501,6 +507,9 @@ class ProbOSRuntime:
         """
         t_start = time.monotonic()
 
+        # Update attention focus with current request
+        self.attention.update_focus(intent=text, context=text)
+
         if on_event:
             await on_event("decompose_start", {"text": text})
 
@@ -626,6 +635,8 @@ class ProbOSRuntime:
                 "working_memory_budget": self.working_memory.token_budget,
                 "decomposition_timeout": self.decomposer.timeout,
                 "dag_execution_timeout": self.dag_executor.timeout,
+                "attention_budget": self.attention.max_concurrent,
+                "attention_queue": self.attention.queue_size,
             },
         }
         if self.episodic_memory:
