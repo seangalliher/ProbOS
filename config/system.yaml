@@ -1,0 +1,29 @@
+# ProbOS System Configuration
+system:
+  name: "ProbOS"
+  version: "0.1.0"
+  log_level: "DEBUG"
+
+pools:
+  default_pool_size: 3
+  max_pool_size: 7
+  min_pool_size: 2
+  spawn_cooldown_ms: 500
+  health_check_interval_seconds: 5
+
+mesh:
+  gossip_interval_ms: 1000
+  hebbian_decay_rate: 0.995
+  hebbian_reward: 0.05
+  signal_ttl_seconds: 30
+  capability_broadcast_interval_seconds: 5
+
+consensus:
+  min_votes: 3
+  approval_threshold: 0.6
+  use_confidence_weights: true
+  verification_timeout_seconds: 5
+  red_team_pool_size: 2
+  trust_prior_alpha: 2.0
+  trust_prior_beta: 2.0
+  trust_decay_rate: 0.999
