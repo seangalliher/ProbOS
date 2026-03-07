@@ -165,3 +165,81 @@ class VerificationResult:
     discrepancy: str = ""
     confidence: float = 0.0
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# ------------------------------------------------------------------
+# Phase 3: Cognitive types
+# ------------------------------------------------------------------
+
+
+class LLMTier(Enum):
+    """LLM routing tiers — trade cost/latency for capability."""
+
+    FAST = "fast"  # Simple classification, single-intent parsing
+    STANDARD = "standard"  # Multi-intent decomposition
+    DEEP = "deep"  # Complex reasoning, ambiguous inputs
+
+
+@dataclass
+class LLMRequest:
+    """A request to the LLM client."""
+
+    prompt: str
+    system_prompt: str = ""
+    tier: str = "standard"  # LLMTier value
+    temperature: float = 0.0
+    max_tokens: int = 1024
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+
+@dataclass
+class LLMResponse:
+    """Response from the LLM client."""
+
+    content: str
+    model: str = ""
+    tier: str = "standard"
+    tokens_used: int = 0
+    cached: bool = False
+    error: str | None = None
+    request_id: str = ""
+
+
+@dataclass
+class TaskNode:
+    """A node in a task DAG — represents a single intent to execute."""
+
+    id: str
+    intent: str
+    params: dict[str, Any] = field(default_factory=dict)
+    depends_on: list[str] = field(default_factory=list)
+    use_consensus: bool = False
+    result: Any = None
+    status: str = "pending"  # pending, running, completed, failed
+
+
+@dataclass
+class TaskDAG:
+    """Directed acyclic graph of tasks parsed from natural language."""
+
+    nodes: list[TaskNode] = field(default_factory=list)
+    source_text: str = ""
+    response: str = ""  # Conversational reply from LLM for non-actionable inputs
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    def get_ready_nodes(self) -> list[TaskNode]:
+        """Return nodes whose dependencies are all completed."""
+        completed = {n.id for n in self.nodes if n.status == "completed"}
+        return [
+            n for n in self.nodes
+            if n.status == "pending" and all(d in completed for d in n.depends_on)
+        ]
+
+    def is_complete(self) -> bool:
+        return all(n.status in ("completed", "failed") for n in self.nodes)
+
+    def get_node(self, node_id: str) -> TaskNode | None:
+        for n in self.nodes:
+            if n.id == node_id:
+                return n
+        return None

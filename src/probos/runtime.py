@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,9 @@ from probos.agents.file_reader import FileReaderAgent
 from probos.agents.file_writer import FileWriterAgent
 from probos.agents.heartbeat_monitor import SystemHeartbeatAgent
 from probos.agents.red_team import RedTeamAgent
+from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
+from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient, OpenAICompatibleClient
+from probos.cognitive.working_memory import WorkingMemoryManager
 from probos.config import SystemConfig, load_config
 from probos.consensus.quorum import QuorumEngine
 from probos.consensus.trust import TrustNetwork
@@ -46,6 +50,7 @@ class ProbOSRuntime:
         self,
         config: SystemConfig | None = None,
         data_dir: str | Path | None = None,
+        llm_client: BaseLLMClient | None = None,
     ) -> None:
         self.config = config or load_config(_DEFAULT_CONFIG)
         self._data_dir = Path(data_dir) if data_dir else _DEFAULT_DATA_DIR
@@ -88,6 +93,22 @@ class ProbOSRuntime:
         )
         # Red team agents are stored separately — not on the intent bus
         self._red_team_agents: list[RedTeamAgent] = []
+
+        # --- Cognitive ---
+        cog_cfg = self.config.cognitive
+        self.llm_client: BaseLLMClient = llm_client or MockLLMClient()
+        self.working_memory = WorkingMemoryManager(
+            token_budget=cog_cfg.working_memory_token_budget,
+        )
+        self.decomposer = IntentDecomposer(
+            llm_client=self.llm_client,
+            working_memory=self.working_memory,
+            timeout=cog_cfg.decomposition_timeout_seconds,
+        )
+        self.dag_executor = DAGExecutor(
+            runtime=self,
+            timeout=cog_cfg.dag_execution_timeout_seconds,
+        )
 
         self._started = False
 
@@ -182,6 +203,7 @@ class ProbOSRuntime:
         # Start default pools
         await self.create_pool("system", "system_heartbeat", target_size=2)
         await self.create_pool("filesystem", "file_reader", target_size=3)
+        await self.create_pool("filesystem_writers", "file_writer", target_size=3)
 
         # Spawn red team agents
         await self._spawn_red_team(self.config.consensus.red_team_pool_size)
@@ -222,6 +244,9 @@ class ProbOSRuntime:
         await self.trust_network.stop()
         await self.event_log.log(category="system", event="stopped")
         await self.event_log.stop()
+
+        # Clean up LLM client
+        await self.llm_client.close()
 
         self._started = False
         logger.info("ProbOS shutdown complete. Final agent count: %d", self.registry.count)
@@ -435,6 +460,74 @@ class ProbOSRuntime:
         result["committed"] = committed
         return result
 
+    async def process_natural_language(
+        self,
+        text: str,
+        on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> dict[str, Any]:
+        """Process a natural language request through the full cognitive pipeline.
+
+        Pipeline: NL input → working memory assembly → LLM decomposition →
+        DAG execution via mesh + consensus → aggregated results.
+
+        If on_event is provided, it is called at key pipeline stages:
+        decompose_start, decompose_complete, node_start, node_complete, node_failed.
+        """
+        if on_event:
+            await on_event("decompose_start", {"text": text})
+
+        # 1. Assemble working memory context
+        context = self.working_memory.assemble(
+            registry=self.registry,
+            trust_network=self.trust_network,
+            hebbian_router=self.hebbian_router,
+            capability_list=[
+                cap.can
+                for caps in self.capability_registry._capabilities.values()
+                for cap in caps
+            ] if hasattr(self.capability_registry, '_capabilities') else [],
+        )
+
+        # 2. Decompose NL → TaskDAG
+        dag = await self.decomposer.decompose(text, context=context)
+
+        if on_event:
+            await on_event("decompose_complete", {"dag": dag})
+
+        if not dag.nodes:
+            logger.warning("No intents parsed from NL input: %s", text[:50])
+            return {
+                "input": text,
+                "dag": dag,
+                "results": {},
+                "complete": True,
+                "node_count": 0,
+                "completed_count": 0,
+                "failed_count": 0,
+                "response": dag.response,
+            }
+
+        # Record intents in working memory
+        for node in dag.nodes:
+            self.working_memory.record_intent(node.intent, node.params)
+
+        # 3. Execute DAG through mesh + consensus
+        execution_result = await self.dag_executor.execute(dag, on_event=on_event)
+
+        # Record results in working memory
+        for node in dag.nodes:
+            node_result = execution_result["results"].get(node.id, {})
+            success = node.status == "completed"
+            self.working_memory.record_result(
+                intent=node.intent,
+                success=success,
+                result_count=1,
+                detail=str(node_result)[:200],
+            )
+
+        execution_result["input"] = text
+        return execution_result
+
     def status(self) -> dict[str, Any]:
         """Return a snapshot of the full system state."""
         return {
@@ -458,6 +551,12 @@ class ProbOSRuntime:
                     "approval_threshold": self.quorum_engine.policy.approval_threshold,
                     "confidence_weighted": self.quorum_engine.policy.use_confidence_weights,
                 },
+            },
+            "cognitive": {
+                "llm_client": type(self.llm_client).__name__,
+                "working_memory_budget": self.working_memory.token_budget,
+                "decomposition_timeout": self.decomposer.timeout,
+                "dag_execution_timeout": self.dag_executor.timeout,
             },
         }
 

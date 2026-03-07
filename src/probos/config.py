@@ -41,12 +41,27 @@ class ConsensusConfig(BaseModel):
     trust_decay_rate: float = 0.999  # Slow decay of trust observations
 
 
+class CognitiveConfig(BaseModel):
+    """Cognitive layer configuration."""
+
+    llm_base_url: str = "http://127.0.0.1:8080/v1"  # OpenAI-compatible endpoint
+    llm_api_key: str = ""
+    llm_model_fast: str = "gpt-4o-mini"
+    llm_model_standard: str = "claude-sonnet-4"
+    llm_model_deep: str = "claude-sonnet-4"
+    llm_timeout_seconds: float = 30.0
+    working_memory_token_budget: int = 4000
+    decomposition_timeout_seconds: float = 30.0
+    dag_execution_timeout_seconds: float = 60.0
+    use_consensus_for_writes: bool = True
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
     name: str = "ProbOS"
     version: str = "0.1.0"
-    log_level: str = "DEBUG"
+    log_level: str = "INFO"
 
 
 class SystemConfig(BaseModel):
@@ -56,6 +71,7 @@ class SystemConfig(BaseModel):
     pools: PoolConfig = PoolConfig()
     mesh: MeshConfig = MeshConfig()
     consensus: ConsensusConfig = ConsensusConfig()
+    cognitive: CognitiveConfig = CognitiveConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

@@ -1,8 +1,9 @@
-"""ProbOS demo — boot the runtime, show consensus layer catching corruption."""
+"""ProbOS demo — boot the runtime, show consensus layer catching corruption.
+
+Uses Rich panels for display instead of raw logging.
+"""
 
 import asyncio
-import json
-import logging
 import sys
 import tempfile
 from pathlib import Path
@@ -10,48 +11,57 @@ from pathlib import Path
 # Add src to path when running directly
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
+import logging
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+
 from probos.agents.corrupted import CorruptedFileReaderAgent
+from probos.experience import panels
+from probos.experience.renderer import ExecutionRenderer
+from probos.mesh.routing import REL_AGENT, REL_INTENT
 from probos.runtime import ProbOSRuntime
 
 
-def setup_logging() -> None:
+def _setup_logging() -> None:
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.WARNING,
         format="%(asctime)s  %(levelname)-8s  %(name)-30s  %(message)s",
         datefmt="%H:%M:%S",
     )
-    # Quiet down noisy loggers
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 
 
-async def main() -> None:
-    setup_logging()
-    log = logging.getLogger("demo")
+def _section(console: Console, title: str) -> None:
+    console.print()
+    console.rule(f"[bold]{title}[/bold]")
+    console.print()
 
-    # Use a temp dir for demo data so we don't pollute the project
+
+async def main() -> None:
+    _setup_logging()
+    console = Console()
+
+    banner = Text()
+    banner.append("ProbOS Demo", style="bold blue")
+    banner.append(" \u2014 Consensus, Trust & Cognitive Pipeline", style="italic")
+    console.print(Panel(banner, style="blue"))
+
     with tempfile.TemporaryDirectory(prefix="probos_demo_") as tmp:
         runtime = ProbOSRuntime(data_dir=tmp)
 
-        log.info("=" * 60)
-        log.info("--- Booting ProbOS ---")
-        log.info("=" * 60)
-        await runtime.start()
+        # Boot
+        with console.status("[bold blue]Starting ProbOS...[/bold blue]"):
+            await runtime.start()
 
-        # Print system status
-        status = runtime.status()
-        log.info(
-            "Status after boot:\n%s",
-            json.dumps(status, indent=2, default=str),
-        )
+        console.print(panels.render_status_panel(runtime.status()))
 
         # --------------------------------------------------------
         # Demo 1: File read with consensus — 3 agents, verified
         # --------------------------------------------------------
-        log.info("")
-        log.info("=" * 60)
-        log.info("--- Demo 1: Consensus file read (honest agents) ---")
-        log.info("=" * 60)
+        _section(console, "Demo 1: Consensus File Read (Honest Agents)")
 
         test_file = Path(tmp) / "test_data.txt"
         test_file.write_text("Hello from ProbOS!\nLine 2\nLine 3\n")
@@ -63,45 +73,37 @@ async def main() -> None:
         )
 
         consensus = result["consensus"]
-        log.info(
-            "Consensus: outcome=%s approval=%.3f votes=%d",
-            consensus.outcome.value,
-            consensus.approval_ratio,
-            len(consensus.votes),
+        console.print(
+            f"  Consensus: [bold]{consensus.outcome.value}[/bold] "
+            f"(approval ratio: {consensus.approval_ratio:.3f}, "
+            f"votes: {len(consensus.votes)})"
         )
         for v in consensus.votes:
-            log.info(
-                "  Vote: agent=%s approved=%s confidence=%.3f",
-                v.agent_id[:8],
-                v.approved,
-                v.confidence,
+            icon = "[green]\u2713[/green]" if v.approved else "[red]\u2717[/red]"
+            console.print(
+                f"    {icon} Agent {v.agent_id[:8]}: "
+                f"confidence={v.confidence:.3f}"
             )
 
-        log.info("Verifications: %d", len(result["verifications"]))
+        console.print(f"\n  Verifications: {len(result['verifications'])}")
         for vr in result["verifications"]:
-            log.info(
-                "  Verify: verifier=%s target=%s verified=%s",
-                vr.verifier_id[:8],
-                vr.target_agent_id[:8],
-                vr.verified,
+            icon = "[green]PASS[/green]" if vr.verified else "[red]FAIL[/red]"
+            console.print(
+                f"    [{icon}] {vr.verifier_id[:8]} -> {vr.target_agent_id[:8]}"
             )
 
         # --------------------------------------------------------
-        # Demo 2: Inject corrupted agent and watch consensus catch it
+        # Demo 2: Inject corrupted agent
         # --------------------------------------------------------
-        log.info("")
-        log.info("=" * 60)
-        log.info("--- Demo 2: Inject corrupted agent ---")
-        log.info("=" * 60)
+        _section(console, "Demo 2: Inject Corrupted Agent")
 
         corrupted = CorruptedFileReaderAgent(pool="filesystem")
         await runtime.registry.register(corrupted)
         await corrupted.start()
         await runtime._wire_agent(corrupted)
 
-        log.info(
-            "Injected corrupted agent: id=%s (disguised as file_reader)",
-            corrupted.id[:8],
+        console.print(
+            f"  Injected [red]corrupted[/red] agent: {corrupted.id[:8]}"
         )
 
         result = await runtime.submit_intent_with_consensus(
@@ -111,86 +113,59 @@ async def main() -> None:
         )
 
         consensus = result["consensus"]
-        log.info(
-            "Consensus: outcome=%s approval=%.3f votes=%d",
-            consensus.outcome.value,
-            consensus.approval_ratio,
-            len(consensus.votes),
+        console.print(
+            f"\n  Consensus: [bold]{consensus.outcome.value}[/bold] "
+            f"(approval ratio: {consensus.approval_ratio:.3f})"
         )
 
-        log.info("Verifications:")
+        console.print("\n  Verifications:")
         for vr in result["verifications"]:
-            status_str = "PASS" if vr.verified else "FAIL"
-            log.info(
-                "  [%s] verifier=%s target=%s discrepancy=%s",
-                status_str,
-                vr.verifier_id[:8],
-                vr.target_agent_id[:8],
-                vr.discrepancy or "(none)",
+            icon = "[green]PASS[/green]" if vr.verified else "[red]FAIL[/red]"
+            disc = f" \u2014 {vr.discrepancy}" if vr.discrepancy else ""
+            console.print(
+                f"    [{icon}] {vr.verifier_id[:8]} -> {vr.target_agent_id[:8]}{disc}"
             )
 
         failed = [v for v in result["verifications"] if not v.verified]
-        log.info(
-            "Red team caught %d discrepancies out of %d verifications",
-            len(failed),
-            len(result["verifications"]),
+        console.print(
+            f"\n  Red team caught [bold red]{len(failed)}[/bold red] discrepancies "
+            f"out of {len(result['verifications'])} verifications"
         )
 
         # --------------------------------------------------------
-        # Demo 3: Trust network shows corrupted agent's trust is lower
+        # Demo 3: Trust network
         # --------------------------------------------------------
-        log.info("")
-        log.info("=" * 60)
-        log.info("--- Demo 3: Trust network after corruption ---")
-        log.info("=" * 60)
+        _section(console, "Demo 3: Trust Network After Corruption")
 
-        trust_summary = runtime.trust_network.summary()
-        for entry in trust_summary:
-            agent_id = entry["agent_id"]
-            is_corrupted = agent_id == corrupted.id
-            label = " ** CORRUPTED **" if is_corrupted else ""
-            log.info(
-                "  agent=%s score=%.4f alpha=%.1f beta=%.1f uncertainty=%.4f%s",
-                agent_id[:8],
-                entry["score"],
-                entry["alpha"],
-                entry["beta"],
-                entry["uncertainty"],
-                label,
-            )
+        console.print(panels.render_trust_panel(runtime.trust_network.summary()))
 
         corrupted_score = runtime.trust_network.get_score(corrupted.id)
-        log.info("Corrupted agent trust: %.4f (should be lower than honest agents)", corrupted_score)
+        console.print(
+            f"  Corrupted agent trust: [red]{corrupted_score:.4f}[/red] "
+            f"(should be lower than honest agents)"
+        )
 
         # --------------------------------------------------------
-        # Demo 4: Hebbian agent-to-agent weights from verifications
+        # Demo 4: Hebbian agent-to-agent weights
         # --------------------------------------------------------
-        log.info("")
-        log.info("=" * 60)
-        log.info("--- Demo 4: Agent-to-agent Hebbian weights ---")
-        log.info("=" * 60)
+        _section(console, "Demo 4: Agent-to-Agent Hebbian Weights")
 
-        from probos.mesh.routing import REL_AGENT, REL_INTENT
         typed_weights = runtime.hebbian_router.all_weights_typed()
         intent_weights = {k: v for k, v in typed_weights.items() if k[2] == REL_INTENT}
         agent_weights = {k: v for k, v in typed_weights.items() if k[2] == REL_AGENT}
 
-        log.info("Intent-to-agent weights: %d", len(intent_weights))
-        log.info("Agent-to-agent weights: %d", len(agent_weights))
-        for (src, tgt, rel), w in agent_weights.items():
-            is_corrupted_tgt = tgt == corrupted.id
-            label = " ** CORRUPTED TARGET **" if is_corrupted_tgt else ""
-            log.info("  %s -> %s [%s]: %.4f%s", src[:8], tgt[:8], rel, w, label)
+        console.print(f"  Intent-to-agent weights: {len(intent_weights)}")
+        console.print(f"  Agent-to-agent weights: {len(agent_weights)}")
+        if agent_weights:
+            console.print(panels.render_weight_table(
+                {k: v for k, v in typed_weights.items() if k[2] == REL_AGENT}
+            ))
 
         # --------------------------------------------------------
         # Demo 5: Write with consensus
         # --------------------------------------------------------
-        log.info("")
-        log.info("=" * 60)
-        log.info("--- Demo 5: Write file with consensus ---")
-        log.info("=" * 60)
+        _section(console, "Demo 5: Write File with Consensus")
 
-        # Create a writer pool
         await runtime.create_pool("writers", "file_writer", target_size=3)
 
         write_path = str(Path(tmp) / "consensus_written.txt")
@@ -200,57 +175,43 @@ async def main() -> None:
             timeout=5.0,
         )
 
-        log.info(
-            "Write consensus: outcome=%s committed=%s",
-            write_result["consensus"].outcome.value,
-            write_result["committed"],
+        console.print(
+            f"  Write consensus: [bold]{write_result['consensus'].outcome.value}[/bold] "
+            f"committed={write_result['committed']}"
         )
         if write_result["committed"]:
             written_content = Path(write_path).read_text()
-            log.info("  File content: %r", written_content)
+            console.print(f"  File content: {written_content!r}")
 
         # --------------------------------------------------------
-        # Demo 6: Event log with consensus events
+        # Demo 6: NL processing with visual feedback
         # --------------------------------------------------------
-        log.info("")
-        log.info("=" * 60)
-        log.info("--- Demo 6: Event log (all categories) ---")
-        log.info("=" * 60)
+        _section(console, "Demo 6: Natural Language Processing")
 
-        total_events = await runtime.event_log.count()
-        lifecycle_events = await runtime.event_log.count("lifecycle")
-        mesh_events = await runtime.event_log.count("mesh")
-        system_events = await runtime.event_log.count("system")
-        consensus_events = await runtime.event_log.count("consensus")
-        log.info(
-            "Events: total=%d lifecycle=%d mesh=%d system=%d consensus=%d",
-            total_events,
-            lifecycle_events,
-            mesh_events,
-            system_events,
-            consensus_events,
+        renderer = ExecutionRenderer(console, runtime)
+        await renderer.process_with_feedback(
+            f"read the file at {test_file}"
         )
 
-        recent = await runtime.event_log.query(category="consensus", limit=10)
-        for ev in recent:
-            log.info(
-                "  [%s] %s/%s agent=%s detail=%s",
-                ev["timestamp"][11:19],
-                ev["category"],
-                ev["event"],
-                (ev["agent_id"] or "")[:8],
-                ev["detail"] or "",
-            )
+        # --------------------------------------------------------
+        # Demo 7: Event log
+        # --------------------------------------------------------
+        _section(console, "Demo 7: Event Log")
+
+        events = await runtime.event_log.query(category="consensus", limit=10)
+        console.print(panels.render_event_log_table(events))
+
+        total = await runtime.event_log.count()
+        console.print(f"\n  Total events: {total}")
 
         # --------------------------------------------------------
         # Shutdown
         # --------------------------------------------------------
-        log.info("")
-        log.info("=" * 60)
-        log.info("--- Shutting down ---")
-        log.info("=" * 60)
-        await runtime.stop()
-        log.info("--- Done ---")
+        _section(console, "Shutdown")
+
+        with console.status("[bold red]Shutting down...[/bold red]"):
+            await runtime.stop()
+        console.print("[dim]ProbOS stopped.[/dim]")
 
 
 if __name__ == "__main__":

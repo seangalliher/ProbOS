@@ -1,0 +1,342 @@
+"""LLM client abstraction with tiered routing and fallback chain."""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from abc import ABC, abstractmethod
+from typing import Any
+
+import httpx
+
+from probos.types import LLMRequest, LLMResponse
+
+logger = logging.getLogger(__name__)
+
+
+class BaseLLMClient(ABC):
+    """Abstract LLM client interface."""
+
+    @abstractmethod
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Send a completion request and return the response."""
+
+    async def close(self) -> None:
+        """Clean up resources."""
+
+
+class OpenAICompatibleClient(BaseLLMClient):
+    """Client for OpenAI-compatible API endpoints (Copilot proxy, Ollama, etc.).
+
+    Implements tiered routing: fast/standard/deep map to different models.
+    Falls back through: live endpoint → cached responses → error.
+    """
+
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:8080/v1",
+        api_key: str = "",
+        models: dict[str, str] | None = None,
+        timeout: float = 30.0,
+        default_tier: str = "standard",
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.models = models or {
+            "fast": "gpt-4o-mini",
+            "standard": "claude-sonnet-4-6",
+            "deep": "claude-opus-4-0-20250115",
+        }
+        self.timeout = timeout
+        self.default_tier = default_tier
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=timeout,
+            headers=self._build_headers(),
+        )
+        # Simple response cache keyed by (model, prompt_hash)
+        self._cache: dict[str, LLMResponse] = {}
+
+    def _build_headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    def _cache_key(self, model: str, prompt: str) -> str:
+        return f"{model}:{hash(prompt)}"
+
+    async def check_connectivity(self) -> bool:
+        """Test whether the LLM endpoint is reachable.
+
+        Returns True if the endpoint responds, False otherwise.
+        """
+        try:
+            # Send a minimal request to verify the endpoint is up
+            resp = await self._client.post(
+                "/chat/completions",
+                json={
+                    "model": self.models.get(self.default_tier, "gpt-4o-mini"),
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1,
+                },
+                timeout=5.0,
+            )
+            # Any response (even 4xx) means the server is up
+            return resp.status_code < 500
+        except (httpx.ConnectError, httpx.TimeoutException, OSError):
+            return False
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Send a completion request with fallback chain.
+
+        Fallback order: live endpoint → cached response → error response.
+        """
+        tier = request.tier or self.default_tier
+        model = self.models.get(tier, self.models.get("standard", "gpt-4o"))
+        cache_key = self._cache_key(model, request.prompt)
+
+        # Try live endpoint
+        try:
+            response = await self._call_api(request, model)
+            # Cache successful responses
+            self._cache[cache_key] = response
+            return response
+        except httpx.ConnectError:
+            logger.warning("LLM endpoint unreachable at %s", self.base_url)
+        except httpx.TimeoutException:
+            logger.warning(
+                "LLM request timed out after %.0fs (model=%s)",
+                self.timeout, model,
+            )
+        except httpx.HTTPStatusError as e:
+            logger.warning(
+                "LLM endpoint returned HTTP %d: %s",
+                e.response.status_code,
+                e.response.text[:200],
+            )
+        except Exception as e:
+            logger.warning("LLM live call failed: %s: %s", type(e).__name__, e)
+
+        # Try cache
+        if cache_key in self._cache:
+            cached = self._cache[cache_key]
+            logger.info("Using cached LLM response for request %s", request.id[:8])
+            return LLMResponse(
+                content=cached.content,
+                model=cached.model,
+                tier=tier,
+                tokens_used=cached.tokens_used,
+                cached=True,
+                request_id=request.id,
+            )
+
+        # Final fallback: error response
+        logger.error("LLM unavailable and no cached response for request %s", request.id[:8])
+        return LLMResponse(
+            content="",
+            model=model,
+            tier=tier,
+            error=f"LLM endpoint at {self.base_url} is unavailable and no cached response exists",
+            request_id=request.id,
+        )
+
+    async def _call_api(self, request: LLMRequest, model: str) -> LLMResponse:
+        """Make the actual API call."""
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+        }
+
+        logger.info("LLM request payload: %s", json.dumps(payload, indent=2))
+        logger.info("LLM request headers: %s", dict(self._client.headers))
+
+        resp = await self._client.post("/chat/completions", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+
+        logger.info("Raw HTTP response body: %s", data)
+
+        content = data["choices"][0]["message"]["content"]
+        tokens_used = data.get("usage", {}).get("total_tokens", 0)
+
+        return LLMResponse(
+            content=content,
+            model=model,
+            tier=request.tier,
+            tokens_used=tokens_used,
+            cached=False,
+            request_id=request.id,
+        )
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+
+class MockLLMClient(BaseLLMClient):
+    """Deterministic mock LLM client for testing.
+
+    Returns canned responses based on input pattern matching.
+    Patterns are checked in order; first match wins.
+    """
+
+    def __init__(self) -> None:
+        self._patterns: list[tuple[str, str]] = []
+        self._call_log: list[LLMRequest] = []
+        self._default_response: str = '{"intents": []}'
+        self._register_defaults()
+
+    def _register_defaults(self) -> None:
+        """Register default pattern → response mappings."""
+
+        # Single read_file intent
+        self.add_pattern(
+            r"read.*file.*((?:/|[A-Za-z]:\\)[\w./\\]+)",
+            self._make_read_response,
+        )
+
+        # Multiple file reads (parallel)
+        self.add_pattern(
+            r"read.*(?:/|[A-Za-z]:\\)[\w./\\]+.*and.*(?:/|[A-Za-z]:\\)[\w./\\]+",
+            self._make_parallel_read_response,
+        )
+
+        # Write file intent
+        self.add_pattern(
+            r"write.*(?:to|into)\s+((?:/|[A-Za-z]:\\)[\w./\\]+)",
+            self._make_write_response,
+        )
+
+    def add_pattern(self, pattern: str, handler: Any) -> None:
+        """Register a regex pattern with a handler (string or callable)."""
+        self._patterns.append((pattern, handler))
+
+    def set_default_response(self, response: str) -> None:
+        """Set the response for unmatched inputs."""
+        self._default_response = response
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Match input against patterns and return canned response."""
+        self._call_log.append(request)
+        prompt = request.prompt.lower()
+
+        for pattern, handler in self._patterns:
+            match = re.search(pattern, prompt, re.IGNORECASE)
+            if match:
+                if callable(handler):
+                    content = handler(prompt, match)
+                else:
+                    content = handler
+                return LLMResponse(
+                    content=content,
+                    model="mock",
+                    tier=request.tier,
+                    tokens_used=len(content) // 4,
+                    cached=False,
+                    request_id=request.id,
+                )
+
+        return LLMResponse(
+            content=self._default_response,
+            model="mock",
+            tier=request.tier,
+            tokens_used=len(self._default_response) // 4,
+            cached=False,
+            request_id=request.id,
+        )
+
+    @property
+    def call_count(self) -> int:
+        return len(self._call_log)
+
+    @property
+    def last_request(self) -> LLMRequest | None:
+        return self._call_log[-1] if self._call_log else None
+
+    # Regex for extracting file paths (Unix and Windows)
+    _PATH_WITH_EXT = re.compile(r'((?:/|[A-Za-z]:\\)[\w./\\\-]+\.[\w]+)')
+    _PATH_ANY = re.compile(r'((?:/|[A-Za-z]:\\)[\w./\\\-]+)')
+
+    def _extract_paths(self, text: str) -> list[str]:
+        """Extract file paths from text, supporting both Unix and Windows."""
+        paths = self._PATH_WITH_EXT.findall(text)
+        if not paths:
+            paths = self._PATH_ANY.findall(text)
+        return paths
+
+    def _make_read_response(self, prompt: str, match: re.Match) -> str:
+        """Generate a read_file intent response."""
+        paths = self._extract_paths(prompt)
+
+        if len(paths) == 1:
+            return json.dumps({
+                "intents": [
+                    {
+                        "id": "t1",
+                        "intent": "read_file",
+                        "params": {"path": paths[0]},
+                        "depends_on": [],
+                        "use_consensus": False,
+                    }
+                ]
+            })
+
+        # Multiple paths — parallel reads
+        intents = []
+        for i, path in enumerate(paths):
+            intents.append({
+                "id": f"t{i + 1}",
+                "intent": "read_file",
+                "params": {"path": path},
+                "depends_on": [],
+                "use_consensus": False,
+            })
+        return json.dumps({"intents": intents})
+
+    def _make_parallel_read_response(self, prompt: str, match: re.Match) -> str:
+        """Generate parallel read_file intents."""
+        paths = self._extract_paths(prompt)
+
+        intents = []
+        for i, path in enumerate(paths):
+            intents.append({
+                "id": f"t{i + 1}",
+                "intent": "read_file",
+                "params": {"path": path},
+                "depends_on": [],
+                "use_consensus": False,
+            })
+        return json.dumps({"intents": intents})
+
+    def _make_write_response(self, prompt: str, match: re.Match) -> str:
+        """Generate a write_file intent response."""
+        paths = self._extract_paths(prompt)
+        path = paths[0] if paths else "/tmp/output.txt"
+
+        # Try to extract content — look for quoted strings or "write X to"
+        content_match = re.search(
+            r'write\s+["\']?(.+?)["\']?\s+(?:to|into)\s+(?:/|[A-Za-z]:\\)',
+            prompt,
+            re.IGNORECASE,
+        )
+        content = content_match.group(1).strip().strip("'\"") if content_match else "content"
+
+        return json.dumps({
+            "intents": [
+                {
+                    "id": "t1",
+                    "intent": "write_file",
+                    "params": {"path": path, "content": content},
+                    "depends_on": [],
+                    "use_consensus": True,
+                }
+            ]
+        })
