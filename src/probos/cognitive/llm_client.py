@@ -195,7 +195,40 @@ class MockLLMClient(BaseLLMClient):
         self._register_defaults()
 
     def _register_defaults(self) -> None:
-        """Register default pattern → response mappings."""
+        """Register default pattern → response mappings.
+
+        Order matters — first match wins. New expansion patterns
+        are registered before read/write to avoid false matches
+        (e.g., "what files are in /tmp" matching read_file).
+        """
+
+        # --- Expansion agent patterns (registered first) ---
+
+        # HTTP fetch — must be before read_file (both can match URLs)
+        self.add_pattern(
+            r"fetch\s+(https?://[\w./\-:?&=%]+)",
+            self._make_http_fetch_response,
+        )
+
+        # Run shell command
+        self.add_pattern(
+            r"run\s+(?:the\s+)?(?:command|cmd)\s+(.+)",
+            self._make_run_command_response,
+        )
+
+        # Search files — must be before list_directory (both use paths)
+        self.add_pattern(
+            r"(?:find|search)\s+.*?files?\s+.*?((?:/|[A-Za-z]:\\)[\w./\\\-]+)",
+            self._make_search_files_response,
+        )
+
+        # List directory — must be before read_file
+        self.add_pattern(
+            r"(?:list|what\s+files|files\s+in|what(?:'s|\s+is)\s+in)\s+.*?((?:/|[A-Za-z]:\\)[\w./\\\-]+)",
+            self._make_list_directory_response,
+        )
+
+        # --- Original patterns ---
 
         # Single read_file intent
         self.add_pattern(
@@ -226,6 +259,22 @@ class MockLLMClient(BaseLLMClient):
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Match input against patterns and return canned response."""
         self._call_log.append(request)
+
+        # Detect reflection requests (uses REFLECT_PROMPT as system prompt)
+        if (
+            request.system_prompt
+            and "analyzing results returned by ProbOS agents" in request.system_prompt
+        ):
+            content = self._make_reflect_response(request.prompt)
+            return LLMResponse(
+                content=content,
+                model="mock",
+                tier=request.tier,
+                tokens_used=len(content) // 4,
+                cached=False,
+                request_id=request.id,
+            )
+
         prompt = request.prompt.lower()
 
         for pattern, handler in self._patterns:
@@ -340,3 +389,71 @@ class MockLLMClient(BaseLLMClient):
                 }
             ]
         })
+
+    def _make_list_directory_response(self, prompt: str, match: re.Match) -> str:
+        """Generate a list_directory intent response."""
+        paths = self._extract_paths(prompt)
+        path = paths[0] if paths else match.group(1)
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "list_directory",
+                "params": {"path": path},
+                "depends_on": [],
+                "use_consensus": False,
+            }]
+        })
+
+    def _make_search_files_response(self, prompt: str, match: re.Match) -> str:
+        """Generate a search_files intent response."""
+        # Extract glob pattern from the prompt
+        pattern_match = re.search(r'(?:named|matching|called)\s+(\S+)', prompt, re.IGNORECASE)
+        if pattern_match:
+            pattern = pattern_match.group(1)
+        else:
+            # Fallback: look for *.ext patterns
+            glob_match = re.search(r'(\*[\w.*]+)', prompt)
+            pattern = glob_match.group(1) if glob_match else "*"
+
+        paths = self._extract_paths(prompt)
+        path = paths[-1] if paths else match.group(1)
+
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "search_files",
+                "params": {"path": path, "pattern": pattern},
+                "depends_on": [],
+                "use_consensus": False,
+            }]
+        })
+
+    def _make_run_command_response(self, prompt: str, match: re.Match) -> str:
+        """Generate a run_command intent response."""
+        command = match.group(1).strip().strip("'\"")
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "run_command",
+                "params": {"command": command},
+                "depends_on": [],
+                "use_consensus": True,
+            }]
+        })
+
+    def _make_http_fetch_response(self, prompt: str, match: re.Match) -> str:
+        """Generate an http_fetch intent response."""
+        url = match.group(1)
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "http_fetch",
+                "params": {"url": url, "method": "GET"},
+                "depends_on": [],
+                "use_consensus": True,
+            }]
+        })
+
+    def _make_reflect_response(self, prompt: str) -> str:
+        """Generate a canned reflection synthesis from agent results."""
+        return "Based on the agent results: The operation completed successfully."

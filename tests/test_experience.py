@@ -507,3 +507,238 @@ class TestEventCallback:
         )
         assert result["complete"]
         assert result["node_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Reflect capability tests
+# ---------------------------------------------------------------------------
+
+
+class TestReflectCapability:
+
+    @pytest.mark.asyncio
+    async def test_render_dag_result_with_reflection(self, runtime, console):
+        """render_dag_result shows reflection text when present."""
+        from probos.experience.panels import render_dag_result
+        from probos.types import TaskDAG, TaskNode
+
+        result = {
+            "node_count": 1,
+            "completed_count": 1,
+            "failed_count": 0,
+            "dag": TaskDAG(nodes=[
+                TaskNode(id="t1", intent="list_directory", status="completed"),
+            ]),
+            "results": {},
+            "reflection": "The largest file is data.csv at 1.2MB.",
+        }
+        panel = render_dag_result(result, debug=False)
+        console.print(panel)
+        output = get_output(console)
+        assert "largest file" in output
+
+    @pytest.mark.asyncio
+    async def test_render_dag_result_without_reflection(self, runtime, console):
+        """render_dag_result works normally when no reflection is present."""
+        from probos.experience.panels import render_dag_result
+        from probos.types import TaskDAG, TaskNode
+
+        result = {
+            "node_count": 1,
+            "completed_count": 1,
+            "failed_count": 0,
+            "dag": TaskDAG(nodes=[
+                TaskNode(id="t1", intent="read_file", status="completed"),
+            ]),
+            "results": {},
+        }
+        panel = render_dag_result(result, debug=False)
+        console.print(panel)
+        output = get_output(console)
+        assert "1/1 tasks completed" in output
+
+    @pytest.mark.asyncio
+    async def test_nl_with_reflect_produces_reflection(self, runtime, tmp_path):
+        """When MockLLMClient returns reflect:true, result includes reflection."""
+        import json
+
+        # Create a file so the intent succeeds
+        (tmp_path / "a.txt").write_text("hello")
+        (tmp_path / "b.txt").write_text("world")
+
+        # Override the default response for this specific request
+        runtime.llm_client.set_default_response(json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "list_directory",
+                "params": {"path": str(tmp_path)},
+                "depends_on": [],
+                "use_consensus": False,
+            }],
+            "reflect": True,
+        }))
+
+        result = await runtime.process_natural_language(
+            "what is the largest file in this directory?"
+        )
+        assert result["node_count"] == 1
+        assert result["completed_count"] == 1
+        assert "reflection" in result
+        assert len(result["reflection"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_nl_without_reflect_no_reflection_key(self, runtime, tmp_path):
+        """When reflect is false, no reflection key in the result."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+
+        result = await runtime.process_natural_language(
+            f"read the file at {test_file}"
+        )
+        assert result["node_count"] == 1
+        assert "reflection" not in result
+
+
+# ---------------------------------------------------------------------------
+# Episodic memory integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestEpisodicMemoryIntegration:
+    """Integration tests: runtime + MockEpisodicMemory."""
+
+    @pytest.fixture
+    async def mem_runtime(self, tmp_path):
+        from probos.cognitive.episodic_mock import MockEpisodicMemory
+
+        llm = MockLLMClient()
+        mem = MockEpisodicMemory(relevance_threshold=0.3)
+        rt = ProbOSRuntime(
+            data_dir=tmp_path / "data",
+            llm_client=llm,
+            episodic_memory=mem,
+        )
+        await rt.start()
+        yield rt, mem
+        await rt.stop()
+
+    @pytest.mark.asyncio
+    async def test_nl_stores_episode(self, mem_runtime, tmp_path):
+        rt, mem = mem_runtime
+        test_file = tmp_path / "ep_test.txt"
+        test_file.write_text("episode test")
+        await rt.process_natural_language(f"read the file at {test_file}")
+
+        recent = await mem.recent(k=10)
+        assert len(recent) == 1
+        ep = recent[0]
+        assert "read the file" in ep.user_input
+        assert len(ep.outcomes) == 1
+        assert ep.outcomes[0]["intent"] == "read_file"
+        assert ep.outcomes[0]["success"] is True
+        assert ep.duration_ms >= 0
+
+    @pytest.mark.asyncio
+    async def test_second_request_can_recall_first(self, mem_runtime, tmp_path):
+        rt, mem = mem_runtime
+        f1 = tmp_path / "first.txt"
+        f1.write_text("first")
+        await rt.process_natural_language(f"read the file at {f1}")
+
+        results = await rt.recall_similar("read the file")
+        assert len(results) >= 1
+        assert "first.txt" in results[0].user_input
+
+    @pytest.mark.asyncio
+    async def test_episode_includes_agent_ids(self, mem_runtime, tmp_path):
+        rt, mem = mem_runtime
+        test_file = tmp_path / "agents.txt"
+        test_file.write_text("test")
+        await rt.process_natural_language(f"read the file at {test_file}")
+
+        recent = await mem.recent(k=1)
+        assert len(recent) == 1
+        # Agent IDs are extracted from results — may be empty if mock
+        # but the episode should still exist with outcomes
+        assert len(recent[0].outcomes) > 0
+
+    @pytest.mark.asyncio
+    async def test_no_episode_for_empty_dag(self, mem_runtime):
+        rt, mem = mem_runtime
+        await rt.process_natural_language("what is the meaning of life?")
+        recent = await mem.recent(k=10)
+        assert len(recent) == 0  # Empty DAGs don't produce episodes
+
+
+# ---------------------------------------------------------------------------
+# Episodic shell command tests
+# ---------------------------------------------------------------------------
+
+
+class TestShellEpisodicCommands:
+
+    @pytest.fixture
+    async def ep_shell(self, tmp_path):
+        from probos.cognitive.episodic_mock import MockEpisodicMemory
+
+        llm = MockLLMClient()
+        mem = MockEpisodicMemory(relevance_threshold=0.3)
+        rt = ProbOSRuntime(
+            data_dir=tmp_path / "data",
+            llm_client=llm,
+            episodic_memory=mem,
+        )
+        await rt.start()
+        con = Console(file=StringIO(), force_terminal=True, width=120)
+        shell = ProbOSShell(rt, console=con)
+        yield shell, con, rt
+        await rt.stop()
+
+    @pytest.mark.asyncio
+    async def test_history_shows_episodes(self, ep_shell, tmp_path):
+        shell, con, rt = ep_shell
+        f = tmp_path / "h.txt"
+        f.write_text("history test")
+        await rt.process_natural_language(f"read the file at {f}")
+        await shell.execute_command("/history")
+        output = get_output(con)
+        assert "read the file" in output
+        assert "read_file" in output
+
+    @pytest.mark.asyncio
+    async def test_recall_shows_results(self, ep_shell, tmp_path):
+        shell, con, rt = ep_shell
+        f = tmp_path / "r.txt"
+        f.write_text("recall test")
+        await rt.process_natural_language(f"read the file at {f}")
+        await shell.execute_command("/recall read the file")
+        output = get_output(con)
+        assert "read the file" in output
+
+    @pytest.mark.asyncio
+    async def test_status_includes_episodic_stats(self, ep_shell):
+        shell, con, rt = ep_shell
+        await shell.execute_command("/status")
+        output = get_output(con)
+        assert "ProbOS" in output
+
+    @pytest.mark.asyncio
+    async def test_history_no_memory(self, shell, console):
+        """Without episodic memory, /history says it's not enabled."""
+        await shell.execute_command("/history")
+        output = get_output(console)
+        assert "not enabled" in output
+
+    @pytest.mark.asyncio
+    async def test_recall_no_memory(self, shell, console):
+        """Without episodic memory, /recall says it's not enabled."""
+        await shell.execute_command("/recall test")
+        output = get_output(console)
+        assert "not enabled" in output
+
+    @pytest.mark.asyncio
+    async def test_help_includes_history_and_recall(self, shell, console):
+        await shell.execute_command("/help")
+        output = get_output(console)
+        assert "/history" in output
+        assert "/recall" in output

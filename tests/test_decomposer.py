@@ -276,3 +276,169 @@ class TestResponseFieldParsing:
         content = '```json\n{"intents": [], "response": "I can only do file operations."}\n```'
         dag = decomposer._parse_response(content, "test")
         assert dag.response == "I can only do file operations."
+
+
+class TestReflectFieldParsing:
+    """Test that the 'reflect' field is extracted from LLM JSON output."""
+
+    @pytest.fixture
+    def decomposer(self):
+        return IntentDecomposer(
+            llm_client=MockLLMClient(),
+            working_memory=WorkingMemoryManager(),
+        )
+
+    def test_reflect_field_default_false(self):
+        dag = TaskDAG()
+        assert dag.reflect is False
+
+    def test_reflect_field_set_true(self):
+        dag = TaskDAG(reflect=True)
+        assert dag.reflect is True
+
+    def test_reflect_field_extracted_true(self, decomposer):
+        content = json.dumps({
+            "intents": [{"id": "t1", "intent": "list_directory", "params": {"path": "/tmp"}, "depends_on": []}],
+            "reflect": True,
+        })
+        dag = decomposer._parse_response(content, "what is the largest file?")
+        assert dag.reflect is True
+        assert len(dag.nodes) == 1
+
+    def test_reflect_field_extracted_false(self, decomposer):
+        content = json.dumps({
+            "intents": [{"id": "t1", "intent": "read_file", "params": {"path": "/tmp/x"}, "depends_on": []}],
+            "reflect": False,
+        })
+        dag = decomposer._parse_response(content, "read the file")
+        assert dag.reflect is False
+
+    def test_reflect_field_missing_defaults_false(self, decomposer):
+        content = json.dumps({"intents": []})
+        dag = decomposer._parse_response(content, "test")
+        assert dag.reflect is False
+
+    def test_reflect_field_non_bool_coerced(self, decomposer):
+        content = json.dumps({"intents": [], "reflect": 1})
+        dag = decomposer._parse_response(content, "test")
+        assert dag.reflect is True
+
+    @pytest.mark.asyncio
+    async def test_reflect_method_returns_text(self, decomposer):
+        """The reflect() method should return a non-empty synthesis string."""
+        result = {
+            "dag": TaskDAG(nodes=[
+                TaskNode(id="t1", intent="list_directory", params={"path": "/tmp"}, status="completed"),
+            ]),
+            "results": {"t1": {"success": True}},
+        }
+        reflection = await decomposer.reflect("what is the largest file?", result)
+        assert isinstance(reflection, str)
+        assert len(reflection) > 0
+
+
+class TestReflectHardening:
+    """Tests for reflect timeout, payload cap, and exception fallback."""
+
+    @pytest.fixture
+    def llm(self):
+        return MockLLMClient()
+
+    @pytest.fixture
+    def wm(self):
+        return WorkingMemoryManager()
+
+    @pytest.fixture
+    def decomposer(self, llm, wm):
+        return IntentDecomposer(llm_client=llm, working_memory=wm, timeout=2.0)
+
+    @pytest.mark.asyncio
+    async def test_reflect_payload_truncated(self, decomposer, llm):
+        """Payloads exceeding REFLECT_PAYLOAD_BUDGET are truncated."""
+        # Build a result set large enough to exceed the budget
+        big_result = "x" * 20000
+        result = {
+            "dag": TaskDAG(nodes=[
+                TaskNode(id="t1", intent="list_directory", params={"path": "/tmp"}, status="completed"),
+            ]),
+            "results": {"t1": {"success": True, "data": big_result}},
+        }
+        await decomposer.reflect("what files?", result)
+
+        # The last request prompt should have been truncated
+        last = llm.last_request
+        assert last is not None
+        assert len(last.prompt) <= decomposer.REFLECT_PAYLOAD_BUDGET + 50  # +margin for suffix
+        assert "[... results truncated ...]" in last.prompt
+
+    @pytest.mark.asyncio
+    async def test_reflect_timeout_returns_empty(self):
+        """reflect() returns empty string when the LLM call times out."""
+        import asyncio
+
+        class SlowLLM(MockLLMClient):
+            async def complete(self, request):
+                await asyncio.sleep(10)
+                return await super().complete(request)
+
+        decomposer = IntentDecomposer(
+            llm_client=SlowLLM(),
+            working_memory=WorkingMemoryManager(),
+            timeout=0.1,
+        )
+        result = {
+            "dag": TaskDAG(nodes=[
+                TaskNode(id="t1", intent="list_directory", params={"path": "/tmp"}, status="completed"),
+            ]),
+            "results": {"t1": {"success": True}},
+        }
+        reflection = await decomposer.reflect("largest file?", result)
+        assert reflection == ""
+
+    @pytest.mark.asyncio
+    async def test_reflect_exception_fallback_in_runtime(self, tmp_path):
+        """Runtime sets fallback string when reflect raises an exception."""
+
+        class ExplodingLLM(MockLLMClient):
+            _call_count = 0
+
+            async def complete(self, request):
+                self._call_count += 1
+                # Explode only on the reflect call (2nd call)
+                if self._call_count > 1:
+                    raise RuntimeError("LLM on fire")
+                return await super().complete(request)
+
+        from probos.runtime import ProbOSRuntime
+
+        llm = ExplodingLLM()
+        # Pre-set a response with reflect=True
+        llm.set_default_response(json.dumps({
+            "intents": [{"id": "t1", "intent": "list_directory", "params": {"path": str(tmp_path)}, "depends_on": [], "use_consensus": False}],
+            "reflect": True,
+        }))
+        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=llm)
+        await rt.start()
+        try:
+            result = await rt.process_natural_language("what is in the dir?")
+            # Execution results should still be intact
+            assert result["node_count"] == 1
+            assert result["completed_count"] == 1
+            # Reflection should be the fallback string
+            assert "Reflection unavailable" in result["reflection"]
+        finally:
+            await rt.stop()
+
+    @pytest.mark.asyncio
+    async def test_reflect_success_unchanged(self, decomposer):
+        """Normal reflect still works after hardening — no regressions."""
+        result = {
+            "dag": TaskDAG(nodes=[
+                TaskNode(id="t1", intent="list_directory", params={"path": "/tmp"}, status="completed"),
+            ]),
+            "results": {"t1": {"success": True, "data": ["a.txt", "b.txt"]}},
+        }
+        reflection = await decomposer.reflect("what files are in /tmp?", result)
+        assert isinstance(reflection, str)
+        assert len(reflection) > 0
+        assert "agent results" in reflection.lower()

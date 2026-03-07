@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from probos.agents.directory_list import DirectoryListAgent
 from probos.agents.file_reader import FileReaderAgent
+from probos.agents.file_search import FileSearchAgent
 from probos.agents.file_writer import FileWriterAgent
 from probos.agents.heartbeat_monitor import SystemHeartbeatAgent
+from probos.agents.http_fetch import HttpFetchAgent
 from probos.agents.red_team import RedTeamAgent
+from probos.agents.shell_command import ShellCommandAgent
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
 from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient, OpenAICompatibleClient
 from probos.cognitive.working_memory import WorkingMemoryManager
@@ -30,6 +35,7 @@ from probos.substrate.registry import AgentRegistry
 from probos.substrate.spawner import AgentSpawner
 from probos.types import (
     ConsensusOutcome,
+    Episode,
     IntentMessage,
     IntentResult,
     QuorumPolicy,
@@ -51,6 +57,7 @@ class ProbOSRuntime:
         config: SystemConfig | None = None,
         data_dir: str | Path | None = None,
         llm_client: BaseLLMClient | None = None,
+        episodic_memory: Any | None = None,
     ) -> None:
         self.config = config or load_config(_DEFAULT_CONFIG)
         self._data_dir = Path(data_dir) if data_dir else _DEFAULT_DATA_DIR
@@ -110,12 +117,19 @@ class ProbOSRuntime:
             timeout=cog_cfg.dag_execution_timeout_seconds,
         )
 
+        # --- Episodic memory ---
+        self.episodic_memory = episodic_memory  # None = disabled
+
         self._started = False
 
         # Register built-in agent templates
         self.spawner.register_template("system_heartbeat", SystemHeartbeatAgent)
         self.spawner.register_template("file_reader", FileReaderAgent)
         self.spawner.register_template("file_writer", FileWriterAgent)
+        self.spawner.register_template("directory_list", DirectoryListAgent)
+        self.spawner.register_template("file_search", FileSearchAgent)
+        self.spawner.register_template("shell_command", ShellCommandAgent)
+        self.spawner.register_template("http_fetch", HttpFetchAgent)
         self.spawner.register_template("red_team", RedTeamAgent)
 
     def register_agent_type(self, type_name: str, agent_class: type) -> None:
@@ -204,9 +218,17 @@ class ProbOSRuntime:
         await self.create_pool("system", "system_heartbeat", target_size=2)
         await self.create_pool("filesystem", "file_reader", target_size=3)
         await self.create_pool("filesystem_writers", "file_writer", target_size=3)
+        await self.create_pool("directory", "directory_list", target_size=3)
+        await self.create_pool("search", "file_search", target_size=3)
+        await self.create_pool("shell", "shell_command", target_size=3)
+        await self.create_pool("http", "http_fetch", target_size=3)
 
         # Spawn red team agents
         await self._spawn_red_team(self.config.consensus.red_team_pool_size)
+
+        # Start episodic memory if provided
+        if self.episodic_memory:
+            await self.episodic_memory.start()
 
         self._started = True
 
@@ -247,6 +269,10 @@ class ProbOSRuntime:
 
         # Clean up LLM client
         await self.llm_client.close()
+
+        # Stop episodic memory
+        if self.episodic_memory:
+            await self.episodic_memory.stop()
 
         self._started = False
         logger.info("ProbOS shutdown complete. Final agent count: %d", self.registry.count)
@@ -473,6 +499,8 @@ class ProbOSRuntime:
         If on_event is provided, it is called at key pipeline stages:
         decompose_start, decompose_complete, node_start, node_complete, node_failed.
         """
+        t_start = time.monotonic()
+
         if on_event:
             await on_event("decompose_start", {"text": text})
 
@@ -488,8 +516,16 @@ class ProbOSRuntime:
             ] if hasattr(self.capability_registry, '_capabilities') else [],
         )
 
-        # 2. Decompose NL → TaskDAG
-        dag = await self.decomposer.decompose(text, context=context)
+        # 2. Decompose NL → TaskDAG (with similar past episodes if available)
+        similar_episodes = None
+        if self.episodic_memory:
+            try:
+                similar_episodes = await self.episodic_memory.recall(text, k=3)
+            except Exception as e:
+                logger.warning("Episode recall failed: %s", e)
+        dag = await self.decomposer.decompose(
+            text, context=context, similar_episodes=similar_episodes or None,
+        )
 
         if on_event:
             await on_event("decompose_complete", {"dag": dag})
@@ -526,11 +562,44 @@ class ProbOSRuntime:
             )
 
         execution_result["input"] = text
+
+        # Step 5: Reflect if requested — send results back to LLM for synthesis
+        if dag.reflect and dag.nodes:
+            reflect_timeout = self.config.cognitive.decomposition_timeout_seconds
+            try:
+                reflection = await asyncio.wait_for(
+                    self.decomposer.reflect(text, execution_result),
+                    timeout=reflect_timeout,
+                )
+                execution_result["reflection"] = reflection
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Reflect timed out after %.0fs — results preserved",
+                    reflect_timeout,
+                )
+                execution_result["reflection"] = (
+                    "(Reflection unavailable — results shown above)"
+                )
+            except Exception as e:
+                logger.warning("Reflect failed: %s: %s", type(e).__name__, e)
+                execution_result["reflection"] = (
+                    "(Reflection unavailable — results shown above)"
+                )
+
+        # Step 6: Store episode in episodic memory (fire-and-forget)
+        if self.episodic_memory and dag.nodes:
+            try:
+                t_end = time.monotonic()
+                episode = self._build_episode(text, execution_result, t_start, t_end)
+                await self.episodic_memory.store(episode)
+            except Exception as e:
+                logger.warning("Episode storage failed: %s: %s", type(e).__name__, e)
+
         return execution_result
 
     def status(self) -> dict[str, Any]:
         """Return a snapshot of the full system state."""
-        return {
+        result = {
             "system": self.config.system.model_dump(),
             "started": self._started,
             "total_agents": self.registry.count,
@@ -559,6 +628,65 @@ class ProbOSRuntime:
                 "dag_execution_timeout": self.dag_executor.timeout,
             },
         }
+        if self.episodic_memory:
+            result["episodic_memory"] = "enabled"
+        return result
+
+    async def recall_similar(self, query: str, k: int = 5) -> list[Episode]:
+        """Recall similar past episodes from episodic memory."""
+        if not self.episodic_memory:
+            return []
+        return await self.episodic_memory.recall(query, k=k)
+
+    def _build_episode(
+        self,
+        text: str,
+        execution_result: dict[str, Any],
+        t_start: float,
+        t_end: float,
+    ) -> Episode:
+        """Build an Episode dataclass from execution results."""
+        dag = execution_result.get("dag")
+        results = execution_result.get("results", {})
+
+        dag_summary: dict[str, Any] = {}
+        outcomes: list[dict[str, Any]] = []
+        agent_ids: list[str] = []
+
+        if dag and hasattr(dag, "nodes"):
+            intent_types = [n.intent for n in dag.nodes]
+            dag_summary = {
+                "node_count": len(dag.nodes),
+                "intent_types": intent_types,
+                "has_dependencies": any(n.depends_on for n in dag.nodes),
+            }
+            for node in dag.nodes:
+                node_result = results.get(node.id, {})
+                outcome: dict[str, Any] = {
+                    "intent": node.intent,
+                    "success": node.status == "completed",
+                    "status": node.status,
+                }
+                # Extract agent IDs from the result
+                if isinstance(node_result, dict):
+                    node_results = node_result.get("results", [])
+                    if isinstance(node_results, list):
+                        for r in node_results:
+                            if hasattr(r, "agent_id"):
+                                agent_ids.append(r.agent_id)
+                outcomes.append(outcome)
+
+        reflection = execution_result.get("reflection")
+
+        return Episode(
+            timestamp=time.time(),
+            user_input=text,
+            dag_summary=dag_summary,
+            outcomes=outcomes,
+            reflection=reflection if isinstance(reflection, str) else None,
+            agent_ids=agent_ids,
+            duration_ms=(t_end - t_start) * 1000,
+        )
 
     # ------------------------------------------------------------------
     # Internal wiring

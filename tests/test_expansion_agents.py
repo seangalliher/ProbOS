@@ -1,0 +1,467 @@
+"""Tests for Phase 5 expansion agents — unit, integration, and error cases."""
+
+import pytest
+
+from probos.agents.directory_list import DirectoryListAgent
+from probos.agents.file_search import FileSearchAgent
+from probos.agents.http_fetch import HttpFetchAgent
+from probos.agents.shell_command import ShellCommandAgent
+from probos.cognitive.llm_client import MockLLMClient
+from probos.runtime import ProbOSRuntime
+from probos.types import IntentMessage
+
+
+# ---------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------
+
+
+@pytest.fixture
+async def runtime(tmp_path):
+    """Create a runtime with MockLLMClient, start it, yield, stop."""
+    llm = MockLLMClient()
+    rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=llm)
+    await rt.start()
+    yield rt
+    await rt.stop()
+
+
+# ---------------------------------------------------------------
+# Unit Tests: DirectoryListAgent
+# ---------------------------------------------------------------
+
+
+class TestDirectoryListAgent:
+    def test_agent_type_and_capabilities(self):
+        agent = DirectoryListAgent(pool="directory")
+        assert agent.agent_type == "directory_list"
+        assert any(c.can == "list_directory" for c in agent.capabilities)
+
+    @pytest.mark.asyncio
+    async def test_list_directory(self, tmp_path):
+        (tmp_path / "file1.txt").write_text("a")
+        (tmp_path / "file2.txt").write_text("b")
+        (tmp_path / "subdir").mkdir()
+
+        agent = DirectoryListAgent()
+        intent = IntentMessage(intent="list_directory", params={"path": str(tmp_path)})
+        result = await agent.handle_intent(intent)
+
+        assert result is not None
+        assert result.success
+        assert len(result.result) == 3
+        names = {e["name"] for e in result.result}
+        assert "file1.txt" in names
+        assert "subdir" in names
+        dir_entry = next(e for e in result.result if e["name"] == "subdir")
+        assert dir_entry["type"] == "dir"
+
+    @pytest.mark.asyncio
+    async def test_list_nonexistent_directory(self):
+        agent = DirectoryListAgent()
+        intent = IntentMessage(
+            intent="list_directory", params={"path": "/nonexistent/xyz"}
+        )
+        result = await agent.handle_intent(intent)
+        assert result is not None
+        assert not result.success
+        assert "not found" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_list_empty_directory(self, tmp_path):
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+
+        agent = DirectoryListAgent()
+        intent = IntentMessage(
+            intent="list_directory", params={"path": str(empty_dir)}
+        )
+        result = await agent.handle_intent(intent)
+        assert result is not None
+        assert result.success
+        assert result.result == []
+
+    @pytest.mark.asyncio
+    async def test_list_not_a_directory(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("hello")
+
+        agent = DirectoryListAgent()
+        intent = IntentMessage(
+            intent="list_directory", params={"path": str(f)}
+        )
+        result = await agent.handle_intent(intent)
+        assert result is not None
+        assert not result.success
+        assert "not a directory" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_missing_path_returns_error(self):
+        agent = DirectoryListAgent()
+        intent = IntentMessage(intent="list_directory", params={})
+        result = await agent.handle_intent(intent)
+        assert result is not None
+        assert not result.success
+        assert "path" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_declines_unhandled_intent(self):
+        agent = DirectoryListAgent()
+        intent = IntentMessage(intent="read_file", params={})
+        result = await agent.handle_intent(intent)
+        assert result is None
+
+
+# ---------------------------------------------------------------
+# Unit Tests: FileSearchAgent
+# ---------------------------------------------------------------
+
+
+class TestFileSearchAgent:
+    def test_agent_type_and_capabilities(self):
+        agent = FileSearchAgent(pool="search")
+        assert agent.agent_type == "file_search"
+        assert any(c.can == "search_files" for c in agent.capabilities)
+
+    @pytest.mark.asyncio
+    async def test_search_matching_glob(self, tmp_path):
+        (tmp_path / "a.txt").write_text("a")
+        (tmp_path / "b.txt").write_text("b")
+        (tmp_path / "c.md").write_text("c")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "d.txt").write_text("d")
+
+        agent = FileSearchAgent()
+        intent = IntentMessage(
+            intent="search_files",
+            params={"path": str(tmp_path), "pattern": "*.txt"},
+        )
+        result = await agent.handle_intent(intent)
+
+        assert result is not None
+        assert result.success
+        assert len(result.result) == 3  # a.txt, b.txt, sub/d.txt
+
+    @pytest.mark.asyncio
+    async def test_search_no_matches(self, tmp_path):
+        (tmp_path / "a.txt").write_text("a")
+
+        agent = FileSearchAgent()
+        intent = IntentMessage(
+            intent="search_files",
+            params={"path": str(tmp_path), "pattern": "*.xyz"},
+        )
+        result = await agent.handle_intent(intent)
+
+        assert result is not None
+        assert result.success
+        assert result.result == []
+
+    @pytest.mark.asyncio
+    async def test_search_nonexistent_base_dir(self):
+        agent = FileSearchAgent()
+        intent = IntentMessage(
+            intent="search_files",
+            params={"path": "/nonexistent", "pattern": "*.txt"},
+        )
+        result = await agent.handle_intent(intent)
+        assert result is not None
+        assert not result.success
+
+    @pytest.mark.asyncio
+    async def test_missing_params(self):
+        agent = FileSearchAgent()
+        intent = IntentMessage(intent="search_files", params={})
+        result = await agent.handle_intent(intent)
+        assert result is not None
+        assert not result.success
+
+    @pytest.mark.asyncio
+    async def test_declines_unhandled_intent(self):
+        agent = FileSearchAgent()
+        intent = IntentMessage(intent="read_file", params={})
+        result = await agent.handle_intent(intent)
+        assert result is None
+
+
+# ---------------------------------------------------------------
+# Unit Tests: ShellCommandAgent
+# ---------------------------------------------------------------
+
+
+class TestShellCommandAgent:
+    def test_agent_type_and_capabilities(self):
+        agent = ShellCommandAgent(pool="shell")
+        assert agent.agent_type == "shell_command"
+        assert any(c.can == "run_command" for c in agent.capabilities)
+
+    @pytest.mark.asyncio
+    async def test_echo_hello(self):
+        agent = ShellCommandAgent()
+        intent = IntentMessage(
+            intent="run_command", params={"command": "echo hello"}
+        )
+        result = await agent.handle_intent(intent)
+
+        assert result is not None
+        assert result.success
+        assert result.result["exit_code"] == 0
+        assert "hello" in result.result["stdout"]
+
+    @pytest.mark.asyncio
+    async def test_failing_command(self):
+        agent = ShellCommandAgent()
+        # 'exit 42' works on both bash and cmd
+        intent = IntentMessage(
+            intent="run_command", params={"command": "exit 42"}
+        )
+        result = await agent.handle_intent(intent)
+
+        assert result is not None
+        assert result.success  # Still True per design
+        assert result.result["exit_code"] != 0
+
+    @pytest.mark.asyncio
+    async def test_empty_command(self):
+        agent = ShellCommandAgent()
+        intent = IntentMessage(intent="run_command", params={"command": ""})
+        result = await agent.handle_intent(intent)
+        assert result is not None
+        assert not result.success
+        assert "command" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_declines_unhandled_intent(self):
+        agent = ShellCommandAgent()
+        intent = IntentMessage(intent="read_file", params={})
+        result = await agent.handle_intent(intent)
+        assert result is None
+
+
+# ---------------------------------------------------------------
+# Unit Tests: HttpFetchAgent
+# ---------------------------------------------------------------
+
+
+class TestHttpFetchAgent:
+    def test_agent_type_and_capabilities(self):
+        agent = HttpFetchAgent(pool="http")
+        assert agent.agent_type == "http_fetch"
+        assert any(c.can == "http_fetch" for c in agent.capabilities)
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_mock(self, monkeypatch):
+        """Mock httpx to avoid network calls in unit tests."""
+        import httpx
+
+        class MockResponse:
+            status_code = 200
+            url = "https://example.com"
+            content = b'{"ok": true}'
+            headers = {"content-type": "application/json", "server": "mock"}
+
+        class MockAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                pass
+
+            async def request(self, method, url):
+                return MockResponse()
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
+
+        agent = HttpFetchAgent()
+        intent = IntentMessage(
+            intent="http_fetch",
+            params={"url": "https://example.com", "method": "GET"},
+        )
+        result = await agent.handle_intent(intent)
+
+        assert result is not None
+        assert result.success
+        assert result.result["status_code"] == 200
+        assert result.result["body_length"] > 0
+
+    @pytest.mark.asyncio
+    async def test_fetch_connection_error(self, monkeypatch):
+        """Simulate unreachable URL."""
+        import httpx
+
+        class MockAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                pass
+
+            async def request(self, method, url):
+                raise httpx.ConnectError("unreachable")
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
+
+        agent = HttpFetchAgent()
+        intent = IntentMessage(
+            intent="http_fetch",
+            params={"url": "https://unreachable.invalid", "method": "GET"},
+        )
+        result = await agent.handle_intent(intent)
+
+        assert result is not None
+        assert not result.success
+        assert "connection" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_missing_url(self):
+        agent = HttpFetchAgent()
+        intent = IntentMessage(intent="http_fetch", params={})
+        result = await agent.handle_intent(intent)
+        assert result is not None
+        assert not result.success
+        assert "url" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_declines_unhandled_intent(self):
+        agent = HttpFetchAgent()
+        intent = IntentMessage(intent="read_file", params={})
+        result = await agent.handle_intent(intent)
+        assert result is None
+
+
+# ---------------------------------------------------------------
+# Integration Tests (full runtime)
+# ---------------------------------------------------------------
+
+
+class TestExpansionIntegration:
+    @pytest.mark.asyncio
+    async def test_pools_created(self, runtime):
+        """New pools should exist after boot."""
+        assert "directory" in runtime.pools
+        assert "search" in runtime.pools
+        assert "shell" in runtime.pools
+        assert "http" in runtime.pools
+
+    @pytest.mark.asyncio
+    async def test_nl_list_directory(self, runtime, tmp_path):
+        """NL 'what files are in <path>' -> list_directory."""
+        (tmp_path / "a.txt").write_text("a")
+        (tmp_path / "b.txt").write_text("b")
+
+        result = await runtime.process_natural_language(
+            f"what files are in {tmp_path}"
+        )
+        assert result["node_count"] == 1
+        assert result["completed_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_nl_search_files(self, runtime, tmp_path):
+        """NL 'find files named *.txt in <path>' -> search_files."""
+        (tmp_path / "x.txt").write_text("x")
+
+        result = await runtime.process_natural_language(
+            f"find files named *.txt in {tmp_path}"
+        )
+        assert result["node_count"] == 1
+        assert result["completed_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_nl_run_command(self, runtime):
+        """NL 'run the command echo hello' -> run_command with consensus."""
+        result = await runtime.process_natural_language(
+            "run the command echo hello"
+        )
+        assert result["node_count"] == 1
+        assert result["completed_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_nl_http_fetch_mock(self, runtime, monkeypatch):
+        """NL 'fetch https://...' -> http_fetch with consensus (mocked)."""
+        import httpx
+
+        class MockResponse:
+            status_code = 200
+            url = "https://httpbin.org/get"
+            content = b'{"ok": true}'
+            headers = {"content-type": "application/json"}
+
+        class MockAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                pass
+
+            async def request(self, method, url):
+                return MockResponse()
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
+
+        result = await runtime.process_natural_language(
+            "fetch https://httpbin.org/get"
+        )
+        assert result["node_count"] == 1
+        assert result["completed_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_submit_list_directory(self, runtime, tmp_path):
+        """Direct submit_intent for list_directory returns results."""
+        (tmp_path / "f.txt").write_text("x")
+        results = await runtime.submit_intent(
+            "list_directory", params={"path": str(tmp_path)}, timeout=5.0
+        )
+        assert len(results) == 3  # 3 agents in pool
+        for r in results:
+            assert r.success
+
+    @pytest.mark.asyncio
+    async def test_submit_run_command_with_consensus(self, runtime):
+        """Direct submit_intent_with_consensus for run_command."""
+        result = await runtime.submit_intent_with_consensus(
+            "run_command",
+            params={"command": "echo consensus_test"},
+            timeout=5.0,
+        )
+        assert len(result["results"]) == 3
+        assert result["consensus"].outcome.value in (
+            "approved", "rejected", "insufficient"
+        )
+
+
+# ---------------------------------------------------------------
+# Error Case Tests
+# ---------------------------------------------------------------
+
+
+class TestExpansionErrors:
+    @pytest.mark.asyncio
+    async def test_list_nonexistent_via_runtime(self, runtime):
+        results = await runtime.submit_intent(
+            "list_directory", params={"path": "/nonexistent/xyz"}, timeout=5.0
+        )
+        assert len(results) == 3
+        for r in results:
+            assert not r.success
+
+    @pytest.mark.asyncio
+    async def test_search_nonexistent_via_runtime(self, runtime):
+        results = await runtime.submit_intent(
+            "search_files",
+            params={"path": "/nonexistent", "pattern": "*.txt"},
+            timeout=5.0,
+        )
+        assert len(results) == 3
+        for r in results:
+            assert not r.success
+
+    @pytest.mark.asyncio
+    async def test_failing_command_via_runtime(self, runtime):
+        results = await runtime.submit_intent(
+            "run_command", params={"command": "exit 42"}, timeout=5.0
+        )
+        assert len(results) == 3
+        for r in results:
+            assert r.success  # success=True even with nonzero exit code
+            assert r.result["exit_code"] != 0

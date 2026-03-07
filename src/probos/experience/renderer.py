@@ -127,7 +127,28 @@ class ExecutionRenderer:
 
         execution_result["input"] = text
 
-        # Phase 3: Show results
+        # Phase 3: Reflect (if requested by the decomposer)
+        if dag.reflect and dag.nodes:
+            with self.console.status(
+                "[bold blue]Reflecting on results...[/bold blue]",
+                spinner="dots",
+            ):
+                try:
+                    reflect_timeout = self.runtime.config.cognitive.decomposition_timeout_seconds
+                    import asyncio
+                    reflection = await asyncio.wait_for(
+                        self.runtime.decomposer.reflect(
+                            text, execution_result
+                        ),
+                        timeout=reflect_timeout,
+                    )
+                    execution_result["reflection"] = reflection
+                except Exception:
+                    execution_result["reflection"] = (
+                        "(Reflection unavailable — results shown above)"
+                    )
+
+        # Phase 4: Show results
         self.console.print(render_dag_result(execution_result, debug=self.debug))
 
         if self.debug:
