@@ -21,10 +21,11 @@ logger = logging.getLogger(__name__)
 
 # Patterns that indicate a capability gap (the LLM is saying "I can't do X")
 # rather than a genuine conversational reply ("Hello!").
+# Note: [''] matches both ASCII and Unicode curly apostrophes.
 _CAPABILITY_GAP_RE = re.compile(
-    r"don'?t have|(?:can'?t|cannot|unable to|no (?:built-in |native )?(?:"
+    r"don['\u2019]?t have|(?:can['\u2019]?t|cannot|unable to|no (?:built-in |native )?(?:"
     r"capability|ability|support|way|mechanism|tool))|not (?:available|"
-    r"supported|possible)|lack(?:s|ing)?|doesn'?t (?:have|support)|"
+    r"supported|possible)|lack(?:s|ing)?|doesn['\u2019]?t (?:have|support)|"
     r"beyond (?:my|current) (?:capabilities|abilities)|outside (?:my|the) "
     r"(?:scope|capabilities)",
     re.IGNORECASE,
