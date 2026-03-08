@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from probos.substrate.agent import BaseAgent
-from probos.types import CapabilityDescriptor, IntentMessage, IntentResult
+from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,9 @@ class DirectoryListAgent(BaseAgent):
         ),
     ]
     initial_confidence: float = 0.8
+    intent_descriptors = [
+        IntentDescriptor(name="list_directory", params={"path": "<absolute_path>"}, description="List files and directories"),
+    ]
 
     _handled_intents = {"list_directory"}
 

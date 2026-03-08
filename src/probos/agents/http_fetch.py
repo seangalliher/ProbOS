@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 
 from probos.substrate.agent import BaseAgent
-from probos.types import CapabilityDescriptor, IntentMessage, IntentResult
+from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,9 @@ class HttpFetchAgent(BaseAgent):
         ),
     ]
     initial_confidence: float = 0.8
+    intent_descriptors = [
+        IntentDescriptor(name="http_fetch", params={"url": "<url>", "method": "GET"}, description="Fetch a URL", requires_consensus=True),
+    ]
 
     _handled_intents = {"http_fetch"}
 

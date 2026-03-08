@@ -9,15 +9,17 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TYPE_CHECKING
 
 from probos.cognitive.llm_client import BaseLLMClient
+from probos.cognitive.prompt_builder import PromptBuilder
 from probos.cognitive.working_memory import WorkingMemoryManager, WorkingMemorySnapshot
-from probos.types import LLMRequest, TaskDAG, TaskNode, Episode, AttentionEntry
+from probos.types import IntentDescriptor, LLMRequest, TaskDAG, TaskNode, Episode, AttentionEntry
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """\
+# Deprecated — kept for backward compatibility when no descriptors are provided.
+_LEGACY_SYSTEM_PROMPT = """\
 You MUST respond with ONLY a JSON object. No preamble, no explanation, no \
 markdown code fences, no text before or after the JSON. Your entire response \
 must be parseable as a single JSON object.
@@ -131,6 +133,9 @@ User: "tell me about file_reader agents"
 {"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "file_reader"}, "depends_on": [], "use_consensus": false}], "reflect": true}
 """
 
+# Public alias for backward compatibility (tests import SYSTEM_PROMPT)
+SYSTEM_PROMPT = _LEGACY_SYSTEM_PROMPT
+
 REFLECT_PROMPT = """\
 You are analyzing results returned by ProbOS agents in response to a user request.
 You will receive the user's original request and the results from each agent operation.
@@ -160,6 +165,8 @@ class IntentDecomposer:
         self.workflow_cache = workflow_cache
         self.last_raw_response: str = ""  # Last raw LLM response for debugging
         self._pre_warm_intents: list[str] = []
+        self._intent_descriptors: list[IntentDescriptor] = []
+        self._prompt_builder = PromptBuilder()
 
     @property
     def pre_warm_intents(self) -> list[str]:
@@ -168,6 +175,10 @@ class IntentDecomposer:
     @pre_warm_intents.setter
     def pre_warm_intents(self, value: list[str]) -> None:
         self._pre_warm_intents = value
+
+    def refresh_descriptors(self, descriptors: list[IntentDescriptor]) -> None:
+        """Update the set of intent descriptors used for dynamic prompt assembly."""
+        self._intent_descriptors = list(descriptors)
 
     async def decompose(
         self,
@@ -232,9 +243,15 @@ class IntentDecomposer:
 
         prompt_parts.append(f"User request: {text}")
 
+        # Select system prompt: dynamic if descriptors available, else legacy
+        if self._intent_descriptors:
+            system_prompt = self._prompt_builder.build_system_prompt(self._intent_descriptors)
+        else:
+            system_prompt = _LEGACY_SYSTEM_PROMPT
+
         request = LLMRequest(
             prompt="\n".join(prompt_parts),
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             tier="standard",
             temperature=0.0,
         )

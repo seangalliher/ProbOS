@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from probos.substrate.agent import BaseAgent
-from probos.types import CapabilityDescriptor, IntentMessage, IntentResult
+from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,12 @@ class IntrospectionAgent(BaseAgent):
         ),
     ]
     initial_confidence: float = 0.9
+    intent_descriptors = [
+        IntentDescriptor(name="explain_last", params={}, description="Explain what happened in the last request", requires_reflect=True),
+        IntentDescriptor(name="agent_info", params={"agent_type": "...", "agent_id": "..."}, description="Get info about a specific agent", requires_reflect=True),
+        IntentDescriptor(name="system_health", params={}, description="Get system health assessment", requires_reflect=True),
+        IntentDescriptor(name="why", params={"question": "..."}, description="Explain why ProbOS did something", requires_reflect=True),
+    ]
 
     _handled_intents = {"explain_last", "agent_info", "system_health", "why"}
 
@@ -190,12 +196,12 @@ class IntrospectionAgent(BaseAgent):
             # Add Hebbian weight context
             all_weights = rt.hebbian_router.all_weights_typed()
             incoming = sorted(
-                [(w.source, w.weight) for w in all_weights if w.target == agent.id],
+                [(k[0], v) for k, v in all_weights.items() if k[1] == agent.id],
                 key=lambda x: x[1],
                 reverse=True,
             )[:3]
             outgoing = sorted(
-                [(w.target, w.weight) for w in all_weights if w.source == agent.id],
+                [(k[1], v) for k, v in all_weights.items() if k[0] == agent.id],
                 key=lambda x: x[1],
                 reverse=True,
             )[:3]
@@ -203,7 +209,7 @@ class IntrospectionAgent(BaseAgent):
                 "incoming_top3": [{"source": s, "weight": round(w, 4)} for s, w in incoming],
                 "outgoing_top3": [{"target": t, "weight": round(w, 4)} for t, w in outgoing],
                 "total_connections": sum(
-                    1 for w in all_weights if w.source == agent.id or w.target == agent.id
+                    1 for k in all_weights if k[0] == agent.id or k[1] == agent.id
                 ),
             }
             agent_infos.append(info)
@@ -317,7 +323,7 @@ class IntrospectionAgent(BaseAgent):
             trust_score = rt.trust_network.get_score(aid)
             all_weights = rt.hebbian_router.all_weights_typed()
             top_connections = sorted(
-                [(w.target, w.weight) for w in all_weights if w.source == aid],
+                [(k[1], v) for k, v in all_weights.items() if k[0] == aid],
                 key=lambda x: x[1],
                 reverse=True,
             )[:3]

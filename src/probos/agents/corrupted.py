@@ -28,6 +28,7 @@ class CorruptedFileReaderAgent(BaseAgent):
         ),
     ]
     initial_confidence: float = 0.8
+    intent_descriptors = []  # Does not handle user intents
 
     _handled_intents = {"read_file"}
 

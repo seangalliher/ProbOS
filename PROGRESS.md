@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 6a — Introspection & Self-Awareness Complete (456/456 tests)
+## Current Status: Phase 6b — Dynamic Intent Discovery Complete (477/477 tests)
 
 ---
 
@@ -13,9 +13,9 @@
 | `pyproject.toml` | done | Project config, deps (pydantic, pyyaml, aiosqlite, rich, pytest) |
 | `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config, dreaming config |
 | `src/probos/__init__.py` | done | Package root, version 0.1.0 |
-| `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `TaskNode` (with `background` field for background demotion), `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record), `AttentionEntry` (priority scoring for task scheduling), `FocusSnapshot` (cross-request focus history), `DreamReport` (dream cycle results), `WorkflowCacheEntry` (cached workflow pattern) |
+| `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `TaskNode` (with `background` field for background demotion), `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record), `AttentionEntry` (priority scoring for task scheduling), `FocusSnapshot` (cross-request focus history), `DreamReport` (dream cycle results), `WorkflowCacheEntry` (cached workflow pattern), `IntentDescriptor` (structured metadata for dynamic intent discovery: name, params, description, requires_consensus, requires_reflect) |
 | `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`, `focus_history_size`, `background_demotion_factor`), `MemoryConfig`, `DreamingConfig` (idle threshold, dream interval, replay count, strengthening/weakening factors, prune threshold, trust boost/penalty, pre-warm top-K), `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
-| `src/probos/substrate/agent.py` | done | `BaseAgent` ABC — `perceive/decide/act/report` lifecycle, confidence tracking, state transitions, async start/stop, optional `_runtime` reference via `**kwargs`, `**kwargs` passthrough to subclasses |
+| `src/probos/substrate/agent.py` | done | `BaseAgent` ABC — `perceive/decide/act/report` lifecycle, confidence tracking, state transitions, async start/stop, optional `_runtime` reference via `**kwargs`, `**kwargs` passthrough to subclasses, class-level `intent_descriptors: list[IntentDescriptor]` for dynamic intent discovery |
 | `src/probos/substrate/registry.py` | done | `AgentRegistry` — in-memory index, lookup by ID/pool/capability, async-safe |
 | `src/probos/substrate/spawner.py` | done | `AgentSpawner` — template registration, `spawn(**kwargs)`, `recycle()` with optional respawn, `**kwargs` forwarded to agent constructors |
 | `src/probos/substrate/pool.py` | done | `ResourcePool` — maintains N agents at target size, background health loop, auto-recycles degraded agents, `**spawn_kwargs` forwarding for agent construction |
@@ -48,7 +48,8 @@
 | `src/probos/cognitive/__init__.py` | done | Package root |
 | `src/probos/cognitive/llm_client.py` | done | `BaseLLMClient` ABC, `OpenAICompatibleClient` (httpx, tiered routing fast/standard/deep, response cache, fallback chain: live → cache → error, connectivity check, specific error handling for connect/timeout/HTTP errors), `MockLLMClient` (regex pattern matching, canned responses for deterministic testing — supports read_file, write_file, list_directory, search_files, run_command, http_fetch, explain_last, system_health, agent_info, why patterns) |
 | `src/probos/cognitive/working_memory.py` | done | `WorkingMemorySnapshot` (serializable system state), `WorkingMemoryManager` (bounded context assembly from registry/trust/Hebbian/capabilities, token budget eviction) |
-| `src/probos/cognitive/decomposer.py` | done | `IntentDecomposer` (NL text + working memory + similar episodes → LLM → `TaskDAG`, aggressive JSON-only system prompt with `response` and `reflect` fields, markdown code fence extraction, available intents: read_file, stat_file, write_file, list_directory, search_files, run_command, http_fetch, explain_last, agent_info, system_health, why, `REFLECT_PROMPT` for post-execution synthesis, `reflect()` method sends results back to LLM with payload cap ~8000 chars and truncation, PAST EXPERIENCE section for episodic context, PRE-WARM HINTS section for dreaming integration, optional `workflow_cache` for cache-first decomposition with exact + fuzzy matching, `pre_warm_intents` property for runtime sync), `DAGExecutor` (parallel/sequential DAG execution through mesh + consensus, dependency resolution, deadlock detection, `on_event` callback for real-time progress, attention-based priority batching when `AttentionManager` is provided) |
+| `src/probos/cognitive/decomposer.py` | done | `IntentDecomposer` (NL text + working memory + similar episodes → LLM → `TaskDAG`, dynamic system prompt via `PromptBuilder` when `_intent_descriptors` populated (falls back to `_LEGACY_SYSTEM_PROMPT`), `refresh_descriptors()` for runtime to push new intent sets, aggressive JSON-only system prompt with `response` and `reflect` fields, markdown code fence extraction, `REFLECT_PROMPT` for post-execution synthesis, `reflect()` method sends results back to LLM with payload cap ~8000 chars and truncation, PAST EXPERIENCE section for episodic context, PRE-WARM HINTS section for dreaming integration, optional `workflow_cache` for cache-first decomposition with exact + fuzzy matching, `pre_warm_intents` property for runtime sync), `DAGExecutor` (parallel/sequential DAG execution through mesh + consensus, dependency resolution, deadlock detection, `on_event` callback for real-time progress, attention-based priority batching when `AttentionManager` is provided) |
+| `src/probos/cognitive/prompt_builder.py` | done | `PromptBuilder` — dynamically assembles decomposer system prompt from `IntentDescriptor` list. Generates intent table, consensus rules, reflect rules. Deterministic output (sorted by name). Constants: `PROMPT_PREAMBLE`, `PROMPT_RESPONSE_FORMAT`, `PROMPT_EXAMPLES` |
 | `src/probos/cognitive/episodic.py` | done | `EpisodicMemory` — SQLite-backed long-term memory, `Episode` storage/recall, keyword-overlap similarity search (cosine over bag-of-words), `recall_by_intent()`, `recent()`, `get_stats()`, max_episodes eviction |
 | `src/probos/cognitive/episodic_mock.py` | done | `MockEpisodicMemory` — in-memory episodic memory for testing, substring/keyword matching recall, no SQLite dependency |
 | `src/probos/cognitive/attention.py` | done | `AttentionManager` — priority scorer and budgeter for task execution, scores = urgency × relevance × deadline_factor × dependency_depth_bonus, configurable concurrency limit (`max_concurrent_tasks`), cross-request focus history (ring buffer of `FocusSnapshot` entries, configurable max size), `_compute_relevance()` (keyword overlap between entry intent and recent focus, floor=0.3), background demotion (configurable factor, default 0.25), queue introspection |
@@ -68,21 +69,21 @@
 
 | File | Status | Description |
 |------|--------|-------------|
-| `src/probos/agents/file_reader.py` | done | `FileReaderAgent` — `read_file` and `stat_file` capabilities, full lifecycle, self-selects on intent match |
-| `src/probos/agents/file_writer.py` | done | `FileWriterAgent` — `write_file` capability, proposes writes without committing, `commit_write()` called after consensus approval |
-| `src/probos/agents/directory_list.py` | done | `DirectoryListAgent` — `list_directory` capability, lists dir entries with name/type/size, no consensus required |
-| `src/probos/agents/file_search.py` | done | `FileSearchAgent` — `search_files` capability, recursive glob via `Path.rglob()`, no consensus required |
-| `src/probos/agents/shell_command.py` | done | `ShellCommandAgent` — `run_command` capability, `asyncio.create_subprocess_shell()`, 30s timeout, 64KB output cap, consensus required. Returns success=True even for nonzero exit codes |
-| `src/probos/agents/http_fetch.py` | done | `HttpFetchAgent` — `http_fetch` capability, `httpx.AsyncClient` per-request, 15s timeout, 1MB body cap, header whitelist, consensus required |
-| `src/probos/agents/red_team.py` | done | `RedTeamAgent` — independently verifies other agents' results (re-reads files, re-runs commands, re-fetches URLs), does NOT subscribe to intent bus |
-| `src/probos/agents/corrupted.py` | done | `CorruptedFileReaderAgent` — deliberately returns fabricated data, used to test consensus layer catching corruption |
-| `src/probos/agents/introspect.py` | done | `IntrospectionAgent` — self-referential queries about ProbOS state: `explain_last` (previous execution history with episodic fallback), `agent_info` (agent details with trust + Hebbian context), `system_health` (structured health assessment: pools, trust outliers, attention depth, cache stats, Hebbian density, dreaming), `why` (episodic recall + agent trust/connection context for explaining decisions). Reads `_runtime` reference, purely observational |
+| `src/probos/agents/file_reader.py` | done | `FileReaderAgent` — `read_file` and `stat_file` capabilities, `intent_descriptors` declared, full lifecycle, self-selects on intent match |
+| `src/probos/agents/file_writer.py` | done | `FileWriterAgent` — `write_file` capability, `intent_descriptors` with `requires_consensus=True`, proposes writes without committing, `commit_write()` called after consensus approval |
+| `src/probos/agents/directory_list.py` | done | `DirectoryListAgent` — `list_directory` capability, `intent_descriptors` declared, lists dir entries with name/type/size, no consensus required |
+| `src/probos/agents/file_search.py` | done | `FileSearchAgent` — `search_files` capability, `intent_descriptors` declared, recursive glob via `Path.rglob()`, no consensus required |
+| `src/probos/agents/shell_command.py` | done | `ShellCommandAgent` — `run_command` capability, `intent_descriptors` with `requires_consensus=True`, `asyncio.create_subprocess_shell()`, 30s timeout, 64KB output cap. Returns success=True even for nonzero exit codes |
+| `src/probos/agents/http_fetch.py` | done | `HttpFetchAgent` — `http_fetch` capability, `intent_descriptors` with `requires_consensus=True`, `httpx.AsyncClient` per-request, 15s timeout, 1MB body cap, header whitelist |
+| `src/probos/agents/red_team.py` | done | `RedTeamAgent` — independently verifies other agents' results, `intent_descriptors = []` (does NOT handle user intents), does NOT subscribe to intent bus |
+| `src/probos/agents/corrupted.py` | done | `CorruptedFileReaderAgent` — deliberately returns fabricated data, `intent_descriptors = []`, used to test consensus layer catching corruption |
+| `src/probos/agents/introspect.py` | done | `IntrospectionAgent` — self-referential queries about ProbOS state, `intent_descriptors` with `requires_reflect=True` for all 4 intents: `explain_last`, `agent_info`, `system_health`, `why`. Reads `_runtime` reference, purely observational |
 
 ### Runtime
 
 | File | Status | Description |
 |------|--------|-------------|
-| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention + dreaming + workflow cache + introspection, spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), introspect (2 introspection agents with runtime=self), red_team (2 verifiers). 24 agents total. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, dream scheduler activity tracking, pre-warm intent sync to decomposer, execution snapshot pattern (`_previous_execution`/`_last_execution` for introspection without self-overwrite), post-execution reflect step (hardened with `asyncio.wait_for()` timeout and graceful fallback), episodic episode storage (fire-and-forget), workflow cache storage on success, `recall_similar()` for semantic search. `DreamScheduler` created at start when episodic memory is available, stopped at shutdown. `WorkflowCache` created at init, passed to decomposer, exposed in `status()`. Dreaming state and workflow cache stats exposed in `status()` |
+| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention + dreaming + workflow cache + introspection + dynamic intent discovery. Spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), introspect (2 introspection agents with runtime=self), red_team (2 verifiers). 24 agents total. `register_agent_type()` registers new agent class and refreshes decomposer descriptors. `_collect_intent_descriptors()` deduplicates across all registered templates. Boot-time `refresh_descriptors()` call after pool creation syncs decomposer with all registered intents. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, dream scheduler activity tracking, pre-warm intent sync to decomposer, execution snapshot pattern (`_previous_execution`/`_last_execution` for introspection without self-overwrite), post-execution reflect step, episodic episode storage, workflow cache storage on success, `recall_similar()` for semantic search. `DreamScheduler` created at start when episodic memory is available. `WorkflowCache` created at init, passed to decomposer, exposed in `status()` |
 | `src/probos/__main__.py` | done | Entry point: `uv run python -m probos` — boot sequence display, LLM connectivity check with fallback to MockLLMClient, creates `EpisodicMemory` (SQLite in temp dir), interactive shell launch |
 | `demo.py` | done | Full Rich demo: consensus reads, corrupted agent injection, trust/Hebbian display, NL pipeline with visual feedback, event log |
 
@@ -415,6 +416,37 @@
 
 #### Shell /explain command (1 test)
 - /explain is in COMMANDS and dispatches without error (1 test)
+
+### Dynamic Intent Discovery tests (21 tests — new in Phase 6b)
+
+#### PromptBuilder unit tests (10 tests)
+- Build prompt contains all 11 current intents (1 test)
+- Consensus rules generated for write_file, run_command, http_fetch (1 test)
+- Reflect rules generated for introspection intents (1 test)
+- Empty descriptors produces valid prompt with no intent table entries (1 test)
+- Custom descriptor appears in generated prompt (1 test)
+- Prompt contains JSON-only instruction (1 test)
+- Descriptors sorted alphabetically in output (1 test)
+- Duplicate intent names deduplicated in intent table (1 test)
+- Prompt contains static examples section (1 test)
+- Prompt contains response format schema (1 test)
+
+#### IntentDescriptor on agents (3 tests)
+- All user-facing agents have non-empty intent_descriptors (1 test)
+- Non-intent agents (RedTeam, Corrupted, Heartbeat) have empty descriptors (1 test)
+- Descriptor names match _handled_intents for each agent (1 test)
+
+#### Decomposer integration (3 tests)
+- Decomposer with refresh_descriptors uses dynamic prompt successfully (1 test)
+- Decomposer without refresh_descriptors falls back to legacy prompt (1 test)
+- refresh_descriptors with custom descriptor adds intent to system prompt (1 test)
+
+#### Runtime integration (5 tests)
+- Runtime collects descriptors at boot (read_file, write_file, run_command present) (1 test)
+- _collect_intent_descriptors returns deduplicated names (1 test)
+- register_agent_type refreshes decomposer descriptors (1 test)
+- Existing NL processing unchanged with dynamic discovery (1 test)
+- End-to-end: register custom agent, verify decomposer prompt includes it (1 test)
 
 ### Expansion agent tests (33 tests — new in Phase 5)
 
@@ -764,6 +796,30 @@ The `why` handler doesn't just return matching episodes — it also looks up tru
 
 The `/explain` command routes "what just happened?" through the normal NL pipeline rather than implementing a separate code path. This means it goes through decomposition (MockLLMClient matches the regex), execution (IntrospectionAgent handles the intent), and reflection (LLM synthesizes a human-readable explanation). This keeps the shell thin and ensures introspection uses the same cognitive pipeline as regular requests.
 
+### AD-76: IntrospectionAgent Hebbian API mismatch fix
+
+`IntrospectionAgent._agent_info()` and `_why()` both called `rt.hebbian_router.all_weights_typed()` and iterated the result as a list of objects with `.source`, `.target`, `.weight` attributes. But the real `HebbianRouter.all_weights_typed()` returns a `dict` with `(source, target, rel_type)` tuple keys mapped to float weights. Fixed by iterating `all_weights.items()` and indexing tuples (`k[0]`, `k[1]`) instead of attribute access. The test mocks were also corrected from returning `[]` to returning `{}` to match the real API signature.
+
+### AD-77: IntentDescriptor as structured agent metadata
+
+Agents now declare `intent_descriptors: list[IntentDescriptor]` as class-level metadata. Each descriptor specifies the intent `name`, `params` schema, `description`, `requires_consensus`, and `requires_reflect`. This is part of the agent type definition, not per-instance state. Non-intent agents (RedTeam, Corrupted, SystemHeartbeat) explicitly declare `intent_descriptors = []`.
+
+### AD-78: Dynamic prompt assembly via PromptBuilder
+
+The decomposer's system prompt is no longer a single hardcoded string. `PromptBuilder.build_system_prompt(descriptors)` dynamically generates the intent table, consensus rules, and reflect rules from whatever `IntentDescriptor` list is provided. The preamble, response format, and examples are static constants (they demonstrate format, not enumerate capabilities). Descriptors are sorted by name for deterministic output and deduplicated by name.
+
+### AD-79: Legacy system prompt fallback
+
+The original `SYSTEM_PROMPT` is preserved as `_LEGACY_SYSTEM_PROMPT` (with a public `SYSTEM_PROMPT` alias for backward compatibility). When `IntentDecomposer._intent_descriptors` is empty (i.e., `refresh_descriptors()` was never called), the decomposer falls back to the legacy prompt. This ensures tests that create a standalone `IntentDecomposer` without a runtime still work unchanged.
+
+### AD-80: Boot-time descriptor sync
+
+During `ProbOSRuntime.start()`, after all pools are created, the runtime calls `self.decomposer.refresh_descriptors(self._collect_intent_descriptors())`. This walks all registered agent templates, collects their `intent_descriptors`, deduplicates by name, and pushes the full set to the decomposer. `register_agent_type()` also triggers a refresh, so dynamically added agent types immediately become available to the LLM.
+
+### AD-81: Self-assembling intent table fulfills original vision
+
+The original ProbOS vision promised: "New capability is added by introducing new agent types to the mesh. They self-integrate by broadcasting capabilities and forming connections." Phase 6b makes this real for the decomposer. Adding a new agent class with `intent_descriptors` declared makes its intents immediately available to the LLM without editing any system prompt, mock patterns, or configuration files.
+
 ---
 
 ## What's Next
@@ -812,6 +868,8 @@ The `/explain` command routes "what just happened?" through the normal NL pipeli
 - [x] ~~437/437 tests pass~~
 - [x] ~~Phase 6a: Introspection & self-awareness (IntrospectionAgent — explain_last/agent_info/system_health/why, BaseAgent **kwargs + _runtime, AgentSpawner/ResourcePool kwargs forwarding, execution snapshot pattern _previous_execution/_last_execution, MockLLMClient introspection patterns, decomposer system prompt introspection intents, /explain command, renderer execution snapshot wiring)~~
 - [x] ~~456/456 tests pass~~
+- [x] ~~Phase 6b: Dynamic intent discovery (IntentDescriptor type, intent_descriptors class var on BaseAgent and all agents, PromptBuilder dynamic prompt assembly, IntentDecomposer refresh_descriptors + dynamic/legacy fallback, runtime _collect_intent_descriptors + register_agent_type refresh, boot-time descriptor sync)~~
+- [x] ~~477/477 tests pass~~
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
 
