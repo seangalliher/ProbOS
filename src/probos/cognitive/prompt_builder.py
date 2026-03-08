@@ -3,9 +3,28 @@
 from __future__ import annotations
 
 import json
+import platform
 from typing import Any
 
 from probos.types import IntentDescriptor
+
+
+def get_platform_context() -> str:
+    """Return a short platform description for inclusion in LLM prompts."""
+    system = platform.system()       # e.g. "Windows", "Linux", "Darwin"
+    release = platform.release()     # e.g. "10", "6.5.0-44-generic"
+    if system == "Windows":
+        shell = "PowerShell"
+    elif system == "Darwin":
+        shell = "zsh (macOS default)"
+    else:
+        shell = "bash"
+    return (
+        f"## Host platform\n\n"
+        f"Operating system: {system} {release}\n"
+        f"Default shell: {shell}\n"
+        f"Use only {system}-compatible commands for run_command intents."
+    )
 
 
 PROMPT_PREAMBLE = """\
@@ -108,6 +127,10 @@ class PromptBuilder:
         unique.sort(key=lambda d: d.name)
 
         parts: list[str] = [PROMPT_PREAMBLE]
+
+        # Platform context
+        parts.append("")
+        parts.append(get_platform_context())
 
         # Intent table
         parts.append("")

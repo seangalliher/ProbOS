@@ -114,6 +114,27 @@ class FederationConfig(BaseModel):
     validate_remote_results: bool = True  # Pass remote results through local consensus
 
 
+class SelfModConfig(BaseModel):
+    """Self-modification configuration."""
+
+    enabled: bool = False  # Disabled by default — opt-in capability
+    require_user_approval: bool = True  # Human must confirm before agent goes live
+    probationary_alpha: float = 1.0  # Beta prior alpha for self-created agents
+    probationary_beta: float = 3.0  # Beta prior beta → E[trust] = 0.25
+    max_designed_agents: int = 5  # Maximum self-created agent types in system
+    sandbox_timeout_seconds: float = 10.0  # Timeout for sandbox test execution
+    allowed_imports: list[str] = [
+        "asyncio", "pathlib", "json", "os", "re", "datetime",
+        "typing", "dataclasses", "collections", "math", "hashlib",
+        "urllib.parse", "base64", "csv", "io", "tempfile",
+    ]
+    forbidden_patterns: list[str] = [
+        r"subprocess", r"shutil\.rmtree", r"os\.remove", r"os\.unlink",
+        r"eval\s*\(", r"exec\s*\(", r"__import__",
+        r"open\s*\(.*['\"]w['\"]", r"socket\b", r"ctypes\b",
+    ]
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
@@ -134,6 +155,7 @@ class SystemConfig(BaseModel):
     dreaming: DreamingConfig = DreamingConfig()
     scaling: ScalingConfig = ScalingConfig()
     federation: FederationConfig = FederationConfig()
+    self_mod: SelfModConfig = SelfModConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

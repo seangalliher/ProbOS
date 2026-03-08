@@ -78,3 +78,8 @@ federation:
   forward_timeout_ms: 5000
   gossip_interval_seconds: 10
   validate_remote_results: true
+
+self_mod:
+  enabled: false
+  require_user_approval: true
+  max_designed_agents: 5
