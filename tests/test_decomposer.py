@@ -378,6 +378,79 @@ class TestReflectHardening:
         assert len(last.prompt) <= decomposer.REFLECT_PAYLOAD_BUDGET + 50  # +margin for suffix
         assert "[... results truncated ...]" in last.prompt
 
+
+# ---------------------------------------------------------------------------
+# Capability-gap detection
+# ---------------------------------------------------------------------------
+
+class TestCapabilityGapDetection:
+    """Tests for is_capability_gap() — distinguishes capability-gap responses
+    from genuine conversational replies."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "I don't have a translation capability",
+            "I can't translate text into Japanese",
+            "I'm unable to perform this operation",
+            "No built-in capability for code compilation",
+            "Translation is not supported",
+            "This is beyond my capabilities",
+            "I don't have the ability to do that",
+            "There is no native support for that feature",
+            "I cannot perform web searches",
+            "I lack the necessary tools for that",
+            "ProbOS doesn't have a mechanism for that",
+            "That is outside my scope",
+            "I can help with file operations, but I don't have a translation tool",
+            "Sorry, there's no way to do that currently",
+            "That capability is not available right now",
+            "I doesn't support image generation",  # doesn't have
+        ],
+    )
+    def test_detects_capability_gap(self, text: str) -> None:
+        from probos.cognitive.decomposer import is_capability_gap
+
+        assert is_capability_gap(text) is True, f"Expected gap for: {text!r}"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Hello! I'm ProbOS, your probabilistic operating system.",
+            "Here's what I found in the file:",
+            "The current time in Tokyo is 1:38 AM.",
+            "I can read files, write files, search, and run commands.",
+            "",
+            "Sure, I'd be happy to help with that!",
+            "The file contains 42 lines of Python code.",
+            "Done! The file has been written successfully.",
+        ],
+    )
+    def test_rejects_conversational_reply(self, text: str) -> None:
+        from probos.cognitive.decomposer import is_capability_gap
+
+        assert is_capability_gap(text) is False, f"False positive for: {text!r}"
+
+
+# ---------------------------------------------------------------------------
+# Reflect hardening (continued — timeout, exception, success)
+# ---------------------------------------------------------------------------
+
+class TestReflectHardeningExtended:
+    """Reflect tests that were originally part of TestReflectHardening."""
+
+    @pytest.fixture
+    def llm(self):
+        return MockLLMClient()
+
+    @pytest.fixture
+    def wm(self):
+        return WorkingMemoryManager()
+
+    @pytest.fixture
+    def decomposer(self, llm, wm):
+        return IntentDecomposer(llm_client=llm, working_memory=wm, timeout=2.0)
+
     @pytest.mark.asyncio
     async def test_reflect_timeout_returns_empty(self):
         """reflect() returns empty string when the LLM call times out."""

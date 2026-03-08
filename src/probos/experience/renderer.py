@@ -19,6 +19,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from probos.cognitive.decomposer import is_capability_gap
 from probos.experience.panels import render_dag_result
 from probos.types import TaskDAG, TaskNode
 
@@ -116,12 +117,17 @@ class ExecutionRenderer:
             ))
 
         if not dag.nodes:
-            # If the decomposer returned a conversational response, show it
-            # and skip self-mod.  The LLM chose to answer directly — respect
-            # that instead of trying to design a new agent for it.
-            if dag.response:
+            # If the decomposer returned a genuine conversational response
+            # (greeting, help text, etc.), show it and skip self-mod.
+            # But if the response indicates a *capability gap* ("I don't
+            # have X"), still let self-mod try to create the agent.
+            if dag.response and not is_capability_gap(dag.response):
                 self.console.print(f"[cyan]{dag.response}[/cyan]")
                 return self._empty_result(text, dag)
+
+            # Show the capability-gap response before self-mod kicks in
+            if dag.response:
+                self.console.print(f"[dim]{dag.response}[/dim]")
 
             # Self-modification: try to design an agent for this unhandled intent
             if self.runtime.self_mod_pipeline:
