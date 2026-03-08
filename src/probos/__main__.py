@@ -3,10 +3,12 @@
 Usage::
 
     uv run python -m probos
+    uv run python -m probos --config config/node-1.yaml
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import tempfile
@@ -35,6 +37,8 @@ def _setup_logging(log_level: str) -> None:
     logging.getLogger("aiosqlite").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("probos.substrate.agent").setLevel(logging.WARNING)
+    logging.getLogger("probos.federation").setLevel(logging.WARNING)
 
 
 async def _create_llm_client(config, console: Console):
@@ -76,7 +80,7 @@ async def _create_llm_client(config, console: Console):
     return MockLLMClient()
 
 
-async def _boot_and_run() -> None:
+async def _boot_and_run(config_path: Path | None = None) -> None:
     console = Console()
 
     # Banner
@@ -88,8 +92,9 @@ async def _boot_and_run() -> None:
     console.print()
 
     # Load config
-    project_root = Path(__file__).resolve().parent.parent.parent
-    config_path = project_root / "config" / "system.yaml"
+    if config_path is None:
+        project_root = Path(__file__).resolve().parent.parent.parent
+        config_path = project_root / "config" / "system.yaml"
     config = load_config(config_path)
 
     _setup_logging(config.system.log_level)
@@ -150,8 +155,22 @@ async def _boot_and_run() -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="ProbOS — Probabilistic Agent-Native OS")
+    parser.add_argument(
+        "--config", "-c",
+        type=Path,
+        default=None,
+        help="Path to config YAML (default: config/system.yaml)",
+    )
+    args = parser.parse_args()
+
+    # Windows ProactorEventLoop doesn't support add_reader required by pyzmq.
+    import sys
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     try:
-        asyncio.run(_boot_and_run())
+        asyncio.run(_boot_and_run(config_path=args.config))
     except KeyboardInterrupt:
         pass
 

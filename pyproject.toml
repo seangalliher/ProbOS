@@ -13,6 +13,7 @@ dependencies = [
     "aiosqlite>=0.19",
     "rich>=13.0",
     "httpx>=0.27",
+    "pyzmq>=27.1.0",
 ]
 
 [project.optional-dependencies]

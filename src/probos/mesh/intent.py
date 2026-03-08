@@ -33,6 +33,7 @@ class IntentBus:
         self._result_events: dict[str, asyncio.Event] = {}
         self._broadcast_timestamps: list[tuple[float, str]] = []  # (monotonic_time, intent_name)
         self._window_seconds: float = 60.0
+        self._federation_fn: Callable[[IntentMessage], Awaitable[list[IntentResult]]] | None = None
 
     def subscribe(self, agent_id: str, handler: IntentHandler) -> None:
         """Register an agent's intent handler."""
@@ -50,6 +51,8 @@ class IntentBus:
         self,
         intent: IntentMessage,
         timeout: float | None = None,
+        *,
+        federated: bool = True,
     ) -> list[IntentResult]:
         """Broadcast an intent to all subscribers, collect results.
 
@@ -90,6 +93,14 @@ class IntentBus:
 
         results = self._pending_results.pop(intent.id, [])
         self._signal_manager.untrack(intent.id)
+
+        # Federation: forward to peers if enabled and not an inbound federated intent
+        if federated and self._federation_fn:
+            try:
+                remote_results = await self._federation_fn(intent)
+                results.extend(remote_results)
+            except Exception as e:
+                logger.debug("Federation forwarding failed: %s", e)
 
         logger.info(
             "Intent resolved: %s id=%s results=%d",

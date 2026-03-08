@@ -41,6 +41,8 @@ class ProbOSShell:
         "/dream":     "Show last dream report (/dream now to trigger cycle)",
         "/cache":     "Show workflow cache entries",
         "/scaling":   "Show pool scaling status",
+        "/federation": "Show federation status",
+        "/peers":     "Show peer node models",
         "/explain":   "Explain what happened in the last NL request",
         "/model":     "Show LLM client type, endpoint, and tier config",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
@@ -137,6 +139,8 @@ class ProbOSShell:
             "/dream":     self._cmd_dream,
             "/cache":     self._cmd_cache,
             "/scaling":   self._cmd_scaling,
+            "/federation": self._cmd_federation,
+            "/peers":     self._cmd_peers,
             "/explain":   self._cmd_explain,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
@@ -277,6 +281,21 @@ class ProbOSShell:
             self.console.print("[yellow]Pool scaling is disabled.[/yellow]")
             return
         self.console.print(panels.render_scaling_panel(scaler.scaling_status()))
+
+    async def _cmd_federation(self, arg: str) -> None:
+        bridge = self.runtime.federation_bridge
+        if not bridge:
+            self.console.print("[yellow]Federation is not enabled.[/yellow]")
+            return
+        self.console.print(panels.render_federation_panel(bridge.federation_status()))
+
+    async def _cmd_peers(self, arg: str) -> None:
+        bridge = self.runtime.federation_bridge
+        if not bridge:
+            self.console.print("[yellow]Federation is not enabled.[/yellow]")
+            return
+        status = bridge.federation_status()
+        self.console.print(panels.render_peers_panel(status.get("peer_models", {})))
 
     async def _cmd_explain(self, arg: str) -> None:
         await self._handle_nl("what just happened?")

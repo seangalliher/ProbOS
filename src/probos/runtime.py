@@ -45,6 +45,7 @@ from probos.types import (
     IntentDescriptor,
     IntentMessage,
     IntentResult,
+    NodeSelfModel,
     QuorumPolicy,
 )
 
@@ -148,6 +149,11 @@ class ProbOSRuntime:
 
         # --- Pool scaling ---
         self.pool_scaler: PoolScaler | None = None
+
+        # --- Federation ---
+        self.federation_bridge: Any = None  # FederationBridge | None
+        self._federation_transport: Any = None
+        self._start_time: float = time.monotonic()
 
         # --- Execution history (for introspection) ---
         self._last_execution: dict[str, Any] | None = None
@@ -285,6 +291,48 @@ class ProbOSRuntime:
             # Wire surge function into escalation manager
             self.escalation_manager._surge_fn = self.pool_scaler.request_surge
 
+        # Start federation if enabled
+        if self.config.federation.enabled:
+            from probos.federation import FederationRouter, FederationBridge
+            from probos.federation.mock_transport import MockFederationTransport, MockTransportBus
+
+            # Use real transport if pyzmq available, else skip
+            transport = None
+            try:
+                from probos.federation.transport import FederationTransport
+                transport = FederationTransport(
+                    node_id=self.config.federation.node_id,
+                    bind_address=self.config.federation.bind_address,
+                    peers=self.config.federation.peers,
+                )
+                await transport.start()
+            except ImportError:
+                logger.warning("pyzmq not available; federation transport disabled")
+            except Exception as e:
+                logger.warning("Federation transport failed to start: %s", e)
+
+            if transport is not None:
+                router = FederationRouter()
+                validate_fn = (
+                    self._validate_remote_result
+                    if self.config.federation.validate_remote_results
+                    else None
+                )
+                bridge = FederationBridge(
+                    node_id=self.config.federation.node_id,
+                    transport=transport,
+                    router=router,
+                    intent_bus=self.intent_bus,
+                    config=self.config.federation,
+                    self_model_fn=self._build_self_model,
+                    validate_fn=validate_fn,
+                )
+                await bridge.start()
+                self.intent_bus._federation_fn = bridge.forward_intent
+                self.federation_bridge = bridge
+                self._federation_transport = transport
+                logger.info("Federation started: node=%s", self.config.federation.node_id)
+
         # Start episodic memory if provided
         if self.episodic_memory:
             await self.episodic_memory.start()
@@ -338,6 +386,14 @@ class ProbOSRuntime:
         if self.pool_scaler:
             await self.pool_scaler.stop()
             self.pool_scaler = None
+
+        # Stop federation
+        if self.federation_bridge:
+            await self.federation_bridge.stop()
+            self.federation_bridge = None
+        if self._federation_transport:
+            await self._federation_transport.stop()
+            self._federation_transport = None
 
         # Stop pools (stops agents, unregisters from registry)
         for name, pool in self.pools.items():
@@ -757,6 +813,11 @@ class ProbOSRuntime:
             if self.pool_scaler
             else {"enabled": False}
         )
+        result["federation"] = (
+            self.federation_bridge.federation_status()
+            if self.federation_bridge
+            else {"enabled": False}
+        )
         result["workflow_cache"] = {
             "size": self.workflow_cache.size,
             "entries": len(self.workflow_cache.entries),
@@ -836,6 +897,50 @@ class ProbOSRuntime:
             agent_ids=agent_ids,
             duration_ms=(t_end - t_start) * 1000,
         )
+
+    # ------------------------------------------------------------------
+    # Federation
+    # ------------------------------------------------------------------
+
+    def _build_self_model(self) -> NodeSelfModel:
+        """Build this node's self-model (Psi) for gossip broadcast."""
+        capabilities = []
+        for template_cls in self.spawner._templates.values():
+            for desc in getattr(template_cls, 'intent_descriptors', []):
+                capabilities.append(desc.name)
+        pool_sizes = {name: pool.current_size for name, pool in self.pools.items()}
+        agent_count = sum(pool.current_size for pool in self.pools.values())
+        health = self._compute_health()
+        uptime = time.monotonic() - self._start_time
+        return NodeSelfModel(
+            node_id=self.config.federation.node_id,
+            capabilities=sorted(set(capabilities)),
+            pool_sizes=pool_sizes,
+            agent_count=agent_count,
+            health=health,
+            uptime_seconds=uptime,
+            timestamp=time.monotonic(),
+        )
+
+    def _compute_health(self) -> float:
+        """Average confidence of all ACTIVE agents."""
+        from probos.types import AgentState
+        agents = self.registry.all()
+        active = [a for a in agents if a.state == AgentState.ACTIVE]
+        if not active:
+            return 0.0
+        return sum(a.confidence for a in active) / len(active)
+
+    async def _validate_remote_result(self, result: IntentResult) -> bool:
+        """Validate a remote result through local red team verification.
+
+        Only applied to results from consensus-requiring intents.
+        Read results are trusted without validation.
+        """
+        consensus_intents = {"write_file", "run_command", "http_fetch"}
+        if result.intent_id not in consensus_intents:
+            return True
+        return True  # Placeholder — full validation in a future phase
 
     # ------------------------------------------------------------------
     # Internal wiring

@@ -177,9 +177,12 @@ class IntrospectionAgent(BaseAgent):
                 agents = [agent]
         elif agent_type:
             agents = [a for a in rt.registry.all() if a.agent_type == agent_type]
+        else:
+            # No filter — return all agents
+            agents = list(rt.registry.all())
 
         if not agents:
-            qualifier = agent_type or agent_id or "unknown"
+            qualifier = agent_type or agent_id or "all"
             return {
                 "success": True,
                 "data": {"agents": [], "message": f"No agents found matching: {qualifier}"},

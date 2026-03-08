@@ -1,0 +1,21 @@
+# ProbOS Node 1 Configuration — Federation Leader
+system:
+  name: "ProbOS"
+  version: "0.1.0"
+  log_level: "INFO"
+
+pools:
+  default_pool_size: 3
+  max_pool_size: 7
+  min_pool_size: 2
+
+federation:
+  enabled: true
+  node_id: "node-1"
+  bind_address: "tcp://127.0.0.1:5555"
+  peers:
+    - node_id: "node-2"
+      address: "tcp://127.0.0.1:5556"
+  forward_timeout_ms: 5000
+  gossip_interval_seconds: 10
+  validate_remote_results: true

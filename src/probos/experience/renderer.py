@@ -243,6 +243,10 @@ class ExecutionRenderer:
             pass  # Logged by scaler; no node status change needed
         elif event == "scale_down":
             pass  # Logged by scaler; no node status change needed
+        elif event == "federation_forward":
+            pass  # Logged by bridge; no node status change needed
+        elif event == "federation_receive":
+            pass  # Logged by bridge; no node status change needed
 
 
 

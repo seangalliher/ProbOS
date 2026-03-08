@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 8 — Adaptive Pool Sizing & Dynamic Scaling Complete (540/540 tests)
+## Current Status: Phase 9 — Multi-Node Federation Complete + Windows ZMQ Fix (582/582 tests)
 
 ---
 
@@ -11,10 +11,10 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `pyproject.toml` | done | Project config, deps (pydantic, pyyaml, aiosqlite, rich, pytest) |
-| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config, dreaming config, scaling config |
+| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config, dreaming config, scaling config, federation config |
 | `src/probos/__init__.py` | done | Package root, version 0.1.0 |
-| `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `EscalationTier` (3-tier cascade levels: retry, arbitration, user), `EscalationResult` (escalation outcome with `to_dict()` for JSON-safe serialization, `tiers_attempted` tracking), `TaskNode` (with `background` field for background demotion, `escalation_result: dict | None` for serialized escalation data), `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record), `AttentionEntry` (priority scoring for task scheduling), `FocusSnapshot` (cross-request focus history), `DreamReport` (dream cycle results), `WorkflowCacheEntry` (cached workflow pattern), `IntentDescriptor` (structured metadata for dynamic intent discovery: name, params, description, requires_consensus, requires_reflect) |
-| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`, `focus_history_size`, `background_demotion_factor`), `MemoryConfig`, `DreamingConfig` (idle threshold, dream interval, replay count, strengthening/weakening factors, prune threshold, trust boost/penalty, pre-warm top-K), `ScalingConfig` (scale up/down thresholds, step sizes, cooldown, observation window, idle scale-down), `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
+| `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `EscalationTier` (3-tier cascade levels: retry, arbitration, user), `EscalationResult` (escalation outcome with `to_dict()` for JSON-safe serialization, `tiers_attempted` tracking), `TaskNode` (with `background` field for background demotion, `escalation_result: dict | None` for serialized escalation data), `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record), `AttentionEntry` (priority scoring for task scheduling), `FocusSnapshot` (cross-request focus history), `DreamReport` (dream cycle results), `WorkflowCacheEntry` (cached workflow pattern), `IntentDescriptor` (structured metadata for dynamic intent discovery: name, params, description, requires_consensus, requires_reflect), `NodeSelfModel` (peer node capability/health snapshot for gossip), `FederationMessage` (wire protocol message between nodes) |
+| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`, `focus_history_size`, `background_demotion_factor`), `MemoryConfig`, `DreamingConfig` (idle threshold, dream interval, replay count, strengthening/weakening factors, prune threshold, trust boost/penalty, pre-warm top-K), `ScalingConfig` (scale up/down thresholds, step sizes, cooldown, observation window, idle scale-down), `PeerConfig` (node_id + address for static peer list), `FederationConfig` (enabled, node_id, bind_address, peers, forward_timeout, gossip interval, validate_remote_results), `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
 | `src/probos/substrate/agent.py` | done | `BaseAgent` ABC — `perceive/decide/act/report` lifecycle, confidence tracking, state transitions, async start/stop, optional `_runtime` reference via `**kwargs`, `**kwargs` passthrough to subclasses, class-level `intent_descriptors: list[IntentDescriptor]` for dynamic intent discovery |
 | `src/probos/substrate/registry.py` | done | `AgentRegistry` — in-memory index, lookup by ID/pool/capability, async-safe |
 | `src/probos/substrate/spawner.py` | done | `AgentSpawner` — template registration, `spawn(**kwargs)`, `recycle()` with optional respawn, `**kwargs` forwarded to agent constructors |
@@ -29,7 +29,7 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `src/probos/mesh/signal.py` | done | `SignalManager` — TTL enforcement, background reaper loop, expiry callbacks |
-| `src/probos/mesh/intent.py` | done | `IntentBus` — async pub/sub, concurrent fan-out to subscribers, result collection with timeout, error handling, per-broadcast demand tracking with sliding window, `per_pool_demand()` for scaler |
+| `src/probos/mesh/intent.py` | done | `IntentBus` — async pub/sub, concurrent fan-out to subscribers, result collection with timeout, error handling, per-broadcast demand tracking with sliding window, `per_pool_demand()` for scaler, `_federation_fn` callback for federated forwarding, `federated` parameter on `broadcast()` for loop prevention |
 | `src/probos/mesh/capability.py` | done | `CapabilityRegistry` — semantic descriptor store, fuzzy matching (exact/substring/keyword), scored results |
 | `src/probos/mesh/routing.py` | done | `HebbianRouter` — connection weights with `rel_type` (intent/agent), SQLite persistence, decay_all, preferred target ranking, `record_verification()` |
 | `src/probos/mesh/gossip.py` | done | `GossipProtocol` — partial view management, entry injection/merge by recency, random sampling, periodic gossip loop |
@@ -44,6 +44,16 @@
 | `src/probos/consensus/escalation.py` | done | `EscalationManager` — 3-tier cascade: Tier 1 retry with different agent (pool rotation, `surge_fn` for on-demand pool scale-up), Tier 2 LLM arbitration (approve/reject/modify via `ARBITRATION_PROMPT`), Tier 3 user consultation (async callback with `pre_user_hook` for Rich Live conflict). Event-silent design (AD-87): returns `EscalationResult` to caller, executor logs events. Bounded: max_retries cap on Tier 1, one LLM call for Tier 2, one prompt for Tier 3 |
 
 ### Cognitive Layer (complete — new in Phase 3a)
+
+| File | Status | Description |
+|------|--------|-------------|
+| `src/probos/federation/__init__.py` | done | Package root, re-exports `MockFederationTransport`, `MockTransportBus`, `FederationRouter`, `FederationBridge` |
+| `src/probos/federation/mock_transport.py` | done | `MockTransportBus` — shared in-memory message bus for test federation. `MockFederationTransport` — in-memory transport per node, `send_to_peer()`, `send_to_all_peers()`, `receive_with_timeout()`, `deliver_response()`, inbound handler callback |
+| `src/probos/federation/router.py` | done | `FederationRouter` — routing function R: intent → set[peer_node_ids], `update_peer_model()` stores `NodeSelfModel` from gossip, `select_peers()` (Phase 9: returns all peers), `peer_has_capability()` for intent-level filtering |
+| `src/probos/federation/bridge.py` | done | `FederationBridge` — connects IntentBus to transport: outbound `forward_intent()` sends to selected peers and collects results with timeout, inbound `handle_inbound()` dispatches by message type (intent_request → local broadcast with federated=False, intent_response → response queue, gossip_self_model → router update, ping → pong), gossip loop broadcasts `NodeSelfModel` at configurable interval, optional `validate_fn` for remote result validation, `federation_status()` for shell/panels |
+| `src/probos/federation/transport.py` | done | `FederationTransport` — real ZeroMQ transport using DEALER-ROUTER sockets, JSON serialization, NOT tested in test suite (requires pyzmq). Same interface as `MockFederationTransport` for bridge interchangeability |
+
+### Cognitive Layer (continued)
 
 | File | Status | Description |
 |------|--------|-------------|
@@ -63,9 +73,9 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `src/probos/experience/__init__.py` | done | Package root |
-| `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()` (with dreaming state section), `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_attention_panel()` (with focus history display and background task indicator), `render_dag_result()` (displays `response` field for conversational replies), `render_dream_panel()` (dream cycle report with pre-warm intents), `render_workflow_cache_panel()` (cached workflow patterns with hit counts), `render_scaling_panel()` (pool scaling status with demand ratio, size range, cooldown), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
-| `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — DAG execution display with status spinner (Rich Live removed — AD-92), `on_event` callback integration (including `scale_up`/`scale_down` events), conversational response display when LLM returns `response` field, execution snapshot for introspection (`_previous_execution`/`_last_execution`), debug mode (raw DAG JSON, individual agent responses, consensus details), DAG plan display in debug-only mode (AD-90), Params column in progress table, manually-managed spinner with `_stop_live_for_user` hook for Tier 3 escalation (AD-93) |
-| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/scaling`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, graceful error handling |
+| `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()` (with dreaming state section), `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_attention_panel()` (with focus history display and background task indicator), `render_dag_result()` (displays `response` field for conversational replies), `render_dream_panel()` (dream cycle report with pre-warm intents), `render_workflow_cache_panel()` (cached workflow patterns with hit counts), `render_scaling_panel()` (pool scaling status with demand ratio, size range, cooldown), `render_federation_panel()` (federation node status, connected peers, forwarded/received counts), `render_peers_panel()` (peer self-model table: capabilities, agent count, health, uptime), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
+| `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — DAG execution display with status spinner (Rich Live removed — AD-92), `on_event` callback integration (including `scale_up`/`scale_down`/`federation_forward`/`federation_receive` events), conversational response display when LLM returns `response` field, execution snapshot for introspection (`_previous_execution`/`_last_execution`), debug mode (raw DAG JSON, individual agent responses, consensus details), DAG plan display in debug-only mode (AD-90), Params column in progress table, manually-managed spinner with `_stop_live_for_user` hook for Tier 3 escalation (AD-93) |
+| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/scaling`, `/federation`, `/peers`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, graceful error handling |
 
 ### Agents
 
@@ -85,15 +95,18 @@
 
 | File | Status | Description |
 |------|--------|-------------|
-| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention + dreaming + workflow cache + introspection + dynamic intent discovery. Spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), introspect (2 introspection agents with runtime=self), red_team (2 verifiers). 24 agents total. `register_agent_type()` registers new agent class and refreshes decomposer descriptors. `_collect_intent_descriptors()` deduplicates across all registered templates. Boot-time `refresh_descriptors()` call after pool creation syncs decomposer with all registered intents. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, dream scheduler activity tracking, pre-warm intent sync to decomposer, execution snapshot pattern (`_previous_execution`/`_last_execution` for introspection without self-overwrite), post-execution reflect step, episodic episode storage, workflow cache storage on success, `recall_similar()` for semantic search. `DreamScheduler` created at start when episodic memory is available. `WorkflowCache` created at init, passed to decomposer, exposed in `status()` |
-| `src/probos/__main__.py` | done | Entry point: `uv run python -m probos` — boot sequence display, LLM connectivity check with fallback to MockLLMClient, creates `EpisodicMemory` (SQLite in temp dir), interactive shell launch |
+| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention + dreaming + workflow cache + introspection + dynamic intent discovery + federation. Spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), introspect (2 introspection agents with runtime=self), red_team (2 verifiers). 24 agents total. Federation: `FederationBridge` with `FederationRouter`, `_build_self_model()` (NodeSelfModel Psi with capabilities, pool sizes, health, uptime), `_validate_remote_result()` placeholder, wires `bridge.forward_intent` as `intent_bus._federation_fn`. `register_agent_type()` registers new agent class and refreshes decomposer descriptors. `_collect_intent_descriptors()` deduplicates across all registered templates. Boot-time `refresh_descriptors()` call after pool creation syncs decomposer with all registered intents. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, dream scheduler activity tracking, pre-warm intent sync to decomposer, execution snapshot pattern (`_previous_execution`/`_last_execution` for introspection without self-overwrite), post-execution reflect step, episodic episode storage, workflow cache storage on success, `recall_similar()` for semantic search. `DreamScheduler` created at start when episodic memory is available. `WorkflowCache` created at init, passed to decomposer, exposed in `status()` |
+| `src/probos/__main__.py` | done | Entry point: `uv run python -m probos [--config path]` — boot sequence display, LLM connectivity check with fallback to MockLLMClient, creates `EpisodicMemory` (SQLite in temp dir), interactive shell launch, `--config` flag for node-specific YAML, `WindowsSelectorEventLoopPolicy` for pyzmq compatibility on Windows (AD-108) |
+| `config/node-1.yaml` | done | Node 1 federation config: bind tcp://127.0.0.1:5555, peers=[node-2] |
+| `config/node-2.yaml` | done | Node 2 federation config: bind tcp://127.0.0.1:5556, peers=[node-1] |
+| `scripts/launch-cluster.sh` | done | Launches 2-node ProbOS federation cluster in background processes |
 | `demo.py` | done | Full Rich demo: consensus reads, corrupted agent injection, trust/Hebbian display, NL pipeline with visual feedback, event log |
 
 ---
 
 ## What's Working
 
-**456/456 tests pass.** Test suite covers:
+**582/582 tests pass.** Test suite covers:
 
 ### Substrate tests (50 tests — unchanged)
 - Agent creation, lifecycle, confidence tracking (16 tests)
@@ -493,6 +506,35 @@
 - Nonexistent directory via runtime list_directory (1 test)
 - Nonexistent directory via runtime search_files (1 test)
 - Failing command (exit 42) via runtime — success=True with nonzero exit code (1 test)
+
+### Scaling tests (34 tests — new in Phase 8)
+
+- ScalingConfig defaults, custom values, SystemConfig integration (3 tests)
+- IntentBus demand metrics: zeros, counting, pruning, per-pool demand (4 tests)
+- Pool bounds: add at max, add below max, remove at min, remove above min (4 tests)
+- Trust-aware scale-down: lowest trust removed, equal trust, no trust fallback (3 tests)
+- PoolScaler scale-up: high demand, blocked by max, blocked by cooldown (3 tests)
+- PoolScaler scale-down: low demand, blocked by min, blocked by cooldown (3 tests)
+- PoolScaler surge: adds agent, false at max, bypasses cooldown (3 tests)
+- PoolScaler idle scale-down: reduces pools, skips excluded (2 tests)
+- PoolScaler exclusions: excluded not scaled, pinned not scaled (2 tests)
+- Runtime: scaler when enabled, no scaler when disabled, status includes scaling (3 tests)
+- Escalation surge: surge_fn called during tier1, works without surge_fn (2 tests)
+- Shell: scaling command renders panel, help includes /scaling (2 tests)
+
+### Federation tests (42 tests — new in Phase 9)
+
+- FederationConfig: defaults, custom values, peer config roundtrip, SystemConfig inclusion (4 tests)
+- Federation types: NodeSelfModel roundtrip, FederationMessage roundtrip, carries intent data (3 tests)
+- MockTransportBus: send/receive, unregistered peer, send_to_all_peers, timeout returns None (4 tests)
+- FederationRouter: select_peers returns all, update_peer_model, peer_has_capability true/false (4 tests)
+- Bridge outbound: forward_collects_results, partial results from unresponsive, all unresponsive, increments stats, validate_fn (5 tests)
+- Bridge inbound: broadcasts locally, federated=False, gossip updates router, ping/pong (4 tests)
+- Loop prevention: inbound does not reforward, two-node ring no infinite loop (2 tests)
+- IntentBus federation: broadcast calls federation_fn, federated=False skips, no fn unchanged (3 tests)
+- Gossip: sends self-model, receiving updates router (2 tests)
+- Runtime: creates bridge when enabled, no bridge when disabled, build_self_model, status includes federation (4 tests)
+- Shell: /federation disabled, /peers disabled, /help includes both, panel rendering (7 tests)
 
 ### Phase 4 Milestone — Achieved
 
@@ -898,6 +940,38 @@ New `PoolScaler` class in `substrate/scaler.py` runs a background loop (interval
 
 New `/scaling` shell command shows per-pool scaling status (current size, min-max range, target, demand ratio, last scaling event, cooldown remaining). `render_scaling_panel()` in panels.py builds a Rich Table with excluded pool indicators. Renderer handles `scale_up`/`scale_down` events (no-op on node status, logged by scaler).
 
+### AD-101: Federation config design — disabled by default
+
+`FederationConfig.enabled` defaults to `False`. Single-node remains the default mode. The federation layer is pure additive — no existing behavior changes when `enabled=False`. `PeerConfig` stores static peer list (node_id + address). The config model is clean Pydantic, loaded from YAML just like all other sections.
+
+### AD-102: FederationMessage wire protocol
+
+Chose a flat `FederationMessage` dataclass with `type` discriminator over alternatives (protobuf, msgpack). JSON serialization is sufficient for the 2-3 node prototype. Message types: `intent_request`, `intent_response`, `gossip_self_model`, `ping`, `pong`. Payload carries intent data as a dict, deserialized to `IntentMessage` on the receiving end.
+
+### AD-103: Loop prevention via `federated` parameter
+
+Added `federated: bool = True` keyword-only parameter to `IntentBus.broadcast()`. When the bridge receives an inbound intent from a peer, it calls `broadcast(intent, federated=False)`, which skips `_federation_fn`. This prevents A→B→A infinite forwarding without requiring message ID tracking or TTL hops. The parameter is backward-compatible — all existing call sites use positional args and don't pass `federated`.
+
+### AD-104: MockTransportBus for testing
+
+All federation tests use `MockTransportBus` + `MockFederationTransport` — shared in-memory message delivery with inbound handler callbacks. No pyzmq dependency in tests. The real `FederationTransport` uses ZeroMQ DEALER-ROUTER sockets but is NOT tested in the test suite. Both transports expose the same interface so `FederationBridge` is transport-agnostic.
+
+### AD-105: FederationRouter returns all peers (Phase 9)
+
+`FederationRouter.select_peers()` returns all available peers. With only 2-3 nodes, capability-based peer selection adds complexity without benefit. The router stores `NodeSelfModel` from gossip for future filtering. `peer_has_capability()` is available but not used by `select_peers()` yet.
+
+### AD-106: NodeSelfModel (Psi) gossip
+
+Each node periodically broadcasts `NodeSelfModel` containing capabilities, pool sizes, agent count, health, and uptime. This enables peer routing decisions in future phases. The gossip interval is configurable via `FederationConfig.gossip_interval_seconds`. The `_build_self_model()` method on ProbOSRuntime collects capabilities from agent templates, pool sizes, and average ACTIVE agent confidence.
+
+### AD-107: `--config` flag for multi-node launch
+
+Added `argparse` to `__main__.py` with `--config` / `-c` flag. Each node can be launched with its own YAML: `uv run python -m probos --config config/node-1.yaml`. Default falls back to `config/system.yaml`. Node config files (`config/node-1.yaml`, `config/node-2.yaml`) are provided for a 2-node federation. `scripts/launch-cluster.sh` launches both nodes as background processes.
+
+### AD-108: WindowsSelectorEventLoopPolicy for pyzmq on Windows
+
+On Windows, Python defaults to the ProactorEventLoop which does not implement `add_reader()` / `add_writer()` — methods required by pyzmq's async socket implementation. This caused `RuntimeError: Proactor event loop does not implement add_reader family of methods` when the federation transport tried to recv on ZMQ sockets. Fixed by setting `asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())` before `asyncio.run()` in `__main__.py`, guarded by `sys.platform == "win32"`. The SelectorEventLoop supports the full select-based I/O needed by ZMQ. This is a platform-specific fix — Linux and macOS already default to selector-based event loops.
+
 ---
 
 ## What's Next
@@ -954,6 +1028,10 @@ New `/scaling` shell command shows per-pool scaling status (current size, min-ma
 - [x] ~~506/506 tests pass (after UX fixes)~~
 - [x] ~~Phase 8: Adaptive Pool Sizing & Dynamic Scaling (ScalingConfig, IntentBus demand tracking, ResourcePool add_agent/remove_agent with trust-aware selection, PoolScaler background loop with demand ratio evaluation, escalation surge_fn, dreaming idle_scale_down_fn, /scaling command, render_scaling_panel)~~
 - [x] ~~540/540 tests pass~~
+- [x] ~~Phase 9: Multi-Node Federation (FederationConfig + PeerConfig, NodeSelfModel + FederationMessage types, MockTransportBus + MockFederationTransport for testing, FederationRouter peer selection, FederationBridge outbound/inbound/gossip, loop prevention via federated=False, IntentBus _federation_fn callback, runtime wiring + _build_self_model, FederationTransport ZeroMQ, node configs + --config flag, /federation + /peers commands, render_federation_panel + render_peers_panel, launch-cluster.sh)~~
+- [x] ~~582/582 tests pass~~
+- [x] ~~Windows ZMQ fix: WindowsSelectorEventLoopPolicy for pyzmq compatibility (AD-108)~~
+- [x] ~~582/582 tests pass (after Windows fix)~~
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
 

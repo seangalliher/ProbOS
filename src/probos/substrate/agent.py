@@ -87,7 +87,7 @@ class BaseAgent(ABC):
             except asyncio.CancelledError:
                 pass
         self._task = None
-        logger.info("Agent stopped: type=%s id=%s", self.agent_type, self.id[:8])
+        logger.debug("Agent stopped: type=%s id=%s", self.agent_type, self.id[:8])
 
     @property
     def is_alive(self) -> bool:

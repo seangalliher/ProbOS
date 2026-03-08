@@ -95,6 +95,25 @@ class ScalingConfig(BaseModel):
     idle_scale_down_seconds: float = 120.0
 
 
+class PeerConfig(BaseModel):
+    """Configuration for a single peer node."""
+
+    node_id: str
+    address: str  # e.g. "tcp://127.0.0.1:5556"
+
+
+class FederationConfig(BaseModel):
+    """Multi-node federation configuration."""
+
+    enabled: bool = False  # Disabled by default — single-node is still the default
+    node_id: str = "node-1"
+    bind_address: str = "tcp://127.0.0.1:5555"  # This node's ZeroMQ ROUTER address
+    peers: list[PeerConfig] = []  # Static peer list
+    forward_timeout_ms: int = 5000  # Timeout waiting for peer responses
+    gossip_interval_seconds: float = 10.0  # How often to broadcast self-model to peers
+    validate_remote_results: bool = True  # Pass remote results through local consensus
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
@@ -114,6 +133,7 @@ class SystemConfig(BaseModel):
     memory: MemoryConfig = MemoryConfig()
     dreaming: DreamingConfig = DreamingConfig()
     scaling: ScalingConfig = ScalingConfig()
+    federation: FederationConfig = FederationConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

@@ -229,6 +229,26 @@ class TestIntrospectionAgent:
         await agent.stop()
 
     @pytest.mark.asyncio
+    async def test_agent_info_no_filter_returns_all(self):
+        """agent_info with no agent_type or agent_id returns all agents."""
+        agents = [
+            _make_agent("file_reader", "fr1"),
+            _make_agent("file_writer", "fw1"),
+            _make_agent("introspect", "in1"),
+        ]
+        rt = _mock_runtime(agents=agents)
+        agent = IntrospectionAgent(pool="introspect", runtime=rt)
+        await agent.start()
+
+        msg = IntentMessage(intent="agent_info", params={})
+        result = await agent.handle_intent(msg)
+
+        assert result is not None
+        assert result.success is True
+        assert len(result.result["agents"]) == 3
+        await agent.stop()
+
+    @pytest.mark.asyncio
     async def test_agent_info_includes_hebbian_context(self):
         """agent_info result includes Hebbian weight info."""
         mock_agent = _make_agent("file_reader", "agent_hebb")
