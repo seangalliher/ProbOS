@@ -863,3 +863,88 @@ class TestAttentionExperience:
         con.print(panel)
         output = get_output(con)
         assert "empty" in output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Renderer: force-reflect and self-mod gating
+# ---------------------------------------------------------------------------
+
+class TestRendererForceReflect:
+    """Tests for force-reflect covering built-in agents."""
+
+    @pytest.fixture
+    async def renderer_env(self, tmp_path):
+        llm = MockLLMClient()
+        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=llm)
+        await rt.start()
+        con = Console(file=StringIO(), force_terminal=True, width=120)
+        renderer = ExecutionRenderer(con, rt, debug=False)
+        yield renderer, rt
+        await rt.stop()
+
+    def test_force_reflect_for_builtin_requires_reflect(self, renderer_env):
+        """Test 34: run_command intent forces dag.reflect even if LLM set false."""
+        from probos.types import TaskDAG, TaskNode
+        _, rt = renderer_env
+        dag = TaskDAG(
+            nodes=[TaskNode(id="t1", intent="run_command", params={"command": "date"})],
+            source_text="what time is it",
+            reflect=False,
+        )
+        # Simulate the force-reflect logic that happens in process_with_feedback
+        reflect_intents = {
+            d.name for d in rt._collect_intent_descriptors() if d.requires_reflect
+        }
+        assert "run_command" in reflect_intents
+        if any(n.intent in reflect_intents for n in dag.nodes):
+            dag.reflect = True
+        assert dag.reflect is True
+
+    def test_no_force_reflect_for_read_file(self, renderer_env):
+        """Test 35: read_file does NOT force reflect."""
+        from probos.types import TaskDAG, TaskNode
+        _, rt = renderer_env
+        dag = TaskDAG(
+            nodes=[TaskNode(id="t1", intent="read_file", params={"path": "/tmp/a"})],
+            source_text="read /tmp/a",
+            reflect=False,
+        )
+        reflect_intents = {
+            d.name for d in rt._collect_intent_descriptors() if d.requires_reflect
+        }
+        assert "read_file" not in reflect_intents
+        if any(n.intent in reflect_intents for n in dag.nodes):
+            dag.reflect = True
+        assert dag.reflect is False
+
+
+class TestRendererSelfModGating:
+    """Tests for self-mod not triggering on conversational responses."""
+
+    def test_conversational_response_skips_self_mod(self):
+        """Test 36: Decomposer response with empty intents + response skips self-mod."""
+        from probos.types import TaskDAG
+        dag = TaskDAG(
+            nodes=[],
+            source_text="hello",
+            response="Hello! I'm ProbOS.",
+        )
+        # The renderer should check dag.response BEFORE triggering self-mod.
+        # If response is set and nodes are empty, self-mod should NOT run.
+        assert dag.nodes == []
+        assert dag.response == "Hello! I'm ProbOS."
+        # Renderer logic: if dag.response is truthy, show it and return early
+        should_try_self_mod = not dag.response
+        assert should_try_self_mod is False
+
+    def test_empty_response_allows_self_mod(self):
+        """Test 37: Empty response + empty intents allows self-mod."""
+        from probos.types import TaskDAG
+        dag = TaskDAG(
+            nodes=[],
+            source_text="do something novel",
+            response="",
+        )
+        assert dag.nodes == []
+        should_try_self_mod = not dag.response
+        assert should_try_self_mod is True

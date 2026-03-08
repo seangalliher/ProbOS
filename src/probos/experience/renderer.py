@@ -116,6 +116,13 @@ class ExecutionRenderer:
             ))
 
         if not dag.nodes:
+            # If the decomposer returned a conversational response, show it
+            # and skip self-mod.  The LLM chose to answer directly — respect
+            # that instead of trying to design a new agent for it.
+            if dag.response:
+                self.console.print(f"[cyan]{dag.response}[/cyan]")
+                return self._empty_result(text, dag)
+
             # Self-modification: try to design an agent for this unhandled intent
             if self.runtime.self_mod_pipeline:
                 with self.console.status(
@@ -220,10 +227,7 @@ class ExecutionRenderer:
                             )
 
         if not dag.nodes:
-            if dag.response:
-                self.console.print(f"[cyan]{dag.response}[/cyan]")
-            else:
-                self.console.print("[yellow]No actionable intents recognized.[/yellow]")
+            self.console.print("[yellow]No actionable intents recognized.[/yellow]")
             return self._empty_result(text, dag)
 
         if self.debug:
@@ -271,15 +275,21 @@ class ExecutionRenderer:
 
         execution_result["input"] = text
 
-        # Force reflect for designed agent intents whose raw output
-        # isn't user-friendly (the LLM often ignores the reflect rule).
-        if not dag.reflect and dag.nodes and self.runtime.self_mod_pipeline:
-            designed = {
-                r.intent_name
-                for r in self.runtime.self_mod_pipeline._records
-                if r.status == "active"
-            }
-            if any(n.intent in designed for n in dag.nodes):
+        # Force reflect for intents whose descriptors say requires_reflect
+        # (the LLM often ignores the reflect rule).  This covers both
+        # built-in agents (run_command, introspect, etc.) and designed ones.
+        if not dag.reflect and dag.nodes:
+            reflect_intents: set[str] = set()
+            # Built-in intent descriptors
+            for desc in self.runtime._collect_intent_descriptors():
+                if desc.requires_reflect:
+                    reflect_intents.add(desc.name)
+            # Designed agent intents
+            if self.runtime.self_mod_pipeline:
+                for r in self.runtime.self_mod_pipeline._records:
+                    if r.status == "active":
+                        reflect_intents.add(r.intent_name)
+            if any(n.intent in reflect_intents for n in dag.nodes):
                 dag.reflect = True
 
         # Phase 3: Reflect (if requested by the decomposer)
