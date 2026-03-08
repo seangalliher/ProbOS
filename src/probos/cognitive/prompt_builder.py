@@ -226,8 +226,10 @@ class PromptBuilder:
 
         rules.append(
             f'{rule_num}. Set "reflect" to true when the user asks for analysis, interpretation, '
-            'comparison, summary, or opinion about results. Set to false for simple data '
-            'retrieval or command execution.'
+            'comparison, summary, or opinion about results. Also set "reflect" to true for '
+            'any intent that transforms, translates, generates, or produces content the user '
+            'wants to see explained in natural language. Set to false only for simple data '
+            'retrieval or command execution where the raw result is self-explanatory.'
         )
         rule_num += 1
 
@@ -236,7 +238,7 @@ class PromptBuilder:
         if reflect_intents:
             names = ", ".join(reflect_intents)
             rules.append(
-                f'{rule_num}. {names} intents should have "use_consensus": false.'
+                f'{rule_num}. {names} intents MUST always have "reflect": true.'
             )
             rule_num += 1
 
