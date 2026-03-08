@@ -19,6 +19,17 @@ This phase adds:
 
 ---
 
+## ⚠ Pre-Build Audit: Consensus Rejection Test Scan
+
+**Before writing any code**, scan the existing test suite for every test that:
+- Calls `submit_intent_with_consensus()` and checks `node.status`
+- Checks `node.status` after a consensus path in `DAGExecutor`
+- Asserts `"completed"` status for any consensus-involving operation
+
+List every test that will need updating when consensus-REJECTED nodes change from `"completed"` to `"failed"`. Update those tests FIRST (to expect `"failed"` or to expect escalation behavior) before changing the executor logic. This prevents a cascade of failures mid-build.
+
+---
+
 ## Deliverables
 
 ### 1. Add `EscalationTier` enum and `EscalationResult` type — `src/probos/types.py`
@@ -41,9 +52,41 @@ class EscalationResult:
     agent_id: str = ""                      # Which agent resolved it (Tier 1)
     attempts: int = 0                       # How many retry attempts were made
     user_approved: bool | None = None       # User's decision (Tier 3 only)
+
+    def to_dict(self) -> dict:
+        """Serialize to JSON-safe dict. Required because TaskNode gets serialized
+        for workflow cache deep copy, episodic memory, working memory snapshots,
+        and debug output."""
+        return {
+            "tier": self.tier.value,
+            "resolved": self.resolved,
+            "original_error": self.original_error,
+            "resolution": str(self.resolution) if self.resolution is not None else None,
+            "reason": self.reason,
+            "agent_id": self.agent_id,
+            "attempts": self.attempts,
+            "user_approved": self.user_approved,
+        }
 ```
 
-### 2. Create `src/probos/consensus/escalation.py` — `EscalationManager`
+### 2. Add `escalation_result` field to `TaskNode` — `src/probos/types.py`
+
+Add an **optional dict** field, NOT the dataclass directly. TaskNode gets serialized to JSON in multiple places (workflow cache deep copy with `json.dumps`/`json.loads`, episodic memory episode storage, working memory snapshots, debug output). Storing a raw dataclass with an Enum and Any field will break JSON serialization.
+
+```python
+@dataclass
+class TaskNode:
+    # ... existing fields ...
+    escalation_result: dict | None = None  # Serialized EscalationResult via .to_dict()
+```
+
+When the `DAGExecutor` stores an escalation result on a node, it calls `escalation_result.to_dict()` and stores the dict:
+
+```python
+node.escalation_result = esc_result.to_dict()
+```
+
+### 3. Create `src/probos/consensus/escalation.py` — `EscalationManager`
 
 The escalation manager orchestrates the 3-tier cascade. It receives a failed node context and tries progressively more expensive resolution strategies.
 
@@ -72,7 +115,7 @@ class EscalationManager:
 **Tier 1 — Retry with different agent:**
 - If the original error is a transient failure (exception, timeout, agent error — NOT a consensus rejection), retry the same intent through the runtime.
 - Up to `max_retries` attempts. Each attempt goes through the same `submit_intent()` or `submit_intent_with_consensus()` path, so a different agent from the pool may handle it.
-- If any retry succeeds, return `EscalationResult(tier=RETRY, resolved=True, resolution=<result>, attempts=N)`.
+- If any retry succeeds, return `EscalationResult(tier=RETRY, resolved=True, resolution=<r>, attempts=N)`.
 - If all retries fail, proceed to Tier 2.
 
 **Tier 2 — LLM arbitration:**
@@ -90,7 +133,7 @@ class EscalationManager:
 
 **Key constraint:** Escalation must be **bounded**. Tier 1 retries have a `max_retries` cap. Tier 2 gets one LLM call (plus one optional retry with modified params). Tier 3 gets one user prompt. The entire cascade can be disabled per-intent by the caller.
 
-### 3. Add `ARBITRATION_PROMPT` constant — `src/probos/consensus/escalation.py`
+### 4. Add `ARBITRATION_PROMPT` constant — `src/probos/consensus/escalation.py`
 
 ```python
 ARBITRATION_PROMPT = """You are the escalation arbiter for ProbOS, a probabilistic agent-native OS.
@@ -118,7 +161,7 @@ Rules:
 """
 ```
 
-### 4. Update `MockLLMClient` — `src/probos/cognitive/llm_client.py`
+### 5. Update `MockLLMClient` — `src/probos/cognitive/llm_client.py`
 
 Add a pattern for arbitration requests:
 
@@ -132,7 +175,7 @@ The pattern should:
 - Return `{"action": "reject", "reason": "MockLLMClient cannot arbitrate — escalating to user"}` by default
 - This ensures Tier 2 always falls through to Tier 3 in tests, making test behavior deterministic
 
-### 5. Update `DAGExecutor._execute_node()` — `src/probos/cognitive/decomposer.py`
+### 6. Update `DAGExecutor._execute_node()` — `src/probos/cognitive/decomposer.py`
 
 Wire escalation into the existing error handling. The executor currently has three code paths:
 
@@ -144,15 +187,25 @@ Wire escalation into the existing error handling. The executor currently has thr
 
 **a)** Add an optional `escalation_manager: EscalationManager | None = None` field on `DAGExecutor.__init__()`.
 
-**b)** In the `except Exception` block (currently just marks node as "failed"): if `self.escalation_manager` is not None, call `await self.escalation_manager.escalate(node, str(e), context)`. If the escalation resolves, update `node.result`, `node.status = "completed"`, and `results[node.id]` with the escalation result. If not resolved, keep the existing "failed" behavior.
+**b)** In the `except Exception` block (currently just marks node as "failed"): if `self.escalation_manager` is not None, call `await self.escalation_manager.escalate(node, str(e), context)`. If the escalation resolves, update `node.result`, `node.status = "completed"`, and `results[node.id]` with the escalation result. If not resolved, keep the existing "failed" behavior. Store the serialized escalation result on the node: `node.escalation_result = esc_result.to_dict()`.
 
-**c)** For consensus paths (code paths 1 and 2): after getting the result, check if `consensus.outcome` is `REJECTED` or `INSUFFICIENT`. If so, and if `self.escalation_manager` is not None, escalate with the consensus rejection as the error. If escalation resolves (e.g., user approves), update the node status accordingly. If not, mark the node as "failed" instead of "completed".
+**c)** For consensus paths (code paths 1 and 2): after getting the result, check if `consensus.outcome` is `REJECTED` or `INSUFFICIENT`. If so, and if `self.escalation_manager` is not None, escalate with the consensus rejection as the error. If escalation resolves (e.g., user approves), update the node status accordingly. If not, mark the node as "failed" instead of "completed". Store the serialized escalation result: `node.escalation_result = esc_result.to_dict()`.
 
 **Critical:** Consensus-rejected nodes should NOT be marked "completed" anymore. This is a bug fix — currently a REJECTED write is shown as "completed" with a green checkmark. After this change, REJECTED nodes go through escalation and are marked either "completed" (if escalation resolves) or "failed" (if escalation doesn't resolve).
 
-**d)** Fire `on_event("escalation_start", ...)` and `on_event("escalation_complete", ...)` events so the renderer can display escalation progress.
+**d)** Fire `on_event("escalation_start", ...)` and `on_event("escalation_complete", ...)` events. The `DAGExecutor` is the one that logs these events — **not** the `EscalationManager`. The `EscalationManager` only returns results; it does not interact with the event log or `on_event` callback. This is consistent with how all other events are logged (executor fires them).
 
-### 6. Wire `EscalationManager` into runtime — `src/probos/runtime.py`
+Event log entries to fire from the executor:
+- `category="consensus"`, `event="escalation_start"`: when escalation begins
+- `category="consensus"`, `event="escalation_retry"`: each Tier 1 retry attempt
+- `category="consensus"`, `event="escalation_arbitration"`: Tier 2 LLM call
+- `category="consensus"`, `event="escalation_user"`: Tier 3 user consultation
+- `category="consensus"`, `event="escalation_resolved"`: when escalation succeeds
+- `category="consensus"`, `event="escalation_exhausted"`: when all tiers fail
+
+To enable this, `EscalationManager.escalate()` should report which tiers were attempted in the returned `EscalationResult`. Add a `tiers_attempted: list[EscalationTier]` field to `EscalationResult` so the executor can log after the fact.
+
+### 7. Wire `EscalationManager` into runtime — `src/probos/runtime.py`
 
 **a)** Create `EscalationManager` in `start()` after all pools and decomposer are created:
 
@@ -176,7 +229,7 @@ self.escalation_manager = EscalationManager(
 }
 ```
 
-### 7. Add user consultation to the shell — `src/probos/experience/shell.py`
+### 8. Add user consultation to the shell — `src/probos/experience/shell.py`
 
 **a)** Define a `_user_escalation_callback()` async method on `ProbOSShell`:
 
@@ -209,7 +262,17 @@ async def _user_escalation_callback(self, description: str, context: dict) -> bo
 self.runtime.escalation_manager.set_user_callback(self._user_escalation_callback)
 ```
 
-### 8. Add escalation panel rendering — `src/probos/experience/panels.py`
+**⚠ CRITICAL: Rich Live context conflict.** The `ExecutionRenderer` uses Rich `Live` for progress updates. During a `Live` context, `input()` will fight with the Live display — stdout is captured by the Live context manager, so the user prompt will be garbled or deadlocked.
+
+**The renderer must exit its `Live` context before Tier 3 user consultation fires.** Implement this by having the escalation `on_event("escalation_user_pending", ...)` signal the renderer to stop its `Live` display. After the user callback returns, the renderer can resume or print the remaining results without `Live`. The simplest approach:
+
+1. In `ExecutionRenderer.process_with_feedback()`, the `Live` context is used during DAG execution.
+2. If a `escalation_user_pending` event is received, call `live.stop()` before the user callback fires.
+3. After the escalation completes, print remaining results normally (no need to restart Live — the escalation is the last interesting thing to show before the final result panel).
+
+Alternatively, the `EscalationManager` can accept a `pre_user_hook: Callable | None` that the renderer sets to `live.stop`. The manager calls `pre_user_hook()` before calling `user_callback()`. This keeps the renderer in control of its own Live lifecycle.
+
+### 9. Add escalation panel rendering — `src/probos/experience/panels.py`
 
 Add a helper that `render_dag_result()` calls when an escalation occurred:
 
@@ -229,41 +292,35 @@ def _format_escalation(escalation: dict) -> list[str]:
     return lines
 ```
 
-Update `render_dag_result()` to check for escalation data on nodes and render it.
+Update `render_dag_result()` to check for escalation data on nodes and render it. Since `node.escalation_result` is a plain dict (serialized via `to_dict()`), this function can read it directly with `.get()`.
 
-### 9. Add escalation events to renderer — `src/probos/experience/renderer.py`
+### 10. Add escalation events to renderer — `src/probos/experience/renderer.py`
 
 The `ExecutionRenderer` needs to handle `escalation_start` and `escalation_complete` events in its `on_event` callback to show escalation progress to the user (e.g., "Escalating: retrying with different agent..." spinner).
 
-### 10. Event log entries — `src/probos/consensus/escalation.py`
-
-The `EscalationManager.escalate()` method should log events via the runtime's event log:
-
-- `category="consensus"`, `event="escalation_start"`: when escalation begins
-- `category="consensus"`, `event="escalation_retry"`: each Tier 1 retry attempt
-- `category="consensus"`, `event="escalation_arbitration"`: Tier 2 LLM call
-- `category="consensus"`, `event="escalation_user"`: Tier 3 user consultation
-- `category="consensus"`, `event="escalation_resolved"`: when escalation succeeds
-- `category="consensus"`, `event="escalation_exhausted"`: when all tiers fail
+Also handle `escalation_user_pending` to stop the `Live` display before the user is prompted (see Deliverable 8 critical note above).
 
 ---
 
 ## Build Order
 
-1. **`EscalationTier` enum and `EscalationResult` type** (`types.py`)
-2. **`EscalationManager`** (`escalation.py`) — core cascade logic
-3. **`ARBITRATION_PROMPT`** constant in `escalation.py`
-4. **`MockLLMClient` arbitration pattern** (`llm_client.py`)
-5. **Tests for `EscalationManager`** — unit tests for each tier
-6. **Wire into `DAGExecutor._execute_node()`** (`decomposer.py`) — escalation on failure/rejection
-7. **Fix consensus-rejected nodes** — mark as "failed" not "completed" when rejected
-8. **Wire into runtime** (`runtime.py`) — create EscalationManager, pass to DAGExecutor
-9. **Wire into renderer** (`renderer.py`) — pass escalation_manager, handle events
-10. **User consultation callback** (`shell.py`) — interactive Tier 3 prompt
-11. **Panel rendering** (`panels.py`) — `_format_escalation()` helper
-12. **Integration tests** — end-to-end escalation through the full pipeline
-13. **Run full suite** — `uv run pytest tests/ -v` — all 477 existing + new tests must pass.
-14. **Update PROGRESS.md**
+1. **Pre-build audit** — Scan tests for consensus-rejection status assumptions. List affected tests.
+2. **`EscalationTier` enum and `EscalationResult` type with `to_dict()` and `tiers_attempted`** (`types.py`)
+3. **`escalation_result: dict | None = None` field on `TaskNode`** (`types.py`)
+4. **`EscalationManager`** (`escalation.py`) — core cascade logic
+5. **`ARBITRATION_PROMPT`** constant in `escalation.py`
+6. **`MockLLMClient` arbitration pattern** (`llm_client.py`)
+7. **Tests for `EscalationManager`** — unit tests for each tier
+8. **Fix affected existing tests** — update status expectations from `"completed"` to `"failed"` for consensus-rejected nodes
+9. **Wire into `DAGExecutor._execute_node()`** (`decomposer.py`) — escalation on failure/rejection, event logging from executor
+10. **Fix consensus-rejected nodes** — mark as "failed" not "completed" when rejected
+11. **Wire into runtime** (`runtime.py`) — create EscalationManager, pass to DAGExecutor
+12. **Wire into renderer** (`renderer.py`) — pass escalation_manager, handle events, **stop Live before Tier 3**
+13. **User consultation callback** (`shell.py`) — interactive Tier 3 prompt
+14. **Panel rendering** (`panels.py`) — `_format_escalation()` helper
+15. **Integration tests** — end-to-end escalation through the full pipeline
+16. **Run full suite** — `uv run pytest tests/ -v` — all 477 existing + new tests must pass.
+17. **Update PROGRESS.md**
 
 ---
 
@@ -299,50 +356,71 @@ The `EscalationManager.escalate()` method should log events via the runtime's ev
 
 14. **`test_escalation_bounded`** — Assert that with `max_retries=2`, the total number of submit_intent calls during Tier 1 is at most 2 (not including the original attempt — that's the caller's responsibility).
 
+15. **`test_escalation_result_to_dict`** — Create an `EscalationResult`, call `.to_dict()`, verify all fields are JSON-serializable (no Enum, no arbitrary objects). Verify `json.dumps(result.to_dict())` succeeds without error.
+
+16. **`test_escalation_result_to_dict_roundtrip`** — `to_dict()` output can be passed to `_format_escalation()` in panels.py and renders correctly.
+
 ### DAGExecutor escalation tests — `tests/test_escalation.py`
 
-15. **`test_executor_escalates_on_exception`** — DAGExecutor with escalation_manager. Node execution raises an exception. Assert escalation is triggered and, if it resolves, the node is marked "completed".
+17. **`test_executor_escalates_on_exception`** — DAGExecutor with escalation_manager. Node execution raises an exception. Assert escalation is triggered and, if it resolves, the node is marked "completed".
 
-16. **`test_executor_escalates_on_consensus_rejection`** — Node with `use_consensus=True` gets a REJECTED consensus. Assert escalation is triggered.
+18. **`test_executor_escalates_on_consensus_rejection`** — Node with `use_consensus=True` gets a REJECTED consensus. Assert escalation is triggered.
 
-17. **`test_executor_no_escalation_without_manager`** — DAGExecutor without escalation_manager. Node fails. Assert node is marked "failed" (existing behavior preserved).
+19. **`test_executor_no_escalation_without_manager`** — DAGExecutor without escalation_manager. Node fails. Assert node is marked "failed" (existing behavior preserved).
 
-18. **`test_executor_rejected_node_marked_failed`** — Without escalation manager, a consensus-REJECTED node should now be marked "failed" not "completed". (Bug fix test.)
+20. **`test_executor_rejected_node_marked_failed`** — Without escalation manager, a consensus-REJECTED node should now be marked "failed" not "completed". (Bug fix test.)
 
-19. **`test_executor_escalation_events_fired`** — With `on_event` callback, assert `escalation_start` and `escalation_complete` events are fired during escalation.
+21. **`test_executor_escalation_events_fired`** — With `on_event` callback, assert `escalation_start` and `escalation_complete` events are fired during escalation.
+
+22. **`test_executor_escalation_result_stored_on_node`** — After escalation, `node.escalation_result` is a dict (not None), and `json.dumps(node.escalation_result)` succeeds.
 
 ### Runtime escalation wiring — `tests/test_escalation.py`
 
-20. **`test_runtime_creates_escalation_manager`** — Start runtime. Assert `runtime.escalation_manager` is not None.
+23. **`test_runtime_creates_escalation_manager`** — Start runtime. Assert `runtime.escalation_manager` is not None.
 
-21. **`test_runtime_status_includes_escalation`** — `runtime.status()` includes `"escalation"` key.
+24. **`test_runtime_status_includes_escalation`** — `runtime.status()` includes `"escalation"` key.
 
-22. **`test_runtime_nl_with_escalation`** — Process NL input through the full pipeline. Assert existing behavior is unchanged when no escalation occurs.
+25. **`test_runtime_nl_with_escalation`** — Process NL input through the full pipeline. Assert existing behavior is unchanged when no escalation occurs.
+
+26. **`test_escalation_resolved_stored_in_episodic_memory`** — Process NL where a node fails, escalation resolves via Tier 1 retry, and the final episode stored in episodic memory reflects the successful outcome (not the initial failure).
 
 ### Panel/rendering tests — `tests/test_escalation.py`
 
-23. **`test_format_escalation_resolved`** — `_format_escalation()` with `resolved=True` produces green "Resolved" text.
+27. **`test_format_escalation_resolved`** — `_format_escalation()` with `resolved=True` produces green "Resolved" text.
 
-24. **`test_format_escalation_unresolved`** — `_format_escalation()` with `resolved=False` produces red "Unresolved" text.
+28. **`test_format_escalation_unresolved`** — `_format_escalation()` with `resolved=False` produces red "Unresolved" text.
 
-25. **`test_render_dag_result_with_escalation`** — `render_dag_result()` with a node that has escalation data shows the escalation info.
+29. **`test_render_dag_result_with_escalation`** — `render_dag_result()` with a node that has escalation data shows the escalation info.
 
-**Total: 25 new tests. Target: 502/502 (477 existing + 25 new).**
+**Total: 29 new tests. Target: 506/506 (477 existing + 29 new).**
 
 ---
 
 ## Rules
 
-1. All 477 existing tests must pass unchanged. Escalation is additive — it adds new behavior for failure/rejection cases without changing the success path.
-2. The existing `node.status = "completed"` for consensus-REJECTED intents is a **bug**. Fix it: REJECTED/INSUFFICIENT consensus should mark the node "failed" (or trigger escalation if available). This may require updating one or two existing tests that check node status after consensus rejection — update them to expect "failed" instead of "completed".
+1. All 477 existing tests must pass unchanged — EXCEPT tests that assert `"completed"` for consensus-REJECTED nodes. Those are testing a bug. Update them to expect `"failed"` (or escalation behavior). Identify all such tests in the pre-build audit before changing any code.
+2. The existing `node.status = "completed"` for consensus-REJECTED intents is a **bug**. Fix it: REJECTED/INSUFFICIENT consensus should mark the node "failed" (or trigger escalation if available).
 3. `EscalationManager.escalate()` is async. Each tier is attempted sequentially (not in parallel). Tier 1 → Tier 2 → Tier 3. If any tier resolves, stop.
 4. Tier 1 retries go through the normal `runtime.submit_intent()` or `runtime.submit_intent_with_consensus()` path. This means different agents may handle the retry due to pool rotation.
 5. Tier 2 LLM arbitration uses the `standard` tier. The `ARBITRATION_PROMPT` is the system prompt.
 6. Tier 3 user callback is optional. If not set (programmatic use, tests), Tier 3 returns unresolved. Tests should use a mock callback.
-7. The `EscalationManager` does NOT log events directly — it returns the result to the caller (DAGExecutor), which logs events via `on_event`. The event log entries listed above are logged by `_execute_node()` through the runtime's event log.
-8. `EscalationResult` is stored on `node.escalation_result` (add optional field to `TaskNode`). This allows the renderer and panels to access it.
-9. The `_format_escalation()` helper is called from `render_dag_result()` when `node.escalation_result` is not None. It appears below the node's result line.
-10. `run_in_terminal` the tests after every file change: `uv run pytest tests/ -v`.
-11. Update `PROGRESS.md` when done: add Phase 7 section, new AD entries, update test counts, update "What's Next".
-12. Do NOT modify the `REFLECT_PROMPT`, `SYSTEM_PROMPT`, `_LEGACY_SYSTEM_PROMPT`, or `PromptBuilder` logic. Escalation does not change intent decomposition.
-13. The `user_callback` in the shell uses `asyncio.get_event_loop().run_in_executor(None, input)` to avoid blocking the event loop. This is the same pattern the shell already uses for user input.
+7. **The `EscalationManager` does NOT log events directly.** It returns the result (including `tiers_attempted`) to the caller (`DAGExecutor`), which logs events via `on_event` and the runtime's event log. This is consistent with how all other events are logged — the executor is the event source, not the components it calls.
+8. `EscalationResult` is stored on `node.escalation_result` as a **plain dict** via `EscalationResult.to_dict()`. NOT as the dataclass directly. This is critical — `TaskNode` gets JSON-serialized for workflow cache deep copy (`json.dumps`/`json.loads`), episodic memory, working memory snapshots, and debug output. Storing an Enum or Any field would break serialization.
+9. The `_format_escalation()` helper is called from `render_dag_result()` when `node.escalation_result` is not None. It appears below the node's result line. Since the field is a plain dict, `_format_escalation()` uses `.get()` access.
+10. **Rich Live conflict resolution**: The renderer's Rich `Live` context must be stopped before Tier 3 user consultation. Either (a) the `EscalationManager` accepts a `pre_user_hook: Callable | None` that the renderer sets to `live.stop`, called before `user_callback`, or (b) the renderer handles the `escalation_user_pending` event by calling `live.stop()`. Pick whichever is cleaner — but the Live display MUST be stopped before `input()` is called. Failing to do this will produce garbled terminal output or a deadlock.
+11. Run the tests after every file change: `uv run pytest tests/ -v`.
+12. Update `PROGRESS.md` when done: add Phase 7 section, new AD entries, update test counts, update "What's Next".
+13. Do NOT modify the `REFLECT_PROMPT`, `SYSTEM_PROMPT`, `_LEGACY_SYSTEM_PROMPT`, or `PromptBuilder` logic. Escalation does not change intent decomposition.
+14. The `user_callback` in the shell uses `asyncio.get_event_loop().run_in_executor(None, input)` to avoid blocking the event loop. This is the same pattern the shell already uses for user input.
+
+---
+
+## Architectural Decisions to Record
+
+**AD-85: MockLLMClient always rejects arbitration for deterministic testing.** The MockLLMClient returns `{"action": "reject"}` for all escalation arbitration requests. This means Tier 2 always falls through to Tier 3 in tests. The `"approve"` and `"modify"` paths through a real LLM are tested only via unit tests with mock submit functions (tests 4–6), not through the full runtime pipeline. This is acceptable for now — the unit tests cover the branching logic, and live LLM integration testing covers the `"approve"` path manually.
+
+**AD-86: EscalationResult stored as dict, not dataclass, on TaskNode.** `TaskNode.escalation_result` is `dict | None`, populated via `EscalationResult.to_dict()`. This prevents JSON serialization failures in workflow cache deep copy, episodic memory storage, working memory snapshots, and debug output — all of which call `json.dumps()` on TaskNode fields.
+
+**AD-87: EscalationManager is event-silent; executor logs events.** The `EscalationManager` returns results to its caller but never interacts with the event log or `on_event` callback. The `DAGExecutor._execute_node()` is the single event source for escalation events, consistent with how all other execution events (node_start, node_complete, node_failed) are logged. The `EscalationResult.tiers_attempted` field tells the executor which events to log after the fact.
+
+**AD-88: Rich Live must stop before Tier 3 user input.** The renderer's `Live` context captures stdout. If `input()` is called during a Live session, the prompt is garbled or deadlocked. The escalation system uses a `pre_user_hook` (or equivalent) to stop the Live display before prompting the user. This is a structural constraint that any future interactive escalation must respect.

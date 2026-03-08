@@ -59,6 +59,12 @@ class ProbOSShell:
         self.renderer = ExecutionRenderer(self.console, runtime, debug=self.debug)
         self._running = False
 
+        # Wire user escalation callback
+        if hasattr(self.runtime, "escalation_manager") and self.runtime.escalation_manager:
+            self.runtime.escalation_manager.set_user_callback(
+                self._user_escalation_callback
+            )
+
     # ------------------------------------------------------------------
     # Health and prompt
     # ------------------------------------------------------------------
@@ -353,3 +359,33 @@ class ProbOSShell:
             await self.renderer.process_with_feedback(text)
         except Exception as e:
             self.console.print(f"[red]Processing error: {e}[/red]")
+
+    # ------------------------------------------------------------------
+    # Escalation user callback
+    # ------------------------------------------------------------------
+
+    async def _user_escalation_callback(
+        self, description: str, context: dict
+    ) -> bool | None:
+        """Prompt the user for escalation decision."""
+        self.console.print(
+            f"\n[yellow bold]Warning Escalation — agent operation needs your input:[/yellow bold]"
+        )
+        self.console.print(f"  Intent: [cyan]{context.get('intent', '?')}[/cyan]")
+        self.console.print(f"  Issue: {description}")
+        self.console.print(
+            f"  [dim]Type 'y' to approve, 'n' to reject, or Enter to skip[/dim]"
+        )
+
+        try:
+            response = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: input("  Decision [y/n/skip]: ").strip().lower()
+            )
+            if response in ("y", "yes"):
+                return True
+            elif response in ("n", "no"):
+                return False
+            else:
+                return None  # Skip
+        except (EOFError, KeyboardInterrupt):
+            return None

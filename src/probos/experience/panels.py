@@ -346,6 +346,21 @@ def render_attention_panel(
     return Panel("\n".join(lines), title="Attention Queue", border_style="yellow")
 
 
+def _format_escalation(escalation: dict) -> list[str]:
+    """Format an escalation result for display."""
+    tier = escalation.get("tier", "?")
+    resolved = escalation.get("resolved", False)
+    reason = escalation.get("reason", "")
+
+    colour = "green" if resolved else "red"
+    status = "Resolved" if resolved else "Unresolved"
+
+    lines = [f"    [yellow]\u2191 Escalated (Tier: {tier})[/yellow] \u2014 [{colour}]{status}[/{colour}]"]
+    if reason:
+        lines.append(f"      {reason}")
+    return lines
+
+
 def _format_result(data: Any, max_items: int = 30) -> list[str]:
     """Format an agent result for display, detecting common structures."""
     # Directory listing: list of dicts with 'name' and 'type' keys
@@ -416,6 +431,10 @@ def render_dag_result(result: dict[str, Any], debug: bool = False) -> Panel:
                         if hasattr(ir, "success") and ir.success and ir.result:
                             lines.extend(_format_result(ir.result))
                             break
+            # Show escalation info if present
+            esc = getattr(node, "escalation_result", None)
+            if esc is not None:
+                lines.extend(_format_escalation(esc))
 
     # Show reflection if present
     reflection = result.get("reflection", "")

@@ -218,6 +218,12 @@ class ExecutionRenderer:
             self._node_statuses[node.id] = "completed"
         elif event == "node_failed":
             self._node_statuses[node.id] = "failed"
+        elif event == "escalation_start":
+            self._node_statuses[node.id] = "escalating"
+        elif event == "escalation_resolved":
+            self._node_statuses[node.id] = "completed"
+        elif event == "escalation_exhausted":
+            self._node_statuses[node.id] = "failed"
 
         if self._live:
             self._live.update(self._build_progress_table())
@@ -245,6 +251,9 @@ class ExecutionRenderer:
             elif status == "running":
                 icon = _ICON_RUNNING
                 label = "[bold blue]running[/bold blue]"
+            elif status == "escalating":
+                icon = _ICON_RUNNING
+                label = "[bold yellow]escalating[/bold yellow]"
             elif status == "completed":
                 icon = _ICON_DONE
                 label = "[green]done[/green]"
