@@ -378,11 +378,34 @@ class EscalationManager:
             )
 
     async def _reexecute_without_consensus(self, node: Any) -> dict[str, Any] | None:
-        """Re-run the intent bypassing consensus after user approval.
+        """Get actual agent output after user approves a consensus-rejected op.
 
-        Returns a standard result dict with agent output, or falls back
-        to node.result if re-execution fails.
+        The consensus pipeline rejected the *policy* (e.g. "shell commands
+        are risky"), not the agent results themselves.  The original
+        result dict (``node.result``) already contains the successful
+        IntentResults with real stdout/stderr.  So we first look there
+        before attempting a fresh re-execution.
         """
+        # --- Strategy 1: reuse original successful results ---
+        original = node.result
+        if isinstance(original, dict) and "results" in original:
+            original_results = original["results"]
+            if isinstance(original_results, list) and any(
+                getattr(r, "success", False) for r in original_results
+            ):
+                logger.info(
+                    "Using original agent results (consensus rejected "
+                    "policy, not output): intent=%s agents=%d",
+                    node.intent, len(original_results),
+                )
+                return {
+                    "intent": node.intent,
+                    "results": original_results,
+                    "success": True,
+                    "result_count": len(original_results),
+                }
+
+        # --- Strategy 2: re-execute without consensus ---
         try:
             results = await self.runtime.submit_intent(
                 intent=node.intent,
@@ -399,8 +422,9 @@ class EscalationManager:
                 else:
                     logger.warning(
                         "Re-execution returned results but none successful: "
-                        "intent=%s agents=%d",
+                        "intent=%s agents=%d errors=%s",
                         node.intent, len(results),
+                        [r.error for r in results if r.error],
                     )
                 return {
                     "intent": node.intent,
