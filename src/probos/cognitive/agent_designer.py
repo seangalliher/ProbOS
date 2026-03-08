@@ -74,7 +74,7 @@ class {class_name}(BaseAgent):
             params={param_schema},
             description="{intent_description}",
             requires_consensus={requires_consensus},
-            requires_reflect=False,
+            requires_reflect=True,
         )
     ]
 
