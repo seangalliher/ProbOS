@@ -389,15 +389,34 @@ class EscalationManager:
                 params=dict(node.params),
                 timeout=30.0,
             )
-            if any(r.success for r in results):
+            if results:
+                successful = any(r.success for r in results)
+                if successful:
+                    logger.info(
+                        "Re-execution succeeded: intent=%s agents=%d",
+                        node.intent, len(results),
+                    )
+                else:
+                    logger.warning(
+                        "Re-execution returned results but none successful: "
+                        "intent=%s agents=%d",
+                        node.intent, len(results),
+                    )
                 return {
                     "intent": node.intent,
                     "results": results,
-                    "success": True,
+                    "success": successful,
                     "result_count": len(results),
                 }
+            else:
+                logger.warning(
+                    "Re-execution returned no results: intent=%s", node.intent,
+                )
         except Exception as e:
-            logger.debug("Re-execution after user approval failed: %s", e)
+            logger.warning("Re-execution after user approval failed: %s", e)
 
         # Fallback: return whatever was there before
+        logger.warning(
+            "Falling back to original node.result for intent=%s", node.intent,
+        )
         return node.result
