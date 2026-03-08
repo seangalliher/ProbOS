@@ -27,10 +27,18 @@ class BaseLLMClient(ABC):
 
 
 class OpenAICompatibleClient(BaseLLMClient):
-    """Client for OpenAI-compatible API endpoints (Copilot proxy, Ollama, etc.).
+    """Multi-endpoint OpenAI-compatible LLM client with per-tier routing.
 
-    Implements tiered routing: fast/standard/deep map to different models.
-    Falls back through: live endpoint → cached responses → error.
+    Each tier (fast/standard/deep) can have its own:
+    - base_url (different server)
+    - api_key (different auth)
+    - model (different model name)
+    - timeout (different latency budget)
+    - httpx.AsyncClient (separate connection pool)
+
+    When per-tier config is not specified, falls back to shared values.
+    Tiers sharing the same base_url share the same httpx.AsyncClient
+    (no duplicate connection pools for the same server).
     """
 
     def __init__(
@@ -40,50 +48,120 @@ class OpenAICompatibleClient(BaseLLMClient):
         models: dict[str, str] | None = None,
         timeout: float = 30.0,
         default_tier: str = "standard",
+        config: Any = None,  # CognitiveConfig — optional, overrides all above
     ) -> None:
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
-        self.models = models or {
-            "fast": "gpt-4o-mini",
-            "standard": "claude-sonnet-4-6",
-            "deep": "claude-opus-4-0-20250115",
-        }
-        self.timeout = timeout
+        from probos.config import CognitiveConfig
+
+        if config is not None and isinstance(config, CognitiveConfig):
+            self._config = config
+        else:
+            # Build a CognitiveConfig from legacy keyword args
+            models = models or {
+                "fast": "gpt-4o-mini",
+                "standard": "claude-sonnet-4-6",
+                "deep": "claude-opus-4-0-20250115",
+            }
+            self._config = CognitiveConfig(
+                llm_base_url=base_url,
+                llm_api_key=api_key,
+                llm_model_fast=models.get("fast", "gpt-4o-mini"),
+                llm_model_standard=models.get("standard", "claude-sonnet-4"),
+                llm_model_deep=models.get("deep", "claude-sonnet-4"),
+                llm_timeout_seconds=timeout,
+            )
+
         self.default_tier = default_tier
-        self._client = httpx.AsyncClient(
-            base_url=self.base_url,
-            timeout=timeout,
-            headers=self._build_headers(),
-        )
-        # Simple response cache keyed by (model, prompt_hash)
+
+        # Resolve per-tier configs
+        self._tier_configs: dict[str, dict] = {}
+        for tier in ("fast", "standard", "deep"):
+            self._tier_configs[tier] = self._config.tier_config(tier)
+
+        # Create httpx clients, deduplicated by (base_url, api_key)
+        self._clients: dict[str, httpx.AsyncClient] = {}  # base_url → client
+        self._tier_status: dict[str, bool] = {}
+        for tier in ("fast", "standard", "deep"):
+            tc = self._tier_configs[tier]
+            url = tc["base_url"]
+            # Ensure trailing slash so httpx relative-path resolution
+            # keeps the base path (e.g. /v1/) instead of replacing it.
+            normalized = url.rstrip("/") + "/"
+            if url not in self._clients:
+                headers = {"Content-Type": "application/json"}
+                if tc["api_key"]:
+                    headers["Authorization"] = f"Bearer {tc['api_key']}"
+                self._clients[url] = httpx.AsyncClient(
+                    base_url=normalized,
+                    headers=headers,
+                    timeout=tc["timeout"],
+                )
+
+        # Simple response cache keyed by (tier, prompt_hash)
         self._cache: dict[str, LLMResponse] = {}
 
-    def _build_headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
+    # Backward-compat properties
+    @property
+    def base_url(self) -> str:
+        return self._config.llm_base_url
 
-    def _cache_key(self, model: str, prompt: str) -> str:
-        return f"{model}:{hash(prompt)}"
+    @property
+    def api_key(self) -> str:
+        return self._config.llm_api_key
 
-    async def check_connectivity(self) -> bool:
-        """Test whether the LLM endpoint is reachable.
+    @property
+    def timeout(self) -> float:
+        return self._config.llm_timeout_seconds
 
-        Returns True if the endpoint responds, False otherwise.
+    @property
+    def models(self) -> dict[str, str]:
+        return {
+            tier: self._tier_configs[tier]["model"]
+            for tier in ("fast", "standard", "deep")
+        }
+
+    def _cache_key(self, tier: str, prompt: str) -> str:
+        return f"{tier}:{hash(prompt)}"
+
+    async def check_connectivity(self) -> dict[str, bool]:
+        """Check connectivity for each tier independently.
+
+        Returns {"fast": True/False, "standard": True/False, "deep": True/False}.
+        Tiers sharing the same endpoint share the result (no duplicate checks).
         """
+        results: dict[str, bool] = {}
+        checked_urls: dict[str, bool] = {}
+
+        for tier in ("fast", "standard", "deep"):
+            tc = self._tier_configs[tier]
+            url = tc["base_url"]
+            if url in checked_urls:
+                results[tier] = checked_urls[url]
+            else:
+                reachable = await self._check_endpoint(tier)
+                checked_urls[url] = reachable
+                results[tier] = reachable
+            self._tier_status[tier] = results[tier]
+
+        return results
+
+    async def _check_endpoint(self, tier: str) -> bool:
+        """Check if a tier's endpoint is reachable.
+
+        Sends a minimal completion request with a short timeout.
+        Any response below HTTP 500 means the server is up.
+        """
+        tc = self._tier_configs[tier]
+        client = self._clients[tc["base_url"]]
         try:
-            # Send a minimal request to verify the endpoint is up
-            resp = await self._client.post(
-                "/chat/completions",
+            resp = await client.post(
+                "chat/completions",
                 json={
-                    "model": self.models.get(self.default_tier, "gpt-4o-mini"),
+                    "model": tc["model"],
                     "messages": [{"role": "user", "content": "ping"}],
                     "max_tokens": 1,
                 },
                 timeout=5.0,
             )
-            # Any response (even 4xx) means the server is up
             return resp.status_code < 500
         except (httpx.ConnectError, httpx.TimeoutException, OSError):
             return False
@@ -91,24 +169,27 @@ class OpenAICompatibleClient(BaseLLMClient):
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Send a completion request with fallback chain.
 
+        Routes to the appropriate tier's endpoint and client.
         Fallback order: live endpoint → cached response → error response.
         """
         tier = request.tier or self.default_tier
-        model = self.models.get(tier, self.models.get("standard", "gpt-4o"))
-        cache_key = self._cache_key(model, request.prompt)
+        tc = self._tier_configs.get(tier, self._tier_configs["standard"])
+        client = self._clients[tc["base_url"]]
+        model = tc["model"]
+        cache_key = self._cache_key(tier, request.prompt)
 
         # Try live endpoint
         try:
-            response = await self._call_api(request, model)
+            response = await self._call_api(request, model, client)
             # Cache successful responses
             self._cache[cache_key] = response
             return response
         except httpx.ConnectError:
-            logger.warning("LLM endpoint unreachable at %s", self.base_url)
+            logger.warning("LLM endpoint unreachable at %s", tc["base_url"])
         except httpx.TimeoutException:
             logger.warning(
                 "LLM request timed out after %.0fs (model=%s)",
-                self.timeout, model,
+                tc["timeout"], model,
             )
         except httpx.HTTPStatusError as e:
             logger.warning(
@@ -138,11 +219,11 @@ class OpenAICompatibleClient(BaseLLMClient):
             content="",
             model=model,
             tier=tier,
-            error=f"LLM endpoint at {self.base_url} is unavailable and no cached response exists",
+            error=f"LLM endpoint at {tc['base_url']} is unavailable and no cached response exists",
             request_id=request.id,
         )
 
-    async def _call_api(self, request: LLMRequest, model: str) -> LLMResponse:
+    async def _call_api(self, request: LLMRequest, model: str, client: httpx.AsyncClient) -> LLMResponse:
         """Make the actual API call."""
         messages = []
         if request.system_prompt:
@@ -157,9 +238,9 @@ class OpenAICompatibleClient(BaseLLMClient):
         }
 
         logger.debug("LLM request payload: %s", json.dumps(payload, indent=2))
-        logger.debug("LLM request headers: %s", dict(self._client.headers))
+        logger.debug("LLM request headers: %s", dict(client.headers))
 
-        resp = await self._client.post("/chat/completions", json=payload)
+        resp = await client.post("chat/completions", json=payload)
         resp.raise_for_status()
         data = resp.json()
 
@@ -177,8 +258,26 @@ class OpenAICompatibleClient(BaseLLMClient):
             request_id=request.id,
         )
 
+    def tier_info(self) -> dict[str, dict]:
+        """Return per-tier config for /model display.
+
+        Returns {"fast": {"base_url": ..., "model": ..., "reachable": ...}, ...}
+        """
+        info = {}
+        for tier in ("fast", "standard", "deep"):
+            tc = self._tier_configs[tier]
+            info[tier] = {
+                "base_url": tc["base_url"],
+                "model": tc["model"],
+                "timeout": tc["timeout"],
+                "reachable": self._tier_status.get(tier),
+            }
+        return info
+
     async def close(self) -> None:
-        await self._client.aclose()
+        """Close all httpx clients."""
+        for client in self._clients.values():
+            await client.aclose()
 
 
 class MockLLMClient(BaseLLMClient):
@@ -322,6 +421,42 @@ class MockLLMClient(BaseLLMClient):
         # Detect agent design requests (AGENT_DESIGN_PROMPT signature)
         if "UNHANDLED INTENT:" in request.prompt and "Subclass BaseAgent" in request.prompt:
             content = self._make_agent_design_response(request.prompt)
+            return LLMResponse(
+                content=content,
+                model="mock",
+                tier=request.tier,
+                tokens_used=len(content) // 4,
+                cached=False,
+                request_id=request.id,
+            )
+
+        # Detect skill design requests (SKILL_DESIGN_PROMPT signature)
+        if "SKILL TO CREATE:" in request.prompt and "handle_" in request.prompt:
+            content = self._make_skill_design_response(request.prompt)
+            return LLMResponse(
+                content=content,
+                model="mock",
+                tier=request.tier,
+                tokens_used=len(content) // 4,
+                cached=False,
+                request_id=request.id,
+            )
+
+        # Detect research query generation requests
+        if "INTENT TO BUILD:" in request.prompt and "search queries" in request.prompt:
+            content = json.dumps(["python library docs", "API reference example"])
+            return LLMResponse(
+                content=content,
+                model="mock",
+                tier=request.tier,
+                tokens_used=len(content) // 4,
+                cached=False,
+                request_id=request.id,
+            )
+
+        # Detect research synthesis requests
+        if "DOCUMENTATION FETCHED:" in request.prompt and "reference section" in request.prompt:
+            content = "Reference: Use the json module for parsing. Example: json.loads(data)."
             return LLMResponse(
                 content=content,
                 model="mock",
@@ -654,6 +789,36 @@ class MockLLMClient(BaseLLMClient):
             '            error=report.get("error"),\n'
             '            confidence=self.confidence,\n'
             '        )\n'
+        )
+
+    def _make_skill_design_response(self, prompt: str) -> str:
+        """Generate a valid skill handler function for a skill design request.
+
+        Parses the intent name from the prompt and returns minimal valid
+        skill handler Python source code.
+        """
+        # Extract intent name from the prompt
+        name_match = re.search(r'Name:\s*(\w+)', prompt)
+        intent_name = name_match.group(1) if name_match else "custom_task"
+
+        return (
+            'from probos.types import IntentMessage, IntentResult, LLMRequest\n'
+            '\n'
+            f'async def handle_{intent_name}(intent: IntentMessage, llm_client=None) -> IntentResult:\n'
+            f'    """Handle {intent_name} intent."""\n'
+            '    params = intent.params\n'
+            '    text = params.get("text", "")\n'
+            '    result_data = {"result": f"Processed: {text}"}\n'
+            '    if llm_client:\n'
+            '        request = LLMRequest(prompt=f"Process: {text}", tier="fast")\n'
+            '        response = await llm_client.complete(request)\n'
+            '        result_data = {"result": response.content}\n'
+            '    return IntentResult(\n'
+            '        intent_id=intent.id,\n'
+            '        agent_id="skill",\n'
+            '        success=True,\n'
+            '        result=result_data,\n'
+            '    )\n'
         )
 
     def _make_intent_extraction_response(self, prompt: str) -> str:

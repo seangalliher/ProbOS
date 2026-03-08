@@ -20,6 +20,7 @@ from rich.table import Table
 from rich.text import Text
 
 from probos.cognitive.decomposer import is_capability_gap
+from probos.cognitive.strategy import StrategyOption, StrategyRecommender
 from probos.experience.panels import render_dag_result
 from probos.types import TaskDAG, TaskNode
 
@@ -161,53 +162,110 @@ class ExecutionRenderer:
                         intent_meta = None  # skip self-mod flow below
 
                 if intent_meta:
-                    # Phase A: Ask user for consent
+                    # Phase A: Strategy proposal
+                    recommender = StrategyRecommender(
+                        intent_descriptors=self.runtime._collect_intent_descriptors(),
+                        llm_equipped_types=self.runtime._get_llm_equipped_types()
+                        if hasattr(self.runtime, "_get_llm_equipped_types")
+                        else set(),
+                    )
+                    proposal = recommender.propose(
+                        intent_name=intent_meta["name"],
+                        intent_description=intent_meta["description"],
+                        parameters=intent_meta.get("parameters", {}),
+                    )
+
+                    # Display strategy options
                     self.console.print(
-                        "\n[yellow bold]\U0001f527 Self-Modification — approval needed:[/yellow bold]"
+                        "\n[yellow bold]\U0001f527 Self-Modification Proposal:[/yellow bold]"
                     )
                     self.console.print(
-                        f"  [bold]Intent:[/bold]  [cyan]{intent_meta['name']}[/cyan]"
+                        f"  [bold]Unhandled intent:[/bold] [cyan]{intent_meta['name']}[/cyan]"
                     )
                     self.console.print(
                         f"  [bold]Purpose:[/bold] {intent_meta['description']}"
                     )
-                    self.console.print(
-                        "  [dim]A new agent will be designed, validated, and sandboxed.[/dim]"
-                    )
-                    self.console.print(
-                        "  [dim]'y' = approve  |  'n' = reject[/dim]"
-                    )
+                    self.console.print()
+
+                    if len(proposal.options) == 1:
+                        # Single option — simpler prompt
+                        opt = proposal.options[0]
+                        self.console.print(
+                            f"  [bold]Strategy:[/bold] {opt.label} "
+                            f"(confidence: {opt.confidence})"
+                        )
+                        self.console.print(f"  [dim]{opt.reason}[/dim]")
+                        prompt_text = "  Approve? [y/n]: "
+                    else:
+                        # Multiple options — numbered menu
+                        for i, opt in enumerate(proposal.options, 1):
+                            star = "\u2605 " if opt.is_recommended else "  "
+                            self.console.print(
+                                f"  [{i}] {star}{opt.label}  "
+                                f"(confidence: {opt.confidence})"
+                            )
+                            if opt.target_agent_type:
+                                self.console.print(
+                                    f"      Target: {opt.target_agent_type} (has LLM access)"
+                                )
+                            self.console.print(f"      [dim]{opt.reason}[/dim]")
+                        prompt_text = f"  Choose strategy [1-{len(proposal.options)}] or [n] to cancel: "
 
                     try:
                         resp = await asyncio.get_event_loop().run_in_executor(
-                            None, lambda: input("  Approve? [y/n]: ").strip().lower()
+                            None, lambda: input(prompt_text).strip().lower()
                         )
                     except (EOFError, KeyboardInterrupt, OSError):
                         resp = "n"
 
-                    if resp not in ("y", "yes"):
+                    # Determine chosen strategy
+                    chosen_option: StrategyOption | None = None
+                    if len(proposal.options) == 1:
+                        if resp in ("y", "yes"):
+                            chosen_option = proposal.options[0]
+                    elif resp.isdigit():
+                        idx = int(resp) - 1
+                        if 0 <= idx < len(proposal.options):
+                            chosen_option = proposal.options[idx]
+
+                    if chosen_option is None:
                         self.console.print("[dim]Self-modification rejected by user.[/dim]")
                     else:
-                        # Phase B: Design the agent (skip pipeline's internal approval)
+                        # Phase B: Execute chosen strategy
                         orig_approval = self.runtime.self_mod_pipeline._user_approval_fn
                         self.runtime.self_mod_pipeline._user_approval_fn = None
                         try:
-                            with self.console.status(
-                                "[bold yellow]Designing agent...[/bold yellow]",
-                                spinner="dots",
+                            if chosen_option.strategy == "add_skill" and hasattr(
+                                self.runtime.self_mod_pipeline, "handle_add_skill"
                             ):
-                                record = await self.runtime.self_mod_pipeline.handle_unhandled_intent(
-                                    intent_name=intent_meta["name"],
-                                    intent_description=intent_meta["description"],
-                                    parameters=intent_meta.get("parameters", {}),
-                                    requires_consensus=intent_meta.get("requires_consensus", False),
-                                )
+                                with self.console.status(
+                                    "[bold yellow]Designing skill...[/bold yellow]",
+                                    spinner="dots",
+                                ):
+                                    record = await self.runtime.self_mod_pipeline.handle_add_skill(
+                                        intent_name=intent_meta["name"],
+                                        intent_description=intent_meta["description"],
+                                        parameters=intent_meta.get("parameters", {}),
+                                        target_agent_type=chosen_option.target_agent_type or "skill_agent",
+                                    )
+                            else:
+                                with self.console.status(
+                                    "[bold yellow]Designing agent...[/bold yellow]",
+                                    spinner="dots",
+                                ):
+                                    record = await self.runtime.self_mod_pipeline.handle_unhandled_intent(
+                                        intent_name=intent_meta["name"],
+                                        intent_description=intent_meta["description"],
+                                        parameters=intent_meta.get("parameters", {}),
+                                        requires_consensus=intent_meta.get("requires_consensus", False),
+                                    )
                         finally:
                             self.runtime.self_mod_pipeline._user_approval_fn = orig_approval
 
                         if record and record.status == "active":
+                            strategy_label = "Skill" if chosen_option.strategy == "add_skill" else "Agent"
                             self.console.print(
-                                f"  [green bold]\u2713 Agent '{record.agent_type}' "
+                                f"  [green bold]\u2713 {strategy_label} '{record.agent_type}' "
                                 f"designed and registered[/green bold]"
                             )
                             # Phase C: Execute directly with the new intent

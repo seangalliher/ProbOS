@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
     from probos.cognitive.code_validator import CodeValidator
     from probos.cognitive.sandbox import SandboxRunner
+    from probos.cognitive.skill_designer import SkillDesigner
+    from probos.cognitive.skill_validator import SkillValidator
     from probos.config import SelfModConfig
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,7 @@ class DesignedAgentRecord:
     sandbox_time_ms: float = 0.0
     pool_name: str = ""
     status: str = "active"  # "active", "removed", "failed_validation", "rejected_by_user"
+    strategy: str = "new_agent"  # "new_agent" or "skill"
 
 
 class SelfModificationPipeline:
@@ -58,6 +61,10 @@ class SelfModificationPipeline:
         create_pool_fn: Callable,  # runtime creates a pool for the new type
         set_trust_fn: Callable,  # trust_network.create_with_prior
         user_approval_fn: Callable[[str], Awaitable[bool]] | None = None,
+        skill_designer: SkillDesigner | None = None,
+        skill_validator: SkillValidator | None = None,
+        add_skill_fn: Callable | None = None,
+        research: Any = None,
     ) -> None:
         self._designer = designer
         self._validator = validator
@@ -68,6 +75,10 @@ class SelfModificationPipeline:
         self._create_pool_fn = create_pool_fn
         self._set_trust_fn = set_trust_fn
         self._user_approval_fn = user_approval_fn
+        self._skill_designer = skill_designer
+        self._skill_validator = skill_validator
+        self._add_skill_fn = add_skill_fn
+        self._research = research
         self._records: list[DesignedAgentRecord] = []
 
     async def handle_unhandled_intent(
@@ -113,6 +124,16 @@ class SelfModificationPipeline:
                 self._records.append(record)
                 return None
 
+        # Research phase (optional)
+        research_context = "No research available."
+        if self._config.research_enabled and self._research:
+            try:
+                research_context = await self._research.research(
+                    intent_name, intent_description, parameters,
+                )
+            except Exception as e:
+                logger.warning("Research failed for %s: %s", intent_name, e)
+
         # 1. Design agent
         try:
             source_code = await self._designer.design_agent(
@@ -120,6 +141,7 @@ class SelfModificationPipeline:
                 intent_description=intent_description,
                 parameters=parameters,
                 requires_consensus=requires_consensus,
+                research_context=research_context,
             )
         except Exception as e:
             logger.warning("Agent design failed for %s: %s", intent_name, e)
@@ -198,6 +220,145 @@ class SelfModificationPipeline:
         )
         self._records.append(record)
         logger.info("Self-designed agent registered: %s (%s)", class_name, agent_type)
+        return record
+
+    async def handle_add_skill(
+        self,
+        intent_name: str,
+        intent_description: str,
+        parameters: dict[str, str],
+        target_agent_type: str,
+        research_context: str = "No research available.",
+    ) -> DesignedAgentRecord | None:
+        """Design and attach a skill instead of creating a new agent.
+
+        Flow:
+        1. Call SkillDesigner.design_skill() -> source code
+        2. Call SkillValidator.validate() -> static analysis
+        3. Compile the handler function (importlib)
+        4. Create Skill object with handler
+        5. Call add_skill_fn callback to attach to skill agents
+        6. Record as DesignedAgentRecord with strategy="skill"
+        """
+        if not self._skill_designer or not self._skill_validator or not self._add_skill_fn:
+            logger.warning("Skill pipeline not configured, falling back to new agent")
+            return None
+
+        # Check max limit
+        active_count = sum(1 for r in self._records if r.status == "active")
+        if active_count >= self._config.max_designed_agents:
+            logger.warning(
+                "Max designed agents (%d) reached, skipping skill for %s",
+                self._config.max_designed_agents, intent_name,
+            )
+            return None
+
+        # 1. Design skill
+        try:
+            source_code = await self._skill_designer.design_skill(
+                intent_name=intent_name,
+                intent_description=intent_description,
+                parameters=parameters,
+                target_agent_type=target_agent_type,
+                research_context=research_context,
+            )
+        except Exception as e:
+            logger.warning("Skill design failed for %s: %s", intent_name, e)
+            return None
+
+        # 2. Validate
+        errors = self._skill_validator.validate(source_code, intent_name)
+        if errors:
+            logger.warning("Skill validation failed for %s: %s", intent_name, errors)
+            record = DesignedAgentRecord(
+                intent_name=intent_name,
+                agent_type=target_agent_type,
+                class_name=self._skill_designer._build_function_name(intent_name),
+                source_code=source_code,
+                created_at=time.monotonic(),
+                status="failed_validation",
+                strategy="skill",
+            )
+            self._records.append(record)
+            return None
+
+        # 3. Compile the handler function
+        handler = None
+        try:
+            import importlib.util
+            import sys
+            import tempfile
+            from pathlib import Path
+
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", delete=False, encoding="utf-8",
+            )
+            tmp.write(source_code)
+            tmp.flush()
+            tmp.close()
+            tmp_path = tmp.name
+            module_name = f"_probos_skill_{id(source_code)}"
+
+            try:
+                spec = importlib.util.spec_from_file_location(module_name, tmp_path)
+                if spec and spec.loader:
+                    module = importlib.util.module_from_spec(spec)
+                    sys.modules[module_name] = module
+                    spec.loader.exec_module(module)
+
+                    func_name = self._skill_designer._build_function_name(intent_name)
+                    handler = getattr(module, func_name, None)
+            finally:
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
+                sys.modules.pop(module_name, None)
+        except Exception as e:
+            logger.warning("Skill compilation failed for %s: %s", intent_name, e)
+            return None
+
+        if handler is None:
+            logger.warning("Could not find handler function for %s", intent_name)
+            return None
+
+        # 4. Create Skill object
+        from probos.types import IntentDescriptor, Skill
+        skill = Skill(
+            name=intent_name,
+            descriptor=IntentDescriptor(
+                name=intent_name,
+                params=parameters,
+                description=intent_description,
+                requires_reflect=True,
+            ),
+            source_code=source_code,
+            handler=handler,
+            created_at=time.monotonic(),
+            origin="designed",
+        )
+
+        # 5. Attach to skill agents via callback
+        try:
+            await self._add_skill_fn(skill)
+        except Exception as e:
+            logger.warning("Skill attachment failed for %s: %s", intent_name, e)
+            return None
+
+        # 6. Record
+        record = DesignedAgentRecord(
+            intent_name=intent_name,
+            agent_type=target_agent_type,
+            class_name=self._skill_designer._build_function_name(intent_name),
+            source_code=source_code,
+            created_at=time.monotonic(),
+            pool_name="skills",
+            status="active",
+            strategy="skill",
+        )
+        self._records.append(record)
+        self._monitor.track_agent_type(f"skill:{intent_name}")
+        logger.info("Skill designed and attached: %s -> %s", intent_name, target_agent_type)
         return record
 
     def designed_agents(self) -> list[DesignedAgentRecord]:

@@ -29,12 +29,23 @@ consensus:
   trust_decay_rate: 0.999
 
 cognitive:
+  # Shared defaults (used when per-tier not specified)
   llm_base_url: "http://127.0.0.1:8080/v1"
   llm_api_key: ""
-  llm_model_fast: "gpt-4o-mini"
-  llm_model_standard: "claude-sonnet-4"
-  llm_model_deep: "claude-sonnet-4"
   llm_timeout_seconds: 30
+
+  # Fast tier: local Ollama (no auth needed)
+  llm_base_url_fast: "http://127.0.0.1:11434/v1"
+  llm_api_key_fast: ""
+  llm_model_fast: "qwen3.5:35b"
+  llm_timeout_fast: 15
+
+  # Standard tier: Copilot proxy (uses shared endpoint)
+  llm_model_standard: "claude-sonnet-4.6"
+
+  # Deep tier: Copilot proxy (uses shared endpoint)
+  llm_model_deep: "claude-opus-4.6"
+
   working_memory_token_budget: 4000
   decomposition_timeout_seconds: 30
   dag_execution_timeout_seconds: 60

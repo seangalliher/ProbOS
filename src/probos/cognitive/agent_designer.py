@@ -123,6 +123,12 @@ RULES:
 - No markdown code fences, no explanation, just the Python code
 - You MUST include ALL four lifecycle methods (perceive, decide, act, report) exactly as shown in the template
 
+RESEARCH CONTEXT:
+{research_context}
+
+Use the above research to inform your implementation.
+If research context says "No research available.", rely on your training knowledge.
+
 {platform_context}
 """
 
@@ -147,6 +153,7 @@ class AgentDesigner:
         intent_description: str,
         parameters: dict[str, str],
         requires_consensus: bool = False,
+        research_context: str = "No research available.",
     ) -> str:
         """Generate agent source code for an unhandled intent.
 
@@ -165,6 +172,7 @@ class AgentDesigner:
             param_schema=parameters,
             requires_consensus=requires_consensus,
             allowed_imports=", ".join(self._config.allowed_imports),
+            research_context=research_context,
             platform_context=get_platform_context(),
         )
 
