@@ -122,7 +122,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         # Try cache
         if cache_key in self._cache:
             cached = self._cache[cache_key]
-            logger.info("Using cached LLM response for request %s", request.id[:8])
+            logger.debug("Using cached LLM response for request %s", request.id[:8])
             return LLMResponse(
                 content=cached.content,
                 model=cached.model,
@@ -156,14 +156,14 @@ class OpenAICompatibleClient(BaseLLMClient):
             "max_tokens": request.max_tokens,
         }
 
-        logger.info("LLM request payload: %s", json.dumps(payload, indent=2))
-        logger.info("LLM request headers: %s", dict(self._client.headers))
+        logger.debug("LLM request payload: %s", json.dumps(payload, indent=2))
+        logger.debug("LLM request headers: %s", dict(self._client.headers))
 
         resp = await self._client.post("/chat/completions", json=payload)
         resp.raise_for_status()
         data = resp.json()
 
-        logger.info("Raw HTTP response body: %s", data)
+        logger.debug("Raw HTTP response body: %s", data)
 
         content = data["choices"][0]["message"]["content"]
         tokens_used = data.get("usage", {}).get("total_tokens", 0)

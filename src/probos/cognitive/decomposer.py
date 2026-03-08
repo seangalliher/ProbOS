@@ -97,10 +97,10 @@ User: "hello"
 {"intents": [], "response": "Hello! I'm ProbOS, a probabilistic agent-native OS. I can read, write, and inspect files. Try: read /tmp/test.txt"}
 
 User: "what can you do?"
-{"intents": [], "response": "I can read files, write files, list directories, search for files, run shell commands, and fetch URLs. Writes, commands, and HTTP requests go through consensus verification."}
+{"intents": [], "response": "I can read files, write files, list directories, search for files, run shell commands, fetch URLs, and answer questions about my own state (explain what happened, describe agents, assess system health, explain my reasoning). Writes, commands, and HTTP requests go through consensus verification."}
 
 User: "what is the weather?"
-{"intents": [], "response": "I can only perform file and system operations (read, write, list, search, run commands, fetch URLs). I don't have access to weather data."}
+{"intents": [], "response": "I can only perform file, system, and self-inspection operations. I don't have access to weather data."}
 
 User: "list the files in /tmp/mydir"
 {"intents": [{"id": "t1", "intent": "list_directory", "params": {"path": "/tmp/mydir"}, "depends_on": [], "use_consensus": false}], "reflect": false}
@@ -272,7 +272,7 @@ class IntentDecomposer:
 
         # Parse response into TaskDAG
         self.last_raw_response = response.content
-        logger.info("Raw LLM response: %s", response.content)
+        logger.debug("Raw LLM response: %s", response.content)
         dag = self._parse_response(response.content, text)
         return dag
 

@@ -346,6 +346,37 @@ def render_attention_panel(
     return Panel("\n".join(lines), title="Attention Queue", border_style="yellow")
 
 
+def _format_result(data: Any, max_items: int = 30) -> list[str]:
+    """Format an agent result for display, detecting common structures."""
+    # Directory listing: list of dicts with 'name' and 'type' keys
+    if isinstance(data, list) and data and isinstance(data[0], dict) and "name" in data[0]:
+        lines = []
+        for entry in data[:max_items]:
+            name = entry.get("name", "?")
+            etype = entry.get("type", "")
+            if etype == "dir":
+                lines.append(f"      [bold blue]{name}/[/bold blue]")
+            else:
+                size = entry.get("size", 0)
+                lines.append(f"      {name}  [dim]({size} bytes)[/dim]")
+        if len(data) > max_items:
+            lines.append(f"      [dim]... and {len(data) - max_items} more[/dim]")
+        return lines
+
+    # String result — show up to 500 chars
+    if isinstance(data, str):
+        preview = data[:500]
+        if len(data) > 500:
+            preview += "..."
+        return [f"      {preview}"]
+
+    # Fallback — generic preview
+    preview = str(data)[:200]
+    if len(str(data)) > 200:
+        preview += "..."
+    return [f"      {preview}"]
+
+
 def render_dag_result(result: dict[str, Any], debug: bool = False) -> Panel:
     """Render the result of ``process_natural_language()``."""
     lines: list[str] = []
@@ -383,8 +414,7 @@ def render_dag_result(result: dict[str, Any], debug: bool = False) -> Panel:
                     # Show first successful agent result excerpt
                     for ir in node_res["results"]:
                         if hasattr(ir, "success") and ir.success and ir.result:
-                            preview = str(ir.result)[:100]
-                            lines.append(f"      {preview}")
+                            lines.extend(_format_result(ir.result))
                             break
 
     # Show reflection if present
