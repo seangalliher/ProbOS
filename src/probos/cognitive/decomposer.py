@@ -96,15 +96,22 @@ No markdown. No code fences. No commentary. Just the raw JSON object.
 8. read_file and stat_file intents should have "use_consensus": false.
 9. list_directory and search_files should have "use_consensus": false.
 10. Paths must be absolute. Use the path exactly as the user provides it.
-11. If the request cannot be mapped to any available intent, respond with \
-{"intents": [], "response": "a helpful explanation of what you can do"}.
+11. If the request is conversational (greeting, help, small talk), respond with \
+{"intents": [], "response": "a helpful reply"}. \
+If the request is a task (translation, analysis, creative writing, etc.) that \
+cannot be mapped to any available intent, respond with \
+{"intents": [], "response": "I don't have an intent for <task type> yet."}.
 12. Never invent intents not in the table above.
 13a. ONLY use run_command when a real program or OS utility genuinely \
 computes the answer (e.g. date/time, math, system info, pip install). \
 NEVER use run_command to output hardcoded text you already know \
-(echo, Write-Host, Write-Output, printf, print, etc.). Translation, \
-conversation, creative writing, and knowledge questions are NOT \
-run_command tasks — return {"intents": [], "response": "..."} instead.
+(echo, Write-Host, Write-Output, printf, print, etc.).
+13b. For tasks requiring intelligence — translation, creative writing, \
+summarization, knowledge questions — if a matching intent exists in the \
+table above, use it. If NO matching intent exists, return \
+{"intents": [], "response": "I don't have an intent for <task type> yet."}. \
+NEVER perform these tasks yourself in the response field. \
+Conversational replies (greetings, help, small talk) are fine as direct responses.
 13. Set "reflect" to true when the user asks for analysis, interpretation, \
 comparison, summary, or opinion about results. Also set "reflect" to true for \
 any intent that transforms, translates, generates, or produces content the user \
@@ -165,6 +172,12 @@ User: "what just happened?"
 
 User: "tell me about file_reader agents"
 {"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "file_reader"}, "depends_on": [], "use_consensus": false}], "reflect": true}
+
+User: "translate 'hello world' to French"
+{"intents": [], "response": "I don't have an intent for translation yet."}
+
+User: "write me a haiku about the ocean"
+{"intents": [], "response": "I don't have an intent for creative writing yet."}
 """
 
 # Public alias for backward compatibility (tests import SYSTEM_PROMPT)

@@ -105,7 +105,13 @@ User: "what just happened?"
 {"intents": [{"id": "t1", "intent": "explain_last", "params": {}, "depends_on": [], "use_consensus": false}], "reflect": true}
 
 User: "tell me about file_reader agents"
-{"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "file_reader"}, "depends_on": [], "use_consensus": false}], "reflect": true}"""
+{"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "file_reader"}, "depends_on": [], "use_consensus": false}], "reflect": true}
+
+User: "translate 'hello world' to French"
+{"intents": [], "response": "I don't have an intent for translation yet."}
+
+User: "write me a haiku about the ocean"
+{"intents": [], "response": "I don't have an intent for creative writing yet."}"""
 
 
 class PromptBuilder:
@@ -207,8 +213,12 @@ class PromptBuilder:
         )
         rule_num += 1
         rules.append(
-            f'{rule_num}. If the request cannot be mapped to any available intent, respond with '
-            '{"intents": [], "response": "a helpful explanation of what you can do"}.'
+            f'{rule_num}. If the request is conversational (greeting, help, small talk), respond with '
+            '{"intents": [], "response": "a helpful reply"}. '
+            'If the request is a task (translation, analysis, creative writing, etc.) that '
+            'cannot be mapped to any available intent, respond with '
+            '{"intents": [], "response": "I don\'t have an intent for <task type> yet."}. '
+            'NEVER perform tasks yourself in the response field.'
         )
         rule_num += 1
         rules.append(f'{rule_num}. Never invent intents not in the table above.')
@@ -221,9 +231,16 @@ class PromptBuilder:
                 f'{rule_num}. ONLY use run_command when a real program or OS utility '
                 'genuinely computes the answer (e.g. date/time, math, system info, '
                 'pip install). NEVER use run_command to output hardcoded text you '
-                'already know (echo, Write-Host, Write-Output, printf, print, etc.). '
-                'Translation, conversation, creative writing, and knowledge questions '
-                'are NOT run_command tasks — return empty intents instead.'
+                'already know (echo, Write-Host, Write-Output, printf, print, etc.).'
+            )
+            rule_num += 1
+            rules.append(
+                f'{rule_num}. For tasks requiring intelligence — translation, creative writing, '
+                'summarization, knowledge questions — if a matching intent exists in the '
+                'table above, use it. If NO matching intent exists, return '
+                '{"intents": [], "response": "I don\'t have an intent for <task type> yet."}. '
+                'NEVER perform these tasks yourself in the response field. '
+                'Conversational replies (greetings, help, small talk) are fine as direct responses.'
             )
             rule_num += 1
 
