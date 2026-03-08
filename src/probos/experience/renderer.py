@@ -115,6 +115,45 @@ class ExecutionRenderer:
             ))
 
         if not dag.nodes:
+            # Self-modification: try to design an agent for this unhandled intent
+            if self.runtime.self_mod_pipeline:
+                with self.console.status(
+                    "[bold yellow]Attempting self-modification...[/bold yellow]",
+                    spinner="dots",
+                ):
+                    intent_meta = await self.runtime._extract_unhandled_intent(text)
+                if intent_meta:
+                    record = await self.runtime.self_mod_pipeline.handle_unhandled_intent(
+                        intent_name=intent_meta["name"],
+                        intent_description=intent_meta["description"],
+                        parameters=intent_meta.get("parameters", {}),
+                        requires_consensus=intent_meta.get("requires_consensus", False),
+                    )
+                    if record and record.status == "active":
+                        self.console.print(
+                            f"[green bold]✓ Self-designed agent '{record.agent_type}' "
+                            f"for intent '{record.intent_name}'[/green bold]"
+                        )
+                        # Retry decomposition now that a new agent exists
+                        with self.console.status(
+                            "[bold blue]Re-decomposing with new agent...[/bold blue]",
+                            spinner="dots",
+                        ):
+                            dag = await self.runtime.decomposer.decompose(
+                                text, context=context, similar_episodes=similar_episodes or None,
+                            )
+                    elif record:
+                        self.console.print(
+                            f"[yellow]Self-mod attempted for '{intent_meta['name']}' "
+                            f"but {record.status.replace('_', ' ')}.[/yellow]"
+                        )
+                    else:
+                        self.console.print(
+                            f"[yellow]Self-mod attempted for '{intent_meta['name']}' "
+                            f"but failed.[/yellow]"
+                        )
+
+        if not dag.nodes:
             if dag.response:
                 self.console.print(f"[cyan]{dag.response}[/cyan]")
             else:
