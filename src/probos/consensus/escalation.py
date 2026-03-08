@@ -424,7 +424,7 @@ class EscalationManager:
                         "Re-execution returned results but none successful: "
                         "intent=%s agents=%d errors=%s",
                         node.intent, len(results),
-                        [r.error for r in results if r.error],
+                        [r.error or "(empty)" for r in results if not r.success],
                     )
                 return {
                     "intent": node.intent,

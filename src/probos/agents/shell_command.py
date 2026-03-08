@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import subprocess
 import sys
 from typing import Any
 
@@ -11,6 +13,14 @@ from probos.substrate.agent import BaseAgent
 from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
 logger = logging.getLogger(__name__)
+
+# Regex to detect and strip redundant `powershell -Command "..."` wrappers.
+# The agent already invokes powershell on Windows, so the inner call is
+# unnecessary and can cause quoting issues.
+_PS_WRAPPER_RE = re.compile(
+    r"^powershell(?:\.exe)?\s+(?:-\w+\s+)*-(?:Command|c)\s+",
+    re.IGNORECASE,
+)
 
 
 class ShellCommandAgent(BaseAgent):
@@ -102,36 +112,70 @@ class ShellCommandAgent(BaseAgent):
         return result
 
     async def _run_command(self, command: str) -> dict[str, Any]:
-        """Execute a shell command with timeout and output capping."""
+        """Execute a shell command with timeout and output capping.
+
+        Uses subprocess.Popen in a thread executor so it works with any
+        asyncio event-loop policy (including WindowsSelectorEventLoop
+        which does not support asyncio.create_subprocess_*).
+        """
+        if sys.platform == "win32":
+            # Strip redundant powershell wrapper — the agent already
+            # runs commands under powershell via Popen.
+            command = self._strip_ps_wrapper(command)
+
+        loop = asyncio.get_running_loop()
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, self._run_sync, command),
+                timeout=self.DEFAULT_TIMEOUT,
+            )
+            return result
+        except asyncio.TimeoutError:
+            return {
+                "success": False,
+                "error": f"Command timed out after {self.DEFAULT_TIMEOUT}s",
+            }
+        except Exception as e:
+            return {"success": False, "error": repr(e)}
+
+    @staticmethod
+    def _strip_ps_wrapper(command: str) -> str:
+        """Remove a redundant ``powershell -Command "..."`` wrapper.
+
+        If the whole command is wrapped in an outer ``powershell -Command``
+        invocation, unwrap it so we don't nest powershell → powershell.
+        Handles optional surrounding quotes on the inner body.
+        """
+        m = _PS_WRAPPER_RE.match(command)
+        if m:
+            inner = command[m.end():]
+            # Strip one layer of surrounding double-quotes if present
+            if inner.startswith('"') and inner.endswith('"'):
+                inner = inner[1:-1]
+            return inner
+        return command
+
+    def _run_sync(self, command: str) -> dict[str, Any]:
+        """Blocking subprocess execution (called via run_in_executor)."""
         try:
             if sys.platform == "win32":
-                # Use PowerShell on Windows — create_subprocess_shell uses
-                # cmd.exe which can't run PowerShell syntax (Get-Date, etc.)
-                # and "date" in cmd.exe hangs waiting for stdin.
-                proc = await asyncio.create_subprocess_exec(
-                    "powershell", "-NoProfile", "-Command", command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                args = ["powershell", "-NoProfile", "-Command", command]
+                proc = subprocess.Popen(
+                    args,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
             else:
-                proc = await asyncio.create_subprocess_shell(
+                proc = subprocess.Popen(
                     command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
 
-            try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=self.DEFAULT_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
-                return {
-                    "success": False,
-                    "error": f"Command timed out after {self.DEFAULT_TIMEOUT}s",
-                }
+            stdout_bytes, stderr_bytes = proc.communicate(
+                timeout=self.DEFAULT_TIMEOUT,
+            )
 
             stdout = stdout_bytes[:self.MAX_OUTPUT_BYTES].decode(
                 "utf-8", errors="replace"
@@ -149,5 +193,12 @@ class ShellCommandAgent(BaseAgent):
                     "command": command,
                 },
             }
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            return {
+                "success": False,
+                "error": f"Command timed out after {self.DEFAULT_TIMEOUT}s",
+            }
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": repr(e)}
