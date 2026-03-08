@@ -263,9 +263,28 @@ class TestEscalationManagerTier3:
 
     @pytest.mark.asyncio
     async def test_tier3_user_approves(self):
-        """9. User callback returns True. Resolved."""
+        """9. User callback returns True. Re-executes without consensus."""
+        # First call (tier1 retry) fails, then re-execution after user
+        # approval succeeds with actual output.
+        call_count = 0
+
+        async def submit_intent_fn(intent, params, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                # Tier 1 retry — still fails
+                return _fail_intent_results()
+            else:
+                # Re-execution after user approval — succeeds
+                r = MagicMock()
+                r.success = True
+                r.result = {"stdout": "Tokyo time output", "stderr": "", "exit_code": 0}
+                r.error = None
+                r.confidence = 0.8
+                return [r]
+
         runtime = _make_mock_runtime(
-            submit_intent_side_effect=AsyncMock(return_value=_fail_intent_results()),
+            submit_intent_side_effect=submit_intent_fn,
         )
 
         async def user_cb(desc, ctx):
@@ -282,6 +301,11 @@ class TestEscalationManagerTier3:
         assert result.tier == EscalationTier.USER
         assert result.resolved is True
         assert result.user_approved is True
+        # The resolution should contain actual re-executed output
+        assert result.resolution is not None
+        assert result.resolution["success"] is True
+        assert len(result.resolution["results"]) == 1
+        assert result.resolution["results"][0].result["stdout"] == "Tokyo time output"
 
     @pytest.mark.asyncio
     async def test_tier3_user_rejects(self):
@@ -719,3 +743,196 @@ class TestEscalationPanels:
         # The panel should contain escalation info —
         # We can check the renderable text
         assert panel is not None
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: escalation → re-execute → reflect
+# ---------------------------------------------------------------------------
+
+
+class TestEscalationReflectEndToEnd:
+    """Verify that user-approved escalation produces meaningful reflection."""
+
+    @pytest.mark.asyncio
+    async def test_consensus_reject_user_approve_reflects_output(self):
+        """30. Consensus rejects run_command → user approves → re-execute
+        produces stdout → DAGExecutor stores normalized result →
+        reflect sees the output and produces a meaningful summary.
+        """
+        from probos.cognitive.decomposer import DAGExecutor, _normalize_consensus_result
+
+        # --- Mock runtime ---
+        # submit_intent_with_consensus always rejects (consensus REJECTED)
+        rejected_result = {
+            "consensus": MagicMock(outcome=ConsensusOutcome.REJECTED),
+            "results": [
+                MagicMock(
+                    success=True,
+                    result={"stdout": "03/09/2026 01:30:00\r\n", "stderr": "", "exit_code": 0},
+                    error=None,
+                    confidence=0.8,
+                    agent_id="shell_cmd_01",
+                ),
+            ],
+        }
+        runtime = MagicMock()
+        runtime.submit_intent_with_consensus = AsyncMock(
+            return_value=rejected_result,
+        )
+
+        # submit_intent succeeds (re-execution without consensus)
+        reexec_ir = MagicMock()
+        reexec_ir.success = True
+        reexec_ir.result = {"stdout": "03/09/2026 01:30:00\r\n", "stderr": "", "exit_code": 0}
+        reexec_ir.error = None
+        reexec_ir.confidence = 0.8
+        reexec_ir.agent_id = "shell_cmd_01"
+        runtime.submit_intent = AsyncMock(return_value=[reexec_ir])
+
+        # --- User callback ---
+        async def user_cb(desc, ctx):
+            return True
+
+        esc_mgr = EscalationManager(
+            runtime=runtime, llm_client=None, max_retries=1,
+            user_callback=user_cb,
+        )
+
+        # --- Build DAG ---
+        node = TaskNode(
+            id="t1",
+            intent="run_command",
+            params={"command": 'powershell -Command "[System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId((Get-Date), \'Tokyo Standard Time\')"'},
+            use_consensus=True,
+        )
+        dag = TaskDAG(nodes=[node], reflect=True)
+
+        # --- Execute ---
+        executor = DAGExecutor(runtime=runtime, escalation_manager=esc_mgr)
+        execution_result = await executor.execute(dag)
+
+        # --- Assertions on DAG state ---
+        assert node.status == "completed", f"Expected completed, got {node.status}"
+        assert node.escalation_result is not None
+        assert node.escalation_result["resolved"] is True
+
+        # --- Assertions on result content ---
+        node_result = execution_result["results"]["t1"]
+        assert isinstance(node_result, dict)
+        assert node_result.get("success") is True, f"Result should be successful: {node_result}"
+        assert "results" in node_result, f"Result should have 'results' key: {node_result}"
+
+        # The actual agent output should be accessible
+        agent_results = node_result["results"]
+        assert len(agent_results) >= 1
+        first_ir = agent_results[0]
+        assert first_ir.result["stdout"].strip() == "03/09/2026 01:30:00"
+
+    @pytest.mark.asyncio
+    async def test_reflect_sees_stdout_after_escalation(self):
+        """31. The reflect() method extracts stdout from the re-executed
+        result and sends it to the LLM for synthesis.
+        """
+        from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
+        from probos.cognitive.working_memory import WorkingMemoryManager
+
+        # --- Build a result dict simulating post-escalation ---
+        reexec_ir = MagicMock()
+        reexec_ir.success = True
+        reexec_ir.result = {"stdout": "03/09/2026 01:30:00\r\n", "stderr": "", "exit_code": 0}
+        reexec_ir.error = None
+
+        node = TaskNode(
+            id="t1", intent="run_command",
+            params={"command": "get tokyo time"},
+            status="completed",
+        )
+        dag = TaskDAG(nodes=[node], reflect=True)
+
+        execution_result = {
+            "dag": dag,
+            "results": {
+                "t1": {
+                    "intent": "run_command",
+                    "results": [reexec_ir],
+                    "success": True,
+                    "result_count": 1,
+                },
+            },
+            "node_count": 1,
+            "completed_count": 1,
+            "failed_count": 0,
+        }
+
+        # --- Setup decomposer with mock LLM ---
+        from probos.cognitive.llm_client import MockLLMClient
+        llm = MockLLMClient()
+        decomposer = IntentDecomposer(
+            llm_client=llm,
+            working_memory=WorkingMemoryManager(),
+        )
+
+        reflection = await decomposer.reflect(
+            "what time is it in tokyo?", execution_result
+        )
+
+        # Check what was sent to the LLM
+        last_req = llm.last_request
+        assert last_req is not None
+        prompt = last_req.prompt
+
+        # The prompt should contain the actual stdout, not consensus metadata
+        assert "03/09/2026 01:30:00" in prompt, (
+            f"Reflection prompt should contain stdout. Got:\n{prompt}"
+        )
+        assert "REJECTED" not in prompt, (
+            f"Reflection prompt should NOT contain REJECTED. Got:\n{prompt}"
+        )
+        assert "ConsensusOutcome" not in prompt, (
+            f"Reflection prompt should NOT contain ConsensusOutcome. Got:\n{prompt}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_user_rejects_marks_node_failed(self):
+        """32. Consensus rejects → user rejects → node is 'failed', not 'completed'."""
+        from probos.cognitive.decomposer import DAGExecutor
+
+        rejected_result = {
+            "consensus": MagicMock(outcome=ConsensusOutcome.REJECTED),
+            "results": [
+                MagicMock(
+                    success=True,
+                    result={"stdout": "some output", "stderr": "", "exit_code": 0},
+                    error=None,
+                    confidence=0.8,
+                    agent_id="shell_cmd_01",
+                ),
+            ],
+        }
+        runtime = MagicMock()
+        runtime.submit_intent_with_consensus = AsyncMock(
+            return_value=rejected_result,
+        )
+        runtime.submit_intent = AsyncMock(return_value=[])
+
+        async def user_cb(desc, ctx):
+            return False  # User rejects
+
+        esc_mgr = EscalationManager(
+            runtime=runtime, llm_client=None, max_retries=1,
+            user_callback=user_cb,
+        )
+
+        node = TaskNode(
+            id="t1", intent="run_command",
+            params={"command": "echo hello"},
+            use_consensus=True,
+        )
+        dag = TaskDAG(nodes=[node], reflect=True)
+
+        executor = DAGExecutor(runtime=runtime, escalation_manager=esc_mgr)
+        execution_result = await executor.execute(dag)
+
+        assert node.status == "failed", f"Expected failed, got {node.status}"
+        node_result = execution_result["results"]["t1"]
+        assert "error" in node_result

@@ -704,13 +704,30 @@ class DAGExecutor:
                     if esc_result.resolution is not None:
                         node.result = esc_result.resolution
                         results[node.id] = esc_result.resolution
-                    node.status = "completed"
-                    if on_event:
-                        await on_event("escalation_resolved", {
-                            "node": node, "escalation": node.escalation_result,
-                            "category": "consensus", "event": "escalation_resolved",
-                        })
-                        await on_event("node_complete", {"node": node, "result": results.get(node.id)})
+                        node.status = "completed"
+                        if on_event:
+                            await on_event("escalation_resolved", {
+                                "node": node, "escalation": node.escalation_result,
+                                "category": "consensus", "event": "escalation_resolved",
+                            })
+                            await on_event("node_complete", {"node": node, "result": results.get(node.id)})
+                    elif esc_result.user_approved is False:
+                        node.status = "failed"
+                        results[node.id] = {"error": "User rejected the operation"}
+                        if on_event:
+                            await on_event("escalation_exhausted", {
+                                "node": node, "escalation": node.escalation_result,
+                                "category": "consensus", "event": "escalation_exhausted",
+                            })
+                            await on_event("node_failed", {"node": node, "error": "User rejected"})
+                    else:
+                        node.status = "completed"
+                        if on_event:
+                            await on_event("escalation_resolved", {
+                                "node": node, "escalation": node.escalation_result,
+                                "category": "consensus", "event": "escalation_resolved",
+                            })
+                            await on_event("node_complete", {"node": node, "result": results.get(node.id)})
                 else:
                     node.status = "failed"
                     results[node.id] = {"error": str(e)}
@@ -744,6 +761,12 @@ class DAGExecutor:
             esc_result = await self.escalation_manager.escalate(
                 node, error, {"intent": node.intent, "params": node.params},
             )
+            logger.info(
+                "Escalation result for node %s: resolved=%s tier=%s "
+                "user_approved=%s has_resolution=%s",
+                node.id, esc_result.resolved, esc_result.tier,
+                esc_result.user_approved, esc_result.resolution is not None,
+            )
             node.escalation_result = esc_result.to_dict()
             if esc_result.resolved:
                 if esc_result.resolution is not None:
@@ -755,13 +778,31 @@ class DAGExecutor:
                     )
                     node.result = resolution
                     results[node.id] = resolution
-                node.status = "completed"
-                if on_event:
-                    await on_event("escalation_resolved", {
-                        "node": node, "escalation": node.escalation_result,
-                        "category": "consensus", "event": "escalation_resolved",
-                    })
-                    await on_event("node_complete", {"node": node, "result": results.get(node.id)})
+                    node.status = "completed"
+                    if on_event:
+                        await on_event("escalation_resolved", {
+                            "node": node, "escalation": node.escalation_result,
+                            "category": "consensus", "event": "escalation_resolved",
+                        })
+                        await on_event("node_complete", {"node": node, "result": results.get(node.id)})
+                elif esc_result.user_approved is False:
+                    # User explicitly rejected — treat as failure.
+                    node.status = "failed"
+                    results[node.id] = {"error": "User rejected the operation"}
+                    if on_event:
+                        await on_event("escalation_exhausted", {
+                            "node": node, "escalation": node.escalation_result,
+                            "category": "consensus", "event": "escalation_exhausted",
+                        })
+                        await on_event("node_failed", {"node": node, "error": "User rejected"})
+                else:
+                    node.status = "completed"
+                    if on_event:
+                        await on_event("escalation_resolved", {
+                            "node": node, "escalation": node.escalation_result,
+                            "category": "consensus", "event": "escalation_resolved",
+                        })
+                        await on_event("node_complete", {"node": node, "result": results.get(node.id)})
             else:
                 node.status = "failed"
                 if on_event:
