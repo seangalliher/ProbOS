@@ -936,3 +936,61 @@ class TestEscalationReflectEndToEnd:
         assert node.status == "failed", f"Expected failed, got {node.status}"
         node_result = execution_result["results"]["t1"]
         assert "error" in node_result
+
+    @pytest.mark.asyncio
+    async def test_reuse_original_results_on_consensus_rejection(self):
+        """33. When consensus rejected the policy (not the results), user
+        approval should reuse the original successful agent output
+        without re-executing.
+        """
+        from probos.cognitive.decomposer import DAGExecutor
+
+        # Original consensus result: agents succeeded but consensus rejected
+        original_ir = MagicMock()
+        original_ir.success = True
+        original_ir.result = {
+            "stdout": "03/08/2026 10:30:00\r\n",
+            "stderr": "",
+            "exit_code": 0,
+            "command": "powershell -Command \"Get-Date\"",
+        }
+        original_ir.error = None
+        original_ir.confidence = 0.8
+        original_ir.agent_id = "shell_cmd_01"
+
+        rejected_result = {
+            "consensus": MagicMock(outcome=ConsensusOutcome.REJECTED),
+            "results": [original_ir],
+        }
+        runtime = MagicMock()
+        runtime.submit_intent_with_consensus = AsyncMock(
+            return_value=rejected_result,
+        )
+        # submit_intent should NOT be called — original results are reused
+        runtime.submit_intent = AsyncMock(
+            side_effect=AssertionError("submit_intent should not be called"),
+        )
+
+        async def user_cb(desc, ctx):
+            return True
+
+        esc_mgr = EscalationManager(
+            runtime=runtime, llm_client=None, max_retries=1,
+            user_callback=user_cb,
+        )
+
+        node = TaskNode(
+            id="t1", intent="run_command",
+            params={"command": "powershell -Command \"Get-Date\""},
+            use_consensus=True,
+        )
+        dag = TaskDAG(nodes=[node], reflect=True)
+
+        executor = DAGExecutor(runtime=runtime, escalation_manager=esc_mgr)
+        execution_result = await executor.execute(dag)
+
+        assert node.status == "completed"
+        node_result = execution_result["results"]["t1"]
+        assert node_result["success"] is True
+        # Should have the original stdout from the consensus attempt
+        assert node_result["results"][0].result["stdout"].strip() == "03/08/2026 10:30:00"
