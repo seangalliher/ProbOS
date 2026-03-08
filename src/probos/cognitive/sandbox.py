@@ -14,6 +14,7 @@ from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from probos.config import SelfModConfig
+    from probos.cognitive.llm_client import BaseLLMClient
 
 from probos.substrate.agent import BaseAgent
 from probos.types import IntentMessage, IntentResult
@@ -48,8 +49,9 @@ class SandboxRunner:
     The SandboxRunner verifies functional correctness.
     """
 
-    def __init__(self, config: SelfModConfig) -> None:
+    def __init__(self, config: SelfModConfig, llm_client: Any = None) -> None:
         self._timeout = config.sandbox_timeout_seconds
+        self._llm_client = llm_client
 
     async def test_agent(
         self,
@@ -105,8 +107,8 @@ class SandboxRunner:
                         execution_time_ms=(time.monotonic() - t_start) * 1000,
                     )
 
-                # 4. Instantiate
-                agent = agent_class(pool="sandbox")
+                # 4. Instantiate (inject LLM client if available)
+                agent = agent_class(pool="sandbox", llm_client=self._llm_client)
 
                 # 5. Create test intent
                 test_intent = IntentMessage(

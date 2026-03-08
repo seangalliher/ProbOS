@@ -616,6 +616,7 @@ class MockLLMClient(BaseLLMClient):
             '\n'
             '    def __init__(self, **kwargs):\n'
             '        super().__init__(**kwargs)\n'
+            '        self._llm_client = kwargs.get("llm_client")\n'
             '\n'
             '    async def perceive(self, intent):\n'
             '        intent_name = intent.get("intent", "")\n'
