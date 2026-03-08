@@ -25,6 +25,7 @@ from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient, OpenAIComp
 from probos.cognitive.working_memory import WorkingMemoryManager
 from probos.cognitive.workflow_cache import WorkflowCache
 from probos.config import SystemConfig, load_config
+from probos.consensus.escalation import EscalationManager
 from probos.consensus.quorum import QuorumEngine
 from probos.consensus.trust import TrustNetwork
 from probos.mesh.capability import CapabilityRegistry
@@ -125,10 +126,16 @@ class ProbOSRuntime:
             focus_history_size=cog_cfg.focus_history_size,
             background_demotion_factor=cog_cfg.background_demotion_factor,
         )
+        self.escalation_manager = EscalationManager(
+            runtime=self,
+            llm_client=self.llm_client,
+            max_retries=2,
+        )
         self.dag_executor = DAGExecutor(
             runtime=self,
             timeout=cog_cfg.dag_execution_timeout_seconds,
             attention=self.attention,
+            escalation_manager=self.escalation_manager,
         )
 
         # --- Episodic memory ---
@@ -711,6 +718,9 @@ class ProbOSRuntime:
         }
         if self.episodic_memory:
             result["episodic_memory"] = "enabled"
+        result["escalation"] = {
+            "enabled": self.escalation_manager is not None,
+        }
         result["workflow_cache"] = {
             "size": self.workflow_cache.size,
             "entries": len(self.workflow_cache.entries),

@@ -286,6 +286,24 @@ class MockLLMClient(BaseLLMClient):
         """Match input against patterns and return canned response."""
         self._call_log.append(request)
 
+        # Detect escalation arbitration requests
+        if (
+            request.system_prompt
+            and "escalation arbiter" in request.system_prompt
+        ):
+            content = json.dumps({
+                "action": "reject",
+                "reason": "MockLLMClient cannot arbitrate — escalating to user",
+            })
+            return LLMResponse(
+                content=content,
+                model="mock",
+                tier=request.tier,
+                tokens_used=len(content) // 4,
+                cached=False,
+                request_id=request.id,
+            )
+
         # Detect reflection requests (uses REFLECT_PROMPT as system prompt)
         if (
             request.system_prompt

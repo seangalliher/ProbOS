@@ -205,6 +205,45 @@ class LLMResponse:
     request_id: str = ""
 
 
+class EscalationTier(Enum):
+    """Escalation cascade levels."""
+
+    RETRY = "retry"              # Tier 1: retry with a different agent
+    ARBITRATION = "arbitration"  # Tier 2: ask the LLM to judge
+    USER = "user"                # Tier 3: ask the user
+
+
+@dataclass
+class EscalationResult:
+    """Outcome of an escalation attempt."""
+
+    tier: EscalationTier
+    resolved: bool                          # Did this tier resolve the issue?
+    original_error: str = ""                # What triggered escalation
+    resolution: Any = None                  # The successful result (if resolved)
+    reason: str = ""                        # Human-readable explanation
+    agent_id: str = ""                      # Which agent resolved it (Tier 1)
+    attempts: int = 0                       # How many retry attempts were made
+    user_approved: bool | None = None       # User's decision (Tier 3 only)
+    tiers_attempted: list[EscalationTier] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        """Serialize to JSON-safe dict. Required because TaskNode gets serialized
+        for workflow cache deep copy, episodic memory, working memory snapshots,
+        and debug output."""
+        return {
+            "tier": self.tier.value,
+            "resolved": self.resolved,
+            "original_error": self.original_error,
+            "resolution": str(self.resolution) if self.resolution is not None else None,
+            "reason": self.reason,
+            "agent_id": self.agent_id,
+            "attempts": self.attempts,
+            "user_approved": self.user_approved,
+            "tiers_attempted": [t.value for t in self.tiers_attempted],
+        }
+
+
 @dataclass
 class TaskNode:
     """A node in a task DAG — represents a single intent to execute."""
@@ -217,6 +256,7 @@ class TaskNode:
     background: bool = False
     result: Any = None
     status: str = "pending"  # pending, running, completed, failed
+    escalation_result: dict | None = None  # Serialized EscalationResult via .to_dict()
 
 
 @dataclass

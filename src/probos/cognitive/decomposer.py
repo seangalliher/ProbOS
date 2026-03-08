@@ -11,7 +11,7 @@ from typing import Any, TYPE_CHECKING
 from probos.cognitive.llm_client import BaseLLMClient
 from probos.cognitive.prompt_builder import PromptBuilder
 from probos.cognitive.working_memory import WorkingMemoryManager, WorkingMemorySnapshot
-from probos.types import IntentDescriptor, LLMRequest, TaskDAG, TaskNode, Episode, AttentionEntry
+from probos.types import ConsensusOutcome, IntentDescriptor, LLMRequest, TaskDAG, TaskNode, Episode, AttentionEntry
 
 if TYPE_CHECKING:
     pass
@@ -417,10 +417,12 @@ class DAGExecutor:
         runtime: Any,  # ProbOSRuntime (avoid circular import)
         timeout: float = 60.0,
         attention: Any | None = None,  # AttentionManager (optional)
+        escalation_manager: Any | None = None,  # EscalationManager (optional)
     ) -> None:
         self.runtime = runtime
         self.timeout = timeout
         self.attention = attention
+        self.escalation_manager = escalation_manager
 
     async def execute(
         self,
@@ -558,7 +560,18 @@ class DAGExecutor:
                 )
                 node.result = result
                 results[node.id] = result
-                node.status = "completed"
+                # Check consensus outcome
+                consensus = result.get("consensus")
+                if consensus and consensus.outcome in (
+                    ConsensusOutcome.REJECTED, ConsensusOutcome.INSUFFICIENT
+                ):
+                    await self._handle_rejection(
+                        node, dag, results,
+                        f"Consensus {consensus.outcome.value}",
+                        on_event=on_event,
+                    )
+                else:
+                    node.status = "completed"
             elif node.use_consensus:
                 result = await self.runtime.submit_intent_with_consensus(
                     intent=node.intent,
@@ -567,7 +580,18 @@ class DAGExecutor:
                 )
                 node.result = result
                 results[node.id] = result
-                node.status = "completed"
+                # Check consensus outcome
+                consensus = result.get("consensus")
+                if consensus and consensus.outcome in (
+                    ConsensusOutcome.REJECTED, ConsensusOutcome.INSUFFICIENT
+                ):
+                    await self._handle_rejection(
+                        node, dag, results,
+                        f"Consensus {consensus.outcome.value}",
+                        on_event=on_event,
+                    )
+                else:
+                    node.status = "completed"
             else:
                 intent_results = await self.runtime.submit_intent(
                     intent=node.intent,
@@ -583,12 +607,86 @@ class DAGExecutor:
                 }
                 node.status = "completed"
 
-            if on_event:
+            if on_event and node.status == "completed":
                 await on_event("node_complete", {"node": node, "result": results.get(node.id)})
 
         except Exception as e:
             logger.error("Node %s failed: %s", node.id, e)
-            node.status = "failed"
-            results[node.id] = {"error": str(e)}
+            if self.escalation_manager is not None:
+                if on_event:
+                    await on_event("escalation_start", {
+                        "node": node, "error": str(e),
+                        "category": "consensus", "event": "escalation_start",
+                    })
+                esc_result = await self.escalation_manager.escalate(
+                    node, str(e), {"intent": node.intent, "params": node.params},
+                )
+                node.escalation_result = esc_result.to_dict()
+                if esc_result.resolved:
+                    if esc_result.resolution is not None:
+                        node.result = esc_result.resolution
+                        results[node.id] = esc_result.resolution
+                    node.status = "completed"
+                    if on_event:
+                        await on_event("escalation_resolved", {
+                            "node": node, "escalation": node.escalation_result,
+                            "category": "consensus", "event": "escalation_resolved",
+                        })
+                        await on_event("node_complete", {"node": node, "result": results.get(node.id)})
+                else:
+                    node.status = "failed"
+                    results[node.id] = {"error": str(e)}
+                    if on_event:
+                        await on_event("escalation_exhausted", {
+                            "node": node, "escalation": node.escalation_result,
+                            "category": "consensus", "event": "escalation_exhausted",
+                        })
+                        await on_event("node_failed", {"node": node, "error": str(e)})
+            else:
+                node.status = "failed"
+                results[node.id] = {"error": str(e)}
+                if on_event:
+                    await on_event("node_failed", {"node": node, "error": str(e)})
+
+    async def _handle_rejection(
+        self,
+        node: TaskNode,
+        dag: TaskDAG,
+        results: dict[str, Any],
+        error: str,
+        on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> None:
+        """Handle a consensus-rejected node: escalate or mark failed."""
+        if self.escalation_manager is not None:
             if on_event:
-                await on_event("node_failed", {"node": node, "error": str(e)})
+                await on_event("escalation_start", {
+                    "node": node, "error": error,
+                    "category": "consensus", "event": "escalation_start",
+                })
+            esc_result = await self.escalation_manager.escalate(
+                node, error, {"intent": node.intent, "params": node.params},
+            )
+            node.escalation_result = esc_result.to_dict()
+            if esc_result.resolved:
+                if esc_result.resolution is not None:
+                    node.result = esc_result.resolution
+                    results[node.id] = esc_result.resolution
+                node.status = "completed"
+                if on_event:
+                    await on_event("escalation_resolved", {
+                        "node": node, "escalation": node.escalation_result,
+                        "category": "consensus", "event": "escalation_resolved",
+                    })
+                    await on_event("node_complete", {"node": node, "result": results.get(node.id)})
+            else:
+                node.status = "failed"
+                if on_event:
+                    await on_event("escalation_exhausted", {
+                        "node": node, "escalation": node.escalation_result,
+                        "category": "consensus", "event": "escalation_exhausted",
+                    })
+                    await on_event("node_failed", {"node": node, "error": error})
+        else:
+            node.status = "failed"
+            if on_event:
+                await on_event("node_failed", {"node": node, "error": error})
