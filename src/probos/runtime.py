@@ -37,6 +37,7 @@ from probos.substrate.event_log import EventLog
 from probos.substrate.heartbeat import HeartbeatAgent
 from probos.substrate.pool import ResourcePool
 from probos.substrate.registry import AgentRegistry
+from probos.substrate.scaler import PoolScaler
 from probos.substrate.spawner import AgentSpawner
 from probos.types import (
     ConsensusOutcome,
@@ -144,6 +145,9 @@ class ProbOSRuntime:
         # --- Dreaming ---
         self.dream_scheduler: DreamScheduler | None = None
         self._last_request_time: float = time.monotonic()
+
+        # --- Pool scaling ---
+        self.pool_scaler: PoolScaler | None = None
 
         # --- Execution history (for introspection) ---
         self._last_execution: dict[str, Any] | None = None
@@ -264,6 +268,23 @@ class ProbOSRuntime:
         # Spawn red team agents
         await self._spawn_red_team(self.config.consensus.red_team_pool_size)
 
+        # Start pool scaler if scaling is enabled
+        if self.config.scaling.enabled:
+            pool_intent_map = self._build_pool_intent_map()
+            self.pool_scaler = PoolScaler(
+                pools=self.pools,
+                intent_bus=self.intent_bus,
+                pool_config=self.config.pools,
+                scaling_config=self.config.scaling,
+                pool_intent_map=pool_intent_map,
+                excluded_pools={"system"},
+                trust_network=self.trust_network,
+            )
+            await self.pool_scaler.start()
+
+            # Wire surge function into escalation manager
+            self.escalation_manager._surge_fn = self.pool_scaler.request_surge
+
         # Start episodic memory if provided
         if self.episodic_memory:
             await self.episodic_memory.start()
@@ -276,6 +297,11 @@ class ProbOSRuntime:
                 trust_network=self.trust_network,
                 episodic_memory=self.episodic_memory,
                 config=dream_cfg,
+                idle_scale_down_fn=(
+                    self.pool_scaler.scale_down_idle
+                    if self.pool_scaler
+                    else None
+                ),
             )
             self.dream_scheduler = DreamScheduler(
                 engine=engine,
@@ -307,6 +333,11 @@ class ProbOSRuntime:
             await agent.stop()
             await self.registry.unregister(agent.id)
         self._red_team_agents.clear()
+
+        # Stop pool scaler before stopping pools
+        if self.pool_scaler:
+            await self.pool_scaler.stop()
+            self.pool_scaler = None
 
         # Stop pools (stops agents, unregisters from registry)
         for name, pool in self.pools.items():
@@ -721,6 +752,11 @@ class ProbOSRuntime:
         result["escalation"] = {
             "enabled": self.escalation_manager is not None,
         }
+        result["scaling"] = (
+            self.pool_scaler.scaling_status()
+            if self.pool_scaler
+            else {"enabled": False}
+        )
         result["workflow_cache"] = {
             "size": self.workflow_cache.size,
             "entries": len(self.workflow_cache.entries),
@@ -850,3 +886,19 @@ class ProbOSRuntime:
                     seen.add(desc.name)
                     descriptors.append(desc)
         return descriptors
+
+    def _build_pool_intent_map(self) -> dict[str, list[str]]:
+        """Build mapping of pool_name -> list of intent names for demand tracking.
+
+        Uses intent_descriptors from registered agent templates.
+        """
+        pool_intents: dict[str, list[str]] = {}
+        for type_name, template_cls in self.spawner._templates.items():
+            descriptors = getattr(template_cls, 'intent_descriptors', [])
+            if not descriptors:
+                continue
+            for pool_name, pool in self.pools.items():
+                if pool.agent_type == type_name:
+                    pool_intents[pool_name] = [d.name for d in descriptors]
+                    break
+        return pool_intents

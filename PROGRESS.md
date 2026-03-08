@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 7 — Escalation Cascades & Error Recovery Complete + UX Fixes (506/506 tests)
+## Current Status: Phase 8 — Adaptive Pool Sizing & Dynamic Scaling Complete (540/540 tests)
 
 ---
 
@@ -11,14 +11,15 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `pyproject.toml` | done | Project config, deps (pydantic, pyyaml, aiosqlite, rich, pytest) |
-| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config, dreaming config |
+| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config, dreaming config, scaling config |
 | `src/probos/__init__.py` | done | Package root, version 0.1.0 |
 | `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `EscalationTier` (3-tier cascade levels: retry, arbitration, user), `EscalationResult` (escalation outcome with `to_dict()` for JSON-safe serialization, `tiers_attempted` tracking), `TaskNode` (with `background` field for background demotion, `escalation_result: dict | None` for serialized escalation data), `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record), `AttentionEntry` (priority scoring for task scheduling), `FocusSnapshot` (cross-request focus history), `DreamReport` (dream cycle results), `WorkflowCacheEntry` (cached workflow pattern), `IntentDescriptor` (structured metadata for dynamic intent discovery: name, params, description, requires_consensus, requires_reflect) |
-| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`, `focus_history_size`, `background_demotion_factor`), `MemoryConfig`, `DreamingConfig` (idle threshold, dream interval, replay count, strengthening/weakening factors, prune threshold, trust boost/penalty, pre-warm top-K), `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
+| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`, `focus_history_size`, `background_demotion_factor`), `MemoryConfig`, `DreamingConfig` (idle threshold, dream interval, replay count, strengthening/weakening factors, prune threshold, trust boost/penalty, pre-warm top-K), `ScalingConfig` (scale up/down thresholds, step sizes, cooldown, observation window, idle scale-down), `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
 | `src/probos/substrate/agent.py` | done | `BaseAgent` ABC — `perceive/decide/act/report` lifecycle, confidence tracking, state transitions, async start/stop, optional `_runtime` reference via `**kwargs`, `**kwargs` passthrough to subclasses, class-level `intent_descriptors: list[IntentDescriptor]` for dynamic intent discovery |
 | `src/probos/substrate/registry.py` | done | `AgentRegistry` — in-memory index, lookup by ID/pool/capability, async-safe |
 | `src/probos/substrate/spawner.py` | done | `AgentSpawner` — template registration, `spawn(**kwargs)`, `recycle()` with optional respawn, `**kwargs` forwarded to agent constructors |
-| `src/probos/substrate/pool.py` | done | `ResourcePool` — maintains N agents at target size, background health loop, auto-recycles degraded agents, `**spawn_kwargs` forwarding for agent construction |
+| `src/probos/substrate/pool.py` | done | `ResourcePool` — maintains N agents at target size, background health loop, auto-recycles degraded agents, `**spawn_kwargs` forwarding for agent construction, `add_agent()`/`remove_agent()` with min/max bounds enforcement, trust-aware scale-down selection |
+| `src/probos/substrate/scaler.py` | done | `PoolScaler` — demand-driven background loop, per-pool demand ratio evaluation, scale up/down with cooldown, `request_surge()` for escalation, `scale_down_idle()` for dreaming, pool exclusions, pinned pool detection, `scaling_status()` for shell/panel |
 | `src/probos/substrate/heartbeat.py` | done | `HeartbeatAgent` — fixed-interval pulse loop, listener callbacks, gossip carrier |
 | `src/probos/substrate/event_log.py` | done | `EventLog` — append-only SQLite event log for lifecycle, mesh, system, and consensus events |
 | `src/probos/agents/heartbeat_monitor.py` | done | `SystemHeartbeatAgent` — collects CPU count, load average, platform, PID |
@@ -28,7 +29,7 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `src/probos/mesh/signal.py` | done | `SignalManager` — TTL enforcement, background reaper loop, expiry callbacks |
-| `src/probos/mesh/intent.py` | done | `IntentBus` — async pub/sub, concurrent fan-out to subscribers, result collection with timeout, error handling |
+| `src/probos/mesh/intent.py` | done | `IntentBus` — async pub/sub, concurrent fan-out to subscribers, result collection with timeout, error handling, per-broadcast demand tracking with sliding window, `per_pool_demand()` for scaler |
 | `src/probos/mesh/capability.py` | done | `CapabilityRegistry` — semantic descriptor store, fuzzy matching (exact/substring/keyword), scored results |
 | `src/probos/mesh/routing.py` | done | `HebbianRouter` — connection weights with `rel_type` (intent/agent), SQLite persistence, decay_all, preferred target ranking, `record_verification()` |
 | `src/probos/mesh/gossip.py` | done | `GossipProtocol` — partial view management, entry injection/merge by recency, random sampling, periodic gossip loop |
@@ -40,7 +41,7 @@
 | `src/probos/consensus/__init__.py` | done | Package root |
 | `src/probos/consensus/quorum.py` | done | `QuorumEngine` — configurable thresholds (2-of-3, 3-of-5, etc.), confidence-weighted voting, `evaluate()` and `evaluate_values()` |
 | `src/probos/consensus/trust.py` | done | `TrustNetwork` — Bayesian Beta(alpha, beta) reputation scoring, observation recording, decay toward prior, SQLite persistence |
-| `src/probos/consensus/escalation.py` | done | `EscalationManager` — 3-tier cascade: Tier 1 retry with different agent (pool rotation), Tier 2 LLM arbitration (approve/reject/modify via `ARBITRATION_PROMPT`), Tier 3 user consultation (async callback with `pre_user_hook` for Rich Live conflict). Event-silent design (AD-87): returns `EscalationResult` to caller, executor logs events. Bounded: max_retries cap on Tier 1, one LLM call for Tier 2, one prompt for Tier 3 |
+| `src/probos/consensus/escalation.py` | done | `EscalationManager` — 3-tier cascade: Tier 1 retry with different agent (pool rotation, `surge_fn` for on-demand pool scale-up), Tier 2 LLM arbitration (approve/reject/modify via `ARBITRATION_PROMPT`), Tier 3 user consultation (async callback with `pre_user_hook` for Rich Live conflict). Event-silent design (AD-87): returns `EscalationResult` to caller, executor logs events. Bounded: max_retries cap on Tier 1, one LLM call for Tier 2, one prompt for Tier 3 |
 
 ### Cognitive Layer (complete — new in Phase 3a)
 
@@ -54,7 +55,7 @@
 | `src/probos/cognitive/episodic.py` | done | `EpisodicMemory` — SQLite-backed long-term memory, `Episode` storage/recall, keyword-overlap similarity search (cosine over bag-of-words), `recall_by_intent()`, `recent()`, `get_stats()`, max_episodes eviction |
 | `src/probos/cognitive/episodic_mock.py` | done | `MockEpisodicMemory` — in-memory episodic memory for testing, substring/keyword matching recall, no SQLite dependency |
 | `src/probos/cognitive/attention.py` | done | `AttentionManager` — priority scorer and budgeter for task execution, scores = urgency × relevance × deadline_factor × dependency_depth_bonus, configurable concurrency limit (`max_concurrent_tasks`), cross-request focus history (ring buffer of `FocusSnapshot` entries, configurable max size), `_compute_relevance()` (keyword overlap between entry intent and recent focus, floor=0.3), background demotion (configurable factor, default 0.25), queue introspection |
-| `src/probos/cognitive/dreaming.py` | done | `DreamingEngine` — offline consolidation: replay recent episodes to strengthen/weaken Hebbian weights, prune below-threshold connections, trust consolidation (boost/penalize agents by track record), pre-warm intent prediction via temporal bigram analysis. `DreamScheduler` — background asyncio task monitors idle time, triggers dream cycles after configurable threshold, `force_dream()` for immediate cycles, `is_dreaming` property, `last_dream_report` for introspection |
+| `src/probos/cognitive/dreaming.py` | done | `DreamingEngine` — offline consolidation: replay recent episodes to strengthen/weaken Hebbian weights, prune below-threshold connections, trust consolidation (boost/penalize agents by track record), pre-warm intent prediction via temporal bigram analysis, `idle_scale_down_fn` callback for pool scaler integration. `DreamScheduler` — background asyncio task monitors idle time, triggers dream cycles after configurable threshold, `force_dream()` for immediate cycles, `is_dreaming` property, `last_dream_report` for introspection |
 | `src/probos/cognitive/workflow_cache.py` | done | `WorkflowCache` — in-memory LRU cache of successful DAG patterns, exact and fuzzy lookup (keyword overlap + pre-warm intent subset), deep copy with fresh node IDs on retrieval, popularity-based eviction, stores only fully-successful DAGs |
 
 ### Experience Layer (complete — new in Phase 4)
@@ -62,9 +63,9 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `src/probos/experience/__init__.py` | done | Package root |
-| `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()` (with dreaming state section), `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_attention_panel()` (with focus history display and background task indicator), `render_dag_result()` (displays `response` field for conversational replies), `render_dream_panel()` (dream cycle report with pre-warm intents), `render_workflow_cache_panel()` (cached workflow patterns with hit counts), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
-| `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — DAG execution display with status spinner (Rich Live removed — AD-92), `on_event` callback integration, conversational response display when LLM returns `response` field, execution snapshot for introspection (`_previous_execution`/`_last_execution`), debug mode (raw DAG JSON, individual agent responses, consensus details), DAG plan display in debug-only mode (AD-90), Params column in progress table, manually-managed spinner with `_stop_live_for_user` hook for Tier 3 escalation (AD-93) |
-| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, graceful error handling |
+| `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()` (with dreaming state section), `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_attention_panel()` (with focus history display and background task indicator), `render_dag_result()` (displays `response` field for conversational replies), `render_dream_panel()` (dream cycle report with pre-warm intents), `render_workflow_cache_panel()` (cached workflow patterns with hit counts), `render_scaling_panel()` (pool scaling status with demand ratio, size range, cooldown), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
+| `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — DAG execution display with status spinner (Rich Live removed — AD-92), `on_event` callback integration (including `scale_up`/`scale_down` events), conversational response display when LLM returns `response` field, execution snapshot for introspection (`_previous_execution`/`_last_execution`), debug mode (raw DAG JSON, individual agent responses, consensus details), DAG plan display in debug-only mode (AD-90), Params column in progress table, manually-managed spinner with `_stop_live_for_user` hook for Tier 3 escalation (AD-93) |
+| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/scaling`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, graceful error handling |
 
 ### Agents
 
@@ -869,6 +870,34 @@ Rich's `Live` display relies on ANSI escape sequences to erase and redraw frames
 
 Using `console.status()` as a context manager (`with ... as status:`) blocks stdin, preventing Tier 3 escalation from accepting user input. Changed to manually managed spinner: `status = console.status(...); status.start()` before execution, `status.stop()` in a `finally` block after execution. The `_stop_live_for_user` hook calls `self._status.stop()` before the escalation prompt appears, freeing stdin for `input()`. This replaces the Rich Live pre_user_hook (AD-88/AD-89) with an equivalent mechanism for the spinner.
 
+### AD-94: ScalingConfig and demand tracking
+
+Added `ScalingConfig` pydantic model with scale_up/down thresholds, step sizes, cooldown, observation window, idle scale-down timing. IntentBus extended with per-broadcast timestamp tracking (`_broadcast_timestamps`), sliding window pruning, `demand_metrics()` for system-wide stats, and `per_pool_demand(pool_intents)` for per-pool broadcast counts keyed by intent-to-pool mapping.
+
+### AD-95: Pool bounds enforcement (add_agent / remove_agent)
+
+ResourcePool extended with `min_size` and `max_size` attributes (from PoolConfig), `add_agent()` that respects `max_size`, and `remove_agent(trust_network=)` that respects `min_size`. `check_health()` now caps at `max_size` after respawn. These methods do NOT touch `target_size` — only the PoolScaler adjusts targets.
+
+### AD-96: Trust-aware scale-down selection
+
+`remove_agent(trust_network=...)` selects the agent with the lowest Bayesian trust score (via `trust_network.get_score()`) for removal. When all agents have equal trust or no trust_network is provided, falls back to removing the newest agent (last in `_agent_ids` list). This ensures high-trust agents survive scale-down.
+
+### AD-97: PoolScaler — demand-driven pool sizing
+
+New `PoolScaler` class in `substrate/scaler.py` runs a background loop (interval = observation_window / 2). Per cycle: queries `IntentBus.per_pool_demand()`, computes `broadcasts / pool.current_size` ratio, scales up if above threshold, scales down if below. Cooldown prevents flapping. Excluded pools (e.g., "system") and pinned pools (min == max) are skipped. `scaling_status()` returns per-pool snapshot for shell/panel display.
+
+### AD-98: Escalation surge integration
+
+`EscalationManager.__init__` accepts optional `surge_fn` parameter (async callable `(pool_name, extra) -> bool`). When Tier 1 retry begins, if `surge_fn` is set and `context` contains `pool_name`, the manager requests one extra agent in that pool before retrying. This gives retries a better chance of succeeding by temporarily increasing pool capacity. Bypasses cooldown (emergency request).
+
+### AD-99: Dreaming idle scale-down integration
+
+`DreamingEngine.__init__` accepts optional `idle_scale_down_fn` parameter. After Step 4 (pre-warm) in `dream_cycle()`, the callback is invoked to reduce pool sizes toward their minimums, freeing resources during idle periods. Runtime wires `pool_scaler.scale_down_idle` into the dreaming engine when both are enabled.
+
+### AD-100: /scaling command and render_scaling_panel
+
+New `/scaling` shell command shows per-pool scaling status (current size, min-max range, target, demand ratio, last scaling event, cooldown remaining). `render_scaling_panel()` in panels.py builds a Rich Table with excluded pool indicators. Renderer handles `scale_up`/`scale_down` events (no-op on node status, logged by scaler).
+
 ---
 
 ## What's Next
@@ -923,6 +952,8 @@ Using `console.status()` as a context manager (`with ... as status:`) blocks std
 - [x] ~~506/506 tests pass~~
 - [x] ~~UX fixes: pre_user_hook wiring (AD-89), DAG plan to debug-only (AD-90), Tier 3 prompt enrichment (AD-91), Rich Live → spinner (AD-92), manually managed spinner for escalation (AD-93)~~
 - [x] ~~506/506 tests pass (after UX fixes)~~
+- [x] ~~Phase 8: Adaptive Pool Sizing & Dynamic Scaling (ScalingConfig, IntentBus demand tracking, ResourcePool add_agent/remove_agent with trust-aware selection, PoolScaler background loop with demand ratio evaluation, escalation surge_fn, dreaming idle_scale_down_fn, /scaling command, render_scaling_panel)~~
+- [x] ~~540/540 tests pass~~
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
 

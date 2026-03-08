@@ -239,6 +239,10 @@ class ExecutionRenderer:
             self._node_statuses[node.id] = "completed"
         elif event == "escalation_exhausted":
             self._node_statuses[node.id] = "failed"
+        elif event == "scale_up":
+            pass  # Logged by scaler; no node status change needed
+        elif event == "scale_down":
+            pass  # Logged by scaler; no node status change needed
 
 
 

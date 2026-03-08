@@ -521,3 +521,45 @@ def render_workflow_cache_panel(
         table.add_row(pattern, intents, str(entry.hit_count), last_hit)
 
     return Panel(table, title=f"Workflow Cache ({size} entries)", border_style="cyan")
+
+
+def render_scaling_panel(scaling_status: dict) -> Panel:
+    """Render pool scaling status as a Rich Panel."""
+    if not scaling_status or scaling_status.get("enabled") is False:
+        return Panel("[dim]Pool scaling is disabled.[/dim]", title="Scaling", border_style="cyan")
+
+    table = Table(show_header=True, show_lines=False)
+    table.add_column("Pool")
+    table.add_column("Size", justify="right")
+    table.add_column("Range", justify="center")
+    table.add_column("Target", justify="right")
+    table.add_column("Demand", justify="right")
+    table.add_column("Last Event")
+    table.add_column("Cooldown", justify="right")
+
+    for pool_name, info in scaling_status.items():
+        if not isinstance(info, dict) or "current_size" not in info:
+            continue
+
+        excluded = " [dim](excl)[/dim]" if info.get("excluded") else ""
+        size = str(info["current_size"])
+        range_str = f"{info['min_size']}-{info['max_size']}"
+        target = str(info["target_size"])
+        demand = f"{info['demand_ratio']:.2f}"
+
+        last = info.get("last_event")
+        if last:
+            arrow = "\u2191" if last["direction"] == "up" else "\u2193"
+            event_str = f"{arrow} {last['reason']}"
+        else:
+            event_str = "[dim]-[/dim]"
+
+        cd = info.get("cooldown_remaining", 0.0)
+        cd_str = f"{cd:.0f}s" if cd > 0 else "[dim]-[/dim]"
+
+        table.add_row(
+            f"{pool_name}{excluded}", size, range_str, target,
+            demand, event_str, cd_str,
+        )
+
+    return Panel(table, title="Pool Scaling", border_style="cyan")

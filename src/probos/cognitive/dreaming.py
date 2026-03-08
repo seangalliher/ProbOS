@@ -30,12 +30,14 @@ class DreamingEngine:
         trust_network: TrustNetwork,
         episodic_memory: Any,
         config: DreamingConfig,
+        idle_scale_down_fn: Any = None,
     ) -> None:
         self.router = router
         self.trust_network = trust_network
         self.episodic_memory = episodic_memory
         self.config = config
         self.pre_warm_intents: list[str] = []
+        self._idle_scale_down_fn = idle_scale_down_fn
 
     async def dream_cycle(self) -> DreamReport:
         """Execute one full dream pass.
@@ -65,6 +67,13 @@ class DreamingEngine:
         # Step 4: Pre-warm
         pre_warm = self._compute_pre_warm(episodes)
         self.pre_warm_intents = pre_warm
+
+        # Step 5: Idle pool scale-down (if scaler wired)
+        if self._idle_scale_down_fn:
+            try:
+                await self._idle_scale_down_fn()
+            except Exception as e:
+                logger.debug("Idle scale-down failed: %s", e)
 
         duration_ms = (time.monotonic() - t_start) * 1000
 

@@ -38,6 +38,8 @@ class ResourcePool:
         self.registry = registry
         self.config = config
         self.target_size = target_size or config.default_pool_size
+        self.min_size = config.min_pool_size
+        self.max_size = config.max_pool_size
         self._agent_ids: list[AgentID] = []
         self._health_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
@@ -135,6 +137,14 @@ class ResourcePool:
             agent = await self.spawner.spawn(self.agent_type, self.name, **self._spawn_kwargs)
             self._agent_ids.append(agent.id)
 
+        # Cap at max_pool_size (safety check)
+        while len(self._agent_ids) > self.max_size:
+            excess_id = self._agent_ids.pop()
+            agent = self.registry.get(excess_id)
+            if agent:
+                await agent.stop()
+                await self.registry.unregister(excess_id)
+
         status = {"healthy": healthy, "degraded": degraded, "dead": dead}
         if degraded or dead:
             logger.info("Pool %r health check: %s", self.name, status)
@@ -152,6 +162,51 @@ class ResourcePool:
             except asyncio.TimeoutError:
                 pass  # Timeout means it's time for a health check
             await self.check_health()
+
+    async def add_agent(self, **kwargs: Any) -> str | None:
+        """Spawn one additional agent. Returns new agent ID, or None if at max.
+
+        Does NOT modify target_size — the scaler owns target_size adjustments.
+        """
+        if self.current_size >= self.max_size:
+            return None
+        agent = await self.spawner.spawn(self.agent_type, self.name, **self._spawn_kwargs, **kwargs)
+        self._agent_ids.append(agent.id)
+        return agent.id
+
+    async def remove_agent(self, trust_network: Any = None) -> str | None:
+        """Stop and remove one agent. Returns removed ID, or None if at min.
+
+        If trust_network is provided, removes the agent with the lowest trust score.
+        If trust_network is None or all agents have equal trust, removes newest (last in list).
+        Does NOT modify target_size — the scaler owns target_size adjustments.
+        """
+        if self.current_size <= self.min_size:
+            return None
+
+        if trust_network:
+            worst_id = None
+            worst_trust = float('inf')
+            for aid in self._agent_ids:
+                score = trust_network.get_score(aid)
+                if score < worst_trust:
+                    worst_trust = score
+                    worst_id = aid
+            if worst_id:
+                self._agent_ids.remove(worst_id)
+                agent = self.registry.get(worst_id)
+                if agent:
+                    await agent.stop()
+                    await self.registry.unregister(worst_id)
+                return worst_id
+
+        # Fallback: remove newest
+        aid = self._agent_ids.pop()
+        agent = self.registry.get(aid)
+        if agent:
+            await agent.stop()
+            await self.registry.unregister(aid)
+        return aid
 
     def info(self) -> dict:
         """Pool status snapshot."""

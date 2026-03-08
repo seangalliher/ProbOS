@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Awaitable
 
@@ -30,6 +31,8 @@ class IntentBus:
         self._subscribers: dict[str, IntentHandler] = {}  # agent_id -> handler
         self._pending_results: dict[str, list[IntentResult]] = {}  # intent_id -> results
         self._result_events: dict[str, asyncio.Event] = {}
+        self._broadcast_timestamps: list[tuple[float, str]] = []  # (monotonic_time, intent_name)
+        self._window_seconds: float = 60.0
 
     def subscribe(self, agent_id: str, handler: IntentHandler) -> None:
         """Register an agent's intent handler."""
@@ -56,6 +59,7 @@ class IntentBus:
         """
         timeout = timeout if timeout is not None else intent.ttl_seconds
 
+        self.record_broadcast(intent.intent)
         self._signal_manager.track(intent)
         self._pending_results[intent.id] = []
 
@@ -94,6 +98,46 @@ class IntentBus:
             len(results),
         )
         return results
+
+    def record_broadcast(self, intent_name: str) -> None:
+        """Record a broadcast event with its intent name."""
+        self._broadcast_timestamps.append((time.monotonic(), intent_name))
+
+    def demand_metrics(self) -> dict:
+        """Return current demand snapshot (system-wide)."""
+        now = time.monotonic()
+        cutoff = now - self._window_seconds
+        self._broadcast_timestamps = [(t, n) for t, n in self._broadcast_timestamps if t > cutoff]
+        return {
+            "broadcasts_in_window": len(self._broadcast_timestamps),
+            "subscriber_count": len(self._subscribers),
+        }
+
+    def per_pool_demand(self, pool_intents: dict[str, list[str]]) -> dict[str, int]:
+        """Return broadcast counts per pool within the observation window.
+
+        Args:
+            pool_intents: mapping of pool_name -> list of intent names that pool handles.
+
+        Returns:
+            dict of pool_name -> number of broadcasts targeting that pool's intents.
+        """
+        now = time.monotonic()
+        cutoff = now - self._window_seconds
+        self._broadcast_timestamps = [(t, n) for t, n in self._broadcast_timestamps if t > cutoff]
+
+        # Build reverse mapping: intent_name -> pool_name
+        intent_to_pool: dict[str, str] = {}
+        for pool_name, intents in pool_intents.items():
+            for intent_name in intents:
+                intent_to_pool[intent_name] = pool_name
+
+        counts: dict[str, int] = {name: 0 for name in pool_intents}
+        for _, intent_name in self._broadcast_timestamps:
+            pool = intent_to_pool.get(intent_name)
+            if pool:
+                counts[pool] += 1
+        return counts
 
     async def _invoke_handler(
         self,
