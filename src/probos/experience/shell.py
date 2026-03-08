@@ -69,6 +69,12 @@ class ProbOSShell:
                 self._user_escalation_callback
             )
 
+        # Wire self-mod user approval callback
+        if self.runtime.self_mod_pipeline:
+            self.runtime.self_mod_pipeline._user_approval_fn = (
+                self._user_self_mod_approval
+            )
+
     # ------------------------------------------------------------------
     # Health and prompt
     # ------------------------------------------------------------------
@@ -448,3 +454,25 @@ class ProbOSShell:
                 return None  # Skip
         except (EOFError, KeyboardInterrupt):
             return None
+
+    # ------------------------------------------------------------------
+    # Self-mod approval callback
+    # ------------------------------------------------------------------
+
+    async def _user_self_mod_approval(self, description: str) -> bool:
+        """Prompt the user to approve or reject a self-designed agent."""
+        self.console.print(
+            "\n[yellow bold]🔧 Self-Modification — approval needed:[/yellow bold]"
+        )
+        self.console.print(f"  {description}")
+        self.console.print(
+            "  [dim]'y' = approve  |  'n' = reject[/dim]"
+        )
+
+        try:
+            response = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: input("  Approve? [y/n]: ").strip().lower()
+            )
+            return response in ("y", "yes")
+        except (EOFError, KeyboardInterrupt):
+            return False

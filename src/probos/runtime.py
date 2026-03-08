@@ -728,6 +728,7 @@ class ProbOSRuntime:
             # Self-modification: try to design an agent for this unhandled intent
             # Trigger even if dag.response is set — a conversational "I can't do that"
             # response with no actual intents still means no agent handled it.
+            self_mod_result = None
             if self.self_mod_pipeline:
                 intent_meta = await self._extract_unhandled_intent(text)
                 if intent_meta:
@@ -738,6 +739,11 @@ class ProbOSRuntime:
                         requires_consensus=intent_meta.get("requires_consensus", False),
                     )
                     if record and record.status == "active":
+                        self_mod_result = {
+                            "status": "active",
+                            "intent": intent_meta["name"],
+                            "agent_type": record.agent_type,
+                        }
                         # Retry the original request now that a new agent exists
                         dag = await self.decomposer.decompose(
                             text, context=context, similar_episodes=similar_episodes or None,
@@ -745,10 +751,20 @@ class ProbOSRuntime:
                         if dag.nodes:
                             # Successfully re-decomposed — continue with normal execution
                             pass
+                    elif record:
+                        self_mod_result = {
+                            "status": record.status,
+                            "intent": intent_meta["name"],
+                        }
+                    else:
+                        self_mod_result = {
+                            "status": "failed",
+                            "intent": intent_meta["name"],
+                        }
 
             if not dag.nodes:
                 logger.warning("No intents parsed from NL input: %s", text[:50])
-                return {
+                result = {
                     "input": text,
                     "dag": dag,
                     "results": {},
@@ -758,6 +774,9 @@ class ProbOSRuntime:
                     "failed_count": 0,
                     "response": dag.response,
                 }
+                if self_mod_result:
+                    result["self_mod"] = self_mod_result
+                return result
 
         # Record intents in working memory
         for node in dag.nodes:
