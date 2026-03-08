@@ -1131,6 +1131,10 @@ class ProbOSRuntime:
             f'- Do NOT create intents that duplicate existing capabilities: {existing}\n'
             '- requires_consensus should be true only for destructive or external operations\n'
             '- actual_values must contain the real values extracted from the user request\n'
+            '- PREFER GENERAL-PURPOSE intents over narrow ones. For example:\n'
+            '  GOOD: "translate_text" with params {"text": "...", "target_language": "..."}\n'
+            '  BAD:  "translate_text_to_french" with params {"text": "..."}\n'
+            '  The agent should handle the whole category, not just one specific case.\n'
         )
 
         from probos.types import LLMRequest
