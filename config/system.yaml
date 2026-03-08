@@ -80,6 +80,6 @@ federation:
   validate_remote_results: true
 
 self_mod:
-  enabled: false
+  enabled: true
   require_user_approval: true
   max_designed_agents: 5

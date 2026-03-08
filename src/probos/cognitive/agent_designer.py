@@ -28,8 +28,9 @@ The agent MUST:
 1. Subclass BaseAgent
 2. Define intent_descriptors as a class variable
 3. Implement handle_intent(self, intent: IntentMessage) -> IntentResult
-4. Return IntentResult with success=True/False and data dict
-5. Be self-contained (~40-80 lines)
+4. Implement the four lifecycle methods: perceive, decide, act, report
+5. Return IntentResult with success=True/False and data dict
+6. Be self-contained (~50-100 lines)
 
 TEMPLATE (fill in the implementation):
 
@@ -56,6 +57,30 @@ class {class_name}(BaseAgent):
         if intent.intent not in self._handled_intents:
             return None
         # YOUR IMPLEMENTATION HERE
+
+    async def perceive(self, intent: dict) -> any:
+        intent_name = intent.get("intent", "")
+        if intent_name not in self._handled_intents:
+            return None
+        return {{"intent": intent_name, "params": intent.get("params", {{}})}}
+
+    async def decide(self, observation: any) -> any:
+        if observation is None:
+            return None
+        return {{"action": observation["intent"], "params": observation["params"]}}
+
+    async def act(self, plan: any) -> any:
+        if plan is None:
+            return {{"success": False, "error": "No plan"}}
+        from probos.types import IntentMessage as IM
+        intent = IM(intent=plan["action"], params=plan["params"])
+        result = await self.handle_intent(intent)
+        if result is None:
+            return {{"success": False, "error": "Unhandled"}}
+        return result.data if result.data else {{"success": result.success}}
+
+    async def report(self, result: any) -> dict:
+        return result if isinstance(result, dict) else {{"result": result}}
 ```
 
 RULES:
@@ -65,6 +90,7 @@ RULES:
 - Do NOT make network calls — use the existing HttpFetchAgent for HTTP
 - Return the COMPLETE Python file content, nothing else
 - No markdown code fences, no explanation, just the Python code
+- You MUST include ALL four lifecycle methods (perceive, decide, act, report) exactly as shown in the template
 
 {platform_context}
 """
