@@ -268,6 +268,7 @@ class TaskDAG:
     source_text: str = ""
     response: str = ""  # Conversational reply from LLM for non-actionable inputs
     reflect: bool = False  # Whether to send results back to LLM for synthesis
+    capability_gap: bool = False  # LLM says no intent can handle this task
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def get_ready_nodes(self) -> list[TaskNode]:

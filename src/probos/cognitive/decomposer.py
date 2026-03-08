@@ -71,7 +71,7 @@ operating system runtime. You translate user requests into structured intents.
 
 Your response MUST be exactly one JSON object with this structure:
 
-{"intents": [...], "response": "optional text for the user", "reflect": false}
+{"intents": [...], "response": "optional text", "reflect": false, "capability_gap": false}
 
 - "intents": array of intent objects (empty array if no actionable intents)
 - "response": optional string — a brief message for the user. Use this for \
@@ -79,6 +79,9 @@ conversational replies, confirmations, or when no intents apply.
 - "reflect": boolean — set to true when the user asks for analysis, \
 interpretation, comparison, summary, or opinion about the results. Set to \
 false for simple data retrieval or command execution.
+- "capability_gap": boolean — set to true when the request is a task that \
+no available intent can handle (translation, creative writing, etc.). \
+Set to false for conversational replies and for tasks that map to an intent.
 
 Each intent object:
 
@@ -175,10 +178,10 @@ User: "tell me about file_reader agents"
 {"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "file_reader"}, "depends_on": [], "use_consensus": false}], "reflect": true}
 
 User: "translate 'hello world' to French"
-{"intents": [], "response": "I don't have an intent for translation yet."}
+{"intents": [], "response": "I don't have an intent for translation yet.", "capability_gap": true}
 
 User: "write me a haiku about the ocean"
-{"intents": [], "response": "I don't have an intent for creative writing yet."}
+{"intents": [], "response": "I don't have an intent for creative writing yet.", "capability_gap": true}
 """
 
 # Public alias for backward compatibility (tests import SYSTEM_PROMPT)
@@ -439,7 +442,10 @@ class IntentDecomposer:
         # Extract optional reflect flag
         reflect = bool(data.get("reflect", False))
 
-        return TaskDAG(nodes=nodes, source_text=source_text, response=response, reflect=reflect)
+        # Extract optional capability_gap flag
+        capability_gap = bool(data.get("capability_gap", False))
+
+        return TaskDAG(nodes=nodes, source_text=source_text, response=response, reflect=reflect, capability_gap=capability_gap)
 
     def _extract_json(self, content: str) -> str:
         """Extract JSON from LLM response, handling markdown code blocks."""

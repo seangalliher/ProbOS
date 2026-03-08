@@ -431,6 +431,71 @@ class TestCapabilityGapDetection:
 
         assert is_capability_gap(text) is False, f"False positive for: {text!r}"
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "I don\u2019t have an intent for translation yet.",
+            "I can\u2019t translate text into Japanese",
+            "ProbOS doesn\u2019t have a mechanism for that",
+            "I don\u2019t have the ability to do that",
+        ],
+    )
+    def test_detects_capability_gap_unicode_apostrophe(self, text: str) -> None:
+        """Unicode curly apostrophes (U+2019) must also trigger capability gap."""
+        from probos.cognitive.decomposer import is_capability_gap
+
+        assert is_capability_gap(text) is True, f"Expected gap for: {text!r}"
+
+
+class TestCapabilityGapFlag:
+    """Tests for the structured capability_gap boolean in TaskDAG."""
+
+    @pytest.fixture
+    def llm(self):
+        return MockLLMClient()
+
+    @pytest.fixture
+    def wm(self):
+        return WorkingMemoryManager()
+
+    @pytest.fixture
+    def decomposer(self, llm, wm):
+        return IntentDecomposer(llm_client=llm, working_memory=wm, timeout=2.0)
+
+    @pytest.mark.asyncio
+    async def test_capability_gap_flag_parsed_from_json(self, decomposer, llm):
+        """_parse_response extracts capability_gap=true from LLM JSON."""
+        llm.set_default_response(json.dumps({
+            "intents": [],
+            "response": "I don't have an intent for translation yet.",
+            "capability_gap": True,
+        }))
+        dag = await decomposer.decompose("translate hello to French")
+        assert dag.capability_gap is True
+        assert dag.response == "I don't have an intent for translation yet."
+        assert len(dag.nodes) == 0
+
+    @pytest.mark.asyncio
+    async def test_capability_gap_flag_defaults_false(self, decomposer, llm):
+        """capability_gap defaults to False when not present in JSON."""
+        llm.set_default_response(json.dumps({
+            "intents": [],
+            "response": "Hello! I'm ProbOS.",
+        }))
+        dag = await decomposer.decompose("hello")
+        assert dag.capability_gap is False
+
+    @pytest.mark.asyncio
+    async def test_capability_gap_flag_false_for_normal_intents(self, decomposer, llm):
+        """Normal intent decomposition has capability_gap=False."""
+        llm.set_default_response(json.dumps({
+            "intents": [{"id": "t1", "intent": "read_file", "params": {"path": "/tmp/x"}}],
+            "reflect": False,
+        }))
+        dag = await decomposer.decompose("read /tmp/x")
+        assert dag.capability_gap is False
+        assert len(dag.nodes) == 1
+
 
 # ---------------------------------------------------------------------------
 # Reflect hardening (continued — timeout, exception, success)
