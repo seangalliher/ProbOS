@@ -210,6 +210,17 @@ class PromptBuilder:
         rule_num += 1
         rules.append(f'{rule_num}. Never invent intents not in the table above.')
         rule_num += 1
+
+        # Encourage using run_command as a general-purpose fallback
+        intent_names = {d.name for d in descriptors}
+        if "run_command" in intent_names:
+            rules.append(
+                f'{rule_num}. Prefer mapping to run_command over declining when a shell '
+                'command could answer the question (e.g. date/time, math, system info, '
+                'environment).'
+            )
+            rule_num += 1
+
         rules.append(
             f'{rule_num}. Set "reflect" to true when the user asks for analysis, interpretation, '
             'comparison, summary, or opinion about results. Set to false for simple data '
