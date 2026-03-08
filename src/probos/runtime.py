@@ -1204,9 +1204,10 @@ class ProbOSRuntime:
             return None
 
         try:
-            raw = response.content.strip()
-            # Strip markdown code fences if present (common with local models)
             import re as _re
+            # Strip <think>...</think> blocks (common with qwen / reasoning models)
+            raw = _re.sub(r'<think>.*?</think>', '', response.content, flags=_re.DOTALL).strip()
+            # Strip markdown code fences if present (common with local models)
             fence = _re.search(r'```(?:json)?\s*\n?(.*?)\n?```', raw, _re.DOTALL)
             if fence:
                 raw = fence.group(1).strip()
