@@ -368,13 +368,33 @@ class ProbOSShell:
         self, description: str, context: dict
     ) -> bool | None:
         """Prompt the user for escalation decision."""
+        intent = context.get('intent', '?')
+        params = context.get('params', {})
+        error = context.get('error', '')
+
         self.console.print(
-            f"\n[yellow bold]Warning Escalation — agent operation needs your input:[/yellow bold]"
+            f"\n[yellow bold]⚠ Escalation — your decision needed:[/yellow bold]"
         )
-        self.console.print(f"  Intent: [cyan]{context.get('intent', '?')}[/cyan]")
-        self.console.print(f"  Issue: {description}")
+        self.console.print(f"  [bold]Intent:[/bold] [cyan]{intent}[/cyan]")
+
+        # Show params so user knows what the operation is trying to do
+        if params:
+            for k, v in params.items():
+                val = str(v)
+                if len(val) > 120:
+                    val = val[:120] + "..."
+                self.console.print(f"  [bold]{k}:[/bold] {val}")
+
+        self.console.print(f"  [bold]Error:[/bold] [red]{error}[/red]")
+
+        # Show what was already tried
+        tiers_tried = context.get('tiers_attempted', [])
+        if tiers_tried:
+            tried_names = [t.value if hasattr(t, 'value') else str(t) for t in tiers_tried]
+            self.console.print(f"  [bold]Already tried:[/bold] [dim]{' → '.join(tried_names)}[/dim]")
+
         self.console.print(
-            f"  [dim]Type 'y' to approve, 'n' to reject, or Enter to skip[/dim]"
+            f"\n  [dim]'y' = force approve  |  'n' = reject  |  Enter = skip[/dim]"
         )
 
         try:
