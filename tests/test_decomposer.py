@@ -496,6 +496,52 @@ class TestCapabilityGapFlag:
         assert dag.capability_gap is False
         assert len(dag.nodes) == 1
 
+    @pytest.mark.asyncio
+    async def test_think_tags_stripped_before_json_extraction(self, decomposer, llm):
+        """qwen-style <think>...</think> tags are stripped before JSON parsing."""
+        response_with_think = (
+            '<think>\nThe user wants to translate text. '
+            'I should return {"capability_gap": true} since there is no '
+            'translation intent.\n</think>\n\n'
+            '{"intents": [], "response": "I don\\u2019t have a translation intent.", '
+            '"capability_gap": true}'
+        )
+        llm.set_default_response(response_with_think)
+        dag = await decomposer.decompose("translate hello to French")
+        assert dag.capability_gap is True
+        assert "translation" in dag.response
+        assert len(dag.nodes) == 0
+
+    @pytest.mark.asyncio
+    async def test_think_tags_with_code_fenced_json(self, decomposer, llm):
+        """<think> tags + markdown code fence around JSON still parses."""
+        response = (
+            '<think>\nLet me analyze this request.\n</think>\n\n'
+            '```json\n'
+            '{"intents": [{"id": "t1", "intent": "read_file", '
+            '"params": {"path": "/tmp/a.txt"}}], "reflect": false}\n'
+            '```'
+        )
+        llm.set_default_response(response)
+        dag = await decomposer.decompose("read /tmp/a.txt")
+        assert len(dag.nodes) == 1
+        assert dag.nodes[0].intent == "read_file"
+
+    @pytest.mark.asyncio
+    async def test_think_tags_with_braces_in_reasoning(self, decomposer, llm):
+        """<think> block containing { chars doesn't corrupt extraction."""
+        response = (
+            '<think>\nI need to return something like '
+            '{"intents": [], "response": "..."} but with capability_gap. '
+            'Let me format it properly.\n</think>\n\n'
+            '{"intents": [], "response": "No capability for this.", '
+            '"capability_gap": true}'
+        )
+        llm.set_default_response(response)
+        dag = await decomposer.decompose("do something weird")
+        assert dag.capability_gap is True
+        assert len(dag.nodes) == 0
+
 
 # ---------------------------------------------------------------------------
 # Reflect hardening (continued — timeout, exception, success)

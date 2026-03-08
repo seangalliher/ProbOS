@@ -982,3 +982,137 @@ class TestRendererSelfModGating:
         # But the flag catches it:
         is_gap = dag.capability_gap or (dag.response and is_capability_gap(dag.response))
         assert is_gap is True
+
+
+class TestRendererSelfModIntegration:
+    """Integration tests for the full renderer self-mod pipeline."""
+
+    @pytest.fixture
+    async def self_mod_env(self, tmp_path):
+        """Runtime with self-mod enabled + renderer + captured console."""
+        llm = MockLLMClient()
+        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=llm)
+        await rt.start()
+        con = Console(file=StringIO(), force_terminal=True, width=120)
+        renderer = ExecutionRenderer(con, rt, debug=False)
+        yield llm, rt, renderer, con
+        await rt.stop()
+
+    @pytest.mark.asyncio
+    async def test_self_mod_pipeline_exists(self, self_mod_env):
+        """Verify that the test runtime actually has self_mod_pipeline set up."""
+        _, rt, _, _ = self_mod_env
+        assert rt.self_mod_pipeline is not None, (
+            "self_mod_pipeline is None — self-mod won't trigger"
+        )
+
+    @pytest.mark.asyncio
+    async def test_capability_gap_reaches_self_mod(self, self_mod_env):
+        """Capability gap DAG triggers _extract_unhandled_intent (not early return)."""
+        llm, rt, renderer, con = self_mod_env
+
+        # Phase 1 (decompose): return a capability-gap response
+        gap_json = (
+            '{"intents": [], '
+            '"response": "I don\\u2019t have a translation intent yet.", '
+            '"capability_gap": true}'
+        )
+        llm.set_default_response(gap_json)
+
+        # Because user approval prompt blocks (EOFError → "n"), self-mod
+        # will be "rejected" but the proposal text should appear in output.
+        result = await renderer.process_with_feedback(
+            "translate hello into japanese"
+        )
+        output = con.file.getvalue()
+
+        # The gap response should be printed (dim)
+        assert "translation intent" in output
+
+        # Self-mod proposal should appear OR "Analyzing unhandled request"
+        # was reached (either way proves we entered the self-mod block).
+        entered_self_mod = (
+            "Self-Modification Proposal" in output
+            or "Self-modification rejected" in output
+            or "designed and registered" in output.lower()
+        )
+        assert entered_self_mod, (
+            f"Self-mod block was never entered.  Full output:\n{output}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_capability_gap_via_regex_fallback(self, self_mod_env):
+        """Even without capability_gap flag, regex match enters self-mod."""
+        llm, rt, renderer, con = self_mod_env
+
+        # Return response matching regex but NO capability_gap field
+        gap_json = (
+            '{"intents": [], '
+            '"response": "I don\'t have an intent for translation yet."}'
+        )
+        llm.set_default_response(gap_json)
+
+        await renderer.process_with_feedback("translate hello into japanese")
+        output = con.file.getvalue()
+
+        entered_self_mod = (
+            "Self-Modification Proposal" in output
+            or "Self-modification rejected" in output
+            or "designed and registered" in output.lower()
+        )
+        assert entered_self_mod, (
+            f"Regex fallback did not trigger self-mod.  Full output:\n{output}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_conversational_response_skips_self_mod_integration(self, self_mod_env):
+        """Genuine conversational response must NOT enter self-mod."""
+        llm, rt, renderer, con = self_mod_env
+
+        # Conversational reply — no capability gap
+        conv_json = '{"intents": [], "response": "Hello! How can I help you?"}'
+        llm.set_default_response(conv_json)
+
+        await renderer.process_with_feedback("hello there")
+        output = con.file.getvalue()
+
+        assert "How can I help you" in output
+        assert "Self-Modification Proposal" not in output
+        assert "Analyzing unhandled request" not in output
+
+    @pytest.mark.asyncio
+    async def test_extract_unhandled_intent_returns_data(self, self_mod_env):
+        """_extract_unhandled_intent returns valid intent metadata."""
+        _, rt, _, _ = self_mod_env
+        meta = await rt._extract_unhandled_intent("translate hello into japanese")
+        assert meta is not None, "_extract_unhandled_intent returned None"
+        assert "name" in meta
+        assert "description" in meta
+
+    @pytest.mark.asyncio
+    async def test_think_tags_dont_break_self_mod(self, self_mod_env):
+        """qwen-style <think> tags in decomposer response still trigger self-mod."""
+        llm, rt, renderer, con = self_mod_env
+
+        # Simulate qwen output with <think> tags wrapping the JSON
+        gap_with_think = (
+            '<think>\nThe user wants translation. No matching intent. '
+            'I should return {"capability_gap": true}.\n</think>\n\n'
+            '{"intents": [], '
+            '"response": "I don\\u2019t have a translation intent yet.", '
+            '"capability_gap": true}'
+        )
+        llm.set_default_response(gap_with_think)
+
+        await renderer.process_with_feedback("translate hello into japanese")
+        output = con.file.getvalue()
+
+        assert "translation intent" in output
+        entered_self_mod = (
+            "Self-Modification Proposal" in output
+            or "Self-modification rejected" in output
+            or "designed and registered" in output.lower()
+        )
+        assert entered_self_mod, (
+            f"Think-tagged response did not reach self-mod.  Full output:\n{output}"
+        )

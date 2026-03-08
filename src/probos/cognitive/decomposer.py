@@ -449,10 +449,11 @@ class IntentDecomposer:
 
     def _extract_json(self, content: str) -> str:
         """Extract JSON from LLM response, handling markdown code blocks."""
-        content = content.strip()
+        import re
+        # Strip <think>...</think> blocks (common with qwen / reasoning models)
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
 
         # Try to find JSON in code blocks
-        import re
         code_block = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', content, re.DOTALL)
         if code_block:
             return code_block.group(1).strip()
