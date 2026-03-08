@@ -70,7 +70,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                 llm_timeout_seconds=timeout,
             )
 
-        self.default_tier = default_tier
+        self.default_tier = self._config.default_llm_tier if hasattr(self._config, 'default_llm_tier') else default_tier
 
         # Resolve per-tier configs
         self._tier_configs: dict[str, dict] = {}

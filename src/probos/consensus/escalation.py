@@ -220,7 +220,7 @@ class EscalationManager:
         request = LLMRequest(
             prompt=prompt,
             system_prompt=ARBITRATION_PROMPT,
-            tier="standard",
+            tier=None,
             temperature=0.0,
         )
 

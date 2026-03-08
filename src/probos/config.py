@@ -67,6 +67,9 @@ class CognitiveConfig(BaseModel):
     llm_api_key_deep: str | None = None
     llm_timeout_deep: float | None = None
 
+    # Default tier for LLM requests ("fast", "standard", or "deep")
+    default_llm_tier: str = "fast"
+
     working_memory_token_budget: int = 4000
     decomposition_timeout_seconds: float = 30.0
     dag_execution_timeout_seconds: float = 60.0

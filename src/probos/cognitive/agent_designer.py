@@ -176,7 +176,7 @@ class AgentDesigner:
             platform_context=get_platform_context(),
         )
 
-        request = LLMRequest(prompt=prompt, tier="standard")
+        request = LLMRequest(prompt=prompt, tier=None)
         response = await self._llm.complete(request)
 
         if not response.content or response.error:
