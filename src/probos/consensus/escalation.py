@@ -347,12 +347,16 @@ class EscalationManager:
             )
 
         if user_decision is True:
+            # User approved — re-execute the intent without consensus
+            # to get actual results (node.result still holds the
+            # consensus-rejected dict from the initial attempt).
+            resolution = await self._reexecute_without_consensus(node)
             return EscalationResult(
                 tier=EscalationTier.USER,
                 resolved=True,
                 original_error=error,
                 user_approved=True,
-                resolution=node.result,
+                resolution=resolution,
                 reason="User approved",
             )
         elif user_decision is False:
@@ -372,3 +376,28 @@ class EscalationManager:
                 user_approved=None,
                 reason="User skipped",
             )
+
+    async def _reexecute_without_consensus(self, node: Any) -> dict[str, Any] | None:
+        """Re-run the intent bypassing consensus after user approval.
+
+        Returns a standard result dict with agent output, or falls back
+        to node.result if re-execution fails.
+        """
+        try:
+            results = await self.runtime.submit_intent(
+                intent=node.intent,
+                params=dict(node.params),
+                timeout=30.0,
+            )
+            if any(r.success for r in results):
+                return {
+                    "intent": node.intent,
+                    "results": results,
+                    "success": True,
+                    "result_count": len(results),
+                }
+        except Exception as e:
+            logger.debug("Re-execution after user approval failed: %s", e)
+
+        # Fallback: return whatever was there before
+        return node.result
