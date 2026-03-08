@@ -124,6 +124,22 @@ def render_status_panel(status: dict[str, Any]) -> Panel:
                      f"{lr.get('weights_strengthened', 0)} strengthened, "
                      f"{lr.get('weights_pruned', 0)} pruned")
 
+    # Federation
+    fed = status.get("federation", {})
+    if fed.get("enabled") is not False:
+        lines.append("")
+        lines.append("[bold]Federation[/bold]")
+        peers = fed.get("connected_peers", [])
+        lines.append(f"  Node ID:   {fed.get('node_id', '?')}")
+        lines.append(f"  Peers:     {len(peers)} ({', '.join(peers) if peers else 'none'})")
+        lines.append(f"  Forwarded: {fed.get('intents_forwarded', 0)}  "
+                     f"Received: {fed.get('intents_received', 0)}  "
+                     f"Collected: {fed.get('results_collected', 0)}")
+    else:
+        lines.append("")
+        lines.append("[bold]Federation[/bold]")
+        lines.append("  [dim]disabled[/dim]")
+
     # Workflow Cache
     wc = status.get("workflow_cache", {})
     lines.append("")
@@ -563,3 +579,67 @@ def render_scaling_panel(scaling_status: dict) -> Panel:
         )
 
     return Panel(table, title="Pool Scaling", border_style="cyan")
+
+
+def render_federation_panel(federation_status: dict) -> Panel:
+    """Render federation status as a Rich Panel."""
+    if not federation_status or federation_status.get("enabled") is False:
+        return Panel("[dim]Federation is not enabled.[/dim]", title="Federation", border_style="cyan")
+
+    lines: list[str] = []
+    lines.append(f"[bold]Node ID:[/bold]         {federation_status.get('node_id', '?')}")
+    lines.append(f"[bold]Bind address:[/bold]    {federation_status.get('bind_address', '?')}")
+    peers = federation_status.get("connected_peers", [])
+    lines.append(f"[bold]Connected peers:[/bold] {len(peers)} ({', '.join(peers) if peers else 'none'})")
+    lines.append(f"[bold]Gossip interval:[/bold] {federation_status.get('gossip_interval', '?')}s")
+    lines.append("")
+    lines.append(f"[bold]Intents forwarded:[/bold] {federation_status.get('intents_forwarded', 0)}")
+    lines.append(f"[bold]Intents received:[/bold]  {federation_status.get('intents_received', 0)}")
+    lines.append(f"[bold]Results collected:[/bold] {federation_status.get('results_collected', 0)}")
+
+    return Panel("\n".join(lines), title="Federation", border_style="cyan")
+
+
+def render_peers_panel(peer_models: dict) -> Panel:
+    """Render peer self-models as a Rich Panel with table."""
+    if not peer_models:
+        return Panel("[dim]No peer models received yet.[/dim]", title="Peers", border_style="cyan")
+
+    table = Table(show_header=True, show_lines=False)
+    table.add_column("Peer")
+    table.add_column("Capabilities")
+    table.add_column("Agents", justify="right")
+    table.add_column("Health", justify="right")
+    table.add_column("Uptime", justify="right")
+
+    for peer_id, info in peer_models.items():
+        caps = ", ".join(info.get("capabilities", [])[:5])
+        if len(info.get("capabilities", [])) > 5:
+            caps += f" (+{len(info['capabilities']) - 5})"
+
+        health = info.get("health", 0.0)
+        health_text = Text(f"{health:.2f}")
+        if health >= _HEALTH_GREEN:
+            health_text.stylize("green")
+        elif health >= _HEALTH_YELLOW:
+            health_text.stylize("yellow")
+        else:
+            health_text.stylize("red")
+
+        uptime = info.get("uptime_seconds", 0.0)
+        if uptime >= 3600:
+            uptime_str = f"{uptime / 3600:.1f}h"
+        elif uptime >= 60:
+            uptime_str = f"{uptime / 60:.1f}m"
+        else:
+            uptime_str = f"{uptime:.0f}s"
+
+        table.add_row(
+            peer_id,
+            caps,
+            str(info.get("agent_count", 0)),
+            health_text,
+            uptime_str,
+        )
+
+    return Panel(table, title=f"Peers ({len(peer_models)})", border_style="cyan")

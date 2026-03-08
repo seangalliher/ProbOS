@@ -69,3 +69,12 @@ scaling:
   cooldown_seconds: 30
   observation_window_seconds: 60
   idle_scale_down_seconds: 120
+
+federation:
+  enabled: false
+  node_id: "node-1"
+  bind_address: "tcp://127.0.0.1:5555"
+  peers: []
+  forward_timeout_ms: 5000
+  gossip_interval_seconds: 10
+  validate_remote_results: true

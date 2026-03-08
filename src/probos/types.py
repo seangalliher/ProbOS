@@ -388,3 +388,35 @@ class IntentDescriptor:
     description: str = ""  # e.g. "Read file contents"
     requires_consensus: bool = False
     requires_reflect: bool = False
+
+
+# ------------------------------------------------------------------
+# Phase 9: Federation types
+# ------------------------------------------------------------------
+
+
+@dataclass
+class NodeSelfModel:
+    """A node's self-assessment of its capabilities and health (Nooplex Psi).
+
+    Broadcast to peers via gossip so they can make routing decisions.
+    """
+
+    node_id: str
+    capabilities: list[str] = field(default_factory=list)
+    pool_sizes: dict[str, int] = field(default_factory=dict)
+    agent_count: int = 0
+    health: float = 0.0
+    uptime_seconds: float = 0.0
+    timestamp: float = 0.0
+
+
+@dataclass
+class FederationMessage:
+    """Wire protocol message between nodes."""
+
+    type: str  # "intent_request", "intent_response", "gossip_self_model", "ping", "pong"
+    source_node: str
+    message_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    payload: dict[str, Any] = field(default_factory=dict)
+    timestamp: float = 0.0
