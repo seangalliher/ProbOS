@@ -379,6 +379,19 @@ def _format_escalation(escalation: dict) -> list[str]:
 
 def _format_result(data: Any, max_items: int = 30) -> list[str]:
     """Format an agent result for display, detecting common structures."""
+    # Command output: dict with stdout/stderr/exit_code
+    if isinstance(data, dict) and "stdout" in data:
+        lines = []
+        stdout = data["stdout"].strip()
+        stderr = data.get("stderr", "").strip()
+        if stdout:
+            lines.append(f"      {stdout[:500]}")
+        if stderr:
+            lines.append(f"      [dim]{stderr[:200]}[/dim]")
+        if not stdout and not stderr:
+            lines.append("      [dim](no output)[/dim]")
+        return lines
+
     # Directory listing: list of dicts with 'name' and 'type' keys
     if isinstance(data, list) and data and isinstance(data[0], dict) and "name" in data[0]:
         lines = []

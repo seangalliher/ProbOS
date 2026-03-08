@@ -303,8 +303,9 @@ class IntentDecomposer:
         if dag and hasattr(dag, "nodes"):
             for node in dag.nodes:
                 node_result = results.get(node.id, {})
+                summary = _summarize_node_result(node_result)
                 result_parts.append(
-                    f"- {node.intent}({node.params}): {node_result}"
+                    f"- {node.intent}({node.params}): {summary}"
                 )
 
         prompt_text = "\n".join(result_parts)
@@ -411,6 +412,68 @@ class IntentDecomposer:
                         return content[brace_start:i + 1]
 
         raise ValueError("No JSON object found in response")
+
+
+def _normalize_consensus_result(
+    result: Any, intent: str, *, success: bool = True
+) -> dict[str, Any]:
+    """Convert a consensus-wrapped result into the standard result format.
+
+    The standard format has ``success``, ``results`` (list[IntentResult]),
+    ``intent``, and ``result_count`` — matching what the non-consensus
+    path produces.  This lets the display code and reflector handle
+    consensus and non-consensus results identically.
+    """
+    if not isinstance(result, dict) or "results" not in result:
+        return result  # Already in a different format, pass through.
+
+    agent_results = result["results"]
+    return {
+        "intent": intent,
+        "results": agent_results,
+        "success": success and any(
+            getattr(r, "success", False) for r in agent_results
+        ),
+        "result_count": len(agent_results),
+    }
+
+
+def _summarize_node_result(node_result: Any) -> str:
+    """Extract meaningful output from a node result for reflection.
+
+    Pulls actual agent output (stdout, file content, etc.) from the
+    nested IntentResult objects rather than dumping raw metadata.
+    """
+    if not isinstance(node_result, dict):
+        return str(node_result)[:500]
+
+    # Standard format: {success, results: [IntentResult, ...], ...}
+    if "results" in node_result:
+        parts: list[str] = []
+        success = node_result.get("success", False)
+        parts.append(f"success={success}")
+        for ir in node_result["results"]:
+            if hasattr(ir, "result") and ir.result is not None:
+                data = ir.result
+                # Command output: extract stdout
+                if isinstance(data, dict) and "stdout" in data:
+                    stdout = data["stdout"].strip()
+                    stderr = data.get("stderr", "").strip()
+                    if stdout:
+                        parts.append(f"output={stdout[:500]}")
+                    if stderr:
+                        parts.append(f"stderr={stderr[:200]}")
+                else:
+                    parts.append(f"result={str(data)[:500]}")
+            elif hasattr(ir, "error") and ir.error:
+                parts.append(f"error={ir.error}")
+        return "; ".join(parts)
+
+    # Error result
+    if "error" in node_result:
+        return f"error={node_result['error']}"
+
+    return str(node_result)[:500]
 
 
 class DAGExecutor:
@@ -599,6 +662,13 @@ class DAGExecutor:
                         on_event=on_event,
                     )
                 else:
+                    # Normalize into standard result format so display
+                    # code can find the agent output via success key.
+                    normalized = _normalize_consensus_result(
+                        result, node.intent, success=True
+                    )
+                    node.result = normalized
+                    results[node.id] = normalized
                     node.status = "completed"
             else:
                 intent_results = await self.runtime.submit_intent(
@@ -677,8 +747,14 @@ class DAGExecutor:
             node.escalation_result = esc_result.to_dict()
             if esc_result.resolved:
                 if esc_result.resolution is not None:
-                    node.result = esc_result.resolution
-                    results[node.id] = esc_result.resolution
+                    # Normalize consensus-wrapped results: strip the
+                    # rejected consensus object so downstream display
+                    # and reflection see a clean successful result.
+                    resolution = _normalize_consensus_result(
+                        esc_result.resolution, node.intent, success=True
+                    )
+                    node.result = resolution
+                    results[node.id] = resolution
                 node.status = "completed"
                 if on_event:
                     await on_event("escalation_resolved", {

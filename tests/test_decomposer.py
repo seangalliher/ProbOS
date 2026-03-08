@@ -355,13 +355,20 @@ class TestReflectHardening:
     @pytest.mark.asyncio
     async def test_reflect_payload_truncated(self, decomposer, llm):
         """Payloads exceeding REFLECT_PAYLOAD_BUDGET are truncated."""
-        # Build a result set large enough to exceed the budget
-        big_result = "x" * 20000
+        # Build a result set large enough to exceed the budget.
+        # Use many nodes so the combined summary exceeds the budget
+        # (each node's result is summarized to ~500 chars).
+        nodes = []
+        results = {}
+        for i in range(30):
+            nid = f"t{i}"
+            nodes.append(
+                TaskNode(id=nid, intent="list_directory", params={"path": f"/tmp/{i}"}, status="completed"),
+            )
+            results[nid] = {"success": True, "data": "x" * 1000}
         result = {
-            "dag": TaskDAG(nodes=[
-                TaskNode(id="t1", intent="list_directory", params={"path": "/tmp"}, status="completed"),
-            ]),
-            "results": {"t1": {"success": True, "data": big_result}},
+            "dag": TaskDAG(nodes=nodes),
+            "results": results,
         }
         await decomposer.reflect("what files?", result)
 
