@@ -40,6 +40,7 @@ class ProbOSShell:
         "/recall":    "Semantic recall from episodic memory (/recall <query>)",
         "/dream":     "Show last dream report (/dream now to trigger cycle)",
         "/cache":     "Show workflow cache entries",
+        "/scaling":   "Show pool scaling status",
         "/explain":   "Explain what happened in the last NL request",
         "/model":     "Show LLM client type, endpoint, and tier config",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
@@ -135,6 +136,7 @@ class ProbOSShell:
             "/recall":    self._cmd_recall,
             "/dream":     self._cmd_dream,
             "/cache":     self._cmd_cache,
+            "/scaling":   self._cmd_scaling,
             "/explain":   self._cmd_explain,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
@@ -268,6 +270,13 @@ class ProbOSShell:
         self.console.print(panels.render_workflow_cache_panel(
             cache.entries, cache.size,
         ))
+
+    async def _cmd_scaling(self, arg: str) -> None:
+        scaler = self.runtime.pool_scaler
+        if not scaler:
+            self.console.print("[yellow]Pool scaling is disabled.[/yellow]")
+            return
+        self.console.print(panels.render_scaling_panel(scaler.scaling_status()))
 
     async def _cmd_explain(self, arg: str) -> None:
         await self._handle_nl("what just happened?")

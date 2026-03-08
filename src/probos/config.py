@@ -82,6 +82,19 @@ class DreamingConfig(BaseModel):
     pre_warm_top_k: int = 5
 
 
+class ScalingConfig(BaseModel):
+    """Adaptive pool scaling configuration."""
+
+    enabled: bool = True
+    scale_up_threshold: float = 0.8
+    scale_down_threshold: float = 0.2
+    scale_up_step: int = 1
+    scale_down_step: int = 1
+    cooldown_seconds: float = 30.0
+    observation_window_seconds: float = 60.0
+    idle_scale_down_seconds: float = 120.0
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
@@ -100,6 +113,7 @@ class SystemConfig(BaseModel):
     cognitive: CognitiveConfig = CognitiveConfig()
     memory: MemoryConfig = MemoryConfig()
     dreaming: DreamingConfig = DreamingConfig()
+    scaling: ScalingConfig = ScalingConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

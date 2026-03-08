@@ -59,3 +59,13 @@ dreaming:
   trust_boost: 0.1
   trust_penalty: 0.1
   pre_warm_top_k: 5
+
+scaling:
+  enabled: true
+  scale_up_threshold: 0.8
+  scale_down_threshold: 0.2
+  scale_up_step: 1
+  scale_down_step: 1
+  cooldown_seconds: 30
+  observation_window_seconds: 60
+  idle_scale_down_seconds: 120

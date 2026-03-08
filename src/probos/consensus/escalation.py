@@ -60,12 +60,14 @@ class EscalationManager:
         max_retries: int = 2,  # Max Tier 1 retry attempts
         user_callback: Callable | None = None,  # Tier 3: async callback to prompt user
         pre_user_hook: Callable | None = None,   # Called before user_callback (e.g. live.stop)
+        surge_fn: Callable | None = None,  # async (pool_name, extra) -> bool
     ) -> None:
         self.runtime = runtime
         self.llm_client = llm_client
         self.max_retries = max_retries
         self._user_callback = user_callback
         self._pre_user_hook = pre_user_hook
+        self._surge_fn = surge_fn
 
     def set_user_callback(
         self, callback: Callable[[str, dict], Awaitable[bool | None]]
@@ -133,6 +135,15 @@ class EscalationManager:
         self, node: Any, error: str, context: dict
     ) -> EscalationResult:
         """Retry the intent up to max_retries times."""
+        # Request surge capacity if available
+        if self._surge_fn:
+            pool_name = context.get("pool_name")
+            if pool_name:
+                try:
+                    await self._surge_fn(pool_name, 1)
+                except Exception as e:
+                    logger.debug("Surge request failed: %s", e)
+
         for attempt in range(1, self.max_retries + 1):
             try:
                 if node.use_consensus:
