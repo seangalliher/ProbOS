@@ -111,7 +111,7 @@ User: "what is the weather in Denver?"
 {"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://wttr.in/Denver?format=3", "method": "GET"}, "depends_on": [], "use_consensus": true}], "reflect": true}
 
 User: "what time is it in Tokyo?"
-{"intents": [{"id": "t1", "intent": "run_command", "params": {"command": "date"}, "depends_on": [], "use_consensus": true}], "reflect": true}
+{"intents": [{"id": "t1", "intent": "run_command", "params": {"command": "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"}, "depends_on": [], "use_consensus": true}], "reflect": true}
 
 User: "list the files in /tmp/mydir"
 {"intents": [{"id": "t1", "intent": "list_directory", "params": {"path": "/tmp/mydir"}, "depends_on": [], "use_consensus": false}], "reflect": false}
@@ -151,9 +151,17 @@ REFLECT_PROMPT = """\
 You are analyzing results returned by ProbOS agents in response to a user request.
 You will receive the user's original request and the results from each agent operation.
 Synthesize a clear, concise response that directly answers the user's question.
-Focus on answering what the user asked — do not describe the operations that were performed.
-IMPORTANT: If the results show success=True with output data, USE that data \
-in your response. NEVER claim an operation failed when it succeeded.
+
+CRITICAL RULES:
+1. If a result shows success=True and output=<data>, the operation SUCCEEDED. \
+USE that output data to answer the user. NEVER say the operation failed.
+2. If the output is a date/time and the user asked about a different timezone, \
+calculate the conversion yourself (e.g. UTC+9 for Tokyo, UTC-7 for Denver, etc.).
+3. Focus on answering what the user asked \u2014 do not describe the operations \
+that were performed.
+4. Each result line starts with [completed] or [failed] \u2014 trust that status.
+5. Even partial or imperfect data is better than saying you couldn\u2019t retrieve it.
+
 Respond with plain text only. No JSON. No markdown code fences.
 """
 
@@ -309,8 +317,9 @@ class IntentDecomposer:
             for node in dag.nodes:
                 node_result = results.get(node.id, {})
                 summary = _summarize_node_result(node_result)
+                status = getattr(node, "status", "unknown")
                 result_parts.append(
-                    f"- {node.intent}({node.params}): {summary}"
+                    f"- [{status}] {node.intent}({node.params}): {summary}"
                 )
 
         prompt_text = "\n".join(result_parts)
@@ -450,30 +459,43 @@ def _summarize_node_result(node_result: Any) -> str:
 
     Pulls actual agent output (stdout, file content, etc.) from the
     nested IntentResult objects rather than dumping raw metadata.
+    Deduplicates identical outputs from multiple agents.
     """
     if not isinstance(node_result, dict):
         return str(node_result)[:500]
 
     # Standard format: {success, results: [IntentResult, ...], ...}
     if "results" in node_result:
-        parts: list[str] = []
         success = node_result.get("success", False)
-        parts.append(f"success={success}")
+        # Collect unique outputs (agents often return identical results)
+        seen_outputs: list[str] = []
+        errors: list[str] = []
         for ir in node_result["results"]:
             if hasattr(ir, "result") and ir.result is not None:
                 data = ir.result
-                # Command output: extract stdout
                 if isinstance(data, dict) and "stdout" in data:
                     stdout = data["stdout"].strip()
                     stderr = data.get("stderr", "").strip()
-                    if stdout:
-                        parts.append(f"output={stdout[:500]}")
+                    exit_code = data.get("exit_code")
+                    entry = stdout[:500] if stdout else ""
                     if stderr:
-                        parts.append(f"stderr={stderr[:200]}")
+                        entry += f" (stderr: {stderr[:200]})"
+                    if exit_code and exit_code != 0:
+                        entry += f" (exit_code: {exit_code})"
+                    if entry and entry not in seen_outputs:
+                        seen_outputs.append(entry)
                 else:
-                    parts.append(f"result={str(data)[:500]}")
+                    entry = str(data)[:500]
+                    if entry not in seen_outputs:
+                        seen_outputs.append(entry)
             elif hasattr(ir, "error") and ir.error:
-                parts.append(f"error={ir.error}")
+                if ir.error not in errors:
+                    errors.append(ir.error)
+        parts = [f"success={success}"]
+        for out in seen_outputs:
+            parts.append(f"output={out}")
+        for err in errors:
+            parts.append(f"error={err}")
         return "; ".join(parts)
 
     # Error result

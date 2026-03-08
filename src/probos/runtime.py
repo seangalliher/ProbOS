@@ -725,11 +725,12 @@ class ProbOSRuntime:
             await on_event("decompose_complete", {"dag": dag})
 
         if not dag.nodes:
-            # Self-modification: try to design an agent for this unhandled intent
-            # Trigger even if dag.response is set — a conversational "I can't do that"
-            # response with no actual intents still means no agent handled it.
+            # Self-modification: only try to design an agent when the
+            # decomposer returned NO intents AND NO conversational response.
+            # A non-empty dag.response means the decomposer chose to answer
+            # conversationally — respect that instead of creating agents.
             self_mod_result = None
-            if self.self_mod_pipeline:
+            if self.self_mod_pipeline and not dag.response:
                 intent_meta = await self._extract_unhandled_intent(text)
                 if intent_meta:
                     record = await self.self_mod_pipeline.handle_unhandled_intent(

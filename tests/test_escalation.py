@@ -994,3 +994,68 @@ class TestEscalationReflectEndToEnd:
         assert node_result["success"] is True
         # Should have the original stdout from the consensus attempt
         assert node_result["results"][0].result["stdout"].strip() == "03/08/2026 10:30:00"
+
+    @pytest.mark.asyncio
+    async def test_reflect_deduplicates_and_includes_status(self):
+        """34. Reflect prompt deduplicates identical agent outputs and
+        includes node status ([completed]) in the data sent to the LLM.
+        """
+        from probos.cognitive.decomposer import IntentDecomposer
+        from probos.cognitive.working_memory import WorkingMemoryManager
+        from probos.cognitive.llm_client import MockLLMClient
+
+        # 3 agents all returning identical stdout
+        irs = []
+        for i in range(3):
+            ir = MagicMock()
+            ir.success = True
+            ir.result = {
+                "stdout": "Sunday, March 8, 2026 10:30:00 AM\r\n",
+                "stderr": "",
+                "exit_code": 0,
+                "command": "date",
+            }
+            ir.error = None
+            irs.append(ir)
+
+        node = TaskNode(
+            id="t1", intent="run_command",
+            params={"command": "date"},
+            status="completed",
+        )
+        dag = TaskDAG(nodes=[node], reflect=True)
+
+        execution_result = {
+            "dag": dag,
+            "results": {
+                "t1": {
+                    "intent": "run_command",
+                    "results": irs,
+                    "success": True,
+                    "result_count": 3,
+                },
+            },
+        }
+
+        llm = MockLLMClient()
+        decomposer = IntentDecomposer(
+            llm_client=llm,
+            working_memory=WorkingMemoryManager(),
+        )
+
+        await decomposer.reflect("what time is it?", execution_result)
+
+        prompt = llm.last_request.prompt
+
+        # Output should appear exactly once (deduplicated)
+        assert prompt.count("Sunday, March 8, 2026 10:30:00 AM") == 1, (
+            f"Output should appear once (deduplicated). Got:\n{prompt}"
+        )
+
+        # Node status should be included
+        assert "[completed]" in prompt, (
+            f"Prompt should include [completed] status. Got:\n{prompt}"
+        )
+
+        # success=True should be present
+        assert "success=True" in prompt

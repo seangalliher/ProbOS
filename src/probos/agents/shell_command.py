@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from typing import Any
 
 from probos.substrate.agent import BaseAgent
@@ -103,11 +104,21 @@ class ShellCommandAgent(BaseAgent):
     async def _run_command(self, command: str) -> dict[str, Any]:
         """Execute a shell command with timeout and output capping."""
         try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            if sys.platform == "win32":
+                # Use PowerShell on Windows — create_subprocess_shell uses
+                # cmd.exe which can't run PowerShell syntax (Get-Date, etc.)
+                # and "date" in cmd.exe hangs waiting for stdin.
+                proc = await asyncio.create_subprocess_exec(
+                    "powershell", "-NoProfile", "-Command", command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            else:
+                proc = await asyncio.create_subprocess_shell(
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(

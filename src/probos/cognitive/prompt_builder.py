@@ -75,7 +75,7 @@ User: "what is the weather in Denver?"
 {"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://wttr.in/Denver?format=3", "method": "GET"}, "depends_on": [], "use_consensus": true}], "reflect": true}
 
 User: "what time is it in Tokyo?"
-{"intents": [{"id": "t1", "intent": "run_command", "params": {"command": "date"}, "depends_on": [], "use_consensus": true}], "reflect": true}
+{"intents": [{"id": "t1", "intent": "run_command", "params": {"command": "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"}, "depends_on": [], "use_consensus": true}], "reflect": true}
 
 User: "list the files in /tmp/mydir"
 {"intents": [{"id": "t1", "intent": "list_directory", "params": {"path": "/tmp/mydir"}, "depends_on": [], "use_consensus": false}], "reflect": false}
