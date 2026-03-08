@@ -51,6 +51,7 @@ class RedTeamAgent(BaseAgent):
         ),
     ]
     initial_confidence: float = 0.9
+    intent_descriptors = []  # Does not handle user intents
 
     # Red team agents do NOT subscribe to the normal intent bus.
     # They are invoked directly by the consensus layer.

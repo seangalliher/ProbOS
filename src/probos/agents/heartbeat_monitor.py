@@ -18,6 +18,7 @@ class SystemHeartbeatAgent(HeartbeatAgent):
     """
 
     agent_type: str = "system_heartbeat"
+    intent_descriptors = []  # Does not handle user intents
     default_capabilities = [
         CapabilityDescriptor(can="heartbeat", detail="System health metrics"),
         CapabilityDescriptor(can="system_metrics", detail="CPU, memory, load"),

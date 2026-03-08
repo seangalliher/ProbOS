@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from probos.substrate.agent import BaseAgent
-from probos.types import CapabilityDescriptor, IntentMessage, IntentResult
+from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,10 @@ class FileReaderAgent(BaseAgent):
         ),
     ]
     initial_confidence: float = 0.8
+    intent_descriptors = [
+        IntentDescriptor(name="read_file", params={"path": "<absolute_path>"}, description="Read a file and return content"),
+        IntentDescriptor(name="stat_file", params={"path": "<absolute_path>"}, description="Get file size, mtime, etc."),
+    ]
 
     # Intent names this agent handles
     _handled_intents = {"read_file", "stat_file"}

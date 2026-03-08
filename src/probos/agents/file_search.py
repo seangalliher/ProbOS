@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from probos.substrate.agent import BaseAgent
-from probos.types import CapabilityDescriptor, IntentMessage, IntentResult
+from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,9 @@ class FileSearchAgent(BaseAgent):
         ),
     ]
     initial_confidence: float = 0.8
+    intent_descriptors = [
+        IntentDescriptor(name="search_files", params={"path": "<absolute_path>", "pattern": "<glob>"}, description="Search for files matching pattern"),
+    ]
 
     _handled_intents = {"search_files"}
 

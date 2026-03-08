@@ -328,3 +328,23 @@ class WorkflowCacheEntry:
     hit_count: int = 0
     last_hit: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# ------------------------------------------------------------------
+# Phase 6b: Dynamic intent discovery types
+# ------------------------------------------------------------------
+
+
+@dataclass
+class IntentDescriptor:
+    """Structured metadata declaring an intent an agent can handle.
+
+    Used by the PromptBuilder to dynamically assemble the decomposer's
+    system prompt from whatever agents are registered.
+    """
+
+    name: str  # e.g. "read_file"
+    params: dict[str, str] = field(default_factory=dict)  # param name → description
+    description: str = ""  # e.g. "Read file contents"
+    requires_consensus: bool = False
+    requires_reflect: bool = False

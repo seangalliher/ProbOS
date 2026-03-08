@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any
 
-from probos.types import AgentID, AgentMeta, AgentState, CapabilityDescriptor
+from probos.types import AgentID, AgentMeta, AgentState, CapabilityDescriptor, IntentDescriptor
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ class BaseAgent(ABC):
 
     agent_type: str = "base"
     default_capabilities: list[CapabilityDescriptor] = []
+    intent_descriptors: list[IntentDescriptor] = []
     initial_confidence: float = 0.8
 
     def __init__(self, pool: str = "default", **kwargs: Any) -> None:

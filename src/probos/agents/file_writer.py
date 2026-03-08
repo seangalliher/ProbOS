@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from probos.substrate.agent import BaseAgent
-from probos.types import CapabilityDescriptor, IntentMessage, IntentResult
+from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,9 @@ class FileWriterAgent(BaseAgent):
         ),
     ]
     initial_confidence: float = 0.8
+    intent_descriptors = [
+        IntentDescriptor(name="write_file", params={"path": "<absolute_path>", "content": "..."}, description="Write content to a file", requires_consensus=True),
+    ]
 
     _handled_intents = {"write_file"}
 

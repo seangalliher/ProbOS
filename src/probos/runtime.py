@@ -40,6 +40,7 @@ from probos.substrate.spawner import AgentSpawner
 from probos.types import (
     ConsensusOutcome,
     Episode,
+    IntentDescriptor,
     IntentMessage,
     IntentResult,
     QuorumPolicy,
@@ -155,8 +156,10 @@ class ProbOSRuntime:
         self.spawner.register_template("introspect", IntrospectionAgent)
 
     def register_agent_type(self, type_name: str, agent_class: type) -> None:
-        """Register an agent class so it can be spawned into pools."""
+        """Register an agent class and refresh the decomposer's intent descriptors."""
         self.spawner.register_template(type_name, agent_class)
+        if self.decomposer:
+            self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
 
     async def create_pool(
         self,
@@ -247,6 +250,9 @@ class ProbOSRuntime:
         await self.create_pool("shell", "shell_command", target_size=3)
         await self.create_pool("http", "http_fetch", target_size=3)
         await self.create_pool("introspect", "introspect", target_size=2, runtime=self)
+
+        # Refresh decomposer with intent descriptors from all registered templates
+        self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
 
         # Spawn red team agents
         await self._spawn_red_team(self.config.consensus.red_team_pool_size)
@@ -823,3 +829,14 @@ class ProbOSRuntime:
             agent_type=agent.agent_type,
             pool=agent.pool,
         )
+
+    def _collect_intent_descriptors(self) -> list[IntentDescriptor]:
+        """Collect unique intent descriptors from all registered agent templates."""
+        seen: set[str] = set()
+        descriptors: list[IntentDescriptor] = []
+        for agent_class in self.spawner._templates.values():
+            for desc in getattr(agent_class, "intent_descriptors", []):
+                if desc.name not in seen:
+                    seen.add(desc.name)
+                    descriptors.append(desc)
+        return descriptors

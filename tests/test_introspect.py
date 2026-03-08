@@ -43,7 +43,7 @@ def _mock_runtime(
     rt.trust_network.all_scores.return_value = trust_scores or {}
 
     # Hebbian router
-    rt.hebbian_router.all_weights_typed.return_value = weights or []
+    rt.hebbian_router.all_weights_typed.return_value = weights or {}
 
     # Pools
     rt.pools = {}
@@ -232,12 +232,9 @@ class TestIntrospectionAgent:
     async def test_agent_info_includes_hebbian_context(self):
         """agent_info result includes Hebbian weight info."""
         mock_agent = _make_agent("file_reader", "agent_hebb")
-        weight = MagicMock()
-        weight.source = "agent_hebb"
-        weight.target = "other_agent"
-        weight.weight = 0.42
+        weights = {("agent_hebb", "other_agent", "intent"): 0.42}
 
-        rt = _mock_runtime(agents=[mock_agent], weights=[weight])
+        rt = _mock_runtime(agents=[mock_agent], weights=weights)
         agent = IntrospectionAgent(pool="introspect", runtime=rt)
         await agent.start()
 
