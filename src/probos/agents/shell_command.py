@@ -30,7 +30,7 @@ class ShellCommandAgent(BaseAgent):
     ]
     initial_confidence: float = 0.8
     intent_descriptors = [
-        IntentDescriptor(name="run_command", params={"command": "<shell_command>"}, description="Execute a shell command (use for calculations, dates, system info, or anything a shell can do)", requires_consensus=True),
+        IntentDescriptor(name="run_command", params={"command": "<shell_command>"}, description="Execute a shell command (use for calculations, dates, system info, or anything a shell can do)", requires_consensus=True, requires_reflect=True),
     ]
 
     _handled_intents = {"run_command"}
