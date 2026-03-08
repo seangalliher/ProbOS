@@ -214,6 +214,7 @@ class TaskNode:
     params: dict[str, Any] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)
     use_consensus: bool = False
+    background: bool = False
     result: Any = None
     status: str = "pending"  # pending, running, completed, failed
 
@@ -285,3 +286,45 @@ class AttentionEntry:
     score: float = 0.0  # Computed by AttentionManager
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     ttl_seconds: float = 30.0
+
+
+@dataclass
+class FocusSnapshot:
+    """A snapshot of attention focus at a point in time."""
+
+    keywords: list[str] = field(default_factory=list)
+    context: str = ""
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# ------------------------------------------------------------------
+# Phase 3b-3: Dreaming types
+# ------------------------------------------------------------------
+
+
+@dataclass
+class DreamReport:
+    """Result of a single dream cycle."""
+
+    episodes_replayed: int = 0
+    weights_strengthened: int = 0
+    weights_pruned: int = 0
+    trust_adjustments: int = 0
+    pre_warm_intents: list[str] = field(default_factory=list)
+    duration_ms: float = 0.0
+
+
+# ------------------------------------------------------------------
+# Phase 3b-5: Workflow cache types
+# ------------------------------------------------------------------
+
+
+@dataclass
+class WorkflowCacheEntry:
+    """A cached workflow pattern for fast replay."""
+
+    pattern: str  # normalized user input (lowercase, stripped)
+    dag_json: str  # serialized TaskDAG JSON
+    hit_count: int = 0
+    last_hit: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

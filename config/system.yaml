@@ -41,8 +41,21 @@ cognitive:
   use_consensus_for_writes: true
   max_concurrent_tasks: 8
   attention_decay_rate: 0.95
+  focus_history_size: 10
+  background_demotion_factor: 0.25
 
 memory:
   collection_name: "probos_episodes"
   max_episodes: 100000
   relevance_threshold: 0.7
+
+dreaming:
+  idle_threshold_seconds: 300
+  dream_interval_seconds: 600
+  replay_episode_count: 50
+  pathway_strengthening_factor: 0.03
+  pathway_weakening_factor: 0.02
+  prune_threshold: 0.01
+  trust_boost: 0.1
+  trust_penalty: 0.1
+  pre_warm_top_k: 5

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 3b-2 — Attention Mechanism Complete (369/369 tests)
+## Current Status: Phase 6a — Introspection & Self-Awareness Complete (456/456 tests)
 
 ---
 
@@ -11,14 +11,14 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `pyproject.toml` | done | Project config, deps (pydantic, pyyaml, aiosqlite, rich, pytest) |
-| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config |
+| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config, dreaming config |
 | `src/probos/__init__.py` | done | Package root, version 0.1.0 |
-| `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `TaskNode`, `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record), `AttentionEntry` (priority scoring for task scheduling) |
-| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`), `MemoryConfig`, `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
-| `src/probos/substrate/agent.py` | done | `BaseAgent` ABC — `perceive/decide/act/report` lifecycle, confidence tracking, state transitions, async start/stop |
+| `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `TaskNode` (with `background` field for background demotion), `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record), `AttentionEntry` (priority scoring for task scheduling), `FocusSnapshot` (cross-request focus history), `DreamReport` (dream cycle results), `WorkflowCacheEntry` (cached workflow pattern) |
+| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`, `focus_history_size`, `background_demotion_factor`), `MemoryConfig`, `DreamingConfig` (idle threshold, dream interval, replay count, strengthening/weakening factors, prune threshold, trust boost/penalty, pre-warm top-K), `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
+| `src/probos/substrate/agent.py` | done | `BaseAgent` ABC — `perceive/decide/act/report` lifecycle, confidence tracking, state transitions, async start/stop, optional `_runtime` reference via `**kwargs`, `**kwargs` passthrough to subclasses |
 | `src/probos/substrate/registry.py` | done | `AgentRegistry` — in-memory index, lookup by ID/pool/capability, async-safe |
-| `src/probos/substrate/spawner.py` | done | `AgentSpawner` — template registration, `spawn()`, `recycle()` with optional respawn |
-| `src/probos/substrate/pool.py` | done | `ResourcePool` — maintains N agents at target size, background health loop, auto-recycles degraded agents |
+| `src/probos/substrate/spawner.py` | done | `AgentSpawner` — template registration, `spawn(**kwargs)`, `recycle()` with optional respawn, `**kwargs` forwarded to agent constructors |
+| `src/probos/substrate/pool.py` | done | `ResourcePool` — maintains N agents at target size, background health loop, auto-recycles degraded agents, `**spawn_kwargs` forwarding for agent construction |
 | `src/probos/substrate/heartbeat.py` | done | `HeartbeatAgent` — fixed-interval pulse loop, listener callbacks, gossip carrier |
 | `src/probos/substrate/event_log.py` | done | `EventLog` — append-only SQLite event log for lifecycle, mesh, system, and consensus events |
 | `src/probos/agents/heartbeat_monitor.py` | done | `SystemHeartbeatAgent` — collects CPU count, load average, platform, PID |
@@ -46,21 +46,23 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `src/probos/cognitive/__init__.py` | done | Package root |
-| `src/probos/cognitive/llm_client.py` | done | `BaseLLMClient` ABC, `OpenAICompatibleClient` (httpx, tiered routing fast/standard/deep, response cache, fallback chain: live → cache → error, connectivity check, specific error handling for connect/timeout/HTTP errors), `MockLLMClient` (regex pattern matching, canned responses for deterministic testing — supports read_file, write_file, list_directory, search_files, run_command, http_fetch patterns) |
+| `src/probos/cognitive/llm_client.py` | done | `BaseLLMClient` ABC, `OpenAICompatibleClient` (httpx, tiered routing fast/standard/deep, response cache, fallback chain: live → cache → error, connectivity check, specific error handling for connect/timeout/HTTP errors), `MockLLMClient` (regex pattern matching, canned responses for deterministic testing — supports read_file, write_file, list_directory, search_files, run_command, http_fetch, explain_last, system_health, agent_info, why patterns) |
 | `src/probos/cognitive/working_memory.py` | done | `WorkingMemorySnapshot` (serializable system state), `WorkingMemoryManager` (bounded context assembly from registry/trust/Hebbian/capabilities, token budget eviction) |
-| `src/probos/cognitive/decomposer.py` | done | `IntentDecomposer` (NL text + working memory + similar episodes → LLM → `TaskDAG`, aggressive JSON-only system prompt with `response` and `reflect` fields, markdown code fence extraction, available intents: read_file, stat_file, write_file, list_directory, search_files, run_command, http_fetch, `REFLECT_PROMPT` for post-execution synthesis, `reflect()` method sends results back to LLM with payload cap ~8000 chars and truncation, PAST EXPERIENCE section for episodic context), `DAGExecutor` (parallel/sequential DAG execution through mesh + consensus, dependency resolution, deadlock detection, `on_event` callback for real-time progress, attention-based priority batching when `AttentionManager` is provided) |
+| `src/probos/cognitive/decomposer.py` | done | `IntentDecomposer` (NL text + working memory + similar episodes → LLM → `TaskDAG`, aggressive JSON-only system prompt with `response` and `reflect` fields, markdown code fence extraction, available intents: read_file, stat_file, write_file, list_directory, search_files, run_command, http_fetch, explain_last, agent_info, system_health, why, `REFLECT_PROMPT` for post-execution synthesis, `reflect()` method sends results back to LLM with payload cap ~8000 chars and truncation, PAST EXPERIENCE section for episodic context, PRE-WARM HINTS section for dreaming integration, optional `workflow_cache` for cache-first decomposition with exact + fuzzy matching, `pre_warm_intents` property for runtime sync), `DAGExecutor` (parallel/sequential DAG execution through mesh + consensus, dependency resolution, deadlock detection, `on_event` callback for real-time progress, attention-based priority batching when `AttentionManager` is provided) |
 | `src/probos/cognitive/episodic.py` | done | `EpisodicMemory` — SQLite-backed long-term memory, `Episode` storage/recall, keyword-overlap similarity search (cosine over bag-of-words), `recall_by_intent()`, `recent()`, `get_stats()`, max_episodes eviction |
 | `src/probos/cognitive/episodic_mock.py` | done | `MockEpisodicMemory` — in-memory episodic memory for testing, substring/keyword matching recall, no SQLite dependency |
-| `src/probos/cognitive/attention.py` | done | `AttentionManager` — priority scorer and budgeter for task execution, scores = urgency × relevance × deadline_factor × dependency_depth_bonus, configurable concurrency limit (`max_concurrent_tasks`), focus tracking (infrastructure for cross-request attention), queue introspection |
+| `src/probos/cognitive/attention.py` | done | `AttentionManager` — priority scorer and budgeter for task execution, scores = urgency × relevance × deadline_factor × dependency_depth_bonus, configurable concurrency limit (`max_concurrent_tasks`), cross-request focus history (ring buffer of `FocusSnapshot` entries, configurable max size), `_compute_relevance()` (keyword overlap between entry intent and recent focus, floor=0.3), background demotion (configurable factor, default 0.25), queue introspection |
+| `src/probos/cognitive/dreaming.py` | done | `DreamingEngine` — offline consolidation: replay recent episodes to strengthen/weaken Hebbian weights, prune below-threshold connections, trust consolidation (boost/penalize agents by track record), pre-warm intent prediction via temporal bigram analysis. `DreamScheduler` — background asyncio task monitors idle time, triggers dream cycles after configurable threshold, `force_dream()` for immediate cycles, `is_dreaming` property, `last_dream_report` for introspection |
+| `src/probos/cognitive/workflow_cache.py` | done | `WorkflowCache` — in-memory LRU cache of successful DAG patterns, exact and fuzzy lookup (keyword overlap + pre-warm intent subset), deep copy with fresh node IDs on retrieval, popularity-based eviction, stores only fully-successful DAGs |
 
 ### Experience Layer (complete — new in Phase 4)
 
 | File | Status | Description |
 |------|--------|-------------|
 | `src/probos/experience/__init__.py` | done | Package root |
-| `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()`, `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_attention_panel()`, `render_dag_result()` (displays `response` field for conversational replies), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
-| `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — real-time DAG execution display with Rich spinners and Live updates, `on_event` callback integration, conversational response display when LLM returns `response` field, debug mode (raw DAG JSON, individual agent responses, consensus details) |
-| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, graceful error handling |
+| `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()` (with dreaming state section), `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_attention_panel()` (with focus history display and background task indicator), `render_dag_result()` (displays `response` field for conversational replies), `render_dream_panel()` (dream cycle report with pre-warm intents), `render_workflow_cache_panel()` (cached workflow patterns with hit counts), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
+| `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — real-time DAG execution display with Rich spinners and Live updates, `on_event` callback integration, conversational response display when LLM returns `response` field, execution snapshot for introspection (`_previous_execution`/`_last_execution`), debug mode (raw DAG JSON, individual agent responses, consensus details) |
+| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, graceful error handling |
 
 ### Agents
 
@@ -74,20 +76,21 @@
 | `src/probos/agents/http_fetch.py` | done | `HttpFetchAgent` — `http_fetch` capability, `httpx.AsyncClient` per-request, 15s timeout, 1MB body cap, header whitelist, consensus required |
 | `src/probos/agents/red_team.py` | done | `RedTeamAgent` — independently verifies other agents' results (re-reads files, re-runs commands, re-fetches URLs), does NOT subscribe to intent bus |
 | `src/probos/agents/corrupted.py` | done | `CorruptedFileReaderAgent` — deliberately returns fabricated data, used to test consensus layer catching corruption |
+| `src/probos/agents/introspect.py` | done | `IntrospectionAgent` — self-referential queries about ProbOS state: `explain_last` (previous execution history with episodic fallback), `agent_info` (agent details with trust + Hebbian context), `system_health` (structured health assessment: pools, trust outliers, attention depth, cache stats, Hebbian density, dreaming), `why` (episodic recall + agent trust/connection context for explaining decisions). Reads `_runtime` reference, purely observational |
 
 ### Runtime
 
 | File | Status | Description |
 |------|--------|-------------|
-| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention, spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), red_team (2 verifiers). 22 agents total. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, post-execution reflect step (hardened with `asyncio.wait_for()` timeout and graceful fallback), episodic episode storage (fire-and-forget), `recall_similar()` for semantic search |
-| `src/probos/__main__.py` | done | Entry point: `uv run python -m probos` — boot sequence display, LLM connectivity check with fallback to MockLLMClient, interactive shell launch |
+| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention + dreaming + workflow cache + introspection, spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), introspect (2 introspection agents with runtime=self), red_team (2 verifiers). 24 agents total. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, dream scheduler activity tracking, pre-warm intent sync to decomposer, execution snapshot pattern (`_previous_execution`/`_last_execution` for introspection without self-overwrite), post-execution reflect step (hardened with `asyncio.wait_for()` timeout and graceful fallback), episodic episode storage (fire-and-forget), workflow cache storage on success, `recall_similar()` for semantic search. `DreamScheduler` created at start when episodic memory is available, stopped at shutdown. `WorkflowCache` created at init, passed to decomposer, exposed in `status()`. Dreaming state and workflow cache stats exposed in `status()` |
+| `src/probos/__main__.py` | done | Entry point: `uv run python -m probos` — boot sequence display, LLM connectivity check with fallback to MockLLMClient, creates `EpisodicMemory` (SQLite in temp dir), interactive shell launch |
 | `demo.py` | done | Full Rich demo: consensus reads, corrupted agent injection, trust/Hebbian display, NL pipeline with visual feedback, event log |
 
 ---
 
 ## What's Working
 
-**369/369 tests pass.** Test suite covers:
+**456/456 tests pass.** Test suite covers:
 
 ### Substrate tests (50 tests — unchanged)
 - Agent creation, lifecycle, confidence tracking (16 tests)
@@ -264,19 +267,154 @@
 - Different text similarity < 0.5 (1 test)
 - Empty embedding similarity = 0.0 (1 test)
 
-### Attention mechanism tests (12 tests — new in Phase 3b-2)
+### Attention mechanism tests (12 tests — updated in Phase 3b-3a)
 - Submit 3 tasks, get_next_batch returns sorted by score (1 test)
 - Budget=3 limits batch to top 3 of 10 (1 test)
 - Higher urgency → higher score (1 test)
 - Task near TTL expiry gets boosted deadline factor (1 test)
 - Higher dependency depth gets bonus (1 test)
 - update_focus stores keywords, retrievable via current_focus (1 test)
-- is_background flag stored but inert this phase (1 test)
+- is_background flag demotes scores by background demotion factor (1 test)
 - mark_completed removes from queue (1 test)
 - mark_failed removes from queue (1 test)
 - Empty queue returns empty batch (1 test)
-- Focus update stores state without affecting scores (1 test)
+- Focus update stores state and affects relevance scoring (1 test)
 - Queue snapshot returns all tasks sorted by score (1 test)
+
+### Cross-request attention tests (15 tests — new in Phase 3b-3a)
+
+#### Focus history (3 tests)
+- update_focus records snapshots in focus_history (1 test)
+- Ring buffer evicts oldest entries when exceeding max size (1 test)
+- New AttentionManager has empty focus_history (1 test)
+
+#### Cross-request relevance (3 tests)
+- Focus on "read file" boosts read_file intent over http_fetch (1 test)
+- Zero keyword overlap still gets relevance floor ≥ 0.3 (1 test)
+- Only last 3 focus snapshots affect relevance (1 test)
+
+#### Background demotion (3 tests)
+- Background task score is ~0.25x foreground task score (1 test)
+- All foreground tasks sort before background tasks in batch (1 test)
+- Custom background_demotion_factor is respected (1 test)
+
+#### TaskNode background field (2 tests)
+- TaskNode background defaults to False (1 test)
+- TaskNode background can be set to True (1 test)
+
+#### Config (2 tests)
+- Default config focus_history_size == 10 (1 test)
+- Default config background_demotion_factor == 0.25 (1 test)
+
+#### Integration (2 tests)
+- DAGExecutor attention_batch propagates background flag, foreground first (1 test)
+- End-to-end: focus + relevance + background demotion + budget limiting (1 test)
+
+### Dreaming tests (31 tests — new in Phase 3b-4)
+
+#### DreamingEngine (10 tests)
+- dream_cycle strengthens Hebbian weights for successful episodes (1 test)
+- dream_cycle weakens Hebbian weights for failed episodes (1 test)
+- Mixed success/failure episodes strengthen correct weights and weaken others (1 test)
+- Prune removes connections below configured threshold (1 test)
+- Trust consolidation boosts agents with multiple successful episodes (1 test)
+- Trust consolidation penalizes agents with multiple failed episodes (1 test)
+- Pre-warm identifies temporal intent sequences (bigram transitions) (1 test)
+- Pre-warm intents stored on engine for decomposer access (1 test)
+- Empty episodes produces no-op dream report (1 test)
+- Dream report includes non-negative duration_ms (1 test)
+
+#### DreamScheduler (6 tests)
+- Triggers dream cycle after idle threshold is reached (1 test)
+- Respects minimum interval between dream cycles (1 test)
+- is_dreaming flag is False after cycle completes (1 test)
+- force_dream() triggers immediate dream cycle (1 test)
+- record_activity() prevents dream cycles by resetting idle timer (1 test)
+- stop() cancels background monitor task (1 test)
+
+#### Runtime dreaming integration (5 tests)
+- Runtime status includes dreaming state (enabled, idle/dreaming) (1 test)
+- Without episodic memory, dreaming is disabled in status (1 test)
+- _last_request_time updates on NL processing (1 test)
+- Dream scheduler activity tracked on NL processing (1 test)
+- Status includes last dream report summary after dream cycle (1 test)
+
+#### Shell /dream command (5 tests)
+- /dream shows dream report after dream cycle (1 test)
+- /dream shows "no cycles yet" before any dreams (1 test)
+- /dream now forces an immediate dream cycle (1 test)
+- /dream shows disabled message without episodic memory (1 test)
+- /help includes /dream command (1 test)
+
+#### Dream panel rendering (4 tests)
+- render_dream_panel with report data shows all fields (1 test)
+- render_dream_panel with None shows empty state (1 test)
+- render_dream_panel with no pre-warm intents (1 test)
+- render_status_panel includes dreaming section (1 test)
+
+#### Full integration (1 test)
+- NL requests → episodes → dream cycle → weights changed (1 test)
+
+### Workflow cache tests (22 tests — new in Phase 3b-5)
+
+#### WorkflowCache unit tests (12 tests)
+- Store and exact lookup returns correct DAG (1 test)
+- Lookup miss returns None (1 test)
+- Lookup returns deep copy with different node IDs and pending status (1 test)
+- Normalize is case insensitive (1 test)
+- Normalize strips whitespace (1 test)
+- Hit count increments on lookup (1 test)
+- Max size evicts lowest hit_count entry (1 test)
+- Only stores DAGs where all nodes completed successfully (1 test)
+- Fuzzy lookup with pre-warm intent overlap and keyword overlap (1 test)
+- Fuzzy lookup returns None when no keyword/intent overlap (1 test)
+- Clear empties cache (1 test)
+- Entries sorted by hit_count descending (1 test)
+
+#### Decomposer integration (3 tests)
+- Cache hit skips LLM (call_count == 0) (1 test)
+- Cache miss falls through to LLM (call_count == 1) (1 test)
+- Pre-warm intents appear in LLM prompt as PRE-WARM HINTS (1 test)
+
+#### Runtime integration (3 tests)
+- Successful NL stores DAG in workflow cache (1 test)
+- Status includes workflow_cache key with size/entries (1 test)
+- Failed DAG handling — status dict still includes workflow_cache (1 test)
+
+#### Shell/panel tests (4 tests)
+- /cache command renders Workflow Cache panel (1 test)
+- /help includes /cache command (1 test)
+- render_workflow_cache_panel with entries shows hit counts (1 test)
+- render_workflow_cache_panel empty shows empty message (1 test)
+
+### Introspection tests (19 tests — new in Phase 6a)
+
+#### IntrospectionAgent unit tests (13 tests)
+- Agent creates with runtime reference (1 test)
+- Agent creates without runtime (runtime is None) (1 test)
+- explain_last returns previous execution info (1 test)
+- explain_last with no previous execution returns "No execution history" (1 test)
+- explain_last falls back to episodic memory when no previous execution (1 test)
+- agent_info returns agents matching type with trust scores (1 test)
+- agent_info by specific agent ID (1 test)
+- agent_info with unknown type returns empty list (1 test)
+- agent_info includes Hebbian weight context (1 test)
+- system_health returns structured dict (pool_health, trust_outliers, overall_health, cache_stats, hebbian_density) (1 test)
+- why queries episodic memory and includes agent Hebbian/trust context (1 test)
+- why without episodic memory returns graceful response (1 test)
+- IntrospectionAgent has 'introspect' capability registered (1 test)
+
+#### Decomposer introspection (2 tests)
+- SYSTEM_PROMPT contains explain_last, agent_info, system_health, why (1 test)
+- Mock LLM returns 'why' intent for a why question (1 test)
+
+#### Runtime introspection integration (3 tests)
+- Runtime creates introspect pool with 2 agents (1 test)
+- Introspect agents have _runtime reference set (1 test)
+- _previous_execution tracks correctly after two sequential NL requests (1 test)
+
+#### Shell /explain command (1 test)
+- /explain is in COMMANDS and dispatches without error (1 test)
 
 ### Expansion agent tests (33 tests — new in Phase 5)
 
@@ -458,7 +596,7 @@ The shell's `execute_command(line)` method is the public API for testing. Tests 
 
 ### AD-34: Renderer orchestrates pipeline stages
 
-The `ExecutionRenderer` orchestrates the cognitive pipeline stages itself (working memory assembly, decompose, execute, record results) rather than calling `runtime.process_natural_language()`. This allows inserting different Rich display modes (spinner for decomposition, Live display for execution) between stages. The duplicated logic is minimal (~15 lines).
+The `ExecutionRenderer` orchestrates the cognitive pipeline stages itself (working memory assembly, episodic recall, decompose, execute, record results, episodic storage, attention focus update) rather than calling `runtime.process_natural_language()`. This allows inserting different Rich display modes (spinner for decomposition, Live display for execution) between stages. Episodic recall, episodic storage, and attention focus updates are wired in to match `runtime.process_natural_language()` behavior.
 
 ### AD-35: Ambient health in prompt
 
@@ -528,7 +666,103 @@ Episode storage in `runtime.py` is wrapped in a try/except. If storage fails (SQ
 
 ### AD-51: Attention mechanism — priority-based task scheduling
 
-The `AttentionManager` is a priority scorer and budgeter, not an execution engine. It scores tasks using `urgency × relevance × deadline_factor × dependency_depth_bonus` and returns batches capped at `max_concurrent_tasks`. The `DAGExecutor` asks "which nodes should I run next?" instead of running all ready nodes simultaneously. Focus tracking (`update_focus()`) stores the current request's keywords as infrastructure for future cross-request attention (Phase 3b-3) but does not affect scoring this phase. Background demotion and preemption are deferred to Phase 3b-3. The mechanism is backward compatible — `DAGExecutor` works without an `AttentionManager` (guarded by `if self.attention`).
+The `AttentionManager` is a priority scorer and budgeter, not an execution engine. It scores tasks using `urgency × relevance × deadline_factor × dependency_depth_bonus` and returns batches capped at `max_concurrent_tasks`. The `DAGExecutor` asks "which nodes should I run next?" instead of running all ready nodes simultaneously. The mechanism is backward compatible — `DAGExecutor` works without an `AttentionManager` (guarded by `if self.attention`).
+
+### AD-53: Cross-request focus history as ring buffer
+
+The `AttentionManager` maintains a bounded ring buffer of `FocusSnapshot` entries (default max 10, configurable via `focus_history_size`). Each `update_focus()` call appends a snapshot with the current keywords and timestamp. The `_compute_relevance()` method uses the union of keywords from the last 3 snapshots to compute keyword overlap with task intents. This means recent request context influences task prioritization across multiple `process_natural_language()` calls. The overlap ratio has a floor of 0.3 so that unfocused tasks still get non-zero relevance.
+
+### AD-54: Background demotion via configurable factor
+
+Tasks with `is_background=True` have their final attention score multiplied by `background_demotion_factor` (default 0.25). This pushes background tasks to the bottom of the attention batch without removing them entirely. The factor is configurable in `CognitiveConfig` and `system.yaml`, and is passed to `AttentionManager` via the runtime constructor. The `TaskNode` dataclass gained a `background: bool = False` field, and the `DAGExecutor._attention_batch()` propagates it to `AttentionEntry.is_background`.
+
+### AD-55: Intent tokenization for relevance matching
+
+Intent strings like `"read_file"` are tokenized by splitting on both underscores and spaces, producing tokens `{"read", "file"}`. Tokens shorter than 3 characters are filtered out. Focus keywords are similarly tokenized from natural language text. Relevance is computed as the ratio of overlapping tokens to total intent tokens: `overlap / len(intent_tokens)`. This allows intent names (underscore-separated) to match against natural language focus text (space-separated).
+
+### AD-52: Episodic memory created at boot
+
+`__main__.py` creates an `EpisodicMemory` instance (SQLite-backed, stored in the session's temp directory) and passes it to `ProbOSRuntime`. The `ExecutionRenderer.process_with_feedback()` was also updated to include episodic recall (before decomposition) and episode storage (after execution), matching the behavior of `runtime.process_natural_language()`. Previously, the renderer's duplicated pipeline (AD-34) skipped episodic memory entirely, causing `/history` to report "not enabled" and no episodes to be recorded during interactive use.
+
+### AD-56: Renderer attention focus wiring
+
+The `ExecutionRenderer.process_with_feedback()` was missing the `attention.update_focus()` call that `runtime.process_natural_language()` performs at the start of each request. Without this, interactive use via the shell never populated the focus history ring buffer, so `/attention` showed "Focus: none" and cross-request relevance scoring had no data. Fixed by adding `self.runtime.attention.update_focus(intent=text, context=text)` at the top of `process_with_feedback()`. Same class of bug as AD-52 — the renderer's duplicated pipeline (AD-34) missed a step added in a later phase.
+
+### AD-57: Dreaming as proactive consolidation
+
+Dreaming is the proactive counterpart to reactive learning. During active use, Hebbian weights, trust, and episodic memory evolve based on individual interactions. During idle periods, the dreaming engine replays recent experiences in bulk to consolidate patterns: strengthening pathways that led to successful outcomes, weakening failed ones, pruning near-zero connections, and identifying temporal intent sequences for pre-warming. This is analogous to memory consolidation during biological sleep.
+
+### AD-58: Dream cycle is synchronous on internal state
+
+The `DreamingEngine.dream_cycle()` directly mutates `HebbianRouter._weights` and `TrustNetwork._records` rather than going through the normal `record_interaction()` / `record_outcome()` APIs. This is intentional — dream replay is a bulk consolidation operation with its own strengthening/weakening factors (configurable separately from the real-time Hebbian reward). The `pathway_strengthening_factor` (default 0.03) and `pathway_weakening_factor` (default 0.02) are smaller than the real-time Hebbian reward (0.05) to avoid over-learning from replay.
+
+### AD-59: DreamScheduler idle detection via monotonic clock
+
+The `DreamScheduler` tracks idle time using `time.monotonic()` rather than wall clock time. Each `process_natural_language()` call triggers `record_activity()` on the scheduler, resetting the idle timer. The scheduler's background loop checks `time.monotonic() - last_activity_time >= idle_threshold_seconds` to determine when to dream. This avoids issues with system clock adjustments and timezone changes.
+
+### AD-60: Pre-warm intents via temporal bigrams
+
+Pre-warm identification uses a simple but effective approach: count bigram transitions across recent episodes (e.g., if `list_directory` is frequently followed by `read_file`, then `read_file` is a pre-warm candidate). Bigram successors are weighted 2x relative to raw frequency to emphasize sequential patterns over standalone popularity. The top-K intents (default 5) are stored on `DreamingEngine.pre_warm_intents` for future decomposer integration.
+
+### AD-61: Trust consolidation threshold
+
+Trust boosts and penalties during dreaming require an agent to appear in more than 1 successful (or failed) episode to receive an adjustment. This prevents a single lucky or unlucky interaction from triggering a dreaming-based trust change. The threshold is intentionally low (>1) since dreaming operates on recent episodes (default 50), and higher thresholds would make trust consolidation too conservative.
+
+### AD-62: Dream prune threshold separate from Hebbian decay
+
+The dreaming prune threshold (default 0.01) is higher than the Hebbian `decay_all()` pruning threshold (0.001). During a dream cycle, `decay_all()` is called first (pruning < 0.001), then a second pass removes anything below `prune_threshold` (< 0.01). This more aggressive pruning during dreaming keeps the weight graph sparse and focused on meaningful connections.
+
+### AD-63: Background dream cycle logs at DEBUG level
+
+The dream cycle completion message in `DreamingEngine.dream_cycle()` was changed from `logger.info()` to `logger.debug()`. Since the dream scheduler fires from a background asyncio task, INFO-level output was printing over the interactive shell prompt, making it impossible to type commands. With the system log level set to INFO (`config/system.yaml`), DEBUG messages are suppressed in normal interactive use but remain available when running with a lower log level for troubleshooting.
+
+### AD-64: Workflow cache as LLM bypass optimization
+
+The `WorkflowCache` stores successful DAG patterns keyed by normalized user input. On subsequent identical (or fuzzy-matching) requests, the cached DAG is returned directly without calling the LLM. This eliminates LLM latency and cost for repeated workflows. The cache sits in the `IntentDecomposer.decompose()` method before the LLM call — exact match first, then fuzzy match with pre-warm hints. Cache misses fall through to the normal LLM decomposition path with zero overhead.
+
+### AD-65: Deep copy with fresh UUIDs on cache retrieval
+
+When a cached DAG is retrieved, it is deserialized from JSON with fresh `uuid4()` node IDs and all node statuses reset to `"pending"`. This prevents ID collisions when the same workflow is executed multiple times (each execution needs unique node IDs for the event log, attention manager, and result tracking). The original cached DAG is never mutated.
+
+### AD-66: Fuzzy matching requires dual overlap
+
+`WorkflowCache.lookup_fuzzy()` requires BOTH conditions to return a hit: (1) at least one pre-warm intent must match an intent stored in the cached DAG, AND (2) keyword overlap between the query and cached pattern must be ≥50%. This dual requirement prevents false positives — a request for "fetch website data" won't match a cached "read the file" workflow just because both contain common words. Pre-warm intents provide semantic signal; keyword overlap provides lexical signal.
+
+### AD-67: Pre-warm hints injected into LLM prompt
+
+When `IntentDecomposer.pre_warm_intents` is non-empty, a `PRE-WARM HINTS` section is appended to the LLM prompt listing the predicted intents. This nudges the LLM toward intents that the dreaming engine identified as likely follow-ups based on temporal bigram analysis. The hints are advisory — the LLM is free to ignore them if the user's request doesn't match.
+
+### AD-68: Cache-first decomposition pattern
+
+The decomposer checks the workflow cache before calling the LLM, creating a three-tier lookup: (1) exact normalized match → instant replay, (2) fuzzy match with pre-warm overlap → likely replay, (3) full LLM decomposition → fallback. This mirrors CPU cache hierarchies (L1/L2/main memory) where each tier trades coverage for speed. The cache stores only successful DAGs (all nodes completed), so replayed workflows have a high probability of success.
+
+### AD-69: Workflow cache wired in both runtime and renderer
+
+Following the AD-34 pattern, workflow cache storage and pre-warm intent synchronization are wired in both `runtime.process_natural_language()` and `renderer.process_with_feedback()`. After successful DAG execution, the DAG is stored in the cache. Before decomposition, pre-warm intents from the dream engine are synced to the decomposer. This ensures the cache works correctly regardless of whether the request comes through the programmatic API or the interactive shell.
+
+### AD-70: Status panel workflow cache section
+
+The `render_status_panel()` in `panels.py` was missing the Workflow Cache section even though `runtime.status()` already returned `workflow_cache` data (size and entries). Added a "Workflow Cache" heading with `Cached patterns: N` to the status panel, matching how Dreaming and Cognitive sections are displayed. Same class of omission as AD-52/AD-56 — the rendering layer wasn't updated when a new runtime capability was added.
+
+### AD-71: BaseAgent **kwargs passthrough for extensibility
+
+`BaseAgent.__init__()` gained `**kwargs` and stores `kwargs.get("runtime")` as `self._runtime`. This allows agent subclasses to receive arbitrary construction parameters without modifying the base signature. `AgentSpawner.spawn()` and `ResourcePool` both forward `**kwargs` to agent constructors. Existing agents ignore the kwargs — only `IntrospectionAgent` reads `_runtime`. This is a minimal, non-breaking change: all existing agent constructors continue to work unchanged.
+
+### AD-72: Execution snapshot pattern prevents self-referential overwrite
+
+When a user asks "what just happened?", that request itself goes through `process_natural_language()`. Without protection, `explain_last` would read the introspection result (its own execution), not the previous real request. The snapshot pattern solves this: at the top of `process_natural_language()`, `_previous_execution = _last_execution`. At the end, `_last_execution = execution_result`. The `IntrospectionAgent.explain_last` reads `_previous_execution`, which always contains the request before the current one. This is wired in both `runtime.py` and `renderer.py` (AD-34 duplication).
+
+### AD-73: IntrospectionAgent is purely observational
+
+The `IntrospectionAgent` reads from runtime internals but never modifies them. All handlers return structured data that the reflect step can synthesize into natural language. The agent has high initial confidence (0.9) since it only reads system state and cannot "fail" in the same way a file reader can. It does not subscribe to consensus — all introspection intents have `use_consensus: false`.
+
+### AD-74: Why intent combines episodic and Hebbian context
+
+The `why` handler doesn't just return matching episodes — it also looks up trust scores and top Hebbian connections for every agent mentioned in those episodes. This gives the reflect step enough material to explain agent selection decisions: "file_reader was chosen because it has a trust score of 0.85 and strong Hebbian connections to the read_file intent." Without this agent context, the reflect step would only know what happened, not why.
+
+### AD-75: /explain as NL routing shortcut
+
+The `/explain` command routes "what just happened?" through the normal NL pipeline rather than implementing a separate code path. This means it goes through decomposition (MockLLMClient matches the regex), execution (IntrospectionAgent handles the intent), and reflection (LLM synthesizes a human-readable explanation). This keeps the shell thin and ensures introspection uses the same cognitive pipeline as regular requests.
 
 ---
 
@@ -570,7 +804,15 @@ The `AttentionManager` is a priority scorer and budgeter, not an execution engin
 - [x] ~~351/351 tests pass~~
 - [x] ~~Phase 3b-2: Attention mechanism (AttentionEntry type, AttentionManager, DAGExecutor priority batching, /attention command, focus tracking infrastructure)~~
 - [x] ~~369/369 tests pass~~
-- [ ] **Phase 3b-3 (Cognitive continued):** Cross-request attention, preemption, background demotion, richer NL understanding
+- [x] ~~Phase 3b-3a: Cross-request attention & background demotion (FocusSnapshot type, focus history ring buffer, _compute_relevance with keyword overlap, background demotion factor, TaskNode.background field, config wiring, panels focus history display)~~
+- [x] ~~384/384 tests pass~~
+- [x] ~~Phase 3b-4: Dreaming engine (DreamReport type, DreamingConfig, DreamingEngine — replay/prune/trust consolidation/pre-warm, DreamScheduler — idle monitoring/forced dream, runtime wiring, /dream command, render_dream_panel, render_status_panel dreaming section)~~
+- [x] ~~415/415 tests pass~~
+- [x] ~~Phase 3b-5: Habit formation & workflow cache (WorkflowCacheEntry type, WorkflowCache — exact/fuzzy lookup/LRU eviction/deep copy, decomposer cache-first decomposition, pre-warm hints in LLM prompt, runtime cache storage & pre-warm sync, /cache command, render_workflow_cache_panel)~~
+- [x] ~~437/437 tests pass~~
+- [x] ~~Phase 6a: Introspection & self-awareness (IntrospectionAgent — explain_last/agent_info/system_health/why, BaseAgent **kwargs + _runtime, AgentSpawner/ResourcePool kwargs forwarding, execution snapshot pattern _previous_execution/_last_execution, MockLLMClient introspection patterns, decomposer system prompt introspection intents, /explain command, renderer execution snapshot wiring)~~
+- [x] ~~456/456 tests pass~~
+- [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
 
 ---

@@ -56,6 +56,8 @@ class CognitiveConfig(BaseModel):
     use_consensus_for_writes: bool = True
     max_concurrent_tasks: int = 8
     attention_decay_rate: float = 0.95  # Per-second decay for stale tasks
+    focus_history_size: int = 10
+    background_demotion_factor: float = 0.25
 
 
 class MemoryConfig(BaseModel):
@@ -64,6 +66,20 @@ class MemoryConfig(BaseModel):
     collection_name: str = "probos_episodes"
     max_episodes: int = 100000
     relevance_threshold: float = 0.7
+
+
+class DreamingConfig(BaseModel):
+    """Dreaming / offline consolidation configuration."""
+
+    idle_threshold_seconds: float = 300.0
+    dream_interval_seconds: float = 600.0
+    replay_episode_count: int = 50
+    pathway_strengthening_factor: float = 0.03
+    pathway_weakening_factor: float = 0.02
+    prune_threshold: float = 0.01
+    trust_boost: float = 0.1
+    trust_penalty: float = 0.1
+    pre_warm_top_k: int = 5
 
 
 class SystemInfo(BaseModel):
@@ -83,6 +99,7 @@ class SystemConfig(BaseModel):
     consensus: ConsensusConfig = ConsensusConfig()
     cognitive: CognitiveConfig = CognitiveConfig()
     memory: MemoryConfig = MemoryConfig()
+    dreaming: DreamingConfig = DreamingConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

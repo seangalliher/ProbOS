@@ -15,7 +15,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from probos.types import AgentState
+from probos.types import AgentState, DreamReport, FocusSnapshot, WorkflowCacheEntry
 
 # ---------------------------------------------------------------------------
 # Colour constants
@@ -111,6 +111,24 @@ def render_status_panel(status: dict[str, Any]) -> Panel:
     lines.append(f"  Memory budget:    {cognitive.get('working_memory_budget', '?')} tokens")
     lines.append(f"  Decompose timeout: {cognitive.get('decomposition_timeout', '?')}s")
     lines.append(f"  DAG timeout:       {cognitive.get('dag_execution_timeout', '?')}s")
+
+    # Dreaming
+    dreaming = status.get("dreaming", {})
+    dream_state = dreaming.get("state", "disabled")
+    lines.append("")
+    lines.append("[bold]Dreaming[/bold]")
+    lines.append(f"  State: {dream_state}")
+    if dreaming.get("last_report"):
+        lr = dreaming["last_report"]
+        lines.append(f"  Last cycle: {lr.get('episodes_replayed', 0)} episodes, "
+                     f"{lr.get('weights_strengthened', 0)} strengthened, "
+                     f"{lr.get('weights_pruned', 0)} pruned")
+
+    # Workflow Cache
+    wc = status.get("workflow_cache", {})
+    lines.append("")
+    lines.append("[bold]Workflow Cache[/bold]")
+    lines.append(f"  Cached patterns: {wc.get('size', 0)}")
 
     return Panel("\n".join(lines), title="System Status", border_style="blue")
 
@@ -290,6 +308,7 @@ def render_working_memory_panel(snapshot: Any) -> Panel:
 def render_attention_panel(
     queue: list[Any],
     focus: dict[str, Any] | None = None,
+    focus_history: list[FocusSnapshot] | None = None,
 ) -> Panel:
     """Rich Panel showing the attention queue with scores and current focus."""
     lines: list[str] = []
@@ -306,11 +325,23 @@ def render_attention_panel(
         lines.append("[dim]Attention queue is empty.[/dim]")
     else:
         for entry in queue:
+            bg_tag = " [dim](bg)[/dim]" if getattr(entry, "is_background", False) else ""
             lines.append(
                 f"  [cyan]{entry.task_id[:8]}[/cyan] {entry.intent:16s} "
                 f"urgency={entry.urgency:.2f} deadline={entry.deadline_factor:.2f} "
-                f"depth={entry.dependency_depth} [bold]score={entry.score:.3f}[/bold]"
+                f"depth={entry.dependency_depth} [bold]score={entry.score:.3f}[/bold]{bg_tag}"
             )
+
+    # Focus history section
+    if focus_history:
+        lines.append("")
+        lines.append("[bold]Focus History[/bold]")
+        for snap in focus_history:
+            ts = snap.timestamp.strftime("%H:%M:%S")
+            kws = ", ".join(snap.keywords[:5])
+            if len(snap.keywords) > 5:
+                kws += f" (+{len(snap.keywords) - 5})"
+            lines.append(f"  [{ts}] {kws}")
 
     return Panel("\n".join(lines), title="Attention Queue", border_style="yellow")
 
@@ -375,3 +406,69 @@ def render_dag_result(result: dict[str, Any], debug: bool = False) -> Panel:
         lines.append(json.dumps(debug_results, indent=2, default=str))
 
     return Panel("\n".join(lines), title="Results", border_style="green")
+
+
+def render_dream_panel(report: DreamReport | None) -> Panel:
+    """Render a dream cycle report as a Rich Panel."""
+    lines: list[str] = []
+
+    if report is None:
+        lines.append("[dim]No dream cycles yet.[/dim]")
+        lines.append("")
+        lines.append("Use [bold]/dream now[/bold] to trigger an immediate dream cycle.")
+        return Panel("\n".join(lines), title="Dream Report", border_style="magenta")
+
+    lines.append(f"[bold]Episodes replayed:[/bold]    {report.episodes_replayed}")
+    lines.append(f"[bold]Weights strengthened:[/bold] {report.weights_strengthened}")
+    lines.append(f"[bold]Connections pruned:[/bold]   {report.weights_pruned}")
+    lines.append(f"[bold]Trust adjustments:[/bold]    {report.trust_adjustments}")
+    lines.append(f"[bold]Duration:[/bold]             {report.duration_ms:.1f}ms")
+
+    if report.pre_warm_intents:
+        lines.append("")
+        lines.append("[bold]Pre-warm intents:[/bold]")
+        for intent in report.pre_warm_intents:
+            lines.append(f"  - {intent}")
+    else:
+        lines.append("")
+        lines.append("[dim]No pre-warm intents identified.[/dim]")
+
+    return Panel("\n".join(lines), title="Dream Report", border_style="magenta")
+
+
+def render_workflow_cache_panel(
+    entries: list[WorkflowCacheEntry], size: int
+) -> Panel:
+    """Render the workflow cache as a Rich Panel with a table."""
+    if not entries:
+        lines = [
+            "[dim]Workflow cache is empty.[/dim]",
+            "",
+            "Cached workflows appear after successful NL requests.",
+        ]
+        return Panel(
+            "\n".join(lines),
+            title=f"Workflow Cache ({size} entries)",
+            border_style="cyan",
+        )
+
+    table = Table(show_header=True, show_lines=False)
+    table.add_column("Pattern", max_width=40)
+    table.add_column("Intents")
+    table.add_column("Hits", justify="right")
+    table.add_column("Last Hit")
+
+    for entry in entries:
+        # Extract intents from stored DAG JSON
+        try:
+            import json as _json
+            dag_data = _json.loads(entry.dag_json)
+            intents = ", ".join(n.get("intent", "?") for n in dag_data.get("nodes", []))
+        except Exception:
+            intents = "?"
+
+        pattern = entry.pattern[:40]
+        last_hit = entry.last_hit.strftime("%H:%M:%S") if entry.last_hit else "-"
+        table.add_row(pattern, intents, str(entry.hit_count), last_hit)
+
+    return Panel(table, title=f"Workflow Cache ({size} entries)", border_style="cyan")

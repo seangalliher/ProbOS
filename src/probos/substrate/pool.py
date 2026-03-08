@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from probos.config import PoolConfig
 from probos.types import AgentID, AgentState
@@ -30,6 +30,7 @@ class ResourcePool:
         registry: AgentRegistry,
         config: PoolConfig,
         target_size: int | None = None,
+        **spawn_kwargs: Any,
     ) -> None:
         self.name = name
         self.agent_type = agent_type
@@ -40,6 +41,7 @@ class ResourcePool:
         self._agent_ids: list[AgentID] = []
         self._health_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
+        self._spawn_kwargs = spawn_kwargs
 
     @property
     def current_size(self) -> int:
@@ -67,7 +69,7 @@ class ResourcePool:
 
         # Spawn to target
         while len(self._agent_ids) < self.target_size:
-            agent = await self.spawner.spawn(self.agent_type, self.name)
+            agent = await self.spawner.spawn(self.agent_type, self.name, **self._spawn_kwargs)
             self._agent_ids.append(agent.id)
 
         # Start health monitoring loop
@@ -130,7 +132,7 @@ class ResourcePool:
 
         # Respawn to maintain target size
         while len(self._agent_ids) < self.target_size:
-            agent = await self.spawner.spawn(self.agent_type, self.name)
+            agent = await self.spawner.spawn(self.agent_type, self.name, **self._spawn_kwargs)
             self._agent_ids.append(agent.id)
 
         status = {"healthy": healthy, "degraded": degraded, "dead": dead}

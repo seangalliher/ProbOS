@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, TYPE_CHECKING
 
@@ -59,6 +60,13 @@ class ExecutionRenderer:
         Returns the same dict as ``runtime.process_natural_language()``.
         """
         self.console.print(f"\n[bold]> {text}[/bold]")
+        t_start = time.monotonic()
+
+        # Snapshot previous execution for introspection (AD-34 duplication)
+        self.runtime._previous_execution = self.runtime._last_execution
+
+        # Update attention focus with current request
+        self.runtime.attention.update_focus(intent=text, context=text)
 
         # Phase 1: Decompose with spinner
         with self.console.status(
@@ -71,7 +79,23 @@ class ExecutionRenderer:
                 hebbian_router=self.runtime.hebbian_router,
                 capability_list=self._get_capability_list(),
             )
-            dag = await self.runtime.decomposer.decompose(text, context=context)
+            # Recall similar past episodes if episodic memory is available
+            similar_episodes = None
+            if self.runtime.episodic_memory:
+                try:
+                    similar_episodes = await self.runtime.episodic_memory.recall(text, k=3)
+                except Exception as e:
+                    logger.warning("Episode recall failed: %s", e)
+
+            # Sync pre-warm intents from dreaming engine to decomposer
+            if self.runtime.dream_scheduler and self.runtime.dream_scheduler.last_dream_report:
+                self.runtime.decomposer.pre_warm_intents = (
+                    self.runtime.dream_scheduler.engine.pre_warm_intents
+                )
+
+            dag = await self.runtime.decomposer.decompose(
+                text, context=context, similar_episodes=similar_episodes or None,
+            )
 
         if self.debug:
             raw = self.runtime.decomposer.last_raw_response
@@ -148,11 +172,31 @@ class ExecutionRenderer:
                         "(Reflection unavailable — results shown above)"
                     )
 
+        # Store episode in episodic memory (fire-and-forget)
+        if self.runtime.episodic_memory and dag.nodes:
+            try:
+                t_end = time.monotonic()
+                episode = self.runtime._build_episode(
+                    text, execution_result, t_start, t_end,
+                )
+                await self.runtime.episodic_memory.store(episode)
+            except Exception as e:
+                logger.warning("Episode storage failed: %s: %s", type(e).__name__, e)
+
+        # Store successful workflows in cache
+        if self.runtime.workflow_cache and dag.nodes:
+            all_success = all(n.status == "completed" for n in dag.nodes)
+            if all_success:
+                self.runtime.workflow_cache.store(text, dag)
+
         # Phase 4: Show results
         self.console.print(render_dag_result(execution_result, debug=self.debug))
 
         if self.debug:
             self._render_debug_results(execution_result)
+
+        # Store execution result for introspection (AD-34 duplication)
+        self.runtime._last_execution = execution_result
 
         return execution_result
 

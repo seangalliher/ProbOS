@@ -120,18 +120,18 @@ class TestAttentionManager:
         assert focus["context"] == "looking at quarterly report data"
 
     def test_background_flag_accepted(self, am: AttentionManager):
-        """is_background flag is stored but does not affect scoring this phase."""
+        """is_background flag demotes scores by the background demotion factor."""
         fg = _make_entry("fg", urgency=0.5, is_background=False)
         bg = _make_entry("bg", urgency=0.5, is_background=True)
         am.submit(fg)
         am.submit(bg)
         am.compute_scores()
 
-        # Same urgency, same scoring — background flag is stored but inert
         assert bg.is_background is True
         assert fg.is_background is False
-        # Scores should be approximately equal (both have same params)
-        assert abs(fg.score - bg.score) < 0.01
+        # Background task score should be ~0.25x the foreground task score
+        assert bg.score < fg.score
+        assert abs(bg.score - fg.score * 0.25) < 0.01
 
     # ---- removal ------------------------------------------------
 
@@ -160,17 +160,17 @@ class TestAttentionManager:
         assert batch == []
 
     def test_focus_update_stores_state(self, am: AttentionManager):
-        """update_focus() stores keywords without affecting scores."""
-        am.submit(_make_entry("t1", urgency=0.5))
+        """update_focus() stores keywords and affects relevance scoring."""
+        am.submit(_make_entry("t1", intent="read_file", urgency=0.5))
         am.compute_scores()
         score_before = am.get_queue_snapshot()[0].score
 
-        am.update_focus("read_file", "some context about files")
+        am.update_focus("read file", "some context about files")
         am.compute_scores()
         score_after = am.get_queue_snapshot()[0].score
 
-        # Scores unchanged — focus not wired into scoring this phase
-        assert abs(score_before - score_after) < 0.001
+        # Focus on "read file" should boost read_file intent via relevance
+        assert score_after >= score_before
 
     def test_queue_snapshot(self, am: AttentionManager):
         """get_queue_snapshot returns current state of all queued tasks."""

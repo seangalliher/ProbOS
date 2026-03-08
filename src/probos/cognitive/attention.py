@@ -16,7 +16,7 @@ import logging
 import time
 from typing import Any
 
-from probos.types import AttentionEntry
+from probos.types import AttentionEntry, FocusSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +32,17 @@ class AttentionManager:
         self,
         max_concurrent: int = 8,
         decay_rate: float = 0.95,
+        focus_history_size: int = 10,
+        background_demotion_factor: float = 0.25,
     ) -> None:
         self.max_concurrent = max_concurrent
         self.decay_rate = decay_rate
+        self._focus_history_size = focus_history_size
+        self._background_demotion_factor = background_demotion_factor
         self._queue: dict[str, AttentionEntry] = {}
         self._focus_keywords: list[str] = []
         self._focus_context: str = ""
+        self._focus_history: list[FocusSnapshot] = []
 
     # ---- submission / removal ------------------------------------
 
@@ -78,7 +83,16 @@ class AttentionManager:
         # Dependency depth bonus: tasks that unblock others get +10% per level
         dep_bonus = 1.0 + (entry.dependency_depth * 0.1)
 
-        return entry.urgency * entry.relevance * deadline_factor * dep_bonus
+        # Cross-request relevance from focus history
+        relevance = self._compute_relevance(entry)
+
+        score = entry.urgency * relevance * deadline_factor * dep_bonus
+
+        # Background demotion
+        if entry.is_background:
+            score *= self._background_demotion_factor
+
+        return score
 
     # ---- batching ------------------------------------------------
 
@@ -102,14 +116,23 @@ class AttentionManager:
     # ---- focus tracking ------------------------------------------
 
     def update_focus(self, intent: str, context: str) -> None:
-        """Store the current request's keywords.
+        """Store the current request's keywords and append to focus history.
 
-        Infrastructure for future cross-request attention (Phase 3b-3).
-        Not used in scoring this phase.
+        Maintains a ring buffer of FocusSnapshot entries for cross-request
+        relevance scoring.
         """
         words = intent.lower().split() + context.lower().split()
         self._focus_keywords = [w for w in words if len(w) > 2]
         self._focus_context = context
+
+        snapshot = FocusSnapshot(
+            keywords=list(self._focus_keywords),
+            context=context,
+        )
+        self._focus_history.append(snapshot)
+        # Evict oldest when exceeding max size
+        while len(self._focus_history) > self._focus_history_size:
+            self._focus_history.pop(0)
 
     @property
     def current_focus(self) -> dict[str, Any]:
@@ -118,6 +141,42 @@ class AttentionManager:
             "keywords": self._focus_keywords,
             "context": self._focus_context,
         }
+
+    @property
+    def focus_history(self) -> list[FocusSnapshot]:
+        """Return a copy of the focus history ring buffer."""
+        return list(self._focus_history)
+
+    def _compute_relevance(self, entry: AttentionEntry) -> float:
+        """Compute keyword overlap between entry intent and recent focus.
+
+        Uses the union of keywords from the last 3 focus snapshots.
+        Returns max(overlap_ratio, 0.3) so unfocused tasks get a floor score.
+        """
+        if not self._focus_history:
+            return 1.0
+
+        # Union of keywords from the last 3 snapshots
+        recent = self._focus_history[-3:]
+        focus_words: set[str] = set()
+        for snap in recent:
+            focus_words.update(snap.keywords)
+
+        if not focus_words:
+            return 1.0
+
+        # Tokenize entry intent (split on underscores and spaces)
+        intent_tokens: set[str] = set()
+        for part in entry.intent.lower().replace("_", " ").split():
+            if len(part) > 2:
+                intent_tokens.add(part)
+
+        if not intent_tokens:
+            return 0.3
+
+        overlap = len(intent_tokens & focus_words)
+        ratio = overlap / len(intent_tokens)
+        return max(ratio, 0.3)
 
     # ---- introspection -------------------------------------------
 
