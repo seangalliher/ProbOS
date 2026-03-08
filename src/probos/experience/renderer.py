@@ -124,6 +124,30 @@ class ExecutionRenderer:
                 ):
                     intent_meta = await self.runtime._extract_unhandled_intent(text)
                 if intent_meta:
+                    # Check if this intent already exists (LLM extracted
+                    # an existing capability the decomposer didn't route to)
+                    existing_names = {
+                        d.name for d in self.runtime._collect_intent_descriptors()
+                    }
+                    if intent_meta["name"] in existing_names:
+                        actual = intent_meta.get(
+                            "actual_values", intent_meta.get("parameters", {})
+                        )
+                        dag = TaskDAG(
+                            nodes=[TaskNode(
+                                id="t1",
+                                intent=intent_meta["name"],
+                                params=actual,
+                                use_consensus=intent_meta.get(
+                                    "requires_consensus", False
+                                ),
+                            )],
+                            source_text=text,
+                            reflect=True,
+                        )
+                        intent_meta = None  # skip self-mod flow below
+
+                if intent_meta:
                     # Phase A: Ask user for consent
                     self.console.print(
                         "\n[yellow bold]\U0001f527 Self-Modification — approval needed:[/yellow bold]"
