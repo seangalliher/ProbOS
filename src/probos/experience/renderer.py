@@ -111,9 +111,11 @@ class ExecutionRenderer:
 
         if self.debug:
             raw = self.runtime.decomposer.last_raw_response
+            tier = self.runtime.decomposer.last_tier or "?"
+            model = self.runtime.decomposer.last_model or "?"
             self.console.print(Panel(
                 raw or "[dim]<empty>[/dim]",
-                title="DEBUG: Raw LLM Response",
+                title=f"DEBUG: Raw LLM Response  [bold]{tier}[/bold] / {model}",
                 style="dim",
             ))
 

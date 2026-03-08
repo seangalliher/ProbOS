@@ -208,6 +208,8 @@ class IntentDecomposer:
         self.timeout = timeout
         self.workflow_cache = workflow_cache
         self.last_raw_response: str = ""  # Last raw LLM response for debugging
+        self.last_tier: str = ""  # Tier used for last LLM call
+        self.last_model: str = ""  # Model used for last LLM call
         self._pre_warm_intents: list[str] = []
         self._intent_descriptors: list[IntentDescriptor] = []
         self._prompt_builder = PromptBuilder()
@@ -316,6 +318,8 @@ class IntentDecomposer:
 
         # Parse response into TaskDAG
         self.last_raw_response = response.content
+        self.last_tier = response.tier
+        self.last_model = response.model
         logger.debug("Raw LLM response: %s", response.content)
         dag = self._parse_response(response.content, text)
         return dag

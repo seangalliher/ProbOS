@@ -252,7 +252,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         return LLMResponse(
             content=content,
             model=model,
-            tier=request.tier,
+            tier=request.tier or self.default_tier,
             tokens_used=tokens_used,
             cached=False,
             request_id=request.id,
