@@ -44,12 +44,29 @@ class ConsensusConfig(BaseModel):
 class CognitiveConfig(BaseModel):
     """Cognitive layer configuration."""
 
+    # Shared endpoint (backward compat — used when per-tier not specified)
     llm_base_url: str = "http://127.0.0.1:8080/v1"  # OpenAI-compatible endpoint
     llm_api_key: str = ""
+    llm_timeout_seconds: float = 30.0
+
+    # Per-tier model names (existing)
     llm_model_fast: str = "gpt-4o-mini"
     llm_model_standard: str = "claude-sonnet-4"
     llm_model_deep: str = "claude-sonnet-4"
-    llm_timeout_seconds: float = 30.0
+
+    # Per-tier endpoint overrides (None = fall back to shared)
+    llm_base_url_fast: str | None = None
+    llm_api_key_fast: str | None = None
+    llm_timeout_fast: float | None = None
+
+    llm_base_url_standard: str | None = None
+    llm_api_key_standard: str | None = None
+    llm_timeout_standard: float | None = None
+
+    llm_base_url_deep: str | None = None
+    llm_api_key_deep: str | None = None
+    llm_timeout_deep: float | None = None
+
     working_memory_token_budget: int = 4000
     decomposition_timeout_seconds: float = 30.0
     dag_execution_timeout_seconds: float = 60.0
@@ -58,6 +75,39 @@ class CognitiveConfig(BaseModel):
     attention_decay_rate: float = 0.95  # Per-second decay for stale tasks
     focus_history_size: int = 10
     background_demotion_factor: float = 0.25
+
+    def tier_config(self, tier: str) -> dict:
+        """Return resolved endpoint config for a tier.
+
+        Returns {"base_url": str, "api_key": str, "model": str, "timeout": float}
+        with per-tier overrides applied, falling back to shared values.
+        """
+        model_map = {
+            "fast": self.llm_model_fast,
+            "standard": self.llm_model_standard,
+            "deep": self.llm_model_deep,
+        }
+        url_map = {
+            "fast": self.llm_base_url_fast,
+            "standard": self.llm_base_url_standard,
+            "deep": self.llm_base_url_deep,
+        }
+        key_map = {
+            "fast": self.llm_api_key_fast,
+            "standard": self.llm_api_key_standard,
+            "deep": self.llm_api_key_deep,
+        }
+        timeout_map = {
+            "fast": self.llm_timeout_fast,
+            "standard": self.llm_timeout_standard,
+            "deep": self.llm_timeout_deep,
+        }
+        return {
+            "base_url": url_map.get(tier) or self.llm_base_url,
+            "api_key": key_map.get(tier) if key_map.get(tier) is not None else self.llm_api_key,
+            "model": model_map.get(tier, self.llm_model_standard),
+            "timeout": timeout_map.get(tier) if timeout_map.get(tier) is not None else self.llm_timeout_seconds,
+        }
 
 
 class MemoryConfig(BaseModel):
@@ -133,6 +183,15 @@ class SelfModConfig(BaseModel):
         r"eval\s*\(", r"exec\s*\(", r"__import__",
         r"open\s*\(.*['\"]w['\"]", r"socket\b", r"ctypes\b",
     ]
+    research_enabled: bool = False  # Opt-in web research before design
+    research_domain_whitelist: list[str] = [
+        "docs.python.org",
+        "pypi.org",
+        "developer.mozilla.org",
+        "learn.microsoft.com",
+    ]
+    research_max_pages: int = 3
+    research_max_content_per_page: int = 2000
 
 
 class SystemInfo(BaseModel):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -388,6 +389,24 @@ class IntentDescriptor:
     description: str = ""  # e.g. "Read file contents"
     requires_consensus: bool = False
     requires_reflect: bool = False
+
+
+@dataclass
+class Skill:
+    """A modular intent handler that can be attached to an agent.
+
+    Unlike a full agent (which has its own pool, lifecycle, and identity),
+    a skill is a piece of code that extends an existing agent's capabilities.
+    The agent discovers its skills via its _skills list and dispatches
+    matching intents to the skill's handler.
+    """
+
+    name: str  # Intent name this skill handles, e.g., "translate_text"
+    descriptor: IntentDescriptor  # Intent metadata for decomposer
+    source_code: str  # Python source of the handler function
+    handler: Callable[..., Awaitable] | None = None  # Compiled async callable
+    created_at: float = 0.0
+    origin: str = "designed"  # "designed" or "built_in"
 
 
 # ------------------------------------------------------------------

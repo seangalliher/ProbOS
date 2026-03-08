@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 10 — Self-Modification Complete + Post-Phase Hardening (660/660 tests)
+## Current Status: Phase 12 — Per-Tier LLM Endpoints Complete (736/736 tests)
 
 ---
 
@@ -11,10 +11,10 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `pyproject.toml` | done | Project config, deps (pydantic, pyyaml, aiosqlite, rich, pytest) |
-| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config, dreaming config, scaling config, federation config, self-mod config |
+| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config, dreaming config, scaling config, federation config, self-mod config, per-tier LLM endpoints (fast=qwen3.5:35b at Ollama localhost:11434, standard=claude-sonnet-4.6 at Copilot proxy localhost:8080, deep=claude-opus-4.6 at Copilot proxy — AD-132) |
 | `src/probos/__init__.py` | done | Package root, version 0.1.0 |
-| `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `EscalationTier` (3-tier cascade levels: retry, arbitration, user), `EscalationResult` (escalation outcome with `to_dict()` for JSON-safe serialization, `tiers_attempted` tracking), `TaskNode` (with `background` field for background demotion, `escalation_result: dict | None` for serialized escalation data), `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record), `AttentionEntry` (priority scoring for task scheduling), `FocusSnapshot` (cross-request focus history), `DreamReport` (dream cycle results), `WorkflowCacheEntry` (cached workflow pattern), `IntentDescriptor` (structured metadata for dynamic intent discovery: name, params, description, requires_consensus, requires_reflect), `NodeSelfModel` (peer node capability/health snapshot for gossip), `FederationMessage` (wire protocol message between nodes) |
-| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`, `focus_history_size`, `background_demotion_factor`), `MemoryConfig`, `DreamingConfig` (idle threshold, dream interval, replay count, strengthening/weakening factors, prune threshold, trust boost/penalty, pre-warm top-K), `ScalingConfig` (scale up/down thresholds, step sizes, cooldown, observation window, idle scale-down), `PeerConfig` (node_id + address for static peer list), `FederationConfig` (enabled, node_id, bind_address, peers, forward_timeout, gossip interval, validate_remote_results), `SelfModConfig` (enabled, require_user_approval, probationary_alpha/beta, max_designed_agents, sandbox_timeout, allowed_imports whitelist, forbidden_patterns regex list), `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
+| `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `EscalationTier` (3-tier cascade levels: retry, arbitration, user), `EscalationResult` (escalation outcome with `to_dict()` for JSON-safe serialization, `tiers_attempted` tracking), `TaskNode` (with `background` field for background demotion, `escalation_result: dict | None` for serialized escalation data), `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record), `AttentionEntry` (priority scoring for task scheduling), `FocusSnapshot` (cross-request focus history), `DreamReport` (dream cycle results), `WorkflowCacheEntry` (cached workflow pattern), `IntentDescriptor` (structured metadata for dynamic intent discovery: name, params, description, requires_consensus, requires_reflect), `Skill` (modular intent handler with descriptor, source_code, compiled handler — AD-128), `NodeSelfModel` (peer node capability/health snapshot for gossip), `FederationMessage` (wire protocol message between nodes) |
+| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`, `focus_history_size`, `background_demotion_factor`, per-tier endpoint fields: `llm_base_url_fast/standard/deep`, `llm_api_key_fast/standard/deep`, `llm_timeout_fast/standard/deep` — all `None` by default for backward compat, `tier_config()` helper returns resolved {base_url, api_key, model, timeout} per tier — AD-132), `MemoryConfig`, `DreamingConfig` (idle threshold, dream interval, replay count, strengthening/weakening factors, prune threshold, trust boost/penalty, pre-warm top-K), `ScalingConfig` (scale up/down thresholds, step sizes, cooldown, observation window, idle scale-down), `PeerConfig` (node_id + address for static peer list), `FederationConfig` (enabled, node_id, bind_address, peers, forward_timeout, gossip interval, validate_remote_results), `SelfModConfig` (enabled, require_user_approval, probationary_alpha/beta, max_designed_agents, sandbox_timeout, allowed_imports whitelist, forbidden_patterns regex list, research_enabled, research_domain_whitelist, research_max_pages, research_max_content_per_page — AD-130), `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
 | `src/probos/substrate/agent.py` | done | `BaseAgent` ABC — `perceive/decide/act/report` lifecycle, confidence tracking, state transitions, async start/stop, optional `_runtime` reference via `**kwargs`, `**kwargs` passthrough to subclasses, class-level `intent_descriptors: list[IntentDescriptor]` for dynamic intent discovery |
 | `src/probos/substrate/registry.py` | done | `AgentRegistry` — in-memory index, lookup by ID/pool/capability, async-safe |
 | `src/probos/substrate/spawner.py` | done | `AgentSpawner` — template registration, `spawn(**kwargs)`, `recycle()` with optional respawn, `**kwargs` forwarded to agent constructors |
@@ -58,7 +58,7 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `src/probos/cognitive/__init__.py` | done | Package root |
-| `src/probos/cognitive/llm_client.py` | done | `BaseLLMClient` ABC, `OpenAICompatibleClient` (httpx, tiered routing fast/standard/deep, response cache, fallback chain: live → cache → error, connectivity check, specific error handling for connect/timeout/HTTP errors), `MockLLMClient` (regex pattern matching, canned responses for deterministic testing — supports read_file, write_file, list_directory, search_files, run_command, http_fetch, explain_last, system_health, agent_info, why patterns; escalation arbiter pattern returns reject for deterministic Tier 2 → Tier 3 fallthrough (AD-85); agent_design pattern generates valid BaseAgent source code with `__init__(**kwargs)` + LLM client injection template (AD-111, AD-115); intent_extraction pattern returns JSON with name/description/parameters, prefers general-purpose intents over narrow ones (AD-124)) |
+| `src/probos/cognitive/llm_client.py` | done | `BaseLLMClient` ABC, `OpenAICompatibleClient` (per-tier endpoint routing: each tier gets its own base_url/api_key/model/timeout/httpx.AsyncClient, httpx clients deduplicated by base_url — AD-133, per-tier connectivity checks avoiding duplicate probes for shared endpoints — AD-134, response cache keyed by (tier, prompt_hash) — AD-136, backward-compatible legacy kwargs constructor, `tier_info()` for /model display, fallback chain: live → cache → error), `MockLLMClient` (regex pattern matching, canned responses for deterministic testing — supports read_file, write_file, list_directory, search_files, run_command, http_fetch, explain_last, system_health, agent_info, why patterns; escalation arbiter pattern returns reject for deterministic Tier 2 → Tier 3 fallthrough (AD-85); agent_design pattern generates valid BaseAgent source code with `__init__(**kwargs)` + LLM client injection template (AD-111, AD-115); intent_extraction pattern returns JSON with name/description/parameters, prefers general-purpose intents over narrow ones (AD-124); skill_design pattern generates valid async handler function with IntentResult (AD-128); research_query pattern returns JSON array of search queries; research_synthesis pattern returns reference section string (AD-130)) |
 | `src/probos/cognitive/working_memory.py` | done | `WorkingMemorySnapshot` (serializable system state), `WorkingMemoryManager` (bounded context assembly from registry/trust/Hebbian/capabilities, token budget eviction) |
 | `src/probos/cognitive/decomposer.py` | done | `IntentDecomposer` (NL text + working memory + similar episodes → LLM → `TaskDAG`, dynamic system prompt via `PromptBuilder` when `_intent_descriptors` populated (falls back to `_LEGACY_SYSTEM_PROMPT`), `refresh_descriptors()` for runtime to push new intent sets, aggressive JSON-only system prompt with `response` and `reflect` fields, markdown code fence extraction, `REFLECT_PROMPT` for post-execution synthesis with `[status]` prefix per node for LLM context (AD-121), `reflect()` method sends results back to LLM with payload cap ~8000 chars and truncation, `_summarize_node_result()` deduplicates identical output/result fields (AD-122), PAST EXPERIENCE section for episodic context, PRE-WARM HINTS section for dreaming integration, optional `workflow_cache` for cache-first decomposition with exact + fuzzy matching, `pre_warm_intents` property for runtime sync, `is_capability_gap()` function with `_CAPABILITY_GAP_RE` regex to distinguish capability-gap responses from conversational replies (AD-126)), `DAGExecutor` (parallel/sequential DAG execution through mesh + consensus, dependency resolution, deadlock detection, `on_event` callback for real-time progress, attention-based priority batching when `AttentionManager` is provided, optional `escalation_manager` for 3-tier error recovery, consensus-rejected nodes now correctly marked "failed" instead of "completed", escalation events: escalation_start, escalation_resolved, escalation_exhausted) |
 | `src/probos/cognitive/prompt_builder.py` | done | `PromptBuilder` — dynamically assembles decomposer system prompt from `IntentDescriptor` list. Generates intent table, consensus rules, reflect rules (broadened to include transformation/translation intents). Anti-echo rules for `run_command` (no echo/Write-Host/Write-Output to fake answers). Deterministic output (sorted by name). Constants: `PROMPT_PREAMBLE`, `PROMPT_RESPONSE_FORMAT`, `PROMPT_EXAMPLES` (updated with introspection + time examples) |
@@ -71,7 +71,11 @@
 | `src/probos/cognitive/code_validator.py` | done | `CodeValidator` — static analysis of generated agent code: syntax check (AST parse), import whitelist enforcement, forbidden pattern regex scan, schema conformance (BaseAgent subclass, intent_descriptors, handle_intent, agent_type, _handled_intents), module-level side effect detection |
 | `src/probos/cognitive/sandbox.py` | done | `SandboxRunner` — test-executes generated agents in isolated context: temp file write, importlib dynamic loading, BaseAgent subclass discovery, synthetic IntentMessage test, IntentResult type verification, configurable timeout, LLM client forwarding to sandboxed agents |
 | `src/probos/cognitive/behavioral_monitor.py` | done | `BehavioralMonitor` — monitors self-created agents for behavioral anomalies: execution time tracking, failure rate alerting (>50% over 5+ executions), slow execution detection (>5s avg), trust trajectory decline detection, removal recommendation (failure rate >50% over 10+ or consecutive trust decline) |
-| `src/probos/cognitive/self_mod.py` | done | `SelfModificationPipeline` — orchestrates full self-modification flow: config check (max_designed_agents limit), optional user approval gate, AgentDesigner code generation, CodeValidator static analysis, SandboxRunner functional testing, agent type registration, pool creation, BehavioralMonitor tracking. `DesignedAgentRecord` dataclass for history |
+| `src/probos/cognitive/self_mod.py` | done | `SelfModificationPipeline` — orchestrates full self-modification flow: config check (max_designed_agents limit), optional user approval gate, AgentDesigner code generation, CodeValidator static analysis, SandboxRunner functional testing, agent type registration, pool creation, BehavioralMonitor tracking. `DesignedAgentRecord` dataclass for history (with `strategy` field: "new_agent" or "skill"). `handle_add_skill()` — skill design pipeline: SkillDesigner code generation, SkillValidator validation, importlib compilation, Skill object creation, add_skill_fn callback for pool injection (AD-129). Optional `ResearchPhase` integration when research_enabled=True (AD-131) |
+| `src/probos/cognitive/strategy.py` | done | `StrategyRecommender` — heuristic-based strategy proposal for unhandled intents: keyword overlap between intent and existing descriptors, `add_skill` strategy with reversibility bonus, `new_agent` fallback. `StrategyOption` (strategy, label, reason, confidence, target_agent_type, is_recommended), `StrategyProposal` (options sorted by confidence, `.recommended` property). LLM-equipped types filtering (AD-127) |
+| `src/probos/cognitive/skill_designer.py` | done | `SkillDesigner` — generates async skill handler functions via LLM, template-based prompt construction with IntentResult/IntentMessage signatures, LLM ACCESS section, research context injection, `_build_function_name()` conversion (AD-128) |
+| `src/probos/cognitive/skill_validator.py` | done | `SkillValidator` — static analysis of generated skill code: syntax check, import whitelist, forbidden patterns, schema conformance (async function named handle_{intent_name}), module-level side effect detection (AD-128) |
+| `src/probos/cognitive/research.py` | done | `ResearchPhase` — web research before agent/skill design: LLM-generated search queries, domain-whitelisted URL construction via urllib.parse, mesh-based page fetching (uses HttpFetchAgent + consensus), content truncation, LLM synthesis. Security: all fetches go through existing mesh, content truncated before LLM, output is context only (never executed — code still goes through CodeValidator + SandboxRunner) (AD-130, AD-131) |
 
 ### Experience Layer (complete — new in Phase 4)
 
@@ -79,8 +83,8 @@
 |------|--------|-------------|
 | `src/probos/experience/__init__.py` | done | Package root |
 | `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()` (with dreaming state section), `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_attention_panel()` (with focus history display and background task indicator), `render_dag_result()` (displays `response` field for conversational replies), `render_dream_panel()` (dream cycle report with pre-warm intents), `render_workflow_cache_panel()` (cached workflow patterns with hit counts), `render_scaling_panel()` (pool scaling status with demand ratio, size range, cooldown), `render_federation_panel()` (federation node status, connected peers, forwarded/received counts), `render_peers_panel()` (peer self-model table: capabilities, agent count, health, uptime), `render_designed_panel()` (self-designed agent status table with sandbox time and behavioral alerts), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
-| `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — DAG execution display with status spinner (Rich Live removed — AD-92), `on_event` callback integration (including `scale_up`/`scale_down`/`federation_forward`/`federation_receive`/`self_mod_design`/`self_mod_success`/`self_mod_failure` events), conversational response display when LLM returns `response` field, execution snapshot for introspection (`_previous_execution`/`_last_execution`), debug mode (raw DAG JSON, individual agent responses, consensus details), DAG plan display in debug-only mode (AD-90), Params column in progress table, manually-managed spinner with `_stop_live_for_user` hook for Tier 3 escalation (AD-93). Self-mod UX: explicit user approval prompt with intent/purpose display (AD-123), existing-agent re-routing when LLM extracts already-registered intent, capability-gap detection gates self-mod (AD-126), force `reflect=True` on designed-agent DAGs |
-| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/scaling`, `/federation`, `/peers`, `/designed`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, user approval callback for self-mod agent creation (AD-123), graceful error handling |
+| `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — DAG execution display with status spinner (Rich Live removed — AD-92), `on_event` callback integration (including `scale_up`/`scale_down`/`federation_forward`/`federation_receive`/`self_mod_design`/`self_mod_success`/`self_mod_failure` events), conversational response display when LLM returns `response` field, execution snapshot for introspection (`_previous_execution`/`_last_execution`), debug mode (raw DAG JSON, individual agent responses, consensus details), DAG plan display in debug-only mode (AD-90), Params column in progress table, manually-managed spinner with `_stop_live_for_user` hook for Tier 3 escalation (AD-93). Self-mod UX: `StrategyRecommender` integration with numbered strategy menu (AD-127), `add_skill` strategy dispatch when available (AD-129), existing-agent re-routing when LLM extracts already-registered intent, capability-gap detection gates self-mod (AD-126), force `reflect=True` on designed-agent DAGs |
+| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/scaling`, `/federation`, `/peers`, `/designed`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, user approval callback for self-mod agent creation (AD-123), `/model` shows per-tier endpoint/model/status with shared-endpoint notes (AD-135), `/tier` switch shows endpoint URL, graceful error handling |
 
 ### Agents
 
@@ -95,13 +99,14 @@
 | `src/probos/agents/red_team.py` | done | `RedTeamAgent` — independently verifies other agents' results, `intent_descriptors = []` (does NOT handle user intents), does NOT subscribe to intent bus |
 | `src/probos/agents/corrupted.py` | done | `CorruptedFileReaderAgent` — deliberately returns fabricated data, `intent_descriptors = []`, used to test consensus layer catching corruption |
 | `src/probos/agents/introspect.py` | done | `IntrospectionAgent` — self-referential queries about ProbOS state, `intent_descriptors` with `requires_reflect=True` for all 4 intents: `explain_last`, `agent_info`, `system_health`, `why`. Reads `_runtime` reference, purely observational |
+| `src/probos/substrate/skill_agent.py` | done | `SkillBasedAgent` — general-purpose agent dispatching intents to attached Skill objects, `add_skill()` updates both instance AND class-level `_handled_intents` and `intent_descriptors` (AD-128), `remove_skill()` cleans up both levels, `handle_intent()` passes `llm_client` to skill handlers, `skills` pool only spawned when `self_mod.enabled=True` (AD-129) |
 
 ### Runtime
 
 | File | Status | Description |
 |------|--------|-------------|
-| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention + dreaming + workflow cache + introspection + dynamic intent discovery + federation + self-modification. Spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), introspect (2 introspection agents with runtime=self), red_team (2 verifiers). 24 agents total. Federation: `FederationBridge` with `FederationRouter`, `_build_self_model()` (NodeSelfModel Psi with capabilities, pool sizes, health, uptime), `_validate_remote_result()` placeholder, wires `bridge.forward_intent` as `intent_bus._federation_fn`. Self-modification: creates `SelfModificationPipeline` when `config.self_mod.enabled=True`, `_extract_unhandled_intent()` via LLM (prefers general-purpose intents over narrow ones — AD-124), auto-design when decomposer returns empty DAG or capability-gap response (AD-126), `_register_designed_agent()`, `_create_designed_pool()`, `_set_probationary_trust()`, LLM client injected into designed agent pools (AD-115). `register_agent_type()` registers new agent class and refreshes decomposer descriptors. `_collect_intent_descriptors()` deduplicates across all registered templates. Boot-time `refresh_descriptors()` call after pool creation syncs decomposer with all registered intents. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, dream scheduler activity tracking, pre-warm intent sync to decomposer, execution snapshot pattern (`_previous_execution`/`_last_execution` for introspection without self-overwrite), post-execution reflect step, episodic episode storage, workflow cache storage on success, `recall_similar()` for semantic search. `DreamScheduler` created at start when episodic memory is available. `WorkflowCache` created at init, passed to decomposer, exposed in `status()` |
-| `src/probos/__main__.py` | done | Entry point: `uv run python -m probos [--config path]` — boot sequence display, LLM connectivity check with fallback to MockLLMClient, creates `EpisodicMemory` (SQLite in temp dir), interactive shell launch, `--config` flag for node-specific YAML, `WindowsSelectorEventLoopPolicy` for pyzmq compatibility on Windows (AD-108), noisy INFO log suppression for interactive shell (AD-125) |
+| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention + dreaming + workflow cache + introspection + dynamic intent discovery + federation + self-modification + skills + research. Spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), introspect (2 introspection agents with runtime=self), skills (2 skill_agents with llm_client — only when self_mod.enabled), red_team (2 verifiers). 24-26 agents total. Federation: `FederationBridge` with `FederationRouter`, `_build_self_model()` (NodeSelfModel Psi with capabilities, pool sizes, health, uptime), `_validate_remote_result()` placeholder, wires `bridge.forward_intent` as `intent_bus._federation_fn`. Self-modification: creates `SelfModificationPipeline` with `SkillDesigner`/`SkillValidator`/`add_skill_fn` when `config.self_mod.enabled=True`, optional `ResearchPhase` when `research_enabled=True` (AD-131), `_extract_unhandled_intent()` via LLM (prefers general-purpose intents over narrow ones — AD-124), auto-design when decomposer returns empty DAG or capability-gap response (AD-126), `_register_designed_agent()`, `_create_designed_pool()`, `_set_probationary_trust()`, `_get_llm_equipped_types()` for strategy recommender, `_add_skill_to_agents()` for skill injection into skills pool (AD-129), LLM client injected into designed agent pools (AD-115). `register_agent_type()` registers new agent class and refreshes decomposer descriptors. `_collect_intent_descriptors()` deduplicates across all registered templates (including SkillBasedAgent class-level descriptors). Boot-time `refresh_descriptors()` call after pool creation syncs decomposer with all registered intents. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, dream scheduler activity tracking, pre-warm intent sync to decomposer, execution snapshot pattern (`_previous_execution`/`_last_execution` for introspection without self-overwrite), post-execution reflect step, episodic episode storage, workflow cache storage on success, `recall_similar()` for semantic search. `DreamScheduler` created at start when episodic memory is available. `WorkflowCache` created at init, passed to decomposer, exposed in `status()` |
+| `src/probos/__main__.py` | done | Entry point: `uv run python -m probos [--config path]` — boot sequence display with per-tier LLM connectivity checks (each tier checked independently, partial connectivity continues with warning, all-unreachable falls back to MockLLMClient — AD-134), creates `EpisodicMemory` (SQLite in temp dir), interactive shell launch, `--config` flag for node-specific YAML, `WindowsSelectorEventLoopPolicy` for pyzmq compatibility on Windows (AD-108), noisy INFO log suppression for interactive shell (AD-125) |
 | `config/node-1.yaml` | done | Node 1 federation config: bind tcp://127.0.0.1:5555, peers=[node-2] |
 | `config/node-2.yaml` | done | Node 2 federation config: bind tcp://127.0.0.1:5556, peers=[node-1] |
 | `scripts/launch-cluster.sh` | done | Launches 2-node ProbOS federation cluster in background processes |
@@ -111,7 +116,7 @@
 
 ## What's Working
 
-**660/660 tests pass.** Test suite covers:
+**719/719 tests pass.** Test suite covers:
 
 ### Substrate tests (50 tests — unchanged)
 - Agent creation, lifecycle, confidence tracking (16 tests)
@@ -606,6 +611,108 @@
 - Empty error message replaced with "(empty)" (1 test)
 
 ### Phase 4 Milestone — Achieved
+
+### Phase 11 tests (59 tests — new in Phase 11)
+
+#### Strategy Recommender (12 tests)
+- Always returns at least one option (new_agent fallback) (1 test)
+- Zero overlap → new_agent highest confidence (1 test)
+- Keyword overlap with LLM-equipped → add_skill recommended (1 test)
+- add_skill confidence > new_agent when both viable (reversibility) (1 test)
+- Options sorted by confidence descending (1 test)
+- recommended property returns is_recommended option (1 test)
+- recommended property returns None when no options (1 test)
+- Keyword overlap tokenization (AD-55 pattern) (1 test)
+- StrategyOption fields roundtrip (1 test)
+- StrategyProposal with empty options (1 test)
+- LLM-equipped types filters add_skill (1 test)
+- Safety budget risk confidence — reversible scores higher (1 test)
+
+#### SkillBasedAgent (10 tests)
+- Agent creates with empty skills (1 test)
+- add_skill registers intent on instance (1 test)
+- add_skill updates class-level descriptors (1 test)
+- remove_skill clears intent from both levels (1 test)
+- handle_intent dispatches to correct skill (1 test)
+- handle_intent returns None for unknown (1 test)
+- handle_intent passes llm_client (1 test)
+- Multiple skills dispatch independently (1 test)
+- agent_type is "skill_agent" (1 test)
+- Skill with LLM handler (1 test)
+
+#### SkillDesigner (3 tests)
+- design_skill returns valid function source (1 test)
+- Generated code passes SkillValidator (1 test)
+- _build_function_name conversion (1 test)
+
+#### SkillValidator (6 tests)
+- Valid skill code passes (1 test)
+- Missing async function rejected (1 test)
+- Wrong function name rejected (1 test)
+- Forbidden import rejected (1 test)
+- Forbidden pattern rejected (1 test)
+- Module-level side effects rejected (1 test)
+
+#### Skill Pipeline Integration (7 tests)
+- handle_add_skill full flow — design → validate → compile → attach (1 test)
+- handle_add_skill validation failure aborts (1 test)
+- DesignedAgentRecord.strategy field (1 test)
+- Runtime _add_skill_to_agents updates pool members (1 test)
+- Descriptor refresh after skill addition includes new intent (1 test)
+- Skills pool spawned when self_mod.enabled=True (1 test)
+- Skills pool NOT spawned when self_mod.enabled=False (1 test)
+
+#### ResearchPhase (17 tests)
+- Research returns synthesis on success (1 test)
+- Research returns fallback on network failure (1 test)
+- Research returns fallback on empty content (1 test)
+- _generate_queries returns list (1 test)
+- _generate_queries handles malformed response (1 test)
+- _queries_to_urls uses urllib.parse (1 test)
+- _queries_to_urls filters non-whitelisted domains (1 test)
+- _queries_to_urls returns empty for empty queries (1 test)
+- _queries_to_urls caps at max_pages (1 test)
+- _fetch_pages truncates content (1 test)
+- _fetch_pages handles failed fetches (1 test)
+- _synthesize passes content to LLM (1 test)
+- _synthesize handles no useful docs (1 test)
+- Full research flow (1 test)
+- Research context injected into design prompt (1 test)
+- Pipeline research_enabled=False skips research (1 test)
+- Pipeline research_enabled=True includes context (1 test)
+
+#### Research Security (4 tests)
+- URLs use urllib.parse.urlencode (1 test)
+- Non-whitelisted domain URLs filtered (1 test)
+- Content truncation enforced (1 test)
+- Fetch goes through consensus submit_intent (1 test)
+
+### Phase 12 tests (17 tests — new in Phase 12)
+
+#### CognitiveConfig Tiers (5 tests)
+- Default config falls back to shared values (1 test)
+- Per-tier URL overrides shared (1 test)
+- Per-tier API key overrides shared (1 test)
+- Mixed overrides: fast overridden, standard/deep fall back (1 test)
+- tier_config() returns correct model per tier (1 test)
+
+#### OpenAICompatibleClient Multi-Endpoint (7 tests)
+- Separate httpx clients for different base_urls (1 test)
+- Deduplicates httpx clients for shared base_urls (1 test)
+- complete() routes fast-tier to fast endpoint (1 test)
+- complete() routes standard-tier to standard endpoint (1 test)
+- tier_info() returns per-tier config (1 test)
+- Backward-compat legacy keyword args (1 test)
+- models property reflects tier_configs (1 test)
+
+#### Connectivity Check (3 tests)
+- check_connectivity() returns per-tier status dict (1 test)
+- Shared endpoint checked once, result reused (1 test)
+- Individual tier failure doesn't block others (1 test)
+
+#### Boot Sequence (2 tests)
+- All tiers unreachable falls back to MockLLMClient (1 test)
+- Partial connectivity tracked in tier_status (1 test)
 
 The interactive terminal interface works end-to-end:
 
@@ -1113,6 +1220,46 @@ The prompt builder generates explicit rules prohibiting `echo`, `Write-Host`, `W
 
 `is_capability_gap()` in `decomposer.py` uses a compiled regex (`_CAPABILITY_GAP_RE`) to detect LLM responses that indicate a missing capability rather than a genuine conversational reply. Phrases like "I don't have", "no capability", "not equipped", "unable to", "beyond my current capabilities" trigger self-modification. This fixes a regression where capability-gap responses blocked self-mod because the `response` field was non-empty (AD-112 originally gated self-mod on empty `response`). The regex has 16 positive and 8 negative test cases to prevent false positives on normal responses.
 
+### AD-127: Strategy proposals with reversibility preference
+
+`StrategyRecommender` analyzes unhandled intents and proposes strategies with confidence scores. Two strategies: `new_agent` (always available, creates dedicated agent with probationary trust) and `add_skill` (adds modular handler to existing SkillBasedAgent — more reversible, preferred when keyword overlap exists). The `add_skill` strategy gets a `_REVERSIBILITY_BONUS = 0.1` boost reflecting the Reversibility Preference axiom — skills can be removed without destroying a pool. The renderer displays a numbered strategy menu instead of a simple y/n prompt, letting users choose their preferred approach.
+
+### AD-128: Skill type and SkillBasedAgent architecture
+
+The `Skill` dataclass (in `types.py`) encapsulates a modular intent handler: name, `IntentDescriptor`, source code, compiled async handler callable, creation timestamp, and origin. `SkillBasedAgent` is a general-purpose agent that dispatches intents to attached `Skill` objects. Critical implementation: `add_skill()` updates BOTH instance-level AND class-level `_handled_intents` and `intent_descriptors`, ensuring that `_collect_intent_descriptors()` (which reads class-level descriptors from `spawner._templates`) discovers new skills without requiring a template re-registration. `SkillDesigner` generates async handler functions (not full agent classes) via LLM, and `SkillValidator` performs the same static analysis checks as `CodeValidator` but validates function-level schema (async def handle_{name}) instead of class-level schema.
+
+### AD-129: Skills pool conditional spawning
+
+The `skills` ResourcePool (2 SkillBasedAgents with `llm_client` injection) is only created when `config.self_mod.enabled=True`. This prevents unnecessary agent spawning in systems without self-modification capability. The pipeline's `handle_add_skill()` method orchestrates: design → validate → compile (importlib) → create Skill → `add_skill_fn` callback → record with `strategy="skill"`. The `add_skill_fn` iterates `pool.healthy_agents` to inject the skill into all pool members and refreshes decomposer descriptors.
+
+### AD-130: Web research with domain whitelist security
+
+`ResearchPhase` adds optional pre-design documentation research. Security model: (1) Search queries generated by LLM, (2) URLs constructed via `urllib.parse.urlencode()` — never raw string concatenation — for whitelisted domains only (`docs.python.org`, `pypi.org`, `developer.mozilla.org`, `learn.microsoft.com`), (3) Page fetching goes through the mesh's `http_fetch` intent with consensus, (4) Fetched content truncated to `research_max_content_per_page` chars before LLM processing, (5) Research output is context for code generation only — never executed directly — all generated code still passes through `CodeValidator` + `SandboxRunner`. Config fields: `research_enabled`, `research_domain_whitelist`, `research_max_pages`, `research_max_content_per_page`.
+
+### AD-131: Research integration in self-modification pipeline
+
+Research context is injected into both `AGENT_DESIGN_PROMPT` and `SKILL_DESIGN_PROMPT` via a `{research_context}` template variable. When `config.self_mod.research_enabled=True` and a `ResearchPhase` instance is available, `handle_unhandled_intent()` runs research before the design step. Research failures are caught and logged — they never block design (fallback: "No research available."). The design prompt instructs: "Use the above research to inform your implementation. If research context says 'No research available.', rely on your training knowledge." This makes research a best-effort enhancement, not a required dependency.
+
+### AD-132: Per-tier endpoint config with shared fallback
+
+Each LLM tier (fast/standard/deep) can override `base_url`, `api_key`, and `timeout` independently. When not specified (value is `None`), each falls back to the shared `llm_base_url`, `llm_api_key`, and `llm_timeout_seconds`. This is fully backward compatible — existing configs with only shared values produce identical behavior. The `tier_config(tier)` helper method on `CognitiveConfig` returns a resolved dict `{"base_url", "api_key", "model", "timeout"}` for any tier. The user's setup: fast=`qwen3.5:35b` at Ollama `localhost:11434` (no auth), standard=`claude-sonnet-4.6` at Copilot proxy `localhost:8080`, deep=`claude-opus-4.6` at Copilot proxy.
+
+### AD-133: httpx client deduplication by base_url
+
+`OpenAICompatibleClient` creates one `httpx.AsyncClient` per unique `base_url`, not per tier. If standard and deep share the same endpoint (as in the user's setup), they share the same connection pool. This avoids duplicate connection pools and redundant connectivity checks. The deduplication key is the URL string. Each client gets its own `Authorization` header at construction time — if `api_key` is empty, the header is omitted entirely (handles Ollama's no-auth model cleanly without a special flag — AD-135).
+
+### AD-134: Per-tier connectivity at boot
+
+`check_connectivity()` returns `dict[str, bool]` instead of a single `bool`. Each unique endpoint is checked independently — shared endpoints are checked once and the result reused for all tiers pointing to that URL. Boot sequence: if ALL tiers unreachable → fall back to `MockLLMClient`; if SOME tiers unreachable → warn but continue with `OpenAICompatibleClient` (partial connectivity). The `_check_endpoint()` method sends a minimal completion request with a 5-second timeout.
+
+### AD-135: Empty api_key means no Authorization header
+
+When `api_key` is empty string, the `Authorization` header is omitted from the `httpx.AsyncClient` headers entirely. This handles Ollama (no auth) and other local endpoints cleanly without a separate "no auth" flag. The `/model` command shows per-tier endpoint info with shared-endpoint notes when multiple tiers use the same URL (e.g., "shared with standard"). The `/tier` command now displays the endpoint URL on switch.
+
+### AD-136: Response cache keyed by (tier, prompt_hash)
+
+The response cache is shared across tiers but qualified by tier name: `f"{tier}:{hash(prompt)}"`. A cached response from the fast tier won't be served for a standard-tier request, since different models produce different outputs. Previously the cache was keyed by `(model, prompt_hash)` — the tier-based key is semantically equivalent but more explicit about the routing intent.
+
 ---
 
 ## What's Next
@@ -1177,8 +1324,17 @@ The prompt builder generates explicit rules prohibiting `echo`, `Write-Host`, `W
 - [x] ~~627/627 tests pass~~
 - [x] ~~Post-Phase 10 hardening: escalation re-execution after approval (AD-118), capability-gap detection for self-mod (AD-126), SelectorEventLoop subprocess compat (AD-116), PowerShell wrapper stripping (AD-117), LLM client injection into designed agents (AD-115), self-mod UX with user approval (AD-123), existing-agent routing (AD-119), general-purpose intent preference (AD-120), force reflect for designed agents (AD-122), anti-echo rules (AD-124), reflect prompt rewrite with node status (AD-121), log suppression (AD-125)~~
 - [x] ~~660/660 tests pass~~
+- [x] ~~Phase 11: Skills, Transparency & Web Research (StrategyRecommender with reversibility preference, SkillBasedAgent with instance+class descriptor sync, SkillDesigner/SkillValidator, ResearchPhase with domain-whitelisted URL construction + mesh-based fetching + content truncation, MockLLMClient skill_design + research patterns, renderer strategy menu, runtime skills pool + _add_skill_to_agents + _get_llm_equipped_types)~~
+- [x] ~~719/719 tests pass~~
+- [x] ~~Phase 12: Per-Tier LLM Endpoints (CognitiveConfig per-tier fields + tier_config() helper, OpenAICompatibleClient per-tier httpx clients with deduplication, per-tier connectivity checks at boot, partial connectivity support, /model per-tier display, /tier endpoint display, system.yaml fast=qwen3.5:35b@Ollama + standard/deep=Claude@Copilot proxy)~~
+- [x] ~~736/736 tests pass~~
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
+- [x] ~~**Phase 11: Skills, Transparency & Web Research** — Strategy proposals with confidence scores, SkillBasedAgent with modular intent handlers, web research phase for agent design (see `prompts/phase-11-skills-transparency-research.md`)~~
+- [x] ~~**Per-Tier LLM Endpoints:** Each LLM tier (fast/standard/deep) gets its own `base_url` + `api_key` + `model` (see `prompts/phase-12-per-tier-llm.md`)~~
+- [ ] **Episodic Memory Upgrade (ChromaDB):** Replace keyword-overlap bag-of-words similarity in `EpisodicMemory` with ChromaDB vector store for true semantic recall. ChromaDB runs embedded (no external server), supports real embeddings, and enables similarity search that understands meaning ("find past tasks about deployment" matches "push to production"). The current SQLite store becomes the persistence layer; ChromaDB provides the retrieval layer. This also upgrades workflow cache fuzzy matching, capability registry matching, and strategy recommender keyword overlap — all currently using hand-rolled tokenization that ChromaDB embeddings would replace. (Original vision: `Vibes/probos-claude-code-prompt.md` line 123.)
+- [ ] **Long-term Knowledge Store (Git-backed):** Replace volatile SQLite episodic memory (currently in temp dir, lost on reboot) with a Git-backed knowledge repository. Episodes, designed agents/skills, workflow cache entries, and trust snapshots become versioned artifacts — commits are episodes, diffs are self-modification audit trails, branches are experimental agent designs. Enables: durable history across restarts, federated knowledge sync via push/pull (complementing ZMQ gossip), self-mod rollback via `git revert`, and blame-based provenance ("which agent design introduced this behavior?"). The Git repo *is* the system's long-term memory — fractal with the rest of the architecture (nodes are repos, federations are remotes). ChromaDB provides fast semantic retrieval over the Git-stored episodes.
+- [ ] **Semantic Knowledge Layer:** A query layer that sits above the storage tiers (ChromaDB for short-term retrieval, Git for long-term persistence) and exposes unified semantic search across all system knowledge — episodes, designed agents, skills, workflow cache entries, trust history, escalation outcomes, dream reports. Natural language queries like "what agents have I built for text processing?" or "show me tasks that failed due to missing permissions" search across all knowledge types with ranked results. This layer enables: agents to reason about the system's own history during planning (decomposer context), the strategy recommender to find precedent ("we built a similar skill last week"), research-informed design to check if a capability already exists before fetching docs, and user-facing commands (`/search`, `/knowledge`) for exploring system state. Implemented as a thin orchestrator over ChromaDB collections — each knowledge type (episodes, agents, skills, workflows, trust) is a collection with typed metadata, and the semantic layer fans out queries and merges results by relevance score.
 
 ### Design Principle: Probabilistic Agents, Consensus Governance
 
@@ -1190,6 +1346,18 @@ As ProbOS evolves, every new capability must preserve this principle:
 - **Agent behavior stays probabilistic:** Confidence is Bayesian (Beta distributions), routing is learned (Hebbian weights with decay), trust evolves from observations, attention is scored not prescribed, dreaming replays and consolidates stochastically.
 - **Governance stays collective:** Consensus is quorum-based (not dictated by a single authority), escalation cascades through tiers, self-modification requires user approval, designed agents start with probationary trust and earn standing through repeated successful interactions.
 - **No deterministic overrides:** Avoid hardcoded "always do X" logic. Prefer probabilistic priors that converge toward correct behavior through experience. The system should *learn* what works, not be *told* what works.
+
+### Foundational Governance Axioms
+
+Three axioms underpin ProbOS's safety model. Unlike Asimov's Three Laws (which were literary devices designed to demonstrate failure modes of absolute rules in autonomous systems), these axioms are mechanistic, testable, and compatible with probabilistic agency. They constrain *outcomes* without constraining the *process* — agents are still free to reason probabilistically, but the governance layer enforces structural safeguards.
+
+1. **Safety Budget:** Every agent action carries an implicit risk score. Low-risk actions (reads, queries) proceed with normal routing. Higher-risk actions (writes, deletes, shell commands) require proportionally stronger consensus — higher quorum thresholds, trust-weighted voting, red team verification. The safety budget is not a hardcoded gate; it is a continuous score that shifts consensus requirements. As an agent's trust grows, its safety budget widens — but destructive actions always require collective agreement regardless of trust.
+
+2. **Reversibility Preference:** When multiple strategies can achieve a goal, prefer the one whose effects are most reversible. Read before write. Backup before delete. Query before mutate. This is enforced at the decomposer level — the DAG planning stage can order nodes to front-load information-gathering and defer state-changing actions. Reversibility is a planning heuristic, not an absolute prohibition: sometimes irreversible actions are the only path, and the system proceeds after appropriate consensus.
+
+3. **Minimal Authority:** Agents request only the capabilities they need for the current task. The capability mesh already enforces this — agents declare their intents, and the router matches only on declared capabilities. Self-modification extends this: designed agents receive a scoped import whitelist, sandboxed execution, and probationary trust. No agent starts with full system access. Authority is earned through repeated successful interactions, not granted by default.
+
+These axioms are already partially implemented across the existing architecture (consensus quorum, CodeValidator, capability mesh, probationary trust). Phase 11 and beyond should formalize them as explicit, testable properties — not as vague principles, but as measurable invariants with test coverage.
 
 ---
 

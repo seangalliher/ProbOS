@@ -1,0 +1,37 @@
+Imagine you have a box of crayons.
+
+One crayon can draw one thing. A red crayon draws red. That's like one agent — it does one job, like reading a file.
+
+A handful of crayons is a pool. You grab 3 red crayons so if one breaks, you still have red. That's what ProbOS does — it keeps a few copies of each agent so one can rest while another works.
+
+Now here's the magic part.
+
+You and your friends are all drawing pictures at the same table. You each have your own box of crayons. If you need a color you don't have, you ask your friend: "Hey, do you have purple?" Your friend checks their box and passes it over. That's federation — each kid is a ProbOS node with its own agents, and they share by asking.
+
+But before you use your friend's crayon, you sniff it to make sure it's not a marker pretending to be a crayon. That's consensus — the other crayons at your table vote on whether the new one is okay.
+
+Here's why it's fractal — the same shape repeats at every size:
+
+Tiny: One agent has a confidence score. It gets better at its job the more it practices. Like how you get better at coloring inside the lines.
+
+Small: A pool of agents picks which one should do the job. The best one goes first. Like picking which of your 3 red crayons has the sharpest tip.
+
+Medium: The whole box (one ProbOS node) figures out which pool can handle your request. "I need to draw a house" → you need brown for walls, blue for sky, green for grass. It breaks the job into parts. That's the decomposer.
+
+Big: Multiple boxes at the table (federated nodes) share work. Your box doesn't have gold? Ask your friend's box.
+
+Huge: Tables in different rooms (future: cross-network federation). Same rules, just farther apart.
+
+At every single level, the same three rules apply:
+
+"Is this safe?" — Before using a crayon, check it won't ruin the picture. (Safety budget)
+"Can I undo this?" — Draw in pencil before using marker. (Reversibility)
+"Only grab what you need" — Don't dump the whole box out for one line. (Minimal authority)
+And at every single level, the same pattern repeats:
+
+Try → see what happens
+Learn → remember if it worked
+Ask friends → if it's a big deal, vote on it
+One crayon learning to draw better. One pool picking its best crayon. One box splitting a picture into parts. Many boxes sharing crayons across the table. It's the same pattern of try, learn, ask — just repeated at bigger and bigger sizes.
+
+That's fractal scaling. Same shape, every size. Crayons all the way down.

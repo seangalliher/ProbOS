@@ -18,6 +18,7 @@ from probos.agents.http_fetch import HttpFetchAgent
 from probos.agents.introspect import IntrospectionAgent
 from probos.agents.red_team import RedTeamAgent
 from probos.agents.shell_command import ShellCommandAgent
+from probos.substrate.skill_agent import SkillBasedAgent
 from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
 from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
@@ -175,6 +176,7 @@ class ProbOSRuntime:
         self.spawner.register_template("http_fetch", HttpFetchAgent)
         self.spawner.register_template("red_team", RedTeamAgent)
         self.spawner.register_template("introspect", IntrospectionAgent)
+        self.spawner.register_template("skill_agent", SkillBasedAgent)
 
     def register_agent_type(self, type_name: str, agent_class: type) -> None:
         """Register an agent class and refresh the decomposer's intent descriptors."""
@@ -344,11 +346,25 @@ class ProbOSRuntime:
             from probos.cognitive.sandbox import SandboxRunner
             from probos.cognitive.behavioral_monitor import BehavioralMonitor
             from probos.cognitive.self_mod import SelfModificationPipeline
+            from probos.cognitive.skill_designer import SkillDesigner
+            from probos.cognitive.skill_validator import SkillValidator
 
             designer = AgentDesigner(self.llm_client, self.config.self_mod)
             validator = CodeValidator(self.config.self_mod)
             sandbox = SandboxRunner(self.config.self_mod, llm_client=self.llm_client)
             self.behavioral_monitor = BehavioralMonitor()
+            skill_designer = SkillDesigner(self.llm_client, self.config.self_mod)
+            skill_validator = SkillValidator(self.config.self_mod)
+
+            # Optional research phase
+            research = None
+            if self.config.self_mod.research_enabled:
+                from probos.cognitive.research import ResearchPhase
+                research = ResearchPhase(
+                    llm_client=self.llm_client,
+                    submit_intent_fn=self.submit_intent_with_consensus,
+                    config=self.config.self_mod,
+                )
 
             self.self_mod_pipeline = SelfModificationPipeline(
                 designer=designer,
@@ -360,8 +376,18 @@ class ProbOSRuntime:
                 create_pool_fn=self._create_designed_pool,
                 set_trust_fn=self._set_probationary_trust,
                 user_approval_fn=None,  # Shell sets this after creation
+                skill_designer=skill_designer,
+                skill_validator=skill_validator,
+                add_skill_fn=self._add_skill_to_agents,
+                research=research,
             )
             logger.info("Self-modification pipeline enabled")
+
+            # Spawn skills pool for SkillBasedAgent
+            await self.create_pool(
+                "skills", "skill_agent", target_size=2,
+                llm_client=self.llm_client,
+            )
 
         # Start episodic memory if provided
         if self.episodic_memory:
@@ -1112,6 +1138,34 @@ class ProbOSRuntime:
                 alpha=self.config.self_mod.probationary_alpha,
                 beta=self.config.self_mod.probationary_beta,
             )
+
+    def _get_llm_equipped_types(self) -> set[str]:
+        """Return agent types that have LLM client access.
+
+        The runtime knows because it injected llm_client into these agents.
+        """
+        types: set[str] = set()
+        if self.pools.get("skills"):
+            types.add("skill_agent")
+        if self.pools.get("introspect"):
+            types.add("introspection")
+        return types
+
+    async def _add_skill_to_agents(self, skill: Any) -> None:
+        """Add a skill to all agents in the skills pool.
+
+        After adding, refresh decomposer descriptors so the new intent
+        is available for decomposition.
+        """
+        pool = self.pools.get("skills")
+        if not pool:
+            return
+        for agent_id in pool.healthy_agents:
+            agent = self.registry.get(agent_id)
+            if agent and isinstance(agent, SkillBasedAgent):
+                agent.add_skill(skill)
+        # Refresh descriptors
+        self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
 
     async def _extract_unhandled_intent(self, text: str) -> dict[str, Any] | None:
         """Use LLM to extract intent metadata from an unhandled request."""

@@ -50,40 +50,40 @@ def _setup_logging(log_level: str) -> None:
 async def _create_llm_client(config, console: Console):
     """Create an LLM client from config, falling back to MockLLMClient."""
     cog = config.cognitive
-    client = OpenAICompatibleClient(
-        base_url=cog.llm_base_url,
-        api_key=cog.llm_api_key,
-        models={
-            "fast": cog.llm_model_fast,
-            "standard": cog.llm_model_standard,
-            "deep": cog.llm_model_deep,
-        },
-        timeout=cog.llm_timeout_seconds,
-    )
+    client = OpenAICompatibleClient(config=cog)
 
-    console.print(
-        f"  Checking LLM endpoint at [bold]{cog.llm_base_url}[/bold]...",
-        end="",
-    )
-    reachable = await client.check_connectivity()
+    console.print("  Checking LLM endpoints...")
+    connectivity = await client.check_connectivity()
 
-    if reachable:
-        console.print(" [green]connected[/green]")
+    for tier in ("fast", "standard", "deep"):
+        tc = cog.tier_config(tier)
+        reachable = connectivity[tier]
+        if reachable:
+            console.print(
+                f"  [green]\u2713[/green] LLM {tier}: {tc['model']} at {tc['base_url']}"
+            )
+        else:
+            console.print(
+                f"  [yellow]\u2717[/yellow] LLM {tier}: {tc['base_url']} unreachable"
+            )
+
+    if not any(connectivity.values()):
+        # All endpoints unreachable — fall back to mock
+        await client.close()
         console.print(
-            f"  [green]\u2713[/green] LLM: {cog.llm_model_standard} "
-            f"(fast={cog.llm_model_fast}, deep={cog.llm_model_deep})"
+            "  [yellow]\u26a0[/yellow] No LLM endpoints reachable. "
+            "Falling back to [bold]MockLLMClient[/bold] "
+            "(pattern-matched responses only)."
         )
-        return client
+        return MockLLMClient()
 
-    # Endpoint unreachable — fall back to mock
-    await client.close()
-    console.print(" [yellow]unreachable[/yellow]")
-    console.print(
-        "  [yellow]\u26a0[/yellow] LLM endpoint not available. "
-        "Falling back to [bold]MockLLMClient[/bold] "
-        "(pattern-matched responses only)."
-    )
-    return MockLLMClient()
+    if not all(connectivity.values()):
+        down_tiers = [t for t, r in connectivity.items() if not r]
+        console.print(
+            f"  [yellow]\u26a0 Warning: {', '.join(down_tiers)} tier(s) unreachable[/yellow]"
+        )
+
+    return client
 
 
 async def _boot_and_run(config_path: Path | None = None) -> None:

@@ -325,14 +325,34 @@ class ProbOSShell:
         lines.append(f"[bold]LLM Client:[/bold] {client_type}")
 
         if isinstance(client, OpenAICompatibleClient):
-            lines.append(f"[bold]Endpoint:[/bold]   {client.base_url}")
-            lines.append(f"[bold]Timeout:[/bold]    {client.timeout}s")
             lines.append(f"[bold]Default tier:[/bold] {client.default_tier}")
             lines.append("")
-            lines.append("[bold]Tier model mapping:[/bold]")
-            for tier, model in sorted(client.models.items()):
+
+            info = client.tier_info()
+            # Track which URLs we've seen to note shared endpoints
+            seen_urls: dict[str, str] = {}
+            for tier in ("fast", "standard", "deep"):
+                ti = info[tier]
                 marker = " [dim](active)[/dim]" if tier == client.default_tier else ""
-                lines.append(f"  {tier:10s} {model}{marker}")
+                reachable = ti.get("reachable")
+                if reachable is True:
+                    status = "[green]connected[/green]"
+                elif reachable is False:
+                    status = "[red]unreachable[/red]"
+                else:
+                    status = "[dim]unknown[/dim]"
+
+                shared_note = ""
+                if ti["base_url"] in seen_urls:
+                    shared_note = f" [dim](shared with {seen_urls[ti['base_url']]})[/dim]"
+                else:
+                    seen_urls[ti["base_url"]] = tier
+
+                lines.append(f"  [bold]{tier}:[/bold]{marker}")
+                lines.append(f"    Endpoint: {ti['base_url']}{shared_note}")
+                lines.append(f"    Model:    {ti['model']}")
+                lines.append(f"    Status:   {status}")
+                lines.append("")
         else:
             lines.append("[dim]Using pattern-matched mock responses (no live LLM).[/dim]")
 
@@ -366,9 +386,11 @@ class ProbOSShell:
             return
 
         client.default_tier = tier
+        info = client.tier_info()
+        ti = info[tier]
         self.console.print(
-            f"Tier switched to [bold]{tier}[/bold] "
-            f"(model: {client.models[tier]})"
+            f"Switched to [bold]{tier}[/bold] tier: "
+            f"{ti['model']} at {ti['base_url']}"
         )
 
     async def _cmd_debug(self, arg: str) -> None:
