@@ -83,8 +83,10 @@ NEVER use run_command to output hardcoded text you already know \
 conversation, creative writing, and knowledge questions are NOT \
 run_command tasks — return {"intents": [], "response": "..."} instead.
 13. Set "reflect" to true when the user asks for analysis, interpretation, \
-comparison, summary, or opinion about results. Set to false for simple data \
-retrieval or command execution.
+comparison, summary, or opinion about results. Also set "reflect" to true for \
+any intent that transforms, translates, generates, or produces content the user \
+wants to see explained in natural language. Set to false only for simple data \
+retrieval or command execution where the raw result is self-explanatory.
 14. explain_last, agent_info, system_health, why intents should have \
 "use_consensus": false.
 
