@@ -1203,9 +1203,20 @@ class ProbOSRuntime:
             return None
 
         try:
-            data = _json.loads(response.content)
+            raw = response.content.strip()
+            # Strip markdown code fences if present (common with local models)
+            import re as _re
+            fence = _re.search(r'```(?:json)?\s*\n?(.*?)\n?```', raw, _re.DOTALL)
+            if fence:
+                raw = fence.group(1).strip()
+            elif not raw.startswith("{"):
+                brace = raw.find("{")
+                if brace >= 0:
+                    raw = raw[brace:]
+
+            data = _json.loads(raw)
             if "name" in data and "description" in data:
                 return data
-        except (_json.JSONDecodeError, TypeError):
+        except (_json.JSONDecodeError, TypeError, ValueError):
             pass
         return None
