@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from probos.types import AgentState
 
@@ -30,7 +30,7 @@ class AgentSpawner:
     def available_templates(self) -> list[str]:
         return list(self._templates.keys())
 
-    async def spawn(self, type_name: str, pool: str = "default") -> BaseAgent:
+    async def spawn(self, type_name: str, pool: str = "default", **kwargs: Any) -> BaseAgent:
         """Create, register, and start an agent from a template."""
         if type_name not in self._templates:
             raise ValueError(
@@ -39,7 +39,7 @@ class AgentSpawner:
             )
 
         agent_class = self._templates[type_name]
-        agent = agent_class(pool=pool)
+        agent = agent_class(pool=pool, **kwargs)
         agent.state = AgentState.SPAWNING
         await self.registry.register(agent)
         await agent.start()

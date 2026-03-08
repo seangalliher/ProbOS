@@ -36,6 +36,10 @@ operating system runtime. You translate user requests into structured intents.
 | search_files    | {"path": "<absolute_path>", "pattern": "<glob>"} | Search for files matching pattern |
 | run_command     | {"command": "<shell_command>"}                   | Execute a shell command           |
 | http_fetch      | {"url": "<url>", "method": "GET"}                | Fetch a URL                       |
+| explain_last    | {}                                                | Explain what happened in the last request  |
+| agent_info      | {"agent_type": "...", "agent_id": "..."}         | Get info about a specific agent            |
+| system_health   | {}                                                | Get system health assessment               |
+| why             | {"question": "..."}                               | Explain why ProbOS did something           |
 
 ## Response format
 
@@ -73,6 +77,8 @@ No markdown. No code fences. No commentary. Just the raw JSON object.
 13. Set "reflect" to true when the user asks for analysis, interpretation, \
 comparison, summary, or opinion about results. Set to false for simple data \
 retrieval or command execution.
+14. explain_last, agent_info, system_health, why intents should have \
+"use_consensus": false.
 
 ## Examples
 
@@ -111,6 +117,18 @@ User: "what is the largest file in /tmp/mydir?"
 
 User: "fetch https://example.com and summarize it"
 {"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://example.com", "method": "GET"}, "depends_on": [], "use_consensus": true}], "reflect": true}
+
+User: "why did you use file_reader for that?"
+{"intents": [{"id": "t1", "intent": "why", "params": {"question": "why did you use file_reader for that?"}, "depends_on": [], "use_consensus": false}], "reflect": true}
+
+User: "how healthy is the system?"
+{"intents": [{"id": "t1", "intent": "system_health", "params": {}, "depends_on": [], "use_consensus": false}], "reflect": true}
+
+User: "what just happened?"
+{"intents": [{"id": "t1", "intent": "explain_last", "params": {}, "depends_on": [], "use_consensus": false}], "reflect": true}
+
+User: "tell me about file_reader agents"
+{"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "file_reader"}, "depends_on": [], "use_consensus": false}], "reflect": true}
 """
 
 REFLECT_PROMPT = """\
@@ -134,11 +152,22 @@ class IntentDecomposer:
         llm_client: BaseLLMClient,
         working_memory: WorkingMemoryManager,
         timeout: float = 15.0,
+        workflow_cache: Any | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.working_memory = working_memory
         self.timeout = timeout
+        self.workflow_cache = workflow_cache
         self.last_raw_response: str = ""  # Last raw LLM response for debugging
+        self._pre_warm_intents: list[str] = []
+
+    @property
+    def pre_warm_intents(self) -> list[str]:
+        return self._pre_warm_intents
+
+    @pre_warm_intents.setter
+    def pre_warm_intents(self, value: list[str]) -> None:
+        self._pre_warm_intents = value
 
     async def decompose(
         self,
@@ -148,11 +177,26 @@ class IntentDecomposer:
     ) -> TaskDAG:
         """Decompose natural language text into a TaskDAG.
 
-        1. Assemble working memory context
-        2. Build LLM prompt with system state + user request
-        3. Call LLM
-        4. Parse response into TaskDAG
+        1. Check workflow cache (exact match, then fuzzy)
+        2. Assemble working memory context
+        3. Build LLM prompt with system state + user request
+        4. Call LLM
+        5. Parse response into TaskDAG
         """
+        # Try workflow cache first (exact match)
+        if self.workflow_cache:
+            cached = self.workflow_cache.lookup(text)
+            if cached:
+                logger.info("Workflow cache HIT (exact): %s", text[:50])
+                return cached
+
+        # Try fuzzy match with pre-warm intents
+        if self.workflow_cache and self._pre_warm_intents:
+            cached = self.workflow_cache.lookup_fuzzy(text, self._pre_warm_intents)
+            if cached:
+                logger.info("Workflow cache HIT (fuzzy): %s", text[:50])
+                return cached
+
         # Build prompt
         prompt_parts = []
         if context:
@@ -172,6 +216,18 @@ class IntentDecomposer:
                     f'- "{ep.user_input}" → {intents_used} '
                     f"({successes}/{total} succeeded)"
                 )
+            prompt_parts.append("")
+
+        # Add pre-warm hints if available
+        if self._pre_warm_intents:
+            prompt_parts.append("## PRE-WARM HINTS")
+            intent_list = ", ".join(self._pre_warm_intents)
+            prompt_parts.append(
+                f"Recent usage patterns suggest these intents are likely: {intent_list}"
+            )
+            prompt_parts.append(
+                "Consider using these intents if they match the user's request."
+            )
             prompt_parts.append("")
 
         prompt_parts.append(f"User request: {text}")
@@ -431,6 +487,7 @@ class DAGExecutor:
                 intent=node.intent,
                 urgency=0.5,
                 dependency_depth=dep_depth.get(node.id, 0),
+                is_background=node.background,
             )
             self.attention.submit(entry)
 

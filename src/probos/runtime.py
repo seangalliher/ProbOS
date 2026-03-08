@@ -15,12 +15,15 @@ from probos.agents.file_search import FileSearchAgent
 from probos.agents.file_writer import FileWriterAgent
 from probos.agents.heartbeat_monitor import SystemHeartbeatAgent
 from probos.agents.http_fetch import HttpFetchAgent
+from probos.agents.introspect import IntrospectionAgent
 from probos.agents.red_team import RedTeamAgent
 from probos.agents.shell_command import ShellCommandAgent
+from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
+from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
 from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient, OpenAICompatibleClient
 from probos.cognitive.working_memory import WorkingMemoryManager
-from probos.cognitive.attention import AttentionManager
+from probos.cognitive.workflow_cache import WorkflowCache
 from probos.config import SystemConfig, load_config
 from probos.consensus.quorum import QuorumEngine
 from probos.consensus.trust import TrustNetwork
@@ -108,14 +111,18 @@ class ProbOSRuntime:
         self.working_memory = WorkingMemoryManager(
             token_budget=cog_cfg.working_memory_token_budget,
         )
+        self.workflow_cache = WorkflowCache()
         self.decomposer = IntentDecomposer(
             llm_client=self.llm_client,
             working_memory=self.working_memory,
             timeout=cog_cfg.decomposition_timeout_seconds,
+            workflow_cache=self.workflow_cache,
         )
         self.attention = AttentionManager(
             max_concurrent=cog_cfg.max_concurrent_tasks,
             decay_rate=cog_cfg.attention_decay_rate,
+            focus_history_size=cog_cfg.focus_history_size,
+            background_demotion_factor=cog_cfg.background_demotion_factor,
         )
         self.dag_executor = DAGExecutor(
             runtime=self,
@@ -125,6 +132,14 @@ class ProbOSRuntime:
 
         # --- Episodic memory ---
         self.episodic_memory = episodic_memory  # None = disabled
+
+        # --- Dreaming ---
+        self.dream_scheduler: DreamScheduler | None = None
+        self._last_request_time: float = time.monotonic()
+
+        # --- Execution history (for introspection) ---
+        self._last_execution: dict[str, Any] | None = None
+        self._previous_execution: dict[str, Any] | None = None
 
         self._started = False
 
@@ -137,6 +152,7 @@ class ProbOSRuntime:
         self.spawner.register_template("shell_command", ShellCommandAgent)
         self.spawner.register_template("http_fetch", HttpFetchAgent)
         self.spawner.register_template("red_team", RedTeamAgent)
+        self.spawner.register_template("introspect", IntrospectionAgent)
 
     def register_agent_type(self, type_name: str, agent_class: type) -> None:
         """Register an agent class so it can be spawned into pools."""
@@ -147,6 +163,7 @@ class ProbOSRuntime:
         name: str,
         agent_type: str,
         target_size: int | None = None,
+        **spawn_kwargs: Any,
     ) -> ResourcePool:
         """Create and start a resource pool."""
         pool = ResourcePool(
@@ -156,6 +173,7 @@ class ProbOSRuntime:
             registry=self.registry,
             config=self.config.pools,
             target_size=target_size,
+            **spawn_kwargs,
         )
         self.pools[name] = pool
         await pool.start()
@@ -228,6 +246,7 @@ class ProbOSRuntime:
         await self.create_pool("search", "file_search", target_size=3)
         await self.create_pool("shell", "shell_command", target_size=3)
         await self.create_pool("http", "http_fetch", target_size=3)
+        await self.create_pool("introspect", "introspect", target_size=2, runtime=self)
 
         # Spawn red team agents
         await self._spawn_red_team(self.config.consensus.red_team_pool_size)
@@ -235,6 +254,22 @@ class ProbOSRuntime:
         # Start episodic memory if provided
         if self.episodic_memory:
             await self.episodic_memory.start()
+
+        # Start dreaming scheduler if episodic memory is available
+        if self.episodic_memory:
+            dream_cfg = self.config.dreaming
+            engine = DreamingEngine(
+                router=self.hebbian_router,
+                trust_network=self.trust_network,
+                episodic_memory=self.episodic_memory,
+                config=dream_cfg,
+            )
+            self.dream_scheduler = DreamScheduler(
+                engine=engine,
+                idle_threshold_seconds=dream_cfg.idle_threshold_seconds,
+                dream_interval_seconds=dream_cfg.dream_interval_seconds,
+            )
+            self.dream_scheduler.start()
 
         self._started = True
 
@@ -275,6 +310,11 @@ class ProbOSRuntime:
 
         # Clean up LLM client
         await self.llm_client.close()
+
+        # Stop dreaming scheduler
+        if self.dream_scheduler:
+            await self.dream_scheduler.stop()
+            self.dream_scheduler = None
 
         # Stop episodic memory
         if self.episodic_memory:
@@ -507,6 +547,14 @@ class ProbOSRuntime:
         """
         t_start = time.monotonic()
 
+        # Snapshot previous execution for introspection (prevents self-overwrite)
+        self._previous_execution = self._last_execution
+
+        # Track activity for dream scheduler
+        self._last_request_time = time.monotonic()
+        if self.dream_scheduler:
+            self.dream_scheduler.record_activity()
+
         # Update attention focus with current request
         self.attention.update_focus(intent=text, context=text)
 
@@ -532,6 +580,13 @@ class ProbOSRuntime:
                 similar_episodes = await self.episodic_memory.recall(text, k=3)
             except Exception as e:
                 logger.warning("Episode recall failed: %s", e)
+
+        # Sync pre-warm intents from dreaming engine to decomposer
+        if self.dream_scheduler and self.dream_scheduler.last_dream_report:
+            self.decomposer.pre_warm_intents = (
+                self.dream_scheduler.engine.pre_warm_intents
+            )
+
         dag = await self.decomposer.decompose(
             text, context=context, similar_episodes=similar_episodes or None,
         )
@@ -604,6 +659,15 @@ class ProbOSRuntime:
             except Exception as e:
                 logger.warning("Episode storage failed: %s: %s", type(e).__name__, e)
 
+        # Step 7: Store successful workflows in cache
+        if self.workflow_cache and dag.nodes:
+            all_success = all(n.status == "completed" for n in dag.nodes)
+            if all_success:
+                self.workflow_cache.store(text, dag)
+
+        # Store execution result for introspection
+        self._last_execution = execution_result
+
         return execution_result
 
     def status(self) -> dict[str, Any]:
@@ -641,6 +705,28 @@ class ProbOSRuntime:
         }
         if self.episodic_memory:
             result["episodic_memory"] = "enabled"
+        result["workflow_cache"] = {
+            "size": self.workflow_cache.size,
+            "entries": len(self.workflow_cache.entries),
+        }
+        if self.dream_scheduler:
+            dream_status: dict[str, Any] = {
+                "state": "dreaming" if self.dream_scheduler.is_dreaming else "idle",
+                "enabled": True,
+            }
+            report = self.dream_scheduler.last_dream_report
+            if report:
+                dream_status["last_report"] = {
+                    "episodes_replayed": report.episodes_replayed,
+                    "weights_strengthened": report.weights_strengthened,
+                    "weights_pruned": report.weights_pruned,
+                    "trust_adjustments": report.trust_adjustments,
+                    "pre_warm_intents": report.pre_warm_intents,
+                    "duration_ms": round(report.duration_ms, 1),
+                }
+            result["dreaming"] = dream_status
+        else:
+            result["dreaming"] = {"state": "disabled", "enabled": False}
         return result
 
     async def recall_similar(self, query: str, k: int = 5) -> list[Episode]:

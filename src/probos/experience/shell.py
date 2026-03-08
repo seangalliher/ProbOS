@@ -38,6 +38,9 @@ class ProbOSShell:
         "/attention": "Show attention queue and current focus",
         "/history":   "Show recent episodic memory entries",
         "/recall":    "Semantic recall from episodic memory (/recall <query>)",
+        "/dream":     "Show last dream report (/dream now to trigger cycle)",
+        "/cache":     "Show workflow cache entries",
+        "/explain":   "Explain what happened in the last NL request",
         "/model":     "Show LLM client type, endpoint, and tier config",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
         "/debug":     "Toggle debug mode (/debug on|off)",
@@ -124,6 +127,9 @@ class ProbOSShell:
             "/attention": self._cmd_attention,
             "/history":   self._cmd_history,
             "/recall":    self._cmd_recall,
+            "/dream":     self._cmd_dream,
+            "/cache":     self._cmd_cache,
+            "/explain":   self._cmd_explain,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
             "/debug":   self._cmd_debug,
@@ -184,7 +190,9 @@ class ProbOSShell:
     async def _cmd_attention(self, arg: str) -> None:
         queue = self.runtime.attention.get_queue_snapshot()
         focus = self.runtime.attention.current_focus
-        self.console.print(panels.render_attention_panel(queue, focus))
+        self.console.print(panels.render_attention_panel(
+            queue, focus, focus_history=self.runtime.attention.focus_history,
+        ))
 
     async def _cmd_history(self, arg: str) -> None:
         mem = self.runtime.episodic_memory
@@ -236,6 +244,27 @@ class ProbOSShell:
             intents = ", ".join(o.get("intent", "?") for o in ep.outcomes) or "-"
             table.add_row(ts, ep.user_input[:60], intents, rate)
         self.console.print(table)
+
+    async def _cmd_dream(self, arg: str) -> None:
+        scheduler = self.runtime.dream_scheduler
+        if not scheduler:
+            self.console.print("[yellow]Dreaming is not enabled (no episodic memory).[/yellow]")
+            return
+        if arg.strip().lower() == "now":
+            self.console.print("[dim]Triggering dream cycle...[/dim]")
+            report = await scheduler.force_dream()
+            self.console.print(panels.render_dream_panel(report))
+        else:
+            self.console.print(panels.render_dream_panel(scheduler.last_dream_report))
+
+    async def _cmd_cache(self, arg: str) -> None:
+        cache = self.runtime.workflow_cache
+        self.console.print(panels.render_workflow_cache_panel(
+            cache.entries, cache.size,
+        ))
+
+    async def _cmd_explain(self, arg: str) -> None:
+        await self._handle_nl("what just happened?")
 
     async def _cmd_model(self, arg: str) -> None:
         client = self.runtime.llm_client

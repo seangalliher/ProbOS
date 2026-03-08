@@ -16,6 +16,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
+from probos.cognitive.episodic import EpisodicMemory
 from probos.cognitive.llm_client import MockLLMClient, OpenAICompatibleClient
 from probos.config import load_config
 from probos.runtime import ProbOSRuntime
@@ -98,7 +99,17 @@ async def _boot_and_run() -> None:
         console.print("[bold blue]Starting ProbOS...[/bold blue]")
         llm_client = await _create_llm_client(config, console)
 
-        runtime = ProbOSRuntime(config=config, data_dir=tmp, llm_client=llm_client)
+        # Create episodic memory
+        episodic_db = Path(tmp) / "episodic.db"
+        episodic_memory = EpisodicMemory(
+            db_path=str(episodic_db),
+            max_episodes=config.memory.max_episodes,
+        )
+
+        runtime = ProbOSRuntime(
+            config=config, data_dir=tmp, llm_client=llm_client,
+            episodic_memory=episodic_memory,
+        )
 
         # Boot sequence
         with console.status("  Initializing infrastructure..."):

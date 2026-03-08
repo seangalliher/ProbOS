@@ -204,6 +204,32 @@ class MockLLMClient(BaseLLMClient):
 
         # --- Expansion agent patterns (registered first) ---
 
+        # --- Introspection patterns (before expansion to catch NL queries) ---
+
+        # explain_last
+        self.add_pattern(
+            r"what (?:just )?happened|explain.*(last|previous)|what did you (?:just )?do",
+            self._make_explain_last_response,
+        )
+
+        # system_health
+        self.add_pattern(
+            r"how healthy|system (?:health|status)|are you ok",
+            self._make_system_health_response,
+        )
+
+        # agent_info
+        self.add_pattern(
+            r"tell me about (.+) agents?|info.*(agent|file_reader|file_writer)",
+            self._make_agent_info_response,
+        )
+
+        # why
+        self.add_pattern(
+            r"why did you|why.*(choose|pick|use|select)",
+            self._make_why_response,
+        )
+
         # HTTP fetch — must be before read_file (both can match URLs)
         self.add_pattern(
             r"fetch\s+(https?://[\w./\-:?&=%]+)",
@@ -457,3 +483,58 @@ class MockLLMClient(BaseLLMClient):
     def _make_reflect_response(self, prompt: str) -> str:
         """Generate a canned reflection synthesis from agent results."""
         return "Based on the agent results: The operation completed successfully."
+
+    def _make_explain_last_response(self, prompt: str, match: re.Match) -> str:
+        """Generate an explain_last intent response."""
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "explain_last",
+                "params": {},
+                "depends_on": [],
+                "use_consensus": False,
+            }],
+            "reflect": True,
+        })
+
+    def _make_system_health_response(self, prompt: str, match: re.Match) -> str:
+        """Generate a system_health intent response."""
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "system_health",
+                "params": {},
+                "depends_on": [],
+                "use_consensus": False,
+            }],
+            "reflect": True,
+        })
+
+    def _make_agent_info_response(self, prompt: str, match: re.Match) -> str:
+        """Generate an agent_info intent response."""
+        # Try to extract agent type from the prompt
+        type_match = re.search(r"about\s+(\w+)\s+agents?", prompt, re.IGNORECASE)
+        agent_type = type_match.group(1) if type_match else "file_reader"
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "agent_info",
+                "params": {"agent_type": agent_type},
+                "depends_on": [],
+                "use_consensus": False,
+            }],
+            "reflect": True,
+        })
+
+    def _make_why_response(self, prompt: str, match: re.Match) -> str:
+        """Generate a why intent response."""
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "why",
+                "params": {"question": prompt},
+                "depends_on": [],
+                "use_consensus": False,
+            }],
+            "reflect": True,
+        })

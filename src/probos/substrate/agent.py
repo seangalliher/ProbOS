@@ -25,7 +25,7 @@ class BaseAgent(ABC):
     default_capabilities: list[CapabilityDescriptor] = []
     initial_confidence: float = 0.8
 
-    def __init__(self, pool: str = "default") -> None:
+    def __init__(self, pool: str = "default", **kwargs: Any) -> None:
         self.id: AgentID = uuid.uuid4().hex
         self.pool = pool
         self.confidence: float = self.initial_confidence
@@ -36,6 +36,7 @@ class BaseAgent(ABC):
         self.meta = AgentMeta()
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
+        self._runtime: Any = kwargs.get("runtime")
 
     # ------------------------------------------------------------------
     # Lifecycle contract — subclasses implement these
