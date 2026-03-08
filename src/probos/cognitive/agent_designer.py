@@ -53,6 +53,9 @@ class {class_name}(BaseAgent):
         )
     ]
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         if intent.intent not in self._handled_intents:
             return None
@@ -88,6 +91,7 @@ RULES:
 - Do NOT use subprocess, eval, exec, __import__, socket, ctypes
 - Do NOT write files (no open() with 'w' mode) — use the existing FileWriterAgent for writes
 - Do NOT make network calls — use the existing HttpFetchAgent for HTTP
+- You MUST keep the __init__(self, **kwargs) that calls super().__init__(**kwargs) exactly as shown
 - Return the COMPLETE Python file content, nothing else
 - No markdown code fences, no explanation, just the Python code
 - You MUST include ALL four lifecycle methods (perceive, decide, act, report) exactly as shown in the template
