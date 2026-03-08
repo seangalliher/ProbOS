@@ -216,8 +216,10 @@ class PromptBuilder:
         if "run_command" in intent_names:
             rules.append(
                 f'{rule_num}. Prefer mapping to run_command over declining when a shell '
-                'command could answer the question (e.g. date/time, math, system info, '
-                'environment).'
+                'command can COMPUTE or QUERY information (e.g. date/time, math, '
+                'system info, environment). NEVER use run_command with echo/Write-Host/'
+                'print to fake an answer — if no command genuinely produces the result, '
+                'return empty intents so self-modification can create a proper agent.'
             )
             rule_num += 1
 
