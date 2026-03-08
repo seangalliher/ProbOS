@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 10 — Self-Modification Complete (627/627 tests)
+## Current Status: Phase 10 — Self-Modification Complete + Post-Phase Hardening (660/660 tests)
 
 ---
 
@@ -41,7 +41,7 @@
 | `src/probos/consensus/__init__.py` | done | Package root |
 | `src/probos/consensus/quorum.py` | done | `QuorumEngine` — configurable thresholds (2-of-3, 3-of-5, etc.), confidence-weighted voting, `evaluate()` and `evaluate_values()` |
 | `src/probos/consensus/trust.py` | done | `TrustNetwork` — Bayesian Beta(alpha, beta) reputation scoring, observation recording, decay toward prior, SQLite persistence, `create_with_prior()` for probationary agents with custom Beta prior (AD-110) |
-| `src/probos/consensus/escalation.py` | done | `EscalationManager` — 3-tier cascade: Tier 1 retry with different agent (pool rotation, `surge_fn` for on-demand pool scale-up), Tier 2 LLM arbitration (approve/reject/modify via `ARBITRATION_PROMPT`), Tier 3 user consultation (async callback with `pre_user_hook` for Rich Live conflict). Event-silent design (AD-87): returns `EscalationResult` to caller, executor logs events. Bounded: max_retries cap on Tier 1, one LLM call for Tier 2, one prompt for Tier 3 |
+| `src/probos/consensus/escalation.py` | done | `EscalationManager` — 3-tier cascade: Tier 1 retry with different agent (pool rotation, `surge_fn` for on-demand pool scale-up), Tier 2 LLM arbitration (approve/reject/modify via `ARBITRATION_PROMPT`), Tier 3 user consultation (async callback with `pre_user_hook` for Rich Live conflict). Event-silent design (AD-87): returns `EscalationResult` to caller, executor logs events. Bounded: max_retries cap on Tier 1, one LLM call for Tier 2, one prompt for Tier 3. Re-execution of original intent after user approval (AD-118), original agent results preserved on consensus-policy rejection (AD-119), user rejection marks node as failed (AD-120), `repr(e)` for non-empty exception messages |
 
 ### Cognitive Layer (complete — new in Phase 3a)
 
@@ -58,18 +58,18 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `src/probos/cognitive/__init__.py` | done | Package root |
-| `src/probos/cognitive/llm_client.py` | done | `BaseLLMClient` ABC, `OpenAICompatibleClient` (httpx, tiered routing fast/standard/deep, response cache, fallback chain: live → cache → error, connectivity check, specific error handling for connect/timeout/HTTP errors), `MockLLMClient` (regex pattern matching, canned responses for deterministic testing — supports read_file, write_file, list_directory, search_files, run_command, http_fetch, explain_last, system_health, agent_info, why patterns; escalation arbiter pattern returns reject for deterministic Tier 2 → Tier 3 fallthrough (AD-85); agent_design pattern generates valid BaseAgent source code (AD-111); intent_extraction pattern returns JSON with name/description/parameters for unhandled intent detection) |
+| `src/probos/cognitive/llm_client.py` | done | `BaseLLMClient` ABC, `OpenAICompatibleClient` (httpx, tiered routing fast/standard/deep, response cache, fallback chain: live → cache → error, connectivity check, specific error handling for connect/timeout/HTTP errors), `MockLLMClient` (regex pattern matching, canned responses for deterministic testing — supports read_file, write_file, list_directory, search_files, run_command, http_fetch, explain_last, system_health, agent_info, why patterns; escalation arbiter pattern returns reject for deterministic Tier 2 → Tier 3 fallthrough (AD-85); agent_design pattern generates valid BaseAgent source code with `__init__(**kwargs)` + LLM client injection template (AD-111, AD-115); intent_extraction pattern returns JSON with name/description/parameters, prefers general-purpose intents over narrow ones (AD-124)) |
 | `src/probos/cognitive/working_memory.py` | done | `WorkingMemorySnapshot` (serializable system state), `WorkingMemoryManager` (bounded context assembly from registry/trust/Hebbian/capabilities, token budget eviction) |
-| `src/probos/cognitive/decomposer.py` | done | `IntentDecomposer` (NL text + working memory + similar episodes → LLM → `TaskDAG`, dynamic system prompt via `PromptBuilder` when `_intent_descriptors` populated (falls back to `_LEGACY_SYSTEM_PROMPT`), `refresh_descriptors()` for runtime to push new intent sets, aggressive JSON-only system prompt with `response` and `reflect` fields, markdown code fence extraction, `REFLECT_PROMPT` for post-execution synthesis, `reflect()` method sends results back to LLM with payload cap ~8000 chars and truncation, PAST EXPERIENCE section for episodic context, PRE-WARM HINTS section for dreaming integration, optional `workflow_cache` for cache-first decomposition with exact + fuzzy matching, `pre_warm_intents` property for runtime sync), `DAGExecutor` (parallel/sequential DAG execution through mesh + consensus, dependency resolution, deadlock detection, `on_event` callback for real-time progress, attention-based priority batching when `AttentionManager` is provided, optional `escalation_manager` for 3-tier error recovery, consensus-rejected nodes now correctly marked "failed" instead of "completed", escalation events: escalation_start, escalation_resolved, escalation_exhausted) |
-| `src/probos/cognitive/prompt_builder.py` | done | `PromptBuilder` — dynamically assembles decomposer system prompt from `IntentDescriptor` list. Generates intent table, consensus rules, reflect rules. Deterministic output (sorted by name). Constants: `PROMPT_PREAMBLE`, `PROMPT_RESPONSE_FORMAT`, `PROMPT_EXAMPLES` |
+| `src/probos/cognitive/decomposer.py` | done | `IntentDecomposer` (NL text + working memory + similar episodes → LLM → `TaskDAG`, dynamic system prompt via `PromptBuilder` when `_intent_descriptors` populated (falls back to `_LEGACY_SYSTEM_PROMPT`), `refresh_descriptors()` for runtime to push new intent sets, aggressive JSON-only system prompt with `response` and `reflect` fields, markdown code fence extraction, `REFLECT_PROMPT` for post-execution synthesis with `[status]` prefix per node for LLM context (AD-121), `reflect()` method sends results back to LLM with payload cap ~8000 chars and truncation, `_summarize_node_result()` deduplicates identical output/result fields (AD-122), PAST EXPERIENCE section for episodic context, PRE-WARM HINTS section for dreaming integration, optional `workflow_cache` for cache-first decomposition with exact + fuzzy matching, `pre_warm_intents` property for runtime sync, `is_capability_gap()` function with `_CAPABILITY_GAP_RE` regex to distinguish capability-gap responses from conversational replies (AD-126)), `DAGExecutor` (parallel/sequential DAG execution through mesh + consensus, dependency resolution, deadlock detection, `on_event` callback for real-time progress, attention-based priority batching when `AttentionManager` is provided, optional `escalation_manager` for 3-tier error recovery, consensus-rejected nodes now correctly marked "failed" instead of "completed", escalation events: escalation_start, escalation_resolved, escalation_exhausted) |
+| `src/probos/cognitive/prompt_builder.py` | done | `PromptBuilder` — dynamically assembles decomposer system prompt from `IntentDescriptor` list. Generates intent table, consensus rules, reflect rules (broadened to include transformation/translation intents). Anti-echo rules for `run_command` (no echo/Write-Host/Write-Output to fake answers). Deterministic output (sorted by name). Constants: `PROMPT_PREAMBLE`, `PROMPT_RESPONSE_FORMAT`, `PROMPT_EXAMPLES` (updated with introspection + time examples) |
 | `src/probos/cognitive/episodic.py` | done | `EpisodicMemory` — SQLite-backed long-term memory, `Episode` storage/recall, keyword-overlap similarity search (cosine over bag-of-words), `recall_by_intent()`, `recent()`, `get_stats()`, max_episodes eviction |
 | `src/probos/cognitive/episodic_mock.py` | done | `MockEpisodicMemory` — in-memory episodic memory for testing, substring/keyword matching recall, no SQLite dependency |
 | `src/probos/cognitive/attention.py` | done | `AttentionManager` — priority scorer and budgeter for task execution, scores = urgency × relevance × deadline_factor × dependency_depth_bonus, configurable concurrency limit (`max_concurrent_tasks`), cross-request focus history (ring buffer of `FocusSnapshot` entries, configurable max size), `_compute_relevance()` (keyword overlap between entry intent and recent focus, floor=0.3), background demotion (configurable factor, default 0.25), queue introspection |
 | `src/probos/cognitive/dreaming.py` | done | `DreamingEngine` — offline consolidation: replay recent episodes to strengthen/weaken Hebbian weights, prune below-threshold connections, trust consolidation (boost/penalize agents by track record), pre-warm intent prediction via temporal bigram analysis, `idle_scale_down_fn` callback for pool scaler integration. `DreamScheduler` — background asyncio task monitors idle time, triggers dream cycles after configurable threshold, `force_dream()` for immediate cycles, `is_dreaming` property, `last_dream_report` for introspection |
 | `src/probos/cognitive/workflow_cache.py` | done | `WorkflowCache` — in-memory LRU cache of successful DAG patterns, exact and fuzzy lookup (keyword overlap + pre-warm intent subset), deep copy with fresh node IDs on retrieval, popularity-based eviction, stores only fully-successful DAGs |
-| `src/probos/cognitive/agent_designer.py` | done | `AgentDesigner` — generates agent source code via LLM for unhandled intents, template-based prompt construction, class name derivation, allowed_imports whitelist enforcement |
+| `src/probos/cognitive/agent_designer.py` | done | `AgentDesigner` — generates agent source code via LLM for unhandled intents, template-based prompt construction with full `IntentResult`/`IntentMessage` signatures, `BaseAgent` attribute names (`self.id`, `self.pool`, `self.confidence`), `__init__(**kwargs)` with `self._llm_client = kwargs.get("llm_client")`, all 4 abstract lifecycle methods (perceive/decide/act/report), LLM ACCESS section for intelligence tasks (AD-115), `requires_reflect=True` on designed agent descriptors, class name derivation, allowed_imports whitelist enforcement |
 | `src/probos/cognitive/code_validator.py` | done | `CodeValidator` — static analysis of generated agent code: syntax check (AST parse), import whitelist enforcement, forbidden pattern regex scan, schema conformance (BaseAgent subclass, intent_descriptors, handle_intent, agent_type, _handled_intents), module-level side effect detection |
-| `src/probos/cognitive/sandbox.py` | done | `SandboxRunner` — test-executes generated agents in isolated context: temp file write, importlib dynamic loading, BaseAgent subclass discovery, synthetic IntentMessage test, IntentResult type verification, configurable timeout |
+| `src/probos/cognitive/sandbox.py` | done | `SandboxRunner` — test-executes generated agents in isolated context: temp file write, importlib dynamic loading, BaseAgent subclass discovery, synthetic IntentMessage test, IntentResult type verification, configurable timeout, LLM client forwarding to sandboxed agents |
 | `src/probos/cognitive/behavioral_monitor.py` | done | `BehavioralMonitor` — monitors self-created agents for behavioral anomalies: execution time tracking, failure rate alerting (>50% over 5+ executions), slow execution detection (>5s avg), trust trajectory decline detection, removal recommendation (failure rate >50% over 10+ or consecutive trust decline) |
 | `src/probos/cognitive/self_mod.py` | done | `SelfModificationPipeline` — orchestrates full self-modification flow: config check (max_designed_agents limit), optional user approval gate, AgentDesigner code generation, CodeValidator static analysis, SandboxRunner functional testing, agent type registration, pool creation, BehavioralMonitor tracking. `DesignedAgentRecord` dataclass for history |
 
@@ -79,8 +79,8 @@
 |------|--------|-------------|
 | `src/probos/experience/__init__.py` | done | Package root |
 | `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()` (with dreaming state section), `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_attention_panel()` (with focus history display and background task indicator), `render_dag_result()` (displays `response` field for conversational replies), `render_dream_panel()` (dream cycle report with pre-warm intents), `render_workflow_cache_panel()` (cached workflow patterns with hit counts), `render_scaling_panel()` (pool scaling status with demand ratio, size range, cooldown), `render_federation_panel()` (federation node status, connected peers, forwarded/received counts), `render_peers_panel()` (peer self-model table: capabilities, agent count, health, uptime), `render_designed_panel()` (self-designed agent status table with sandbox time and behavioral alerts), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
-| `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — DAG execution display with status spinner (Rich Live removed — AD-92), `on_event` callback integration (including `scale_up`/`scale_down`/`federation_forward`/`federation_receive`/`self_mod_design`/`self_mod_success`/`self_mod_failure` events), conversational response display when LLM returns `response` field, execution snapshot for introspection (`_previous_execution`/`_last_execution`), debug mode (raw DAG JSON, individual agent responses, consensus details), DAG plan display in debug-only mode (AD-90), Params column in progress table, manually-managed spinner with `_stop_live_for_user` hook for Tier 3 escalation (AD-93) |
-| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/scaling`, `/federation`, `/peers`, `/designed`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, graceful error handling |
+| `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — DAG execution display with status spinner (Rich Live removed — AD-92), `on_event` callback integration (including `scale_up`/`scale_down`/`federation_forward`/`federation_receive`/`self_mod_design`/`self_mod_success`/`self_mod_failure` events), conversational response display when LLM returns `response` field, execution snapshot for introspection (`_previous_execution`/`_last_execution`), debug mode (raw DAG JSON, individual agent responses, consensus details), DAG plan display in debug-only mode (AD-90), Params column in progress table, manually-managed spinner with `_stop_live_for_user` hook for Tier 3 escalation (AD-93). Self-mod UX: explicit user approval prompt with intent/purpose display (AD-123), existing-agent re-routing when LLM extracts already-registered intent, capability-gap detection gates self-mod (AD-126), force `reflect=True` on designed-agent DAGs |
+| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/scaling`, `/federation`, `/peers`, `/designed`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, user approval callback for self-mod agent creation (AD-123), graceful error handling |
 
 ### Agents
 
@@ -90,7 +90,7 @@
 | `src/probos/agents/file_writer.py` | done | `FileWriterAgent` — `write_file` capability, `intent_descriptors` with `requires_consensus=True`, proposes writes without committing, `commit_write()` called after consensus approval |
 | `src/probos/agents/directory_list.py` | done | `DirectoryListAgent` — `list_directory` capability, `intent_descriptors` declared, lists dir entries with name/type/size, no consensus required |
 | `src/probos/agents/file_search.py` | done | `FileSearchAgent` — `search_files` capability, `intent_descriptors` declared, recursive glob via `Path.rglob()`, no consensus required |
-| `src/probos/agents/shell_command.py` | done | `ShellCommandAgent` — `run_command` capability, `intent_descriptors` with `requires_consensus=True`, `asyncio.create_subprocess_shell()`, 30s timeout, 64KB output cap. Returns success=True even for nonzero exit codes |
+| `src/probos/agents/shell_command.py` | done | `ShellCommandAgent` — `run_command` capability, `intent_descriptors` with `requires_consensus=True`, `subprocess.Popen` via `loop.run_in_executor()` (AD-116: SelectorEventLoop compat), 30s timeout, 64KB output cap, `_strip_ps_wrapper()` strips redundant `powershell -Command` wrappers from LLM-generated commands, `_run_sync()` blocking subprocess method. Returns success=True even for nonzero exit codes. Uses PowerShell on Windows, `/bin/sh` elsewhere |
 | `src/probos/agents/http_fetch.py` | done | `HttpFetchAgent` — `http_fetch` capability, `intent_descriptors` with `requires_consensus=True`, `httpx.AsyncClient` per-request, 15s timeout, 1MB body cap, header whitelist |
 | `src/probos/agents/red_team.py` | done | `RedTeamAgent` — independently verifies other agents' results, `intent_descriptors = []` (does NOT handle user intents), does NOT subscribe to intent bus |
 | `src/probos/agents/corrupted.py` | done | `CorruptedFileReaderAgent` — deliberately returns fabricated data, `intent_descriptors = []`, used to test consensus layer catching corruption |
@@ -100,8 +100,8 @@
 
 | File | Status | Description |
 |------|--------|-------------|
-| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention + dreaming + workflow cache + introspection + dynamic intent discovery + federation + self-modification. Spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), introspect (2 introspection agents with runtime=self), red_team (2 verifiers). 24 agents total. Federation: `FederationBridge` with `FederationRouter`, `_build_self_model()` (NodeSelfModel Psi with capabilities, pool sizes, health, uptime), `_validate_remote_result()` placeholder, wires `bridge.forward_intent` as `intent_bus._federation_fn`. Self-modification: creates `SelfModificationPipeline` when `config.self_mod.enabled=True`, `_extract_unhandled_intent()` via LLM, auto-design when decomposer returns empty DAG, `_register_designed_agent()`, `_create_designed_pool()`, `_set_probationary_trust()`. `register_agent_type()` registers new agent class and refreshes decomposer descriptors. `_collect_intent_descriptors()` deduplicates across all registered templates. Boot-time `refresh_descriptors()` call after pool creation syncs decomposer with all registered intents. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, dream scheduler activity tracking, pre-warm intent sync to decomposer, execution snapshot pattern (`_previous_execution`/`_last_execution` for introspection without self-overwrite), post-execution reflect step, episodic episode storage, workflow cache storage on success, `recall_similar()` for semantic search. `DreamScheduler` created at start when episodic memory is available. `WorkflowCache` created at init, passed to decomposer, exposed in `status()` |
-| `src/probos/__main__.py` | done | Entry point: `uv run python -m probos [--config path]` — boot sequence display, LLM connectivity check with fallback to MockLLMClient, creates `EpisodicMemory` (SQLite in temp dir), interactive shell launch, `--config` flag for node-specific YAML, `WindowsSelectorEventLoopPolicy` for pyzmq compatibility on Windows (AD-108) |
+| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention + dreaming + workflow cache + introspection + dynamic intent discovery + federation + self-modification. Spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), introspect (2 introspection agents with runtime=self), red_team (2 verifiers). 24 agents total. Federation: `FederationBridge` with `FederationRouter`, `_build_self_model()` (NodeSelfModel Psi with capabilities, pool sizes, health, uptime), `_validate_remote_result()` placeholder, wires `bridge.forward_intent` as `intent_bus._federation_fn`. Self-modification: creates `SelfModificationPipeline` when `config.self_mod.enabled=True`, `_extract_unhandled_intent()` via LLM (prefers general-purpose intents over narrow ones — AD-124), auto-design when decomposer returns empty DAG or capability-gap response (AD-126), `_register_designed_agent()`, `_create_designed_pool()`, `_set_probationary_trust()`, LLM client injected into designed agent pools (AD-115). `register_agent_type()` registers new agent class and refreshes decomposer descriptors. `_collect_intent_descriptors()` deduplicates across all registered templates. Boot-time `refresh_descriptors()` call after pool creation syncs decomposer with all registered intents. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, dream scheduler activity tracking, pre-warm intent sync to decomposer, execution snapshot pattern (`_previous_execution`/`_last_execution` for introspection without self-overwrite), post-execution reflect step, episodic episode storage, workflow cache storage on success, `recall_similar()` for semantic search. `DreamScheduler` created at start when episodic memory is available. `WorkflowCache` created at init, passed to decomposer, exposed in `status()` |
+| `src/probos/__main__.py` | done | Entry point: `uv run python -m probos [--config path]` — boot sequence display, LLM connectivity check with fallback to MockLLMClient, creates `EpisodicMemory` (SQLite in temp dir), interactive shell launch, `--config` flag for node-specific YAML, `WindowsSelectorEventLoopPolicy` for pyzmq compatibility on Windows (AD-108), noisy INFO log suppression for interactive shell (AD-125) |
 | `config/node-1.yaml` | done | Node 1 federation config: bind tcp://127.0.0.1:5555, peers=[node-2] |
 | `config/node-2.yaml` | done | Node 2 federation config: bind tcp://127.0.0.1:5556, peers=[node-1] |
 | `scripts/launch-cluster.sh` | done | Launches 2-node ProbOS federation cluster in background processes |
@@ -111,7 +111,7 @@
 
 ## What's Working
 
-**582/582 tests pass.** Test suite covers:
+**660/660 tests pass.** Test suite covers:
 
 ### Substrate tests (50 tests — unchanged)
 - Agent creation, lifecycle, confidence tracking (16 tests)
@@ -153,7 +153,7 @@
 - Submit with consensus: correct read approved, trust updated, agent-to-agent weights recorded, consensus events logged
 - Corrupted agent caught, majority corrupted detected, write with consensus committed
 
-### Cognitive tests (81 tests)
+### Cognitive tests (105 tests)
 
 #### LLM Client (10 tests)
 - MockLLMClient: single read, parallel reads, write with consensus, unmatched default, call count, last request, custom default, token estimate, tier passthrough
@@ -163,7 +163,7 @@
 - WorkingMemorySnapshot: empty to_text, with agents, with capabilities, with trust, with connections, token estimate, token scales with content
 - WorkingMemoryManager: record intent, record result removes from active, bounded intents, bounded results, assemble without sources, eviction under budget, assemble returns copy
 
-#### Decomposer + TaskDAG (44 tests)
+#### Decomposer + TaskDAG (68 tests)
 - IntentDecomposer: single read, parallel reads, write with consensus, source text preserved, with context, unrecognized input, malformed JSON, missing intents key, intents not a list, empty intent filtered
 - ParseResponse: raw JSON, code block, preamble, invalid JSON, non-dict items skipped
 - ExtractJson: raw JSON, code block, embedded JSON, no JSON raises
@@ -171,11 +171,13 @@
 - ResponseFieldParsing: response field extracted, response with intents, response missing defaults empty, non-string response ignored, JSON in code fences with response
 - ReflectFieldParsing: reflect field default false, reflect field set true, reflect extracted true, reflect extracted false, reflect missing defaults false, non-bool coerced, reflect method returns text
 - ReflectHardening: payload truncated beyond budget, timeout returns empty string, exception fallback sets fallback string in runtime, success unchanged after hardening
+- ReflectHardeningExtended: dedup identical output/result in reflect payloads, node status prefix in reflect data, reflect with mixed node statuses (3 tests)
+- CapabilityGapDetection: positive detection for "I don't have", "no capability", "cannot help", "I can help with... but", "don't have a translation", "no built-in", "not equipped", "unable to", "outside my capabilities", "don't currently support", "no existing agent", "lack the ability", "I'm not able", "beyond my current", "not something I can", hedged "I can help with X but not Y" (16 positive tests); negative detection for concrete results, conversational replies, error messages, factual responses, short answers, questions, suggestions, empty strings (8 negative tests) — total 24 tests
 
 #### Cognitive integration (8 tests)
 - NL single read, parallel reads, write with consensus, unrecognized returns empty, read missing file, working memory updated, status includes cognitive, multiple NL requests
 
-### Experience tests (69 tests)
+### Experience tests (70 tests)
 
 #### Panels (13 tests)
 - render_status_panel: shows ProbOS system info (1 test)
@@ -239,6 +241,9 @@
 - render_dag_result without reflection works normally (1 test)
 - NL with reflect:true produces reflection key in result (1 test)
 - NL without reflect has no reflection key (1 test)
+
+#### Self-Mod / Designed Agent Reflect (1 test)
+- Designed agent DAG forces reflect=true and produces reflection (1 test)
 
 #### Episodic Memory Integration (4 tests)
 - NL stores episode in memory with correct outcomes (1 test)
@@ -540,6 +545,65 @@
 - Gossip: sends self-model, receiving updates router (2 tests)
 - Runtime: creates bridge when enabled, no bridge when disabled, build_self_model, status includes federation (4 tests)
 - Shell: /federation disabled, /peers disabled, /help includes both, panel rendering (7 tests)
+
+### Self-modification tests (44 tests — new in Phase 10)
+
+#### CodeValidator (9 tests)
+- Valid agent code passes (1 test)
+- Syntax error rejected (1 test)
+- Forbidden import rejected (1 test)
+- Forbidden pattern (eval/exec) rejected (1 test)
+- Missing BaseAgent subclass rejected (1 test)
+- Missing intent_descriptors rejected (1 test)
+- Missing handle_intent rejected (1 test)
+- Module-level side effects rejected (1 test)
+- Allowed imports pass (1 test)
+
+#### AgentDesigner (5 tests)
+- Design returns valid source code (1 test)
+- Generated code passes CodeValidator (1 test)
+- Design prompt contains intent name and description (1 test)
+- Design prompt includes IntentResult/IntentMessage signatures (1 test)
+- Design prompt includes BaseAgent lifecycle methods (1 test)
+
+#### SandboxRunner (4 tests)
+- Valid agent loads and returns IntentResult (1 test)
+- Syntax error agent fails sandbox (1 test)
+- Non-BaseAgent subclass fails (1 test)
+- Timeout kills runaway agent (1 test)
+
+#### SelfModificationPipeline (7 tests)
+- Full pipeline: design → validate → sandbox → register (1 test)
+- Validation failure aborts pipeline (1 test)
+- Sandbox failure aborts pipeline (1 test)
+- Max designed agents limit enforced (1 test)
+- Config disabled returns early (1 test)
+- Pipeline events emitted (design, success/failure) (2 tests)
+
+#### BehavioralMonitor (5 tests)
+- Record execution updates metrics (1 test)
+- High failure rate triggers alert (1 test)
+- Low failure rate no alert (1 test)
+- Trust decline detection (1 test)
+- should_recommend_removal with insufficient data (1 test)
+
+#### Runtime self-mod integration (8 tests)
+- Runtime creates pipeline when enabled (1 test)
+- Runtime skips pipeline when disabled (1 test)
+- Empty DAG triggers self-mod design (1 test)
+- Successful design registers new agent type (1 test)
+- Designed agent pool created with correct size (1 test)
+- Probationary trust set on designed agents (1 test)
+- /designed command shows designed agents (1 test)
+- re-decomposition after design uses new agent (1 test)
+
+#### Escalation post-Phase-10 hardening (6 tests)
+- Re-execute intent after user approval (1 test)
+- User rejection marks node failed (1 test)
+- Original agent results preserved on consensus-policy rejection (1 test)
+- Escalation re-execution with pool rotation (1 test)
+- Re-execution logging includes intent details (1 test)
+- Empty error message replaced with "(empty)" (1 test)
 
 ### Phase 4 Milestone — Achieved
 
@@ -1001,6 +1065,54 @@ The CodeValidator checks that generated code structurally matches the agent cont
 
 Unlike red team agents (which verify output correctness during consensus), the BehavioralMonitor tracks operational patterns of self-created agents over time: execution duration, failure rate, trust trajectory. Alerts are informational — visible via `/designed` — not blocking. The `should_recommend_removal()` method recommends removal after 10+ executions with >50% failure rate, or after 3 consecutive trust declines. This separates "is this output correct?" (red team) from "is this agent reliable over time?" (behavioral monitor).
 
+### AD-115: LLM client injection into designed agents
+
+Designed agents that need LLM intelligence (e.g., translation, summarization) can't function without access to the LLM client. The `AgentDesigner` prompt now includes an LLM ACCESS section with `self._llm_client = kwargs.get("llm_client")` in `__init__`. `SandboxRunner` forwards the LLM client during sandbox testing. `ProbOSRuntime._create_designed_pool()` passes `llm_client=self.llm_client` in the pool kwargs. This means designed agents can make LLM calls just like the cognitive layer, enabling intelligence-based capabilities beyond simple data retrieval.
+
+### AD-116: subprocess.Popen for SelectorEventLoop compatibility
+
+On Windows, `WindowsSelectorEventLoopPolicy` is required for pyzmq (AD-108), but `SelectorEventLoop` does not support `asyncio.create_subprocess_shell/exec`. Replaced async subprocess calls in `ShellCommandAgent` with synchronous `subprocess.Popen` run via `loop.run_in_executor(None, _run_sync, ...)`. The `_run_sync()` function blocks in a thread pool, preserving async compatibility while working on all Windows event loop policies. Uses PowerShell on Windows (`["powershell", "-Command", cmd]`), `/bin/sh -c` elsewhere.
+
+### AD-117: PowerShell wrapper stripping via _PS_WRAPPER_RE
+
+LLM-generated commands often arrive wrapped in redundant `powershell -Command "..."` shells. Since `ShellCommandAgent` already invokes PowerShell on Windows, this creates a double-nesting problem (`powershell -Command "powershell -Command '...'"`) that changes quoting semantics and breaks commands. `_strip_ps_wrapper()` uses `_PS_WRAPPER_RE` regex to detect and unwrap these patterns before execution, extracting the inner command. The regex handles both quoted (`"..."`, `'...'`) and unquoted forms.
+
+### AD-118: Escalation re-execution after user approval
+
+When Tier 3 user consultation approves an intent, the escalation manager now re-executes the original intent through the mesh rather than just returning a stale result. The re-execution uses the same pool rotation and submit function as Tier 1 retries. If the user rejects, the node is marked as failed with a descriptive message. On consensus-policy rejection (Tier 2 LLM rejects), the original agent results are preserved and returned instead of being discarded.
+
+### AD-119: Existing-agent routing before self-mod
+
+Before triggering the self-modification pipeline, the renderer checks whether the LLM-extracted intent name matches an already-registered intent. If a match is found, the request is re-decomposed using the existing agent rather than creating a duplicate. This prevents the common case where the LLM extracts `run_command` as the "unhandled intent" even though `ShellCommandAgent` already handles it, avoiding unnecessary agent proliferation.
+
+### AD-120: General-purpose intent preference in self-mod
+
+`_extract_unhandled_intent()` includes explicit guidance: "Prefer general-purpose intents (translate_text, convert_data) over narrow ones (translate_hello_to_japanese)." This nudges the LLM toward creating reusable agents rather than single-use ones. The intent extraction prompt also avoids creating intents that overlap with existing capabilities by listing all registered intent names.
+
+### AD-121: Reflect prompt rewrite with node status prefix
+
+The `REFLECT_PROMPT` was rewritten to produce synthesized answers rather than summaries. Each node's results in the reflect payload are now prefixed with `[status]` (e.g., `[completed]`, `[failed]`) so the LLM can distinguish successful from failed operations. The `_summarize_node_result()` method deduplicates identical `output` and `result` fields (common when an agent returns the same data in both) to reduce payload bloat.
+
+### AD-122: Force reflect=true for designed agent intents
+
+When a designed agent handles an intent, its descriptor is created with `requires_reflect=True`. The renderer also forces `dag.reflect = True` on DAGs produced by designed agents. This ensures all designed agent responses go through LLM synthesis, compensating for the fact that designed agents may produce raw/structured output that benefits from a natural-language reflection step.
+
+### AD-123: Self-mod UX with explicit user approval
+
+Self-modification now shows the user what intent was detected, what the proposed agent will do, and asks for explicit approval before creating the agent. The renderer displays the intent name, purpose, and "Create this agent? (y/N)" prompt. After approval, the agent is designed, validated, sandboxed, and registered with the user's original request retried immediately. The shell wires `_user_approval_callback` for this prompt.
+
+### AD-124: Anti-echo rules for run_command
+
+The prompt builder generates explicit rules prohibiting `echo`, `Write-Host`, `Write-Output`, and similar commands from being used to fabricate answers. Without this, the LLM would often decompose "what time is it?" into `run_command: echo "The time is 3pm"` — faking the answer rather than running an actual time-querying command. The anti-echo rules force the LLM to use real system commands for data retrieval.
+
+### AD-125: Log suppression during interactive shell
+
+`__main__.py` now raises the logging level for noisy loggers (root, probos, asyncio, etc.) during interactive shell operation. Without this, INFO-level log messages from subsystems (dream scheduler, Hebbian router, gossip protocol) would print over the interactive prompt, making the shell unusable. Log level is restored to the configured level when the shell exits.
+
+### AD-126: Capability-gap detection via regex heuristic
+
+`is_capability_gap()` in `decomposer.py` uses a compiled regex (`_CAPABILITY_GAP_RE`) to detect LLM responses that indicate a missing capability rather than a genuine conversational reply. Phrases like "I don't have", "no capability", "not equipped", "unable to", "beyond my current capabilities" trigger self-modification. This fixes a regression where capability-gap responses blocked self-mod because the `response` field was non-empty (AD-112 originally gated self-mod on empty `response`). The regex has 16 positive and 8 negative test cases to prevent false positives on normal responses.
+
 ---
 
 ## What's Next
@@ -1063,6 +1175,8 @@ Unlike red team agents (which verify output correctness during consensus), the B
 - [x] ~~582/582 tests pass (after Windows fix)~~
 - [x] ~~Phase 10: Self-Modification (SelfModConfig, CodeValidator AST analysis, AgentDesigner LLM-based code generation, SandboxRunner dynamic module loading, BehavioralMonitor anomaly detection, SelfModificationPipeline orchestration, TrustNetwork.create_with_prior() probationary trust, MockLLMClient agent_design + intent_extraction patterns, runtime unhandled intent detection + auto-design pipeline, /designed command + render_designed_panel, renderer self_mod events)~~
 - [x] ~~627/627 tests pass~~
+- [x] ~~Post-Phase 10 hardening: escalation re-execution after approval (AD-118), capability-gap detection for self-mod (AD-126), SelectorEventLoop subprocess compat (AD-116), PowerShell wrapper stripping (AD-117), LLM client injection into designed agents (AD-115), self-mod UX with user approval (AD-123), existing-agent routing (AD-119), general-purpose intent preference (AD-120), force reflect for designed agents (AD-122), anti-echo rules (AD-124), reflect prompt rewrite with node status (AD-121), log suppression (AD-125)~~
+- [x] ~~660/660 tests pass~~
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
 
