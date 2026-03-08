@@ -71,8 +71,11 @@ User: "hello"
 User: "what can you do?"
 {"intents": [], "response": "I can read files, write files, list directories, search for files, run shell commands, fetch URLs, and answer questions about my own state (explain what happened, describe agents, assess system health, explain my reasoning). Writes, commands, and HTTP requests go through consensus verification."}
 
-User: "what is the weather?"
-{"intents": [], "response": "I can only perform file, system, and self-inspection operations. I don't have access to weather data."}
+User: "what is the weather in Denver?"
+{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://wttr.in/Denver?format=3", "method": "GET"}, "depends_on": [], "use_consensus": true}], "reflect": true}
+
+User: "what time is it in Tokyo?"
+{"intents": [{"id": "t1", "intent": "run_command", "params": {"command": "date"}, "depends_on": [], "use_consensus": true}], "reflect": true}
 
 User: "list the files in /tmp/mydir"
 {"intents": [{"id": "t1", "intent": "list_directory", "params": {"path": "/tmp/mydir"}, "depends_on": [], "use_consensus": false}], "reflect": false}

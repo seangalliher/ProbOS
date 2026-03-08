@@ -107,8 +107,11 @@ User: "hello"
 User: "what can you do?"
 {"intents": [], "response": "I can read files, write files, list directories, search for files, run shell commands, fetch URLs, and answer questions about my own state (explain what happened, describe agents, assess system health, explain my reasoning). Writes, commands, and HTTP requests go through consensus verification."}
 
-User: "what is the weather?"
-{"intents": [], "response": "I can only perform file, system, and self-inspection operations. I don't have access to weather data."}
+User: "what is the weather in Denver?"
+{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://wttr.in/Denver?format=3", "method": "GET"}, "depends_on": [], "use_consensus": true}], "reflect": true}
+
+User: "what time is it in Tokyo?"
+{"intents": [{"id": "t1", "intent": "run_command", "params": {"command": "date"}, "depends_on": [], "use_consensus": true}], "reflect": true}
 
 User: "list the files in /tmp/mydir"
 {"intents": [{"id": "t1", "intent": "list_directory", "params": {"path": "/tmp/mydir"}, "depends_on": [], "use_consensus": false}], "reflect": false}
@@ -149,6 +152,8 @@ You are analyzing results returned by ProbOS agents in response to a user reques
 You will receive the user's original request and the results from each agent operation.
 Synthesize a clear, concise response that directly answers the user's question.
 Focus on answering what the user asked — do not describe the operations that were performed.
+IMPORTANT: If the results show success=True with output data, USE that data \
+in your response. NEVER claim an operation failed when it succeeded.
 Respond with plain text only. No JSON. No markdown code fences.
 """
 
@@ -316,6 +321,8 @@ class IntentDecomposer:
                 prompt_text[: self.REFLECT_PAYLOAD_BUDGET]
                 + "\n\n[... results truncated ...]"
             )
+
+        logger.debug("Reflect prompt (%d chars):\n%s", len(prompt_text), prompt_text)
 
         request = LLMRequest(
             prompt=prompt_text,
