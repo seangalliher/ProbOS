@@ -347,7 +347,7 @@ class ProbOSRuntime:
 
             designer = AgentDesigner(self.llm_client, self.config.self_mod)
             validator = CodeValidator(self.config.self_mod)
-            sandbox = SandboxRunner(self.config.self_mod)
+            sandbox = SandboxRunner(self.config.self_mod, llm_client=self.llm_client)
             self.behavioral_monitor = BehavioralMonitor()
 
             self.self_mod_pipeline = SelfModificationPipeline(
@@ -1095,7 +1095,7 @@ class ProbOSRuntime:
 
     async def _create_designed_pool(self, agent_type: str, pool_name: str, size: int = 2) -> None:
         """Create a pool for a self-designed agent type."""
-        await self.create_pool(pool_name, agent_type, target_size=size)
+        await self.create_pool(pool_name, agent_type, target_size=size, llm_client=self.llm_client)
 
     async def _set_probationary_trust(self, pool_name: str) -> None:
         """Set probationary trust for all agents in a designed pool."""

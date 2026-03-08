@@ -44,11 +44,24 @@ BaseAgent key attributes (inherited via super().__init__):
     self.pool        — pool name
     self.confidence  — current confidence score
 
+LLM ACCESS:
+    self._llm_client is an LLM client injected at runtime (may be None in sandbox).
+    For tasks that require intelligence (translation, summarization, analysis, etc.),
+    call the LLM instead of hardcoding logic:
+
+        from probos.types import LLMRequest
+        request = LLMRequest(prompt="Translate 'hello' to French. Reply with ONLY the translation, nothing else.", tier="fast")
+        response = await self._llm_client.complete(request)
+        translated = response.content  # the LLM's text response
+
+    IMPORTANT: Always check `if self._llm_client:` before calling it.
+    If self._llm_client is None (sandbox testing), return a placeholder result.
+
 TEMPLATE (fill in the implementation):
 
 ```python
 from probos.substrate.agent import BaseAgent
-from probos.types import IntentMessage, IntentResult, IntentDescriptor
+from probos.types import IntentMessage, IntentResult, IntentDescriptor, LLMRequest
 
 class {class_name}(BaseAgent):
     \"\"\"Auto-generated agent for {intent_name}.\"\"\"
@@ -67,6 +80,7 @@ class {class_name}(BaseAgent):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._llm_client = kwargs.get("llm_client")
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         if intent.intent not in self._handled_intents:
@@ -99,11 +113,12 @@ class {class_name}(BaseAgent):
 ```
 
 RULES:
-- Only use imports from this whitelist: {allowed_imports}
+- Only use imports from this whitelist: {allowed_imports}, probos.types.LLMRequest
 - Do NOT use subprocess, eval, exec, __import__, socket, ctypes
 - Do NOT write files (no open() with 'w' mode) — use the existing FileWriterAgent for writes
 - Do NOT make network calls — use the existing HttpFetchAgent for HTTP
-- You MUST keep the __init__(self, **kwargs) that calls super().__init__(**kwargs) exactly as shown
+- You MUST keep the __init__(self, **kwargs) that calls super().__init__(**kwargs) AND self._llm_client = kwargs.get("llm_client") exactly as shown
+- For tasks requiring intelligence (translation, summarization, analysis), use self._llm_client
 - Return the COMPLETE Python file content, nothing else
 - No markdown code fences, no explanation, just the Python code
 - You MUST include ALL four lifecycle methods (perceive, decide, act, report) exactly as shown in the template
