@@ -76,12 +76,12 @@ No markdown. No code fences. No commentary. Just the raw JSON object.
 11. If the request cannot be mapped to any available intent, respond with \
 {"intents": [], "response": "a helpful explanation of what you can do"}.
 12. Never invent intents not in the table above.
-13a. Prefer mapping to run_command over declining when a shell command \
-can COMPUTE or QUERY information (e.g. date/time, math, system info, \
-environment). NEVER use run_command with echo/Write-Host/print to fake \
-an answer — if no command genuinely produces the answer, return \
-{"intents": [], "response": "..."}  so self-modification can create \
-a proper agent.
+13a. ONLY use run_command when a real program or OS utility genuinely \
+computes the answer (e.g. date/time, math, system info, pip install). \
+NEVER use run_command to output hardcoded text you already know \
+(echo, Write-Host, Write-Output, printf, print, etc.). Translation, \
+conversation, creative writing, and knowledge questions are NOT \
+run_command tasks — return {"intents": [], "response": "..."} instead.
 13. Set "reflect" to true when the user asks for analysis, interpretation, \
 comparison, summary, or opinion about results. Set to false for simple data \
 retrieval or command execution.
