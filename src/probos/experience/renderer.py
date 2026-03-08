@@ -14,7 +14,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TYPE_CHECKING
 
 from rich.console import Console
-from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -46,9 +45,19 @@ class ExecutionRenderer:
         self.console = console
         self.runtime = runtime
         self.debug = debug
-        self._live: Live | None = None
         self._current_dag: TaskDAG | None = None
         self._node_statuses: dict[str, str] = {}
+        self._status = None
+
+        # Wire pre-user hook so Tier 3 escalation stops Live before prompting
+        if hasattr(runtime, 'escalation_manager') and runtime.escalation_manager:
+            runtime.escalation_manager.set_pre_user_hook(self._stop_live_for_user)
+
+    def _stop_live_for_user(self) -> None:
+        """Stop the spinner so the user can interact with the escalation prompt."""
+        if self._status is not None:
+            self._status.stop()
+            self._status = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -112,8 +121,9 @@ class ExecutionRenderer:
                 self.console.print("[yellow]No actionable intents recognized.[/yellow]")
             return self._empty_result(text, dag)
 
-        # Show DAG plan
-        self._render_dag_plan(dag)
+        if self.debug:
+            # Show DAG plan only in debug mode (Live table shows same info)
+            self._render_dag_plan(dag)
 
         if self.debug:
             self._render_debug_dag(dag)
@@ -126,17 +136,22 @@ class ExecutionRenderer:
         for node in dag.nodes:
             self.runtime.working_memory.record_intent(node.intent, node.params)
 
-        with Live(
-            self._build_progress_table(),
-            console=self.console,
-            refresh_per_second=4,
-            transient=True,
-        ) as live:
-            self._live = live
+        node_count = len(dag.nodes)
+        self._status = self.console.status(
+            f"[bold blue]Executing {node_count} task(s)...[/bold blue]",
+            spinner="dots",
+        )
+        self._status.start()
+        try:
             execution_result = await self.runtime.dag_executor.execute(
                 dag, on_event=self._on_execution_event
             )
-            self._live = None
+        finally:
+            if self._status is not None:
+                self._status.stop()
+                self._status = None
+        # Print final table with completed statuses
+        self.console.print(self._build_progress_table())
 
         # Record results in working memory
         for node in dag.nodes:
@@ -225,8 +240,7 @@ class ExecutionRenderer:
         elif event == "escalation_exhausted":
             self._node_statuses[node.id] = "failed"
 
-        if self._live:
-            self._live.update(self._build_progress_table())
+
 
     # ------------------------------------------------------------------
     # Display builders
@@ -234,9 +248,11 @@ class ExecutionRenderer:
 
     def _build_progress_table(self) -> Table:
         """Build a progress table showing each DAG node's status."""
-        table = Table(show_header=True, show_lines=False, title="Executing")
+        node_count = len(self._current_dag.nodes) if self._current_dag else 0
+        table = Table(show_header=True, show_lines=False, title=f"Executing {node_count} task(s)")
         table.add_column("Node", width=6)
         table.add_column("Intent")
+        table.add_column("Params", max_width=40)
         table.add_column("Status")
         table.add_column("Dependencies")
 
@@ -261,8 +277,9 @@ class ExecutionRenderer:
                 icon = _ICON_FAIL
                 label = "[red]FAILED[/red]"
 
+            params_str = " ".join(f"{k}={v}" for k, v in node.params.items()) if node.params else "-"
             deps = ", ".join(node.depends_on) if node.depends_on else "-"
-            table.add_row(node.id, node.intent, f"{icon} {label}", deps)
+            table.add_row(node.id, node.intent, f"[dim]{params_str}[/dim]", f"{icon} {label}", deps)
 
         return table
 

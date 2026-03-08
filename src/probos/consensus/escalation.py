@@ -116,7 +116,8 @@ class EscalationManager:
 
         # ---- Tier 3: User consultation ----
         tiers_attempted.append(EscalationTier.USER)
-        tier3_result = await self._tier3_user(node, error, context)
+        context_with_tiers = {**context, "tiers_attempted": tiers_attempted}
+        tier3_result = await self._tier3_user(node, error, context_with_tiers)
         tier3_result.tiers_attempted = tiers_attempted
         return tier3_result
 
