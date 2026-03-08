@@ -29,6 +29,9 @@ consensus:
   trust_decay_rate: 0.999
 
 cognitive:
+  # Default tier for all LLM requests ("fast", "standard", or "deep")
+  default_llm_tier: "fast"
+
   # Shared defaults (used when per-tier not specified)
   llm_base_url: "http://127.0.0.1:8080/v1"
   llm_api_key: ""
