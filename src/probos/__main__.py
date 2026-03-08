@@ -32,13 +32,19 @@ def _setup_logging(log_level: str) -> None:
         format="%(asctime)s  %(levelname)-8s  %(name)-30s  %(message)s",
         datefmt="%H:%M:%S",
     )
-    # Keep the noise down while the shell is active
+    # Keep the noise down while the shell is active — the Rich UI
+    # already shows execution progress visually.
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     logging.getLogger("aiosqlite").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("probos.substrate.agent").setLevel(logging.WARNING)
     logging.getLogger("probos.federation").setLevel(logging.WARNING)
+    logging.getLogger("probos.cognitive.decomposer").setLevel(logging.WARNING)
+    logging.getLogger("probos.mesh.intent").setLevel(logging.WARNING)
+    logging.getLogger("probos.mesh.routing").setLevel(logging.WARNING)
+    logging.getLogger("probos.substrate.spawner").setLevel(logging.WARNING)
+    logging.getLogger("probos.substrate.pool").setLevel(logging.WARNING)
 
 
 async def _create_llm_client(config, console: Console):
