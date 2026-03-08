@@ -247,6 +247,12 @@ class ExecutionRenderer:
             pass  # Logged by bridge; no node status change needed
         elif event == "federation_receive":
             pass  # Logged by bridge; no node status change needed
+        elif event == "self_mod_design":
+            pass  # Logged by pipeline
+        elif event == "self_mod_success":
+            pass  # Logged by pipeline
+        elif event == "self_mod_failure":
+            pass  # Logged by pipeline
 
 
 

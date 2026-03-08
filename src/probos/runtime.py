@@ -155,6 +155,10 @@ class ProbOSRuntime:
         self._federation_transport: Any = None
         self._start_time: float = time.monotonic()
 
+        # --- Self-modification ---
+        self.self_mod_pipeline: Any = None  # SelfModificationPipeline | None
+        self.behavioral_monitor: Any = None  # BehavioralMonitor | None
+
         # --- Execution history (for introspection) ---
         self._last_execution: dict[str, Any] | None = None
         self._previous_execution: dict[str, Any] | None = None
@@ -332,6 +336,32 @@ class ProbOSRuntime:
                 self.federation_bridge = bridge
                 self._federation_transport = transport
                 logger.info("Federation started: node=%s", self.config.federation.node_id)
+
+        # Start self-modification pipeline if enabled
+        if self.config.self_mod.enabled:
+            from probos.cognitive.agent_designer import AgentDesigner
+            from probos.cognitive.code_validator import CodeValidator
+            from probos.cognitive.sandbox import SandboxRunner
+            from probos.cognitive.behavioral_monitor import BehavioralMonitor
+            from probos.cognitive.self_mod import SelfModificationPipeline
+
+            designer = AgentDesigner(self.llm_client, self.config.self_mod)
+            validator = CodeValidator(self.config.self_mod)
+            sandbox = SandboxRunner(self.config.self_mod)
+            self.behavioral_monitor = BehavioralMonitor()
+
+            self.self_mod_pipeline = SelfModificationPipeline(
+                designer=designer,
+                validator=validator,
+                sandbox=sandbox,
+                monitor=self.behavioral_monitor,
+                config=self.config.self_mod,
+                register_fn=self._register_designed_agent,
+                create_pool_fn=self._create_designed_pool,
+                set_trust_fn=self._set_probationary_trust,
+                user_approval_fn=None,  # Shell sets this after creation
+            )
+            logger.info("Self-modification pipeline enabled")
 
         # Start episodic memory if provided
         if self.episodic_memory:
@@ -695,17 +725,39 @@ class ProbOSRuntime:
             await on_event("decompose_complete", {"dag": dag})
 
         if not dag.nodes:
-            logger.warning("No intents parsed from NL input: %s", text[:50])
-            return {
-                "input": text,
-                "dag": dag,
-                "results": {},
-                "complete": True,
-                "node_count": 0,
-                "completed_count": 0,
-                "failed_count": 0,
-                "response": dag.response,
-            }
+            # Self-modification: try to design an agent for this unhandled intent
+            # Trigger even if dag.response is set — a conversational "I can't do that"
+            # response with no actual intents still means no agent handled it.
+            if self.self_mod_pipeline:
+                intent_meta = await self._extract_unhandled_intent(text)
+                if intent_meta:
+                    record = await self.self_mod_pipeline.handle_unhandled_intent(
+                        intent_name=intent_meta["name"],
+                        intent_description=intent_meta["description"],
+                        parameters=intent_meta.get("parameters", {}),
+                        requires_consensus=intent_meta.get("requires_consensus", False),
+                    )
+                    if record and record.status == "active":
+                        # Retry the original request now that a new agent exists
+                        dag = await self.decomposer.decompose(
+                            text, context=context, similar_episodes=similar_episodes or None,
+                        )
+                        if dag.nodes:
+                            # Successfully re-decomposed — continue with normal execution
+                            pass
+
+            if not dag.nodes:
+                logger.warning("No intents parsed from NL input: %s", text[:50])
+                return {
+                    "input": text,
+                    "dag": dag,
+                    "results": {},
+                    "complete": True,
+                    "node_count": 0,
+                    "completed_count": 0,
+                    "failed_count": 0,
+                    "response": dag.response,
+                }
 
         # Record intents in working memory
         for node in dag.nodes:
@@ -822,6 +874,11 @@ class ProbOSRuntime:
             "size": self.workflow_cache.size,
             "entries": len(self.workflow_cache.entries),
         }
+        result["self_mod"] = (
+            self.self_mod_pipeline.designed_agent_status()
+            if self.self_mod_pipeline
+            else {"enabled": False}
+        )
         if self.dream_scheduler:
             dream_status: dict[str, Any] = {
                 "state": "dreaming" if self.dream_scheduler.is_dreaming else "idle",
@@ -1007,3 +1064,65 @@ class ProbOSRuntime:
                     pool_intents[pool_name] = [d.name for d in descriptors]
                     break
         return pool_intents
+
+    # ------------------------------------------------------------------
+    # Self-modification helpers
+    # ------------------------------------------------------------------
+
+    async def _register_designed_agent(self, agent_class: type) -> None:
+        """Register a self-designed agent class. Wraps register_agent_type()."""
+        agent_type = getattr(agent_class, "agent_type", "unknown")
+        self.register_agent_type(agent_type, agent_class)
+
+    async def _create_designed_pool(self, agent_type: str, pool_name: str, size: int = 2) -> None:
+        """Create a pool for a self-designed agent type."""
+        await self.create_pool(pool_name, agent_type, target_size=size)
+
+    async def _set_probationary_trust(self, pool_name: str) -> None:
+        """Set probationary trust for all agents in a designed pool."""
+        pool = self.pools.get(pool_name)
+        if not pool:
+            return
+        for agent in pool.healthy_agents:
+            self.trust_network.create_with_prior(
+                agent.id,
+                alpha=self.config.self_mod.probationary_alpha,
+                beta=self.config.self_mod.probationary_beta,
+            )
+
+    async def _extract_unhandled_intent(self, text: str) -> dict[str, Any] | None:
+        """Use LLM to extract intent metadata from an unhandled request."""
+        import json as _json
+
+        existing = [d.name for d in self._collect_intent_descriptors()]
+
+        prompt = (
+            'The user asked ProbOS to do something, but no existing agent can handle it.\n'
+            f'User request: "{text}"\n\n'
+            'Extract what kind of agent would be needed. Respond with ONLY a JSON object:\n'
+            '{\n'
+            '    "name": "intent_name_snake_case",\n'
+            '    "description": "What this intent does in one sentence",\n'
+            '    "parameters": {"param_name": "description"},\n'
+            '    "requires_consensus": false\n'
+            '}\n\n'
+            'Rules:\n'
+            '- name must be snake_case, 2-4 words\n'
+            f'- Do NOT create intents that duplicate existing capabilities: {existing}\n'
+            '- requires_consensus should be true only for destructive or external operations\n'
+        )
+
+        from probos.types import LLMRequest
+        request = LLMRequest(prompt=prompt, tier="fast")
+        response = await self.llm_client.complete(request)
+
+        if not response.content or response.error:
+            return None
+
+        try:
+            data = _json.loads(response.content)
+            if "name" in data and "description" in data:
+                return data
+        except (_json.JSONDecodeError, TypeError):
+            pass
+        return None

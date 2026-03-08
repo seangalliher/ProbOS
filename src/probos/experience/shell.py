@@ -43,6 +43,7 @@ class ProbOSShell:
         "/scaling":   "Show pool scaling status",
         "/federation": "Show federation status",
         "/peers":     "Show peer node models",
+        "/designed":  "Show self-designed agent status",
         "/explain":   "Explain what happened in the last NL request",
         "/model":     "Show LLM client type, endpoint, and tier config",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
@@ -141,6 +142,7 @@ class ProbOSShell:
             "/scaling":   self._cmd_scaling,
             "/federation": self._cmd_federation,
             "/peers":     self._cmd_peers,
+            "/designed":  self._cmd_designed,
             "/explain":   self._cmd_explain,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
@@ -296,6 +298,15 @@ class ProbOSShell:
             return
         status = bridge.federation_status()
         self.console.print(panels.render_peers_panel(status.get("peer_models", {})))
+
+    async def _cmd_designed(self, arg: str) -> None:
+        if self.runtime.self_mod_pipeline:
+            status = self.runtime.self_mod_pipeline.designed_agent_status()
+            if self.runtime.behavioral_monitor:
+                status["behavioral"] = self.runtime.behavioral_monitor.get_status()
+            self.console.print(panels.render_designed_panel(status))
+        else:
+            self.console.print("[yellow]Self-modification not enabled[/yellow]")
 
     async def _cmd_explain(self, arg: str) -> None:
         await self._handle_nl("what just happened?")

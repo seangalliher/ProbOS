@@ -319,6 +319,30 @@ class MockLLMClient(BaseLLMClient):
                 request_id=request.id,
             )
 
+        # Detect agent design requests (AGENT_DESIGN_PROMPT signature)
+        if "UNHANDLED INTENT:" in request.prompt and "Subclass BaseAgent" in request.prompt:
+            content = self._make_agent_design_response(request.prompt)
+            return LLMResponse(
+                content=content,
+                model="mock",
+                tier=request.tier,
+                tokens_used=len(content) // 4,
+                cached=False,
+                request_id=request.id,
+            )
+
+        # Detect intent extraction requests
+        if "no existing agent can handle it" in request.prompt and "intent_name_snake_case" in request.prompt:
+            content = self._make_intent_extraction_response(request.prompt)
+            return LLMResponse(
+                content=content,
+                model="mock",
+                tier=request.tier,
+                tokens_used=len(content) // 4,
+                cached=False,
+                request_id=request.id,
+            )
+
         prompt = request.prompt.lower()
 
         for pattern, handler in self._patterns:
@@ -555,4 +579,96 @@ class MockLLMClient(BaseLLMClient):
                 "use_consensus": False,
             }],
             "reflect": True,
+        })
+
+    def _make_agent_design_response(self, prompt: str) -> str:
+        """Generate a valid agent source code for an agent design request.
+
+        Parses the intent name from the prompt and returns minimal valid
+        agent Python source code.
+        """
+        # Extract intent name from the prompt
+        name_match = re.search(r'Name:\s*(\w+)', prompt)
+        intent_name = name_match.group(1) if name_match else "count_words"
+
+        # Build class name
+        parts = intent_name.split("_")
+        class_name = "".join(p.capitalize() for p in parts) + "Agent"
+
+        return (
+            'from probos.substrate.agent import BaseAgent\n'
+            'from probos.types import IntentMessage, IntentResult, IntentDescriptor\n'
+            '\n'
+            f'class {class_name}(BaseAgent):\n'
+            f'    """Auto-generated agent for {intent_name}."""\n'
+            '\n'
+            f'    agent_type = "{intent_name}"\n'
+            f'    _handled_intents = ["{intent_name}"]\n'
+            '    intent_descriptors = [\n'
+            '        IntentDescriptor(\n'
+            f'            name="{intent_name}",\n'
+            '            params={"text": "input text"},\n'
+            f'            description="Handle {intent_name} intent",\n'
+            '            requires_consensus=False,\n'
+            '            requires_reflect=False,\n'
+            '        )\n'
+            '    ]\n'
+            '\n'
+            '    async def perceive(self, intent):\n'
+            '        intent_name = intent.get("intent", "")\n'
+            '        if intent_name not in self._handled_intents:\n'
+            '            return None\n'
+            '        return {"intent": intent_name, "params": intent.get("params", {})}\n'
+            '\n'
+            '    async def decide(self, observation):\n'
+            '        return {"action": "process", "params": observation["params"]}\n'
+            '\n'
+            '    async def act(self, plan):\n'
+            '        text = plan.get("params", {}).get("text", "")\n'
+            '        count = len(text.split())\n'
+            '        return {"success": True, "data": {"result": count}}\n'
+            '\n'
+            '    async def report(self, result):\n'
+            '        return result\n'
+            '\n'
+            '    async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:\n'
+            '        if intent.intent not in self._handled_intents:\n'
+            '            return None\n'
+            '        observation = await self.perceive(intent.__dict__)\n'
+            '        if observation is None:\n'
+            '            return None\n'
+            '        plan = await self.decide(observation)\n'
+            '        result = await self.act(plan)\n'
+            '        report = await self.report(result)\n'
+            '        success = report.get("success", False)\n'
+            '        self.update_confidence(success)\n'
+            '        return IntentResult(\n'
+            '            intent_id=intent.id,\n'
+            '            agent_id=self.id,\n'
+            '            success=success,\n'
+            '            result=report.get("data"),\n'
+            '            error=report.get("error"),\n'
+            '            confidence=self.confidence,\n'
+            '        )\n'
+        )
+
+    def _make_intent_extraction_response(self, prompt: str) -> str:
+        """Generate a valid JSON intent extraction response.
+
+        Parses the user request text from the prompt and returns
+        a synthetic intent name.
+        """
+        # Extract user request text
+        req_match = re.search(r'User request:\s*"(.+?)"', prompt)
+        user_text = req_match.group(1) if req_match else "count words"
+
+        # Derive a simple intent name from the user text
+        words = re.findall(r'[a-z]+', user_text.lower())
+        intent_name = "_".join(words[:3]) if words else "custom_task"
+
+        return json.dumps({
+            "name": intent_name,
+            "description": f"Handle the request: {user_text}",
+            "parameters": {"text": "input text"},
+            "requires_consensus": False,
         })

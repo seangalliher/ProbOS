@@ -643,3 +643,66 @@ def render_peers_panel(peer_models: dict) -> Panel:
         )
 
     return Panel(table, title=f"Peers ({len(peer_models)})", border_style="cyan")
+
+
+def render_designed_panel(status: dict[str, Any]) -> Panel:
+    """Render self-designed agents as a Rich Panel with table."""
+    agents = status.get("designed_agents", [])
+    active = status.get("active_count", 0)
+    max_agents = status.get("max_designed_agents", 5)
+
+    if not agents:
+        lines = [
+            "[dim]No self-designed agents yet.[/dim]",
+            "",
+            f"Capacity: {active}/{max_agents} slots used.",
+        ]
+        return Panel("\n".join(lines), title="Designed Agents", border_style="yellow")
+
+    table = Table(show_header=True, show_lines=False)
+    table.add_column("Type")
+    table.add_column("Class")
+    table.add_column("Intent")
+    table.add_column("Status")
+    table.add_column("Sandbox", justify="right")
+
+    for a in agents:
+        status_text = Text(a.get("status", "?"))
+        if a.get("status") == "active":
+            status_text.stylize("green")
+        elif a.get("status") in ("failed_validation", "failed_sandbox"):
+            status_text.stylize("red")
+        elif a.get("status") == "rejected_by_user":
+            status_text.stylize("yellow")
+
+        sandbox_ms = a.get("sandbox_time_ms", 0)
+        sandbox_str = f"{sandbox_ms:.0f}ms" if sandbox_ms else "-"
+
+        table.add_row(
+            a.get("agent_type", "?"),
+            a.get("class_name", "?"),
+            a.get("intent_name", "?"),
+            status_text,
+            sandbox_str,
+        )
+
+    # Behavioral alerts summary
+    behavioral = status.get("behavioral", {})
+    lines_after = []
+    if behavioral:
+        for agent_type, info in behavioral.items():
+            alert_count = info.get("alert_count", 0)
+            if alert_count > 0:
+                lines_after.append(
+                    f"[yellow]! {agent_type}: {alert_count} behavioral alert(s)[/yellow]"
+                )
+
+    title = f"Designed Agents ({active}/{max_agents})"
+    if lines_after:
+        return Panel(
+            table.__rich_console__(None, None) if False else
+            "\n".join([str(table)] + lines_after),
+            title=title,
+            border_style="yellow",
+        )
+    return Panel(table, title=title, border_style="yellow")

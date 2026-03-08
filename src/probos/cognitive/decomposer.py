@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TYPE_CHECKING
 
 from probos.cognitive.llm_client import BaseLLMClient
-from probos.cognitive.prompt_builder import PromptBuilder
+from probos.cognitive.prompt_builder import PromptBuilder, get_platform_context
 from probos.cognitive.working_memory import WorkingMemoryManager, WorkingMemorySnapshot
 from probos.types import ConsensusOutcome, IntentDescriptor, LLMRequest, TaskDAG, TaskNode, Episode, AttentionEntry
 
@@ -247,7 +247,7 @@ class IntentDecomposer:
         if self._intent_descriptors:
             system_prompt = self._prompt_builder.build_system_prompt(self._intent_descriptors)
         else:
-            system_prompt = _LEGACY_SYSTEM_PROMPT
+            system_prompt = _LEGACY_SYSTEM_PROMPT + "\n\n" + get_platform_context()
 
         request = LLMRequest(
             prompt="\n".join(prompt_parts),

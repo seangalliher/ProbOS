@@ -112,6 +112,19 @@ class TrustNetwork:
             )
         return self._records[agent_id]
 
+    def create_with_prior(self, agent_id: AgentID, alpha: float, beta: float) -> None:
+        """Create a trust record with a custom Beta prior.
+
+        Used for probationary agents (e.g., self-created with alpha=1, beta=3).
+        If the agent already has a trust record, this is a no-op.
+        """
+        if agent_id not in self._records:
+            self._records[agent_id] = TrustRecord(
+                agent_id=agent_id,
+                alpha=alpha,
+                beta=beta,
+            )
+
     def record_outcome(
         self,
         agent_id: AgentID,
