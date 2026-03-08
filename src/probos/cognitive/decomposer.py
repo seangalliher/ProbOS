@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any, TYPE_CHECKING
 
@@ -17,6 +18,28 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+# Patterns that indicate a capability gap (the LLM is saying "I can't do X")
+# rather than a genuine conversational reply ("Hello!").
+_CAPABILITY_GAP_RE = re.compile(
+    r"don'?t have|(?:can'?t|cannot|unable to|no (?:built-in |native )?(?:"
+    r"capability|ability|support|way|mechanism|tool))|not (?:available|"
+    r"supported|possible)|lack(?:s|ing)?|doesn'?t (?:have|support)|"
+    r"beyond (?:my|current) (?:capabilities|abilities)|outside (?:my|the) "
+    r"(?:scope|capabilities)",
+    re.IGNORECASE,
+)
+
+
+def is_capability_gap(response: str) -> bool:
+    """Return True if a dag.response indicates a capability gap.
+
+    A capability-gap response means the LLM couldn't map the request to
+    any existing intent and is explaining the limitation.  These should
+    still trigger self-mod so ProbOS can learn the missing capability.
+    Conversational responses ("Hello!", "Here's what I can do") should not.
+    """
+    return bool(_CAPABILITY_GAP_RE.search(response))
 
 # Deprecated — kept for backward compatibility when no descriptors are provided.
 _LEGACY_SYSTEM_PROMPT = """\

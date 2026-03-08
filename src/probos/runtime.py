@@ -725,12 +725,15 @@ class ProbOSRuntime:
             await on_event("decompose_complete", {"dag": dag})
 
         if not dag.nodes:
-            # Self-modification: only try to design an agent when the
-            # decomposer returned NO intents AND NO conversational response.
-            # A non-empty dag.response means the decomposer chose to answer
-            # conversationally — respect that instead of creating agents.
+            # Self-modification: try when the decomposer returned no intents.
+            # Skip only if the response is a genuine conversational reply
+            # (greeting, help text).  Capability-gap responses ("I don't
+            # have X") should still trigger self-mod.
+            from probos.cognitive.decomposer import is_capability_gap
             self_mod_result = None
-            if self.self_mod_pipeline and not dag.response:
+            if self.self_mod_pipeline and (
+                not dag.response or is_capability_gap(dag.response)
+            ):
                 intent_meta = await self._extract_unhandled_intent(text)
                 if intent_meta:
                     record = await self.self_mod_pipeline.handle_unhandled_intent(
