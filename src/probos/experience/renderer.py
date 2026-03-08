@@ -271,6 +271,17 @@ class ExecutionRenderer:
 
         execution_result["input"] = text
 
+        # Force reflect for designed agent intents whose raw output
+        # isn't user-friendly (the LLM often ignores the reflect rule).
+        if not dag.reflect and dag.nodes and self.runtime.self_mod_pipeline:
+            designed = {
+                r.intent_name
+                for r in self.runtime.self_mod_pipeline._records
+                if r.status == "active"
+            }
+            if any(n.intent in designed for n in dag.nodes):
+                dag.reflect = True
+
         # Phase 3: Reflect (if requested by the decomposer)
         if dag.reflect and dag.nodes:
             with self.console.status(
