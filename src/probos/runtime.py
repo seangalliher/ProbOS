@@ -757,8 +757,9 @@ class ProbOSRuntime:
             # have X") should still trigger self-mod.
             from probos.cognitive.decomposer import is_capability_gap
             self_mod_result = None
+            is_gap = dag.capability_gap or (dag.response and is_capability_gap(dag.response))
             if self.self_mod_pipeline and (
-                not dag.response or is_capability_gap(dag.response)
+                not dag.response or is_gap
             ):
                 intent_meta = await self._extract_unhandled_intent(text)
                 if intent_meta:

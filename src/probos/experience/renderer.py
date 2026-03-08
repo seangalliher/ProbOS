@@ -124,7 +124,8 @@ class ExecutionRenderer:
             # (greeting, help text, etc.), show it and skip self-mod.
             # But if the response indicates a *capability gap* ("I don't
             # have X"), still let self-mod try to create the agent.
-            if dag.response and not is_capability_gap(dag.response):
+            is_gap = dag.capability_gap or (dag.response and is_capability_gap(dag.response))
+            if dag.response and not is_gap:
                 self.console.print(f"[cyan]{dag.response}[/cyan]")
                 return self._empty_result(text, dag)
 

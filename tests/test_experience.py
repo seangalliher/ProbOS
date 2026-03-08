@@ -948,3 +948,37 @@ class TestRendererSelfModGating:
         assert dag.nodes == []
         should_try_self_mod = not dag.response
         assert should_try_self_mod is True
+
+    def test_capability_gap_flag_triggers_self_mod(self):
+        """capability_gap=True triggers self-mod even with a response set."""
+        from probos.types import TaskDAG
+        from probos.cognitive.decomposer import is_capability_gap
+
+        dag = TaskDAG(
+            nodes=[],
+            source_text="translate hello to French",
+            response="No translation capability available.",
+            capability_gap=True,
+        )
+        is_gap = dag.capability_gap or (dag.response and is_capability_gap(dag.response))
+        # Renderer: if dag.response and NOT is_gap → skip self-mod (early return)
+        # So self-mod runs when is_gap is True.
+        assert is_gap is True
+
+    def test_capability_gap_flag_overrides_undetectable_response(self):
+        """capability_gap=True works even when regex can't match response text."""
+        from probos.types import TaskDAG
+        from probos.cognitive.decomposer import is_capability_gap
+
+        # A response the regex would never match
+        dag = TaskDAG(
+            nodes=[],
+            source_text="translate hello to French",
+            response="Translation is something I need to learn.",
+            capability_gap=True,
+        )
+        # Regex alone would miss this:
+        assert is_capability_gap(dag.response) is False
+        # But the flag catches it:
+        is_gap = dag.capability_gap or (dag.response and is_capability_gap(dag.response))
+        assert is_gap is True
