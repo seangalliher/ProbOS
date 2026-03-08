@@ -1180,6 +1180,17 @@ The prompt builder generates explicit rules prohibiting `echo`, `Write-Host`, `W
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
 
+### Design Principle: Probabilistic Agents, Consensus Governance
+
+ProbOS must remain probabilistic at its core. There is a critical distinction between **deterministic logic** and **governance**. Agents are not deterministic automata — they are probabilistic entities with Bayesian confidence, stochastic routing (Hebbian weights), and non-deterministic LLM-driven decision-making. Like humans with free will who still follow rules in a society, agents in the ProbOS ecosystem are probabilistic but must still follow consensus.
+
+Consensus is governance, not control. It constrains *outcomes* (quorum approval, trust-weighted voting, red team verification) without constraining the *process* by which agents arrive at those outcomes. An agent may choose how to handle an intent, how confident it is, and what it reports — but destructive actions require collective agreement. This mirrors how societies work: individuals think freely, but shared rules prevent harm.
+
+As ProbOS evolves, every new capability must preserve this principle:
+- **Agent behavior stays probabilistic:** Confidence is Bayesian (Beta distributions), routing is learned (Hebbian weights with decay), trust evolves from observations, attention is scored not prescribed, dreaming replays and consolidates stochastically.
+- **Governance stays collective:** Consensus is quorum-based (not dictated by a single authority), escalation cascades through tiers, self-modification requires user approval, designed agents start with probationary trust and earn standing through repeated successful interactions.
+- **No deterministic overrides:** Avoid hardcoded "always do X" logic. Prefer probabilistic priors that converge toward correct behavior through experience. The system should *learn* what works, not be *told* what works.
+
 ---
 
 ## Environment
