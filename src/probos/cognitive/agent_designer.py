@@ -39,6 +39,11 @@ IntentResult signature (dataclass):
 IntentMessage signature (dataclass):
     IntentMessage(intent: str, params: dict, id: str = auto, source: str = "", priority: float = 0.5)
 
+BaseAgent key attributes (inherited via super().__init__):
+    self.id          — the agent's unique ID (NOT self.agent_id)
+    self.pool        — pool name
+    self.confidence  — current confidence score
+
 TEMPLATE (fill in the implementation):
 
 ```python
@@ -87,7 +92,7 @@ class {class_name}(BaseAgent):
         result = await self.handle_intent(intent)
         if result is None:
             return {{"success": False, "error": "Unhandled"}}
-        return result.data if result.data else {{"success": result.success}}
+        return result.result if result.result else {{"success": result.success}}
 
     async def report(self, result: any) -> dict:
         return result if isinstance(result, dict) else {{"result": result}}
