@@ -117,8 +117,7 @@ class ExecutionRenderer:
 
         if not dag.nodes:
             # Self-modification: try to design an agent for this unhandled intent
-            # Skip if the LLM already gave a conversational response
-            if self.runtime.self_mod_pipeline and not dag.response:
+            if self.runtime.self_mod_pipeline:
                 with self.console.status(
                     "[bold yellow]Analyzing unhandled request...[/bold yellow]",
                     spinner="dots",
