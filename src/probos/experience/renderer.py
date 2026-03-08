@@ -7,6 +7,7 @@ insert different Rich display modes (spinner vs Live) between stages.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -116,42 +117,84 @@ class ExecutionRenderer:
 
         if not dag.nodes:
             # Self-modification: try to design an agent for this unhandled intent
-            if self.runtime.self_mod_pipeline:
+            # Skip if the LLM already gave a conversational response
+            if self.runtime.self_mod_pipeline and not dag.response:
                 with self.console.status(
-                    "[bold yellow]Attempting self-modification...[/bold yellow]",
+                    "[bold yellow]Analyzing unhandled request...[/bold yellow]",
                     spinner="dots",
                 ):
                     intent_meta = await self.runtime._extract_unhandled_intent(text)
                 if intent_meta:
-                    record = await self.runtime.self_mod_pipeline.handle_unhandled_intent(
-                        intent_name=intent_meta["name"],
-                        intent_description=intent_meta["description"],
-                        parameters=intent_meta.get("parameters", {}),
-                        requires_consensus=intent_meta.get("requires_consensus", False),
+                    # Phase A: Ask user for consent
+                    self.console.print(
+                        "\n[yellow bold]\U0001f527 Self-Modification — approval needed:[/yellow bold]"
                     )
-                    if record and record.status == "active":
-                        self.console.print(
-                            f"[green bold]✓ Self-designed agent '{record.agent_type}' "
-                            f"for intent '{record.intent_name}'[/green bold]"
+                    self.console.print(
+                        f"  [bold]Intent:[/bold]  [cyan]{intent_meta['name']}[/cyan]"
+                    )
+                    self.console.print(
+                        f"  [bold]Purpose:[/bold] {intent_meta['description']}"
+                    )
+                    self.console.print(
+                        "  [dim]A new agent will be designed, validated, and sandboxed.[/dim]"
+                    )
+                    self.console.print(
+                        "  [dim]'y' = approve  |  'n' = reject[/dim]"
+                    )
+
+                    try:
+                        resp = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: input("  Approve? [y/n]: ").strip().lower()
                         )
-                        # Retry decomposition now that a new agent exists
-                        with self.console.status(
-                            "[bold blue]Re-decomposing with new agent...[/bold blue]",
-                            spinner="dots",
-                        ):
-                            dag = await self.runtime.decomposer.decompose(
-                                text, context=context, similar_episodes=similar_episodes or None,
-                            )
-                    elif record:
-                        self.console.print(
-                            f"[yellow]Self-mod attempted for '{intent_meta['name']}' "
-                            f"but {record.status.replace('_', ' ')}.[/yellow]"
-                        )
+                    except (EOFError, KeyboardInterrupt, OSError):
+                        resp = "n"
+
+                    if resp not in ("y", "yes"):
+                        self.console.print("[dim]Self-modification rejected by user.[/dim]")
                     else:
-                        self.console.print(
-                            f"[yellow]Self-mod attempted for '{intent_meta['name']}' "
-                            f"but failed.[/yellow]"
-                        )
+                        # Phase B: Design the agent (skip pipeline's internal approval)
+                        orig_approval = self.runtime.self_mod_pipeline._user_approval_fn
+                        self.runtime.self_mod_pipeline._user_approval_fn = None
+                        try:
+                            with self.console.status(
+                                "[bold yellow]Designing agent...[/bold yellow]",
+                                spinner="dots",
+                            ):
+                                record = await self.runtime.self_mod_pipeline.handle_unhandled_intent(
+                                    intent_name=intent_meta["name"],
+                                    intent_description=intent_meta["description"],
+                                    parameters=intent_meta.get("parameters", {}),
+                                    requires_consensus=intent_meta.get("requires_consensus", False),
+                                )
+                        finally:
+                            self.runtime.self_mod_pipeline._user_approval_fn = orig_approval
+
+                        if record and record.status == "active":
+                            self.console.print(
+                                f"  [green bold]\u2713 Agent '{record.agent_type}' "
+                                f"designed and registered[/green bold]"
+                            )
+                            # Phase C: Execute directly with the new intent
+                            actual = intent_meta.get("actual_values", intent_meta.get("parameters", {}))
+                            dag = TaskDAG(
+                                nodes=[TaskNode(
+                                    id="t1",
+                                    intent=intent_meta["name"],
+                                    params=actual,
+                                    use_consensus=intent_meta.get("requires_consensus", False),
+                                )],
+                                source_text=text,
+                                reflect=True,
+                            )
+                        elif record:
+                            self.console.print(
+                                f"  [yellow]\u2717 Design failed: "
+                                f"{record.status.replace('_', ' ')}[/yellow]"
+                            )
+                        else:
+                            self.console.print(
+                                "  [yellow]\u2717 Agent design failed.[/yellow]"
+                            )
 
         if not dag.nodes:
             if dag.response:
@@ -213,7 +256,6 @@ class ExecutionRenderer:
             ):
                 try:
                     reflect_timeout = self.runtime.config.cognitive.decomposition_timeout_seconds
-                    import asyncio
                     reflection = await asyncio.wait_for(
                         self.runtime.decomposer.reflect(
                             text, execution_result

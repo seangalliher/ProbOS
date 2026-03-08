@@ -1123,12 +1123,14 @@ class ProbOSRuntime:
             '    "name": "intent_name_snake_case",\n'
             '    "description": "What this intent does in one sentence",\n'
             '    "parameters": {"param_name": "description"},\n'
+            '    "actual_values": {"param_name": "value_from_user_request"},\n'
             '    "requires_consensus": false\n'
             '}\n\n'
             'Rules:\n'
             '- name must be snake_case, 2-4 words\n'
             f'- Do NOT create intents that duplicate existing capabilities: {existing}\n'
             '- requires_consensus should be true only for destructive or external operations\n'
+            '- actual_values must contain the real values extracted from the user request\n'
         )
 
         from probos.types import LLMRequest

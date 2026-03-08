@@ -670,5 +670,6 @@ class MockLLMClient(BaseLLMClient):
             "name": intent_name,
             "description": f"Handle the request: {user_text}",
             "parameters": {"text": "input text"},
+            "actual_values": {"text": user_text},
             "requires_consensus": False,
         })
