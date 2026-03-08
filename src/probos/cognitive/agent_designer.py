@@ -29,8 +29,15 @@ The agent MUST:
 2. Define intent_descriptors as a class variable
 3. Implement handle_intent(self, intent: IntentMessage) -> IntentResult
 4. Implement the four lifecycle methods: perceive, decide, act, report
-5. Return IntentResult with success=True/False and data dict
+5. Return IntentResult with the correct fields (see signature below)
 6. Be self-contained (~50-100 lines)
+
+IntentResult signature (dataclass):
+    IntentResult(intent_id: str, agent_id: str, success: bool, result: Any = None, error: str | None = None, confidence: float = 0.0)
+    NOTE: The field is "result", NOT "data". There is no "data" parameter.
+
+IntentMessage signature (dataclass):
+    IntentMessage(intent: str, params: dict, id: str = auto, source: str = "", priority: float = 0.5)
 
 TEMPLATE (fill in the implementation):
 
