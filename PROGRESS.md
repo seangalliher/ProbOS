@@ -1362,6 +1362,16 @@ Designed agents were answering factual/knowledge questions from LLM training dat
 
 787/787 tests + 8/8 live LLM tests passing (3 skipped — Copilot proxy not running).
 
+### AD-147: Runtime injection for designed agent pools
+
+Designed agents had `self._runtime = None` at runtime because `_create_designed_pool()` passed `llm_client=self.llm_client` but not `runtime=self`. Without runtime, the agent's mesh dispatch (`self._runtime.intent_bus.broadcast()`) hit the sandbox fallback path and returned placeholder results instead of fetching from the web.
+
+**Fix (`runtime.py`):**
+- `_create_designed_pool()` now passes `runtime=self` alongside `llm_client=self.llm_client`
+- Matches the pattern used by the introspection pool: `create_pool(..., runtime=self)`
+
+787/787 tests passing.
+
 ---
 
 ## What's Next
@@ -1440,6 +1450,7 @@ Designed agents were answering factual/knowledge questions from LLM training dat
 - [x] ~~**Native Ollama API format:** Per-tier `api_format` config (`"ollama"` / `"openai"`), dual API path in LLM client, `think: false` on native `/api/chat`, 25+ regression tests (AD-145)~~
 - [x] ~~**Dynamic capability-gap examples:** Prompt examples conditionally suppressed when matching intents exist — prevents non-thinking models from following stale gap examples after self-mod (AD-145)~~
 - [x] ~~**Agent designer mesh access:** Designed agents taught to dispatch sub-intents through `intent_bus.broadcast()` for external data tasks (web lookups, factual questions) instead of answering from LLM training data. Knowledge-lookup gap example added to decomposer prompt. Rules updated to distinguish inference vs external data tasks (AD-146)~~
+- [x] ~~**Runtime injection for designed agents:** `_create_designed_pool()` now passes `runtime=self` so designed agents can dispatch mesh sub-intents (AD-147)~~
 - [x] ~~787/787 tests pass + 11 live LLM tests~~
 - [ ] **SystemQAAgent (Internal Self-Testing):** A runtime self-monitoring agent that validates designed agents after self-modification. On every successful self-mod pipeline, SystemQAAgent smoke-tests the newly designed agent with synthetic intents, verifies the output shape and content, records pass/fail outcomes in episodic memory, and uses the trust network to flag flaky agents for demotion or redesign. Complements the external `pytest -m live_llm` integration tests with always-on internal quality assurance — the system tests itself as it evolves.
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
