@@ -246,7 +246,16 @@ class OpenAICompatibleClient(BaseLLMClient):
 
         logger.debug("Raw HTTP response body: %s", data)
 
-        content = data["choices"][0]["message"]["content"]
+        message = data["choices"][0]["message"]
+        content = message.get("content") or ""
+
+        # Some models (e.g. qwen3 via Ollama) put output in a
+        # "reasoning" field when content is empty.  Fall back to it
+        # so callers still receive usable text.
+        if not content and message.get("reasoning"):
+            logger.debug("content empty, falling back to reasoning field")
+            content = message["reasoning"]
+
         tokens_used = data.get("usage", {}).get("total_tokens", 0)
 
         return LLMResponse(

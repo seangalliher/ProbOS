@@ -176,7 +176,7 @@ class AgentDesigner:
             platform_context=get_platform_context(),
         )
 
-        request = LLMRequest(prompt=prompt, tier=None)
+        request = LLMRequest(prompt=prompt, tier="standard", max_tokens=4096)
         response = await self._llm.complete(request)
 
         if not response.content or response.error:
@@ -184,8 +184,9 @@ class AgentDesigner:
                 f"LLM returned empty or error response: {response.error}"
             )
 
+        # Strip <think>...</think> blocks (common with reasoning models)
+        code = re.sub(r'<think>.*?</think>', '', response.content, flags=re.DOTALL).strip()
         # Strip markdown code fences if present
-        code = response.content.strip()
         code = re.sub(r'^```python\s*\n', '', code)
         code = re.sub(r'\n```\s*$', '', code)
 
