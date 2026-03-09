@@ -1414,6 +1414,36 @@ When consensus is INSUFFICIENT and escalation reaches Tier 3 (user consultation)
 
 ---
 
+### AD-150: http_fetch non-consensus + pool scaling consensus floor
+
+Read-only HTTP GET requests were gated by consensus (`requires_consensus=True`), but the `http_fetch` pool at `target_size=3` could be scaled down below `min_votes=3` by the PoolScaler, causing structural INSUFFICIENT consensus. More fundamentally, 2-agent consensus is meaningless (unanimous or tie — neither useful), and GET requests are non-destructive reads already protected by red team URL verification.
+
+**Two-part fix:**
+
+**http_fetch non-consensus (`http_fetch.py`, `runtime.py`):**
+- `IntentDescriptor.requires_consensus` changed from `True` to `False`
+- Removed `"http_fetch"` from `consensus_intents` set in `_validate_remote_result()`
+- Updated docstrings: "Read-only: GET requests are non-destructive" (was "Medium-risk: all requests go through consensus")
+
+**Pool scaling consensus floor (`scaler.py`, `runtime.py`):**
+- `PoolScaler.__init__` accepts `consensus_pools: set[str]` and `consensus_min_agents: int` (defaults to 3)
+- `_scale_down()` refuses to remove agents from consensus pools when `current_size <= consensus_min_agents`
+- `scale_down_idle()` same floor check — idle dreaming can't starve consensus pools
+- Runtime computes `consensus_pools` via new `_find_consensus_pools()` method (iterates spawner templates, returns pool names whose agents declare `requires_consensus=True`)
+- Passes `consensus_pools` and `consensus_min_agents=config.consensus.min_votes` to PoolScaler
+
+**Tests:**
+- Updated `test_prompt_builder.py`: moved `http_fetch` from consensus-true to consensus-false assertions
+- Updated `test_expansion_agents.py`: http_fetch test docstring reflects non-consensus
+- 3 new tests in `test_scaling.py` (`TestPoolScalerConsensusFloor`):
+  - Scale-down blocked by consensus floor
+  - Idle scale-down blocked by consensus floor
+  - Non-consensus pool still scales below floor (only `min_size` applies)
+
+793/793 tests passing.
+
+---
+
 ## What's Next
 
 - [x] ~~Plan Phase 1 implementation~~

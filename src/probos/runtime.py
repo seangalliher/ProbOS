@@ -283,6 +283,7 @@ class ProbOSRuntime:
         # Start pool scaler if scaling is enabled
         if self.config.scaling.enabled:
             pool_intent_map = self._build_pool_intent_map()
+            consensus_pools = self._find_consensus_pools()
             self.pool_scaler = PoolScaler(
                 pools=self.pools,
                 intent_bus=self.intent_bus,
@@ -291,6 +292,8 @@ class ProbOSRuntime:
                 pool_intent_map=pool_intent_map,
                 excluded_pools={"system"},
                 trust_network=self.trust_network,
+                consensus_pools=consensus_pools,
+                consensus_min_agents=self.config.consensus.min_votes,
             )
             await self.pool_scaler.start()
 
@@ -1044,7 +1047,7 @@ class ProbOSRuntime:
         Only applied to results from consensus-requiring intents.
         Read results are trusted without validation.
         """
-        consensus_intents = {"write_file", "run_command", "http_fetch"}
+        consensus_intents = {"write_file", "run_command"}
         if result.intent_id not in consensus_intents:
             return True
         return True  # Placeholder — full validation in a future phase
@@ -1114,6 +1117,18 @@ class ProbOSRuntime:
                     pool_intents[pool_name] = [d.name for d in descriptors]
                     break
         return pool_intents
+
+    def _find_consensus_pools(self) -> set[str]:
+        """Return pool names whose agents declare requires_consensus=True."""
+        result: set[str] = set()
+        for type_name, template_cls in self.spawner._templates.items():
+            descriptors = getattr(template_cls, 'intent_descriptors', [])
+            if any(d.requires_consensus for d in descriptors):
+                for pool_name, pool in self.pools.items():
+                    if pool.agent_type == type_name:
+                        result.add(pool_name)
+                        break
+        return result
 
     # ------------------------------------------------------------------
     # Self-modification helpers

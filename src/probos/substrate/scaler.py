@@ -36,6 +36,8 @@ class PoolScaler:
         pool_intent_map: dict[str, list[str]],
         excluded_pools: set[str] | None = None,
         trust_network: Any = None,
+        consensus_pools: set[str] | None = None,
+        consensus_min_agents: int = 3,
     ) -> None:
         self.pools = pools
         self.intent_bus = intent_bus
@@ -44,6 +46,8 @@ class PoolScaler:
         self.pool_intent_map = pool_intent_map
         self.excluded_pools = excluded_pools or set()
         self.trust_network = trust_network
+        self.consensus_pools = consensus_pools or set()
+        self.consensus_min_agents = consensus_min_agents
 
         self._last_scale_time: dict[str, float] = {}  # pool_name -> monotonic time
         self._scaling_events: list[dict[str, Any]] = []
@@ -108,6 +112,10 @@ class PoolScaler:
                 continue
             if not self._cooldown_ok(pool_name):
                 continue
+            # Consensus-requiring pools must not shrink below min_votes
+            if pool_name in self.consensus_pools:
+                if pool.current_size <= self.consensus_min_agents:
+                    continue
             removed = await pool.remove_agent(trust_network=self.trust_network)
             if removed:
                 pool.target_size = pool.current_size
@@ -177,6 +185,10 @@ class PoolScaler:
         """Remove one agent from pool. Returns True if successful."""
         if not self._cooldown_ok(pool.name):
             return False
+        # Consensus-requiring pools must not shrink below min_votes
+        if pool.name in self.consensus_pools:
+            if pool.current_size <= self.consensus_min_agents:
+                return False
         removed = await pool.remove_agent(trust_network=self.trust_network)
         if removed is None:
             return False

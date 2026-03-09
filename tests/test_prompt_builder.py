@@ -66,11 +66,11 @@ class TestPromptBuilder:
         prompt = builder.build_system_prompt(_all_current_descriptors())
 
         # Consensus-true intents
-        for name in ["write_file", "run_command", "http_fetch"]:
+        for name in ["write_file", "run_command"]:
             assert f'All {name} intents MUST have "use_consensus": true' in prompt
 
         # Consensus-false intents should appear in a combined rule
-        for name in ["read_file", "stat_file", "list_directory", "search_files"]:
+        for name in ["read_file", "stat_file", "list_directory", "search_files", "http_fetch"]:
             assert name in prompt
 
     def test_reflect_rules_generated(self):

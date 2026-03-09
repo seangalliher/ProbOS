@@ -609,6 +609,65 @@ class TestPoolScalerExclusions:
 
 
 # =====================================================================
+# TestPoolScalerConsensusFloor (tests AD-150a–c)
+# =====================================================================
+
+
+class TestPoolScalerConsensusFloor:
+    """Consensus pools must not shrink below consensus_min_agents."""
+
+    @pytest.mark.asyncio
+    async def test_scale_down_blocked_by_consensus_floor(self):
+        """Scale-down refused when pool is at consensus_min_agents."""
+        pool, bus, scaler = _make_scaler_env(
+            pool_size=3, max_size=5, min_size=1,
+            scale_down_threshold=0.2, cooldown=0.0,
+        )
+        scaler.consensus_pools = {"test_pool"}
+        scaler.consensus_min_agents = 3
+        await pool.start()
+        assert pool.current_size == 3
+
+        # No demand → ratio=0 → would normally scale down, but consensus floor blocks it
+        await scaler._evaluate_and_scale()
+        assert pool.current_size == 3
+        await pool.stop()
+
+    @pytest.mark.asyncio
+    async def test_idle_scale_down_blocked_by_consensus_floor(self):
+        """Idle scale-down refused when pool is at consensus_min_agents."""
+        pool, bus, scaler = _make_scaler_env(
+            pool_size=3, max_size=5, min_size=1, cooldown=0.0,
+        )
+        scaler.consensus_pools = {"test_pool"}
+        scaler.consensus_min_agents = 3
+        await pool.start()
+        assert pool.current_size == 3
+
+        await scaler.scale_down_idle()
+        assert pool.current_size == 3  # Floor holds
+        await pool.stop()
+
+    @pytest.mark.asyncio
+    async def test_non_consensus_pool_scales_below_floor(self):
+        """Non-consensus pool can scale below consensus_min_agents (only min_size applies)."""
+        pool, bus, scaler = _make_scaler_env(
+            pool_size=3, max_size=5, min_size=1,
+            scale_down_threshold=0.2, cooldown=0.0,
+        )
+        # consensus_pools is empty — test_pool is not in it
+        scaler.consensus_pools = set()
+        scaler.consensus_min_agents = 3
+        await pool.start()
+        assert pool.current_size == 3
+
+        # No demand → should scale down (min_size=1 allows it)
+        await scaler._evaluate_and_scale()
+        assert pool.current_size == 2
+        await pool.stop()
+
+
+# =====================================================================
 # TestRuntimeScaling (tests 27-29)
 # =====================================================================
 

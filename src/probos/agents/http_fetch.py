@@ -1,4 +1,4 @@
-"""HTTP fetch agent — fetches URLs, gated by consensus."""
+"""HTTP fetch agent — fetches URLs via HTTP."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 class HttpFetchAgent(BaseAgent):
     """Concrete agent that fetches URLs via HTTP.
 
-    Medium-risk: all requests go through consensus (enforced
-    at the DAG level via use_consensus=true).
+    Read-only: GET requests are non-destructive and don't require
+    consensus.  URL safety is enforced by red team verification.
 
     Capabilities: http_fetch.
     """
@@ -31,7 +31,7 @@ class HttpFetchAgent(BaseAgent):
     ]
     initial_confidence: float = 0.8
     intent_descriptors = [
-        IntentDescriptor(name="http_fetch", params={"url": "<url>", "method": "GET"}, description="Fetch a URL", requires_consensus=True),
+        IntentDescriptor(name="http_fetch", params={"url": "<url>", "method": "GET"}, description="Fetch a URL", requires_consensus=False),
     ]
 
     _handled_intents = {"http_fetch"}

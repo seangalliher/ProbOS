@@ -378,7 +378,7 @@ class TestExpansionIntegration:
 
     @pytest.mark.asyncio
     async def test_nl_http_fetch_mock(self, runtime, monkeypatch):
-        """NL 'fetch https://...' -> http_fetch with consensus (mocked)."""
+        """NL 'fetch https://...' -> http_fetch without consensus (mocked)."""
         import httpx
 
         class MockResponse:
