@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -68,6 +69,7 @@ class EscalationManager:
         self._user_callback = user_callback
         self._pre_user_hook = pre_user_hook
         self._surge_fn = surge_fn
+        self.user_wait_seconds: float = 0.0  # accumulated user-wait time
 
     def set_user_callback(
         self, callback: Callable[[str, dict], Awaitable[bool | None]]
@@ -336,7 +338,9 @@ class EscalationManager:
         }
 
         try:
+            t_user_start = time.monotonic()
             user_decision = await self._user_callback(description, ctx)
+            self.user_wait_seconds += time.monotonic() - t_user_start
         except Exception as e:
             logger.debug("User callback failed: %s", e)
             return EscalationResult(

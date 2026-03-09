@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, TYPE_CHECKING
 
@@ -571,6 +572,7 @@ class DAGExecutor:
         self.timeout = timeout
         self.attention = attention
         self.escalation_manager = escalation_manager
+        self._dag_start: float = 0.0
 
     async def execute(
         self,
@@ -585,11 +587,15 @@ class DAGExecutor:
         """
         results: dict[str, Any] = {}
 
+        # Reset user-wait accumulator so we can extend the deadline
+        # by however long the user spent at escalation prompts.
+        if self.escalation_manager:
+            self.escalation_manager.user_wait_seconds = 0.0
+
+        self._dag_start = time.monotonic()
+
         try:
-            await asyncio.wait_for(
-                self._execute_dag(dag, results, on_event=on_event),
-                timeout=self.timeout,
-            )
+            await self._execute_dag(dag, results, on_event=on_event)
         except asyncio.TimeoutError:
             logger.error("DAG execution timed out after %.0fs", self.timeout)
             # Mark remaining pending nodes as failed
@@ -607,6 +613,15 @@ class DAGExecutor:
             "failed_count": sum(1 for n in dag.nodes if n.status == "failed"),
         }
 
+    def _effective_elapsed(self) -> float:
+        """Wall-clock elapsed minus user-wait time during escalation."""
+        elapsed = time.monotonic() - self._dag_start
+        user_wait = (
+            self.escalation_manager.user_wait_seconds
+            if self.escalation_manager else 0.0
+        )
+        return elapsed - user_wait
+
     async def _execute_dag(
         self,
         dag: TaskDAG,
@@ -615,6 +630,10 @@ class DAGExecutor:
     ) -> None:
         """Execute the DAG, running ready nodes in parallel batches."""
         while not dag.is_complete():
+            # Check effective deadline before each batch
+            if self._effective_elapsed() > self.timeout:
+                raise asyncio.TimeoutError()
+
             ready = dag.get_ready_nodes()
             if not ready:
                 # No ready nodes but not complete — dependency deadlock

@@ -1389,6 +1389,31 @@ Designed agents dispatching `http_fetch` sub-intents got 403 responses from Wiki
 
 ---
 
+### AD-149: DAG execution timeout excludes user-wait during escalation
+
+When consensus is INSUFFICIENT and escalation reaches Tier 3 (user consultation), the interactive prompt blocks the DAG coroutine. The 60-second `dag_execution_timeout_seconds` counted this user-wait time against the deadline, causing timeouts even when the user promptly approved.
+
+**Root cause:** `asyncio.wait_for(coro, timeout=60)` sets a fixed deadline at call time. User-wait time accumulates *during* execution and cannot retroactively extend the deadline.
+
+**EscalationManager (`escalation.py`):**
+- Added `user_wait_seconds: float` accumulator, reset per `execute()` call
+- `_tier3_user()` wraps the `user_callback` call with `time.monotonic()` timing — seconds spent waiting for the user are recorded but excluded from the effective elapsed time
+
+**DAGExecutor (`decomposer.py`):**
+- Replaced `asyncio.wait_for` with direct `await _execute_dag()` — individual nodes already have their own 10s timeouts via `submit_intent(timeout=10.0)`
+- Added `_effective_elapsed()` helper: `(wall_clock - user_wait_seconds)` — the time the *system* has been working, excluding user interaction
+- Deadline check runs between batches in `_execute_dag()`: if effective elapsed exceeds `self.timeout`, raises `asyncio.TimeoutError`
+- `_dag_start` timestamp set at top of `execute()` for accurate measurement
+
+**Tests (3 new):**
+- `test_user_wait_excluded_from_deadline` — simulates 2s user-wait with 3s timeout; effective elapsed (~0.5s) is within budget
+- `test_genuine_timeout_still_fires` — multi-batch DAG where first batch exceeds timeout; deadline check fires before second batch
+- `test_user_wait_seconds_reset_each_execute` — verifies accumulator is reset between executions
+
+790/790 tests passing.
+
+---
+
 ## What's Next
 
 - [x] ~~Plan Phase 1 implementation~~
@@ -1468,6 +1493,8 @@ Designed agents dispatching `http_fetch` sub-intents got 403 responses from Wiki
 - [x] ~~**Runtime injection for designed agents:** `_create_designed_pool()` now passes `runtime=self` so designed agents can dispatch mesh sub-intents (AD-147)~~
 - [x] ~~**HttpFetch User-Agent + search strategy:** User-Agent header on all HTTP requests (fixes 403 blocks), DuckDuckGo HTML search as primary web search pattern in agent designer prompt (AD-148)~~
 - [x] ~~787/787 tests pass + 11 live LLM tests~~
+- [x] ~~**DAG timeout excludes user-wait:** Escalation user prompts no longer count against the 60s DAG execution deadline. Deadline checked between batches using effective elapsed time (wall-clock minus accumulated user-wait). `EscalationManager` tracks `user_wait_seconds` via `time.monotonic()` around user callbacks. 3 new tests (AD-149)~~
+- [x] ~~790/790 tests pass + 11 live LLM tests~~
 - [ ] **SystemQAAgent (Internal Self-Testing):** A runtime self-monitoring agent that validates designed agents after self-modification. On every successful self-mod pipeline, SystemQAAgent smoke-tests the newly designed agent with synthetic intents, verifies the output shape and content, records pass/fail outcomes in episodic memory, and uses the trust network to flag flaky agents for demotion or redesign. Complements the external `pytest -m live_llm` integration tests with always-on internal quality assurance — the system tests itself as it evolves.
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution

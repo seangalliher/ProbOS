@@ -1059,3 +1059,111 @@ class TestEscalationReflectEndToEnd:
 
         # success=True should be present
         assert "success=True" in prompt
+
+
+# ---------------------------------------------------------------------------
+# DAG timeout + user-wait deadline extension tests
+# ---------------------------------------------------------------------------
+
+
+class TestDAGTimeoutUserWait:
+    """Verify DAG timeout excludes user-wait time during escalation."""
+
+    @pytest.mark.asyncio
+    async def test_user_wait_excluded_from_deadline(self):
+        """33. User spent 2s at prompt, DAG timeout is 3s, node takes 2s
+        total wall-clock ~4s but effective elapsed (4-2=2s) < 3s → succeeds.
+        """
+        from probos.cognitive.decomposer import DAGExecutor
+
+        async def slow_submit(intent, params, timeout=None):
+            await asyncio.sleep(0.5)
+            return _success_intent_results()
+
+        runtime = MagicMock()
+        runtime.submit_intent = AsyncMock(side_effect=slow_submit)
+
+        # Simulate an escalation manager where user waited 2 seconds
+        esc_mgr = EscalationManager(
+            runtime=runtime, llm_client=None, max_retries=1,
+        )
+
+        executor = DAGExecutor(
+            runtime=runtime, timeout=3.0, escalation_manager=esc_mgr,
+        )
+
+        dag = TaskDAG(nodes=[_make_node()])
+
+        # Simulate user-wait: set user_wait_seconds mid-flight via a task
+        # that adds user-wait time before the main node executes.
+        # We do this by monkey-patching the execute flow: after reset but
+        # before _execute_dag, add 2.0s of user_wait.
+        original_execute_dag = executor._execute_dag
+
+        async def patched_execute_dag(*args, **kwargs):
+            # Simulate that escalation added 2s of user-wait
+            esc_mgr.user_wait_seconds = 2.0
+            # Burn 2s of wall-clock (simulating the user prompt)
+            await asyncio.sleep(2.0)
+            return await original_execute_dag(*args, **kwargs)
+
+        executor._execute_dag = patched_execute_dag
+
+        result = await executor.execute(dag)
+
+        # Should succeed: effective = ~2.5s wall - 2.0s user = 0.5s < 3.0s
+        assert result["completed_count"] == 1
+        assert result["failed_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_genuine_timeout_still_fires(self):
+        """34. Multi-batch DAG: first batch completes slowly, deadline
+        check fires before second batch starts.  Individual node
+        timeouts (submit_intent timeout=10) handle single-node hangs;
+        the DAG-level timeout is checked between batches.
+        """
+        from probos.cognitive.decomposer import DAGExecutor
+
+        async def slow_submit(intent, params, timeout=None):
+            await asyncio.sleep(0.6)  # completes, but burns most of budget
+            return _success_intent_results()
+
+        runtime = MagicMock()
+        runtime.submit_intent = AsyncMock(side_effect=slow_submit)
+
+        executor = DAGExecutor(runtime=runtime, timeout=0.5)
+        # Two nodes: t2 depends on t1 → forces two separate batches
+        dag = TaskDAG(nodes=[
+            _make_node(id="t1"),
+            TaskNode(id="t2", intent="read_file", params={"path": "/x"},
+                     depends_on=["t1"]),
+        ])
+
+        result = await executor.execute(dag)
+
+        # t1 completed in its batch, but t2 never ran — deadline fires
+        assert result["failed_count"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_user_wait_seconds_reset_each_execute(self):
+        """35. user_wait_seconds is reset to 0 at start of each execute()."""
+        from probos.cognitive.decomposer import DAGExecutor
+
+        runtime = MagicMock()
+        runtime.submit_intent = AsyncMock(return_value=_success_intent_results())
+
+        esc_mgr = EscalationManager(
+            runtime=runtime, llm_client=None, max_retries=1,
+        )
+        esc_mgr.user_wait_seconds = 99.0  # leftover from previous run
+
+        executor = DAGExecutor(
+            runtime=runtime, timeout=5.0, escalation_manager=esc_mgr,
+        )
+        dag = TaskDAG(nodes=[_make_node()])
+
+        await executor.execute(dag)
+
+        # After execute, user_wait_seconds should have been reset (not 99)
+        # The exact value may be 0 or small, but definitely not 99
+        assert esc_mgr.user_wait_seconds < 1.0
