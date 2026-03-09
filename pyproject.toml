@@ -28,3 +28,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "live_llm: tests requiring live LLM backends (Ollama/Copilot proxy)",
+]
