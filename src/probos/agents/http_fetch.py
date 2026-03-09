@@ -39,6 +39,7 @@ class HttpFetchAgent(BaseAgent):
     # Security constants
     DEFAULT_TIMEOUT: float = 15.0
     MAX_BODY_BYTES: int = 1024 * 1024  # 1MB cap
+    USER_AGENT: str = "ProbOS/0.1.0 (https://github.com/seangalliher/ProbOS)"
 
     # Only expose safe response headers
     _SAFE_HEADERS = frozenset({
@@ -114,7 +115,11 @@ class HttpFetchAgent(BaseAgent):
     async def _fetch_url(self, url: str, method: str) -> dict[str, Any]:
         """Fetch a URL with timeout and body capping."""
         try:
-            async with httpx.AsyncClient(timeout=self.DEFAULT_TIMEOUT) as client:
+            async with httpx.AsyncClient(
+                timeout=self.DEFAULT_TIMEOUT,
+                headers={"User-Agent": self.USER_AGENT},
+                follow_redirects=True,
+            ) as client:
                 response = await client.request(method, url)
 
                 body = response.content[:self.MAX_BODY_BYTES].decode(

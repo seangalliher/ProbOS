@@ -62,16 +62,26 @@ MESH ACCESS (for external data — web lookups, factual questions, current info)
     self._runtime is injected at runtime (may be None in sandbox).
     Use it to dispatch sub-intents to other agents via the intent bus.
     For any task that needs external/real-world data (person lookup, web search,
-    current events, factual questions), dispatch an http_fetch sub-intent:
+    current events, factual questions), dispatch an http_fetch sub-intent.
 
+    For GENERAL WEB SEARCH (people, topics, current events), use DuckDuckGo HTML search:
+
+        import urllib.parse
         from probos.types import IntentMessage as IM
-        if self._runtime:
-            fetch_intent = IM(intent="http_fetch", params={{"url": "https://en.wikipedia.org/api/rest_v1/page/summary/Python_(programming_language)", "method": "GET"}})
-            results = await self._runtime.intent_bus.broadcast(fetch_intent, timeout=15.0)
-            successful = [r for r in results if r.success]
-            if successful:
-                data = successful[0].result  # raw HTTP response data
-                # Then optionally use self._llm_client to summarize/synthesize the fetched data
+        query = urllib.parse.quote_plus(search_terms)
+        url = f"https://html.duckduckgo.com/html/?q={{query}}"
+        fetch_intent = IM(intent="http_fetch", params={{"url": url, "method": "GET"}})
+        results = await self._runtime.intent_bus.broadcast(fetch_intent, timeout=15.0)
+        successful = [r for r in results if r.success]
+        if successful:
+            raw_html = successful[0].result["body"]
+            # Parse search results from HTML, then optionally use self._llm_client
+            # to summarize/synthesize the fetched content
+
+    For KNOWN TOPICS (specific Wikipedia articles), use the Wikipedia REST API:
+
+        fetch_intent = IM(intent="http_fetch", params={{"url": "https://en.wikipedia.org/api/rest_v1/page/summary/Python_(programming_language)", "method": "GET"}})
+        results = await self._runtime.intent_bus.broadcast(fetch_intent, timeout=15.0)
 
     IMPORTANT: Always check `if self._runtime:` before using it.
     If self._runtime is None (sandbox testing), return a placeholder result.

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 12 — Agent Designer Mesh Access (787/787 tests + 11 live LLM)
+## Current Status: Phase 12 — HttpFetch User-Agent + Search Strategy (787/787 tests + 11 live LLM)
 
 ---
 
@@ -1372,6 +1372,21 @@ Designed agents had `self._runtime = None` at runtime because `_create_designed_
 
 787/787 tests passing.
 
+### AD-148: HttpFetchAgent User-Agent header + DuckDuckGo search strategy
+
+Designed agents dispatching `http_fetch` sub-intents got 403 responses from Wikipedia and other sites because httpx's default User-Agent is blocked. Also, the agent designer prompt only showed a Wikipedia API example, which doesn't work for general person/topic lookups.
+
+**HttpFetchAgent (`http_fetch.py`):**
+- Added `USER_AGENT = "ProbOS/0.1.0 (https://github.com/seangalliher/ProbOS)"` constant
+- `_fetch_url()` now creates httpx client with User-Agent header and `follow_redirects=True`
+
+**Agent designer prompt (`agent_designer.py`):**
+- Added DuckDuckGo HTML search pattern as the primary web search example: `https://html.duckduckgo.com/html/?q={query}` with `urllib.parse.quote_plus()`
+- Wikipedia REST API kept as secondary example for known topics
+- Clearer separation: "GENERAL WEB SEARCH" vs "KNOWN TOPICS"
+
+787/787 tests passing.
+
 ---
 
 ## What's Next
@@ -1451,6 +1466,7 @@ Designed agents had `self._runtime = None` at runtime because `_create_designed_
 - [x] ~~**Dynamic capability-gap examples:** Prompt examples conditionally suppressed when matching intents exist — prevents non-thinking models from following stale gap examples after self-mod (AD-145)~~
 - [x] ~~**Agent designer mesh access:** Designed agents taught to dispatch sub-intents through `intent_bus.broadcast()` for external data tasks (web lookups, factual questions) instead of answering from LLM training data. Knowledge-lookup gap example added to decomposer prompt. Rules updated to distinguish inference vs external data tasks (AD-146)~~
 - [x] ~~**Runtime injection for designed agents:** `_create_designed_pool()` now passes `runtime=self` so designed agents can dispatch mesh sub-intents (AD-147)~~
+- [x] ~~**HttpFetch User-Agent + search strategy:** User-Agent header on all HTTP requests (fixes 403 blocks), DuckDuckGo HTML search as primary web search pattern in agent designer prompt (AD-148)~~
 - [x] ~~787/787 tests pass + 11 live LLM tests~~
 - [ ] **SystemQAAgent (Internal Self-Testing):** A runtime self-monitoring agent that validates designed agents after self-modification. On every successful self-mod pipeline, SystemQAAgent smoke-tests the newly designed agent with synthetic intents, verifies the output shape and content, records pass/fail outcomes in episodic memory, and uses the trust network to flag flaky agents for demotion or redesign. Complements the external `pytest -m live_llm` integration tests with always-on internal quality assurance — the system tests itself as it evolves.
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
