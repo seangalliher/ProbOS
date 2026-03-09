@@ -1376,6 +1376,10 @@ Added `tests/test_live_llm.py` with 11 tests across 5 classes that exercise the 
 - [x] ~~736/736 tests pass~~
 - [x] ~~**Configurable default LLM tier:** `default_llm_tier: "fast"` in config, cognitive components use `tier=None` to respect default, debug panel shows tier/model (AD-137, AD-138)~~
 - [x] ~~736/736 tests pass~~
+- [x] ~~**Self-mod routing fixes:** Prompt rules for capability-gap routing (AD-139), structured `capability_gap` flag (AD-140), `<think>` tag stripping (AD-141), Unicode apostrophe regex + JSON fence stripping~~
+- [x] ~~**Self-mod pipeline end-to-end fix:** Token budget bump to 2048 + `/no_think`, LLM client reasoning-field fallback, agent/skill designer routed to `tier="standard"` (Claude) with `max_tokens=4096` (AD-142)~~
+- [x] ~~**Live LLM integration tests:** 11 tests across 5 classes (`pytest -m live_llm`), conftest auto-skip hook, connectivity-based skip decorators (AD-143)~~
+- [x] ~~754/754 tests pass + 11 live LLM tests~~
 - [ ] **SystemQAAgent (Internal Self-Testing):** A runtime self-monitoring agent that validates designed agents after self-modification. On every successful self-mod pipeline, SystemQAAgent smoke-tests the newly designed agent with synthetic intents, verifies the output shape and content, records pass/fail outcomes in episodic memory, and uses the trust network to flag flaky agents for demotion or redesign. Complements the external `pytest -m live_llm` integration tests with always-on internal quality assurance — the system tests itself as it evolves.
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
