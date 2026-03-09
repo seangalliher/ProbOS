@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 12 — Self-Mod Pipeline End-to-End (754/754 tests)
+## Current Status: Phase 12 — Self-Mod Pipeline End-to-End (754/754 tests + 11 live LLM)
 
 ---
 
@@ -1288,6 +1288,26 @@ Verified end-to-end: "translate hello into japanese" → capability_gap → extr
 
 ---
 
+### AD-143: Live LLM integration tests
+
+Added `tests/test_live_llm.py` with 11 tests across 5 classes that exercise the full stack against real LLM backends (Ollama + Copilot proxy). Tests are marked `@pytest.mark.live_llm` and skipped by default — run explicitly with `pytest -m live_llm`.
+
+**Test classes:**
+- `TestRawLLMResponse` — fast/standard tier connectivity and content
+- `TestDecomposerLive` — read_file decomposition, capability_gap detection, conversational filtering, multi-intent DAGs, think-tag survival
+- `TestExtractUnhandledIntentLive` — translation/summarization intent extraction
+- `TestAgentDesignerLive` — agent code generation + validation
+- `TestFullPipelineLive` — end-to-end self-mod: NL input → gap detection → design → execute
+
+**Infrastructure:**
+- `conftest.py`: `pytest_collection_modifyitems` hook auto-skips `live_llm` tests unless `-m live_llm` is passed
+- `pyproject.toml`: registered `live_llm` marker in `[tool.pytest.ini_options]`
+- Connectivity-based skip decorators (`skip_no_ollama`, `skip_no_proxy`) for graceful degradation when backends are down
+
+754/754 tests passing, 11 live_llm tests skipped by default.
+
+---
+
 ## What's Next
 
 - [x] ~~Plan Phase 1 implementation~~
@@ -1356,6 +1376,7 @@ Verified end-to-end: "translate hello into japanese" → capability_gap → extr
 - [x] ~~736/736 tests pass~~
 - [x] ~~**Configurable default LLM tier:** `default_llm_tier: "fast"` in config, cognitive components use `tier=None` to respect default, debug panel shows tier/model (AD-137, AD-138)~~
 - [x] ~~736/736 tests pass~~
+- [ ] **SystemQAAgent (Internal Self-Testing):** A runtime self-monitoring agent that validates designed agents after self-modification. On every successful self-mod pipeline, SystemQAAgent smoke-tests the newly designed agent with synthetic intents, verifies the output shape and content, records pass/fail outcomes in episodic memory, and uses the trust network to flag flaky agents for demotion or redesign. Complements the external `pytest -m live_llm` integration tests with always-on internal quality assurance — the system tests itself as it evolves.
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
 - [x] ~~**Phase 11: Skills, Transparency & Web Research** — Strategy proposals with confidence scores, SkillBasedAgent with modular intent handlers, web research phase for agent design (see `prompts/phase-11-skills-transparency-research.md`)~~

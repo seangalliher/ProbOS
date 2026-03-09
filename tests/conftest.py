@@ -7,6 +7,17 @@ from probos.substrate.spawner import AgentSpawner
 from probos.config import PoolConfig
 
 
+def pytest_collection_modifyitems(config, items):
+    """Skip live_llm tests unless explicitly requested with -m live_llm."""
+    marker_expr = config.getoption("-m", default="")
+    if marker_expr and "live_llm" in marker_expr:
+        return
+    skip_live = pytest.mark.skip(reason="live_llm tests only run with: pytest -m live_llm")
+    for item in items:
+        if "live_llm" in item.keywords:
+            item.add_marker(skip_live)
+
+
 @pytest.fixture
 def registry():
     return AgentRegistry()
