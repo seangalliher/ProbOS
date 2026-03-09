@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 12 — Native Ollama API + Dynamic Prompt Examples (784/784 tests + 11 live LLM)
+## Current Status: Phase 12 — Agent Designer Mesh Access (787/787 tests + 11 live LLM)
 
 ---
 
@@ -1341,6 +1341,27 @@ Two-part fix that eliminates thinking-mode interference for the fast tier (qwen 
 
 784/784 tests + 11/11 live LLM tests passing.
 
+### AD-146: Agent designer mesh access for external data tasks
+
+Designed agents were answering factual/knowledge questions from LLM training data instead of searching the web. Root cause: the `AGENT_DESIGN_PROMPT` only showed `self._llm_client` for "intelligence tasks" and never explained how to dispatch sub-intents through the mesh to reach `HttpFetchAgent`.
+
+**Agent designer prompt (`agent_designer.py`):**
+- Split `LLM ACCESS` section into two: `LLM ACCESS (for inference)` and `MESH ACCESS (for external data)`
+- `MESH ACCESS` section shows `self._runtime.intent_bus.broadcast()` pattern with `http_fetch` example, then optional LLM synthesis of fetched content
+- Updated RULES: separated INFERENCE tasks (→ `self._llm_client`) from EXTERNAL DATA tasks (→ mesh → http_fetch → optional LLM synthesis)
+- Added rule: "NEVER use `self._llm_client` alone to answer factual/knowledge questions — it has no internet access and will hallucinate"
+
+**Decomposer prompt (`prompt_builder.py`):**
+- Added knowledge-lookup to `_GAP_EXAMPLES`: `("who is Alan Turing?", ..., "lookup")` — suppressed when a `lookup*` intent exists
+- Updated `_build_rules()`: both the general fallback rule and the intelligence-task rule now explicitly mention knowledge/factual questions as capability gaps, with `capability_gap: true` in the response format and a warning against answering from training data
+
+**Tests (`test_prompt_builder.py`):**
+- `test_lookup_gap_present_without_matching_intent` — knowledge-lookup gap example appears by default
+- `test_lookup_gap_suppressed_when_lookup_intent_exists` — suppressed when `lookup_info` intent registered
+- `test_all_gaps_suppressed_when_all_intents_exist` — all 3 gap examples suppressed together
+
+787/787 tests + 8/8 live LLM tests passing (3 skipped — Copilot proxy not running).
+
 ---
 
 ## What's Next
@@ -1418,7 +1439,8 @@ Two-part fix that eliminates thinking-mode interference for the fast tier (qwen 
 - [x] ~~**Fast→standard tier-fallback:** `_extract_unhandled_intent()` cascades fast→standard on parse failure for thinking-model interference (AD-144)~~
 - [x] ~~**Native Ollama API format:** Per-tier `api_format` config (`"ollama"` / `"openai"`), dual API path in LLM client, `think: false` on native `/api/chat`, 25+ regression tests (AD-145)~~
 - [x] ~~**Dynamic capability-gap examples:** Prompt examples conditionally suppressed when matching intents exist — prevents non-thinking models from following stale gap examples after self-mod (AD-145)~~
-- [x] ~~784/784 tests pass + 11 live LLM tests~~
+- [x] ~~**Agent designer mesh access:** Designed agents taught to dispatch sub-intents through `intent_bus.broadcast()` for external data tasks (web lookups, factual questions) instead of answering from LLM training data. Knowledge-lookup gap example added to decomposer prompt. Rules updated to distinguish inference vs external data tasks (AD-146)~~
+- [x] ~~787/787 tests pass + 11 live LLM tests~~
 - [ ] **SystemQAAgent (Internal Self-Testing):** A runtime self-monitoring agent that validates designed agents after self-modification. On every successful self-mod pipeline, SystemQAAgent smoke-tests the newly designed agent with synthetic intents, verifies the output shape and content, records pass/fail outcomes in episodic memory, and uses the trust network to flag flaky agents for demotion or redesign. Complements the external `pytest -m live_llm` integration tests with always-on internal quality assurance — the system tests itself as it evolves.
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution

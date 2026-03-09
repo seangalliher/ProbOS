@@ -44,10 +44,11 @@ BaseAgent key attributes (inherited via super().__init__):
     self.pool        — pool name
     self.confidence  — current confidence score
 
-LLM ACCESS:
+LLM ACCESS (for inference — translation, summarization, creative writing):
     self._llm_client is an LLM client injected at runtime (may be None in sandbox).
-    For tasks that require intelligence (translation, summarization, analysis, etc.),
-    call the LLM instead of hardcoding logic:
+    Use ONLY for tasks where the LLM itself is the tool — translation, summarization,
+    creative writing, text analysis, reformatting. Do NOT use the LLM to answer factual
+    questions — it has no internet access and may hallucinate.
 
         from probos.types import LLMRequest
         request = LLMRequest(prompt="Translate 'hello' to French. Reply with ONLY the translation, nothing else.", tier="fast")
@@ -56,6 +57,27 @@ LLM ACCESS:
 
     IMPORTANT: Always check `if self._llm_client:` before calling it.
     If self._llm_client is None (sandbox testing), return a placeholder result.
+
+MESH ACCESS (for external data — web lookups, factual questions, current info):
+    self._runtime is injected at runtime (may be None in sandbox).
+    Use it to dispatch sub-intents to other agents via the intent bus.
+    For any task that needs external/real-world data (person lookup, web search,
+    current events, factual questions), dispatch an http_fetch sub-intent:
+
+        from probos.types import IntentMessage as IM
+        if self._runtime:
+            fetch_intent = IM(intent="http_fetch", params={{"url": "https://en.wikipedia.org/api/rest_v1/page/summary/Python_(programming_language)", "method": "GET"}})
+            results = await self._runtime.intent_bus.broadcast(fetch_intent, timeout=15.0)
+            successful = [r for r in results if r.success]
+            if successful:
+                data = successful[0].result  # raw HTTP response data
+                # Then optionally use self._llm_client to summarize/synthesize the fetched data
+
+    IMPORTANT: Always check `if self._runtime:` before using it.
+    If self._runtime is None (sandbox testing), return a placeholder result.
+    For factual/knowledge tasks, ALWAYS fetch from the web first, then optionally
+    use the LLM to synthesize/summarize the fetched content. NEVER use the LLM
+    alone to answer factual questions — it cannot access the internet.
 
 TEMPLATE (fill in the implementation):
 
@@ -116,9 +138,15 @@ RULES:
 - Only use imports from this whitelist: {allowed_imports}, probos.types.LLMRequest
 - Do NOT use subprocess, eval, exec, __import__, socket, ctypes
 - Do NOT write files (no open() with 'w' mode) — use the existing FileWriterAgent for writes
-- Do NOT make network calls — use the existing HttpFetchAgent for HTTP
+- Do NOT make direct network calls (no socket, no urllib.request, no httpx) — \
+dispatch http_fetch sub-intents through self._runtime.intent_bus instead
 - You MUST keep the __init__(self, **kwargs) that calls super().__init__(**kwargs) AND self._llm_client = kwargs.get("llm_client") exactly as shown
-- For tasks requiring intelligence (translation, summarization, analysis), use self._llm_client
+- For INFERENCE tasks (translation, summarization, creative writing, text analysis), use self._llm_client
+- For EXTERNAL DATA tasks (person/topic lookup, factual questions, current events, \
+web search), use self._runtime.intent_bus to dispatch http_fetch sub-intents, \
+then optionally use self._llm_client to synthesize the fetched content
+- NEVER use self._llm_client alone to answer factual/knowledge questions — it has \
+no internet access and will hallucinate
 - Return the COMPLETE Python file content, nothing else
 - No markdown code fences, no explanation, just the Python code
 - You MUST include ALL four lifecycle methods (perceive, decide, act, report) exactly as shown in the template

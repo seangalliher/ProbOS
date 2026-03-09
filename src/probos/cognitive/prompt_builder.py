@@ -126,6 +126,11 @@ _GAP_EXAMPLES: list[tuple[str, str, str]] = [
         "I don't have an intent for creative writing yet.",
         "writing",
     ),
+    (
+        "who is Alan Turing?",
+        "I don't have an intent for knowledge lookup yet.",
+        "lookup",
+    ),
 ]
 
 
@@ -252,10 +257,11 @@ class PromptBuilder:
         rules.append(
             f'{rule_num}. If the request is conversational (greeting, help, small talk), respond with '
             '{"intents": [], "response": "a helpful reply"}. '
-            'If the request is a task (translation, analysis, creative writing, etc.) that '
-            'cannot be mapped to any available intent, respond with '
-            '{"intents": [], "response": "I don\'t have an intent for <task type> yet."}. '
-            'NEVER perform tasks yourself in the response field.'
+            'If the request is a task (translation, analysis, creative writing, knowledge/factual '
+            'lookup, person lookup, etc.) that cannot be mapped to any available intent, respond with '
+            '{"intents": [], "response": "I don\'t have an intent for <task type> yet.", "capability_gap": true}. '
+            'NEVER answer factual questions or perform tasks yourself in the response field — '
+            'you have no internet access and will hallucinate.'
         )
         rule_num += 1
         rules.append(f'{rule_num}. Never invent intents not in the table above.')
@@ -272,11 +278,13 @@ class PromptBuilder:
             )
             rule_num += 1
             rules.append(
-                f'{rule_num}. For tasks requiring intelligence — translation, creative writing, '
-                'summarization, knowledge questions — if a matching intent exists in the '
+                f'{rule_num}. For tasks requiring intelligence or external data — translation, '
+                'creative writing, summarization, knowledge questions, person/topic lookup, '
+                'factual questions — if a matching intent exists in the '
                 'table above, use it. If NO matching intent exists, return '
-                '{"intents": [], "response": "I don\'t have an intent for <task type> yet."}. '
-                'NEVER perform these tasks yourself in the response field. '
+                '{"intents": [], "response": "I don\'t have an intent for <task type> yet.", "capability_gap": true}. '
+                'NEVER answer factual questions or perform tasks yourself in the response field — '
+                'you have no internet access and will hallucinate. '
                 'Conversational replies (greetings, help, small talk) are fine as direct responses.'
             )
             rule_num += 1
