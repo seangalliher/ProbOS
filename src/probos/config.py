@@ -58,14 +58,17 @@ class CognitiveConfig(BaseModel):
     llm_base_url_fast: str | None = None
     llm_api_key_fast: str | None = None
     llm_timeout_fast: float | None = None
+    llm_api_format_fast: str | None = None  # "openai" or "ollama"
 
     llm_base_url_standard: str | None = None
     llm_api_key_standard: str | None = None
     llm_timeout_standard: float | None = None
+    llm_api_format_standard: str | None = None
 
     llm_base_url_deep: str | None = None
     llm_api_key_deep: str | None = None
     llm_timeout_deep: float | None = None
+    llm_api_format_deep: str | None = None
 
     # Default tier for LLM requests ("fast", "standard", or "deep")
     default_llm_tier: str = "fast"
@@ -105,11 +108,17 @@ class CognitiveConfig(BaseModel):
             "standard": self.llm_timeout_standard,
             "deep": self.llm_timeout_deep,
         }
+        format_map = {
+            "fast": self.llm_api_format_fast,
+            "standard": self.llm_api_format_standard,
+            "deep": self.llm_api_format_deep,
+        }
         return {
             "base_url": url_map.get(tier) or self.llm_base_url,
             "api_key": key_map.get(tier) if key_map.get(tier) is not None else self.llm_api_key,
             "model": model_map.get(tier, self.llm_model_standard),
             "timeout": timeout_map.get(tier) if timeout_map.get(tier) is not None else self.llm_timeout_seconds,
+            "api_format": format_map.get(tier) or "openai",
         }
 
 

@@ -105,8 +105,8 @@ class TestOpenAICompatibleClientMultiEndpoint:
         client = OpenAICompatibleClient(config=config)
         # Fast tier has a different URL, so there should be 2 httpx clients
         assert len(client._clients) == 2
-        assert "http://proxy:8080/v1" in client._clients
-        assert "http://ollama:11434/v1" in client._clients
+        assert "http://proxy:8080/v1|openai" in client._clients
+        assert "http://ollama:11434/v1|openai" in client._clients
 
     def test_deduplicates_clients_for_shared_base_urls(self):
         """Client deduplicates httpx clients for shared base_urls."""

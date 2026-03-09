@@ -37,11 +37,12 @@ cognitive:
   llm_api_key: ""
   llm_timeout_seconds: 30
 
-  # Fast tier: local Ollama (no auth needed)
-  llm_base_url_fast: "http://127.0.0.1:11434/v1"
+  # Fast tier: local Ollama (native API, thinking disabled)
+  llm_base_url_fast: "http://127.0.0.1:11434"
   llm_api_key_fast: ""
   llm_model_fast: "qwen3.5:35b"
   llm_timeout_fast: 30
+  llm_api_format_fast: "ollama"
 
   # Standard tier: Copilot proxy (uses shared endpoint)
   llm_model_standard: "claude-sonnet-4.6"

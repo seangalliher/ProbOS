@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 12 — Self-Mod Pipeline End-to-End (754/754 tests + 11 live LLM)
+## Current Status: Phase 12 — Native Ollama API + Dynamic Prompt Examples (784/784 tests + 11 live LLM)
 
 ---
 
@@ -11,10 +11,10 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `pyproject.toml` | done | Project config, deps (pydantic, pyyaml, aiosqlite, rich, pytest) |
-| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config, dreaming config, scaling config, federation config, self-mod config, per-tier LLM endpoints (fast=qwen3.5:35b at Ollama localhost:11434, standard=claude-sonnet-4.6 at Copilot proxy localhost:8080, deep=claude-opus-4.6 at Copilot proxy — AD-132), `default_llm_tier: "fast"` (AD-137) |
+| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config, dreaming config, scaling config, federation config, self-mod config, per-tier LLM endpoints (fast=qwen3.5:35b at Ollama localhost:11434 native API, standard=claude-sonnet-4.6 at Copilot proxy localhost:8080, deep=claude-opus-4.6 at Copilot proxy — AD-132), `default_llm_tier: "fast"` (AD-137), `llm_api_format_fast: "ollama"` (AD-145) |
 | `src/probos/__init__.py` | done | Package root, version 0.1.0 |
 | `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `EscalationTier` (3-tier cascade levels: retry, arbitration, user), `EscalationResult` (escalation outcome with `to_dict()` for JSON-safe serialization, `tiers_attempted` tracking), `TaskNode` (with `background` field for background demotion, `escalation_result: dict | None` for serialized escalation data), `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record), `AttentionEntry` (priority scoring for task scheduling), `FocusSnapshot` (cross-request focus history), `DreamReport` (dream cycle results), `WorkflowCacheEntry` (cached workflow pattern), `IntentDescriptor` (structured metadata for dynamic intent discovery: name, params, description, requires_consensus, requires_reflect), `Skill` (modular intent handler with descriptor, source_code, compiled handler — AD-128), `NodeSelfModel` (peer node capability/health snapshot for gossip), `FederationMessage` (wire protocol message between nodes) |
-| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`, `focus_history_size`, `background_demotion_factor`, per-tier endpoint fields: `llm_base_url_fast/standard/deep`, `llm_api_key_fast/standard/deep`, `llm_timeout_fast/standard/deep` — all `None` by default for backward compat, `tier_config()` helper returns resolved {base_url, api_key, model, timeout} per tier — AD-132, `default_llm_tier: str = "fast"` — AD-137), `MemoryConfig`, `DreamingConfig` (idle threshold, dream interval, replay count, strengthening/weakening factors, prune threshold, trust boost/penalty, pre-warm top-K), `ScalingConfig` (scale up/down thresholds, step sizes, cooldown, observation window, idle scale-down), `PeerConfig` (node_id + address for static peer list), `FederationConfig` (enabled, node_id, bind_address, peers, forward_timeout, gossip interval, validate_remote_results), `SelfModConfig` (enabled, require_user_approval, probationary_alpha/beta, max_designed_agents, sandbox_timeout, allowed_imports whitelist, forbidden_patterns regex list, research_enabled, research_domain_whitelist, research_max_pages, research_max_content_per_page — AD-130), `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
+| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`, `focus_history_size`, `background_demotion_factor`, per-tier endpoint fields: `llm_base_url_fast/standard/deep`, `llm_api_key_fast/standard/deep`, `llm_timeout_fast/standard/deep` — all `None` by default for backward compat, per-tier API format: `llm_api_format_fast/standard/deep` — `"ollama"` or `"openai"` (default) — AD-145, `tier_config()` helper returns resolved {base_url, api_key, model, timeout, api_format} per tier — AD-132, `default_llm_tier: str = "fast"` — AD-137), `MemoryConfig`, `DreamingConfig` (idle threshold, dream interval, replay count, strengthening/weakening factors, prune threshold, trust boost/penalty, pre-warm top-K), `ScalingConfig` (scale up/down thresholds, step sizes, cooldown, observation window, idle scale-down), `PeerConfig` (node_id + address for static peer list), `FederationConfig` (enabled, node_id, bind_address, peers, forward_timeout, gossip interval, validate_remote_results), `SelfModConfig` (enabled, require_user_approval, probationary_alpha/beta, max_designed_agents, sandbox_timeout, allowed_imports whitelist, forbidden_patterns regex list, research_enabled, research_domain_whitelist, research_max_pages, research_max_content_per_page — AD-130), `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
 | `src/probos/substrate/agent.py` | done | `BaseAgent` ABC — `perceive/decide/act/report` lifecycle, confidence tracking, state transitions, async start/stop, optional `_runtime` reference via `**kwargs`, `**kwargs` passthrough to subclasses, class-level `intent_descriptors: list[IntentDescriptor]` for dynamic intent discovery |
 | `src/probos/substrate/registry.py` | done | `AgentRegistry` — in-memory index, lookup by ID/pool/capability, async-safe |
 | `src/probos/substrate/spawner.py` | done | `AgentSpawner` — template registration, `spawn(**kwargs)`, `recycle()` with optional respawn, `**kwargs` forwarded to agent constructors |
@@ -1308,6 +1308,41 @@ Added `tests/test_live_llm.py` with 11 tests across 5 classes that exercise the 
 
 ---
 
+### AD-144: Fast→standard tier-fallback for intent extraction
+
+Fixed `test_extract_summarize_intent` live LLM test failure. Root cause: qwen puts all tokens into the `reasoning` field (not `content`) for "summarize" prompts when thinking mode is active — the `/no_think` directive and Ollama API `think: false` option are unreliable via OpenAI-compatible endpoint.
+
+**Fix:** `_extract_unhandled_intent()` in `runtime.py` now cascades fast→standard tier on parse failure: if fast tier returns unparseable JSON, retries on standard tier (Claude) before giving up.
+
+754/754 tests + 11/11 live LLM tests passing.
+
+---
+
+### AD-145: Native Ollama API format + dynamic capability-gap examples
+
+Two-part fix that eliminates thinking-mode interference for the fast tier (qwen via Ollama) and resolves a prompt conflict that broke the self-mod pipeline.
+
+**Part 1 — Per-tier API format (`config.py`, `llm_client.py`, `system.yaml`):**
+- Added `llm_api_format_fast/standard/deep` fields to `CognitiveConfig` — values: `"ollama"` or `"openai"` (default)
+- `tier_config()` returns `api_format` per tier
+- Refactored `OpenAICompatibleClient` with dual API path: `_call_openai()` (existing chat/completions) and `_call_ollama_native()` (posts to `/api/chat` with `stream: False, think: False`)
+- Client dedup key changed from `url` to `url|api_format` to support same-host setups
+- `system.yaml` fast tier updated: `llm_base_url_fast: "http://127.0.0.1:11434"` + `llm_api_format_fast: "ollama"`
+- 25+ regression tests across 8 test classes in `test_llm_client.py`
+
+**Part 2 — Dynamic capability-gap examples (`prompt_builder.py`):**
+- Hardcoded examples showed `"translate 'hello world' to French" → capability_gap: true` unconditionally, even when `translate_text` was in the intents table (added by self-mod)
+- With thinking disabled (native Ollama API), qwen follows examples literally instead of reasoning against the intents table
+- Fix: capability-gap examples are now conditionally included — suppressed when a matching intent exists in the descriptors list
+- `_GAP_EXAMPLES` list with keyword matching, `_build_examples()` method filters based on registered intent names
+- 6 new tests in `TestCapabilityGapExamples` class in `test_prompt_builder.py`
+
+**Result:** `test_extract_summarize_intent` passes (was the AD-144 driver — native API eliminates thinking overhead entirely). `test_self_mod_creates_and_executes_agent` passes (dynamic examples prevent prompt conflict after self-mod adds translate_text).
+
+784/784 tests + 11/11 live LLM tests passing.
+
+---
+
 ## What's Next
 
 - [x] ~~Plan Phase 1 implementation~~
@@ -1380,6 +1415,10 @@ Added `tests/test_live_llm.py` with 11 tests across 5 classes that exercise the 
 - [x] ~~**Self-mod pipeline end-to-end fix:** Token budget bump to 2048 + `/no_think`, LLM client reasoning-field fallback, agent/skill designer routed to `tier="standard"` (Claude) with `max_tokens=4096` (AD-142)~~
 - [x] ~~**Live LLM integration tests:** 11 tests across 5 classes (`pytest -m live_llm`), conftest auto-skip hook, connectivity-based skip decorators (AD-143)~~
 - [x] ~~754/754 tests pass + 11 live LLM tests~~
+- [x] ~~**Fast→standard tier-fallback:** `_extract_unhandled_intent()` cascades fast→standard on parse failure for thinking-model interference (AD-144)~~
+- [x] ~~**Native Ollama API format:** Per-tier `api_format` config (`"ollama"` / `"openai"`), dual API path in LLM client, `think: false` on native `/api/chat`, 25+ regression tests (AD-145)~~
+- [x] ~~**Dynamic capability-gap examples:** Prompt examples conditionally suppressed when matching intents exist — prevents non-thinking models from following stale gap examples after self-mod (AD-145)~~
+- [x] ~~784/784 tests pass + 11 live LLM tests~~
 - [ ] **SystemQAAgent (Internal Self-Testing):** A runtime self-monitoring agent that validates designed agents after self-modification. On every successful self-mod pipeline, SystemQAAgent smoke-tests the newly designed agent with synthetic intents, verifies the output shape and content, records pass/fail outcomes in episodic memory, and uses the trust network to flag flaky agents for demotion or redesign. Complements the external `pytest -m live_llm` integration tests with always-on internal quality assurance — the system tests itself as it evolves.
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution

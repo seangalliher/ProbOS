@@ -108,13 +108,25 @@ User: "what just happened?"
 {"intents": [{"id": "t1", "intent": "explain_last", "params": {}, "depends_on": [], "use_consensus": false}], "reflect": true}
 
 User: "tell me about file_reader agents"
-{"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "file_reader"}, "depends_on": [], "use_consensus": false}], "reflect": true}
+{"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "file_reader"}, "depends_on": [], "use_consensus": false}], "reflect": true}"""
 
-User: "translate 'hello world' to French"
-{"intents": [], "response": "I don't have an intent for translation yet.", "capability_gap": true}
-
-User: "write me a haiku about the ocean"
-{"intents": [], "response": "I don't have an intent for creative writing yet.", "capability_gap": true}"""
+# Capability-gap examples conditionally appended when no matching intent
+# exists.  Each entry: (user_input, gap_response, intent_keyword).
+# When the matching keyword appears in any registered intent name, the
+# example is suppressed so the LLM uses the intent table instead of
+# mimicking the hardcoded gap example (critical for non-thinking models).
+_GAP_EXAMPLES: list[tuple[str, str, str]] = [
+    (
+        "translate 'hello world' to French",
+        "I don't have an intent for translation yet.",
+        "translate",
+    ),
+    (
+        "write me a haiku about the ocean",
+        "I don't have an intent for creative writing yet.",
+        "writing",
+    ),
+]
 
 
 class PromptBuilder:
@@ -158,9 +170,31 @@ class PromptBuilder:
 
         # Examples
         parts.append("")
-        parts.append(PROMPT_EXAMPLES)
+        parts.append(self._build_examples(unique))
 
         return "\n".join(parts)
+
+    def _build_examples(self, descriptors: list[IntentDescriptor]) -> str:
+        """Return examples block, conditionally including capability-gap entries.
+
+        Capability-gap examples (e.g. translate → gap) are suppressed when a
+        matching intent already exists in *descriptors*.  This prevents
+        non-thinking models from blindly following the gap example instead of
+        using the intent table.
+        """
+        intent_names = {d.name for d in descriptors}
+        gap_lines: list[str] = []
+        for user_input, response, keyword in _GAP_EXAMPLES:
+            if any(keyword in name for name in intent_names):
+                continue  # intent available — skip misleading gap example
+            gap_lines.append(
+                f'\nUser: "{user_input}"\n'
+                f'{{"intents": [], "response": "{response}", '
+                f'"capability_gap": true}}'
+            )
+        if gap_lines:
+            return PROMPT_EXAMPLES + "".join(gap_lines)
+        return PROMPT_EXAMPLES
 
     def _build_intent_table(self, descriptors: list[IntentDescriptor]) -> str:
         """Generate the '## Available intents' markdown table."""

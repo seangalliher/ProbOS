@@ -83,14 +83,23 @@ class OpenAICompatibleClient(BaseLLMClient):
         for tier in ("fast", "standard", "deep"):
             tc = self._tier_configs[tier]
             url = tc["base_url"]
-            # Ensure trailing slash so httpx relative-path resolution
-            # keeps the base path (e.g. /v1/) instead of replacing it.
-            normalized = url.rstrip("/") + "/"
-            if url not in self._clients:
+            api_format = tc.get("api_format", "openai")
+
+            # For Ollama native format, use the base URL directly (no /v1/ suffix).
+            # For OpenAI format, ensure trailing slash so relative paths resolve.
+            if api_format == "ollama":
+                normalized = url.rstrip("/") + "/"
+            else:
+                normalized = url.rstrip("/") + "/"
+
+            # Deduplicate clients by (url, format) — same Ollama server could
+            # be used for both native and OpenAI endpoints, needing separate clients.
+            client_key = f"{url}|{api_format}"
+            if client_key not in self._clients:
                 headers = {"Content-Type": "application/json"}
                 if tc["api_key"]:
                     headers["Authorization"] = f"Bearer {tc['api_key']}"
-                self._clients[url] = httpx.AsyncClient(
+                self._clients[client_key] = httpx.AsyncClient(
                     base_url=normalized,
                     headers=headers,
                     timeout=tc["timeout"],
@@ -118,6 +127,11 @@ class OpenAICompatibleClient(BaseLLMClient):
             tier: self._tier_configs[tier]["model"]
             for tier in ("fast", "standard", "deep")
         }
+
+    def _client_key(self, tier: str) -> str:
+        """Return the client lookup key for a tier."""
+        tc = self._tier_configs[tier]
+        return f"{tc['base_url']}|{tc.get('api_format', 'openai')}"
 
     def _cache_key(self, tier: str, prompt: str) -> str:
         return f"{tier}:{hash(prompt)}"
@@ -151,17 +165,30 @@ class OpenAICompatibleClient(BaseLLMClient):
         Any response below HTTP 500 means the server is up.
         """
         tc = self._tier_configs[tier]
-        client = self._clients[tc["base_url"]]
+        client = self._clients[self._client_key(tier)]
+        api_format = tc.get("api_format", "openai")
         try:
-            resp = await client.post(
-                "chat/completions",
-                json={
-                    "model": tc["model"],
-                    "messages": [{"role": "user", "content": "ping"}],
-                    "max_tokens": 1,
-                },
-                timeout=5.0,
-            )
+            if api_format == "ollama":
+                resp = await client.post(
+                    "api/chat",
+                    json={
+                        "model": tc["model"],
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "stream": False,
+                        "think": False,
+                    },
+                    timeout=5.0,
+                )
+            else:
+                resp = await client.post(
+                    "chat/completions",
+                    json={
+                        "model": tc["model"],
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "max_tokens": 1,
+                    },
+                    timeout=5.0,
+                )
             return resp.status_code < 500
         except (httpx.ConnectError, httpx.TimeoutException, OSError):
             return False
@@ -174,13 +201,14 @@ class OpenAICompatibleClient(BaseLLMClient):
         """
         tier = request.tier or self.default_tier
         tc = self._tier_configs.get(tier, self._tier_configs["standard"])
-        client = self._clients[tc["base_url"]]
+        client = self._clients[self._client_key(tier)]
         model = tc["model"]
+        api_format = tc.get("api_format", "openai")
         cache_key = self._cache_key(tier, request.prompt)
 
         # Try live endpoint
         try:
-            response = await self._call_api(request, model, client)
+            response = await self._call_api(request, model, client, api_format=api_format)
             # Cache successful responses
             self._cache[cache_key] = response
             return response
@@ -223,8 +251,17 @@ class OpenAICompatibleClient(BaseLLMClient):
             request_id=request.id,
         )
 
-    async def _call_api(self, request: LLMRequest, model: str, client: httpx.AsyncClient) -> LLMResponse:
-        """Make the actual API call."""
+    async def _call_api(
+        self, request: LLMRequest, model: str, client: httpx.AsyncClient,
+        *, api_format: str = "openai",
+    ) -> LLMResponse:
+        """Make the actual API call, routing by api_format."""
+        if api_format == "ollama":
+            return await self._call_ollama_native(request, model, client)
+        return await self._call_openai(request, model, client)
+
+    async def _call_openai(self, request: LLMRequest, model: str, client: httpx.AsyncClient) -> LLMResponse:
+        """OpenAI-compatible chat/completions call."""
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
@@ -237,8 +274,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             "max_tokens": request.max_tokens,
         }
 
-        logger.debug("LLM request payload: %s", json.dumps(payload, indent=2))
-        logger.debug("LLM request headers: %s", dict(client.headers))
+        logger.debug("LLM request payload (openai): %s", json.dumps(payload, indent=2))
 
         resp = await client.post("chat/completions", json=payload)
         resp.raise_for_status()
@@ -249,14 +285,56 @@ class OpenAICompatibleClient(BaseLLMClient):
         message = data["choices"][0]["message"]
         content = message.get("content") or ""
 
-        # Some models (e.g. qwen3 via Ollama) put output in a
-        # "reasoning" field when content is empty.  Fall back to it
+        # Some models (e.g. qwen3 via Ollama's OpenAI compat) put output
+        # in a "reasoning" field when content is empty.  Fall back to it
         # so callers still receive usable text.
         if not content and message.get("reasoning"):
             logger.debug("content empty, falling back to reasoning field")
             content = message["reasoning"]
 
         tokens_used = data.get("usage", {}).get("total_tokens", 0)
+
+        return LLMResponse(
+            content=content,
+            model=model,
+            tier=request.tier or self.default_tier,
+            tokens_used=tokens_used,
+            cached=False,
+            request_id=request.id,
+        )
+
+    async def _call_ollama_native(self, request: LLMRequest, model: str, client: httpx.AsyncClient) -> LLMResponse:
+        """Native Ollama /api/chat call with think disabled."""
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "think": False,
+        }
+        if request.max_tokens:
+            payload.setdefault("options", {})["num_predict"] = request.max_tokens
+        if request.temperature is not None:
+            payload.setdefault("options", {})["temperature"] = request.temperature
+
+        logger.debug("LLM request payload (ollama): %s", json.dumps(payload, indent=2))
+
+        resp = await client.post("api/chat", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+
+        logger.debug("Raw HTTP response body: %s", data)
+
+        message = data.get("message", {})
+        content = message.get("content") or ""
+
+        tokens_used = (
+            data.get("prompt_eval_count", 0) + data.get("eval_count", 0)
+        )
 
         return LLMResponse(
             content=content,
@@ -279,6 +357,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                 "base_url": tc["base_url"],
                 "model": tc["model"],
                 "timeout": tc["timeout"],
+                "api_format": tc.get("api_format", "openai"),
                 "reachable": self._tier_status.get(tier),
             }
         return info

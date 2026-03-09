@@ -156,6 +156,81 @@ class TestPromptBuilder:
         assert '"reflect": false' in prompt
 
 
+class TestCapabilityGapExamples:
+    """Capability-gap examples must be suppressed when matching intents exist."""
+
+    def test_gap_examples_present_without_matching_intents(self):
+        """With default intents (no translate/writing), both gap examples appear."""
+        builder = PromptBuilder()
+        prompt = builder.build_system_prompt(_all_current_descriptors())
+        assert "translate 'hello world' to French" in prompt
+        assert "capability_gap" in prompt
+        assert "haiku about the ocean" in prompt
+
+    def test_translate_gap_suppressed_when_translate_intent_exists(self):
+        """Adding a translate_text intent suppresses the translate gap example."""
+        builder = PromptBuilder()
+        descs = _all_current_descriptors() + [
+            IntentDescriptor(
+                name="translate_text",
+                params={"text": "...", "target_language": "..."},
+                description="Translate text to a target language",
+            ),
+        ]
+        prompt = builder.build_system_prompt(descs)
+        # translate gap example should be gone
+        assert "I don't have an intent for translation yet" not in prompt
+        # creative writing gap should still be there
+        assert "haiku about the ocean" in prompt
+
+    def test_writing_gap_suppressed_when_writing_intent_exists(self):
+        """Adding a creative_writing intent suppresses the haiku gap example."""
+        builder = PromptBuilder()
+        descs = _all_current_descriptors() + [
+            IntentDescriptor(
+                name="creative_writing",
+                params={"prompt": "..."},
+                description="Generate creative text",
+            ),
+        ]
+        prompt = builder.build_system_prompt(descs)
+        # writing gap should be gone
+        assert "I don't have an intent for creative writing yet" not in prompt
+        # translate gap should still be present
+        assert "translate 'hello world' to French" in prompt
+
+    def test_both_gaps_suppressed_when_both_intents_exist(self):
+        """Both gap examples suppressed when matching intents exist."""
+        builder = PromptBuilder()
+        descs = _all_current_descriptors() + [
+            IntentDescriptor(
+                name="translate_text",
+                params={"text": "..."},
+                description="Translate",
+            ),
+            IntentDescriptor(
+                name="creative_writing",
+                params={"prompt": "..."},
+                description="Write creatively",
+            ),
+        ]
+        prompt = builder.build_system_prompt(descs)
+        assert "I don't have an intent for translation yet" not in prompt
+        assert "I don't have an intent for creative writing yet" not in prompt
+
+    def test_core_examples_always_present(self):
+        """Core examples (read_file, write_file, etc.) always present regardless."""
+        builder = PromptBuilder()
+        descs = _all_current_descriptors() + [
+            IntentDescriptor(name="translate_text", params={}, description="x"),
+            IntentDescriptor(name="creative_writing", params={}, description="x"),
+        ]
+        prompt = builder.build_system_prompt(descs)
+        assert 'User: "read the file at /tmp/test.txt"' in prompt
+        assert 'User: "write hello to /tmp/out.txt"' in prompt
+        assert '## Examples' in prompt
+
+
 # ---------------------------------------------------------------------------
 # IntentDescriptor on agents
 # ---------------------------------------------------------------------------
