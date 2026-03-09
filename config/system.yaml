@@ -41,7 +41,7 @@ cognitive:
   llm_base_url_fast: "http://127.0.0.1:11434/v1"
   llm_api_key_fast: ""
   llm_model_fast: "qwen3.5:35b"
-  llm_timeout_fast: 15
+  llm_timeout_fast: 30
 
   # Standard tier: Copilot proxy (uses shared endpoint)
   llm_model_standard: "claude-sonnet-4.6"
