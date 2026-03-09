@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 12 — HttpFetch User-Agent + Search Strategy (787/787 tests + 11 live LLM)
+## Current Status: Phase 12 — Non-Consensus Node Status + Regression Tests (820/820 tests + 11 skipped)
 
 ---
 
@@ -1461,6 +1461,34 @@ Additionally, the red team's `_verify_http_fetch` used `httpx.AsyncClient(timeou
 - httpx now times out cleanly before `asyncio.wait_for`, producing a proper `TimeoutException` caught by the existing handler instead of a raw coroutine cancellation
 
 793/793 tests passing.
+
+### AD-152: Non-consensus node status + http_fetch timeout alignment + regression tests
+
+**Root cause:** Two bugs caused http_fetch to show "✓ done" while the reflector reported "unable to retrieve":
+
+1. `HttpFetchAgent.DEFAULT_TIMEOUT = 15.0s` exceeded the DAG executor broadcast timeout of `10.0s`. When the target site was slow, `asyncio.wait(tasks, timeout=10.0)` cancelled the httpx request before it completed, producing empty results.
+2. The non-consensus path in `_execute_node()` unconditionally set `node.status = "completed"` regardless of whether any result succeeded. Failed tasks appeared as completed, confusing the reflector.
+
+**Fixes:**
+
+- `http_fetch.py`: `DEFAULT_TIMEOUT` 15.0 → 8.0 (fits within 10s broadcast window)
+- `decomposer.py`: Non-consensus path now sets `node.status = "completed" if success else "failed"` based on `any(r.success for r in intent_results)`
+- `decomposer.py`: Added `node_failed` event emission for failed non-consensus nodes (mirrors existing `node_complete` event)
+
+**Regression tests (`tests/test_ad152_regressions.py` — 27 tests):**
+
+| Class | Tests | What it guards |
+|-------|-------|----------------|
+| `TestTimeoutAlignment` | 3 | http_fetch timeout < broadcast timeout, red team httpx < verification timeout |
+| `TestPromptConsistency` | 5 | Few-shot examples match `requires_consensus`, dynamic rules correct |
+| `TestNonConsensusResultFormat` | 4 | Result dict structure, empty/failed/mixed results |
+| `TestNodeStatusReflectsSuccess` | 5 | Node.status based on success, event emission for completed/failed |
+| `TestSummarizeHttpFetchResult` | 5 | `_summarize_node_result` with http_fetch data variants |
+| `TestHttpFetchNonConsensus` | 3 | Descriptor check, runtime pool mapping, consensus_intents exclusion |
+| `TestDependencyFailurePropagation` | 1 | Failed node causes dependent nodes to fail |
+| `TestHttpFetchTimeoutMessage` | 1 | Timeout error message reflects actual DEFAULT_TIMEOUT |
+
+820/820 tests passing (+ 11 skipped).
 
 ---
 

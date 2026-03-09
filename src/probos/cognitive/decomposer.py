@@ -771,17 +771,20 @@ class DAGExecutor:
                     params=params,
                     timeout=10.0,
                 )
+                success = any(r.success for r in intent_results)
                 node.result = intent_results
                 results[node.id] = {
                     "intent": node.intent,
                     "results": intent_results,
-                    "success": any(r.success for r in intent_results),
+                    "success": success,
                     "result_count": len(intent_results),
                 }
-                node.status = "completed"
+                node.status = "completed" if success else "failed"
 
             if on_event and node.status == "completed":
                 await on_event("node_complete", {"node": node, "result": results.get(node.id)})
+            elif on_event and node.status == "failed":
+                await on_event("node_failed", {"node": node, "result": results.get(node.id)})
 
         except Exception as e:
             logger.error("Node %s failed: %s", node.id, e)

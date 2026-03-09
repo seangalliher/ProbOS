@@ -37,7 +37,10 @@ class HttpFetchAgent(BaseAgent):
     _handled_intents = {"http_fetch"}
 
     # Security constants
-    DEFAULT_TIMEOUT: float = 15.0
+    # Must be less than the DAG executor broadcast timeout (10s) so httpx
+    # either completes or raises TimeoutException before asyncio.wait()
+    # cancels the task.
+    DEFAULT_TIMEOUT: float = 8.0
     MAX_BODY_BYTES: int = 1024 * 1024  # 1MB cap
     USER_AGENT: str = "ProbOS/0.1.0 (https://github.com/seangalliher/ProbOS)"
 
