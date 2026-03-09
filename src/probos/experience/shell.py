@@ -44,6 +44,7 @@ class ProbOSShell:
         "/federation": "Show federation status",
         "/peers":     "Show peer node models",
         "/designed":  "Show self-designed agent status",
+        "/qa":        "Show QA status for designed agents (/qa [agent_type])",
         "/explain":   "Explain what happened in the last NL request",
         "/model":     "Show LLM client type, endpoint, and tier config",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
@@ -149,6 +150,7 @@ class ProbOSShell:
             "/federation": self._cmd_federation,
             "/peers":     self._cmd_peers,
             "/designed":  self._cmd_designed,
+            "/qa":        self._cmd_qa,
             "/explain":   self._cmd_explain,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
@@ -310,9 +312,27 @@ class ProbOSShell:
             status = self.runtime.self_mod_pipeline.designed_agent_status()
             if self.runtime.behavioral_monitor:
                 status["behavioral"] = self.runtime.behavioral_monitor.get_status()
-            self.console.print(panels.render_designed_panel(status))
+            qa_reports = getattr(self.runtime, "_qa_reports", None) or None
+            self.console.print(panels.render_designed_panel(status, qa_reports=qa_reports))
         else:
             self.console.print("[yellow]Self-modification not enabled[/yellow]")
+
+    async def _cmd_qa(self, arg: str) -> None:
+        from probos.experience.qa_panel import render_qa_panel, render_qa_detail
+
+        qa_reports = getattr(self.runtime, "_qa_reports", {})
+        if not qa_reports:
+            self.console.print("[dim]No QA results yet.[/dim]")
+            return
+
+        if arg:
+            report = qa_reports.get(arg)
+            if report is None:
+                self.console.print(f"[red]No QA report for agent type: {arg}[/red]")
+                return
+            self.console.print(render_qa_detail(arg, report, self.runtime.trust_network))
+        else:
+            self.console.print(render_qa_panel(qa_reports, self.runtime.trust_network))
 
     async def _cmd_explain(self, arg: str) -> None:
         await self._handle_nl("what just happened?")

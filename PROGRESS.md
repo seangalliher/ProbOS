@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 12 — Non-Consensus Node Status + Regression Tests (820/820 tests + 11 skipped)
+## Current Status: Phase 13 — SystemQAAgent + Smoke Testing (892/892 tests + 11 skipped)
 
 ---
 
@@ -11,10 +11,10 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `pyproject.toml` | done | Project config, deps (pydantic, pyyaml, aiosqlite, rich, pytest) |
-| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config, dreaming config, scaling config, federation config, self-mod config, per-tier LLM endpoints (fast=qwen3.5:35b at Ollama localhost:11434 native API, standard=claude-sonnet-4.6 at Copilot proxy localhost:8080, deep=claude-opus-4.6 at Copilot proxy — AD-132), `default_llm_tier: "fast"` (AD-137), `llm_api_format_fast: "ollama"` (AD-145) |
+| `config/system.yaml` | done | Pool sizes, mesh params, heartbeat intervals, consensus config, memory config, dreaming config, scaling config, federation config, self-mod config, QA config (smoke_test_count, pass_threshold, timeout per test/total, trust reward/penalty weights — AD-153), per-tier LLM endpoints (fast=qwen3.5:35b at Ollama localhost:11434 native API, standard=claude-sonnet-4.6 at Copilot proxy localhost:8080, deep=claude-opus-4.6 at Copilot proxy — AD-132), `default_llm_tier: "fast"` (AD-137), `llm_api_format_fast: "ollama"` (AD-145) |
 | `src/probos/__init__.py` | done | Package root, version 0.1.0 |
 | `src/probos/types.py` | done | `AgentState`, `AgentMeta`, `CapabilityDescriptor`, `IntentMessage`, `IntentResult`, `GossipEntry`, `ConnectionWeight`, `ConsensusOutcome`, `Vote`, `QuorumPolicy`, `ConsensusResult`, `VerificationResult`, `LLMTier`, `LLMRequest`, `LLMResponse`, `EscalationTier` (3-tier cascade levels: retry, arbitration, user), `EscalationResult` (escalation outcome with `to_dict()` for JSON-safe serialization, `tiers_attempted` tracking), `TaskNode` (with `background` field for background demotion, `escalation_result: dict | None` for serialized escalation data), `TaskDAG` (with `response` field for conversational LLM replies, `reflect` field for post-execution synthesis), `Episode` (episodic memory record), `AttentionEntry` (priority scoring for task scheduling), `FocusSnapshot` (cross-request focus history), `DreamReport` (dream cycle results), `WorkflowCacheEntry` (cached workflow pattern), `IntentDescriptor` (structured metadata for dynamic intent discovery: name, params, description, requires_consensus, requires_reflect), `Skill` (modular intent handler with descriptor, source_code, compiled handler — AD-128), `NodeSelfModel` (peer node capability/health snapshot for gossip), `FederationMessage` (wire protocol message between nodes) |
-| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`, `focus_history_size`, `background_demotion_factor`, per-tier endpoint fields: `llm_base_url_fast/standard/deep`, `llm_api_key_fast/standard/deep`, `llm_timeout_fast/standard/deep` — all `None` by default for backward compat, per-tier API format: `llm_api_format_fast/standard/deep` — `"ollama"` or `"openai"` (default) — AD-145, `tier_config()` helper returns resolved {base_url, api_key, model, timeout, api_format} per tier — AD-132, `default_llm_tier: str = "fast"` — AD-137), `MemoryConfig`, `DreamingConfig` (idle threshold, dream interval, replay count, strengthening/weakening factors, prune threshold, trust boost/penalty, pre-warm top-K), `ScalingConfig` (scale up/down thresholds, step sizes, cooldown, observation window, idle scale-down), `PeerConfig` (node_id + address for static peer list), `FederationConfig` (enabled, node_id, bind_address, peers, forward_timeout, gossip interval, validate_remote_results), `SelfModConfig` (enabled, require_user_approval, probationary_alpha/beta, max_designed_agents, sandbox_timeout, allowed_imports whitelist, forbidden_patterns regex list, research_enabled, research_domain_whitelist, research_max_pages, research_max_content_per_page — AD-130), `SystemConfig`, `load_config()` — pydantic models loaded from YAML |
+| `src/probos/config.py` | done | `PoolConfig`, `MeshConfig`, `ConsensusConfig`, `CognitiveConfig` (with `max_concurrent_tasks`, `attention_decay_rate`, `focus_history_size`, `background_demotion_factor`, per-tier endpoint fields: `llm_base_url_fast/standard/deep`, `llm_api_key_fast/standard/deep`, `llm_timeout_fast/standard/deep` — all `None` by default for backward compat, per-tier API format: `llm_api_format_fast/standard/deep` — `"ollama"` or `"openai"` (default) — AD-145, `tier_config()` helper returns resolved {base_url, api_key, model, timeout, api_format} per tier — AD-132, `default_llm_tier: str = "fast"` — AD-137), `MemoryConfig`, `DreamingConfig` (idle threshold, dream interval, replay count, strengthening/weakening factors, prune threshold, trust boost/penalty, pre-warm top-K), `ScalingConfig` (scale up/down thresholds, step sizes, cooldown, observation window, idle scale-down), `PeerConfig` (node_id + address for static peer list), `FederationConfig` (enabled, node_id, bind_address, peers, forward_timeout, gossip interval, validate_remote_results), `SelfModConfig` (enabled, require_user_approval, probationary_alpha/beta, max_designed_agents, sandbox_timeout, allowed_imports whitelist, forbidden_patterns regex list, research_enabled, research_domain_whitelist, research_max_pages, research_max_content_per_page — AD-130), `QAConfig` (enabled, smoke_test_count, timeout_per_test_seconds, total_timeout_seconds, pass_threshold, trust_reward_weight, trust_penalty_weight, flag_on_fail, auto_remove_on_total_fail — AD-153), `SystemConfig`, `load_config()` — pydantic models loaded from YAML, None-section filtering for commented YAML |
 | `src/probos/substrate/agent.py` | done | `BaseAgent` ABC — `perceive/decide/act/report` lifecycle, confidence tracking, state transitions, async start/stop, optional `_runtime` reference via `**kwargs`, `**kwargs` passthrough to subclasses, class-level `intent_descriptors: list[IntentDescriptor]` for dynamic intent discovery |
 | `src/probos/substrate/registry.py` | done | `AgentRegistry` — in-memory index, lookup by ID/pool/capability, async-safe |
 | `src/probos/substrate/spawner.py` | done | `AgentSpawner` — template registration, `spawn(**kwargs)`, `recycle()` with optional respawn, `**kwargs` forwarded to agent constructors |
@@ -82,9 +82,10 @@
 | File | Status | Description |
 |------|--------|-------------|
 | `src/probos/experience/__init__.py` | done | Package root |
-| `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()` (with dreaming state section), `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_attention_panel()` (with focus history display and background task indicator), `render_dag_result()` (displays `response` field for conversational replies), `render_dream_panel()` (dream cycle report with pre-warm intents), `render_workflow_cache_panel()` (cached workflow patterns with hit counts), `render_scaling_panel()` (pool scaling status with demand ratio, size range, cooldown), `render_federation_panel()` (federation node status, connected peers, forwarded/received counts), `render_peers_panel()` (peer self-model table: capabilities, agent count, health, uptime), `render_designed_panel()` (self-designed agent status table with sandbox time and behavioral alerts), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
+| `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()` (with dreaming state section), `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_attention_panel()` (with focus history display and background task indicator), `render_dag_result()` (displays `response` field for conversational replies), `render_dream_panel()` (dream cycle report with pre-warm intents), `render_workflow_cache_panel()` (cached workflow patterns with hit counts), `render_scaling_panel()` (pool scaling status with demand ratio, size range, cooldown), `render_federation_panel()` (federation node status, connected peers, forwarded/received counts), `render_peers_panel()` (peer self-model table: capabilities, agent count, health, uptime), `render_designed_panel()` (self-designed agent status table with sandbox time, behavioral alerts, optional QA column — AD-153), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
+| `src/probos/experience/qa_panel.py` | done | `render_qa_panel()` — Rich table of QA results from in-memory report store (AD-157), shows agent type/verdict/score/duration/trust per designed agent. `render_qa_detail()` — detailed view for single agent with per-test breakdown (case type, result, error). Both functions follow the panels.py pattern: empty-state guard, Rich Table, Rich Panel with border styling |
 | `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — DAG execution display with status spinner (Rich Live removed — AD-92), `on_event` callback integration (including `scale_up`/`scale_down`/`federation_forward`/`federation_receive`/`self_mod_design`/`self_mod_success`/`self_mod_failure` events), conversational response display when LLM returns `response` field, execution snapshot for introspection (`_previous_execution`/`_last_execution`), debug mode (raw DAG JSON, individual agent responses, consensus details, **tier/model in debug panel title** — AD-138), DAG plan display in debug-only mode (AD-90), Params column in progress table, manually-managed spinner with `_stop_live_for_user` hook for Tier 3 escalation (AD-93). Self-mod UX: `StrategyRecommender` integration with numbered strategy menu (AD-127), `add_skill` strategy dispatch when available (AD-129), existing-agent re-routing when LLM extracts already-registered intent, capability-gap detection gates self-mod (AD-126), force `reflect=True` on designed-agent DAGs |
-| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/scaling`, `/federation`, `/peers`, `/designed`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, user approval callback for self-mod agent creation (AD-123), `/model` shows per-tier endpoint/model/status with shared-endpoint notes (AD-135), `/tier` switch shows endpoint URL, graceful error handling |
+| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/scaling`, `/federation`, `/peers`, `/designed`, `/qa`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, user approval callback for self-mod agent creation (AD-123), `/model` shows per-tier endpoint/model/status with shared-endpoint notes (AD-135), `/tier` switch shows endpoint URL, `/qa` command shows QA status for designed agents with optional agent_type detail view (AD-157), `/designed` passes `qa_reports` for QA column, graceful error handling |
 
 ### Agents
 
@@ -100,12 +101,13 @@
 | `src/probos/agents/corrupted.py` | done | `CorruptedFileReaderAgent` — deliberately returns fabricated data, `intent_descriptors = []`, used to test consensus layer catching corruption |
 | `src/probos/agents/introspect.py` | done | `IntrospectionAgent` — self-referential queries about ProbOS state, `intent_descriptors` with `requires_reflect=True` for all 4 intents: `explain_last`, `agent_info`, `system_health`, `why`. Reads `_runtime` reference, purely observational |
 | `src/probos/substrate/skill_agent.py` | done | `SkillBasedAgent` — general-purpose agent dispatching intents to attached Skill objects, `add_skill()` updates both instance AND class-level `_handled_intents` and `intent_descriptors` (AD-128), `remove_skill()` cleans up both levels, `handle_intent()` passes `llm_client` to skill handlers, `skills` pool only spawned when `self_mod.enabled=True` (AD-129) |
+| `src/probos/agents/system_qa.py` | done | `SystemQAAgent` — meta-agent that smoke-tests newly designed agents after self-modification (AD-153). `QAReport` dataclass with verdict/pass_rate/test_details/duration. `generate_synthetic_intents()` creates deterministic test cases from intent metadata — happy path (valid params), edge case (minimal/empty), error case (invalid). `_infer_param_type()` heuristic maps key names to param types (url/path/numeric/bool/default — AD-156). `validate_result()` checks outcomes per case type: happy must succeed, edge must not crash, error must fail gracefully or decline. `run_smoke_tests()` executes against pool agents with per-test and total timeout. Event log integration for started/passed/failed lifecycle events |
 
 ### Runtime
 
 | File | Status | Description |
 |------|--------|-------------|
-| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention + dreaming + workflow cache + introspection + dynamic intent discovery + federation + self-modification + skills + research. Spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), introspect (2 introspection agents with runtime=self), skills (2 skill_agents with llm_client — only when self_mod.enabled), red_team (2 verifiers). 24-26 agents total. Federation: `FederationBridge` with `FederationRouter`, `_build_self_model()` (NodeSelfModel Psi with capabilities, pool sizes, health, uptime), `_validate_remote_result()` placeholder, wires `bridge.forward_intent` as `intent_bus._federation_fn`. Self-modification: creates `SelfModificationPipeline` with `SkillDesigner`/`SkillValidator`/`add_skill_fn` when `config.self_mod.enabled=True`, optional `ResearchPhase` when `research_enabled=True` (AD-131), `_extract_unhandled_intent()` via LLM (prefers general-purpose intents over narrow ones — AD-124), auto-design when decomposer returns empty DAG or capability-gap response (AD-126), `_register_designed_agent()`, `_create_designed_pool()`, `_set_probationary_trust()`, `_get_llm_equipped_types()` for strategy recommender, `_add_skill_to_agents()` for skill injection into skills pool (AD-129), LLM client injected into designed agent pools (AD-115). `register_agent_type()` registers new agent class and refreshes decomposer descriptors. `_collect_intent_descriptors()` deduplicates across all registered templates (including SkillBasedAgent class-level descriptors). Boot-time `refresh_descriptors()` call after pool creation syncs decomposer with all registered intents. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, dream scheduler activity tracking, pre-warm intent sync to decomposer, execution snapshot pattern (`_previous_execution`/`_last_execution` for introspection without self-overwrite), post-execution reflect step, episodic episode storage, workflow cache storage on success, `recall_similar()` for semantic search. `DreamScheduler` created at start when episodic memory is available. `WorkflowCache` created at init, passed to decomposer, exposed in `status()` |
+| `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention + dreaming + workflow cache + introspection + dynamic intent discovery + federation + self-modification + skills + research + SystemQA. Spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), introspect (2 introspection agents with runtime=self), skills (2 skill_agents with llm_client — only when self_mod.enabled), system_qa (1 SystemQAAgent — only when self_mod.enabled and qa.enabled — AD-153), red_team (2 verifiers). 25-27 agents total. Federation: `FederationBridge` with `FederationRouter`, `_build_self_model()` (NodeSelfModel Psi with capabilities, pool sizes, health, uptime), `_validate_remote_result()` placeholder, wires `bridge.forward_intent` as `intent_bus._federation_fn`. Self-modification: creates `SelfModificationPipeline` with `SkillDesigner`/`SkillValidator`/`add_skill_fn` when `config.self_mod.enabled=True`, optional `ResearchPhase` when `research_enabled=True` (AD-131), `_extract_unhandled_intent()` via LLM (prefers general-purpose intents over narrow ones — AD-124), auto-design when decomposer returns empty DAG or capability-gap response (AD-126), `_register_designed_agent()`, `_create_designed_pool()`, `_set_probationary_trust()`, `_get_llm_equipped_types()` for strategy recommender, `_add_skill_to_agents()` for skill injection into skills pool (AD-129), LLM client injected into designed agent pools (AD-115). SystemQA: `_run_qa_for_designed_agent()` runs non-blocking smoke tests via `asyncio.create_task()` after self-mod success (AD-154), trust updates with weight asymmetry (AD-155), episodic memory storage (AD-157), event log flagging, auto-remove on total failure, `_qa_reports` in-memory dict for `/qa` command (AD-157), `_EXCLUDED_AGENT_TYPES` set excludes `system_qa` and `red_team` from decomposer intent descriptors (AD-158), QA pool excluded from scaler. `register_agent_type()` registers new agent class and refreshes decomposer descriptors. `_collect_intent_descriptors()` deduplicates across all registered templates (including SkillBasedAgent class-level descriptors). Boot-time `refresh_descriptors()` call after pool creation syncs decomposer with all registered intents. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, dream scheduler activity tracking, pre-warm intent sync to decomposer, execution snapshot pattern (`_previous_execution`/`_last_execution` for introspection without self-overwrite), post-execution reflect step, episodic episode storage, workflow cache storage on success, `recall_similar()` for semantic search. `DreamScheduler` created at start when episodic memory is available. `WorkflowCache` created at init, passed to decomposer, exposed in `status()` |
 | `src/probos/__main__.py` | done | Entry point: `uv run python -m probos [--config path]` — boot sequence display with per-tier LLM connectivity checks (each tier checked independently, partial connectivity continues with warning, all-unreachable falls back to MockLLMClient — AD-134), creates `EpisodicMemory` (SQLite in temp dir), interactive shell launch, `--config` flag for node-specific YAML, `WindowsSelectorEventLoopPolicy` for pyzmq compatibility on Windows (AD-108), noisy INFO log suppression for interactive shell (AD-125) |
 | `config/node-1.yaml` | done | Node 1 federation config: bind tcp://127.0.0.1:5555, peers=[node-2] |
 | `config/node-2.yaml` | done | Node 2 federation config: bind tcp://127.0.0.1:5556, peers=[node-1] |
@@ -116,7 +118,7 @@
 
 ## What's Working
 
-**736/736 tests pass.** Test suite covers:
+**892/892 tests pass.** Test suite covers:
 
 ### Substrate tests (50 tests — unchanged)
 - Agent creation, lifecycle, confidence tracking (16 tests)
@@ -713,6 +715,112 @@
 #### Boot Sequence (2 tests)
 - All tiers unreachable falls back to MockLLMClient (1 test)
 - Partial connectivity tracked in tier_status (1 test)
+
+### SystemQA tests (72 tests — new in Phase 13)
+
+#### QAConfig (4 tests)
+- Default config values match spec (1 test)
+- QAConfig in SystemConfig as qa field (1 test)
+- QAConfig from YAML with custom values (1 test)
+- Missing qa: section falls back to defaults (1 test)
+
+#### Synthetic Intent Generation (11 tests)
+- Happy path intents have valid params (1 test)
+- Edge case intents have minimal/empty params (1 test)
+- Error case intents have invalid params (1 test)
+- Count parametrize [3, 5, 7] — total matches (3 tests)
+- Param type inference: url key → URL values (1 test)
+- Param type inference: path key → path values (1 test)
+- Param type inference: numeric key → int values (1 test)
+- Param type inference: bool key → bool values (1 test)
+- Param type inference: unknown key → string defaults (1 test)
+
+#### Validate Result (7 tests)
+- Happy path success passes (1 test)
+- Error case graceful failure passes (1 test)
+- Unhandled crash fails (1 test)
+- None on error case counts as pass (declined) (1 test)
+- None on happy path counts as fail (1 test)
+- Edge case success passes (1 test)
+- Edge case failure passes (no crash = pass) (1 test)
+
+#### QAReport Structure (4 tests)
+- All required fields and correct types (1 test)
+- Pass rate calculation 3/5 → 0.6, verdict "passed" (1 test)
+- Fail rate calculation 2/5 → 0.4, verdict "failed" (1 test)
+- Boundary: exactly 0.6 → "passed", below → "failed" (1 test)
+
+#### Smoke Test Integration (6 tests)
+- Passing agent → verdict "passed", all tests pass (1 test)
+- Failing agent → verdict "failed", agent crashes (1 test)
+- Flaky agent → mixed results (1 test)
+- Declining agent → only error case passes (1 test)
+- Per-test timeout triggers on slow agent (1 test)
+- Total timeout skips remaining tests (1 test)
+
+#### Trust Integration (3 tests)
+- Trust scores increase after passing QA (1 test)
+- Trust scores decrease after failing QA (1 test)
+- Penalty weight (2.0) > reward weight (1.0) asymmetry (1 test)
+
+#### Episodic Memory Integration (2 tests)
+- Episode stored with [SystemQA] prefix after QA (1 test)
+- Episode has correct dag_summary, outcomes, reflection, agent_ids (1 test)
+
+#### Event Log Integration (5 tests)
+- smoke_test_started event emitted (1 test)
+- smoke_test_passed event emitted on success (1 test)
+- smoke_test_failed event emitted on failure (1 test)
+- agent_flagged event when flag_on_fail=True (1 test)
+- No agent_flagged when flag_on_fail=False (1 test)
+
+#### Auto-Remove (3 tests)
+- Pool emptied when 0/N pass and auto_remove=True (1 test)
+- Pool NOT emptied on partial failure (1 test)
+- Pool NOT emptied when auto_remove=False (1 test)
+
+#### QA Report Store (2 tests)
+- Report stored in runtime._qa_reports[agent_type] (1 test)
+- Report overwritten on rerun of same agent type (1 test)
+
+#### QA Disabled (2 tests)
+- QA disabled skips execution, returns None (1 test)
+- No system_qa agent when self-mod disabled (1 test)
+
+#### Error Containment (4 tests)
+- Exception in run_smoke_tests → qa_error event logged (1 test)
+- Exception does not propagate to caller (1 test)
+- Empty pool → graceful None/error, no crash (1 test)
+- Missing pool → graceful None, no crash (1 test)
+
+#### Routing Exclusion (5 tests)
+- smoke_test_agent not in _collect_intent_descriptors (1 test)
+- smoke_test_agent not in decomposer prompt after boot (1 test)
+- system_qa pool in scaler excluded_pools (1 test)
+- system_qa pool created at boot when self_mod+qa enabled (1 test)
+- system_qa pool NOT created when qa disabled (1 test)
+
+#### Regression Invariants (4 tests)
+- runtime.status() includes qa key with enabled and report_count (1 test)
+- runtime.status() works when QA disabled (1 test)
+- Self-mod pipeline unchanged (1 test)
+- Existing shell commands unchanged (1 test)
+
+#### QA Panel Rendering (3 tests)
+- render_qa_panel with reports shows Rich table (1 test)
+- render_qa_panel empty shows "No QA results" (1 test)
+- render_qa_panel mixed verdicts shows PASSED and FAILED (1 test)
+
+#### QA Shell Command (4 tests)
+- /qa registered in COMMANDS (1 test)
+- /qa command renders panel (1 test)
+- /qa agent_type shows detail view (1 test)
+- /help includes /qa (1 test)
+
+#### Designed Panel QA Column (3 tests)
+- render_designed_panel with qa_reports shows QA column (1 test)
+- render_designed_panel with qa_reports=None — backward compat (1 test)
+- Agent not in QA reports shows em-dash (1 test)
 
 The interactive terminal interface works end-to-end:
 
@@ -1492,7 +1600,35 @@ Additionally, the red team's `_verify_http_fetch` used `httpx.AsyncClient(timeou
 
 ---
 
-## What's Next
+### AD-153 through AD-158: Phase 13 — SystemQAAgent
+
+**SystemQAAgent** is a meta-agent that smoke-tests newly designed agents after self-modification. When the self-mod pipeline successfully creates a new agent, SystemQAAgent generates synthetic test intents from the agent's intent metadata, dispatches them, validates the results, and updates the trust network. The system tests itself as it evolves.
+
+**Architecture decisions:**
+
+| AD | Decision |
+|----|----------|
+| AD-153 | Single-agent QA pool — intentional exception to Design Principle #1 (no single points of failure). QA is a singleton testing tool, not a mission-critical service. Pool excluded from demand-driven scaling |
+| AD-154 | Non-blocking QA via `asyncio.create_task()`. Full error containment: try/except in task body, `qa_error` event logged on failure, never crashes the runtime |
+| AD-155 | Trust weight asymmetry: `trust_penalty_weight=2.0` > `trust_reward_weight=1.0`. Failing agents lose trust faster than passing agents gain it, creating conservative self-correction |
+| AD-156 | Param type inference from key name heuristics, not description string parsing. Key names like "url", "path", "count", "flag" map to typed synthetic values (URLs, file paths, integers, booleans) |
+| AD-157 | Dual storage: `runtime._qa_reports` (typed dict, fast) for `/qa` command, episodic memory (durable) for decomposer context. Avoids fragile string-matching on `[SystemQA]` prefixes |
+| AD-158 | QA pool excluded from user-facing routing: `smoke_test_agent` descriptor excluded from decomposer, pool excluded from scaler. `_EXCLUDED_AGENT_TYPES = {"red_team", "system_qa"}` |
+
+**Files changed/created:**
+
+| File | Change |
+|------|--------|
+| `src/probos/config.py` | Added `QAConfig` class, `qa: QAConfig = QAConfig()` to SystemConfig, None-section filtering in `load_config()` |
+| `config/system.yaml` | Added `qa:` section with commented defaults |
+| `src/probos/agents/system_qa.py` | **New.** `QAReport` dataclass, `SystemQAAgent` with `generate_synthetic_intents()`, `validate_result()`, `run_smoke_tests()`, `_infer_param_type()` heuristics |
+| `src/probos/runtime.py` | QA pool creation, `_run_qa_for_designed_agent()` with trust+episodic+eventlog+flagging+auto-remove, `_EXCLUDED_AGENT_TYPES` set, QA in `status()` |
+| `src/probos/experience/qa_panel.py` | **New.** `render_qa_panel()` summary table, `render_qa_detail()` per-agent breakdown |
+| `src/probos/experience/panels.py` | `render_designed_panel()` — optional `qa_reports` parameter, QA column with verdict styling |
+| `src/probos/experience/shell.py` | `/qa` command registration and handler, `/designed` passes qa_reports |
+| `tests/test_system_qa.py` | **New.** 72 tests across 16 test classes covering all AD-153–AD-158 requirements |
+
+892/892 tests passing (+ 11 skipped).
 
 - [x] ~~Plan Phase 1 implementation~~
 - [x] ~~Build substrate layer (agent, registry, spawner, pool, heartbeat)~~
@@ -1573,7 +1709,8 @@ Additionally, the red team's `_verify_http_fetch` used `httpx.AsyncClient(timeou
 - [x] ~~787/787 tests pass + 11 live LLM tests~~
 - [x] ~~**DAG timeout excludes user-wait:** Escalation user prompts no longer count against the 60s DAG execution deadline. Deadline checked between batches using effective elapsed time (wall-clock minus accumulated user-wait). `EscalationManager` tracks `user_wait_seconds` via `time.monotonic()` around user callbacks. 3 new tests (AD-149)~~
 - [x] ~~790/790 tests pass + 11 live LLM tests~~
-- [ ] **SystemQAAgent (Internal Self-Testing):** A runtime self-monitoring agent that validates designed agents after self-modification. On every successful self-mod pipeline, SystemQAAgent smoke-tests the newly designed agent with synthetic intents, verifies the output shape and content, records pass/fail outcomes in episodic memory, and uses the trust network to flag flaky agents for demotion or redesign. Complements the external `pytest -m live_llm` integration tests with always-on internal quality assurance — the system tests itself as it evolves.
+- [x] ~~**SystemQAAgent (Internal Self-Testing):** A runtime self-monitoring agent that validates designed agents after self-modification. On every successful self-mod pipeline, SystemQAAgent smoke-tests the newly designed agent with synthetic intents, verifies the output shape and content, records pass/fail outcomes in episodic memory, and uses the trust network to flag flaky agents for demotion or redesign. Complements the external `pytest -m live_llm` integration tests with always-on internal quality assurance — the system tests itself as it evolves. (AD-153 through AD-158)~~
+- [x] ~~892/892 tests pass~~
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
 - [x] ~~**Phase 11: Skills, Transparency & Web Research** — Strategy proposals with confidence scores, SkillBasedAgent with modular intent handlers, web research phase for agent design (see `prompts/phase-11-skills-transparency-research.md`)~~

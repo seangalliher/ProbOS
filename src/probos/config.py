@@ -206,6 +206,20 @@ class SelfModConfig(BaseModel):
     research_max_content_per_page: int = 2000
 
 
+class QAConfig(BaseModel):
+    """SystemQAAgent configuration."""
+
+    enabled: bool = True                    # QA runs by default when self-mod is enabled
+    smoke_test_count: int = 5               # Number of synthetic intents per new agent
+    timeout_per_test_seconds: float = 10.0  # Per-intent timeout
+    total_timeout_seconds: float = 30.0     # Total QA budget per agent
+    pass_threshold: float = 0.6             # Fraction of tests that must pass (3/5)
+    trust_reward_weight: float = 1.0        # Weight for trust_network.record_outcome on success
+    trust_penalty_weight: float = 2.0       # Weight for trust_network.record_outcome on failure
+    flag_on_fail: bool = True               # Emit warning event if agent fails QA
+    auto_remove_on_total_fail: bool = False  # Remove agent if 0/N pass
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
@@ -227,6 +241,7 @@ class SystemConfig(BaseModel):
     scaling: ScalingConfig = ScalingConfig()
     federation: FederationConfig = FederationConfig()
     self_mod: SelfModConfig = SelfModConfig()
+    qa: QAConfig = QAConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:
@@ -236,4 +251,7 @@ def load_config(path: str | Path) -> SystemConfig:
         return SystemConfig()
     with open(path) as f:
         raw = yaml.safe_load(f) or {}
+    # YAML sections with all values commented out parse as key: None.
+    # Remove these so pydantic uses defaults instead of failing validation.
+    raw = {k: v for k, v in raw.items() if v is not None}
     return SystemConfig.model_validate(raw)

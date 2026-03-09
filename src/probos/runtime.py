@@ -18,6 +18,7 @@ from probos.agents.http_fetch import HttpFetchAgent
 from probos.agents.introspect import IntrospectionAgent
 from probos.agents.red_team import RedTeamAgent
 from probos.agents.shell_command import ShellCommandAgent
+from probos.agents.system_qa import SystemQAAgent
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
@@ -160,6 +161,10 @@ class ProbOSRuntime:
         self.self_mod_pipeline: Any = None  # SelfModificationPipeline | None
         self.behavioral_monitor: Any = None  # BehavioralMonitor | None
 
+        # --- SystemQA (AD-153) ---
+        self._system_qa: Any = None  # SystemQAAgent | None
+        self._qa_reports: dict[str, Any] = {}  # AD-157: in-memory report store
+
         # --- Execution history (for introspection) ---
         self._last_execution: dict[str, Any] | None = None
         self._previous_execution: dict[str, Any] | None = None
@@ -177,6 +182,7 @@ class ProbOSRuntime:
         self.spawner.register_template("red_team", RedTeamAgent)
         self.spawner.register_template("introspect", IntrospectionAgent)
         self.spawner.register_template("skill_agent", SkillBasedAgent)
+        self.spawner.register_template("system_qa", SystemQAAgent)
 
     def register_agent_type(self, type_name: str, agent_class: type) -> None:
         """Register an agent class and refresh the decomposer's intent descriptors."""
@@ -290,7 +296,7 @@ class ProbOSRuntime:
                 pool_config=self.config.pools,
                 scaling_config=self.config.scaling,
                 pool_intent_map=pool_intent_map,
-                excluded_pools={"system"},
+                excluded_pools={"system", "system_qa"},
                 trust_network=self.trust_network,
                 consensus_pools=consensus_pools,
                 consensus_min_agents=self.config.consensus.min_votes,
@@ -391,6 +397,17 @@ class ProbOSRuntime:
                 "skills", "skill_agent", target_size=2,
                 llm_client=self.llm_client,
             )
+
+            # Spawn SystemQA pool if QA enabled (AD-153: single agent)
+            if self.config.qa.enabled:
+                await self.create_pool("system_qa", "system_qa", target_size=1)
+                qa_pool = self.pools.get("system_qa")
+                if qa_pool and qa_pool.healthy_agents:
+                    agents = list(qa_pool.healthy_agents)
+                    if isinstance(agents[0], str):
+                        self._system_qa = self.registry.get(agents[0])
+                    else:
+                        self._system_qa = agents[0]
 
         # Start episodic memory if provided
         if self.episodic_memory:
@@ -785,6 +802,11 @@ class ProbOSRuntime:
                         if dag.nodes:
                             # Successfully re-decomposed — continue with normal execution
                             pass
+                        # AD-154: Schedule QA as background task (non-blocking)
+                        if self._system_qa is not None:
+                            asyncio.create_task(
+                                self._run_qa_for_designed_agent(record)
+                            )
                     elif record:
                         self_mod_result = {
                             "status": record.status,
@@ -932,6 +954,10 @@ class ProbOSRuntime:
             if self.self_mod_pipeline
             else {"enabled": False}
         )
+        result["qa"] = {
+            "enabled": self.config.qa.enabled and self.config.self_mod.enabled,
+            "report_count": len(self._qa_reports),
+        }
         if self.dream_scheduler:
             dream_status: dict[str, Any] = {
                 "state": "dreaming" if self.dream_scheduler.is_dreaming else "idle",
@@ -1091,11 +1117,19 @@ class ProbOSRuntime:
             pool=agent.pool,
         )
 
+    # AD-158: Agent types excluded from user-facing routing
+    _EXCLUDED_AGENT_TYPES = {"red_team", "system_qa"}
+
     def _collect_intent_descriptors(self) -> list[IntentDescriptor]:
-        """Collect unique intent descriptors from all registered agent templates."""
+        """Collect unique intent descriptors from all registered agent templates.
+
+        Excludes internal-only agent types (red_team, system_qa — AD-158).
+        """
         seen: set[str] = set()
         descriptors: list[IntentDescriptor] = []
-        for agent_class in self.spawner._templates.values():
+        for type_name, agent_class in self.spawner._templates.items():
+            if type_name in self._EXCLUDED_AGENT_TYPES:
+                continue
             for desc in getattr(agent_class, "intent_descriptors", []):
                 if desc.name not in seen:
                     seen.add(desc.name)
@@ -1182,6 +1216,106 @@ class ProbOSRuntime:
                 agent.add_skill(skill)
         # Refresh descriptors
         self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
+
+    # ------------------------------------------------------------------
+    # SystemQA helper (AD-154)
+    # ------------------------------------------------------------------
+
+    async def _run_qa_for_designed_agent(self, record: Any) -> Any:
+        """Run smoke tests for a newly designed agent. Non-blocking.
+
+        AD-154: All errors contained — this runs as a fire-and-forget task.
+        """
+        try:
+            if not self.config.qa.enabled or self._system_qa is None:
+                return None
+
+            pool = self.pools.get(record.pool_name)
+            if not pool or not pool.healthy_agents:
+                return None
+
+            report = await self._system_qa.run_smoke_tests(
+                record, pool, self.config.qa,
+            )
+
+            # AD-157: Store report in-memory for /qa command
+            self._qa_reports[record.agent_type] = report
+
+            # Trust updates (AD-155)
+            for agent_id_or_agent in pool.healthy_agents:
+                aid = agent_id_or_agent if isinstance(agent_id_or_agent, str) else agent_id_or_agent.id
+                for test in report.test_details:
+                    weight = (
+                        self.config.qa.trust_reward_weight
+                        if test["passed"]
+                        else self.config.qa.trust_penalty_weight
+                    )
+                    self.trust_network.record_outcome(
+                        aid, success=test["passed"], weight=weight,
+                    )
+
+            # Episodic memory
+            if self.episodic_memory:
+                import uuid as _uuid
+                episode = Episode(
+                    id=_uuid.uuid4().hex,
+                    timestamp=time.time(),
+                    user_input=f"[SystemQA] Smoke test: {record.intent_name}",
+                    dag_summary={
+                        "node_count": report.total_tests,
+                        "intent_types": [record.intent_name],
+                        "has_dependencies": False,
+                    },
+                    outcomes=[
+                        {
+                            "intent": "smoke_test",
+                            "success": t["passed"],
+                            "status": "completed" if t["passed"] else "failed",
+                        }
+                        for t in report.test_details
+                    ],
+                    reflection=f"QA {report.verdict}: {report.passed}/{report.total_tests} passed for {record.agent_type}",
+                    agent_ids=[
+                        (a if isinstance(a, str) else a.id)
+                        for a in pool.healthy_agents
+                    ],
+                    duration_ms=report.duration_ms,
+                    embedding=[],
+                )
+                await self.episodic_memory.store(episode)
+
+            # Flagging
+            if report.verdict == "failed" and self.config.qa.flag_on_fail:
+                await self.event_log.log(
+                    category="qa",
+                    event="agent_flagged",
+                    detail=f"{record.agent_type} failed smoke tests ({report.passed}/{report.total_tests})",
+                )
+
+            # Auto-remove on total failure
+            if report.passed == 0 and self.config.qa.auto_remove_on_total_fail:
+                for agent_or_id in list(pool.healthy_agents):
+                    aid = agent_or_id if isinstance(agent_or_id, str) else agent_or_id.id
+                    await pool.remove_agent()
+                await self.event_log.log(
+                    category="qa",
+                    event="agent_removed",
+                    detail=f"{record.agent_type}: all agents removed after 0/{report.total_tests} passed",
+                )
+
+            return report
+
+        except Exception as e:
+            # AD-154: QA failure must never crash the runtime
+            try:
+                await self.event_log.log(
+                    category="qa",
+                    event="qa_error",
+                    detail=f"QA failed for {record.agent_type}: {repr(e)}",
+                )
+            except Exception:
+                pass
+            return None
 
     async def _extract_unhandled_intent(self, text: str) -> dict[str, Any] | None:
         """Use LLM to extract intent metadata from an unhandled request."""

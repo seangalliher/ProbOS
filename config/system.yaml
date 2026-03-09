@@ -98,3 +98,14 @@ self_mod:
   enabled: true
   require_user_approval: true
   max_designed_agents: 5
+
+qa:
+  # enabled: true
+  # smoke_test_count: 5
+  # timeout_per_test_seconds: 10.0
+  # total_timeout_seconds: 30.0
+  # pass_threshold: 0.6
+  # trust_reward_weight: 1.0
+  # trust_penalty_weight: 2.0
+  # flag_on_fail: true
+  # auto_remove_on_total_fail: false

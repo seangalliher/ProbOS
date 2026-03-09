@@ -658,7 +658,7 @@ def render_peers_panel(peer_models: dict) -> Panel:
     return Panel(table, title=f"Peers ({len(peer_models)})", border_style="cyan")
 
 
-def render_designed_panel(status: dict[str, Any]) -> Panel:
+def render_designed_panel(status: dict[str, Any], qa_reports: dict[str, Any] | None = None) -> Panel:
     """Render self-designed agents as a Rich Panel with table."""
     agents = status.get("designed_agents", [])
     active = status.get("active_count", 0)
@@ -679,6 +679,9 @@ def render_designed_panel(status: dict[str, Any]) -> Panel:
     table.add_column("Status")
     table.add_column("Sandbox", justify="right")
 
+    if qa_reports is not None:
+        table.add_column("QA")
+
     for a in agents:
         status_text = Text(a.get("status", "?"))
         if a.get("status") == "active":
@@ -691,13 +694,30 @@ def render_designed_panel(status: dict[str, Any]) -> Panel:
         sandbox_ms = a.get("sandbox_time_ms", 0)
         sandbox_str = f"{sandbox_ms:.0f}ms" if sandbox_ms else "-"
 
-        table.add_row(
+        row = [
             a.get("agent_type", "?"),
             a.get("class_name", "?"),
             a.get("intent_name", "?"),
             status_text,
             sandbox_str,
-        )
+        ]
+
+        if qa_reports is not None:
+            agent_type = a.get("agent_type", "")
+            report = qa_reports.get(agent_type)
+            if report is not None:
+                qa_text = Text(report.verdict.upper())
+                if report.verdict == "passed":
+                    qa_text.stylize("green")
+                elif report.verdict == "failed":
+                    qa_text.stylize("red")
+                else:
+                    qa_text.stylize("yellow")
+                row.append(qa_text)
+            else:
+                row.append("\u2014")
+
+        table.add_row(*row)
 
     # Behavioral alerts summary
     behavioral = status.get("behavioral", {})
