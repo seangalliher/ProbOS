@@ -1444,6 +1444,26 @@ Read-only HTTP GET requests were gated by consensus (`requires_consensus=True`),
 
 ---
 
+### AD-151: http_fetch few-shot examples still showed use_consensus: true + red team timeout mismatch
+
+AD-150 changed `http_fetch.requires_consensus` to `False` and updated the dynamic `_build_rules()` output, but the **few-shot examples** in both `PROMPT_EXAMPLES` (prompt_builder.py) and `_LEGACY_SYSTEM_PROMPT` (decomposer.py) still showed `"use_consensus": true` for all 3 http_fetch examples. The LLM followed the examples over the rules, emitting `use_consensus: true` and routing through the full consensus + red team verification path.
+
+Additionally, the red team's `_verify_http_fetch` used `httpx.AsyncClient(timeout=15.0)` but the runtime wrapped verification in `asyncio.wait_for(..., timeout=5.0)`. The httpx timeout exceeded the verification timeout, so `asyncio.wait_for` killed the coroutine mid-request instead of httpx returning a clean `TimeoutException`.
+
+**Prompt fixes (`prompt_builder.py`, `decomposer.py`):**
+- Changed 3 http_fetch few-shot examples from `"use_consensus": true` to `false` in `PROMPT_EXAMPLES`
+- Same 3 examples updated in `_LEGACY_SYSTEM_PROMPT`
+- Updated "what can you do?" response: "Writes and commands go through consensus verification" (was "Writes, commands, and HTTP requests")
+- Fixed legacy prompt rule numbering (removed dedicated http_fetch consensus rule, merged into non-consensus group)
+
+**Red team timeout fix (`red_team.py`):**
+- `_verify_http_fetch` httpx timeout: 15.0s → 4.0s (fits within 5.0s `verification_timeout_seconds`)
+- httpx now times out cleanly before `asyncio.wait_for`, producing a proper `TimeoutException` caught by the existing handler instead of a raw coroutine cancellation
+
+793/793 tests passing.
+
+---
+
 ## What's Next
 
 - [x] ~~Plan Phase 1 implementation~~

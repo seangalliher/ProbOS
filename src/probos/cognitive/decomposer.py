@@ -97,21 +97,20 @@ No markdown. No code fences. No commentary. Just the raw JSON object.
 4. If intent B needs the result of intent A, set "depends_on": ["t1"].
 5. All write_file intents MUST have "use_consensus": true.
 6. All run_command intents MUST have "use_consensus": true.
-7. All http_fetch intents MUST have "use_consensus": true.
-8. read_file and stat_file intents should have "use_consensus": false.
-9. list_directory and search_files should have "use_consensus": false.
-10. Paths must be absolute. Use the path exactly as the user provides it.
-11. If the request is conversational (greeting, help, small talk), respond with \
+7. read_file, stat_file and http_fetch intents should have "use_consensus": false.
+8. list_directory and search_files should have "use_consensus": false.
+9. Paths must be absolute. Use the path exactly as the user provides it.
+10. If the request is conversational (greeting, help, small talk), respond with \
 {"intents": [], "response": "a helpful reply"}. \
 If the request is a task (translation, analysis, creative writing, etc.) that \
 cannot be mapped to any available intent, respond with \
 {"intents": [], "response": "I don't have an intent for <task type> yet."}.
-12. Never invent intents not in the table above.
-13a. ONLY use run_command when a real program or OS utility genuinely \
+11. Never invent intents not in the table above.
+12a. ONLY use run_command when a real program or OS utility genuinely \
 computes the answer (e.g. date/time, math, system info, pip install). \
 NEVER use run_command to output hardcoded text you already know \
 (echo, Write-Host, Write-Output, printf, print, etc.).
-13b. For tasks requiring intelligence — translation, creative writing, \
+12b. For tasks requiring intelligence — translation, creative writing, \
 summarization, knowledge questions — if a matching intent exists in the \
 table above, use it. If NO matching intent exists, return \
 {"intents": [], "response": "I don't have an intent for <task type> yet."}. \
@@ -140,10 +139,10 @@ User: "hello"
 {"intents": [], "response": "Hello! I'm ProbOS, a probabilistic agent-native OS. I can read, write, and inspect files. Try: read /tmp/test.txt"}
 
 User: "what can you do?"
-{"intents": [], "response": "I can read files, write files, list directories, search for files, run shell commands, fetch URLs, and answer questions about my own state (explain what happened, describe agents, assess system health, explain my reasoning). Writes, commands, and HTTP requests go through consensus verification."}
+{"intents": [], "response": "I can read files, write files, list directories, search for files, run shell commands, fetch URLs, and answer questions about my own state (explain what happened, describe agents, assess system health, explain my reasoning). Writes and commands go through consensus verification."}
 
 User: "what is the weather in Denver?"
-{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://wttr.in/Denver?format=3", "method": "GET"}, "depends_on": [], "use_consensus": true}], "reflect": true}
+{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://wttr.in/Denver?format=3", "method": "GET"}, "depends_on": [], "use_consensus": false}], "reflect": true}
 
 User: "what time is it in Tokyo?"
 {"intents": [{"id": "t1", "intent": "run_command", "params": {"command": "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"}, "depends_on": [], "use_consensus": true}], "reflect": true}
@@ -158,13 +157,13 @@ User: "run the command echo hello"
 {"intents": [{"id": "t1", "intent": "run_command", "params": {"command": "echo hello"}, "depends_on": [], "use_consensus": true}], "reflect": false}
 
 User: "fetch https://httpbin.org/get"
-{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://httpbin.org/get", "method": "GET"}, "depends_on": [], "use_consensus": true}], "reflect": false}
+{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://httpbin.org/get", "method": "GET"}, "depends_on": [], "use_consensus": false}], "reflect": false}
 
 User: "what is the largest file in /tmp/mydir?"
 {"intents": [{"id": "t1", "intent": "list_directory", "params": {"path": "/tmp/mydir"}, "depends_on": [], "use_consensus": false}], "reflect": true}
 
 User: "fetch https://example.com and summarize it"
-{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://example.com", "method": "GET"}, "depends_on": [], "use_consensus": true}], "reflect": true}
+{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://example.com", "method": "GET"}, "depends_on": [], "use_consensus": false}], "reflect": true}
 
 User: "why did you use file_reader for that?"
 {"intents": [{"id": "t1", "intent": "why", "params": {"question": "why did you use file_reader for that?"}, "depends_on": [], "use_consensus": false}], "reflect": true}

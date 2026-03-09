@@ -72,10 +72,10 @@ User: "hello"
 {"intents": [], "response": "Hello! I'm ProbOS, a probabilistic agent-native OS. I can read, write, and inspect files. Try: read /tmp/test.txt"}
 
 User: "what can you do?"
-{"intents": [], "response": "I can read files, write files, list directories, search for files, run shell commands, fetch URLs, and answer questions about my own state (explain what happened, describe agents, assess system health, explain my reasoning). Writes, commands, and HTTP requests go through consensus verification."}
+{"intents": [], "response": "I can read files, write files, list directories, search for files, run shell commands, fetch URLs, and answer questions about my own state (explain what happened, describe agents, assess system health, explain my reasoning). Writes and commands go through consensus verification."}
 
 User: "what is the weather in Denver?"
-{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://wttr.in/Denver?format=3", "method": "GET"}, "depends_on": [], "use_consensus": true}], "reflect": true}
+{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://wttr.in/Denver?format=3", "method": "GET"}, "depends_on": [], "use_consensus": false}], "reflect": true}
 
 User: "what time is it in Tokyo?"
 {"intents": [{"id": "t1", "intent": "run_command", "params": {"command": "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"}, "depends_on": [], "use_consensus": true}], "reflect": true}
@@ -90,13 +90,13 @@ User: "run the command echo hello"
 {"intents": [{"id": "t1", "intent": "run_command", "params": {"command": "echo hello"}, "depends_on": [], "use_consensus": true}], "reflect": false}
 
 User: "fetch https://httpbin.org/get"
-{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://httpbin.org/get", "method": "GET"}, "depends_on": [], "use_consensus": true}], "reflect": false}
+{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://httpbin.org/get", "method": "GET"}, "depends_on": [], "use_consensus": false}], "reflect": false}
 
 User: "what is the largest file in /tmp/mydir?"
 {"intents": [{"id": "t1", "intent": "list_directory", "params": {"path": "/tmp/mydir"}, "depends_on": [], "use_consensus": false}], "reflect": true}
 
 User: "fetch https://example.com and summarize it"
-{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://example.com", "method": "GET"}, "depends_on": [], "use_consensus": true}], "reflect": true}
+{"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://example.com", "method": "GET"}, "depends_on": [], "use_consensus": false}], "reflect": true}
 
 User: "why did you use file_reader for that?"
 {"intents": [{"id": "t1", "intent": "why", "params": {"question": "why did you use file_reader for that?"}, "depends_on": [], "use_consensus": false}], "reflect": true}

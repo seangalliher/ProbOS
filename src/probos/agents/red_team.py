@@ -375,7 +375,7 @@ class RedTeamAgent(BaseAgent):
         url = params.get("url", "")
         method = params.get("method", "GET")
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=4.0) as client:
                 response = await client.request(method, url)
 
             if not claimed.success:
