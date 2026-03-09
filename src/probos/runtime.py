@@ -1198,32 +1198,37 @@ class ProbOSRuntime:
         )
 
         from probos.types import LLMRequest
-        request = LLMRequest(prompt=prompt, tier="fast", max_tokens=2048)
-        response = await self.llm_client.complete(request)
+        import re as _re
 
-        if not response.content or response.error:
-            logger.warning("_extract_unhandled_intent: empty/error response (error=%s, content_len=%s)",
-                           response.error, len(response.content) if response.content else 0)
-            return None
+        # Try fast tier first, fall back to standard if qwen's reasoning
+        # mode consumes all tokens and produces no usable JSON.
+        for tier in ("fast", "standard"):
+            request = LLMRequest(prompt=prompt, tier=tier, max_tokens=2048)
+            response = await self.llm_client.complete(request)
 
-        try:
-            import re as _re
-            # Strip <think>...</think> blocks (common with qwen / reasoning models)
-            raw = _re.sub(r'<think>.*?</think>', '', response.content, flags=_re.DOTALL).strip()
-            logger.debug("_extract_unhandled_intent raw after strip: %s", raw[:300])
-            # Strip markdown code fences if present (common with local models)
-            fence = _re.search(r'```(?:json)?\s*\n?(.*?)\n?```', raw, _re.DOTALL)
-            if fence:
-                raw = fence.group(1).strip()
-            elif not raw.startswith("{"):
-                brace = raw.find("{")
-                if brace >= 0:
-                    raw = raw[brace:]
+            if not response.content or response.error:
+                logger.warning("_extract_unhandled_intent: empty/error response (error=%s, content_len=%s, tier=%s)",
+                               response.error, len(response.content) if response.content else 0, tier)
+                continue
 
-            data = _json.loads(raw)
-            if "name" in data and "description" in data:
-                return data
-            logger.warning("_extract_unhandled_intent: JSON missing name/description keys: %s", list(data.keys()))
-        except (_json.JSONDecodeError, TypeError, ValueError) as exc:
-            logger.warning("_extract_unhandled_intent: parse failed (%s). raw=%s", exc, response.content[:200])
+            try:
+                # Strip <think>...</think> blocks (common with qwen / reasoning models)
+                raw = _re.sub(r'<think>.*?</think>', '', response.content, flags=_re.DOTALL).strip()
+                logger.debug("_extract_unhandled_intent raw after strip: %s", raw[:300])
+                # Strip markdown code fences if present (common with local models)
+                fence = _re.search(r'```(?:json)?\s*\n?(.*?)\n?```', raw, _re.DOTALL)
+                if fence:
+                    raw = fence.group(1).strip()
+                elif not raw.startswith("{"):
+                    brace = raw.find("{")
+                    if brace >= 0:
+                        raw = raw[brace:]
+
+                data = _json.loads(raw)
+                if "name" in data and "description" in data:
+                    return data
+                logger.warning("_extract_unhandled_intent: JSON missing name/description keys: %s", list(data.keys()))
+            except (_json.JSONDecodeError, TypeError, ValueError) as exc:
+                logger.warning("_extract_unhandled_intent: parse failed (%s, tier=%s). raw=%s",
+                               exc, tier, response.content[:200])
         return None
