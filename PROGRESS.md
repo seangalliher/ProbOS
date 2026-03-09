@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 12 — Per-Tier LLM Endpoints Complete (736/736 tests)
+## Current Status: Phase 12 — Self-Mod Pipeline End-to-End (754/754 tests)
 
 ---
 
@@ -1267,6 +1267,24 @@ All cognitive components (decomposer, escalation, agent designer, skill designer
 ### AD-138: Debug panel shows tier and model
 
 The debug panel (enabled with `/debug on`) previously showed `"DEBUG: Raw LLM Response"` with no indication of which tier or model was used. Added `last_tier` and `last_model` tracking on the decomposer (populated from `LLMResponse.tier` and `.model` after each LLM call). The debug panel title now reads `"DEBUG: Raw LLM Response  fast / qwen3.5:35b"`. Also fixed `LLMResponse.tier` in `_call_api()` to store the resolved tier (`request.tier or self.default_tier`) instead of the raw request tier (which could be `None`).
+
+### AD-139 – AD-141: Self-mod routing fixes
+
+Prompt rules to route capability-gap requests through self-mod instead of answering inline (AD-139). Structured `capability_gap` boolean field in decomposer output (AD-140). `<think>` tag stripping from qwen LLM responses (AD-141). Unicode apostrophe regex fix and JSON code-fence stripping in `_extract_unhandled_intent`.
+
+### AD-142: Self-mod pipeline end-to-end fix
+
+Three issues prevented the self-mod pipeline from completing:
+
+1. **Token budget in `_extract_unhandled_intent`:** `max_tokens=256` was too small — qwen3.5 used all tokens in the `reasoning` response field (separate from `content`), content was empty, `finish_reason: 'length'`. Bumped to `max_tokens=2048` with `/no_think` prefix.
+
+2. **LLM client reasoning fallback:** When qwen returns `content=''` but has a `reasoning` field in the OpenAI-compatible response, the client now falls back to the reasoning content. Prevents silent empty responses from reasoning-heavy models.
+
+3. **Agent/skill designer tier routing:** `tier=None` resolved to "fast" (qwen3.5:35b), which timed out generating agent code at 30s. Changed agent_designer and skill_designer to `tier="standard"` (Claude) — faster, no reasoning overhead, better code quality. Added `max_tokens=4096` for complete agent output. Added `<think>` tag stripping on designer output.
+
+Also bumped `llm_timeout_fast` from 15→30s in system.yaml.
+
+Verified end-to-end: "translate hello into japanese" → capability_gap → extract intent → design TranslateTextAgent (Claude) → validate → sandbox → register → re-decompose → execute → こんにちは. 754/754 tests passing.
 
 ---
 
