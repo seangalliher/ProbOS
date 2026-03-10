@@ -4,7 +4,8 @@ import time
 
 import pytest
 
-from probos.cognitive.episodic import EpisodicMemory, _keyword_embedding, _similarity
+from probos.cognitive.episodic import EpisodicMemory
+from probos.cognitive.embeddings import _keyword_embedding, _keyword_similarity
 from probos.cognitive.episodic_mock import MockEpisodicMemory
 from probos.types import Episode
 
@@ -145,7 +146,7 @@ class TestMockEpisodicMemory:
 # ---------------------------------------------------------------------------
 
 
-class TestEpisodicMemorySQLite:
+class TestEpisodicMemoryChromaDBLegacy:
     @pytest.fixture
     async def mem(self, tmp_path):
         m = EpisodicMemory(
@@ -249,14 +250,14 @@ class TestKeywordEmbedding:
 
     def test_similarity_identical(self):
         emb = _keyword_embedding("read the file")
-        score = _similarity(emb, emb)
+        score = _keyword_similarity(emb, emb)
         assert score == pytest.approx(1.0, abs=0.001)
 
     def test_similarity_different(self):
         a = _keyword_embedding("read the file at /tmp/test.txt")
         b = _keyword_embedding("completely unrelated banana query")
-        score = _similarity(a, b)
+        score = _keyword_similarity(a, b)
         assert score < 0.5
 
     def test_similarity_empty(self):
-        assert _similarity([], []) == 0.0
+        assert _keyword_similarity([], []) == 0.0

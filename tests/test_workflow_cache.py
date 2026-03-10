@@ -129,14 +129,14 @@ class TestWorkflowCache:
         assert cache.size == 0
 
     def test_fuzzy_lookup_with_prewarm(self):
-        """Store a DAG with read_file for 'read pyproject.toml'. Fuzzy lookup with
-        keyword overlap and pre_warm_intents=['read_file'] — hit."""
+        """Store a DAG with read_file for 'read the project configuration'. Fuzzy lookup
+        with semantic similarity and pre_warm_intents=['read_file'] — hit."""
         cache = WorkflowCache()
-        dag = _make_dag(["read_file"], source_text="read pyproject.toml")
-        cache.store("read pyproject.toml", dag)
+        dag = _make_dag(["read_file"], source_text="read the project configuration")
+        cache.store("read the project configuration", dag)
 
         result = cache.lookup_fuzzy(
-            "read the config file",
+            "read the project config",
             pre_warm_intents=["read_file"],
         )
         assert result is not None
@@ -154,6 +154,20 @@ class TestWorkflowCache:
             pre_warm_intents=["http_fetch"],
         )
         assert result is None
+
+    def test_fuzzy_lookup_semantic_deploy_matches_production(self):
+        """Semantic match: 'deploy API' matches cached 'push app to production'."""
+        cache = WorkflowCache()
+        dag = _make_dag(["deploy_app"], source_text="push app to production")
+        cache.store("push app to production", dag)
+
+        result = cache.lookup_fuzzy(
+            "deploy the app to production",
+            pre_warm_intents=["deploy_app"],
+            similarity_threshold=0.5,
+        )
+        assert result is not None
+        assert result.nodes[0].intent == "deploy_app"
 
     def test_clear_empties_cache(self):
         """Store entries, call clear(). Size == 0."""

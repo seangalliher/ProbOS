@@ -37,6 +37,8 @@ The system cold-starts every time: 25 generic agents, uniform trust priors, no r
 
 7. **Fully test-covered.** Every deliverable has corresponding automated tests. All tests run in `uv run pytest tests/ -v`. The phase is not complete until every new code path has at least one test.
 
+8. **Validated restoration.** Designed agent code restored from disk is run through `CodeValidator` before `importlib` loading — identical to the original self-mod pipeline. A corrupted or tampered `.py` file in the knowledge repo is skipped with a warning, never blindly executed.
+
 ---
 
 ## AD Numbering: Start at AD-159
@@ -46,14 +48,16 @@ AD-153 through AD-158 exist from Phase 13. All architectural decisions in this p
 | AD | Decision |
 |----|----------|
 | AD-159 | Knowledge repo location: `~/.probos/knowledge/` by default, configurable via `knowledge.repo_path` in config. Git init on first write, not on boot |
-| AD-160 | Artifact layout: `episodes/`, `agents/`, `skills/`, `trust/`, `routing/`, `workflows/`, `qa/` subdirectories. One JSON file per artifact, keyed by ID or agent_type |
-| AD-161 | Auto-commit strategy: batch commits via debounce timer (default 5s). Multiple writes within the debounce window are committed together. Immediate commit on shutdown |
+| AD-160 | Artifact layout: `episodes/`, `agents/`, `skills/`, `trust/`, `routing/`, `workflows/`, `qa/` subdirectories. One JSON file per artifact, keyed by ID or agent_type. `meta.json` at repo root with `schema_version`, `probos_version`, `created` timestamp |
+| AD-161 | Auto-commit strategy: batch commits via debounce timer (default 5s). Multiple writes within the debounce window are committed together. Immediate commit on shutdown. `flush()` sets `_flushing = True` guard before committing to prevent race with pending timer callbacks |
 | AD-162 | Warm boot order: trust → routing → agents → skills → episodes → workflows → QA. Trust and routing must load before agents so probationary scores are restored correctly |
-| AD-163 | Designed agent restoration: source code stored as `.py` file, metadata as `.json` sidecar. On warm boot, `importlib` dynamic loading + class registration + pool creation, identical to the self-mod pipeline's registration flow |
+| AD-163 | Designed agent restoration: source code stored as `.py` file, metadata as `.json` sidecar. On warm boot, `CodeValidator` validates source first, then `importlib` dynamic loading + class registration + pool creation, identical to the self-mod pipeline's registration flow. Files that fail validation are skipped with a warning |
 | AD-164 | Rollback via `/rollback <artifact-type> <identifier>`: reverts the last commit affecting that artifact. Uses `git log --follow` + `git show` to retrieve the previous version, then overwrites and re-commits. Does NOT use `git revert` (too coarse for per-artifact rollback) |
 | AD-165 | `--fresh` CLI flag: ignores existing knowledge repo, cold-starts, does NOT delete the repo (user may want to inspect it) |
-| AD-166 | Thread executor for Git operations: all `git add/commit/log/show` calls run via `asyncio.loop.run_in_executor()` to avoid blocking the event loop |
+| AD-166 | Thread executor for Git operations: all `git add/commit/log/show` calls run via `asyncio.get_running_loop().run_in_executor()` to avoid blocking the event loop. Use `get_running_loop()` throughout (not deprecated `get_event_loop()`) |
 | AD-167 | Knowledge store is optional infrastructure: if `knowledge.enabled = False` or Git is not available, the system falls back to current behavior (temp SQLite, in-memory state). No feature depends exclusively on persistence |
+| AD-168 | Trust snapshots capture raw Beta distribution parameters `(alpha, beta)` from `TrustNetwork._records`, not derived `mean()` scores. Restoration recreates the exact distribution |
+| AD-169 | Repo metadata: `meta.json` at repo root contains `{"schema_version": 1, "probos_version": "0.1.0", "created": "<ISO timestamp>"}`. Written on first `_ensure_repo()`. Future phases can use `schema_version` for migration detection |
 
 ---
 
@@ -74,6 +78,11 @@ Before writing any code, read the following to understand the interfaces you'll 
 11. `src/probos/config.py` — `SystemConfig`, `load_config()`
 12. `src/probos/__main__.py` — CLI argument parsing, boot sequence
 13. `src/probos/experience/shell.py` — slash command registration pattern
+14. `src/probos/cognitive/code_validator.py` — `CodeValidator` class, `validate()` method (needed for AD-163 warm boot validation)
+
+**Critical:** Verify what `TrustNetwork.summary()` and `all_scores()` actually return. The knowledge store must persist raw `(alpha, beta)` parameters from `_records`, not derived scores. If `summary()` does not expose raw parameters, add a `raw_scores()` method or extract directly from `_records` (AD-168).
+
+**Critical:** Verify what `WorkflowCache` exposes for bulk export. If there is no `export_all()` or equivalent, add one — shutdown persistence needs the full current cache state, not just incremental writes (see Section 3c shutdown hooks).
 
 ---
 
@@ -109,6 +118,7 @@ class KnowledgeStore:
     """Git-backed persistent knowledge repository."""
 
     def __init__(self, config: KnowledgeConfig):
+        self._flushing: bool = False  # Guard against debounce/flush race (AD-161)
         ...
 
     async def initialize(self) -> None:
@@ -147,8 +157,10 @@ class KnowledgeStore:
         ...
 
     # --- Trust persistence ---
-    async def store_trust_snapshot(self, scores: dict[str, dict]) -> None:
-        """Write trust records to trust/snapshot.json. Called after dreaming consolidation and on shutdown."""
+    async def store_trust_snapshot(self, raw_scores: dict[str, dict]) -> None:
+        """Write trust records to trust/snapshot.json. Called after dreaming consolidation and on shutdown.
+        raw_scores must contain {agent_id: {alpha, beta, observations}} — raw Beta parameters,
+        NOT derived mean() scores (AD-168)."""
         ...
 
     async def load_trust_snapshot(self) -> dict[str, dict] | None:
@@ -184,19 +196,24 @@ class KnowledgeStore:
 
     # --- Git operations ---
     async def _ensure_repo(self) -> None:
-        """Git init if not already a repo (AD-159). Creates directories (AD-160)."""
+        """Git init if not already a repo (AD-159). Creates directories (AD-160).
+        Writes meta.json with schema_version=1, probos_version, created timestamp (AD-169).
+        Checks git version >= 1.8.5 for -C flag support."""
         ...
 
     async def _schedule_commit(self, message: str) -> None:
-        """Debounced commit (AD-161). Batches writes within the debounce window."""
+        """Debounced commit (AD-161). Batches writes within the debounce window.
+        If self._flushing is True, skips (flush is handling the commit)."""
         ...
 
     async def _git_commit(self, message: str) -> None:
-        """Run git add + commit in thread executor (AD-166)."""
+        """Run git add + commit in thread executor (AD-166).
+        Uses asyncio.get_running_loop() (not get_event_loop())."""
         ...
 
     async def flush(self) -> None:
-        """Force commit any pending changes. Called on shutdown."""
+        """Force commit any pending changes. Called on shutdown.
+        Sets self._flushing = True, cancels pending timer, commits, then resets flag (AD-161)."""
         ...
 
     # --- Rollback ---
@@ -221,6 +238,7 @@ class KnowledgeStore:
 ```
 ~/.probos/knowledge/
 ├── .git/
+├── meta.json                     # {schema_version: 1, probos_version, created} (AD-169)
 ├── episodes/
 │   ├── a1b2c3d4.json          # Episode ID as filename
 │   └── e5f6g7h8.json
@@ -233,7 +251,7 @@ class KnowledgeStore:
 │   ├── translate_text.py      # Skill handler source
 │   └── translate_text.json    # Skill descriptor metadata
 ├── trust/
-│   └── snapshot.json           # {agent_id: {alpha, beta, observations}}
+│   └── snapshot.json           # {agent_id: {alpha, beta, observations}} — raw Beta params (AD-168)
 ├── routing/
 │   └── weights.json            # [{source, target, rel_type, weight}, ...]
 ├── workflows/
@@ -249,28 +267,39 @@ The `_schedule_commit()` method uses an `asyncio.TimerHandle` pattern:
 
 ```python
 async def _schedule_commit(self, message: str) -> None:
-    """Accumulate commit message, reset debounce timer."""
+    """Accumulate commit message, reset debounce timer.
+    Skips if _flushing is True (shutdown flush is handling the commit)."""
+    if self._flushing:
+        return
     self._pending_messages.append(message)
     if self._commit_timer is not None:
         self._commit_timer.cancel()
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()  # Not get_event_loop() (AD-166)
     self._commit_timer = loop.call_later(
         self._config.commit_debounce_seconds,
         lambda: asyncio.ensure_future(self._flush_pending())
     )
 ```
 
-On shutdown (`flush()`), the timer is cancelled and any pending changes are committed immediately with all accumulated messages joined.
+The `_flush_pending()` callback must also check `_flushing` before committing, to handle the case where the timer fires between `flush()` setting the flag and cancelling the timer.
+
+On shutdown (`flush()`):
+1. Set `self._flushing = True`
+2. Cancel the pending timer if any
+3. Commit all accumulated messages immediately
+4. Reset `self._flushing = False`
+
+This prevents the race condition where a debounce timer fires during shutdown and double-commits.
 
 #### Git Operations in Thread Executor (AD-166)
 
-All `git` subprocess calls go through `asyncio.loop.run_in_executor()`:
+All `git` subprocess calls go through `asyncio.get_running_loop().run_in_executor()`:
 
 ```python
 async def _git_run(self, *args: str) -> subprocess.CompletedProcess:
     """Run a git command in a thread executor."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()  # Not get_event_loop()
     return await loop.run_in_executor(
         None,
         lambda: subprocess.run(
@@ -279,6 +308,8 @@ async def _git_run(self, *args: str) -> subprocess.CompletedProcess:
         )
     )
 ```
+
+**Note:** `git -C` requires Git ≥ 1.8.5. The `_ensure_repo()` method should check the Git version on first use and log a warning if below 1.8.5.
 
 ---
 
@@ -303,15 +334,44 @@ if self.config.knowledge.enabled:
 
 Load order matters:
 
-1. **Trust snapshot** → Restore `TrustNetwork` records so that agents get their earned trust back, not uniform priors.
+1. **Trust snapshot** → Restore `TrustNetwork` records so that agents get their earned trust back, not uniform priors. Extract raw `(alpha, beta)` and restore into `_records` directly (AD-168).
 2. **Routing weights** → Restore `HebbianRouter` weights so the mesh routes based on learned patterns.
-3. **Designed agents** → For each stored agent: `importlib` dynamic load → class registration → pool creation → trust restoration (must happen after trust snapshot is loaded). Follow the same flow as `_register_designed_agent()` and `_create_designed_pool()` in the existing self-mod code.
+3. **Designed agents** → For each stored agent: **`CodeValidator.validate()` first** (AD-163) — skip any agent that fails validation with a warning. Then `importlib` dynamic load → class registration → pool creation → trust restoration (must happen after trust snapshot is loaded). Follow the same flow as `_register_designed_agent()` and `_create_designed_pool()` in the existing self-mod code.
 4. **Skills** → For each stored skill: compile handler → create `Skill` object → `add_skill()` to `SkillBasedAgent` instances. Follow the same flow as `handle_add_skill()` in `SelfModificationPipeline`.
-5. **Episodes** → Seed `EpisodicMemory` with stored episodes. The decomposer will have historical context immediately.
+5. **Episodes** → Seed `EpisodicMemory` with stored episodes via a new `EpisodicMemory.seed(episodes: list[Episode])` method (see below). The decomposer will have historical context immediately.
 6. **Workflow cache** → Populate `WorkflowCache` with stored entries. Repeated requests hit the cache on first try.
 7. **QA reports** → Restore `_qa_reports` dict for `/qa` command.
 
 If any individual restoration step fails (corrupted file, missing dependency in designed agent code), log a warning and continue. Partial restoration is better than no restoration. Never let a corrupt artifact block startup.
+
+#### 3b-addendum. Add `EpisodicMemory.seed()` method
+
+Add to `src/probos/cognitive/episodic.py`:
+
+```python
+async def seed(self, episodes: list[Episode]) -> int:
+    """Bulk-restore episodes preserving their original IDs and timestamps.
+    Used for warm boot — does NOT trigger normal store() flow (no knowledge store hooks,
+    no duplicate checking beyond ID conflict). Returns count of episodes seeded.
+    Skips episodes whose IDs already exist in the database."""
+    ...
+```
+
+This avoids the problem of `store()` potentially reassigning IDs, triggering knowledge store hooks (infinite loop), or applying max_episodes eviction during restoration.
+
+Also add `MockEpisodicMemory.seed()` with the same interface for test compatibility.
+
+#### 3b-addendum. Add `WorkflowCache.export_all()` method
+
+Add to `src/probos/cognitive/workflow_cache.py`:
+
+```python
+def export_all(self) -> list[dict]:
+    """Export all cached entries for persistence. Returns list of serializable dicts."""
+    ...
+```
+
+This enables the shutdown hook to persist the full current cache state.
 
 #### 3c. Hook persistence into existing write paths
 
@@ -322,13 +382,15 @@ Add `KnowledgeStore` calls at the points where state changes already occur:
 | `EpisodicMemory.store()` (called in `process_natural_language()` after DAG execution) | `knowledge_store.store_episode(episode)` |
 | `_register_designed_agent()` / `_create_designed_pool()` | `knowledge_store.store_agent(record, source_code)` |
 | `_add_skill_to_agents()` | `knowledge_store.store_skill(intent_name, source_code, descriptor)` |
-| `DreamingEngine.dream_cycle()` completes (trust consolidation) | `knowledge_store.store_trust_snapshot(trust_network.summary())` |
+| `DreamingEngine.dream_cycle()` completes (trust consolidation) | `knowledge_store.store_trust_snapshot(trust_network.raw_scores())` — raw Beta params (AD-168) |
 | `DreamingEngine.dream_cycle()` completes (Hebbian updates) | `knowledge_store.store_routing_weights(...)` |
 | `WorkflowCache.store()` | `knowledge_store.store_workflows(...)` |
 | `_run_qa_for_designed_agent()` completes | `knowledge_store.store_qa_report(agent_type, report)` |
-| `stop()` (shutdown) | `knowledge_store.store_trust_snapshot(...)` + `knowledge_store.store_routing_weights(...)` + `knowledge_store.flush()` |
+| `stop()` (shutdown) | `knowledge_store.store_trust_snapshot(...)` + `knowledge_store.store_routing_weights(...)` + `knowledge_store.store_workflows(workflow_cache.export_all())` + `knowledge_store.flush()` |
 
 **Important:** These calls should be additive — wrapped in try/except so a persistence failure never blocks the primary operation. The system must continue working even if the knowledge store is unavailable.
+
+**Note on shutdown:** The shutdown hook persists workflows via `export_all()` to capture the full current cache state (including popularity changes from eviction), not just incremental writes from the session.
 
 #### 3d. Add `--fresh` CLI flag (AD-165)
 
@@ -358,6 +420,7 @@ Display as a Rich panel:
 ╭─── Knowledge Store ─────────────────────────────────────╮
 │ Repository: ~/.probos/knowledge/                        │
 │ Status:     active (42 commits)                         │
+│ Schema:     v1                                          │
 │                                                         │
 │ Artifact Type  │ Count │ Last Modified                   │
 │────────────────│───────│─────────────────────────────────│
@@ -405,7 +468,7 @@ Follow the same pattern as `qa_panel.py`: empty-state guard, Rich Table, Rich Pa
 
 ### 6. Tests: `tests/test_knowledge_store.py`
 
-**Regression mandate:** Every new code path MUST have automated test coverage. `uv run pytest tests/ -v` must show 950+ tests passing (892 existing + 60+ new) with 0 failures.
+**Regression mandate:** Every new code path MUST have automated test coverage. `uv run pytest tests/ -v` must show all existing tests continue to pass plus 60+ new tests, with 0 failures.
 
 #### 6a. KnowledgeStore unit tests
 
@@ -414,6 +477,7 @@ Follow the same pattern as `qa_panel.py`: empty-state guard, Rich Table, Rich Pa
 | `test_initialize_creates_directory` | `initialize()` creates the repo directory if it doesn't exist |
 | `test_initialize_idempotent` | Calling `initialize()` twice doesn't error |
 | `test_git_init_on_first_write` | Git repo is initialized on first `store_*` call, not on `initialize()` (AD-159) |
+| `test_meta_json_written_on_init` | `meta.json` created with schema_version=1 and probos_version on first `_ensure_repo()` (AD-169) |
 | `test_repo_exists_false_before_write` | `repo_exists` returns False before any write |
 | `test_repo_exists_true_after_write` | `repo_exists` returns True after first write |
 | `test_store_episode_creates_file` | `store_episode()` creates `episodes/{id}.json` with correct content |
@@ -431,9 +495,10 @@ Follow the same pattern as `qa_panel.py`: empty-state guard, Rich Table, Rich Pa
 | `test_remove_agent_nonexistent` | `remove_agent()` for missing agent doesn't error |
 | `test_store_skill_creates_files` | `store_skill()` creates `.py` and `.json` files in skills/ |
 | `test_load_skills_returns_stored` | `load_skills()` returns previously stored skills |
-| `test_store_trust_snapshot` | `store_trust_snapshot()` creates `trust/snapshot.json` |
-| `test_load_trust_snapshot` | `load_trust_snapshot()` returns previously stored trust data |
+| `test_store_trust_snapshot` | `store_trust_snapshot()` creates `trust/snapshot.json` with raw alpha/beta (AD-168) |
+| `test_load_trust_snapshot` | `load_trust_snapshot()` returns previously stored trust data with alpha/beta |
 | `test_load_trust_snapshot_missing` | Returns None when no snapshot exists |
+| `test_trust_snapshot_contains_raw_params` | Snapshot contains raw `alpha`, `beta` fields, not derived `mean` scores (AD-168) |
 | `test_store_routing_weights` | `store_routing_weights()` creates `routing/weights.json` |
 | `test_load_routing_weights` | `load_routing_weights()` returns previously stored weights |
 | `test_store_workflows` | `store_workflows()` creates `workflows/cache.json` |
@@ -450,6 +515,7 @@ Follow the same pattern as `qa_panel.py`: empty-state guard, Rich Table, Rich Pa
 | `test_auto_commit_after_debounce` | After storing an artifact and waiting for debounce, a git commit exists |
 | `test_debounce_batches_writes` | Multiple writes within debounce window produce a single commit |
 | `test_flush_commits_immediately` | `flush()` commits pending changes without waiting for debounce |
+| `test_flush_prevents_debounce_race` | Debounce timer firing during `flush()` does not double-commit (AD-161) |
 | `test_commit_message_includes_artifact_info` | Commit messages describe what was changed |
 | `test_artifact_history_returns_commits` | `artifact_history()` returns commit log for a specific file |
 | `test_artifact_history_empty` | `artifact_history()` returns empty list for non-existent artifact |
@@ -458,16 +524,19 @@ Follow the same pattern as `qa_panel.py`: empty-state guard, Rich Table, Rich Pa
 | `test_rollback_no_history_returns_false` | `rollback_artifact()` returns False when artifact has no previous version |
 | `test_thread_executor_no_event_loop_block` | Git operations don't block the asyncio event loop (AD-166) |
 | `test_git_not_available_graceful` | If `git` binary is not found, store falls back to file-only mode (no commits, no rollback) |
+| `test_uses_get_running_loop` | Git operations use `asyncio.get_running_loop()`, not `get_event_loop()` (AD-166) |
 
 #### 6c. Warm boot tests (AD-162)
 
 | Test | What it validates |
 |------|-------------------|
-| `test_warm_boot_restores_trust` | Trust scores from previous session are restored on boot |
+| `test_warm_boot_restores_trust` | Trust scores from previous session are restored on boot with correct alpha/beta (AD-168) |
 | `test_warm_boot_restores_routing` | Hebbian weights from previous session are restored |
 | `test_warm_boot_restores_designed_agents` | Designed agents are re-registered and pooled |
+| `test_warm_boot_validates_agent_code` | Restored agent code is run through `CodeValidator` before loading (AD-163) |
+| `test_warm_boot_skips_invalid_agent` | Designed agent with corrupted source code is skipped with warning, others restore (AD-163) |
 | `test_warm_boot_restores_skills` | Skills are re-attached to SkillBasedAgent instances |
-| `test_warm_boot_restores_episodes` | Episodes are seeded into EpisodicMemory |
+| `test_warm_boot_restores_episodes` | Episodes are seeded into EpisodicMemory via `seed()` |
 | `test_warm_boot_restores_workflows` | WorkflowCache is populated with stored entries |
 | `test_warm_boot_restores_qa_reports` | QA reports are restored into `_qa_reports` dict |
 | `test_warm_boot_order_trust_before_agents` | Trust is restored before agents, so agents get correct trust scores |
@@ -482,14 +551,34 @@ Follow the same pattern as `qa_panel.py`: empty-state guard, Rich Table, Rich Pa
 |------|-------------------|
 | `test_episode_persisted_after_nl_processing` | After `process_natural_language()`, the episode is written to knowledge store |
 | `test_designed_agent_persisted_after_self_mod` | After self-mod, agent source + metadata written to knowledge store |
-| `test_trust_persisted_after_dreaming` | After dream cycle, trust snapshot written to knowledge store |
+| `test_trust_persisted_after_dreaming` | After dream cycle, trust snapshot written to knowledge store with raw alpha/beta |
 | `test_routing_persisted_after_dreaming` | After dream cycle, routing weights written to knowledge store |
 | `test_qa_report_persisted` | After QA completion, report written to knowledge store |
 | `test_persistence_failure_no_crash` | Knowledge store write failure doesn't crash the runtime |
 | `test_shutdown_flushes_knowledge` | `stop()` calls `knowledge_store.flush()` for clean shutdown |
+| `test_shutdown_persists_workflows` | `stop()` calls `store_workflows(workflow_cache.export_all())` before flush |
 | `test_knowledge_disabled_skips_persistence` | When `knowledge.enabled = False`, no persistence calls made |
 
-#### 6e. Config tests
+#### 6e. EpisodicMemory.seed() tests
+
+| Test | What it validates |
+|------|-------------------|
+| `test_seed_restores_episodes` | `seed()` inserts episodes that are retrievable via `recall()` and `recent()` |
+| `test_seed_preserves_ids` | Seeded episodes retain their original IDs |
+| `test_seed_preserves_timestamps` | Seeded episodes retain their original timestamps |
+| `test_seed_skips_duplicate_ids` | Seeded episodes with existing IDs are skipped, not duplicated |
+| `test_seed_empty_list` | `seed([])` is a no-op |
+| `test_mock_episodic_seed` | `MockEpisodicMemory.seed()` works identically |
+
+#### 6f. WorkflowCache.export_all() tests
+
+| Test | What it validates |
+|------|-------------------|
+| `test_export_all_returns_all_entries` | `export_all()` returns all cached entries |
+| `test_export_all_empty_cache` | `export_all()` returns empty list when cache is empty |
+| `test_export_all_serializable` | Returned dicts are JSON-serializable |
+
+#### 6g. Config tests
 
 | Test | What it validates |
 |------|-------------------|
@@ -498,7 +587,7 @@ Follow the same pattern as `qa_panel.py`: empty-state guard, Rich Table, Rich Pa
 | `test_knowledge_config_from_yaml` | Custom values load from YAML |
 | `test_knowledge_config_missing_uses_defaults` | Missing `knowledge:` section → defaults applied |
 
-#### 6f. Shell and experience tests
+#### 6h. Shell and experience tests
 
 | Test | What it validates |
 |------|-------------------|
@@ -508,13 +597,14 @@ Follow the same pattern as `qa_panel.py`: empty-state guard, Rich Table, Rich Pa
 | `test_rollback_command_registered` | `/rollback` appears in shell COMMANDS dict |
 | `test_render_knowledge_panel_populated` | Panel renders with correct artifact counts |
 | `test_render_knowledge_panel_no_store` | Panel shows "Knowledge store not enabled" when disabled |
+| `test_render_knowledge_panel_shows_schema_version` | Panel includes schema version from meta.json |
 | `test_render_knowledge_history` | History panel shows commit entries |
 
-#### 6g. Existing test regression
+#### 6i. Existing test regression
 
 | Test | What it validates |
 |------|-------------------|
-| `test_existing_runtime_tests_pass` | All 32 existing runtime integration tests still pass |
+| `test_existing_runtime_tests_pass` | All existing runtime integration tests still pass |
 | `test_existing_episodic_tests_pass` | All existing episodic memory tests still pass |
 | `test_existing_trust_tests_pass` | All existing trust network tests still pass |
 | `test_existing_shell_tests_pass` | All existing shell command tests still pass |
@@ -528,7 +618,7 @@ Follow the same pattern as `qa_panel.py`: empty-state guard, Rich Table, Rich Pa
 - **Use temp directories.** All tests create knowledge repos in `tempfile.mkdtemp()`, never in `~/.probos/`. Clean up in fixtures.
 - **Git must be available.** Tests that need git should check with `shutil.which("git")` and skip with `pytest.mark.skipif` if unavailable. Provide a marker `@pytest.mark.requires_git` for these tests.
 - **No network, no real filesystem side effects.**
-- **Target:** 60+ new tests. Phase complete when `uv run pytest tests/ -v` shows 950+ tests passing (892 existing + 60+ new) with 0 failures.
+- **Target:** 70+ new tests. Phase complete when `uv run pytest tests/ -v` shows all existing tests plus 70+ new tests passing with 0 failures.
 
 ---
 
@@ -540,7 +630,7 @@ Follow the same pattern as `qa_panel.py`: empty-state guard, Rich Table, Rich Pa
 
 - **Knowledge compaction / garbage collection.** Over time, the episodes directory will grow. A future phase could add episode summarization (compress old episodes into summary episodes) or time-based pruning.
 
-- **Schema migration.** The first version of each artifact format is v1. If fields change in future phases, a migration system will be needed. For now, the JSON format is the schema — forward-compatible by ignoring unknown fields, backward-compatible by using defaults for missing fields.
+- **Schema migration.** The first version of each artifact format is v1. If fields change in future phases, a migration system will be needed. For now, the JSON format is the schema — forward-compatible by ignoring unknown fields, backward-compatible by using defaults for missing fields. The `meta.json` schema_version field (AD-169) enables future migration detection.
 
 - **Encryption at rest.** Knowledge artifacts are stored as plaintext JSON. If the system handles sensitive data, encryption should be added as a separate concern (GPG-encrypted Git, or OS-level disk encryption).
 
@@ -549,13 +639,15 @@ Follow the same pattern as `qa_panel.py`: empty-state guard, Rich Table, Rich Pa
 ## Build Order
 
 1. `KnowledgeConfig` in `config.py` + config tests (verify defaults, YAML loading)
-2. `KnowledgeStore` class skeleton with directory layout + file I/O (no Git yet) + unit tests for store/load of each artifact type
-3. Git integration: `_ensure_repo()`, `_git_commit()`, `_schedule_commit()`, `flush()` + git integration tests
-4. Rollback: `rollback_artifact()`, `artifact_history()` + rollback tests
-5. Runtime wiring: `_restore_from_knowledge()` warm boot, persistence hooks into existing write paths + warm boot tests + runtime integration tests
-6. `--fresh` CLI flag + test
-7. Experience layer: `knowledge_panel.py`, `/knowledge` and `/rollback` shell commands + shell tests
-8. Full regression: `uv run pytest tests/ -v` — all 950+ tests pass
+2. `EpisodicMemory.seed()` + `MockEpisodicMemory.seed()` + seed tests. `WorkflowCache.export_all()` + export tests. These are prerequisites for warm boot.
+3. `KnowledgeStore` class skeleton with directory layout + `meta.json` (AD-169) + file I/O (no Git yet) + unit tests for store/load of each artifact type
+4. Git integration: `_ensure_repo()`, `_git_commit()`, `_schedule_commit()` with flush race guard, `flush()` + git integration tests
+5. Rollback: `rollback_artifact()`, `artifact_history()` + rollback tests
+6. Runtime wiring: `_restore_from_knowledge()` warm boot with CodeValidator gate (AD-163), persistence hooks into existing write paths including shutdown workflow export, raw trust params (AD-168) + warm boot tests + runtime integration tests
+7. `--fresh` CLI flag + test
+8. Experience layer: `knowledge_panel.py`, `/knowledge` and `/rollback` shell commands + shell tests
+9. Update PROGRESS.md: record this as Phase 14, update the "What's Next" section to re-sequence ChromaDB Episodic Upgrade and Semantic Knowledge Layer as subsequent phases
+10. Full regression: `uv run pytest tests/ -v` — all existing tests plus 70+ new tests pass with 0 failures
 
 Do NOT proceed to step N+1 until step N's tests pass.
 
@@ -566,13 +658,15 @@ Do NOT proceed to step N+1 until step N's tests pass.
 | Component | How KnowledgeStore uses it |
 |-----------|--------------------------|
 | `EpisodicMemory.store()` | Hook point — after storing in SQLite, also persist to knowledge repo |
-| `TrustNetwork.summary()` / `all_scores()` | Extracting trust data for snapshot serialization |
+| `EpisodicMemory.seed()` | **NEW** — bulk restore for warm boot without triggering store hooks |
+| `TrustNetwork._records` | Direct extraction of raw `(alpha, beta)` for trust snapshots (AD-168) |
 | `HebbianRouter._weights` | Extracting routing weights for persistence |
 | `SelfModificationPipeline._designed_agents` | Source of `DesignedAgentRecord` + source code for agent persistence |
 | `SkillBasedAgent._skills` | Source of skill data for persistence |
-| `WorkflowCache._cache` | Source of workflow entries for persistence |
+| `WorkflowCache._cache` / `export_all()` | Source of workflow entries for persistence; **NEW** `export_all()` for shutdown bulk export |
+| `CodeValidator.validate()` | **Reused** for warm boot agent validation before `importlib` loading (AD-163) |
 | `importlib` dynamic loading | Reuses the sandbox/self-mod pattern for designed agent restoration |
-| `asyncio.run_in_executor()` | Non-blocking Git subprocess calls |
+| `asyncio.get_running_loop().run_in_executor()` | Non-blocking Git subprocess calls |
 | `ResourcePool` / `AgentSpawner` | Pool creation for restored designed agents |
 | `_register_designed_agent()` | Reused for warm boot agent registration (no code duplication) |
 
@@ -588,8 +682,14 @@ Do NOT proceed to step N+1 until step N's tests pass.
 
 - **AD-159 — Late git init.** The repo is not git-initialized on boot because the system may run in read-only or temporary contexts where no knowledge needs to persist. Git init happens on the first write, ensuring the repo is only created when there's something to store.
 
-- **AD-161 — Debounce, not write-through.** Committing on every `store_episode()` call would generate hundreds of commits per session. The debounce timer batches writes into logical units. A 5-second window means rapid-fire operations (like 5 DAG nodes completing in sequence) produce one commit, not five.
+- **AD-161 — Debounce, not write-through.** Committing on every `store_episode()` call would generate hundreds of commits per session. The debounce timer batches writes into logical units. A 5-second window means rapid-fire operations (like 5 DAG nodes completing in sequence) produce one commit, not five. The `_flushing` guard prevents the race condition where `flush()` and a debounce timer callback compete to commit simultaneously.
 
 - **AD-162 — Trust-first warm boot.** Designed agents restored on warm boot need their earned trust scores, not the default probationary prior. Loading trust before agents ensures `_set_probationary_trust()` is skipped (or overridden) for agents that already have trust history.
 
+- **AD-163 — Validated restoration.** The knowledge repo lives on disk at `~/.probos/knowledge/` and is editable by the user or other processes. Running `CodeValidator.validate()` on restored `.py` files before `importlib` loading closes the gap where a corrupted or tampered file could execute arbitrary code on boot. This reuses existing infrastructure at near-zero cost.
+
 - **AD-164 — Per-artifact rollback.** `git revert` operates on entire commits, which may contain changes to multiple artifacts (e.g., a dream cycle commits trust + routing + episodes together). Per-artifact rollback uses `git log --follow` to find the commit that last changed a specific file, then `git show` to retrieve the previous version. This is more surgical than `git revert`.
+
+- **AD-168 — Raw Beta parameters.** Trust snapshots must capture `(alpha, beta)` from the Beta distribution, not the derived mean `alpha / (alpha + beta)`. Restoring from means would lose the shape of the distribution — an agent with Beta(10, 10) and one with Beta(1, 1) both have mean 0.5 but very different confidence. The raw parameters preserve the full Bayesian state.
+
+- **AD-169 — Repo metadata.** A `meta.json` at the repo root costs one file and enables future schema migration detection. Without it, a future phase that changes the artifact format would have no way to know whether the existing repo uses v1 or v2 schema.

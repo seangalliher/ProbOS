@@ -1,116 +1,25 @@
 """Episodic memory — long-term storage and recall of past operations.
 
-Uses SQLite for persistence and keyword-overlap scoring for similarity
-search.  This avoids heavyweight embedding model dependencies (ChromaDB,
-Sentence Transformers) while still providing useful recall.  See AD-48.
+Uses ChromaDB for persistence and semantic similarity search via ONNX
+MiniLM embeddings.  Replaces the previous SQLite + keyword-overlap
+implementation (Phase 14b).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import math
-import re
 import time
-from collections import Counter
 from pathlib import Path
 from typing import Any
-
-import aiosqlite
 
 from probos.types import Episode
 
 logger = logging.getLogger(__name__)
 
-# ------------------------------------------------------------------
-# Lightweight keyword embedding
-# ------------------------------------------------------------------
-
-_STOP_WORDS = frozenset(
-    "a an the in on at to of is are was were for and or but with from by".split()
-)
-
-
-def _tokenize(text: str) -> list[str]:
-    """Lowercase alpha tokens, no stop words."""
-    return [
-        w
-        for w in re.findall(r"[a-z0-9_./\\]+", text.lower())
-        if w not in _STOP_WORDS
-    ]
-
-
-def _keyword_embedding(text: str) -> list[float]:
-    """Produce a bag-of-words frequency vector encoded as sparse pairs.
-
-    Format: [hash1, freq1, hash2, freq2, …]
-    Using a stable hash so each keyword maps to a repeatable float slot.
-    """
-    tokens = _tokenize(text)
-    if not tokens:
-        return []
-    counts = Counter(tokens)
-    total = len(tokens)
-    pairs: list[float] = []
-    for word, count in sorted(counts.items()):
-        # Use a simple hash to produce a stable float key
-        h = float(hash(word) & 0xFFFFFFFF)
-        pairs.extend([h, count / total])
-    return pairs
-
-
-def _similarity(embedding_a: list[float], embedding_b: list[float]) -> float:
-    """Keyword-overlap similarity between two embeddings.
-
-    Reconstructs sparse vectors, computes cosine similarity.
-    """
-    if not embedding_a or not embedding_b:
-        return 0.0
-
-    # Reconstruct as {hash_key: frequency}
-    def _to_dict(emb: list[float]) -> dict[float, float]:
-        d: dict[float, float] = {}
-        for i in range(0, len(emb) - 1, 2):
-            d[emb[i]] = emb[i + 1]
-        return d
-
-    a = _to_dict(embedding_a)
-    b = _to_dict(embedding_b)
-
-    # Cosine similarity
-    keys = set(a) | set(b)
-    dot = sum(a.get(k, 0.0) * b.get(k, 0.0) for k in keys)
-    mag_a = math.sqrt(sum(v * v for v in a.values()))
-    mag_b = math.sqrt(sum(v * v for v in b.values()))
-    if mag_a == 0 or mag_b == 0:
-        return 0.0
-    return dot / (mag_a * mag_b)
-
-
-# ------------------------------------------------------------------
-# EpisodicMemory (SQLite-backed)
-# ------------------------------------------------------------------
-
-_CREATE_TABLE = """\
-CREATE TABLE IF NOT EXISTS episodes (
-    id TEXT PRIMARY KEY,
-    timestamp REAL NOT NULL,
-    user_input TEXT NOT NULL,
-    dag_summary TEXT NOT NULL,
-    outcomes TEXT NOT NULL,
-    reflection TEXT,
-    agent_ids TEXT NOT NULL,
-    duration_ms REAL NOT NULL,
-    embedding TEXT NOT NULL
-);
-"""
-_CREATE_INDEX = """\
-CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes (timestamp DESC);
-"""
-
 
 class EpisodicMemory:
-    """SQLite-backed episodic memory with keyword-similarity recall."""
+    """ChromaDB-backed episodic memory with semantic similarity recall."""
 
     def __init__(
         self,
@@ -121,153 +30,246 @@ class EpisodicMemory:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
         self.relevance_threshold = relevance_threshold
-        self._db: aiosqlite.Connection | None = None
+        self._client: Any = None
+        self._collection: Any = None
 
     async def start(self) -> None:
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path)
-        await self._db.execute(_CREATE_TABLE)
-        await self._db.execute(_CREATE_INDEX)
-        await self._db.commit()
+        import chromadb
+        from probos.cognitive.embeddings import get_embedding_function
+
+        db_dir = Path(self.db_path).parent
+        db_dir.mkdir(parents=True, exist_ok=True)
+
+        self._client = chromadb.PersistentClient(path=str(db_dir))
+        ef = get_embedding_function()
+        self._collection = self._client.get_or_create_collection(
+            name="episodes",
+            embedding_function=ef,
+            metadata={"hnsw:space": "cosine"},
+        )
 
     async def stop(self) -> None:
-        if self._db:
-            await self._db.close()
-            self._db = None
+        if self._client is not None:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+        self._collection = None
+        self._client = None
+
+    # ---- seeding (warm boot) -----------------------------------------
+
+    async def seed(self, episodes: list[Episode]) -> int:
+        """Bulk-restore episodes preserving original IDs and timestamps.
+
+        Used for warm boot — does NOT trigger normal store() flow (no
+        knowledge store hooks, no eviction). Skips episodes whose IDs
+        already exist in the collection.  Returns count of episodes seeded.
+        """
+        if not self._collection or not episodes:
+            return 0
+
+        seeded = 0
+        # Batch add for efficiency — ChromaDB handles duplicates via upsert
+        batch_ids: list[str] = []
+        batch_docs: list[str] = []
+        batch_metas: list[dict] = []
+
+        # Check which IDs already exist
+        existing_ids: set[str] = set()
+        try:
+            all_ids = [ep.id for ep in episodes]
+            result = self._collection.get(ids=all_ids)
+            if result and result["ids"]:
+                existing_ids = set(result["ids"])
+        except Exception:
+            pass
+
+        for ep in episodes:
+            if ep.id in existing_ids:
+                continue
+            batch_ids.append(ep.id)
+            batch_docs.append(ep.user_input)
+            batch_metas.append(self._episode_to_metadata(ep))
+            seeded += 1
+
+        if batch_ids:
+            try:
+                self._collection.add(
+                    ids=batch_ids,
+                    documents=batch_docs,
+                    metadatas=batch_metas,
+                )
+            except Exception as e:
+                logger.warning("Seed batch add failed: %s", e)
+                seeded = 0
+
+        return seeded
 
     # ---- storage --------------------------------------------------
 
     async def store(self, episode: Episode) -> None:
-        """Persist an episode.  Evicts oldest if over max_episodes."""
-        if not self._db:
+        """Persist an episode. Evicts oldest if over max_episodes."""
+        if not self._collection:
             return
 
-        # Compute embedding if not set
-        if not episode.embedding:
-            episode.embedding = _keyword_embedding(episode.user_input)
+        metadata = self._episode_to_metadata(episode)
 
-        await self._db.execute(
-            "INSERT OR REPLACE INTO episodes "
-            "(id, timestamp, user_input, dag_summary, outcomes, reflection, "
-            "agent_ids, duration_ms, embedding) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                episode.id,
-                episode.timestamp or time.time(),
-                episode.user_input,
-                json.dumps(episode.dag_summary),
-                json.dumps(episode.outcomes),
-                episode.reflection,
-                json.dumps(episode.agent_ids),
-                episode.duration_ms,
-                json.dumps(episode.embedding),
-            ),
+        self._collection.upsert(
+            ids=[episode.id],
+            documents=[episode.user_input],
+            metadatas=[metadata],
         )
-        await self._db.commit()
 
         # Evict oldest beyond budget
         await self._evict()
 
     async def _evict(self) -> None:
-        assert self._db
-        cursor = await self._db.execute("SELECT COUNT(*) FROM episodes")
-        row = await cursor.fetchone()
-        count = row[0] if row else 0
+        assert self._collection
+        count = self._collection.count()
         if count > self.max_episodes:
             excess = count - self.max_episodes
-            await self._db.execute(
-                "DELETE FROM episodes WHERE id IN "
-                "(SELECT id FROM episodes ORDER BY timestamp ASC LIMIT ?)",
-                (excess,),
+            # Get oldest episodes by timestamp
+            result = self._collection.get(
+                include=["metadatas"],
             )
-            await self._db.commit()
+            if result and result["ids"] and result["metadatas"]:
+                # Sort by timestamp ascending (oldest first)
+                paired = list(zip(result["ids"], result["metadatas"]))
+                paired.sort(key=lambda x: x[1].get("timestamp", 0))
+                ids_to_delete = [p[0] for p in paired[:excess]]
+                if ids_to_delete:
+                    self._collection.delete(ids=ids_to_delete)
 
     # ---- recall ---------------------------------------------------
 
     async def recall(self, query: str, k: int = 5) -> list[Episode]:
-        """Semantic search — return top-k episodes above relevance_threshold."""
-        if not self._db:
+        """Semantic search — return top-k episodes by embedding similarity."""
+        if not self._collection:
             return []
 
-        query_emb = _keyword_embedding(query)
-        if not query_emb:
+        if not query.strip():
             return []
 
-        # Load all embeddings (in-process scoring)
-        cursor = await self._db.execute(
-            "SELECT id, timestamp, user_input, dag_summary, outcomes, "
-            "reflection, agent_ids, duration_ms, embedding FROM episodes"
+        count = self._collection.count()
+        if count == 0:
+            return []
+
+        n_results = min(k * 3, count)  # Query more to filter by threshold
+        result = self._collection.query(
+            query_texts=[query],
+            n_results=n_results,
+            include=["metadatas", "documents", "distances"],
         )
-        rows = await cursor.fetchall()
 
-        scored: list[tuple[float, Episode]] = []
-        for row in rows:
-            emb = json.loads(row[8])
-            score = _similarity(query_emb, emb)
-            if score >= self.relevance_threshold:
-                ep = self._row_to_episode(row)
-                scored.append((score, ep))
+        if not result or not result["ids"] or not result["ids"][0]:
+            return []
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [ep for _, ep in scored[:k]]
+        episodes: list[Episode] = []
+        for i, doc_id in enumerate(result["ids"][0]):
+            # ChromaDB cosine distance: distance = 1 - similarity
+            distance = result["distances"][0][i] if result["distances"] else 0.0
+            similarity = 1.0 - distance
+
+            if similarity < self.relevance_threshold:
+                continue
+
+            metadata = result["metadatas"][0][i] if result["metadatas"] else {}
+            document = result["documents"][0][i] if result["documents"] else ""
+            ep = self._metadata_to_episode(doc_id, document, metadata)
+            episodes.append(ep)
+
+            if len(episodes) >= k:
+                break
+
+        return episodes
 
     async def recall_by_intent(self, intent_type: str, k: int = 5) -> list[Episode]:
         """Filter by intent type, then rank by recency."""
-        if not self._db:
+        if not self._collection:
             return []
 
-        cursor = await self._db.execute(
-            "SELECT id, timestamp, user_input, dag_summary, outcomes, "
-            "reflection, agent_ids, duration_ms, embedding "
-            "FROM episodes ORDER BY timestamp DESC"
-        )
-        rows = await cursor.fetchall()
+        # Use ChromaDB where filter on intent metadata
+        count = self._collection.count()
+        if count == 0:
+            return []
 
-        results: list[Episode] = []
-        for row in rows:
-            outcomes = json.loads(row[4])
-            if any(o.get("intent") == intent_type for o in outcomes):
-                results.append(self._row_to_episode(row))
-                if len(results) >= k:
-                    break
-        return results
+        # Query with intent filter — get all matching, limited by k
+        try:
+            result = self._collection.get(
+                where={"intent_type": intent_type},
+                include=["metadatas", "documents"],
+            )
+        except Exception:
+            # Fallback: get all and filter manually
+            result = self._collection.get(include=["metadatas", "documents"])
+
+        if not result or not result["ids"]:
+            return []
+
+        # Sort by timestamp descending (most recent first)
+        paired = list(zip(result["ids"], result["metadatas"], result["documents"]))
+        paired.sort(key=lambda x: x[1].get("timestamp", 0), reverse=True)
+
+        episodes: list[Episode] = []
+        for doc_id, metadata, document in paired[:k]:
+            # Double-check intent filter for manual fallback
+            if metadata.get("intent_type") != intent_type:
+                continue
+            ep = self._metadata_to_episode(doc_id, document, metadata)
+            episodes.append(ep)
+            if len(episodes) >= k:
+                break
+
+        return episodes
 
     async def recent(self, k: int = 10) -> list[Episode]:
         """Return the k most recent episodes."""
-        if not self._db:
+        if not self._collection:
             return []
 
-        cursor = await self._db.execute(
-            "SELECT id, timestamp, user_input, dag_summary, outcomes, "
-            "reflection, agent_ids, duration_ms, embedding "
-            "FROM episodes ORDER BY timestamp DESC LIMIT ?",
-            (k,),
+        count = self._collection.count()
+        if count == 0:
+            return []
+
+        result = self._collection.get(
+            include=["metadatas", "documents"],
         )
-        rows = await cursor.fetchall()
-        return [self._row_to_episode(row) for row in rows]
+
+        if not result or not result["ids"]:
+            return []
+
+        # Sort by timestamp descending
+        paired = list(zip(result["ids"], result["metadatas"], result["documents"]))
+        paired.sort(key=lambda x: x[1].get("timestamp", 0), reverse=True)
+
+        return [
+            self._metadata_to_episode(doc_id, document, metadata)
+            for doc_id, metadata, document in paired[:k]
+        ]
 
     async def get_stats(self) -> dict[str, Any]:
         """Total episodes, intent distribution, average success rate, most-used agents."""
-        if not self._db:
+        if not self._collection:
             return {"total": 0}
 
-        cursor = await self._db.execute("SELECT COUNT(*) FROM episodes")
-        row = await cursor.fetchone()
-        total = row[0] if row else 0
+        count = self._collection.count()
+        if count == 0:
+            return {"total": 0}
 
-        cursor = await self._db.execute(
-            "SELECT outcomes, agent_ids FROM episodes"
-        )
-        rows = await cursor.fetchall()
+        result = self._collection.get(include=["metadatas"])
+        if not result or not result["metadatas"]:
+            return {"total": count}
 
+        from collections import Counter
         intent_counts: Counter[str] = Counter()
         agent_counts: Counter[str] = Counter()
         success_total = 0
         outcome_total = 0
 
-        for row in rows:
-            outcomes = json.loads(row[0])
-            agents = json.loads(row[1])
+        for metadata in result["metadatas"]:
+            outcomes = json.loads(metadata.get("outcomes_json", "[]"))
+            agents = json.loads(metadata.get("agent_ids_json", "[]"))
             for o in outcomes:
                 intent_counts[o.get("intent", "unknown")] += 1
                 outcome_total += 1
@@ -277,7 +279,7 @@ class EpisodicMemory:
                 agent_counts[a] += 1
 
         return {
-            "total": total,
+            "total": count,
             "intent_distribution": dict(intent_counts.most_common(10)),
             "avg_success_rate": (
                 success_total / outcome_total if outcome_total else 0.0
@@ -288,15 +290,41 @@ class EpisodicMemory:
     # ---- helpers --------------------------------------------------
 
     @staticmethod
-    def _row_to_episode(row: Any) -> Episode:
+    def _episode_to_metadata(ep: Episode) -> dict:
+        """Convert an Episode to a ChromaDB-compatible metadata dict.
+
+        ChromaDB metadata values must be str, int, float, or bool.
+        Complex types are serialized to JSON strings.
+        """
+        # Extract primary intent type from outcomes
+        intent_type = ""
+        outcomes = ep.outcomes or []
+        if outcomes:
+            intent_type = outcomes[0].get("intent", "") if isinstance(outcomes[0], dict) else ""
+
+        return {
+            "timestamp": ep.timestamp or time.time(),
+            "intent_type": intent_type,
+            "dag_summary_json": json.dumps(ep.dag_summary),
+            "outcomes_json": json.dumps(ep.outcomes),
+            "reflection": ep.reflection or "",
+            "agent_ids_json": json.dumps(ep.agent_ids),
+            "duration_ms": ep.duration_ms,
+        }
+
+    @staticmethod
+    def _metadata_to_episode(
+        doc_id: str, document: str, metadata: dict
+    ) -> Episode:
+        """Convert ChromaDB result back to an Episode."""
         return Episode(
-            id=row[0],
-            timestamp=row[1],
-            user_input=row[2],
-            dag_summary=json.loads(row[3]),
-            outcomes=json.loads(row[4]),
-            reflection=row[5],
-            agent_ids=json.loads(row[6]),
-            duration_ms=row[7],
-            embedding=json.loads(row[8]),
+            id=doc_id,
+            timestamp=metadata.get("timestamp", 0.0),
+            user_input=document,
+            dag_summary=json.loads(metadata.get("dag_summary_json", "{}")),
+            outcomes=json.loads(metadata.get("outcomes_json", "[]")),
+            reflection=metadata.get("reflection", None) or None,
+            agent_ids=json.loads(metadata.get("agent_ids_json", "[]")),
+            duration_ms=metadata.get("duration_ms", 0.0),
+            embedding=[],  # ChromaDB manages embeddings internally
         )

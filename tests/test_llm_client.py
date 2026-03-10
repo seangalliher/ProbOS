@@ -600,7 +600,7 @@ class TestEndToEndApiFormatComplete:
 
     @pytest.mark.asyncio
     async def test_ollama_failure_falls_back_to_cache(self):
-        """When Ollama is unreachable and cache has a hit, use cache."""
+        """When all tiers are unreachable and cache has a hit, use cache."""
         cfg = _make_config(
             llm_base_url_fast="http://localhost:11434",
             llm_api_format_fast="ollama",
@@ -617,10 +617,44 @@ class TestEndToEndApiFormatComplete:
             with patch.object(mock_client, "post", new_callable=AsyncMock, return_value=_httpx_response(200, json=ollama_body)):
                 await client.complete(LLMRequest(prompt="cache me", tier="fast"))
 
-            # Now simulate connection failure
-            with patch.object(mock_client, "post", new_callable=AsyncMock, side_effect=httpx.ConnectError("refused")):
+            # Now simulate connection failure on ALL tiers so cache is used
+            patchers = []
+            for tier_key in set(client._clients.keys()):
+                c = client._clients[tier_key]
+                patchers.append(patch.object(c, "post", new_callable=AsyncMock, side_effect=httpx.ConnectError("refused")))
+            for p in patchers:
+                p.start()
+            try:
                 result = await client.complete(LLMRequest(prompt="cache me", tier="fast"))
                 assert result.content == "cached answer"
                 assert result.cached is True
+            finally:
+                for p in patchers:
+                    p.stop()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_fast_tier_failure_falls_back_to_standard(self):
+        """When fast tier is unreachable, falls back to standard tier."""
+        cfg = _make_config(
+            llm_base_url_fast="http://localhost:11434",
+            llm_api_format_fast="ollama",
+            llm_base_url="http://localhost:9999",
+        )
+        client = OpenAICompatibleClient(config=cfg)
+        try:
+            fast_client = client._clients[client._client_key("fast")]
+            standard_client = client._clients[client._client_key("standard")]
+            standard_body = {
+                "choices": [{"message": {"content": "standard answer"}}],
+                "model": "test-model",
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+            }
+            with patch.object(fast_client, "post", new_callable=AsyncMock, side_effect=httpx.ConnectError("refused")), \
+                 patch.object(standard_client, "post", new_callable=AsyncMock, return_value=_httpx_response(200, json=standard_body)):
+                result = await client.complete(LLMRequest(prompt="hello", tier="fast"))
+                assert result.content == "standard answer"
+                assert result.error is None
         finally:
             await client.close()

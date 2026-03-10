@@ -26,7 +26,7 @@ from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
 from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient, OpenAICompatibleClient
 from probos.cognitive.working_memory import WorkingMemoryManager
 from probos.cognitive.workflow_cache import WorkflowCache
-from probos.config import SystemConfig, load_config
+from probos.config import KnowledgeConfig, SystemConfig, load_config
 from probos.consensus.escalation import EscalationManager
 from probos.consensus.quorum import QuorumEngine
 from probos.consensus.trust import TrustNetwork
@@ -80,7 +80,9 @@ class ProbOSRuntime:
         # --- Mesh ---
         self.signal_manager = SignalManager(reap_interval=1.0)
         self.intent_bus = IntentBus(self.signal_manager)
-        self.capability_registry = CapabilityRegistry()
+        self.capability_registry = CapabilityRegistry(
+            semantic_matching=self.config.mesh.semantic_matching,
+        )
         self.hebbian_router = HebbianRouter(
             decay_rate=self.config.mesh.hebbian_decay_rate,
             reward=self.config.mesh.hebbian_reward,
@@ -164,6 +166,9 @@ class ProbOSRuntime:
         # --- SystemQA (AD-153) ---
         self._system_qa: Any = None  # SystemQAAgent | None
         self._qa_reports: dict[str, Any] = {}  # AD-157: in-memory report store
+
+        # --- Knowledge store (AD-159) ---
+        self._knowledge_store: Any = None  # KnowledgeStore | None
 
         # --- Execution history (for introspection) ---
         self._last_execution: dict[str, Any] | None = None
@@ -413,6 +418,27 @@ class ProbOSRuntime:
         if self.episodic_memory:
             await self.episodic_memory.start()
 
+        # Initialize knowledge store (AD-159) and warm boot (AD-162)
+        if self.config.knowledge.enabled:
+            try:
+                from probos.knowledge.store import KnowledgeStore
+
+                # If no explicit repo_path, use data_dir/knowledge (AD-159)
+                kcfg = self.config.knowledge
+                if not kcfg.repo_path:
+                    kcfg = kcfg.model_copy(update={"repo_path": str(self._data_dir / "knowledge")})
+
+                self._knowledge_store = KnowledgeStore(kcfg)
+                await self._knowledge_store.initialize()
+
+                if self.config.knowledge.restore_on_boot:
+                    await self._restore_from_knowledge()
+
+                logger.info("Knowledge store initialized: %s", self._knowledge_store.repo_path)
+            except Exception as e:
+                logger.warning("Knowledge store initialization failed: %s — continuing without persistence", e)
+                self._knowledge_store = None
+
         # Start dreaming scheduler if episodic memory is available
         if self.episodic_memory:
             dream_cfg = self.config.dreaming
@@ -475,6 +501,28 @@ class ProbOSRuntime:
         for name, pool in self.pools.items():
             await pool.stop()
         self.pools.clear()
+
+        # Persist knowledge store artifacts before stopping services
+        if self._knowledge_store:
+            try:
+                # Persist trust snapshot (raw alpha/beta — AD-168)
+                await self._knowledge_store.store_trust_snapshot(
+                    self.trust_network.raw_scores()
+                )
+                # Persist routing weights
+                weights = [
+                    {"source": s, "target": t, "rel_type": rt, "weight": w}
+                    for (s, t, rt), w in self.hebbian_router.all_weights_typed().items()
+                ]
+                await self._knowledge_store.store_routing_weights(weights)
+                # Persist workflow cache
+                await self._knowledge_store.store_workflows(
+                    self.workflow_cache.export_all()
+                )
+                # Flush all pending commits
+                await self._knowledge_store.flush()
+            except Exception as e:
+                logger.warning("Knowledge store shutdown persistence failed: %s", e)
 
         # Stop mesh and consensus services
         await self.gossip.stop()
@@ -807,6 +855,12 @@ class ProbOSRuntime:
                             asyncio.create_task(
                                 self._run_qa_for_designed_agent(record)
                             )
+                        # Persist designed agent to knowledge store
+                        if self._knowledge_store:
+                            try:
+                                await self._knowledge_store.store_agent(record, record.source_code)
+                            except Exception:
+                                pass  # Never block on persistence failure
                     elif record:
                         self_mod_result = {
                             "status": record.status,
@@ -883,6 +937,13 @@ class ProbOSRuntime:
                 t_end = time.monotonic()
                 episode = self._build_episode(text, execution_result, t_start, t_end)
                 await self.episodic_memory.store(episode)
+
+                # Persist to knowledge store (AD-159)
+                if self._knowledge_store:
+                    try:
+                        await self._knowledge_store.store_episode(episode)
+                    except Exception:
+                        pass  # Never block on persistence failure
             except Exception as e:
                 logger.warning("Episode storage failed: %s: %s", type(e).__name__, e)
 
@@ -957,6 +1018,10 @@ class ProbOSRuntime:
         result["qa"] = {
             "enabled": self.config.qa.enabled and self.config.self_mod.enabled,
             "report_count": len(self._qa_reports),
+        }
+        result["knowledge"] = {
+            "enabled": self._knowledge_store is not None,
+            "repo_path": str(self._knowledge_store.repo_path) if self._knowledge_store else None,
         }
         if self.dream_scheduler:
             dream_status: dict[str, Any] = {
@@ -1217,6 +1282,233 @@ class ProbOSRuntime:
         # Refresh descriptors
         self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
 
+        # Persist skill to knowledge store
+        if self._knowledge_store and hasattr(skill, "source_code") and hasattr(skill, "descriptor"):
+            try:
+                descriptor_dict = {
+                    "name": skill.descriptor.name,
+                    "params": skill.descriptor.params,
+                    "description": skill.descriptor.description,
+                    "requires_reflect": getattr(skill.descriptor, "requires_reflect", True),
+                    "created_at": getattr(skill, "created_at", 0.0),
+                }
+                await self._knowledge_store.store_skill(skill.name, skill.source_code, descriptor_dict)
+            except Exception:
+                pass  # Never block on persistence failure
+
+    # ------------------------------------------------------------------
+    # Knowledge store — warm boot and persistence (AD-162)
+    # ------------------------------------------------------------------
+
+    async def _restore_from_knowledge(self) -> None:
+        """Warm boot: restore state from the knowledge store (AD-162).
+
+        Load order: trust → routing → agents → skills → episodes → workflows → QA.
+        Each step is independent and wrapped in try/except so that partial
+        failures don't block other restorations.
+        """
+        ks = self._knowledge_store
+        if ks is None:
+            return
+
+        restored: list[str] = []
+
+        # 1. Trust snapshot → restore raw Beta parameters (AD-168)
+        try:
+            snapshot = await ks.load_trust_snapshot()
+            if snapshot:
+                for agent_id, params in snapshot.items():
+                    alpha = params.get("alpha", 2.0)
+                    beta = params.get("beta", 2.0)
+                    self.trust_network.create_with_prior(agent_id, alpha=alpha, beta=beta)
+                restored.append(f"trust({len(snapshot)} agents)")
+        except Exception as e:
+            logger.warning("Warm boot: trust restore failed: %s", e)
+
+        # 2. Routing weights → restore Hebbian weights
+        try:
+            weights = await ks.load_routing_weights()
+            if weights:
+                for w in weights:
+                    key = (w["source"], w["target"], w.get("rel_type", "intent"))
+                    self.hebbian_router._weights[key] = w["weight"]
+                    # Also update compat view
+                    self.hebbian_router._compat_weights[(w["source"], w["target"])] = w["weight"]
+                restored.append(f"routing({len(weights)} weights)")
+        except Exception as e:
+            logger.warning("Warm boot: routing restore failed: %s", e)
+
+        # 3. Designed agents → validate + register + pool (AD-163)
+        try:
+            agents = await ks.load_agents()
+            if agents and self.config.self_mod.enabled:
+                from probos.cognitive.code_validator import CodeValidator
+                validator = CodeValidator(self.config.self_mod)
+
+                for metadata, source_code in agents:
+                    agent_type = metadata.get("agent_type", "")
+                    try:
+                        # AD-163: validate before loading
+                        errors = validator.validate(source_code)
+                        if errors:
+                            logger.warning(
+                                "Warm boot: skipping agent %s — validation errors: %s",
+                                agent_type, errors,
+                            )
+                            continue
+
+                        # Dynamic load via importlib
+                        import importlib.util
+                        import sys
+                        import tempfile
+
+                        class_name = metadata.get("class_name", "")
+                        tmp = tempfile.NamedTemporaryFile(
+                            mode="w", suffix=".py", delete=False, encoding="utf-8",
+                        )
+                        tmp.write(source_code)
+                        tmp.flush()
+                        tmp.close()
+                        tmp_path = tmp.name
+                        module_name = f"_probos_restored_{agent_type}"
+
+                        try:
+                            spec = importlib.util.spec_from_file_location(module_name, tmp_path)
+                            if spec and spec.loader:
+                                module = importlib.util.module_from_spec(spec)
+                                sys.modules[module_name] = module
+                                spec.loader.exec_module(module)
+                                agent_class = getattr(module, class_name, None)
+                                if agent_class:
+                                    await self._register_designed_agent(agent_class)
+                                    pool_name = metadata.get("pool_name", f"designed_{agent_type}")
+                                    await self._create_designed_pool(agent_type, pool_name)
+                                    await self._set_probationary_trust(pool_name)
+                                    restored.append(f"agent({agent_type})")
+                                else:
+                                    logger.warning(
+                                        "Warm boot: class %s not found in restored agent %s",
+                                        class_name, agent_type,
+                                    )
+                        finally:
+                            try:
+                                Path(tmp_path).unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                    except Exception as e:
+                        logger.warning("Warm boot: agent %s restore failed: %s", agent_type, e)
+        except Exception as e:
+            logger.warning("Warm boot: agent restore failed: %s", e)
+
+        # 4. Skills → compile + attach to SkillBasedAgent
+        try:
+            skills = await ks.load_skills()
+            if skills and self.config.self_mod.enabled:
+                import importlib.util
+                import sys
+                import tempfile
+
+                for intent_name, source_code, descriptor_dict in skills:
+                    try:
+                        # Compile handler
+                        handler = None
+                        func_name = f"handle_{intent_name}"
+                        tmp = tempfile.NamedTemporaryFile(
+                            mode="w", suffix=".py", delete=False, encoding="utf-8",
+                        )
+                        tmp.write(source_code)
+                        tmp.flush()
+                        tmp.close()
+                        tmp_path = tmp.name
+                        module_name = f"_probos_skill_restored_{intent_name}"
+
+                        try:
+                            spec = importlib.util.spec_from_file_location(module_name, tmp_path)
+                            if spec and spec.loader:
+                                module = importlib.util.module_from_spec(spec)
+                                sys.modules[module_name] = module
+                                spec.loader.exec_module(module)
+                                handler = getattr(module, func_name, None)
+                        finally:
+                            try:
+                                Path(tmp_path).unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                            sys.modules.pop(module_name, None)
+
+                        if handler is None:
+                            logger.warning("Warm boot: no handler function for skill %s", intent_name)
+                            continue
+
+                        from probos.types import IntentDescriptor as _ID, Skill as _Skill
+                        skill_desc = _ID(
+                            name=descriptor_dict.get("name", intent_name),
+                            params=descriptor_dict.get("params", {}),
+                            description=descriptor_dict.get("description", ""),
+                            requires_reflect=descriptor_dict.get("requires_reflect", True),
+                        )
+                        skill_obj = _Skill(
+                            name=intent_name,
+                            descriptor=skill_desc,
+                            source_code=source_code,
+                            handler=handler,
+                            created_at=descriptor_dict.get("created_at", time.monotonic()),
+                            origin="designed",
+                        )
+                        await self._add_skill_to_agents(skill_obj)
+                        restored.append(f"skill({intent_name})")
+                    except Exception as e:
+                        logger.warning("Warm boot: skill %s restore failed: %s", intent_name, e)
+        except Exception as e:
+            logger.warning("Warm boot: skill restore failed: %s", e)
+
+        # 5. Episodes → seed into episodic memory
+        try:
+            if self.episodic_memory:
+                episodes = await ks.load_episodes(limit=self.config.knowledge.max_episodes)
+                if episodes:
+                    seeded = await self.episodic_memory.seed(episodes)
+                    restored.append(f"episodes({seeded})")
+        except Exception as e:
+            logger.warning("Warm boot: episode restore failed: %s", e)
+
+        # 6. Workflows → populate cache
+        try:
+            workflows = await ks.load_workflows()
+            if workflows and self.workflow_cache:
+                from probos.types import WorkflowCacheEntry
+                from datetime import datetime, timezone
+
+                for entry_dict in workflows:
+                    key = entry_dict.get("pattern", "")
+                    if not key:
+                        continue
+                    entry = WorkflowCacheEntry(
+                        pattern=key,
+                        dag_json=entry_dict.get("dag_json", "{}"),
+                        hit_count=entry_dict.get("hit_count", 0),
+                        last_hit=datetime.fromisoformat(entry_dict["last_hit"]) if "last_hit" in entry_dict else datetime.now(timezone.utc),
+                        created_at=datetime.fromisoformat(entry_dict["created_at"]) if "created_at" in entry_dict else datetime.now(timezone.utc),
+                    )
+                    self.workflow_cache._cache[key] = entry
+                restored.append(f"workflows({len(workflows)})")
+        except Exception as e:
+            logger.warning("Warm boot: workflow restore failed: %s", e)
+
+        # 7. QA reports → restore _qa_reports dict
+        try:
+            qa_reports = await ks.load_qa_reports()
+            if qa_reports:
+                self._qa_reports.update(qa_reports)
+                restored.append(f"qa({len(qa_reports)})")
+        except Exception as e:
+            logger.warning("Warm boot: QA report restore failed: %s", e)
+
+        if restored:
+            logger.info("Warm boot restored: %s", ", ".join(restored))
+        else:
+            logger.info("Warm boot: no artifacts to restore (clean repo)")
+
     # ------------------------------------------------------------------
     # SystemQA helper (AD-154)
     # ------------------------------------------------------------------
@@ -1240,6 +1532,21 @@ class ProbOSRuntime:
 
             # AD-157: Store report in-memory for /qa command
             self._qa_reports[record.agent_type] = report
+
+            # Persist QA report to knowledge store
+            if self._knowledge_store:
+                try:
+                    report_dict = {
+                        "agent_type": record.agent_type,
+                        "verdict": report.verdict,
+                        "passed": report.passed,
+                        "total_tests": report.total_tests,
+                        "duration_ms": report.duration_ms,
+                        "test_details": report.test_details,
+                    }
+                    await self._knowledge_store.store_qa_report(record.agent_type, report_dict)
+                except Exception:
+                    pass  # Never block on persistence failure
 
             # Trust updates (AD-155)
             for agent_id_or_agent in pool.healthy_agents:

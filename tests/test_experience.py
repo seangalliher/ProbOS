@@ -667,7 +667,9 @@ class TestEpisodicMemoryIntegration:
         rt, mem = mem_runtime
         await rt.process_natural_language("what is the meaning of life?")
         recent = await mem.recent(k=10)
-        assert len(recent) == 0  # Empty DAGs don't produce episodes
+        # Filter out SystemQA episodes (background task from AD-154)
+        user_episodes = [e for e in recent if not e.user_input.startswith("[SystemQA]")]
+        assert len(user_episodes) == 0  # Empty DAGs don't produce episodes
 
 
 # ---------------------------------------------------------------------------

@@ -185,6 +185,21 @@ class TrustNetwork:
         """Return all agent trust scores."""
         return {aid: r.score for aid, r in self._records.items()}
 
+    def raw_scores(self) -> dict[AgentID, dict[str, float]]:
+        """Return raw Beta distribution parameters for all agents (AD-168).
+
+        Returns {agent_id: {"alpha": float, "beta": float, "observations": float}}.
+        These are the raw parameters, not derived mean scores.
+        """
+        return {
+            aid: {
+                "alpha": r.alpha,
+                "beta": r.beta,
+                "observations": r.observations,
+            }
+            for aid, r in self._records.items()
+        }
+
     def summary(self) -> list[dict[str, Any]]:
         """Return a summary of all trust records."""
         return [

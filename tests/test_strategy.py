@@ -181,3 +181,32 @@ class TestStrategyRecommender:
         if add_skill and new_agent:
             # Reversible strategy should have higher confidence
             assert add_skill.confidence >= new_agent.confidence
+
+    def test_semantic_similarity_higher_confidence_for_similar_intents(self):
+        """Semantically similar intent produces higher add_skill confidence
+        than a dissimilar one."""
+        recommender = StrategyRecommender(
+            intent_descriptors=_make_descriptors(),
+            llm_equipped_types={"skill_agent"},
+        )
+        # "download_page" is semantically close to "http_fetch" / "Fetch URL content"
+        proposal_similar = recommender.propose(
+            "download_page", "Download a web page from a URL", {}
+        )
+        # "bake_cake" has nothing to do with existing descriptors
+        proposal_dissimilar = recommender.propose(
+            "bake_cake", "Bake a delicious chocolate cake", {}
+        )
+
+        similar_skill = next(
+            (o for o in proposal_similar.options if o.strategy == "add_skill"), None
+        )
+        dissimilar_skill = next(
+            (o for o in proposal_dissimilar.options if o.strategy == "add_skill"), None
+        )
+
+        if similar_skill and dissimilar_skill:
+            assert similar_skill.confidence > dissimilar_skill.confidence
+        elif similar_skill and not dissimilar_skill:
+            # Dissimilar has no add_skill option — semantically nothing matched
+            assert similar_skill.confidence > 0.0

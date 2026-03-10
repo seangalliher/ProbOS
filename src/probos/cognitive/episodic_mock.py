@@ -44,6 +44,23 @@ class MockEpisodicMemory:
     async def stop(self) -> None:
         pass
 
+    async def seed(self, episodes: list[Episode]) -> int:
+        """Bulk-restore episodes preserving original IDs and timestamps.
+
+        Used for warm boot.  Skips episodes whose IDs already exist.
+        Returns count seeded.
+        """
+        if not episodes:
+            return 0
+        existing_ids = {ep.id for ep in self._episodes}
+        seeded = 0
+        for ep in episodes:
+            if ep.id not in existing_ids:
+                self._episodes.append(ep)
+                existing_ids.add(ep.id)
+                seeded += 1
+        return seeded
+
     async def store(self, episode: Episode) -> None:
         self._episodes.append(episode)
         # Evict oldest beyond budget

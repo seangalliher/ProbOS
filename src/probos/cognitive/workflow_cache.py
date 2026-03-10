@@ -65,22 +65,27 @@ class WorkflowCache:
         return self._deserialize_dag(entry.dag_json)
 
     def lookup_fuzzy(
-        self, user_input: str, pre_warm_intents: list[str]
+        self, user_input: str, pre_warm_intents: list[str],
+        similarity_threshold: float = 0.6,
     ) -> TaskDAG | None:
         """Fuzzy match: find cached entries whose intents are a subset of
-        pre_warm_intents AND whose pattern shares >=50% keyword overlap.
+        pre_warm_intents AND whose pattern is semantically similar.
+
+        Uses embedding-based semantic similarity from embeddings.py.
+        Falls back to keyword overlap when embeddings are unavailable.
 
         Returns the highest hit_count match, or None.
         """
         if not pre_warm_intents:
             return None
 
-        input_keywords = self._tokenize(user_input)
-        if not input_keywords:
+        if not user_input.strip():
             return None
 
         pre_warm_set = set(pre_warm_intents)
         best_entry: WorkflowCacheEntry | None = None
+
+        from probos.cognitive.embeddings import compute_similarity
 
         for entry in self._cache.values():
             # Check intent subset requirement
@@ -91,14 +96,9 @@ class WorkflowCache:
             if not dag_intents.issubset(pre_warm_set):
                 continue
 
-            # Check keyword overlap requirement (>=50%)
-            pattern_keywords = self._tokenize(entry.pattern)
-            if not pattern_keywords:
-                continue
-            overlap = len(input_keywords & pattern_keywords)
-            # Use the smaller set for overlap ratio to be generous
-            ratio = overlap / min(len(input_keywords), len(pattern_keywords))
-            if ratio < 0.5:
+            # Check semantic similarity
+            sim = compute_similarity(user_input.lower(), entry.pattern)
+            if sim < similarity_threshold:
                 continue
 
             # Pick highest hit_count
@@ -124,6 +124,23 @@ class WorkflowCache:
     def clear(self) -> None:
         """Empty the cache."""
         self._cache.clear()
+
+    def export_all(self) -> list[dict]:
+        """Export all cached entries for persistence.
+
+        Returns list of serializable dicts with keys:
+        pattern, dag_json, hit_count, last_hit, created_at.
+        """
+        result = []
+        for entry in self._cache.values():
+            result.append({
+                "pattern": entry.pattern,
+                "dag_json": entry.dag_json,
+                "hit_count": entry.hit_count,
+                "last_hit": entry.last_hit.isoformat(),
+                "created_at": entry.created_at.isoformat(),
+            })
+        return result
 
     # ------------------------------------------------------------------
     # Internals

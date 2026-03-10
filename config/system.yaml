@@ -17,6 +17,7 @@ mesh:
   hebbian_reward: 0.05
   signal_ttl_seconds: 30
   capability_broadcast_interval_seconds: 5
+  # semantic_matching: true  # Enable semantic matching in CapabilityRegistry
 
 consensus:
   min_votes: 3
@@ -63,6 +64,7 @@ memory:
   collection_name: "probos_episodes"
   max_episodes: 100000
   relevance_threshold: 0.7
+  # similarity_threshold: 0.6  # Semantic similarity threshold for recall/fuzzy lookup
 
 dreaming:
   idle_threshold_seconds: 300
@@ -109,3 +111,12 @@ qa:
   # trust_penalty_weight: 2.0
   # flag_on_fail: true
   # auto_remove_on_total_fail: false
+
+knowledge:
+  # enabled: true
+  # repo_path: ""
+  # auto_commit: true
+  # commit_debounce_seconds: 5.0
+  # max_episodes: 1000
+  # max_workflows: 200
+  # restore_on_boot: true

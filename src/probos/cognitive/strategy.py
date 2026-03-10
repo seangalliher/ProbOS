@@ -79,14 +79,11 @@ class StrategyRecommender:
         """
         options: list[StrategyOption] = []
 
-        # Compute maximum keyword overlap with any LLM-equipped agent's descriptors
+        # Compute maximum semantic similarity with any LLM-equipped agent's descriptors
         max_overlap = 0.0
         best_agent_type: str | None = None
         for desc in self._descriptors:
-            # Only consider descriptors from LLM-equipped agent types
-            # We check via agent_type inference: descriptors don't carry agent_type,
-            # so we check if any llm_equipped_type exists (skill_agent, introspection)
-            overlap = self._keyword_overlap(intent_name, intent_description, desc)
+            overlap = self._compute_overlap(intent_name, intent_description, desc)
             if overlap > max_overlap:
                 max_overlap = overlap
                 best_agent_type = None  # will assign below
@@ -101,7 +98,7 @@ class StrategyRecommender:
                 strategy="add_skill",
                 label=f"Add skill to existing agent",
                 reason=(
-                    f"The intent has keyword overlap with existing capabilities. "
+                    f"The intent has semantic similarity with existing capabilities. "
                     f"Adding a skill is more reversible than creating a new agent."
                 ),
                 confidence=round(skill_confidence, 2),
@@ -135,27 +132,37 @@ class StrategyRecommender:
             options=options,
         )
 
-    def _keyword_overlap(
+    def _compute_overlap(
         self,
         intent_name: str,
         intent_description: str,
         descriptor: IntentDescriptor,
     ) -> float:
-        """Compute keyword overlap between intent name/description tokens
-        and an existing descriptor's name/description tokens.
+        """Compute similarity between intent name/description and an existing
+        descriptor's name/description.
 
-        Uses the same tokenization as attention relevance (AD-55):
-        split on underscores and spaces, filter tokens < 3 chars,
-        compute overlap ratio.
+        Uses semantic similarity via embeddings when available, falls back
+        to keyword overlap (Jaccard tokenization).
         """
-        intent_tokens = self._tokenize(f"{intent_name} {intent_description}")
-        desc_tokens = self._tokenize(f"{descriptor.name} {descriptor.description}")
+        intent_text = f"{intent_name} {intent_description}".replace("_", " ")
+        desc_text = f"{descriptor.name} {descriptor.description}".replace("_", " ")
+
+        try:
+            from probos.cognitive.embeddings import compute_similarity
+            sim = compute_similarity(intent_text, desc_text)
+            if sim > 0.0:
+                return sim
+        except Exception:
+            pass
+
+        # Fallback: keyword overlap (Jaccard)
+        intent_tokens = self._tokenize(intent_text)
+        desc_tokens = self._tokenize(desc_text)
 
         if not intent_tokens or not desc_tokens:
             return 0.0
 
         overlap = intent_tokens & desc_tokens
-        # Jaccard-style: overlap / union
         union = intent_tokens | desc_tokens
         return len(overlap) / len(union) if union else 0.0
 

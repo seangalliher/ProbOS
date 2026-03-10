@@ -120,23 +120,22 @@ class TestOpenAICompatibleClientMultiEndpoint:
 
     @pytest.mark.asyncio
     async def test_complete_routes_fast_to_fast_endpoint(self):
-        """complete() routes fast-tier request to fast endpoint's client."""
+        """complete() tries fast tier first, then falls back through other tiers."""
         config = CognitiveConfig(
             llm_base_url="http://proxy:8080/v1",
             llm_base_url_fast="http://ollama:11434/v1",
             llm_model_fast="qwen3.5:35b",
         )
         client = OpenAICompatibleClient(config=config)
-        # The request will fail (no server), but we verify the error message
-        # references the correct endpoint
+        # The request will fail (no server), falling back through all tiers
         request = LLMRequest(prompt="test", tier="fast")
         response = await client.complete(request)
         assert response.error is not None
-        assert "ollama:11434" in response.error
+        assert "All LLM tiers unavailable" in response.error
 
     @pytest.mark.asyncio
     async def test_complete_routes_standard_to_standard_endpoint(self):
-        """complete() routes standard-tier request to standard endpoint's client."""
+        """complete() tries standard tier first, then falls back through other tiers."""
         config = CognitiveConfig(
             llm_base_url="http://proxy:8080/v1",
             llm_base_url_fast="http://ollama:11434/v1",
@@ -146,7 +145,7 @@ class TestOpenAICompatibleClientMultiEndpoint:
         request = LLMRequest(prompt="test", tier="standard")
         response = await client.complete(request)
         assert response.error is not None
-        assert "proxy:8080" in response.error
+        assert "All LLM tiers unavailable" in response.error
 
     def test_tier_info_returns_per_tier_config(self):
         """tier_info() returns per-tier config with base_url and model."""

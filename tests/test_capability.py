@@ -80,3 +80,34 @@ class TestCapabilityRegistry:
         matches = reg.query("read_file")
         assert len(matches) == 2
         assert matches[0].agent_id == "exact"  # Score 1.0 > 0.8
+
+    def test_semantic_match_open_file_finds_read_document(self):
+        """Semantic match: 'access file data' finds 'read_file' with detail 'Read a document from disk'."""
+        reg = CapabilityRegistry(semantic_matching=True)
+        reg.register("agent-1", [
+            CapabilityDescriptor(can="read_file", detail="Read a document from disk"),
+        ])
+        matches = reg.query("access file data")
+        assert len(matches) >= 1
+        assert matches[0].agent_id == "agent-1"
+        # Semantic matching should produce a higher score than keyword-only
+        assert matches[0].score > 0.5
+
+    def test_semantic_matching_disabled(self):
+        """When semantic_matching=False, scores are lower (keyword-only)."""
+        caps = [CapabilityDescriptor(can="deploy_application",
+                                     detail="Push the app to production servers")]
+
+        reg_disabled = CapabilityRegistry(semantic_matching=False)
+        reg_disabled.register("agent-1", caps)
+        matches_off = reg_disabled.query("deploy service")
+
+        reg_enabled = CapabilityRegistry(semantic_matching=True)
+        reg_enabled.register("agent-1", caps)
+        matches_on = reg_enabled.query("deploy service")
+
+        # Both should match (keyword overlap on "deploy")
+        assert len(matches_off) >= 1
+        assert len(matches_on) >= 1
+        # Semantic matching produces a higher score
+        assert matches_on[0].score > matches_off[0].score

@@ -45,6 +45,8 @@ class ProbOSShell:
         "/peers":     "Show peer node models",
         "/designed":  "Show self-designed agent status",
         "/qa":        "Show QA status for designed agents (/qa [agent_type])",
+        "/knowledge": "Show knowledge store status and history",
+        "/rollback":  "Rollback a knowledge artifact (/rollback <type> <id>)",
         "/explain":   "Explain what happened in the last NL request",
         "/model":     "Show LLM client type, endpoint, and tier config",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
@@ -151,6 +153,8 @@ class ProbOSShell:
             "/peers":     self._cmd_peers,
             "/designed":  self._cmd_designed,
             "/qa":        self._cmd_qa,
+            "/knowledge": self._cmd_knowledge,
+            "/rollback":  self._cmd_rollback,
             "/explain":   self._cmd_explain,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
@@ -333,6 +337,44 @@ class ProbOSShell:
             self.console.print(render_qa_detail(arg, report, self.runtime.trust_network))
         else:
             self.console.print(render_qa_panel(qa_reports, self.runtime.trust_network))
+
+    async def _cmd_knowledge(self, arg: str) -> None:
+        from probos.experience.knowledge_panel import render_knowledge_panel, render_knowledge_history
+
+        ks = getattr(self.runtime, "_knowledge_store", None)
+        if ks is None:
+            self.console.print("[dim]Knowledge store is not enabled.[/dim]")
+            return
+
+        if arg == "history":
+            commits = await ks.recent_commits(20)
+            self.console.print(render_knowledge_history(commits))
+        else:
+            counts = ks.artifact_counts()
+            commit_count = await ks.commit_count()
+            meta = await ks.meta_info()
+            schema_version = meta.get("schema_version") if meta else None
+            self.console.print(render_knowledge_panel(
+                str(ks.repo_path), counts, commit_count, schema_version,
+            ))
+
+    async def _cmd_rollback(self, arg: str) -> None:
+        from probos.experience.knowledge_panel import render_rollback_result
+
+        ks = getattr(self.runtime, "_knowledge_store", None)
+        if ks is None:
+            self.console.print("[dim]Knowledge store is not enabled.[/dim]")
+            return
+
+        parts = arg.split(maxsplit=1)
+        if len(parts) < 2:
+            self.console.print("[yellow]Usage: /rollback <artifact_type> <identifier>[/yellow]")
+            self.console.print("[dim]Example: /rollback trust snapshot[/dim]")
+            return
+
+        artifact_type, identifier = parts[0], parts[1]
+        success = await ks.rollback_artifact(artifact_type, identifier)
+        self.console.print(render_rollback_result(artifact_type, identifier, success))
 
     async def _cmd_explain(self, arg: str) -> None:
         await self._handle_nl("what just happened?")

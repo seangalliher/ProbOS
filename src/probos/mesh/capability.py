@@ -24,11 +24,13 @@ class CapabilityRegistry:
 
     Agents register what they can do. The registry matches intents
     to capable agents using substring/keyword matching against the
-    `can` and `detail` fields.
+    `can` and `detail` fields, with optional semantic matching via
+    embeddings when enabled.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, semantic_matching: bool = True) -> None:
         self._capabilities: dict[AgentID, list[CapabilityDescriptor]] = {}
+        self._semantic_matching = semantic_matching
 
     def register(self, agent_id: AgentID, capabilities: list[CapabilityDescriptor]) -> None:
         self._capabilities[agent_id] = list(capabilities)
@@ -44,9 +46,10 @@ class CapabilityRegistry:
     def query(self, intent: str) -> list[CapabilityMatch]:
         """Find agents whose capabilities match the given intent string.
 
-        Matching strategy (simple, effective):
+        Matching strategy (tiered):
         - Exact match on `can` field → score 1.0
         - Intent is a substring of `can` or vice versa → score 0.8
+        - Semantic similarity via embeddings (if enabled) → score 0.6 * similarity
         - Any keyword from intent appears in `can` or `detail` → score 0.5
         """
         intent_lower = intent.lower()
@@ -74,8 +77,8 @@ class CapabilityRegistry:
     def agent_count(self) -> int:
         return len(self._capabilities)
 
-    @staticmethod
     def _score_match(
+        self,
         intent_lower: str,
         intent_keywords: set[str],
         cap: CapabilityDescriptor,
@@ -91,7 +94,19 @@ class CapabilityRegistry:
         if intent_lower in can_lower or can_lower in intent_lower:
             return 0.8
 
-        # Keyword overlap
+        # Semantic similarity via embeddings (when enabled)
+        if self._semantic_matching:
+            try:
+                from probos.cognitive.embeddings import compute_similarity
+                cap_text = f"{can_lower} {detail_lower}".strip()
+                intent_text = intent_lower.replace("_", " ")
+                sim = compute_similarity(intent_text, cap_text)
+                if sim >= 0.5:
+                    return 0.6 * sim + 0.3  # Scale to 0.6-0.9 range
+            except Exception:
+                pass
+
+        # Keyword overlap (fallback)
         can_keywords = set(can_lower.replace("_", " ").split())
         detail_keywords = set(detail_lower.replace("_", " ").split())
         all_cap_keywords = can_keywords | detail_keywords

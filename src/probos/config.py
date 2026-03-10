@@ -26,6 +26,7 @@ class MeshConfig(BaseModel):
     hebbian_reward: float = 0.05
     signal_ttl_seconds: float = 30.0
     capability_broadcast_interval_seconds: float = 5.0
+    semantic_matching: bool = True  # Enable semantic matching in CapabilityRegistry
 
 
 class ConsensusConfig(BaseModel):
@@ -128,6 +129,7 @@ class MemoryConfig(BaseModel):
     collection_name: str = "probos_episodes"
     max_episodes: int = 100000
     relevance_threshold: float = 0.7
+    similarity_threshold: float = 0.6  # Semantic similarity threshold for recall/fuzzy lookup
 
 
 class DreamingConfig(BaseModel):
@@ -220,6 +222,18 @@ class QAConfig(BaseModel):
     auto_remove_on_total_fail: bool = False  # Remove agent if 0/N pass
 
 
+class KnowledgeConfig(BaseModel):
+    """Persistent knowledge store configuration."""
+
+    enabled: bool = True
+    repo_path: str = ""             # Empty = ~/.probos/knowledge/
+    auto_commit: bool = True        # Auto-commit on writes
+    commit_debounce_seconds: float = 5.0  # Batch writes within this window
+    max_episodes: int = 1000        # Max episodes to persist (oldest evicted)
+    max_workflows: int = 200        # Max workflow cache entries to persist
+    restore_on_boot: bool = True    # Warm boot from existing repo
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
@@ -242,6 +256,7 @@ class SystemConfig(BaseModel):
     federation: FederationConfig = FederationConfig()
     self_mod: SelfModConfig = SelfModConfig()
     qa: QAConfig = QAConfig()
+    knowledge: KnowledgeConfig = KnowledgeConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

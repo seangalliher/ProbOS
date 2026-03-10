@@ -197,38 +197,54 @@ class OpenAICompatibleClient(BaseLLMClient):
         """Send a completion request with fallback chain.
 
         Routes to the appropriate tier's endpoint and client.
-        Fallback order: live endpoint → cached response → error response.
+        Fallback order: requested tier → next available tier → cache → error.
+        Tier fallback: fast → standard → deep.
         """
         tier = request.tier or self.default_tier
-        tc = self._tier_configs.get(tier, self._tier_configs["standard"])
-        client = self._clients[self._client_key(tier)]
-        model = tc["model"]
-        api_format = tc.get("api_format", "openai")
+        # Build fallback chain: requested tier first, then others in order
+        _TIER_ORDER = ["fast", "standard", "deep"]
+        fallback_tiers = [tier] + [t for t in _TIER_ORDER if t != tier]
+
+        last_error = ""
+        for attempt_tier in fallback_tiers:
+            tc = self._tier_configs.get(attempt_tier, self._tier_configs["standard"])
+            client = self._clients[self._client_key(attempt_tier)]
+            model = tc["model"]
+            api_format = tc.get("api_format", "openai")
+
+            # Skip tiers known to be unreachable at boot
+            if self._tier_status.get(attempt_tier) is False and attempt_tier != tier:
+                continue
+
+            try:
+                response = await self._call_api(request, model, client, api_format=api_format)
+                # Cache successful responses (keyed by original tier)
+                cache_key = self._cache_key(tier, request.prompt)
+                self._cache[cache_key] = response
+                if attempt_tier != tier:
+                    logger.info(
+                        "LLM tier fallback: %s → %s (model=%s)",
+                        tier, attempt_tier, model,
+                    )
+                return response
+            except httpx.ConnectError:
+                last_error = f"LLM endpoint unreachable at {tc['base_url']}"
+                logger.warning("%s (tier=%s)", last_error, attempt_tier)
+            except httpx.TimeoutException:
+                last_error = f"LLM request timed out after {tc['timeout']:.0f}s"
+                logger.warning("%s (model=%s, tier=%s)", last_error, model, attempt_tier)
+            except httpx.HTTPStatusError as e:
+                last_error = f"LLM endpoint returned HTTP {e.response.status_code}"
+                logger.warning(
+                    "LLM endpoint returned HTTP %d (tier=%s): %s",
+                    e.response.status_code, attempt_tier, e.response.text[:200],
+                )
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {e}"
+                logger.warning("LLM call failed (tier=%s): %s", attempt_tier, last_error)
+
+        # Try cache (keyed by original tier)
         cache_key = self._cache_key(tier, request.prompt)
-
-        # Try live endpoint
-        try:
-            response = await self._call_api(request, model, client, api_format=api_format)
-            # Cache successful responses
-            self._cache[cache_key] = response
-            return response
-        except httpx.ConnectError:
-            logger.warning("LLM endpoint unreachable at %s", tc["base_url"])
-        except httpx.TimeoutException:
-            logger.warning(
-                "LLM request timed out after %.0fs (model=%s)",
-                tc["timeout"], model,
-            )
-        except httpx.HTTPStatusError as e:
-            logger.warning(
-                "LLM endpoint returned HTTP %d: %s",
-                e.response.status_code,
-                e.response.text[:200],
-            )
-        except Exception as e:
-            logger.warning("LLM live call failed: %s: %s", type(e).__name__, e)
-
-        # Try cache
         if cache_key in self._cache:
             cached = self._cache[cache_key]
             logger.debug("Using cached LLM response for request %s", request.id[:8])
@@ -242,12 +258,12 @@ class OpenAICompatibleClient(BaseLLMClient):
             )
 
         # Final fallback: error response
-        logger.error("LLM unavailable and no cached response for request %s", request.id[:8])
+        logger.error("All LLM tiers unavailable and no cached response for request %s", request.id[:8])
         return LLMResponse(
             content="",
-            model=model,
+            model="",
             tier=tier,
-            error=f"LLM endpoint at {tc['base_url']} is unavailable and no cached response exists",
+            error=f"All LLM tiers unavailable ({last_error})",
             request_id=request.id,
         )
 

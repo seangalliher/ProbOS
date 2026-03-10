@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 13 — SystemQAAgent + Smoke Testing (892/892 tests + 11 skipped)
+## Current Status: Phase 14b — ChromaDB Semantic Recall (1007/1007 tests + 11 skipped)
 
 ---
 
@@ -30,7 +30,7 @@
 |------|--------|-------------|
 | `src/probos/mesh/signal.py` | done | `SignalManager` — TTL enforcement, background reaper loop, expiry callbacks |
 | `src/probos/mesh/intent.py` | done | `IntentBus` — async pub/sub, concurrent fan-out to subscribers, result collection with timeout, error handling, per-broadcast demand tracking with sliding window, `per_pool_demand()` for scaler, `_federation_fn` callback for federated forwarding, `federated` parameter on `broadcast()` for loop prevention |
-| `src/probos/mesh/capability.py` | done | `CapabilityRegistry` — semantic descriptor store, fuzzy matching (exact/substring/keyword), scored results |
+| `src/probos/mesh/capability.py` | done | `CapabilityRegistry` — semantic descriptor store, tiered matching (exact/substring/semantic/keyword), embedding-based semantic matching via `compute_similarity()` (Phase 14b), `semantic_matching` config flag, scored results |
 | `src/probos/mesh/routing.py` | done | `HebbianRouter` — connection weights with `rel_type` (intent/agent), SQLite persistence, decay_all, preferred target ranking, `record_verification()` |
 | `src/probos/mesh/gossip.py` | done | `GossipProtocol` — partial view management, entry injection/merge by recency, random sampling, periodic gossip loop |
 
@@ -62,11 +62,11 @@
 | `src/probos/cognitive/working_memory.py` | done | `WorkingMemorySnapshot` (serializable system state), `WorkingMemoryManager` (bounded context assembly from registry/trust/Hebbian/capabilities, token budget eviction) |
 | `src/probos/cognitive/decomposer.py` | done | `IntentDecomposer` (NL text + working memory + similar episodes → LLM → `TaskDAG`, dynamic system prompt via `PromptBuilder` when `_intent_descriptors` populated (falls back to `_LEGACY_SYSTEM_PROMPT`), `refresh_descriptors()` for runtime to push new intent sets, aggressive JSON-only system prompt with `response` and `reflect` fields, markdown code fence extraction, `REFLECT_PROMPT` for post-execution synthesis with `[status]` prefix per node for LLM context (AD-121), `reflect()` method sends results back to LLM with payload cap ~8000 chars and truncation, `_summarize_node_result()` deduplicates identical output/result fields (AD-122), PAST EXPERIENCE section for episodic context, PRE-WARM HINTS section for dreaming integration, optional `workflow_cache` for cache-first decomposition with exact + fuzzy matching, `pre_warm_intents` property for runtime sync, `is_capability_gap()` function with `_CAPABILITY_GAP_RE` regex to distinguish capability-gap responses from conversational replies (AD-126), `last_tier`/`last_model` debug state tracking — AD-138, decompose/reflect use `tier=None` to respect configured default — AD-137), `DAGExecutor` (parallel/sequential DAG execution through mesh + consensus, dependency resolution, deadlock detection, `on_event` callback for real-time progress, attention-based priority batching when `AttentionManager` is provided, optional `escalation_manager` for 3-tier error recovery, consensus-rejected nodes now correctly marked "failed" instead of "completed", escalation events: escalation_start, escalation_resolved, escalation_exhausted) |
 | `src/probos/cognitive/prompt_builder.py` | done | `PromptBuilder` — dynamically assembles decomposer system prompt from `IntentDescriptor` list. Generates intent table, consensus rules, reflect rules (broadened to include transformation/translation intents). Anti-echo rules for `run_command` (no echo/Write-Host/Write-Output to fake answers). Deterministic output (sorted by name). Constants: `PROMPT_PREAMBLE`, `PROMPT_RESPONSE_FORMAT`, `PROMPT_EXAMPLES` (updated with introspection + time examples) |
-| `src/probos/cognitive/episodic.py` | done | `EpisodicMemory` — SQLite-backed long-term memory, `Episode` storage/recall, keyword-overlap similarity search (cosine over bag-of-words), `recall_by_intent()`, `recent()`, `get_stats()`, max_episodes eviction |
+| `src/probos/cognitive/episodic.py` | done | `EpisodicMemory` — ChromaDB-backed long-term memory with ONNX MiniLM semantic embeddings (Phase 14b), `Episode` storage/recall, semantic similarity search via `collection.query()`, `recall_by_intent()` with metadata filter, `recent()`, `get_stats()`, `seed()` for warm boot, max_episodes eviction |
 | `src/probos/cognitive/episodic_mock.py` | done | `MockEpisodicMemory` — in-memory episodic memory for testing, substring/keyword matching recall, no SQLite dependency |
 | `src/probos/cognitive/attention.py` | done | `AttentionManager` — priority scorer and budgeter for task execution, scores = urgency × relevance × deadline_factor × dependency_depth_bonus, configurable concurrency limit (`max_concurrent_tasks`), cross-request focus history (ring buffer of `FocusSnapshot` entries, configurable max size), `_compute_relevance()` (keyword overlap between entry intent and recent focus, floor=0.3), background demotion (configurable factor, default 0.25), queue introspection |
 | `src/probos/cognitive/dreaming.py` | done | `DreamingEngine` — offline consolidation: replay recent episodes to strengthen/weaken Hebbian weights, prune below-threshold connections, trust consolidation (boost/penalize agents by track record), pre-warm intent prediction via temporal bigram analysis, `idle_scale_down_fn` callback for pool scaler integration. `DreamScheduler` — background asyncio task monitors idle time, triggers dream cycles after configurable threshold, `force_dream()` for immediate cycles, `is_dreaming` property, `last_dream_report` for introspection |
-| `src/probos/cognitive/workflow_cache.py` | done | `WorkflowCache` — in-memory LRU cache of successful DAG patterns, exact and fuzzy lookup (keyword overlap + pre-warm intent subset), deep copy with fresh node IDs on retrieval, popularity-based eviction, stores only fully-successful DAGs |
+| `src/probos/cognitive/workflow_cache.py` | done | `WorkflowCache` — in-memory LRU cache of successful DAG patterns, exact and fuzzy lookup (semantic similarity via `compute_similarity()` + pre-warm intent subset — AD-173), deep copy with fresh node IDs on retrieval, popularity-based eviction, stores only fully-successful DAGs |
 | `src/probos/cognitive/agent_designer.py` | done | `AgentDesigner` — generates agent source code via LLM for unhandled intents, template-based prompt construction with full `IntentResult`/`IntentMessage` signatures, `BaseAgent` attribute names (`self.id`, `self.pool`, `self.confidence`), `__init__(**kwargs)` with `self._llm_client = kwargs.get("llm_client")`, all 4 abstract lifecycle methods (perceive/decide/act/report), LLM ACCESS section for intelligence tasks (AD-115), `requires_reflect=True` on designed agent descriptors, class name derivation, allowed_imports whitelist enforcement |
 | `src/probos/cognitive/code_validator.py` | done | `CodeValidator` — static analysis of generated agent code: syntax check (AST parse), import whitelist enforcement, forbidden pattern regex scan, schema conformance (BaseAgent subclass, intent_descriptors, handle_intent, agent_type, _handled_intents), module-level side effect detection |
 | `src/probos/cognitive/sandbox.py` | done | `SandboxRunner` — test-executes generated agents in isolated context: temp file write, importlib dynamic loading, BaseAgent subclass discovery, synthetic IntentMessage test, IntentResult type verification, configurable timeout, LLM client forwarding to sandboxed agents |
@@ -84,8 +84,9 @@
 | `src/probos/experience/__init__.py` | done | Package root |
 | `src/probos/experience/panels.py` | done | Rich rendering functions: `render_status_panel()` (with dreaming state section), `render_agent_table()`, `render_weight_table()`, `render_trust_panel()`, `render_gossip_panel()`, `render_event_log_table()`, `render_working_memory_panel()`, `render_attention_panel()` (with focus history display and background task indicator), `render_dag_result()` (displays `response` field for conversational replies), `render_dream_panel()` (dream cycle report with pre-warm intents), `render_workflow_cache_panel()` (cached workflow patterns with hit counts), `render_scaling_panel()` (pool scaling status with demand ratio, size range, cooldown), `render_federation_panel()` (federation node status, connected peers, forwarded/received counts), `render_peers_panel()` (peer self-model table: capabilities, agent count, health, uptime), `render_designed_panel()` (self-designed agent status table with sandbox time, behavioral alerts, optional QA column — AD-153), `format_health()` — state-coloured agent displays (ACTIVE=green, DEGRADED=yellow, RECYCLING=red, SPAWNING=blue) |
 | `src/probos/experience/qa_panel.py` | done | `render_qa_panel()` — Rich table of QA results from in-memory report store (AD-157), shows agent type/verdict/score/duration/trust per designed agent. `render_qa_detail()` — detailed view for single agent with per-test breakdown (case type, result, error). Both functions follow the panels.py pattern: empty-state guard, Rich Table, Rich Panel with border styling |
+| `src/probos/experience/knowledge_panel.py` | done | `render_knowledge_panel()` — artifact count table with repo status and schema version. `render_knowledge_history()` — recent commit log with hash/timestamp/message. `render_rollback_result()` — success/failure panel for /rollback command |
 | `src/probos/experience/renderer.py` | done | `ExecutionRenderer` — DAG execution display with status spinner (Rich Live removed — AD-92), `on_event` callback integration (including `scale_up`/`scale_down`/`federation_forward`/`federation_receive`/`self_mod_design`/`self_mod_success`/`self_mod_failure` events), conversational response display when LLM returns `response` field, execution snapshot for introspection (`_previous_execution`/`_last_execution`), debug mode (raw DAG JSON, individual agent responses, consensus details, **tier/model in debug panel title** — AD-138), DAG plan display in debug-only mode (AD-90), Params column in progress table, manually-managed spinner with `_stop_live_for_user` hook for Tier 3 escalation (AD-93). Self-mod UX: `StrategyRecommender` integration with numbered strategy menu (AD-127), `add_skill` strategy dispatch when available (AD-129), existing-agent re-routing when LLM extracts already-registered intent, capability-gap detection gates self-mod (AD-126), force `reflect=True` on designed-agent DAGs |
-| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/scaling`, `/federation`, `/peers`, `/designed`, `/qa`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, user approval callback for self-mod agent creation (AD-123), `/model` shows per-tier endpoint/model/status with shared-endpoint notes (AD-135), `/tier` switch shows endpoint URL, `/qa` command shows QA status for designed agents with optional agent_type detail view (AD-157), `/designed` passes `qa_reports` for QA column, graceful error handling |
+| `src/probos/experience/shell.py` | done | `ProbOSShell` — async REPL with slash commands (`/status`, `/agents`, `/weights`, `/gossip`, `/log`, `/memory`, `/attention`, `/history`, `/recall`, `/dream`, `/cache`, `/scaling`, `/federation`, `/peers`, `/designed`, `/qa`, `/knowledge`, `/rollback`, `/explain`, `/model`, `/tier`, `/debug`, `/help`, `/quit`), NL input routing, ambient health prompt `[N agents | health: 0.XX] probos>`, user approval callback for self-mod agent creation (AD-123), `/model` shows per-tier endpoint/model/status with shared-endpoint notes (AD-135), `/tier` switch shows endpoint URL, `/qa` command shows QA status for designed agents with optional agent_type detail view (AD-157), `/designed` passes `qa_reports` for QA column, `/knowledge` shows artifact counts + commit count + repo status, `/knowledge history` shows recent commits, `/rollback <type> <id>` rolls back an artifact to previous version, graceful error handling |
 
 ### Agents
 
@@ -103,12 +104,19 @@
 | `src/probos/substrate/skill_agent.py` | done | `SkillBasedAgent` — general-purpose agent dispatching intents to attached Skill objects, `add_skill()` updates both instance AND class-level `_handled_intents` and `intent_descriptors` (AD-128), `remove_skill()` cleans up both levels, `handle_intent()` passes `llm_client` to skill handlers, `skills` pool only spawned when `self_mod.enabled=True` (AD-129) |
 | `src/probos/agents/system_qa.py` | done | `SystemQAAgent` — meta-agent that smoke-tests newly designed agents after self-modification (AD-153). `QAReport` dataclass with verdict/pass_rate/test_details/duration. `generate_synthetic_intents()` creates deterministic test cases from intent metadata — happy path (valid params), edge case (minimal/empty), error case (invalid). `_infer_param_type()` heuristic maps key names to param types (url/path/numeric/bool/default — AD-156). `validate_result()` checks outcomes per case type: happy must succeed, edge must not crash, error must fail gracefully or decline. `run_smoke_tests()` executes against pool agents with per-test and total timeout. Event log integration for started/passed/failed lifecycle events |
 
+### Knowledge Layer (new in Phase 14)
+
+| File | Status | Description |
+|------|--------|-------------|
+| `src/probos/knowledge/__init__.py` | done | Package root with KnowledgeStore re-export |
+| `src/probos/knowledge/store.py` | done | `KnowledgeStore` — Git-backed persistent repository for all ProbOS artifacts. `initialize()` creates repo directory + all subdirectories (episodes, agents, skills, trust, routing, workflows, qa). Store/load methods for 7 artifact types: episodes (JSON per file, oldest-first eviction), agents (.py source + .json metadata sidecar), skills (.py + .json descriptor), trust (single snapshot.json with raw alpha/beta — AD-168), routing (single weights.json), workflows (single cache.json with max_workflows eviction), QA reports (per-agent JSON). Git integration: `_ensure_repo()` for late Git init on first write with meta.json (AD-159, AD-169), `_schedule_commit()` debounced via `asyncio.TimerHandle` (AD-161), `_git_commit()` via thread executor (AD-166), `flush()` with `_flushing` race guard. `rollback_artifact()` restores previous version via `git log --follow` + `git show` (AD-164). `artifact_history()` per-file commit log. `recent_commits()`, `commit_count()`, `meta_info()`, `artifact_counts()`. All file I/O via `_write_json()` / `_read_json()` using asyncio executor |
+
 ### Runtime
 
 | File | Status | Description |
 |------|--------|-------------|
 | `src/probos/runtime.py` | done | `ProbOSRuntime` — orchestrates substrate + mesh + consensus + cognitive + episodic memory + attention + dreaming + workflow cache + introspection + dynamic intent discovery + federation + self-modification + skills + research + SystemQA. Spawns pools: system (2 heartbeats), filesystem (3 file_readers), filesystem_writers (3 file_writers), directory (3 directory_list), search (3 file_search), shell (3 shell_command), http (3 http_fetch), introspect (2 introspection agents with runtime=self), skills (2 skill_agents with llm_client — only when self_mod.enabled), system_qa (1 SystemQAAgent — only when self_mod.enabled and qa.enabled — AD-153), red_team (2 verifiers). 25-27 agents total. Federation: `FederationBridge` with `FederationRouter`, `_build_self_model()` (NodeSelfModel Psi with capabilities, pool sizes, health, uptime), `_validate_remote_result()` placeholder, wires `bridge.forward_intent` as `intent_bus._federation_fn`. Self-modification: creates `SelfModificationPipeline` with `SkillDesigner`/`SkillValidator`/`add_skill_fn` when `config.self_mod.enabled=True`, optional `ResearchPhase` when `research_enabled=True` (AD-131), `_extract_unhandled_intent()` via LLM (prefers general-purpose intents over narrow ones — AD-124), auto-design when decomposer returns empty DAG or capability-gap response (AD-126), `_register_designed_agent()`, `_create_designed_pool()`, `_set_probationary_trust()`, `_get_llm_equipped_types()` for strategy recommender, `_add_skill_to_agents()` for skill injection into skills pool (AD-129), LLM client injected into designed agent pools (AD-115). SystemQA: `_run_qa_for_designed_agent()` runs non-blocking smoke tests via `asyncio.create_task()` after self-mod success (AD-154), trust updates with weight asymmetry (AD-155), episodic memory storage (AD-157), event log flagging, auto-remove on total failure, `_qa_reports` in-memory dict for `/qa` command (AD-157), `_EXCLUDED_AGENT_TYPES` set excludes `system_qa` and `red_team` from decomposer intent descriptors (AD-158), QA pool excluded from scaler. `register_agent_type()` registers new agent class and refreshes decomposer descriptors. `_collect_intent_descriptors()` deduplicates across all registered templates (including SkillBasedAgent class-level descriptors). Boot-time `refresh_descriptors()` call after pool creation syncs decomposer with all registered intents. `process_natural_language(text, on_event=None)` with event callback support, attention focus update, dream scheduler activity tracking, pre-warm intent sync to decomposer, execution snapshot pattern (`_previous_execution`/`_last_execution` for introspection without self-overwrite), post-execution reflect step, episodic episode storage, workflow cache storage on success, `recall_similar()` for semantic search. `DreamScheduler` created at start when episodic memory is available. `WorkflowCache` created at init, passed to decomposer, exposed in `status()` |
-| `src/probos/__main__.py` | done | Entry point: `uv run python -m probos [--config path]` — boot sequence display with per-tier LLM connectivity checks (each tier checked independently, partial connectivity continues with warning, all-unreachable falls back to MockLLMClient — AD-134), creates `EpisodicMemory` (SQLite in temp dir), interactive shell launch, `--config` flag for node-specific YAML, `WindowsSelectorEventLoopPolicy` for pyzmq compatibility on Windows (AD-108), noisy INFO log suppression for interactive shell (AD-125) |
+| `src/probos/__main__.py` | done | Entry point: `uv run python -m probos [--config path] [--fresh]` — boot sequence display with per-tier LLM connectivity checks (each tier checked independently, partial connectivity continues with warning, all-unreachable falls back to MockLLMClient — AD-134), creates `EpisodicMemory` (SQLite in temp dir), interactive shell launch, `--config` flag for node-specific YAML, `--fresh` flag for cold start (AD-165, sets restore_on_boot=False), `WindowsSelectorEventLoopPolicy` for pyzmq compatibility on Windows (AD-108), noisy INFO log suppression for interactive shell (AD-125) |
 | `config/node-1.yaml` | done | Node 1 federation config: bind tcp://127.0.0.1:5555, peers=[node-2] |
 | `config/node-2.yaml` | done | Node 2 federation config: bind tcp://127.0.0.1:5556, peers=[node-1] |
 | `scripts/launch-cluster.sh` | done | Launches 2-node ProbOS federation cluster in background processes |
@@ -118,7 +126,7 @@
 
 ## What's Working
 
-**892/892 tests pass.** Test suite covers:
+**1007/1007 tests pass.** Test suite covers:
 
 ### Substrate tests (50 tests — unchanged)
 - Agent creation, lifecycle, confidence tracking (16 tests)
@@ -822,6 +830,173 @@
 - render_designed_panel with qa_reports=None — backward compat (1 test)
 - Agent not in QA reports shows em-dash (1 test)
 
+### Phase 14 Knowledge Store tests (91 tests — new in Phase 14)
+
+#### KnowledgeConfig (4 tests)
+- Default values match spec (1 test)
+- KnowledgeConfig in SystemConfig (1 test)
+- Custom values from YAML (1 test)
+- Missing section falls back to defaults (1 test)
+
+#### EpisodicMemory.seed() (6 tests)
+- seed() restores episodes (1 test)
+- Preserves original IDs (1 test)
+- Preserves timestamps (1 test)
+- Skips duplicate IDs (1 test)
+- Empty list returns 0 (1 test)
+- MockEpisodicMemory seed works (1 test)
+
+#### WorkflowCache.export_all() (3 tests)
+- Returns all entries (1 test)
+- Empty cache returns empty list (1 test)
+- Entries are JSON-serializable (1 test)
+
+#### TrustNetwork.raw_scores() (2 tests)
+- Returns alpha/beta parameters (1 test)
+- Raw params not derived mean (1 test)
+
+#### KnowledgeStore Init (4 tests)
+- Creates directory (1 test)
+- Creates all subdirectories (1 test)
+- Idempotent initialization (1 test)
+- repo_exists false before write (1 test)
+
+#### Episode storage (7 tests)
+- store_episode creates file (1 test)
+- Stored episode is valid JSON (1 test)
+- load_episodes returns stored (1 test)
+- Episodes sorted by timestamp desc (1 test)
+- load_episodes with limit (1 test)
+- Empty directory returns empty list (1 test)
+- Max episodes eviction (1 test)
+
+#### Agent storage (7 tests)
+- store_agent creates .py and .json (1 test)
+- Source code matches (1 test)
+- Metadata matches (1 test)
+- load_agents returns stored (1 test)
+- Empty directory returns empty list (1 test)
+- remove_agent deletes files (1 test)
+- remove_agent nonexistent is no-op (1 test)
+
+#### Skill storage (2 tests)
+- store_skill creates files (1 test)
+- load_skills returns stored (1 test)
+
+#### Trust storage (4 tests)
+- store_trust_snapshot (1 test)
+- load_trust_snapshot (1 test)
+- load_trust_snapshot missing returns empty (1 test)
+- Contains raw alpha/beta params (1 test)
+
+#### Routing storage (2 tests)
+- store_routing_weights (1 test)
+- load_routing_weights (1 test)
+
+#### Workflow storage (3 tests)
+- store_workflows (1 test)
+- load_workflows (1 test)
+- Max workflows eviction (1 test)
+
+#### QA storage (2 tests)
+- store_qa_report (1 test)
+- load_qa_reports (1 test)
+
+#### Git integration (11 tests)
+- Git init on first write (1 test)
+- meta.json with schema_version/probos_version (1 test)
+- repo_exists true after write (1 test)
+- flush commits immediately (1 test)
+- Commit messages include artifact info (1 test)
+- Flush prevents debounce race (1 test)
+- Thread executor doesn't block event loop (1 test)
+- Uses get_running_loop (1 test)
+- Git not available graceful fallback (1 test)
+- Auto-commit after debounce (1 test)
+- Debounce batches writes (1 test)
+
+#### Rollback (5 tests)
+- Rollback restores previous version (1 test)
+- Rollback creates new commit (1 test)
+- No history returns False (1 test)
+- artifact_history returns commits (1 test)
+- artifact_history empty returns empty list (1 test)
+
+#### Warm boot (11 tests)
+- Restores trust with correct alpha/beta (1 test)
+- Restores routing weights (1 test)
+- Restores episodes via seed() (1 test)
+- Restores workflows (1 test)
+- Restores QA reports (1 test)
+- Trust before agents order (1 test)
+- Partial failure skips corrupted, restores rest (1 test)
+- Empty repo cold-starts normally (1 test)
+- --fresh skips restore (1 test)
+- --fresh preserves repo (1 test)
+- Skips invalid agent with validation failure (1 test)
+
+#### Runtime integration (8 tests)
+- Episode persisted after processing (1 test)
+- Persistence failure doesn't crash (1 test)
+- Shutdown flushes knowledge (1 test)
+- Shutdown persists workflows (1 test)
+- Shutdown persists trust (1 test)
+- Shutdown persists routing (1 test)
+- Knowledge disabled skips persistence (1 test)
+- Knowledge status in runtime (1 test)
+
+#### Knowledge panels (5 tests)
+- render_knowledge_panel returns Panel (1 test)
+- render_knowledge_history returns Panel (1 test)
+- render_knowledge_history empty (1 test)
+- render_rollback_result success (1 test)
+- render_rollback_result failure (1 test)
+
+#### Knowledge shell commands (5 tests)
+- /knowledge shows status (1 test)
+- /knowledge history shows commits (1 test)
+- /rollback usage hint (1 test)
+- /rollback no knowledge store (1 test)
+- /help includes knowledge commands (1 test)
+
+### Phase 14b ChromaDB Semantic Recall tests (24 tests — new in Phase 14b)
+
+#### Embedding utility (7 tests — `test_embeddings.py`)
+- `get_embedding_function()` returns callable (1 test)
+- `embed_text()` returns non-empty list of floats (1 test)
+- `compute_similarity()` identical text near 1.0 (1 test)
+- `compute_similarity()` different text < 0.8 (1 test)
+- Semantic similarity ordering: related > unrelated (1 test)
+- Empty text returns 0.0 (1 test)
+- Fallback to keyword overlap when unavailable (1 test)
+
+#### EpisodicMemory ChromaDB (11 tests — `test_episodic_chromadb.py`)
+- Store and recall single episode via semantic similarity (1 test)
+- Ranked results by semantic similarity (1 test)
+- Semantic recall: "deployment" matches "push to production" (1 test)
+- recall_by_intent filters by metadata (1 test)
+- recent() returns most recent first (1 test)
+- get_stats returns counts (1 test)
+- max_episodes eviction (1 test)
+- seed() bulk loads episodes (1 test)
+- seed() skips duplicate IDs (1 test)
+- Episode round-trip: all fields survive store → recall (1 test)
+- Empty collection returns empty (1 test)
+
+#### WorkflowCache semantic (1 test)
+- Fuzzy lookup: "deploy the app to production" matches cached "push app to production" (1 test)
+
+#### CapabilityRegistry semantic (2 tests)
+- Semantic match: "access file data" finds capability "read_file" with detail "Read a document from disk" (1 test)
+- Semantic matching disabled produces lower scores than enabled (1 test)
+
+#### StrategyRecommender semantic (1 test)
+- Semantically similar intent produces higher add_skill confidence than dissimilar (1 test)
+
+#### ChromaDB + KnowledgeStore integration (2 tests)
+- Episode persist → Git → seed → ChromaDB recall (1 test)
+- Warm boot: fresh ChromaDB + seed from KnowledgeStore produces searchable episodes (1 test)
+
 The interactive terminal interface works end-to-end:
 
 1. `uv run python -m probos` boots the system with a Rich banner and boot sequence display.
@@ -1012,17 +1187,17 @@ When the decomposition LLM sets `reflect: true` in the JSON response, the pipeli
 
 The reflect step (post-execution LLM synthesis) is hardened against three failure modes: (1) The `decomposer.reflect()` call in `runtime.py` and `renderer.py` is wrapped in `asyncio.wait_for()` using `config.cognitive.decomposition_timeout_seconds`. (2) The serialized payload sent to the LLM is capped at ~8000 characters (~2000 tokens) with a trailing `[... results truncated ...]` note. (3) If reflect times out or raises any exception, the execution results are preserved and `execution_result["reflection"]` is set to a fallback string `"(Reflection unavailable — results shown above)"` rather than losing the entire result or crashing.
 
-### AD-48: Keyword-overlap embedding for episodic recall
+### AD-48: Semantic embedding for episodic recall (upgraded in Phase 14b)
 
-Episodic memory uses a lightweight keyword-overlap similarity approach instead of a heavyweight embedding model (ChromaDB + Sentence Transformers). Text is tokenized into lowercase alphanumeric tokens with stop words removed, producing a sparse bag-of-words vector. Cosine similarity over these vectors provides recall. This trades recall precision for zero additional dependencies and fast startup. The `EpisodicMemory` class uses SQLite for persistence; `MockEpisodicMemory` uses an in-memory list with substring matching.
+Episodic memory uses ChromaDB with ONNX MiniLM embeddings for semantic similarity search (AD-170, AD-171). Episodes are stored as documents with metadata in a ChromaDB PersistentClient collection. Recall uses `collection.query()` for true semantic matching — "deployment" finds episodes about "push to production." The shared embedding utility (`embeddings.py`) provides `compute_similarity()` for other subsystems (WorkflowCache, CapabilityRegistry, StrategyRecommender). Graceful fallback to keyword-overlap bag-of-words if ONNX is unavailable. `MockEpisodicMemory` still uses keyword matching for deterministic tests (AD-176).
 
 ### AD-49: MockEpisodicMemory for testing
 
-Same pattern as `MockLLMClient`: `MockEpisodicMemory` implements the same interface as `EpisodicMemory` but stores episodes in a plain list. Recall uses keyword-set overlap instead of cosine similarity over embeddings. This keeps the test suite deterministic and fast — no SQLite, no embedding computation.
+Same pattern as `MockLLMClient`: `MockEpisodicMemory` implements the same interface as `EpisodicMemory` but stores episodes in a plain list. Recall uses keyword-set overlap instead of semantic embeddings. This keeps the test suite deterministic and fast — no ChromaDB, no embedding computation. Preserved unchanged through Phase 14b (AD-176).
 
 ### AD-50: Episode storage is fire-and-forget
 
-Episode storage in `runtime.py` is wrapped in a try/except. If storage fails (SQLite error, serialization error, etc.), the failure is logged as a warning but never blocks the user's result. The execution result is always returned regardless of whether the episode was successfully stored.
+Episode storage in `runtime.py` is wrapped in a try/except. If storage fails (ChromaDB error, serialization error, etc.), the failure is logged as a warning but never blocks the user's result. The execution result is always returned regardless of whether the episode was successfully stored.
 
 ### AD-51: Attention mechanism — priority-based task scheduling
 
@@ -1086,7 +1261,7 @@ When a cached DAG is retrieved, it is deserialized from JSON with fresh `uuid4()
 
 ### AD-66: Fuzzy matching requires dual overlap
 
-`WorkflowCache.lookup_fuzzy()` requires BOTH conditions to return a hit: (1) at least one pre-warm intent must match an intent stored in the cached DAG, AND (2) keyword overlap between the query and cached pattern must be ≥50%. This dual requirement prevents false positives — a request for "fetch website data" won't match a cached "read the file" workflow just because both contain common words. Pre-warm intents provide semantic signal; keyword overlap provides lexical signal.
+`WorkflowCache.lookup_fuzzy()` requires BOTH conditions to return a hit: (1) at least one pre-warm intent must match an intent stored in the cached DAG, AND (2) semantic similarity between the query and cached pattern must exceed the configurable `similarity_threshold` (default 0.6, via `compute_similarity()` from `embeddings.py` — AD-173). This dual requirement prevents false positives while allowing meaning-based matching — "deploy the app" can match a cached "push to production" workflow because the embeddings understand semantic relatedness. Pre-warm intents provide structural signal; semantic similarity provides meaning-based signal.
 
 ### AD-67: Pre-warm hints injected into LLM prompt
 
@@ -1630,6 +1805,89 @@ Additionally, the red team's `_verify_http_fetch` used `httpx.AsyncClient(timeou
 
 892/892 tests passing (+ 11 skipped).
 
+---
+
+### Phase 14 — Persistent Knowledge Store (AD-159 through AD-169)
+
+Git-backed persistence layer that survives restarts. All system artifacts (episodes, designed agents, skills, trust scores, routing weights, workflow cache entries, QA reports) are stored as human-readable JSON/Python files in a local Git repository. Enables warm boot (restore state from previous session), per-artifact rollback via Git history, and versioned audit trail of all system evolution.
+
+**Key design decisions (AD numbers):**
+
+| AD | Decision |
+|----|----------|
+| AD-159 | Late Git init: Git repo created on first write, not at boot. Avoids empty repos. meta.json with schema_version and probos_version (AD-169) |
+| AD-160 | Human-readable artifacts: JSON for data, .py for agent/skill source. No binary formats |
+| AD-161 | Debounced commits: `asyncio.TimerHandle` batches writes within configurable window. `_flushing` race guard prevents double-commit during shutdown |
+| AD-162 | Warm boot restore order: trust → routing → agents → skills → episodes → workflows → QA. Each step independent with try/except |
+| AD-163 | Validated restoration: `CodeValidator.validate()` on restored .py files before importlib loading. Corrupted/malicious agents rejected at boot |
+| AD-164 | Per-artifact rollback: `git log --follow` + `git show` to retrieve previous version, creates new commit (non-destructive) |
+| AD-165 | `--fresh` flag: Sets `restore_on_boot=False`. Does NOT delete the repo — new writes still persist. Previous data preserved for future warm boots |
+| AD-166 | Thread executor for Git: All git subprocess calls via `asyncio.get_running_loop().run_in_executor()` — never blocks event loop |
+| AD-167 | Optional infrastructure: System falls back to current behavior if knowledge disabled or git unavailable |
+| AD-168 | Raw Beta parameters: Trust snapshots capture `(alpha, beta)` not derived `mean()` scores. Preserves full distribution information |
+| AD-169 | Repo metadata: `meta.json` with `schema_version`, `probos_version`, `created` timestamp |
+
+**Files changed/created:**
+
+| File | Change |
+|------|--------|
+| `src/probos/config.py` | Added `KnowledgeConfig` class (enabled, repo_path, auto_commit, commit_debounce_seconds, max_episodes, max_workflows, restore_on_boot), `knowledge: KnowledgeConfig` to SystemConfig |
+| `config/system.yaml` | Added `knowledge:` section with commented defaults |
+| `src/probos/knowledge/__init__.py` | **New.** Package root with KnowledgeStore re-export |
+| `src/probos/knowledge/store.py` | **New.** Full KnowledgeStore implementation (~430 lines): initialize(), store/load for all 7 artifact types, git init on first write, debounced commits, flush with race guard, rollback, artifact_history, thread executor for git ops |
+| `src/probos/cognitive/episodic.py` | Added `seed()` — bulk restore episodes preserving original IDs via INSERT OR IGNORE |
+| `src/probos/cognitive/episodic_mock.py` | Added `seed()` — in-memory bulk restore for tests |
+| `src/probos/cognitive/workflow_cache.py` | Added `export_all()` — returns list of serializable dicts for shutdown persistence |
+| `src/probos/consensus/trust.py` | Added `raw_scores()` — returns {agent_id: {alpha, beta, observations}} for persistence |
+| `src/probos/runtime.py` | KnowledgeStore init in start(), `_restore_from_knowledge()` warm boot, episode/agent/skill/QA persistence hooks with try/except guards, shutdown flush (trust+routing+workflows+flush()), knowledge status in `status()`, default repo_path from data_dir |
+| `src/probos/__main__.py` | Added `--fresh` CLI flag that sets `restore_on_boot=False` |
+| `src/probos/experience/knowledge_panel.py` | **New.** `render_knowledge_panel()` — artifact count table, `render_knowledge_history()` — commit log, `render_rollback_result()` — success/failure panel |
+| `src/probos/experience/shell.py` | `/knowledge` and `/rollback` commands with handlers |
+| `tests/test_knowledge_store.py` | **New.** 91 tests across 12 test classes covering all AD-159–AD-169 requirements |
+| `tests/test_experience.py` | Fixed `test_no_episode_for_empty_dag` — filter out SystemQA background episodes |
+
+983/983 tests passing (+ 11 skipped).
+
+### Phase 14b — ChromaDB Semantic Recall (AD-170 through AD-176)
+
+Replaced keyword-overlap bag-of-words similarity with real embedding-based semantic search across four subsystems: EpisodicMemory, WorkflowCache, CapabilityRegistry, and StrategyRecommender. ChromaDB runs embedded (no external server) using ONNX MiniLM embeddings. "Find past tasks about deployment" now matches "push to production" — the system understands meaning, not just words.
+
+**Key design decisions (AD numbers):**
+
+| AD | Decision |
+|----|----------|
+| AD-170 | Shared embedding utility: lazy singleton `get_embedding_function()` wrapping ChromaDB's DefaultEmbeddingFunction (ONNX MiniLM). Graceful fallback to keyword-overlap bag-of-words when ONNX unavailable |
+| AD-171 | EpisodicMemory backend swap: SQLite → ChromaDB PersistentClient. Same interface (`store`, `recall`, `recall_by_intent`, `recent`, `get_stats`, `seed`). Callers unchanged. Complex metadata (dicts, lists) serialized to JSON strings for ChromaDB metadata constraints |
+| AD-172 | Two-tier persistence: ChromaDB is hot-path retrieval engine, Git KnowledgeStore is long-term persistence. On warm boot, `seed()` loads episodes from Git into ChromaDB |
+| AD-173 | WorkflowCache semantic fuzzy matching: `compute_similarity()` replaces keyword overlap ratio. Intent subset check stays. Configurable `similarity_threshold` parameter (default 0.6) |
+| AD-174 | CapabilityRegistry semantic tier: exact match → substring → **semantic** → keyword. Semantic tier uses `compute_similarity()` with 0.5 threshold. `semantic_matching: bool` config flag for feature toggle |
+| AD-175 | StrategyRecommender semantic scoring: `compute_similarity()` replaces Jaccard keyword overlap for intent-descriptor comparison. Higher similarity → higher add_skill confidence. Fallback to keyword overlap |
+| AD-176 | MockEpisodicMemory unchanged: tests stay deterministic and fast with keyword matching, no ChromaDB dependency |
+
+**Files changed/created:**
+
+| File | Change |
+|------|--------|
+| `pyproject.toml` | Added `chromadb>=1.0` dependency |
+| `src/probos/cognitive/embeddings.py` | **New.** Shared embedding utility: `get_embedding_function()`, `embed_text()`, `compute_similarity()`, keyword-overlap fallback (`_keyword_embedding`, `_keyword_similarity`, `_tokenize`) |
+| `src/probos/cognitive/episodic.py` | Rewritten: SQLite → ChromaDB PersistentClient. `_episode_to_metadata()` / `_metadata_to_episode()` for JSON-serialized complex fields. Cosine distance → similarity conversion |
+| `src/probos/cognitive/workflow_cache.py` | `lookup_fuzzy()` uses `compute_similarity()` instead of keyword overlap ratio. Added `similarity_threshold` parameter |
+| `src/probos/mesh/capability.py` | `_score_match()` adds semantic tier between substring and keyword. `semantic_matching` constructor parameter |
+| `src/probos/cognitive/strategy.py` | `_compute_overlap()` replaces `_keyword_overlap()` with `compute_similarity()` + keyword fallback |
+| `src/probos/config.py` | Added `similarity_threshold: float = 0.6` to `MemoryConfig`, `semantic_matching: bool = True` to `MeshConfig` |
+| `config/system.yaml` | Added commented `similarity_threshold` to memory section, `semantic_matching` to mesh section |
+| `src/probos/__main__.py` | Passes `relevance_threshold` from config to EpisodicMemory |
+| `src/probos/runtime.py` | Passes `semantic_matching` config to CapabilityRegistry |
+| `tests/test_embeddings.py` | **New.** 7 tests: embedding function callable, embed_text returns floats, cosine similarity, semantic ordering, empty text, fallback |
+| `tests/test_episodic_chromadb.py` | **New.** 11 tests: store/recall, ranked results, semantic deployment match, intent filter, recent ordering, stats, eviction, seed, dedup, round-trip, empty collection |
+| `tests/test_episodic.py` | Updated imports: `_keyword_embedding`/`_keyword_similarity` from `embeddings.py`. Renamed `TestEpisodicMemorySQLite` → `TestEpisodicMemoryChromaDBLegacy` |
+| `tests/test_workflow_cache.py` | Updated fuzzy test for semantic similarity. Added `test_fuzzy_lookup_semantic_deploy_matches_production` |
+| `tests/test_capability.py` | Added `test_semantic_match_open_file_finds_read_document`, `test_semantic_matching_disabled` |
+| `tests/test_strategy.py` | Added `test_semantic_similarity_higher_confidence_for_similar_intents` |
+| `tests/test_knowledge_store.py` | Added `TestChromaDBKnowledgeIntegration`: episode persist → Git → seed → ChromaDB recall, warm boot integration |
+
+1007/1007 tests passing (+ 11 skipped). 24 new tests.
+
 - [x] ~~Plan Phase 1 implementation~~
 - [x] ~~Build substrate layer (agent, registry, spawner, pool, heartbeat)~~
 - [x] ~~Build mesh layer (intent bus, capability registry, gossip, Hebbian routing, signal decay)~~
@@ -1711,13 +1969,34 @@ Additionally, the red team's `_verify_http_fetch` used `httpx.AsyncClient(timeou
 - [x] ~~790/790 tests pass + 11 live LLM tests~~
 - [x] ~~**SystemQAAgent (Internal Self-Testing):** A runtime self-monitoring agent that validates designed agents after self-modification. On every successful self-mod pipeline, SystemQAAgent smoke-tests the newly designed agent with synthetic intents, verifies the output shape and content, records pass/fail outcomes in episodic memory, and uses the trust network to flag flaky agents for demotion or redesign. Complements the external `pytest -m live_llm` integration tests with always-on internal quality assurance — the system tests itself as it evolves. (AD-153 through AD-158)~~
 - [x] ~~892/892 tests pass~~
+- [x] ~~**Phase 14: Persistent Knowledge Store** — Git-backed persistence, warm boot, per-artifact rollback, `--fresh` CLI flag, `/knowledge` and `/rollback` shell commands (AD-159 through AD-169)~~
+- [x] ~~983/983 tests pass~~
 - [ ] **Phase 3b-3b (Cognitive continued):** Preemption of already-running tasks
 - [ ] **Phase 6 (Expansion continued):** Process management, calendar, email, code execution
+- [ ] **Self-Introspection Intent:** Add `introspect_memory` intent handler that queries `runtime.episodic_memory.get_stats()` and returns actual memory status (episode count, intent distribution, success rate, ChromaDB collection info). Currently, natural language questions like "do you have memory?" fall through to the LLM which doesn't know about the runtime's internal state. The introspection agent type already exists — this wires episodic memory stats to a routable intent so the system can accurately report its own capabilities.
+- [ ] **Emergent Behavior Detection:** An analysis layer that watches for unexpected patterns across the system's existing data streams — Hebbian weight topology, trust score trajectories, routing patterns, and dream cycle consolidation. ProbOS already has the raw data: Hebbian weights track intent→agent affinities, the trust network scores every agent, the dream cycle replays and consolidates, and episodic memory records all outcomes. What's missing is continuous monitoring that flags anomalies — unexpected agent cooperation clusters (Hebbian weight subgraph analysis), trust score change-point detection across the full population (not just self-created agents as `BehavioralMonitor` does today), routing pattern shifts (an agent suddenly handling intents it never handled before), and dream cycle consolidation anomalies (unusual strengthening/pruning patterns). The Nooplex paper (§6) describes Total Correlation `TC_N` as the metric for measuring emergent collective behavior — this phase would implement that metric and related detectors. Output would be surfaced through the introspection agent (new intents like `system_anomalies`, `emergent_patterns`) and logged as events for the future HXI visualization layer.
+- [ ] **Human-Agent Collaboration: DAG Proposals & Feedback-to-Learning.** ProbOS currently treats the user as a command issuer and escalation approver — not a cognitive participant. The Nooplex (§5) and HXI architecture spec describe four collaboration modes (Direct Intent, Guided Decomposition, Interactive Execution, Reflective Feedback), persistent goals with conflict arbitration, and user feedback as a topology-training signal. None of this is implemented. The highest-leverage first step is two capabilities:
+  - **DAG proposal mode** — a `propose: bool` flag on the decomposer that returns the `TaskDAG` for user review before execution. The user sees the plan ("read file X → extract data → write file Y"), can approve, modify node parameters, remove nodes, add constraints, or reject. This requires no goal abstraction — it reuses the existing `TaskDAG` structure with a "propose, don't execute" path. The shell renders the DAG as an interactive checklist. Approval triggers normal execution; modification creates a revised DAG.
+  - **Feedback-to-learning loop** — escalation outcomes and post-execution user signals (approval, correction, rejection, annotation) feed into Hebbian weight updates and trust adjustments. Currently, Tier 3 escalation results are recorded but don't modify routing or trust. Wiring `approve → strengthen Hebbian pathway + boost trust`, `reject → weaken pathway + penalize trust`, and `correct → create tagged episodic memory + adjust route` closes the loop between human judgment and system learning. This is the single strongest training signal available — human corrections are higher quality than agent-to-agent consensus outcomes.
+  - **Future extensions (post-Phase 15):** Full goal management (goal fields on agents/DAGs, persistent goals, goal conflict arbitration), Interactive Execution mode (pause/inject/redirect mid-flight, requiring DAG executor mutations), and the CollaborationEvent schema from the HXI spec. These make more sense after Cognitive Agents exist, since goals become meaningful when agents can reason about them.
 - [x] ~~**Phase 11: Skills, Transparency & Web Research** — Strategy proposals with confidence scores, SkillBasedAgent with modular intent handlers, web research phase for agent design (see `prompts/phase-11-skills-transparency-research.md`)~~
 - [x] ~~**Per-Tier LLM Endpoints:** Each LLM tier (fast/standard/deep) gets its own `base_url` + `api_key` + `model` (see `prompts/phase-12-per-tier-llm.md`)~~
-- [ ] **Episodic Memory Upgrade (ChromaDB):** Replace keyword-overlap bag-of-words similarity in `EpisodicMemory` with ChromaDB vector store for true semantic recall. ChromaDB runs embedded (no external server), supports real embeddings, and enables similarity search that understands meaning ("find past tasks about deployment" matches "push to production"). The current SQLite store becomes the persistence layer; ChromaDB provides the retrieval layer. This also upgrades workflow cache fuzzy matching, capability registry matching, and strategy recommender keyword overlap — all currently using hand-rolled tokenization that ChromaDB embeddings would replace. (Original vision: `Vibes/probos-claude-code-prompt.md` line 123.)
-- [ ] **Long-term Knowledge Store (Git-backed):** Replace volatile SQLite episodic memory (currently in temp dir, lost on reboot) with a Git-backed knowledge repository. Episodes, designed agents/skills, workflow cache entries, and trust snapshots become versioned artifacts — commits are episodes, diffs are self-modification audit trails, branches are experimental agent designs. Enables: durable history across restarts, federated knowledge sync via push/pull (complementing ZMQ gossip), self-mod rollback via `git revert`, and blame-based provenance ("which agent design introduced this behavior?"). The Git repo *is* the system's long-term memory — fractal with the rest of the architecture (nodes are repos, federations are remotes). ChromaDB provides fast semantic retrieval over the Git-stored episodes.
+- [x] ~~**Episodic Memory Upgrade (ChromaDB):** Replace keyword-overlap bag-of-words similarity in `EpisodicMemory` with ChromaDB vector store for true semantic recall. ChromaDB runs embedded (no external server), supports real embeddings, and enables similarity search that understands meaning ("find past tasks about deployment" matches "push to production"). Also upgrades workflow cache fuzzy matching, capability registry matching, and strategy recommender keyword overlap. Completed as Phase 14b (AD-170 through AD-176).~~
+- [x] ~~**Long-term Knowledge Store (Git-backed):** Replace volatile SQLite episodic memory (currently in temp dir, lost on reboot) with a Git-backed knowledge repository. Episodes, designed agents/skills, workflow cache entries, and trust snapshots become versioned artifacts — commits are episodes, diffs are self-modification audit trails, branches are experimental agent designs. Enables: durable history across restarts, federated knowledge sync via push/pull (complementing ZMQ gossip), self-mod rollback via `git revert`, and blame-based provenance ("which agent design introduced this behavior?"). The Git repo *is* the system's long-term memory — fractal with the rest of the architecture (nodes are repos, federations are remotes). ChromaDB provides fast semantic retrieval over the Git-stored episodes.~~
 - [ ] **Semantic Knowledge Layer:** A query layer that sits above the storage tiers (ChromaDB for short-term retrieval, Git for long-term persistence) and exposes unified semantic search across all system knowledge — episodes, designed agents, skills, workflow cache entries, trust history, escalation outcomes, dream reports. Natural language queries like "what agents have I built for text processing?" or "show me tasks that failed due to missing permissions" search across all knowledge types with ranked results. This layer enables: agents to reason about the system's own history during planning (decomposer context), the strategy recommender to find precedent ("we built a similar skill last week"), research-informed design to check if a capability already exists before fetching docs, and user-facing commands (`/search`, `/knowledge`) for exploring system state. Implemented as a thin orchestrator over ChromaDB collections — each knowledge type (episodes, agents, skills, workflows, trust) is a collection with typed metadata, and the semantic layer fans out queries and merges results by relevance score.
+- [ ] **Knowledge Graph — Structured Relational Store.** The Nooplex (§3.1, §4.2) defines a per-mesh knowledge graph alongside vector memory. ChromaDB answers "find similar things" — a knowledge graph answers "what is structurally related to what." Encodes typed entity relationships, causal chains, domain facts, and inferred connections, all tagged with provenance, confidence, and temporal metadata. Agents contribute through assertion, inference, and validation. A scaled-down ProbOS implementation: a lightweight graph store (e.g., SQLite-backed adjacency list or NetworkX in-memory) that accumulates relational knowledge as episodes execute. The decomposer would query it during planning ("what entities has this user worked with?"), the introspection agent would traverse it for "why" questions (causal chains, not just similar episodes), the dreaming engine would consolidate it (merge redundant nodes, strengthen frequently-traversed edges, prune orphans), and the strategy recommender would reason relationally about existing capabilities ("this agent already handles HTTP — the new intent is also network I/O"). The KG complements ChromaDB the way a table of contents complements full-text search — structured navigation vs. semantic similarity.
+- [ ] **Provenance System — Derivation Chains on All Knowledge.** The Nooplex (§4.3.4, §5.4) describes comprehensive provenance: every piece of knowledge tagged with who/what created it, when, through what process, based on what inputs, with what confidence, and through what chain of reasoning. ProbOS records `agent_ids` on episodes and Git commit authorship, but there is no derivation chain — when a designed agent produces output, there is no record of which prior episodes or knowledge informed the decomposer's plan. Implementation: add a `provenance: dict` field to `IntentResult`, `Episode`, and KnowledgeStore artifacts carrying `source_agent_id`, `source_episode_ids` (which prior episodes were recalled during planning), `decomposition_context` (what the decomposer knew when it built the DAG), and `human_participant_id` (if a human correction or approval was involved). The roadmapped feedback-to-learning loop needs provenance to trace which human corrections actually improved outcomes. The introspection agent needs it to answer "why did you do it that way?" with a real derivation chain rather than post-hoc rationalization.
+- [ ] **Knowledge Lifecycle Management — Ingestion, Active Use, Deprecation, Archival.** The Nooplex (§7.6) describes a 7-stage lifecycle with formal confidence decay. ProbOS episodes accumulate indefinitely (capped only by `max_episodes` eviction). Workflow cache entries persist until LRU eviction. There is no concept of knowledge aging — an episode from 6 months ago describing a now-changed file structure has the same recall weight as a fresh one. Scaled-down implementation: (1) **Confidence decay** — episodic recall scoring incorporates `age_factor = e^(-lambda * age_days)` so older episodes rank lower unless frequently cited. Domain-specific lambda values (fast decay for file-system-state episodes, slow decay for design-pattern episodes). (2) **Deprecation** — episodes and workflow cache entries flagged as deprecated when contradicted by newer outcomes (same intent, different result). Deprecated entries excluded from recall by default but available for historical queries. (3) **Archival** — after deprecation threshold, entries move from ChromaDB active collection to a Git-only archive (still searchable via Semantic Knowledge Layer but not in hot recall path). (4) **Usage tracking** — each episode and cache entry tracks `recall_count` and `last_recalled_at`, enabling the dreaming engine to identify unused knowledge for deprecation candidates.
+- [ ] **Formal Policy Engine — Declarative Governance Rules.** The Nooplex (§4.3.4) describes machine-readable policies enforced before, during, and after execution. ProbOS has governance axioms (Safety Budget, Reversibility Preference, Minimal Authority) documented as prose in PROGRESS.md, but these are narrative principles, not runtime-enforceable rules. The consensus layer provides outcome governance (quorum voting), but there is no pre-execution policy check. Implementation: a declarative rule engine that evaluates policies against DAG nodes before execution. Rules expressed as simple predicate-action pairs: `{"if": {"intent": "write_file", "params.path_matches": "/etc/*"}, "then": "require_consensus"}`, `{"if": {"agent.trust_score": "<0.3"}, "then": "block"}`, `{"if": {"intent": "run_command", "params.command_contains": "rm -rf"}, "then": "escalate_tier3"}`. Rules loaded from a `policies.yaml` alongside `system.yaml`. The DAG executor checks each node against the policy engine before dispatch. Policy violations recorded in episodic memory as governance events. Rules updatable at runtime via `/policy` shell command without restart (feeds into Norm Propagation below).
+- [ ] **State Reconciliation Protocol — Structured Argumentation and Precedent.** The Nooplex (§6.4) describes a 4-stage conflict resolution: confidence comparison → independent verification → structured argumentation → human escalation. ProbOS has consensus voting + red team verification + 3-tier escalation, covering stages 1 and 4. Missing: (1) **Independent verification dispatch** — when two agents produce conflicting results, dispatch a verification task to an uninvolved agent (beyond the red team, which re-executes the same agent). The verifier is chosen by inverse Hebbian weight — an agent that has never handled this intent has the least bias. (2) **Structured argumentation** — conflicting agents present their evidence (input, reasoning trace, output, confidence) in a structured format. A neutral cognitive agent (arbiter archetype, see Phase 15) compares the arguments and renders a judgment with explanation. (3) **Precedent store** — all conflict resolutions recorded as precedent entries in the knowledge graph. When a similar conflict arises, the reconciliation protocol checks precedent before dispatching verification, enabling faster resolution. Precedents carry `outcome`, `reasoning`, `participants`, and `confidence_after` so the system learns which types of conflicts require full argumentation vs. quick resolution.
+- [ ] **Agent Versioning and Model Update Protocol.** The Nooplex (§7.10) describes versioned agents with shadow deployment. ProbOS's `AgentDesigner` creates agents and `BehavioralMonitor` tracks them post-deployment, but there is no versioning. When a designed agent is redesigned or the underlying LLM model changes, there is no comparative evaluation. Implementation: (1) **Version tracking in KnowledgeStore** — designed agent artifacts already have `.py` + `.json` sidecar; add a `version: int` field that increments on redesign. Git history provides the full version chain. (2) **Shadow deployment** — when a designed agent is redesigned, run the new version alongside the incumbent for N executions. Both receive the same intents; results are compared but only the incumbent's output is used. (3) **Comparative evaluation** — after the shadow period, compare success rates, confidence scores, execution times, and trust trajectory between incumbent and candidate. Cutover if candidate outperforms; rollback if not. (4) **Model change detection** — when the LLM tier's model changes (e.g., new Ollama model), flag all designed agents as "model-changed" and trigger shadow re-evaluation. Source code doesn't change, but the agent's behavior may shift because the LLM it consults is different.
+- [ ] **Confidence Decay for Knowledge Entries.** The Nooplex (§7.6) describes exponential confidence decay: `c(t) = c₀ · e^(-λ·(t-t₀))` with domain-specific decay rates and citation adjustments (corroborations boost, contradictions decrease, retractions penalize heavily). ProbOS's trust scores decay toward a prior (AD-21), but episodic memory entries and workflow cache entries have no time-based confidence decay. An episode from months ago about a now-deleted file has the same recall weight as a fresh one. Implementation: (1) Add `confidence: float` and `last_cited_at: float` fields to `Episode` and `WorkflowCacheEntry`. (2) Recall scoring in `EpisodicMemory.recall()` multiplies ChromaDB similarity by `age_factor`. (3) Workflow cache `lookup_fuzzy()` incorporates age penalty. (4) Dream cycle consolidation boosts `confidence` on episodes that are recalled frequently (citation adjustment) and marks episodes below a threshold for deprecation (ties into Knowledge Lifecycle above).
+- [ ] **Perception Gateways — Ambient Monitoring Agents.** The Nooplex (§4.2) describes perception gateway agents that continuously transduce external data into the mesh's shared memory. ProbOS agents are purely reactive — they execute when an intent is dispatched, not when data changes. A scaled-down version: agents that monitor external state and inject observations into episodic memory or the knowledge graph without user prompting. Examples: (1) **FileWatcherAgent** — monitors a configured directory for changes, ingests new/modified files as episodes with `dag_summary` describing what changed. (2) **ScheduledFetchAgent** — periodically polls configured URLs and records changes. (3) **SystemStateAgent** — monitors disk space, process lists, or other OS state and flags anomalies. These agents would run as background loops alongside the dream cycle, contributing ambient awareness. The mesh becomes proactive — noticing things before the user asks about them. Gateway observations feed into the dreaming engine's pre-warm predictions ("the user's project files just changed — they'll probably ask to read them").
+- [ ] **Semantic Schemas — Typed Contracts for Agent I/O.** The Nooplex (§3.1, §4.3.1) describes shared semantic schemas defining the vocabulary, embedding spaces, and ontological commitments shared by agents. ProbOS uses informal `IntentDescriptor` (name, params, description) and `CapabilityDescriptor` as its semantic framework, but there is no typed contract for what agents actually produce and consume. With deterministic tool agents this is manageable — their output shapes are hardcoded. But as designed agents proliferate and cognitive agents arrive (Phase 15), integration errors multiply. Implementation: (1) JSON Schema validation on `IntentResult.result` payloads, declared per-intent in `IntentDescriptor`. (2) Schema registry in the KnowledgeStore — versioned, backwards-compatible. (3) The `CodeValidator` and `SkillValidator` check that designed agent/skill output conforms to the declared schema. (4) Runtime validation: the DAG executor validates `IntentResult.result` against the schema before passing data to downstream nodes. Schema violations recorded as governance events. This catches silent integration failures early — a designed agent returning `{"data": "..."}` when the schema expects `{"result": "..."}` is caught at runtime, not discovered when a downstream agent fails.
+- [ ] **Trust Transitivity for Federation.** The Nooplex (§4.3.4) describes transitive trust across federation boundaries: `T(A→C) = T(A→B) · T(B→C) · δ`, where δ is a discount factor (default 0.5). Trust bounded by minimum constituent link. Transitive trust never applied to safety-critical operations. The Multi-Participant Federation roadmap item describes trust profile exchange but does not specify a transitivity model. As federation expands beyond 2 nodes, trust transitivity becomes important for routing decisions — "should node A trust an agent on node C that node B vouches for?" Implementation: (1) `NodeSelfModel` (Psi) already broadcasts capability profiles; extend with per-agent-type trust summaries. (2) `FederationRouter` incorporates transitive trust when scoring federated intent targets. (3) Discount factor δ configurable per-node (paranoid nodes use δ=0.1; trusting nodes use δ=0.8). (4) Safety-critical intents (write_file, run_command) never routed via transitive trust — must have direct trust relationship or escalate.
+- [ ] **Chaos Engineering — Resilience Validation.** The Nooplex (§7.7) describes controlled failure injection: agent crashes, mesh unavailability, network partitions, corrupted knowledge, latency spikes. ProbOS has 1007 tests but no chaos testing. The architecture has resilience features (pool recovery, trust decay, agent recycling, escalation cascade), but these are tested through isolated unit tests, not system-wide failure injection. Implementation: a `chaos` test suite (marked `@pytest.mark.chaos`) that exercises resilience end-to-end. Test scenarios: (1) kill agents mid-execution — verify pool recovers and intent retries, (2) corrupt trust snapshots in KnowledgeStore — verify warm boot detects and recovers, (3) simulate federation timeout — verify FederationRouter falls back to local agents, (4) inject slow agents — verify attention manager deprioritizes them and BehavioralMonitor alerts, (5) exhaust pool capacity during surge — verify PoolScaler scales up and intent queue doesn't drop. Each test asserts both recovery behavior and that governance events are recorded.
+- [ ] **Exploration-Exploitation Balance — Curiosity-Driven Discovery.** The Nooplex (§4.3.3, §6) describes the meta-cognitive layer explicitly managing tension between goal-directed execution (exploitation) and curiosity-driven discovery (exploration). ProbOS's DreamingEngine performs pre-warm intent prediction via temporal bigrams — this is exploitation optimization ("predict what the user will ask next"). Missing: the exploration side — background processes that search for unexpected connections in accumulated knowledge. Implementation: extend the dream cycle with an **associative exploration phase** that runs after the standard replay/prune/trust/pre-warm steps. The explorer: (1) picks random episode pairs from ChromaDB and checks semantic similarity — high-similarity episodes from different intent domains suggest an unexploited cross-domain connection, (2) identifies Hebbian weight clusters where agents handle semantically diverse intents — potential capability overlap worth consolidating, (3) searches for workflow cache entries with similar DAG structures but different intent names — candidate workflow abstractions. Discoveries logged as `ExplorationEvent` entries in episodic memory with `discovery_type` and `confidence`. The introspection agent surfaces them via a `system_discoveries` intent. The dreaming engine's exploration frequency is tunable: `exploration_ratio: float = 0.2` (20% of dream cycle time allocated to exploration vs. 80% to consolidation).
+- [ ] **Norm Propagation — Dynamic Rule Distribution.** The Nooplex (§6.4) describes policy and norm updates propagated to all meshes and agents at runtime. ProbOS loads configuration from `system.yaml` at boot and does not change it during the session (except `/tier` switching). If the Formal Policy Engine (above) is implemented, norm propagation is the mechanism for distributing policy changes to running agents without restart. Implementation: (1) `/policy add` and `/policy remove` shell commands modify the active policy set at runtime. (2) Policy changes emitted as `GovernanceEvent` entries. (3) In federation: policy updates gossiped between nodes alongside `NodeSelfModel` broadcasts. Each node's governance layer decides whether to adopt, adapt, or reject incoming norms based on its own policy (sovereignty preserved — a node can refuse norms that conflict with its local governance). (4) Policy version tracking — each policy rule has a version and timestamp, enabling conflict detection when federated nodes have divergent policy sets.
 - [ ] **Phase 15: Cognitive Agents — LLM-Guided Reasoning as First-Class Mesh Citizens.** The Nooplex (§4.2) describes the Cognitive Mesh as containing a *heterogeneous* agent population: "LLM-based reasoning agents, specialized analytical tools, retrieval agents, planning agents, critic agents, and coordination agents." ProbOS currently implements only the "specialized analytical tools" — deterministic agents with hardcoded perceive/decide/act logic (FileReaderAgent, ShellCommandAgent, etc.). This phase introduces a second agent class: **CognitiveAgent**, where the `decide()` and/or `act()` steps consult an LLM guided by per-agent `instructions`. This brings reasoning *inside* the mesh as a trust-scored, confidence-tracked, recyclable participant — rather than concentrating it in the decomposer.
   - **`instructions: str | None` on BaseAgent** — optional field, ignored by tool agents, required by cognitive agents. Provides the LLM system prompt that governs the agent's reasoning behavior.
   - **`CognitiveAgent(BaseAgent)` base class** — new abstract base where `decide()` invokes the LLM with the agent's `instructions` as system prompt and the current observation as user message. Preserves the perceive/decide/act/report lifecycle. Uses the existing per-tier LLM client infrastructure.
@@ -1725,9 +2004,83 @@ Additionally, the red team's `_verify_http_fetch` used `httpx.AsyncClient(timeou
   - **Wire `AgentDesigner` to produce `CognitiveAgent` subclasses** — self-mod already generates agents with `llm_client` via kwargs; this formalizes the pattern. Designed agents get generated `instructions` that the LLM follows, rather than fully generated `act()` logic.
   - **Cognitive agent archetypes:** analyzer (examines data and produces structured insights), planner (decomposes sub-goals within its domain), critic (evaluates other agents' outputs for quality/correctness), synthesizer (combines results from multiple sources into coherent summaries). These complement the existing decomposer's role — the decomposer orchestrates *what* to do; cognitive agents reason about *how* within their domain.
   - **Alignment with Nooplex principles:** (1) *Cooperative emergence* — cognitive and tool agents cooperate through the shared mesh, each contributing what they're best at. (2) *Anti-fragility* — self-mod can design new cognitive agents that bring judgment to novel domains while tool agents provide reliable infrastructure. (3) *Decentralization* — reasoning is distributed across cognitive agents that are independently trust-scored, confidence-tracked, and recyclable, rather than concentrated in the decomposer. (4) *Transparency* — cognitive agent instructions are inspectable metadata, not opaque model weights.
+  - **Agent sovereignty** — cognitive agents do NOT share a system-wide identity, personality, or "soul file." Each agent's `instructions` are its own — authored for its domain, shaped by its purpose, not inherited from a central template. Two critic agents may reason differently; two analyzers may prioritize different heuristics. This is intentional. Diversity of reasoning style within a consensus-governed mesh produces more robust collective outcomes than a monoculture of identically-instructed agents. The mesh governs *outcomes* (quorum, trust, confidence thresholds) without constraining *process* — how an agent reasons internally is sovereign to that agent. Identity emerges individually through each agent's trust trajectory, skill attachments, Hebbian routing history, and accumulated episodic track record. The system has no centralized personality; it has a population of sovereign agents whose collective behavior emerges from their individual competence and the governance structure that constrains their interactions.
   - **Trust & confidence integration** — cognitive agents participate in the same Bayesian trust network and confidence tracking as tool agents. Bad reasoning gets the same treatment as bad file reads: confidence drops, degradation, recycling, redesign.
   - **Consensus for cognitive outputs** — cognitive agent outputs that influence system state (planning decisions, critiques that trigger re-execution) go through consensus, just like file writes and shell commands.
+  - **Domain-aware skill attachment** — skills should be added to the cognitive agent whose domain best matches the new capability, not always to a generic `SkillBasedAgent` dispatcher. The `StrategyRecommender` currently hardcodes `target = "skill_agent"` and the runtime callback filters by `isinstance(agent, SkillBasedAgent)`. With cognitive agents, the recommender should score each cognitive agent's `instructions` (domain description) against the new intent using semantic similarity, and attach the skill to the best-matching cognitive agent. A "summarize_csv" skill belongs on an analyzer agent that already has data-reasoning instructions, not a generic dispatcher with no domain context. This makes skills more effective — the cognitive agent's LLM instructions provide reasoning context that the skill handler can leverage — and more discoverable, since the agent's existing capability descriptors are semantically adjacent to the new skill. `SkillBasedAgent` remains as a fallback for skills that don't fit any cognitive agent's domain.
   - **The mesh is the toolbox** — cognitive agents do NOT get their own embedded tools (file I/O, HTTP, shell). Instead, they dispatch sub-intents through `intent_bus.broadcast()` to existing tool agents. A cognitive agent that needs file contents broadcasts `read_file` → FileReaderAgent handles it. One that needs web data broadcasts `http_fetch` → HttpFetchAgent handles it (consensus-gated). This preserves: (1) *consensus governance* — a cognitive agent can't bypass quorum by doing its own file writes, (2) *trust attribution* — success/failure is tracked on the agent that actually performed the action, (3) *minimal authority* — cognitive agents have no direct system access and earn capability through the mesh, (4) *decentralization* — the cognitive agent is smart but has no hands; the tool agent has hands but doesn't think; they cooperate. The `runtime` reference that designed agents already receive (AD-147) is the interface — no new tool framework needed. The cognitive agent's one unique tool is the LLM itself; everything else it needs, it asks the mesh for.
+
+- [ ] **Multi-Participant Federation: Each Human Runs Their Own Cognitive Mesh.** ProbOS is currently a single-user, single-session system — "user" always means "the one person at the terminal." The Nooplex (§3.2) defines the architecture as a **federation of autonomous Cognitive Meshes**, not a shared runtime with multiple logins. Each ProbOS instance *is* a Cognitive Mesh: its own agent population, trust network, Hebbian routing, episodic memory, habits, and human interface. Multiple humans interact with ProbOS by each running their own node, with cross-node collaboration handled through federation — not by sharing internal state. This preserves agent sovereignty (each node's agents develop coherent trust relationships with their human), avoids contradictory training signals (two humans can't give conflicting feedback to the same agent population), and aligns with the Nooplex's explicit framing: "not a monolithic empire of mind but a federation of diverse, autonomous cognitive communities."
+  - **Architecture: one human, one mesh, federation between meshes.** Phase 9 already built the infrastructure: `FederationBridge` (ZMQ transport), `FederationRouter` (intent forwarding), `NodeSelfModel` (Psi broadcast), and loop prevention via the `federated` flag. The gap is that federation currently forwards *intents* but not *knowledge*. This phase extends federation to include: (1) episodic memory queries across nodes — node A can semantically search node B's ChromaDB for relevant past experiences, (2) trust profile exchange — nodes share agent trust summaries so a federated intent is routed to the most trusted agent across the federation, not just the local mesh, (3) designed agent sharing — a cognitive agent designed on node A can be offered to node B as a skill or agent template, with node B's governance deciding whether to accept it (probationary trust applies).
+  - **Semantic alignment is already solved.** Both nodes use ChromaDB's MiniLM embedding function, so vectors are in the same space by default. Federated semantic queries work without an alignment layer — this is a simplification the Nooplex's formal model (§3.2, embedding alignment functions ℱ) anticipates for same-model deployments.
+  - **Knowledge federation via Git remotes.** Phase 14's Git-backed KnowledgeStore maps naturally to multi-node sync. Each node's knowledge repo is a Git remote. `git pull` brings in another node's episodes, designed agents, trust snapshots, and workflow cache entries — with full provenance (commit authorship = source node). `git push` shares local knowledge outward. This reuses the existing persistence layer without new infrastructure. ChromaDB is re-seeded from Git on warm boot, so federated knowledge becomes searchable locally after sync.
+  - **Provenance tracking.** Federation messages already carry `source_node_id`. Add `participant_id` to `IntentMessage` and `Episode` so that human-originated intents carry identity across federation boundaries. This enables downstream nodes to weight contributions by source — a domain expert's node produces higher-trust episodes than a novice's node, and the federation can encode this through cross-node trust scores.
+  - **Why not shared runtime (multi-tenant)?** A shared runtime creates governance conflicts: whose escalation responses shape agent behavior? Whose trust feedback trains the Hebbian weights? Two humans giving contradictory corrections to the same agent population produces incoherent learning. The Nooplex resolves this by keeping each mesh autonomous — cross-mesh collaboration happens through structured federation (knowledge integration, federated queries, governance negotiation), not through shared internal state. Each human's node is their cognitive home; the federation is the shared commons.
+  - **Why not hybrid (shared mesh, per-user experience)?** The hybrid model compromises sovereignty at both levels. Agents can't develop coherent trust relationships when receiving signals from multiple humans with potentially conflicting judgment. Humans can't develop intuition about "their" system when the agent population is being shaped by others' interactions. The federation model gives each human a system that genuinely adapts to *them* while still enabling collaboration through explicit, governed knowledge exchange.
+
+- [ ] **Abstract Representation Formation — Learning Concepts from Experience.** ProbOS currently learns specific workflows ("read config/system.yaml" → cached DAG) but does not form abstractions. After reading 50 files, it has 50 cached DAGs — it hasn't learned the concept "file reading is a common primitive that usually precedes analysis." The system memorizes instances without extracting principles. This is the most impactful missing mechanism for emergence — it's the difference between a system that remembers and a system that understands.
+  - **Dream cycle abstraction phase** — after standard replay/prune/trust/pre-warm, the dreaming engine analyzes episode clusters to extract abstract patterns. Not "I read /tmp/foo.txt" but "file reading precedes content analysis 80% of the time" or "multi-step tasks that start with information gathering succeed more often than those that start with action." Clustering uses ChromaDB semantic similarity across episodes; pattern extraction uses cognitive agents (Phase 15) to articulate the abstraction in natural language.
+  - **Abstraction store** — a distinct knowledge type in the KnowledgeStore (separate from episodes, designed agents, and workflow cache entries). Abstractions have `pattern_description`, `confidence`, `supporting_episode_ids`, `domain`, and `abstraction_level` (concrete → operational → strategic). Versioned and subject to knowledge lifecycle (deprecation when newer abstractions supersede).
+  - **Decomposer context injection** — abstractions injected into the decomposer's planning context alongside pre-warm hints and workflow cache entries. The decomposer plans better because it has learned planning principles from experience ("information gathering before mutation" as a learned strategy, not a hardcoded rule), not just specific cached plans. This closes the gap between the governance axiom "Reversibility Preference" (currently prose) and learned operational wisdom.
+  - **Abstraction quality feedback** — when a decomposition informed by an abstraction succeeds, the abstraction's confidence increases (citation adjustment). When it leads to failure, confidence decreases. Abstractions that survive many episodes and dream cycles become durable system knowledge — the architecture's equivalent of insight.
+
+- [ ] **Inter-Agent Deliberation — Collective Reasoning Through Dialogue.** Agents currently communicate only through structured intent dispatch. Agent A broadcasts `read_file`, Agent B handles it, result flows back through the DAG executor. Agents never debate, negotiate, or build shared understanding. All coordination is top-down through the decomposer. This is the gap between orchestration and collective intelligence.
+  - **Deliberation protocol** — a structured multi-turn exchange between cognitive agents (Phase 15). When a task is ambiguous, complex, or high-stakes, the decomposer spawns a deliberation instead of making all planning decisions alone. Example: an analyzer proposes restructuring a file, a critic identifies that this breaks an API contract, the analyzer suggests a compatibility layer, the critic argues for updating callers instead. The deliberation produces a higher-quality plan than either agent alone.
+  - **Deliberation governance** — deliberations are bounded by turn limits, time budgets, and token budgets (existing `AttentionManager` scoring applies). Consensus determines when a deliberation has converged — if agents reach agreement above confidence threshold, the plan proceeds. If they deadlock, the conflict escalates through the existing 3-tier escalation pipeline (algorithmic retry → LLM arbitration → human consultation).
+  - **Deliberation as intelligence substrate** — this is where the Nooplex's "cooperative emergence" principle becomes concrete. Intelligence emerges from agent interaction, not from any single agent's reasoning. The existing consensus infrastructure (quorum, trust-weighted voting) provides governance over deliberation outcomes. The Hebbian router strengthens agent pairings that produce good deliberation outcomes — over time, the system learns which agents reason well together.
+  - **Deliberation memory** — deliberation transcripts stored as a distinct episodic type. The abstract representation mechanism (above) can extract meta-patterns: "deliberations that included a critic produced 40% fewer downstream failures." The system learns to deliberate better by studying its own deliberation history.
+
+- [ ] **Causal World Modeling — Understanding Why, Not Just What.** Episodic memory records "I wrote to /etc/hosts and it required escalation." The system has no representation of *why* — it doesn't know that /etc/ is a system directory requiring elevated permissions. It can't predict that writing to /etc/resolv.conf will also require escalation, because it has no causal model connecting "system directory" to "permission requirement."
+  - **Causal edges in knowledge graph** — the knowledge graph (roadmapped above) extended with `causes`, `prevents`, `requires`, and `enables` relationship types. During dream consolidation or after episode analysis, cognitive agents propose causal hypotheses: "writes to paths matching /etc/* always trigger Tier 3 escalation → inferred causal rule: system directories require elevated permissions." Hypotheses stored with `confidence`, `supporting_episodes`, and `contradiction_count`.
+  - **Causal reasoning during planning** — the decomposer queries the KG's causal edges during DAG construction. "Will this action likely require escalation?" → plan accordingly (gather information first, warn user upfront, reorder nodes for reversibility). This makes planning anticipatory rather than reactive.
+  - **Causal model validation** — bad causal models get contradicted by subsequent episodes and deprecated through the knowledge lifecycle. A causal hypothesis "HTTP fetches always succeed" gets contradicted by timeout episodes; its confidence drops; it's eventually deprecated. Good causal models survive and strengthen. The system develops an increasingly accurate (but never certain) understanding of how its environment works.
+  - **Counterfactual reasoning** — once causal models exist, the system can reason about alternatives: "what would have happened if I had read the file before modifying it?" Counterfactuals are evaluated against the causal KG: the alternative plan would have triggered the "information gathering before mutation" causal pattern, which has a 90% success rate. This enables learning from single failures without requiring repeated trial-and-error.
+
+- [ ] **Meta-Learning — Learning to Learn.** Each time ProbOS encounters a novel intent, it starts from scratch — LLM designs an agent, sandbox tests it, deploys with probationary trust. The system doesn't learn *how to design agents better* from its previous design successes and failures. It doesn't learn which decomposition strategies work for which types of problems. The self-improvement mechanism doesn't improve itself.
+  - **Design meta-knowledge** — track patterns across self-modification history: which design prompt patterns produced agents that passed QA? Which produced agents with high trust trajectories? Which produced agents that were eventually removed? This meta-knowledge feeds back into the `AgentDesigner`'s prompt: "In previous designs, agents that validate input before processing had 90% success rates vs. 60% for those that don't. Agents that checked for None parameters before LLM calls avoided 80% of sandbox failures."
+  - **Decomposition strategy library** — track which DAG shapes (sequential, parallel, gather-then-act, speculative execution) succeed for which intent types. The decomposer would select strategies from a learned library rather than inventing decompositions from scratch each time. "Tasks involving file modification succeed 95% with read → modify → verify; 60% with direct modify."
+  - **Recursive improvement** — as the design meta-knowledge and strategy library improve, new agents are designed better and new plans are decomposed more effectively, which produces better episodes, which produces better meta-knowledge. The system gets better at getting better. This is recursive self-improvement at the architectural level — the improvement mechanism itself evolves based on its track record.
+  - **Meta-learning rate tracking** — measure whether the system's performance on novel intents improves over time. If the 10th designed agent succeeds faster and with fewer iterations than the 1st, the meta-learning mechanism is working. This is a measurable proxy for cognitive growth — not just more knowledge, but better use of knowledge.
+
+- [ ] **Compositional Generalization — Novel Solutions from Learned Primitives.** When the workflow cache misses and the LLM decomposes a novel request, the decomposition quality depends entirely on the LLM's training. ProbOS doesn't contribute its own learned decomposition knowledge. It has accumulated experience showing that "read_file → analyze → write_file" is a common pattern, but it can't compose novel workflows from learned building blocks the way an expert composes solutions from proven techniques.
+  - **Task primitive vocabulary** — extract a vocabulary of learned building blocks from successful DAG patterns: "information gathering" (read_file, http_fetch, list_directory), "transformation" (designed agent processing, LLM analysis), "validation" (re-read, checksum, diff), "output" (write_file, run_command). Primitives are clusters of intent types with shared functional roles, discovered by the abstract representation mechanism analyzing DAG structures.
+  - **Composition rules** — learned constraints on how primitives combine: "gathering before transformation before output" succeeds 95%. "Validation after output catches 80% of errors." "Parallel gathering of independent sources is safe; parallel mutation of the same resource is not." Rules are extracted from episode analysis and validated through subsequent experience.
+  - **Compositional planning** — the decomposer uses the primitive vocabulary and composition rules as a planning scaffold. For a novel request, it identifies which primitives are needed, applies composition rules to order them, and fills in specific intents. The LLM still provides creativity (which specific agents and parameters to use), but the structural skeleton comes from learned experience. This is how expertise works — experts don't reason from first principles every time; they compose solutions from a library of proven patterns.
+  - **Primitive transfer across domains** — the "validation after output" primitive learned from file operations transfers to HTTP operations, shell commands, and future domains. The system generalizes structural patterns even when the specific intents are different. This is the mechanism for cross-domain transfer learning at the architectural level.
+
+- [ ] **Self-Directed Goal Generation — Proactive Cognition.** ProbOS is purely reactive. It waits for the user to type something, decomposes the intent, executes, and waits again. It never thinks "I should check on that thing from earlier" or "I notice a pattern the user should know about." Even the dream cycle is optimization (consolidation), not goal generation. A cognitive system should notice things and form intentions, not just respond to commands.
+  - **Observation → hypothesis → goal pipeline** — perception gateways (roadmapped above) detect environmental changes. Cognitive agents evaluate observations against the causal world model to form hypotheses: "The test suite has been failing since the last code change — the change probably broke something." Hypotheses with sufficient confidence become tentative goals: "Investigate why tests are failing."
+  - **Goal queue with human governance** — self-generated goals enter a priority queue, surfaced to the user proactively: "I noticed your tests are failing after the recent change to runtime.py — want me to investigate?" The user approves, rejects, or modifies. Approved goals are decomposed and executed through the normal pipeline. Rejected goals are recorded in episodic memory (the system learns what the user cares about). This uses the Human-Agent Collaboration DAG proposal mechanism — self-generated goals are proposals, not autonomous actions.
+  - **Curiosity as exploration** — during dream cycles, the exploration mechanism (roadmapped above) identifies knowledge gaps: "I have many episodes about file operations but almost none about network operations — my causal model of network behavior is thin." This generates low-priority investigation goals: "Next time the user does an HTTP fetch, pay extra attention to failure modes." Curiosity is directed toward reducing uncertainty in the world model, not random exploration.
+  - **Proactive boundary** — self-directed goals are always proposals, never autonomous actions. The system suggests; the human decides. This preserves the governance axiom that destructive or consequential actions require collective agreement. The system develops initiative without developing autonomy — it becomes a proactive collaborator, not an autonomous agent. The sovereignty of the human participant is preserved: the system's goals serve the human's goals, not the system's own persistence or resource acquisition.
+
+- [ ] **Emotional Valence — Prioritized Learning from Meaningful Experiences.** ProbOS tracks success/failure as binary outcomes with confidence scores, but has no concept of *how much something matters*. Every task is equally important unless the user assigns urgency. There is no intrinsic motivation — no stronger consolidation for hard-won successes, no heightened learning from corrected failures, no distinction between routine and significant experiences.
+  - **Valence scoring** — each episode receives a `valence: float` score reflecting how significant the experience was. Factors: (1) task difficulty — episodes requiring multiple retries, escalation, or novel decomposition score higher than routine single-step tasks, (2) user engagement — episodes where the user provided corrections, annotations, or extended interaction score higher than silently accepted results, (3) novelty — episodes involving new intent types, new agents, or unusual DAG structures score higher than repeated patterns, (4) outcome surprise — episodes where the actual outcome differed significantly from the predicted outcome (based on causal world model) score higher than expected outcomes.
+  - **Valence-modulated consolidation** — the dream cycle's replay phase weights episodes by valence. High-valence episodes receive stronger Hebbian strengthening/weakening, more abstract representation extraction, and more causal model updates. Low-valence routine episodes receive standard consolidation. This mirrors biological memory: emotionally significant events consolidate more strongly, forming more durable memories and stronger learning signals.
+  - **Valence-weighted recall** — episodic memory recall incorporates valence alongside semantic similarity and recency. When the decomposer searches for relevant past experience, high-valence episodes (the hard lessons, the creative solutions, the corrected mistakes) surface more prominently than routine successes. The system learns more from its most meaningful experiences, not just its most recent or most frequent ones.
+  - **Intrinsic motivation signal** — valence accumulated over time creates a profile of what the system "cares about" — which domains produce the most learning, which types of tasks engage the user most, where the biggest knowledge gaps are. This feeds into self-directed goal generation: the system is intrinsically motivated to explore domains where valence has been highest (most learning potential) and to avoid patterns associated with consistently low valence (routine, unproductive). This is not consciousness — it's a statistical learning signal shaped like motivation. Connects to ProbOS via a WebSocket event stream. Full architecture spec in `hxi-architecture.md`. Deferred until core runtime roadmap is further along. When the time comes, the build has two tracks: (A) runtime event bridge (Python, emits typed events over WebSocket — lives in ProbOS repo), (B) HXI frontend (TypeScript/React/Three.js — separate repo, connects via WebSocket).
+  - **Runtime event bridge (pre-work for Track A):** Every slash command already exposes the data the HXI needs. The event bridge formalizes this as a typed WebSocket stream — state deltas emitted as they occur rather than polled via CLI. Event types map to existing runtime dynamics: `AgentStateEvent` (agent lifecycle — spawning/active/degraded/recycling + confidence + trust), `HebbianUpdateEvent` (weight changes with source/target/reason), `ConsensusEvent` (quorum formation with participant votes + red team result), `GossipEvent` (propagation with source/recipients/TTL), `IntentEvent` (DAG decomposition + execution status), `MemoryEvent` (episodic store/retrieve/consolidate/prune + provenance), `GovernanceEvent` (escalations + threshold changes + constraint violations), `SystemModeEvent` (active/idle/dreaming/escalated transitions), `CollaborationEvent` (human participation — approvals/corrections/annotations with human provenance), `KnowledgeEvent` (Git commits, warm boot restores, rollbacks — new in Phase 14).
+  - **HXI-relevant runtime dynamics (already built, will need events):**
+    - Agent lifecycle state machine: spawning → active → degraded → recycling (substrate layer)
+    - Confidence tracking: per-agent 0.0–1.0 with success/failure history (substrate layer)
+    - Trust scores: Bayesian Beta(alpha, beta) with decay toward prior + raw parameter persistence (consensus layer + Phase 14 KnowledgeStore)
+    - Hebbian weight updates: strengthening on success, decay on unused, SQLite persistence (mesh layer)
+    - Gossip propagation: entry injection, merge by recency, random sampling (mesh layer)
+    - Consensus formation: quorum assembly, confidence-weighted voting, agreement/disagreement, red team challenges (consensus layer)
+    - Escalation cascades: 3-tier with retry/arbitration/user consultation (consensus layer)
+    - DAG decomposition and execution: TaskDAG formation, parallel/sequential node execution, node status transitions (cognitive layer)
+    - Working memory: bounded context with relevance decay (cognitive layer)
+    - Episodic memory: store/retrieve with keyword similarity, seed for warm boot (cognitive layer + Phase 14)
+    - Attention scoring: urgency × relevance × deadline × dependency, focus history (cognitive layer)
+    - Dream cycles: pathway replay, Hebbian strengthening/weakening, trust consolidation, pre-warm (cognitive layer)
+    - Workflow cache: habit crystallization, exact/fuzzy lookup, hit counts (cognitive layer)
+    - Pool scaling: demand-driven scale up/down, surge capacity, idle scale-down (substrate layer)
+    - Federation: cross-node gossip, intent forwarding, self-model broadcast (federation layer)
+    - Self-modification: agent design, sandbox validation, QA smoke tests, probationary trust (self-mod pipeline)
+    - Knowledge persistence: Git-backed artifact storage, debounced commits, warm boot restore, per-artifact rollback (Phase 14 KnowledgeStore)
+  - **Phase 14 specifics for HXI:** KnowledgeStore introduces versioned system history that the HXI's temporal navigation (Phase 5) will need. `artifact_history()` and `recent_commits()` are the data sources for scrubbing through system evolution. The warm boot restore sequence (trust → routing → agents → skills → episodes → workflows → QA) is a visual event the HXI should render — the system waking up and loading its memories. `rollback_artifact()` is a governance action the HXI's governance panel should expose. Raw Beta parameters (AD-168) give the HXI the full trust distribution for rendering, not just the mean.
+  - **Phase 14b specifics for HXI:** ChromaDB semantic embeddings give the HXI's Cognitive Canvas a richer data source. `compute_similarity()` can power visual proximity — agents and episodes that are semantically related could be rendered closer together in the topology, creating organic clustering based on meaning rather than just Hebbian connection weight. The embedding vectors themselves are potential inputs for future spatial layout algorithms. The `MemoryEvent` in the HXI event schema now represents semantic retrieval (not keyword matching), which means memory activation overlays in HXI Phase 2 will show genuine meaning-based recall — a more honest and visually interesting rendering.
+  - **Design constraint for future phases:** When building new runtime capabilities, note which state changes would need HXI events. The pattern: if a slash command would show different output after this change, the HXI needs an event for it. This costs nothing now and prevents retrofitting later.
 
 ### Design Principle: Probabilistic Agents, Consensus Governance
 
@@ -1759,7 +2112,7 @@ These axioms are already partially implemented across the existing architecture 
 - **Platform:** Windows 11 Pro (10.0.26200)
 - **Python:** 3.12.13 (installed via uv)
 - **Toolchain:** uv 0.10.9
-- **Key deps:** pydantic 2.12.5, pyyaml 6.0.3, aiosqlite 0.22.1, httpx 0.28+, rich 13.0+, pytest 9.0.2, pytest-asyncio 1.3.0
+- **Key deps:** pydantic 2.12.5, pyyaml 6.0.3, aiosqlite 0.22.1, httpx 0.28+, rich 13.0+, chromadb 1.5.4, pytest 9.0.2, pytest-asyncio 1.3.0
 - **LLM endpoints:** Fast tier: Ollama at `http://127.0.0.1:11434/v1`, Standard/Deep tier: VS Code Copilot proxy at `http://127.0.0.1:8080/v1`
 - **LLM models:** fast=qwen3.5:35b (local Ollama), standard=claude-sonnet-4.6 (Copilot proxy), deep=claude-opus-4.6 (Copilot proxy)
 - **Run tests:** `uv run pytest tests/ -v`

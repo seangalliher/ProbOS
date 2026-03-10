@@ -86,7 +86,7 @@ async def _create_llm_client(config, console: Console):
     return client
 
 
-async def _boot_and_run(config_path: Path | None = None) -> None:
+async def _boot_and_run(config_path: Path | None = None, fresh: bool = False) -> None:
     console = Console()
 
     # Banner
@@ -103,6 +103,10 @@ async def _boot_and_run(config_path: Path | None = None) -> None:
         config_path = project_root / "config" / "system.yaml"
     config = load_config(config_path)
 
+    # --fresh flag: override restore_on_boot (AD-165)
+    if fresh:
+        config.knowledge.restore_on_boot = False
+
     _setup_logging(config.system.log_level)
 
     with tempfile.TemporaryDirectory(prefix="probos_") as tmp:
@@ -110,11 +114,12 @@ async def _boot_and_run(config_path: Path | None = None) -> None:
         console.print("[bold blue]Starting ProbOS...[/bold blue]")
         llm_client = await _create_llm_client(config, console)
 
-        # Create episodic memory
+        # Create episodic memory (ChromaDB-backed, uses data_dir for persistence)
         episodic_db = Path(tmp) / "episodic.db"
         episodic_memory = EpisodicMemory(
             db_path=str(episodic_db),
             max_episodes=config.memory.max_episodes,
+            relevance_threshold=config.memory.relevance_threshold,
         )
 
         runtime = ProbOSRuntime(
@@ -168,6 +173,11 @@ def main() -> None:
         default=None,
         help="Path to config YAML (default: config/system.yaml)",
     )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Cold start: ignore existing knowledge repo (AD-165)",
+    )
     args = parser.parse_args()
 
     # Windows ProactorEventLoop doesn't support add_reader required by pyzmq.
@@ -176,7 +186,7 @@ def main() -> None:
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     try:
-        asyncio.run(_boot_and_run(config_path=args.config))
+        asyncio.run(_boot_and_run(config_path=args.config, fresh=args.fresh))
     except KeyboardInterrupt:
         pass
 
