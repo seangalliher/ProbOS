@@ -41,9 +41,11 @@ IntentMessage signature (dataclass):
 LLM ACCESS:
     If llm_client is provided, use it for intelligence tasks:
         from probos.types import LLMRequest
-        request = LLMRequest(prompt="...", tier="fast")
+        request = LLMRequest(prompt="Your detailed prompt here...", tier="standard", max_tokens=2048)
         response = await llm_client.complete(request)
         result_text = response.content
+    Use max_tokens=2048 or higher for tasks that need detailed, thorough output.
+    Write clear, specific prompts that tell the LLM exactly what you want.
 
 TEMPLATE:
 
@@ -65,7 +67,7 @@ async def handle_{intent_name}(intent: IntentMessage, llm_client=None) -> Intent
 RULES:
 - Only use imports from this whitelist: {allowed_imports}
 - You have access to `llm_client` for LLM inference — use it for intelligence tasks
-- To call the LLM: `response = await llm_client.complete(LLMRequest(prompt="...", tier="fast"))`
+- To call the LLM: `response = await llm_client.complete(LLMRequest(prompt="...", tier="standard", max_tokens=2048))`
 - Import LLMRequest: `from probos.types import LLMRequest`
 - Do NOT use subprocess, eval, exec, __import__, socket, ctypes
 - Return the COMPLETE Python code, nothing else

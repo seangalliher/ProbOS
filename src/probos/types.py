@@ -189,7 +189,7 @@ class LLMRequest:
     system_prompt: str = ""
     tier: str = "standard"  # LLMTier value
     temperature: float = 0.0
-    max_tokens: int = 1024
+    max_tokens: int = 2048
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 

@@ -51,12 +51,15 @@ LLM ACCESS (for inference — translation, summarization, creative writing):
     questions — it has no internet access and may hallucinate.
 
         from probos.types import LLMRequest
-        request = LLMRequest(prompt="Translate 'hello' to French. Reply with ONLY the translation, nothing else.", tier="fast")
+        request = LLMRequest(prompt="Your detailed prompt here...", tier="standard", max_tokens=2048)
         response = await self._llm_client.complete(request)
-        translated = response.content  # the LLM's text response
+        result_text = response.content  # the LLM's text response
 
     IMPORTANT: Always check `if self._llm_client:` before calling it.
     If self._llm_client is None (sandbox testing), return a placeholder result.
+    Use max_tokens=2048 or higher for tasks that need detailed, thorough output.
+    Write clear, specific prompts that tell the LLM exactly what you want and
+    how detailed the response should be.
 
 MESH ACCESS (for external data — web lookups, factual questions, current info):
     self._runtime is injected at runtime (may be None in sandbox).
