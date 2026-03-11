@@ -390,6 +390,7 @@ class IntentDescriptor:
     description: str = ""  # e.g. "Read file contents"
     requires_consensus: bool = False
     requires_reflect: bool = False
+    tier: str = "domain"  # "core", "utility", or "domain"
 
 
 @dataclass

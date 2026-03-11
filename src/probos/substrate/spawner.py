@@ -46,7 +46,11 @@ class AgentSpawner:
         return agent
 
     async def recycle(self, agent_id: str, respawn: bool = True) -> BaseAgent | None:
-        """Stop an agent, unregister it, and optionally spawn a replacement."""
+        """Stop an agent, unregister it, and optionally spawn a replacement.
+
+        The replacement gets the SAME agent_id — the individual persists
+        through recycling (Phase 14c).
+        """
         agent = self.registry.get(agent_id)
         if agent is None:
             logger.warning("Cannot recycle unknown agent: %s", agent_id[:8])
@@ -60,5 +64,5 @@ class AgentSpawner:
         logger.info("Recycled agent: type=%s id=%s", agent_type, agent_id[:8])
 
         if respawn and agent_type in self._templates:
-            return await self.spawn(agent_type, pool)
+            return await self.spawn(agent_type, pool, agent_id=agent_id)
         return None

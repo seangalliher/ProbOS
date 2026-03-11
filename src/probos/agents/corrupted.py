@@ -20,6 +20,7 @@ class CorruptedFileReaderAgent(BaseAgent):
     """
 
     agent_type: str = "file_reader"  # Disguises as normal file_reader
+    tier = "core"
     default_capabilities = [
         CapabilityDescriptor(
             can="read_file",

@@ -108,7 +108,10 @@ User: "what just happened?"
 {"intents": [{"id": "t1", "intent": "explain_last", "params": {}, "depends_on": [], "use_consensus": false}], "reflect": true}
 
 User: "tell me about file_reader agents"
-{"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "file_reader"}, "depends_on": [], "use_consensus": false}], "reflect": true}"""
+{"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "file_reader"}, "depends_on": [], "use_consensus": false}], "reflect": true}
+
+User: "describe the agents" or "what agents are active?"
+{"intents": [{"id": "t1", "intent": "agent_info", "params": {}, "depends_on": [], "use_consensus": false}], "reflect": true}"""
 
 # Capability-gap examples conditionally appended when no matching intent
 # exists.  Each entry: (user_input, gap_response, intent_keyword).
@@ -304,6 +307,16 @@ class PromptBuilder:
             names = ", ".join(reflect_intents)
             rules.append(
                 f'{rule_num}. {names} intents MUST always have "reflect": true.'
+            )
+            rule_num += 1
+
+        if "http_fetch" in intent_names:
+            rules.append(
+                f'{rule_num}. NEVER fabricate API keys, tokens, credentials, or authentication '
+                'parameters in URLs. If a service requires an API key the user has not provided, '
+                'respond with {"intents": [], "response": "That service requires an API key I '
+                'don\'t have configured."}. For http_fetch, only use URLs that work without '
+                'authentication.'
             )
             rule_num += 1
 

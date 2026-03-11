@@ -17,7 +17,7 @@ mesh:
   hebbian_reward: 0.05
   signal_ttl_seconds: 30
   capability_broadcast_interval_seconds: 5
-  # semantic_matching: true  # Enable semantic matching in CapabilityRegistry
+  semantic_matching: true  # Phase 14b: embedding-based matching in CapabilityRegistry (AD-174)
 
 consensus:
   min_votes: 3
@@ -45,6 +45,10 @@ cognitive:
   llm_timeout_fast: 30
   llm_api_format_fast: "ollama"
 
+  # How long Ollama keeps the model loaded after the last request.
+  # Prevents cold-start delays. Examples: "5m", "30m", "1h", "-1" (forever).
+  ollama_keep_alive: "30m"
+
   # Standard tier: Copilot proxy (uses shared endpoint)
   llm_model_standard: "claude-sonnet-4.6"
 
@@ -64,7 +68,7 @@ memory:
   collection_name: "probos_episodes"
   max_episodes: 100000
   relevance_threshold: 0.7
-  # similarity_threshold: 0.6  # Semantic similarity threshold for recall/fuzzy lookup
+  similarity_threshold: 0.6  # Phase 14b: semantic similarity threshold for recall/fuzzy lookup (AD-173)
 
 dreaming:
   idle_threshold_seconds: 300
@@ -102,21 +106,21 @@ self_mod:
   max_designed_agents: 5
 
 qa:
-  # enabled: true
-  # smoke_test_count: 5
-  # timeout_per_test_seconds: 10.0
-  # total_timeout_seconds: 30.0
-  # pass_threshold: 0.6
-  # trust_reward_weight: 1.0
-  # trust_penalty_weight: 2.0
-  # flag_on_fail: true
-  # auto_remove_on_total_fail: false
+  enabled: true                    # Phase 13: SystemQA smoke-tests designed agents (AD-153)
+  smoke_test_count: 5
+  timeout_per_test_seconds: 10.0
+  total_timeout_seconds: 30.0
+  pass_threshold: 0.6
+  trust_reward_weight: 1.0
+  trust_penalty_weight: 2.0        # Asymmetric: failures penalize 2x (AD-155)
+  flag_on_fail: true
+  auto_remove_on_total_fail: false  # Conservative: flag but don't auto-remove
 
 knowledge:
-  # enabled: true
-  # repo_path: ""
-  # auto_commit: true
-  # commit_debounce_seconds: 5.0
-  # max_episodes: 1000
-  # max_workflows: 200
-  # restore_on_boot: true
+  enabled: true                    # Phase 14: Git-backed persistence (AD-159)
+  repo_path: ""                    # Empty = default to data_dir/knowledge
+  auto_commit: true                # Debounced commits on write (AD-161)
+  commit_debounce_seconds: 5.0
+  max_episodes: 1000               # Oldest-first eviction in KnowledgeStore
+  max_workflows: 200
+  restore_on_boot: true            # Warm boot: restore trust, routing, agents, skills, episodes (AD-162/AD-181)

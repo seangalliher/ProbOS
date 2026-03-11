@@ -32,6 +32,7 @@ class RedTeamAgent(BaseAgent):
     """
 
     agent_type: str = "red_team"
+    tier = "core"
     default_capabilities = [
         CapabilityDescriptor(
             can="verify_read_file",

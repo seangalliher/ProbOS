@@ -146,17 +146,65 @@ def render_status_panel(status: dict[str, Any]) -> Panel:
     lines.append("[bold]Workflow Cache[/bold]")
     lines.append(f"  Cached patterns: {wc.get('size', 0)}")
 
+    # Self-Modification
+    sm = status.get("self_mod", {})
+    lines.append("")
+    lines.append("[bold]Self-Modification[/bold]")
+    if sm.get("enabled") is False:
+        lines.append("  [dim]disabled[/dim]")
+    else:
+        lines.append(f"  Designed agents: {sm.get('designed_agent_count', 0)}")
+        lines.append(f"  Designed skills: {sm.get('designed_skill_count', 0)}")
+
+    # QA
+    qa = status.get("qa", {})
+    lines.append("")
+    lines.append("[bold]QA[/bold]")
+    if qa.get("enabled"):
+        lines.append(f"  Reports: {qa.get('report_count', 0)}")
+    else:
+        lines.append("  [dim]disabled[/dim]")
+
+    # Knowledge
+    kn = status.get("knowledge", {})
+    lines.append("")
+    lines.append("[bold]Knowledge[/bold]")
+    if kn.get("enabled"):
+        lines.append(f"  Repo: {kn.get('repo_path', '?')}")
+    else:
+        lines.append("  [dim]disabled[/dim]")
+
+    # Scaling
+    sc = status.get("scaling", {})
+    lines.append("")
+    lines.append("[bold]Scaling[/bold]")
+    if sc.get("enabled") is False:
+        lines.append("  [dim]disabled[/dim]")
+    else:
+        pool_count = len(sc)
+        excluded = sum(1 for v in sc.values() if isinstance(v, dict) and v.get("excluded"))
+        lines.append(f"  Pools: {pool_count} monitored, {excluded} excluded")
+
+    # Episodic Memory
+    ep = status.get("episodic_stats", {})
+    if ep:
+        lines.append("")
+        lines.append("[bold]Episodic Memory[/bold]")
+        lines.append(f"  Episodes: {ep.get('total_episodes', 0)}")
+        lines.append(f"  Intents:  {ep.get('unique_intents', 0)}")
+
     return Panel("\n".join(lines), title="System Status", border_style="blue")
 
 
 def render_agent_table(agents: list[Any], trust_scores: dict[str, float]) -> Table:
     """Rich Table of all agents.
 
-    Columns: ID (8-char) | Type | Pool | State (coloured) | Confidence | Trust
+    Columns: ID (8-char) | Type | Tier | Pool | State (coloured) | Confidence | Trust
     """
     table = Table(title="Agents", show_lines=False)
     table.add_column("ID", style="cyan", width=10)
     table.add_column("Type")
+    table.add_column("Tier", style="dim")
     table.add_column("Pool")
     table.add_column("State")
     table.add_column("Confidence", justify="right")
@@ -176,6 +224,7 @@ def render_agent_table(agents: list[Any], trust_scores: dict[str, float]) -> Tab
         table.add_row(
             _truncate_id(agent.id),
             agent.agent_type,
+            getattr(agent, "tier", "domain"),
             agent.pool,
             state_text,
             f"{agent.confidence:.2f}",

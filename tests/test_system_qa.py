@@ -1087,7 +1087,7 @@ class TestErrorContainment:
 
 
 # ===================================================================
-# 6d. Routing exclusion tests (AD-158)
+# 6d. Routing exclusion tests (Phase 14d: descriptor-based filtering)
 # ===================================================================
 
 
@@ -1096,7 +1096,8 @@ class TestRoutingExclusion:
 
     @pytest.mark.asyncio
     async def test_qa_pool_not_in_intent_descriptors(self, tmp_path):
-        """_collect_intent_descriptors() does NOT include smoke_test_agent."""
+        """_collect_intent_descriptors() does NOT include smoke_test_agent
+        because SystemQAAgent has empty intent_descriptors (Phase 14d)."""
         from probos.runtime import ProbOSRuntime
         from probos.cognitive.llm_client import MockLLMClient
 

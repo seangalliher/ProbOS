@@ -28,13 +28,14 @@ class HeartbeatAgent(BaseAgent):
     """
 
     agent_type: str = "heartbeat"
+    tier = "core"
     default_capabilities = [
         CapabilityDescriptor(can="heartbeat", detail="Periodic health pulse"),
     ]
     initial_confidence: float = 0.95  # Simple, reliable agents
 
-    def __init__(self, pool: str = "system", interval: float = 5.0) -> None:
-        super().__init__(pool=pool)
+    def __init__(self, pool: str = "system", interval: float = 5.0, **kwargs: Any) -> None:
+        super().__init__(pool=pool, **kwargs)
         self.interval = interval
         self._pulse_count: int = 0
         self._last_metrics: dict[str, Any] = {}

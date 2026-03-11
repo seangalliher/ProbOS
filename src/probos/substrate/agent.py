@@ -22,12 +22,13 @@ class BaseAgent(ABC):
     """
 
     agent_type: str = "base"
+    tier: str = "domain"  # "core", "utility", or "domain"
     default_capabilities: list[CapabilityDescriptor] = []
     intent_descriptors: list[IntentDescriptor] = []
     initial_confidence: float = 0.8
 
     def __init__(self, pool: str = "default", **kwargs: Any) -> None:
-        self.id: AgentID = uuid.uuid4().hex
+        self.id: AgentID = kwargs.pop("agent_id", None) or uuid.uuid4().hex
         self.pool = pool
         self.confidence: float = self.initial_confidence
         self.trust_score: float = 0.5

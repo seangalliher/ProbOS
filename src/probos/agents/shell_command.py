@@ -33,6 +33,7 @@ class ShellCommandAgent(BaseAgent):
     """
 
     agent_type: str = "shell_command"
+    tier = "core"
     default_capabilities = [
         CapabilityDescriptor(
             can="run_command",

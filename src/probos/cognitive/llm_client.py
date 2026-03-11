@@ -108,6 +108,9 @@ class OpenAICompatibleClient(BaseLLMClient):
         # Simple response cache keyed by (tier, prompt_hash)
         self._cache: dict[str, LLMResponse] = {}
 
+        # Ollama keep_alive to prevent model unloading during idle periods
+        self._ollama_keep_alive: str = getattr(self._config, "ollama_keep_alive", "30m")
+
     # Backward-compat properties
     @property
     def base_url(self) -> str:
@@ -176,6 +179,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                         "messages": [{"role": "user", "content": "ping"}],
                         "stream": False,
                         "think": False,
+                        "keep_alive": self._ollama_keep_alive,
                     },
                     timeout=5.0,
                 )
@@ -331,6 +335,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             "messages": messages,
             "stream": False,
             "think": False,
+            "keep_alive": self._ollama_keep_alive,
         }
         if request.max_tokens:
             payload.setdefault("options", {})["num_predict"] = request.max_tokens
@@ -431,6 +436,18 @@ class MockLLMClient(BaseLLMClient):
         self.add_pattern(
             r"why did you|why.*(choose|pick|use|select)",
             self._make_why_response,
+        )
+
+        # introspect_memory
+        self.add_pattern(
+            r"do you have memory|memory status|how many.*remember|episodic|introspect.*memory",
+            self._make_introspect_memory_response,
+        )
+
+        # introspect_system
+        self.add_pattern(
+            r"introspect.*system|system overview|describe.*system|how is the system",
+            self._make_introspect_system_response,
         )
 
         # HTTP fetch — must be before read_file (both can match URLs)
@@ -814,6 +831,32 @@ class MockLLMClient(BaseLLMClient):
                 "id": "t1",
                 "intent": "why",
                 "params": {"question": prompt},
+                "depends_on": [],
+                "use_consensus": False,
+            }],
+            "reflect": True,
+        })
+
+    def _make_introspect_memory_response(self, prompt: str, match: re.Match) -> str:
+        """Generate an introspect_memory intent response."""
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "introspect_memory",
+                "params": {},
+                "depends_on": [],
+                "use_consensus": False,
+            }],
+            "reflect": True,
+        })
+
+    def _make_introspect_system_response(self, prompt: str, match: re.Match) -> str:
+        """Generate an introspect_system intent response."""
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "introspect_system",
+                "params": {},
                 "depends_on": [],
                 "use_consensus": False,
             }],

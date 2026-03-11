@@ -74,6 +74,11 @@ class CognitiveConfig(BaseModel):
     # Default tier for LLM requests ("fast", "standard", or "deep")
     default_llm_tier: str = "fast"
 
+    # Ollama keep_alive: how long the model stays loaded after the last request.
+    # Prevents cold-start delays when Ollama unloads idle models.
+    # Examples: "5m", "30m", "1h", "-1" (forever). Default "30m".
+    ollama_keep_alive: str = "30m"
+
     working_memory_token_budget: int = 4000
     decomposition_timeout_seconds: float = 30.0
     dag_execution_timeout_seconds: float = 60.0
@@ -186,7 +191,7 @@ class SelfModConfig(BaseModel):
     probationary_alpha: float = 1.0  # Beta prior alpha for self-created agents
     probationary_beta: float = 3.0  # Beta prior beta → E[trust] = 0.25
     max_designed_agents: int = 5  # Maximum self-created agent types in system
-    sandbox_timeout_seconds: float = 10.0  # Timeout for sandbox test execution
+    sandbox_timeout_seconds: float = 60.0  # Timeout for sandbox test execution (LLM-backed agents need more)
     allowed_imports: list[str] = [
         "asyncio", "pathlib", "json", "os", "re", "datetime",
         "typing", "dataclasses", "collections", "math", "hashlib",

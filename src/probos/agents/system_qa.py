@@ -91,20 +91,10 @@ class SystemQAAgent(BaseAgent):
     """
 
     agent_type = "system_qa"
-    intent_descriptors = [
-        IntentDescriptor(
-            name="smoke_test_agent",
-            params={
-                "agent_type": "type name of the agent to test",
-                "pool_name": "pool the agent belongs to",
-                "intent_name": "intent the agent should handle",
-                "intent_params": "example params for the intent",
-            },
-            description="Run smoke tests against a newly designed agent",
-            requires_consensus=False,
-            requires_reflect=False,
-        ),
-    ]
+    tier = "utility"
+    # No user-facing descriptors — QA is triggered by the self-mod pipeline,
+    # not routed via the intent bus.
+    intent_descriptors: list = []
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

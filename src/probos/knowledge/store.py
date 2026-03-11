@@ -313,6 +313,28 @@ class KnowledgeStore:
         return results
 
     # ------------------------------------------------------------------
+    # Agent manifest persistence (Phase 14c)
+    # ------------------------------------------------------------------
+
+    async def store_manifest(self, manifest: list[dict]) -> None:
+        """Write the agent roster to manifest.json."""
+        path = self._repo_path / "manifest.json"
+        await self._write_json(path, manifest)
+        await self._schedule_commit("Store agent manifest")
+
+    async def load_manifest(self) -> list[dict]:
+        """Load the agent manifest.  Returns empty list if not found."""
+        path = self._repo_path / "manifest.json"
+        if not path.is_file():
+            return []
+        try:
+            data = await self._read_json(path)
+            return data if isinstance(data, list) else []
+        except Exception as exc:
+            log.warning("Failed to load agent manifest: %s", exc)
+            return []
+
+    # ------------------------------------------------------------------
     # Artifact counts (for experience layer)
     # ------------------------------------------------------------------
 

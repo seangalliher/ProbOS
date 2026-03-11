@@ -21,6 +21,7 @@ class SkillBasedAgent(BaseAgent):
     """
 
     agent_type = "skill_agent"
+    tier = "domain"
     _handled_intents: set[str] = set()
     intent_descriptors: list[IntentDescriptor] = []
 

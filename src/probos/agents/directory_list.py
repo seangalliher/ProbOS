@@ -20,6 +20,7 @@ class DirectoryListAgent(BaseAgent):
     """
 
     agent_type: str = "directory_list"
+    tier = "core"
     default_capabilities = [
         CapabilityDescriptor(
             can="list_directory",

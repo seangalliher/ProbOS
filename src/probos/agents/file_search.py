@@ -20,6 +20,7 @@ class FileSearchAgent(BaseAgent):
     """
 
     agent_type: str = "file_search"
+    tier = "core"
     default_capabilities = [
         CapabilityDescriptor(
             can="search_files",

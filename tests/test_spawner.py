@@ -54,11 +54,11 @@ class TestSpawner:
 
         replacement = await spawner.recycle(original_id, respawn=True)
         assert replacement is not None
-        assert replacement.id != original_id
+        assert replacement.id == original_id  # Phase 14c: individual persists
         assert replacement.pool == "mypool"
         assert replacement.state == AgentState.ACTIVE
-        # Original should be gone
-        assert registry.get(original_id) is None
+        # Replacement re-registered under same ID
+        assert registry.get(original_id) is replacement
         await replacement.stop()
 
     @pytest.mark.asyncio

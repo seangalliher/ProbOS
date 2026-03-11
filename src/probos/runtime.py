@@ -41,6 +41,7 @@ from probos.substrate.pool import ResourcePool
 from probos.substrate.registry import AgentRegistry
 from probos.substrate.scaler import PoolScaler
 from probos.substrate.spawner import AgentSpawner
+from probos.substrate.identity import generate_agent_id, generate_pool_ids
 from probos.types import (
     ConsensusOutcome,
     Episode,
@@ -200,6 +201,7 @@ class ProbOSRuntime:
         name: str,
         agent_type: str,
         target_size: int | None = None,
+        agent_ids: list[str] | None = None,
         **spawn_kwargs: Any,
     ) -> ResourcePool:
         """Create and start a resource pool."""
@@ -210,6 +212,7 @@ class ProbOSRuntime:
             registry=self.registry,
             config=self.config.pools,
             target_size=target_size,
+            agent_ids=agent_ids,
             **spawn_kwargs,
         )
         self.pools[name] = pool
@@ -229,8 +232,9 @@ class ProbOSRuntime:
 
     async def _spawn_red_team(self, count: int) -> None:
         """Spawn red team agents (separate from pools — not on intent bus)."""
-        for _ in range(count):
-            agent = RedTeamAgent(pool="red_team")
+        for i in range(count):
+            agent_id = generate_agent_id("red_team_verifier", "red_team", i)
+            agent = RedTeamAgent(pool="red_team", agent_id=agent_id)
             await self.registry.register(agent)
             await agent.start()
             self._red_team_agents.append(agent)
@@ -275,15 +279,23 @@ class ProbOSRuntime:
         await self.gossip.start()
         await self.trust_network.start()
 
-        # Start default pools
-        await self.create_pool("system", "system_heartbeat", target_size=2)
-        await self.create_pool("filesystem", "file_reader", target_size=3)
-        await self.create_pool("filesystem_writers", "file_writer", target_size=3)
-        await self.create_pool("directory", "directory_list", target_size=3)
-        await self.create_pool("search", "file_search", target_size=3)
-        await self.create_pool("shell", "shell_command", target_size=3)
-        await self.create_pool("http", "http_fetch", target_size=3)
-        await self.create_pool("introspect", "introspect", target_size=2, runtime=self)
+        # Start default pools (Phase 14c: deterministic agent IDs)
+        _builtin_pools = [
+            ("system", "system_heartbeat", 2),
+            ("filesystem", "file_reader", 3),
+            ("filesystem_writers", "file_writer", 3),
+            ("directory", "directory_list", 3),
+            ("search", "file_search", 3),
+            ("shell", "shell_command", 3),
+            ("http", "http_fetch", 3),
+        ]
+        for pool_name, agent_type, size in _builtin_pools:
+            ids = generate_pool_ids(agent_type, pool_name, size)
+            await self.create_pool(pool_name, agent_type, target_size=size, agent_ids=ids)
+
+        # Introspect pool (needs runtime kwarg)
+        ids = generate_pool_ids("introspect", "introspect", 2)
+        await self.create_pool("introspect", "introspect", target_size=2, agent_ids=ids, runtime=self)
 
         # Refresh decomposer with intent descriptors from all registered templates
         self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
@@ -398,14 +410,17 @@ class ProbOSRuntime:
             logger.info("Self-modification pipeline enabled")
 
             # Spawn skills pool for SkillBasedAgent
+            ids = generate_pool_ids("skill_agent", "skills", 2)
             await self.create_pool(
                 "skills", "skill_agent", target_size=2,
+                agent_ids=ids,
                 llm_client=self.llm_client,
             )
 
             # Spawn SystemQA pool if QA enabled (AD-153: single agent)
             if self.config.qa.enabled:
-                await self.create_pool("system_qa", "system_qa", target_size=1)
+                ids = generate_pool_ids("system_qa", "system_qa", 1)
+                await self.create_pool("system_qa", "system_qa", target_size=1, agent_ids=ids)
                 qa_pool = self.pools.get("system_qa")
                 if qa_pool and qa_pool.healthy_agents:
                     agents = list(qa_pool.healthy_agents)
@@ -460,6 +475,9 @@ class ProbOSRuntime:
             )
             self.dream_scheduler.start()
 
+        # Persist agent manifest (Phase 14c)
+        await self._persist_manifest()
+
         self._started = True
 
         await self.event_log.log(category="system", event="started")
@@ -505,6 +523,8 @@ class ProbOSRuntime:
         # Persist knowledge store artifacts before stopping services
         if self._knowledge_store:
             try:
+                # Persist agent manifest (Phase 14c)
+                await self._knowledge_store.store_manifest(self._build_manifest())
                 # Persist trust snapshot (raw alpha/beta — AD-168)
                 await self._knowledge_store.store_trust_snapshot(
                     self.trust_network.raw_scores()
@@ -1182,19 +1202,16 @@ class ProbOSRuntime:
             pool=agent.pool,
         )
 
-    # AD-158: Agent types excluded from user-facing routing
-    _EXCLUDED_AGENT_TYPES = {"red_team", "system_qa"}
-
     def _collect_intent_descriptors(self) -> list[IntentDescriptor]:
         """Collect unique intent descriptors from all registered agent templates.
 
-        Excludes internal-only agent types (red_team, system_qa — AD-158).
+        Includes all agents with non-empty intent_descriptors regardless of tier.
+        Agents with empty descriptors (heartbeat, red_team, etc.) are naturally
+        excluded because they have nothing to contribute.
         """
         seen: set[str] = set()
         descriptors: list[IntentDescriptor] = []
         for type_name, agent_class in self.spawner._templates.items():
-            if type_name in self._EXCLUDED_AGENT_TYPES:
-                continue
             for desc in getattr(agent_class, "intent_descriptors", []):
                 if desc.name not in seen:
                     seen.add(desc.name)
@@ -1240,7 +1257,11 @@ class ProbOSRuntime:
 
     async def _create_designed_pool(self, agent_type: str, pool_name: str, size: int = 2) -> None:
         """Create a pool for a self-designed agent type."""
-        await self.create_pool(pool_name, agent_type, target_size=size, llm_client=self.llm_client, runtime=self)
+        ids = generate_pool_ids(agent_type, pool_name, size)
+        await self.create_pool(
+            pool_name, agent_type, target_size=size,
+            agent_ids=ids, llm_client=self.llm_client, runtime=self,
+        )
 
     async def _set_probationary_trust(self, pool_name: str) -> None:
         """Set probationary trust for all agents in a designed pool."""
@@ -1253,6 +1274,92 @@ class ProbOSRuntime:
                 alpha=self.config.self_mod.probationary_alpha,
                 beta=self.config.self_mod.probationary_beta,
             )
+
+    # ------------------------------------------------------------------
+    # Agent manifest (Phase 14c)
+    # ------------------------------------------------------------------
+
+    def _build_manifest(self) -> list[dict]:
+        """Build the agent roster from current pools + red team."""
+        manifest: list[dict] = []
+        for pool_name, pool in self.pools.items():
+            # Get tier from the template class
+            template = self.spawner._templates.get(pool.agent_type)
+            tier = getattr(template, "tier", "domain") if template else "domain"
+            for idx, aid in enumerate(pool._agent_ids):
+                entry: dict[str, Any] = {
+                    "agent_id": aid,
+                    "agent_type": pool.agent_type,
+                    "pool_name": pool_name,
+                    "instance_index": idx,
+                    "tier": tier,
+                }
+                manifest.append(entry)
+        for idx, agent in enumerate(self._red_team_agents):
+            manifest.append({
+                "agent_id": agent.id,
+                "agent_type": agent.agent_type,
+                "pool_name": "red_team",
+                "instance_index": idx,
+                "tier": agent.tier,
+            })
+        return manifest
+
+    async def _persist_manifest(self) -> None:
+        """Save the agent manifest to the knowledge store."""
+        if self._knowledge_store:
+            try:
+                await self._knowledge_store.store_manifest(self._build_manifest())
+            except Exception as e:
+                logger.warning("Manifest persistence failed: %s", e)
+
+    async def prune_agent(self, agent_id: str) -> bool:
+        """Permanently remove an agent.
+
+        Removes from pool, trust network, Hebbian router, and manifest.
+        The agent's ID is never recycled.
+        Returns True if the agent was found and removed.
+        """
+        # Find the agent's pool
+        target_pool: ResourcePool | None = None
+        for pool in self.pools.values():
+            if agent_id in pool._agent_ids:
+                target_pool = pool
+                break
+
+        if target_pool is None:
+            return False
+
+        # Remove from pool
+        target_pool._agent_ids.remove(agent_id)
+        agent = self.registry.get(agent_id)
+        if agent:
+            await agent.stop()
+            await self.registry.unregister(agent_id)
+
+        # Remove trust records
+        if agent_id in self.trust_network._records:
+            del self.trust_network._records[agent_id]
+
+        # Remove Hebbian weights referencing this agent
+        to_remove = [
+            k for k in self.hebbian_router._weights
+            if agent_id in (k[0], k[1])
+        ]
+        for k in to_remove:
+            del self.hebbian_router._weights[k]
+        to_remove_compat = [
+            k for k in self.hebbian_router._compat_weights
+            if agent_id in (k[0], k[1])
+        ]
+        for k in to_remove_compat:
+            del self.hebbian_router._compat_weights[k]
+
+        # Persist updated manifest
+        await self._persist_manifest()
+
+        logger.info("Pruned agent %s from pool %s", agent_id, target_pool.name)
+        return True
 
     def _get_llm_equipped_types(self) -> set[str]:
         """Return agent types that have LLM client access.
@@ -1312,11 +1419,13 @@ class ProbOSRuntime:
             return
 
         restored: list[str] = []
+        _trust_snapshot: dict[str, dict] = {}
 
         # 1. Trust snapshot → restore raw Beta parameters (AD-168)
         try:
             snapshot = await ks.load_trust_snapshot()
             if snapshot:
+                _trust_snapshot = snapshot
                 for agent_id, params in snapshot.items():
                     alpha = params.get("alpha", 2.0)
                     beta = params.get("beta", 2.0)
@@ -1339,6 +1448,8 @@ class ProbOSRuntime:
             logger.warning("Warm boot: routing restore failed: %s", e)
 
         # 3. Designed agents → validate + register + pool (AD-163)
+        #    Phase 14c: use deterministic IDs so trust reconnects automatically.
+        #    Only set probationary trust for agents NOT in the trust snapshot.
         try:
             agents = await ks.load_agents()
             if agents and self.config.self_mod.enabled:
@@ -1383,7 +1494,17 @@ class ProbOSRuntime:
                                     await self._register_designed_agent(agent_class)
                                     pool_name = metadata.get("pool_name", f"designed_{agent_type}")
                                     await self._create_designed_pool(agent_type, pool_name)
-                                    await self._set_probationary_trust(pool_name)
+                                    # Phase 14c: only set probationary trust for
+                                    # agents that do NOT have restored trust records.
+                                    pool = self.pools.get(pool_name)
+                                    if pool:
+                                        for aid in pool.healthy_agents:
+                                            if aid not in _trust_snapshot:
+                                                self.trust_network.create_with_prior(
+                                                    aid,
+                                                    alpha=self.config.self_mod.probationary_alpha,
+                                                    beta=self.config.self_mod.probationary_beta,
+                                                )
                                     restored.append(f"agent({agent_type})")
                                 else:
                                     logger.warning(

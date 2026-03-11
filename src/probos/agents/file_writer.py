@@ -23,6 +23,7 @@ class FileWriterAgent(BaseAgent):
     """
 
     agent_type: str = "file_writer"
+    tier = "core"
     default_capabilities = [
         CapabilityDescriptor(
             can="write_file",

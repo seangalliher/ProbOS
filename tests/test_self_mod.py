@@ -87,7 +87,7 @@ class TestSelfModConfig:
         assert cfg.max_designed_agents == 5
         assert cfg.probationary_alpha == 1.0
         assert cfg.probationary_beta == 3.0
-        assert cfg.sandbox_timeout_seconds == 10.0
+        assert cfg.sandbox_timeout_seconds == 60.0
         assert "asyncio" in cfg.allowed_imports
         assert "subprocess" in cfg.forbidden_patterns[0]
 

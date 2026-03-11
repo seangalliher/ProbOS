@@ -50,6 +50,7 @@ class ProbOSShell:
         "/explain":   "Explain what happened in the last NL request",
         "/model":     "Show LLM client type, endpoint, and tier config",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
+        "/prune":     "Permanently remove an agent (/prune <agent_id>)",
         "/debug":     "Toggle debug mode (/debug on|off)",
         "/help":      "Show this help message",
         "/quit":      "Exit ProbOS",
@@ -158,6 +159,7 @@ class ProbOSShell:
             "/explain":   self._cmd_explain,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
+            "/prune":   self._cmd_prune,
             "/debug":   self._cmd_debug,
             "/help":    self._cmd_help,
             "/quit":    self._cmd_quit,
@@ -465,6 +467,34 @@ class ProbOSShell:
         self.renderer.debug = self.debug
         state = "on" if self.debug else "off"
         self.console.print(f"Debug mode: [bold]{state}[/bold]")
+
+    async def _cmd_prune(self, arg: str) -> None:
+        if not arg:
+            self.console.print("[yellow]Usage: /prune <agent_id>[/yellow]")
+            return
+
+        agent_id = arg.strip()
+        agent = self.runtime.registry.get(agent_id)
+        if agent is None:
+            self.console.print(f"[red]Agent not found: {agent_id}[/red]")
+            return
+
+        self.console.print(
+            f"[bold yellow]Remove agent {agent_id} permanently? "
+            f"This cannot be undone. [y/n][/bold yellow]"
+        )
+        response = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: input("  Confirm: ").strip().lower()
+        )
+        if response not in ("y", "yes"):
+            self.console.print("[dim]Prune cancelled.[/dim]")
+            return
+
+        removed = await self.runtime.prune_agent(agent_id)
+        if removed:
+            self.console.print(f"[green]Agent {agent_id} pruned.[/green]")
+        else:
+            self.console.print(f"[red]Failed to prune agent {agent_id}.[/red]")
 
     async def _cmd_help(self, arg: str) -> None:
         table = Table(title="Commands", show_header=False)

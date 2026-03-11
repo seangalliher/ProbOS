@@ -7,6 +7,7 @@ import logging
 from typing import Any, TYPE_CHECKING
 
 from probos.config import PoolConfig
+from probos.substrate.identity import generate_agent_id
 from probos.types import AgentID, AgentState
 
 if TYPE_CHECKING:
@@ -30,6 +31,7 @@ class ResourcePool:
         registry: AgentRegistry,
         config: PoolConfig,
         target_size: int | None = None,
+        agent_ids: list[str] | None = None,
         **spawn_kwargs: Any,
     ) -> None:
         self.name = name
@@ -41,6 +43,8 @@ class ResourcePool:
         self.min_size = config.min_pool_size
         self.max_size = config.max_pool_size
         self._agent_ids: list[AgentID] = []
+        self._predetermined_ids: list[str] | None = agent_ids
+        self._next_instance_index: int = len(agent_ids) if agent_ids else 0
         self._health_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._spawn_kwargs = spawn_kwargs
@@ -69,9 +73,14 @@ class ResourcePool:
         )
         self._stop_event.clear()
 
-        # Spawn to target
+        # Spawn to target, using predetermined IDs if provided
+        idx = 0
         while len(self._agent_ids) < self.target_size:
-            agent = await self.spawner.spawn(self.agent_type, self.name, **self._spawn_kwargs)
+            kwargs = dict(self._spawn_kwargs)
+            if self._predetermined_ids and idx < len(self._predetermined_ids):
+                kwargs["agent_id"] = self._predetermined_ids[idx]
+            idx += 1
+            agent = await self.spawner.spawn(self.agent_type, self.name, **kwargs)
             self._agent_ids.append(agent.id)
 
         # Start health monitoring loop
@@ -134,7 +143,13 @@ class ResourcePool:
 
         # Respawn to maintain target size
         while len(self._agent_ids) < self.target_size:
-            agent = await self.spawner.spawn(self.agent_type, self.name, **self._spawn_kwargs)
+            new_id = generate_agent_id(
+                self.agent_type, self.name, self._next_instance_index,
+            )
+            self._next_instance_index += 1
+            agent = await self.spawner.spawn(
+                self.agent_type, self.name, agent_id=new_id, **self._spawn_kwargs,
+            )
             self._agent_ids.append(agent.id)
 
         # Cap at max_pool_size (safety check)
@@ -167,10 +182,18 @@ class ResourcePool:
         """Spawn one additional agent. Returns new agent ID, or None if at max.
 
         Does NOT modify target_size — the scaler owns target_size adjustments.
+        Generates a deterministic ID using the next available instance_index.
         """
         if self.current_size >= self.max_size:
             return None
-        agent = await self.spawner.spawn(self.agent_type, self.name, **self._spawn_kwargs, **kwargs)
+        new_id = generate_agent_id(
+            self.agent_type, self.name, self._next_instance_index,
+        )
+        self._next_instance_index += 1
+        agent = await self.spawner.spawn(
+            self.agent_type, self.name,
+            agent_id=new_id, **self._spawn_kwargs, **kwargs,
+        )
         self._agent_ids.append(agent.id)
         return agent.id
 

@@ -20,6 +20,7 @@ class IntrospectionAgent(BaseAgent):
     """
 
     agent_type: str = "introspect"
+    tier = "utility"
     default_capabilities = [
         CapabilityDescriptor(
             can="introspect",
@@ -32,9 +33,11 @@ class IntrospectionAgent(BaseAgent):
         IntentDescriptor(name="agent_info", params={"agent_type": "...", "agent_id": "..."}, description="Get info about a specific agent", requires_reflect=True),
         IntentDescriptor(name="system_health", params={}, description="Get system health assessment", requires_reflect=True),
         IntentDescriptor(name="why", params={"question": "..."}, description="Explain why ProbOS did something", requires_reflect=True),
+        IntentDescriptor(name="introspect_memory", params={}, description="Report episodic memory status — episode count, intent type distribution, success/failure rates, storage backend info", requires_reflect=True),
+        IntentDescriptor(name="introspect_system", params={}, description="Report comprehensive system status — agent tiers, pool health, trust network summary, Hebbian routing stats, knowledge store status, dream cycle state", requires_reflect=True),
     ]
 
-    _handled_intents = {"explain_last", "agent_info", "system_health", "why"}
+    _handled_intents = {"explain_last", "agent_info", "system_health", "why", "introspect_memory", "introspect_system"}
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Full lifecycle: perceive -> decide -> act -> report."""
@@ -89,6 +92,10 @@ class IntrospectionAgent(BaseAgent):
             return self._system_health(rt)
         elif action == "why":
             return await self._why(rt, params)
+        elif action == "introspect_memory":
+            return await self._introspect_memory(rt)
+        elif action == "introspect_system":
+            return self._introspect_system(rt)
 
         return {"success": False, "error": f"Unknown introspection action: {action}"}
 
@@ -176,7 +183,15 @@ class IntrospectionAgent(BaseAgent):
             if agent:
                 agents = [agent]
         elif agent_type:
+            # Exact match first
             agents = [a for a in rt.registry.all() if a.agent_type == agent_type]
+            if not agents:
+                # Prefix/substring fallback for partial type names
+                needle = agent_type.lower()
+                agents = [
+                    a for a in rt.registry.all()
+                    if needle in a.agent_type.lower() or a.agent_type.lower().startswith(needle)
+                ]
         else:
             # No filter — return all agents
             agents = list(rt.registry.all())
@@ -342,5 +357,93 @@ class IntrospectionAgent(BaseAgent):
             "data": {
                 "matching_episodes": matching_episodes,
                 "agent_context": agent_context,
+            },
+        }
+
+    async def _introspect_memory(self, rt: Any) -> dict[str, Any]:
+        """Report episodic memory status."""
+        if not rt.episodic_memory:
+            return {
+                "success": True,
+                "data": {
+                    "enabled": False,
+                    "message": "Episodic memory is not enabled.",
+                },
+            }
+
+        try:
+            stats = await rt.episodic_memory.get_stats()
+        except Exception as exc:
+            return {
+                "success": True,
+                "data": {
+                    "enabled": True,
+                    "error": f"Failed to retrieve memory stats: {exc}",
+                },
+            }
+
+        return {
+            "success": True,
+            "data": {
+                "enabled": True,
+                "total_episodes": stats.get("total_episodes", 0),
+                "unique_intents": stats.get("unique_intents", 0),
+                "intent_distribution": stats.get("intent_distribution", {}),
+                "success_rate": stats.get("success_rate"),
+                "storage_backend": stats.get("backend", "chromadb"),
+            },
+        }
+
+    def _introspect_system(self, rt: Any) -> dict[str, Any]:
+        """Report comprehensive system status."""
+        # Agent count by tier
+        tier_counts: dict[str, int] = {"core": 0, "utility": 0, "domain": 0}
+        for agent in rt.registry.all():
+            t = getattr(agent, "tier", "domain")
+            tier_counts[t] = tier_counts.get(t, 0) + 1
+
+        # Trust network summary
+        all_scores = rt.trust_network.all_scores()
+        trust_values = list(all_scores.values())
+        trust_summary: dict[str, Any] = {
+            "agent_count": len(trust_values),
+        }
+        if trust_values:
+            trust_summary["mean"] = round(sum(trust_values) / len(trust_values), 4)
+            trust_summary["min"] = round(min(trust_values), 4)
+            trust_summary["max"] = round(max(trust_values), 4)
+
+        # Hebbian routing
+        hebbian_weight_count = rt.hebbian_router.weight_count
+
+        # Pool health
+        pool_health = []
+        for name, pool in rt.pools.items():
+            pool_health.append({
+                "name": name,
+                "current": len(pool.healthy_agents),
+                "target": pool.target_size,
+            })
+
+        # Knowledge store
+        knowledge_info: dict[str, Any] = {"enabled": rt._knowledge_store is not None}
+        if rt._knowledge_store:
+            knowledge_info["repo_path"] = str(rt._knowledge_store.repo_path)
+
+        # Dream cycle
+        dreaming_info: dict[str, Any] = {"enabled": rt.dream_scheduler is not None}
+        if rt.dream_scheduler:
+            dreaming_info["state"] = "dreaming" if rt.dream_scheduler.is_dreaming else "idle"
+
+        return {
+            "success": True,
+            "data": {
+                "agents_by_tier": tier_counts,
+                "total_agents": rt.registry.count,
+                "trust_summary": trust_summary,
+                "hebbian_weight_count": hebbian_weight_count,
+                "pool_health": pool_health,
+                "knowledge": knowledge_info,
+                "dreaming": dreaming_info,
             },
         }

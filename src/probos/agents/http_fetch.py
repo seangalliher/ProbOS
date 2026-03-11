@@ -23,6 +23,7 @@ class HttpFetchAgent(BaseAgent):
     """
 
     agent_type: str = "http_fetch"
+    tier = "core"
     default_capabilities = [
         CapabilityDescriptor(
             can="http_fetch",

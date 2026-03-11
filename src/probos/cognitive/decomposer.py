@@ -123,6 +123,10 @@ wants to see explained in natural language. Set to false only for simple data \
 retrieval or command execution where the raw result is self-explanatory.
 14. explain_last, agent_info, system_health, why intents should have \
 "use_consensus": false.
+15. NEVER fabricate API keys, tokens, credentials, or authentication parameters \
+in URLs. If a service requires an API key the user has not provided, respond with \
+{"intents": [], "response": "That service requires an API key I don't have configured."}. \
+For http_fetch, only use URLs that work without authentication.
 
 ## Examples
 
@@ -176,6 +180,9 @@ User: "what just happened?"
 
 User: "tell me about file_reader agents"
 {"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "file_reader"}, "depends_on": [], "use_consensus": false}], "reflect": true}
+
+User: "describe the agents" or "what agents are active?"
+{"intents": [{"id": "t1", "intent": "agent_info", "params": {}, "depends_on": [], "use_consensus": false}], "reflect": true}
 
 User: "translate 'hello world' to French"
 {"intents": [], "response": "I don't have an intent for translation yet.", "capability_gap": true}
@@ -432,6 +439,13 @@ class IntentDecomposer:
                 use_consensus=item.get("use_consensus", False),
             )
             if node.intent:
+                # Reject http_fetch URLs with fabricated credentials
+                if node.intent == "http_fetch" and self._has_fake_credentials(node.params.get("url", "")):
+                    logger.warning("Rejected http_fetch with fabricated credentials: %s", node.params.get("url"))
+                    return TaskDAG(
+                        source_text=source_text,
+                        response="That service requires an API key I don't have configured.",
+                    )
                 nodes.append(node)
 
         # Extract optional conversational response
@@ -476,6 +490,24 @@ class IntentDecomposer:
                         return content[brace_start:i + 1]
 
         raise ValueError("No JSON object found in response")
+
+    # Common query-parameter names that indicate fabricated credentials
+    _CREDENTIAL_PARAMS = frozenset({
+        "apikey", "api_key", "api-key", "access_token", "token",
+        "secret", "key", "auth", "authorization", "password",
+        "client_secret", "app_key", "appkey", "app_id",
+    })
+
+    @classmethod
+    def _has_fake_credentials(cls, url: str) -> bool:
+        """Return True if the URL contains query parameters that look like fabricated API credentials."""
+        from urllib.parse import urlparse, parse_qs
+        try:
+            parsed = urlparse(url)
+            params = parse_qs(parsed.query)
+            return any(k.lower() in cls._CREDENTIAL_PARAMS for k in params)
+        except Exception:
+            return False
 
 
 def _normalize_consensus_result(
