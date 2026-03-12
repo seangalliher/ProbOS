@@ -144,6 +144,7 @@ class ConsensusResult:
     weighted_rejection: float = 0.0
     total_weight: float = 0.0
     policy: QuorumPolicy = field(default_factory=QuorumPolicy)
+    shapley_values: dict[str, float] | None = None  # AD-224: per-agent Shapley attribution
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property

@@ -150,6 +150,112 @@ class FeedbackEngine:
 
         return result
 
+    async def apply_correction_feedback(
+        self,
+        original_text: str,
+        correction: Any,
+        patch_result: Any,
+        retry_success: bool,
+    ) -> FeedbackResult:
+        """Record a correction event in the learning substrate (AD-234).
+
+        Corrections are the richest feedback signal: they encode both
+        "what went wrong" and "how to fix it".
+        """
+        agent_type = getattr(correction, "target_agent_type", "unknown")
+        correction_type = getattr(correction, "correction_type", "parameter_fix")
+        corrected_values = getattr(correction, "corrected_values", {})
+        changes_description = getattr(patch_result, "changes_description", "")
+        agents_updated: list[str] = []
+
+        # 1. Hebbian — strengthen/weaken intent→agent route
+        target_intent = getattr(correction, "target_intent", "")
+        if target_intent and agent_type:
+            saved_reward = self._hebbian.reward
+            self._hebbian.reward = self._feedback_hebbian_reward
+            try:
+                self._hebbian.record_interaction(
+                    source=target_intent,
+                    target=agent_type,
+                    success=retry_success,
+                    rel_type="intent",
+                )
+            finally:
+                self._hebbian.reward = saved_reward
+            agents_updated.append(agent_type)
+
+        # 2. Trust — small positive if retry succeeded
+        if retry_success and agent_type:
+            self._trust.record_outcome(agent_type, success=True)
+
+        # 3. Episodic memory — correction-tagged episode
+        episode_stored = False
+        if self._episodic:
+            from probos.types import Episode
+
+            feedback_label = (
+                "correction_applied" if retry_success else "correction_failed"
+            )
+            outcomes: list[dict[str, Any]] = [
+                {
+                    "intent": target_intent or agent_type,
+                    "human_feedback": feedback_label,
+                    "correction_type": correction_type,
+                    "corrected_values": corrected_values,
+                    "changes_description": changes_description,
+                    "retry_success": retry_success,
+                },
+            ]
+            dag_summary: dict[str, Any] = {
+                "correction_applied": True,
+                "agent_type": agent_type,
+                "correction_type": correction_type,
+                "corrected_values": corrected_values,
+            }
+            episode = Episode(
+                user_input=original_text,
+                timestamp=time.time(),
+                dag_summary=dag_summary,
+                outcomes=outcomes,
+                agent_ids=agents_updated,
+                reflection=f"Correction {feedback_label}: {changes_description}",
+            )
+            try:
+                await self._episodic.store(episode)
+                episode_stored = True
+            except Exception as e:
+                logger.warning("Failed to store correction episode: %s", e)
+
+        # 4. Event log
+        if self._event_log:
+            event_name = (
+                "feedback_correction_applied"
+                if retry_success
+                else "feedback_correction_failed"
+            )
+            try:
+                await self._event_log.log(
+                    category="cognitive",
+                    event=event_name,
+                    detail=json.dumps({
+                        "agent_type": agent_type,
+                        "correction_type": correction_type,
+                        "corrected_values": corrected_values,
+                        "changes_description": changes_description,
+                        "retry_success": retry_success,
+                        "text": original_text[:200],
+                    }),
+                )
+            except Exception:
+                pass
+
+        return FeedbackResult(
+            feedback_type="correction_applied" if retry_success else "correction_failed",
+            agents_updated=agents_updated,
+            episode_stored=episode_stored,
+            original_text=original_text,
+        )
+
     async def apply_rejection_feedback(
         self,
         proposal_text: str,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from probos.consensus.shapley import compute_shapley_values
 from probos.types import (
     AgentID,
     ConsensusOutcome,
@@ -92,6 +93,14 @@ class QuorumEngine:
             total_weight=total_weight,
             policy=policy,
         )
+
+        # Compute Shapley attribution (AD-224)
+        if votes and outcome != ConsensusOutcome.INSUFFICIENT:
+            result.shapley_values = compute_shapley_values(
+                votes,
+                approval_threshold=policy.approval_threshold,
+                use_confidence_weights=policy.use_confidence_weights,
+            )
 
         logger.info(
             "Quorum evaluated: proposal=%s outcome=%s approval=%.3f/%.3f "

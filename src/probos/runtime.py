@@ -185,6 +185,11 @@ class ProbOSRuntime:
         self._last_feedback_applied: bool = False
         self._last_execution_text: str | None = None
         self.feedback_engine: Any = None
+        # --- Shapley attribution (AD-224) ---
+        self._last_shapley_values: dict[str, float] | None = None
+        # --- Correction feedback (AD-229-232) ---
+        self._correction_detector: Any = None
+        self._agent_patcher: Any = None
 
         self._started = False
 
@@ -459,6 +464,17 @@ class ProbOSRuntime:
             event_log=self.event_log,
         )
 
+        # Create CorrectionDetector + AgentPatcher (AD-229, AD-230)
+        from probos.cognitive.correction_detector import CorrectionDetector
+        from probos.cognitive.agent_patcher import AgentPatcher
+        self._correction_detector = CorrectionDetector(llm_client=self.llm_client)
+        if hasattr(self, "self_mod_pipeline") and self.self_mod_pipeline:
+            self._agent_patcher = AgentPatcher(
+                llm_client=self.llm_client,
+                code_validator=self.self_mod_pipeline._validator,
+                sandbox=self.self_mod_pipeline._sandbox,
+            )
+
         # Initialize knowledge store (AD-159) and warm boot (AD-162)
         if self.config.knowledge.enabled:
             try:
@@ -681,6 +697,10 @@ class ProbOSRuntime:
         # Step 2: Evaluate quorum
         consensus = self.quorum_engine.evaluate(results, policy=policy)
 
+        # Store latest Shapley values for introspection (AD-224)
+        if consensus.shapley_values:
+            self._last_shapley_values = consensus.shapley_values
+
         await self.event_log.log(
             category="consensus",
             event="quorum_evaluated",
@@ -706,10 +726,17 @@ class ProbOSRuntime:
                         )
                         verification_results.append(vr)
 
-                        # Step 4: Update trust network
+                        # Step 4: Update trust network (AD-224: Shapley-weighted)
+                        shapley_weight = 1.0
+                        if consensus.shapley_values:
+                            shapley_weight = max(
+                                consensus.shapley_values.get(result.agent_id, 0.0),
+                                0.1,  # floor: even redundant agents get minimal update
+                            )
                         self.trust_network.record_outcome(
                             result.agent_id,
                             success=vr.verified,
+                            weight=shapley_weight,
                         )
 
                         # Step 5: Update hebbian (agent-to-agent)
@@ -861,6 +888,44 @@ class ProbOSRuntime:
                 self.dream_scheduler.engine.pre_warm_intents
             )
 
+        # AD-232: Check for correction BEFORE decomposition.
+        # The decomposer may turn "use http not https" into a new intent,
+        # so correction detection must run first.
+        if self._correction_detector and self._last_execution is not None:
+            try:
+                correction = await self._correction_detector.detect(
+                    user_text=text,
+                    last_execution_text=self._last_execution_text,
+                    last_execution_dag=self._last_execution,
+                    last_execution_success=self._was_last_execution_successful(),
+                )
+                if correction:
+                    record = self._find_designed_record(
+                        correction.target_agent_type,
+                    )
+                    if record and self._agent_patcher:
+                        patch_result = await self._agent_patcher.patch(
+                            record, correction,
+                            self._last_execution_text or text,
+                        )
+                        if patch_result.success:
+                            result = await self.apply_correction(
+                                correction, patch_result, record,
+                            )
+                            return {
+                                "results": {},
+                                "input": text,
+                                "correction": {
+                                    "success": result.success,
+                                    "agent_type": result.agent_type,
+                                    "changes": result.changes_description,
+                                    "retried": result.retried,
+                                    "retry_result": result.retry_result,
+                                },
+                            }
+            except Exception:
+                logger.debug("Correction detection failed", exc_info=True)
+
         dag = await self.decomposer.decompose(
             text, context=context, similar_episodes=similar_episodes or None,
         )
@@ -869,6 +934,7 @@ class ProbOSRuntime:
             await on_event("decompose_complete", {"dag": dag})
 
         if not dag.nodes:
+
             # Self-modification: try when the decomposer returned no intents.
             # Skip only if the response is a genuine conversational reply
             # (greeting, help text).  Capability-gap responses ("I don't
@@ -881,11 +947,17 @@ class ProbOSRuntime:
             ):
                 intent_meta = await self._extract_unhandled_intent(text)
                 if intent_meta:
+                    # Build execution context from prior execution (AD-235)
+                    exec_context = ""
+                    if self._last_execution and self._was_last_execution_successful():
+                        exec_context = self._format_execution_context()
+
                     record = await self.self_mod_pipeline.handle_unhandled_intent(
                         intent_name=intent_meta["name"],
                         intent_description=intent_meta["description"],
                         parameters=intent_meta.get("parameters", {}),
                         requires_consensus=intent_meta.get("requires_consensus", False),
+                        execution_context=exec_context,
                     )
                     if record and record.status == "active":
                         self_mod_result = {
@@ -1214,6 +1286,231 @@ class ProbOSRuntime:
         )
         self._last_feedback_applied = True
         return result
+
+    # ------------------------------------------------------------------
+    # Correction hot-reload (AD-231)
+    # ------------------------------------------------------------------
+
+    async def apply_correction(
+        self,
+        correction: Any,
+        patch_result: Any,
+        original_record: Any,
+    ) -> Any:
+        """Hot-reload a patched self-mod'd agent into the runtime."""
+        from probos.cognitive.agent_patcher import CorrectionResult
+
+        strategy = original_record.strategy
+        agent_type = original_record.agent_type
+
+        try:
+            if strategy == "skill":
+                await self._apply_skill_correction(
+                    correction, patch_result, original_record,
+                )
+            else:
+                await self._apply_agent_correction(
+                    correction, patch_result, original_record,
+                )
+        except Exception as exc:
+            logger.warning("apply_correction failed: %s", exc)
+            return CorrectionResult(
+                success=False,
+                agent_type=agent_type,
+                strategy=strategy,
+                changes_description=f"Hot-reload failed: {exc}",
+            )
+
+        # Update the record
+        original_record.source_code = patch_result.patched_source
+        original_record.status = "patched"
+
+        # Refresh decomposer descriptors
+        if hasattr(self, "decomposer") and self.decomposer:
+            try:
+                descriptors = self._collect_intent_descriptors()
+                self.decomposer.refresh_descriptors(descriptors)
+            except Exception:
+                pass
+
+        # Persist to knowledge store
+        if hasattr(self, "_knowledge_store") and self._knowledge_store:
+            try:
+                await self._knowledge_store.store_agent(
+                    original_record, patch_result.patched_source,
+                )
+            except Exception:
+                pass
+
+        # Auto-retry the original request
+        retry_result = None
+        retried = False
+        original_text = self._last_execution_text
+        if original_text:
+            try:
+                retried = True
+                import time as _time
+
+                retry_result = await self.process_natural_language(
+                    original_text, on_event=None,
+                )
+            except Exception as exc:
+                retry_result = {"error": str(exc)}
+
+        # Record correction feedback (AD-234)
+        retry_success = bool(
+            retried and retry_result and not retry_result.get("error")
+        )
+        if hasattr(self, "feedback_engine") and self.feedback_engine:
+            try:
+                await self.feedback_engine.apply_correction_feedback(
+                    original_text=original_text or "",
+                    correction=correction,
+                    patch_result=patch_result,
+                    retry_success=retry_success,
+                )
+            except Exception:
+                pass
+
+        return CorrectionResult(
+            success=True,
+            agent_type=agent_type,
+            strategy=strategy,
+            changes_description=patch_result.changes_description,
+            retried=retried,
+            retry_result=retry_result,
+        )
+
+    async def _apply_agent_correction(
+        self,
+        correction: Any,
+        patch_result: Any,
+        record: Any,
+    ) -> None:
+        """Hot-swap a patched agent class into the runtime."""
+        agent_type = record.agent_type
+        pool_name = f"designed_{agent_type}"
+        new_class = patch_result.agent_class
+
+        if new_class is None:
+            raise ValueError("PatchResult has no agent_class")
+
+        # Register the new class template
+        if hasattr(self, "_spawner") and hasattr(self._spawner, "_templates"):
+            self._spawner._templates[agent_type] = new_class
+
+        # Re-create pool agents with the new class
+        pool = self._pools.get(pool_name)
+        if pool:
+            for agent in list(pool.healthy_agents):
+                aid = agent.id if hasattr(agent, "id") else str(agent)
+                try:
+                    new_agent = new_class(
+                        pool=pool_name,
+                        llm_client=getattr(self, "llm_client", None),
+                    )
+                    new_agent._id = aid  # preserve agent identity
+                    self.registry.register(new_agent)
+                    self.intent_bus.subscribe(aid, new_agent.handle_intent)
+                    if hasattr(new_agent, "capabilities") and new_agent.capabilities:
+                        self.capability_registry.register(aid, new_agent.capabilities)
+                except Exception as exc:
+                    logger.warning("Failed to replace agent %s: %s", aid, exc)
+
+    async def _apply_skill_correction(
+        self,
+        correction: Any,
+        patch_result: Any,
+        record: Any,
+    ) -> None:
+        """Hot-swap a patched skill handler."""
+        from probos.types import IntentDescriptor, Skill
+        import time as _time
+
+        intent_name = correction.target_intent or record.intent_name
+        handler = patch_result.handler
+
+        if handler is None:
+            raise ValueError("PatchResult has no handler")
+
+        # Build a replacement skill
+        new_skill = Skill(
+            name=intent_name,
+            descriptor=IntentDescriptor(
+                name=intent_name,
+                description=correction.explanation or record.intent_name,
+            ),
+            source_code=patch_result.patched_source,
+            handler=handler,
+            created_at=_time.time(),
+            origin="patched",
+        )
+
+        # Find agents with the old skill and replace it
+        if hasattr(self, "_add_skill_to_agents"):
+            self._add_skill_to_agents(new_skill)
+
+    def _find_designed_record(self, agent_type: str) -> Any:
+        """Find the most recent active DesignedAgentRecord for an agent type."""
+        if not hasattr(self, "self_mod_pipeline") or not self.self_mod_pipeline:
+            return None
+        records = self.self_mod_pipeline._records
+        # Search in reverse (most recent first)
+        for record in reversed(records):
+            if record.agent_type == agent_type and record.status in (
+                "active", "patched",
+            ):
+                return record
+        return None
+
+    def _was_last_execution_successful(self) -> bool:
+        """Check whether the last execution had any failed nodes."""
+        if not self._last_execution:
+            return False
+        dag = self._last_execution.get("dag")
+        if dag is None:
+            return True  # No DAG info — assume success
+        nodes = getattr(dag, "nodes", [])
+        if not nodes:
+            return True
+        return all(
+            getattr(n, "status", "completed") == "completed"
+            for n in nodes
+        )
+
+    def _format_execution_context(self) -> str:
+        """Format last execution results as context for AgentDesigner (AD-235)."""
+        if not self._last_execution:
+            return ""
+
+        parts: list[str] = []
+        original_text = self._last_execution_text or ""
+        if original_text:
+            parts.append(f"Prior user request: {original_text!r}")
+
+        dag = self._last_execution.get("dag")
+        if dag is not None:
+            nodes = getattr(dag, "nodes", [])
+            for node in nodes:
+                intent = getattr(node, "intent", "?")
+                status = getattr(node, "status", "?")
+                params = getattr(node, "params", {})
+                result = getattr(node, "result", None)
+                result_summary = ""
+                if isinstance(result, dict):
+                    # Show key fields without flooding context
+                    for k in ("output", "result", "agent_id"):
+                        v = result.get(k)
+                        if v is not None:
+                            val = str(v)
+                            if len(val) > 200:
+                                val = val[:200] + "..."
+                            result_summary += f", {k}={val!r}"
+                parts.append(
+                    f"  [intent: {intent}, params: {params}, status: {status}{result_summary}]"
+                )
+
+        return "\n".join(parts) if parts else ""
 
     async def remove_proposal_node(self, node_index: int) -> TaskNode | None:
         """Remove a node from the pending proposal by 0-based index.

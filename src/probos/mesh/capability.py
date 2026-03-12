@@ -43,7 +43,11 @@ class CapabilityRegistry:
     def unregister(self, agent_id: AgentID) -> None:
         self._capabilities.pop(agent_id, None)
 
-    def query(self, intent: str) -> list[CapabilityMatch]:
+    def query(
+        self,
+        intent: str,
+        trust_scores: dict[str, float] | None = None,
+    ) -> list[CapabilityMatch]:
         """Find agents whose capabilities match the given intent string.
 
         Matching strategy (tiered):
@@ -51,6 +55,11 @@ class CapabilityRegistry:
         - Intent is a substring of `can` or vice versa → score 0.8
         - Semantic similarity via embeddings (if enabled) → score 0.6 * similarity
         - Any keyword from intent appears in `can` or `detail` → score 0.5
+
+        When ``trust_scores`` is provided (AD-225), the capability score is
+        weighted by trust: ``final = score * (0.5 + 0.5 * trust)``.  This
+        ensures trust never eliminates a match (floor at 50%) but favours
+        agents whose claims are backed by track record.
         """
         intent_lower = intent.lower()
         intent_keywords = set(intent_lower.replace("_", " ").split())
@@ -60,6 +69,10 @@ class CapabilityRegistry:
             for cap in caps:
                 score = self._score_match(intent_lower, intent_keywords, cap)
                 if score > 0.0:
+                    # Apply trust weighting (AD-225)
+                    if trust_scores is not None:
+                        trust = trust_scores.get(agent_id, 0.5)
+                        score = score * (0.5 + 0.5 * trust)
                     matches.append(CapabilityMatch(
                         agent_id=agent_id,
                         capability=cap,

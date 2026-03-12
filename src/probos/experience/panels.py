@@ -196,10 +196,14 @@ def render_status_panel(status: dict[str, Any]) -> Panel:
     return Panel("\n".join(lines), title="System Status", border_style="blue")
 
 
-def render_agent_table(agents: list[Any], trust_scores: dict[str, float]) -> Table:
+def render_agent_table(
+    agents: list[Any],
+    trust_scores: dict[str, float],
+    shapley_values: dict[str, float] | None = None,
+) -> Table:
     """Rich Table of all agents.
 
-    Columns: ID (8-char) | Type | Tier | Pool | State (coloured) | Confidence | Trust
+    Columns: ID (8-char) | Type | Tier | Pool | State (coloured) | Confidence | Trust | Shapley
     """
     table = Table(title="Agents", show_lines=False)
     table.add_column("ID", style="cyan", width=10)
@@ -209,6 +213,8 @@ def render_agent_table(agents: list[Any], trust_scores: dict[str, float]) -> Tab
     table.add_column("State")
     table.add_column("Confidence", justify="right")
     table.add_column("Trust", justify="right")
+    if shapley_values:
+        table.add_column("Shapley", justify="right")
 
     # Sort by pool then type
     sorted_agents = sorted(agents, key=lambda a: (a.pool, a.agent_type))
@@ -221,7 +227,7 @@ def render_agent_table(agents: list[Any], trust_scores: dict[str, float]) -> Tab
         trust = trust_scores.get(agent.id, 0.5)
         trust_text = Text(f"{trust:.2f}", style=_score_color(trust))
 
-        table.add_row(
+        row = [
             _truncate_id(agent.id),
             agent.agent_type,
             getattr(agent, "tier", "domain"),
@@ -229,7 +235,17 @@ def render_agent_table(agents: list[Any], trust_scores: dict[str, float]) -> Tab
             state_text,
             f"{agent.confidence:.2f}",
             trust_text,
-        )
+        ]
+
+        if shapley_values:
+            sv = shapley_values.get(agent.id)
+            if sv is not None:
+                label = "decisive" if sv >= 0.4 else "marginal" if sv >= 0.15 else "redundant"
+                row.append(Text(f"{sv:.2f} ({label})", style="dim"))
+            else:
+                row.append(Text("—", style="dim"))
+
+        table.add_row(*row)
 
     return table
 

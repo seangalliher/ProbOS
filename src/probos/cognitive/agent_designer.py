@@ -38,11 +38,17 @@ The agent MUST:
 6. Be self-contained (~30-60 lines)
 
 CognitiveAgent provides (you inherit these, do NOT redefine them):
-- perceive() — packages the IntentMessage as an observation dict
 - decide() — sends observation to LLM with instructions as system prompt
 - report() — packages result dict as IntentResult
 - handle_intent() — runs the full perceive->decide->act->report lifecycle
 - __init__(**kwargs) — extracts instructions, llm_client, runtime from kwargs
+
+You MAY override these:
+- perceive(intent) — packages IntentMessage as observation dict.
+  Override this when the intent requires REAL-TIME DATA from the internet
+  (e.g., fetching web pages, APIs, RSS feeds). Fetch the data here and
+  include it in the returned observation dict so decide() can process it.
+- act(decision) — parses the LLM output from decide() into structured results.
 
 act() receives a decision dict from decide():
   {{"action": "execute", "llm_output": "...", "tier_used": "..."}}
@@ -57,7 +63,37 @@ IntentResult signature (dataclass):
 IntentMessage signature (dataclass):
     IntentMessage(intent: str, params: dict, id: str = auto, source: str = "", priority: float = 0.5)
 
-TEMPLATE:
+WEB DATA FETCHING — when the intent requires real-time data from the internet:
+  Override perceive() to fetch the data and include it in the observation.
+  Use httpx for HTTP requests (it is in the allowed imports list).
+  The LLM in decide() will then process the REAL fetched content.
+
+  Example perceive() override for web-fetching agents:
+  ```python
+  async def perceive(self, intent) -> dict:
+      import httpx
+      params = intent.params if hasattr(intent, 'params') else intent.get('params', {{}})
+      url = params.get("url", "https://example.com")
+      fetched_content = ""
+      try:
+          async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+              resp = await client.get(url)
+              resp.raise_for_status()
+              fetched_content = resp.text[:8000]  # Truncate to fit LLM context
+      except Exception as e:
+          fetched_content = f"FETCH_ERROR: {{e}}"
+      obs = await super().perceive(intent)
+      obs["fetched_content"] = fetched_content
+      return obs
+  ```
+  The instructions string should tell the LLM to use the "fetched_content"
+  field in the observation to extract and format the results.
+
+  IMPORTANT: An LLM cannot browse the internet. If the intent requires
+  fetching live data (news, weather, web pages, APIs), you MUST override
+  perceive() to fetch it. Do NOT rely on the LLM to fetch URLs.
+
+TEMPLATE (pure LLM reasoning — use when no live data is needed):
 
 ```python
 from probos.cognitive.cognitive_agent import CognitiveAgent
@@ -91,18 +127,77 @@ class {class_name}(CognitiveAgent):
         return {{"success": True, "result": llm_output}}
 ```
 
+TEMPLATE (web-fetching — use when the intent needs live data from the internet):
+
+```python
+import httpx
+from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.types import IntentDescriptor
+
+class {class_name}(CognitiveAgent):
+    \"\"\"Cognitive agent for {intent_name} (web-fetching).\"\"\"
+
+    agent_type = "{agent_type}"
+    _handled_intents = {{"{intent_name}"}}
+    instructions = (
+        "You are a specialist for {intent_name} tasks. "
+        "You will receive fetched_content in the observation containing "
+        "real data from the internet. Parse and structure this content. "
+        "If fetched_content starts with FETCH_ERROR, report the error. "
+        "Respond with a clear, structured answer."
+    )
+    intent_descriptors = [
+        IntentDescriptor(
+            name="{intent_name}",
+            params={param_schema},
+            description="{intent_description}",
+            requires_consensus={requires_consensus},
+            requires_reflect=True,
+            tier="domain",
+        )
+    ]
+
+    async def perceive(self, intent) -> dict:
+        params = intent.params if hasattr(intent, 'params') else intent.get('params', {{}})
+        # Fetch live data — adapt URL construction to the domain
+        url = params.get("url", "https://example.com")
+        fetched_content = ""
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                fetched_content = resp.text[:8000]
+        except Exception as e:
+            fetched_content = f"FETCH_ERROR: {{e}}"
+        obs = await super().perceive(intent)
+        obs["fetched_content"] = fetched_content
+        return obs
+
+    async def act(self, decision: dict) -> dict:
+        if decision.get("action") == "error":
+            return {{"success": False, "error": decision.get("reason")}}
+        llm_output = decision.get("llm_output", "")
+        if "FETCH_ERROR" in llm_output:
+            return {{"success": False, "error": llm_output}}
+        return {{"success": True, "result": llm_output}}
+```
+
 INSTRUCTIONS GUIDELINES — the `instructions` string should include:
 - What domain this agent covers
 - What output format the agent should produce (so act() can parse it)
 - What constraints the agent operates under
 - How the agent should handle edge cases
 - That the agent should be concise and structured
+- If the agent fetches web data: how to parse the fetched_content field
 
 RULES:
 - Only use imports from this whitelist: {allowed_imports}, probos.cognitive.cognitive_agent
 - Do NOT use subprocess, eval, exec, __import__, socket, ctypes
-- Do NOT redefine perceive(), decide(), report(), handle_intent(), or __init__()
+- Do NOT redefine decide(), report(), handle_intent(), or __init__()
+- You MAY override perceive() for real-time data fetching (web, APIs, RSS)
+- You MAY override act() for structured output parsing
 - Do NOT import BaseAgent — use CognitiveAgent instead
+- If the intent requires fetching live data, you MUST override perceive()
 - The instructions string is the CORE output — make it detailed and specific
 - Return the COMPLETE Python file content, nothing else
 - No markdown code fences, no explanation, just the Python code
@@ -112,6 +207,13 @@ RESEARCH CONTEXT:
 
 Use the above research to inform your implementation.
 If research context says "No research available.", rely on your training knowledge.
+
+EXECUTION CONTEXT:
+{execution_context}
+
+If execution context is provided, use the known-working values (URLs, parameters,
+protocols) from the prior execution instead of guessing. This is critical for
+generating agents that use correct, tested values.
 
 {platform_context}
 """
@@ -138,6 +240,7 @@ class AgentDesigner:
         parameters: dict[str, str],
         requires_consensus: bool = False,
         research_context: str = "No research available.",
+        execution_context: str = "",
     ) -> str:
         """Generate agent source code for an unhandled intent.
 
@@ -157,6 +260,7 @@ class AgentDesigner:
             requires_consensus=requires_consensus,
             allowed_imports=", ".join(self._config.allowed_imports),
             research_context=research_context,
+            execution_context=execution_context or "No prior execution context available.",
             platform_context=get_platform_context(),
         )
 

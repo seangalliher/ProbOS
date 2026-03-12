@@ -95,6 +95,7 @@ class SelfModificationPipeline:
         intent_description: str,
         parameters: dict[str, str],
         requires_consensus: bool = False,
+        execution_context: str = "",
     ) -> DesignedAgentRecord | None:
         """Full pipeline: design -> validate -> sandbox -> register -> track.
 
@@ -150,6 +151,7 @@ class SelfModificationPipeline:
                 parameters=parameters,
                 requires_consensus=requires_consensus,
                 research_context=research_context,
+                execution_context=execution_context,
             )
         except Exception as e:
             logger.warning("Agent design failed for %s: %s", intent_name, e)

@@ -51,6 +51,7 @@ class ProbOSShell:
         "/approve":   "Execute pending proposal",
         "/reject":    "Discard pending proposal",
         "/feedback":  "Rate last execution (/feedback good|bad)",
+        "/correct":   "Correct the last execution (/correct <what to fix>)",
         "/explain":   "Explain what happened in the last NL request",
         "/model":     "Show LLM client type, endpoint, and tier config",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
@@ -170,6 +171,7 @@ class ProbOSShell:
             "/approve":   self._cmd_approve,
             "/reject":    self._cmd_reject,
             "/feedback":  self._cmd_feedback,
+            "/correct":   self._cmd_correct,
             "/explain":   self._cmd_explain,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
@@ -206,7 +208,8 @@ class ProbOSShell:
     async def _cmd_agents(self, arg: str) -> None:
         agents = self.runtime.registry.all()
         trust_scores = self.runtime.trust_network.all_scores()
-        self.console.print(panels.render_agent_table(agents, trust_scores))
+        shapley = getattr(self.runtime, '_last_shapley_values', None)
+        self.console.print(panels.render_agent_table(agents, trust_scores, shapley))
 
     async def _cmd_weights(self, arg: str) -> None:
         weights = self.runtime.hebbian_router.all_weights_typed()
@@ -600,6 +603,100 @@ class ProbOSShell:
             )
         else:
             self.console.print(f"[dim]Feedback ({label}) recorded.[/dim]")
+
+    async def _cmd_correct(self, arg: str) -> None:
+        """Explicit correction command: /correct <what to fix>."""
+        if not arg:
+            self.console.print(
+                "[dim]Usage: /correct <what to fix> — correct the last execution's behavior[/dim]"
+            )
+            return
+
+        if self.runtime._last_execution is None:
+            self.console.print("[yellow]No recent execution to correct.[/yellow]")
+            return
+
+        if not self.runtime._correction_detector:
+            self.console.print("[yellow]Correction detection is not enabled.[/yellow]")
+            return
+
+        # Detect correction signal
+        correction = await self.runtime._correction_detector.detect(
+            user_text=arg,
+            last_execution_text=self.runtime._last_execution_text,
+            last_execution_dag=self.runtime._last_execution,
+            last_execution_success=self.runtime._was_last_execution_successful(),
+        )
+
+        if correction is None:
+            self.console.print(
+                "[yellow]Could not interpret correction. "
+                "Try being more specific about what to change.[/yellow]"
+            )
+            return
+
+        # Find designed agent record
+        record = self.runtime._find_designed_record(correction.target_agent_type)
+        if record is None:
+            self.console.print(
+                f"[yellow]No designed agent found for '{correction.target_agent_type}'. "
+                f"Only self-designed agents can be corrected.[/yellow]"
+            )
+            return
+
+        if not self.runtime._agent_patcher:
+            self.console.print("[yellow]Agent patching is not enabled.[/yellow]")
+            return
+
+        # Patch the agent
+        self.console.print("[dim]Generating patched agent...[/dim]")
+        patch_result = await self.runtime._agent_patcher.patch(
+            record, correction, self.runtime._last_execution_text or arg,
+        )
+
+        if not patch_result.success:
+            self.console.print(
+                f"[red]Correction failed: patched code did not pass validation[/red]"
+            )
+            if patch_result.error:
+                self.console.print(f"  [red]Error: {patch_result.error}[/red]")
+            self.console.print(
+                "  [dim]You can try /feedback bad to mark this execution as negative.[/dim]"
+            )
+            return
+
+        # Apply correction (hot-reload + retry)
+        result = await self.runtime.apply_correction(
+            correction, patch_result, record,
+        )
+
+        if result.success:
+            self.console.print(
+                f"[green]Correction applied to {result.agent_type} agent[/green]"
+            )
+            if result.changes_description:
+                self.console.print(f"  [dim]Changed: {result.changes_description}[/dim]")
+            if result.retried:
+                if result.retry_result and result.retry_result.get("success"):
+                    total = result.retry_result.get("total", 0)
+                    ok = result.retry_result.get("completed", 0)
+                    self.console.print(
+                        f"  [dim]Retrying original request...[/dim]"
+                    )
+                    self.console.print(
+                        f"  [green]Retry successful — {ok}/{total} tasks completed[/green]"
+                    )
+                else:
+                    self.console.print(
+                        "  [yellow]Retry did not fully succeed.[/yellow]"
+                    )
+        else:
+            self.console.print(
+                f"[red]Correction could not be applied to {result.agent_type}[/red]"
+            )
+            self.console.print(
+                "  [dim]You can try /feedback bad to mark this execution as negative.[/dim]"
+            )
 
     async def _cmd_explain(self, arg: str) -> None:
         await self._handle_nl("what just happened?")

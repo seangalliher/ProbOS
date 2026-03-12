@@ -171,6 +171,8 @@ class CognitiveAgent(BaseAgent):
             parts.append(f"Parameters: {observation['params']}")
         if observation.get("context"):
             parts.append(f"Context: {observation['context']}")
+        if observation.get("fetched_content"):
+            parts.append(f"Fetched content:\n{observation['fetched_content']}")
         return "\n".join(parts)
 
     def _resolve_tier(self) -> str:
