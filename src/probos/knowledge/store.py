@@ -37,7 +37,7 @@ class KnowledgeStore:
         self._config = config
         # Resolve repo path: empty → ~/.probos/knowledge/
         if config.repo_path:
-            self._repo_path = Path(config.repo_path)
+            self._repo_path = Path(config.repo_path).expanduser()
         else:
             self._repo_path = Path.home() / ".probos" / "knowledge"
 

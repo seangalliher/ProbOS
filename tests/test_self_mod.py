@@ -290,7 +290,7 @@ class TestAgentDesigner:
             parameters={"text": "input text"},
         )
         assert "class CountWordsAgent" in source
-        assert "BaseAgent" in source
+        assert "CognitiveAgent" in source
         # Verify it's valid Python
         import ast
         ast.parse(source)

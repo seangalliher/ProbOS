@@ -33,6 +33,7 @@ class CodeValidator:
         # Also allow probos imports (needed for agent code)
         self._allowed_imports.update([
             "probos", "probos.substrate.agent", "probos.types",
+            "probos.cognitive.cognitive_agent",
         ])
         self._forbidden_patterns = config.forbidden_patterns
 
@@ -101,26 +102,29 @@ class CodeValidator:
 
     def _check_schema(self, tree: ast.Module) -> list[str]:
         """Verify AST contains:
-        - Exactly one class that appears to subclass BaseAgent
+        - Exactly one class that subclasses BaseAgent or CognitiveAgent
         - Class has 'intent_descriptors' assignment
-        - Class has 'handle_intent' async method
+        - Class has 'handle_intent' async method (required for BaseAgent, inherited for CognitiveAgent)
         - Class has 'agent_type' assignment
         - Class has '_handled_intents' assignment
         """
         errors: list[str] = []
         agent_classes = []
+        is_cognitive = False
 
         for node in ast.iter_child_nodes(tree):
             if isinstance(node, ast.ClassDef):
-                # Check if it subclasses BaseAgent
+                # Check if it subclasses BaseAgent or CognitiveAgent
                 for base in node.bases:
                     base_name = ""
                     if isinstance(base, ast.Name):
                         base_name = base.id
                     elif isinstance(base, ast.Attribute):
                         base_name = base.attr
-                    if base_name == "BaseAgent":
+                    if base_name in ("BaseAgent", "CognitiveAgent"):
                         agent_classes.append(node)
+                        if base_name == "CognitiveAgent":
+                            is_cognitive = True
 
         if not agent_classes:
             errors.append("No BaseAgent subclass found")
@@ -133,6 +137,7 @@ class CodeValidator:
         has_agent_type = False
         has_handled_intents = False
         has_handle_intent = False
+        has_instructions = False
 
         for item in cls.body:
             # Check assignments
@@ -145,6 +150,8 @@ class CodeValidator:
                             has_agent_type = True
                         elif target.id == "_handled_intents":
                             has_handled_intents = True
+                        elif target.id == "instructions":
+                            has_instructions = True
             elif isinstance(item, ast.AnnAssign):
                 if isinstance(item.target, ast.Name):
                     if item.target.id == "intent_descriptors":
@@ -153,6 +160,8 @@ class CodeValidator:
                         has_agent_type = True
                     elif item.target.id == "_handled_intents":
                         has_handled_intents = True
+                    elif item.target.id == "instructions":
+                        has_instructions = True
             # Check async methods
             elif isinstance(item, ast.AsyncFunctionDef):
                 if item.name == "handle_intent":
@@ -167,7 +176,8 @@ class CodeValidator:
             errors.append("Missing 'agent_type' class attribute")
         if not has_handled_intents:
             errors.append("Missing '_handled_intents' class attribute")
-        if not has_handle_intent:
+        # CognitiveAgent subclasses inherit handle_intent from CognitiveAgent
+        if not has_handle_intent and not is_cognitive:
             errors.append("Missing 'handle_intent' method")
 
         return errors

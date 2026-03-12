@@ -15,7 +15,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from probos.types import AgentState, DreamReport, FocusSnapshot, WorkflowCacheEntry
+from probos.types import AgentState, DreamReport, FocusSnapshot, TaskDAG, WorkflowCacheEntry
 
 # ---------------------------------------------------------------------------
 # Colour constants
@@ -788,3 +788,105 @@ def render_designed_panel(status: dict[str, Any], qa_reports: dict[str, Any] | N
             border_style="yellow",
         )
     return Panel(table, title=title, border_style="yellow")
+
+
+# Known consensus-gated intents (built-in)
+_CONSENSUS_INTENTS = {"write_file", "run_command", "http_fetch"}
+
+
+def render_dag_proposal(
+    dag: TaskDAG,
+    intent_descriptors: list[Any] | None = None,
+) -> Panel:
+    """Render a proposed TaskDAG as a numbered, human-readable plan.
+
+    Displays a Rich Table with node index, intent, params, dependencies
+    (mapped to indices), consensus flag, and reflect flag.
+    """
+    if not dag.nodes:
+        return Panel(
+            "[dim]Empty proposal — no tasks to execute.[/dim]",
+            title="Proposed Plan",
+            border_style="cyan",
+        )
+
+    # Build node ID → index mapping for readable dependency display
+    id_to_index: dict[str, int] = {}
+    for i, node in enumerate(dag.nodes):
+        id_to_index[node.id] = i
+
+    # Gather consensus-required intent names from descriptors if provided
+    consensus_names = set(_CONSENSUS_INTENTS)
+    if intent_descriptors:
+        for desc in intent_descriptors:
+            if getattr(desc, "requires_consensus", False):
+                consensus_names.add(desc.name)
+
+    table = Table(show_header=True, show_lines=False)
+    table.add_column("#", justify="right", width=3)
+    table.add_column("Intent")
+    table.add_column("Params", max_width=40)
+    table.add_column("Depends On", justify="center")
+    table.add_column("Consensus", justify="center")
+
+    for i, node in enumerate(dag.nodes):
+        # Format params
+        if node.params:
+            param_strs = []
+            for k, v in node.params.items():
+                val = str(v)
+                if len(val) > 30:
+                    val = val[:27] + "..."
+                param_strs.append(f"{k}={val}")
+            params_display = " ".join(param_strs)
+        else:
+            params_display = "-"
+
+        # Map dependency IDs to indices
+        if node.depends_on:
+            dep_indices = []
+            for dep_id in node.depends_on:
+                if dep_id in id_to_index:
+                    dep_indices.append(str(id_to_index[dep_id]))
+                else:
+                    dep_indices.append("?")
+            deps_display = ", ".join(dep_indices)
+        else:
+            deps_display = "-"
+
+        # Consensus flag
+        needs_consensus = node.use_consensus or node.intent in consensus_names
+        consensus_display = "[yellow]yes[/yellow]" if needs_consensus else "[dim]no[/dim]"
+
+        table.add_row(
+            str(i),
+            node.intent,
+            f"[dim]{params_display}[/dim]",
+            deps_display,
+            consensus_display,
+        )
+
+    lines_after: list[str] = []
+    if dag.reflect:
+        lines_after.append("")
+        lines_after.append("[dim]Post-execution reflection: enabled[/dim]")
+
+    title = (
+        "Proposed Plan -- /approve to execute, /reject to discard, "
+        "/plan remove N to remove a step"
+    )
+
+    if lines_after:
+        from io import StringIO
+        from rich.console import Console as _Console
+        buf = StringIO()
+        c = _Console(file=buf, width=120, force_terminal=True)
+        c.print(table)
+        table_str = buf.getvalue().rstrip()
+        return Panel(
+            table_str + "\n".join(lines_after),
+            title=title,
+            border_style="cyan",
+        )
+
+    return Panel(table, title=title, border_style="cyan")

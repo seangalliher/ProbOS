@@ -356,7 +356,7 @@ class TestSkillPipeline:
 
         attached_skills = []
 
-        async def mock_add_skill(skill):
+        async def mock_add_skill(skill, target_agent_type="skill_agent"):
             attached_skills.append(skill)
 
         pipeline = SelfModificationPipeline(
@@ -409,7 +409,7 @@ class TestSkillPipeline:
             set_trust_fn=lambda *a: asyncio.sleep(0),
             skill_designer=SkillDesigner(mock_llm, config),
             skill_validator=SkillValidator(config),
-            add_skill_fn=lambda s: asyncio.sleep(0),
+            add_skill_fn=lambda s, **kw: asyncio.sleep(0),
         )
 
         record = await pipeline.handle_add_skill(

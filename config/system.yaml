@@ -104,6 +104,86 @@ self_mod:
   enabled: true
   require_user_approval: true
   max_designed_agents: 5
+  allowed_imports:
+    # === Standard library — always available, no install needed ===
+    # Core
+    - asyncio
+    - pathlib
+    - json
+    - os
+    - sys
+    - re
+    - copy
+    - enum
+    - abc
+    - typing
+    - dataclasses
+    - contextlib
+    - functools
+    - itertools
+    - collections
+    - logging
+    - pprint
+    # Strings & text
+    - string
+    - textwrap
+    - difflib
+    # Numbers & math
+    - math
+    - statistics
+    - struct
+    - decimal
+    - fractions
+    - random
+    # Date & time
+    - datetime
+    - time
+    - calendar
+    # File & path
+    - io
+    - csv
+    - tempfile
+    - shutil
+    - glob
+    - fnmatch
+    # Encoding & hashing
+    - hashlib
+    - base64
+    - secrets
+    - uuid
+    # Web & parsing
+    - urllib
+    - urllib.parse
+    - urllib.request
+    - html
+    - html.parser
+    - xml
+    - xml.etree
+    - xml.etree.ElementTree
+    # Data formats
+    - tomllib
+    - configparser
+    # === Third-party — may need install via uv add ===
+    # Web & HTTP
+    - httpx
+    - feedparser
+    - bs4               # package: beautifulsoup4
+    - lxml
+    - chardet
+    # Data formats
+    - yaml              # package: pyyaml
+    - toml
+    # Data processing
+    - pandas
+    - numpy
+    - openpyxl
+    # Text & templates
+    - markdown
+    - jinja2
+    # Date parsing
+    - dateutil          # package: python-dateutil
+    # Table formatting
+    - tabulate
 
 qa:
   enabled: true                    # Phase 13: SystemQA smoke-tests designed agents (AD-153)

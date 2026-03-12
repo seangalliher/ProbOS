@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from probos.cognitive.llm_client import BaseLLMClient
 
 from probos.substrate.agent import BaseAgent
+from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.types import IntentMessage, IntentResult
 
 logger = logging.getLogger(__name__)
@@ -161,7 +162,7 @@ class SandboxRunner:
     def _find_agent_class(self, module: Any) -> type | None:
         """Find the BaseAgent subclass in a loaded module.
 
-        Must be a direct subclass of BaseAgent (not BaseAgent itself).
+        Must be a subclass of BaseAgent (not BaseAgent or CognitiveAgent itself).
         Must have intent_descriptors defined.
         """
         for name, obj in module.__dict__.items():
@@ -169,6 +170,7 @@ class SandboxRunner:
                 isinstance(obj, type)
                 and issubclass(obj, BaseAgent)
                 and obj is not BaseAgent
+                and obj is not CognitiveAgent
                 and hasattr(obj, "intent_descriptors")
                 and obj.intent_descriptors
             ):

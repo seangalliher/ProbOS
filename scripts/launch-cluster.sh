@@ -11,11 +11,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "Starting ProbOS node-1..."
-uv run python -m probos --config config/node-1.yaml &
+uv run python -m probos --config config/node-1.yaml --data-dir ./data/node-1 &
 PID1=$!
 
 echo "Starting ProbOS node-2..."
-uv run python -m probos --config config/node-2.yaml &
+uv run python -m probos --config config/node-2.yaml --data-dir ./data/node-2 &
 PID2=$!
 
 echo "ProbOS cluster running: node-1 (PID $PID1), node-2 (PID $PID2)"

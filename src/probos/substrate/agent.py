@@ -23,6 +23,7 @@ class BaseAgent(ABC):
 
     agent_type: str = "base"
     tier: str = "domain"  # "core", "utility", or "domain"
+    instructions: str | None = None  # Optional LLM instructions; CognitiveAgent requires them
     default_capabilities: list[CapabilityDescriptor] = []
     intent_descriptors: list[IntentDescriptor] = []
     initial_confidence: float = 0.8

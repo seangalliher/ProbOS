@@ -8,6 +8,80 @@ pools:
   default_pool_size: 3
   max_pool_size: 7
   min_pool_size: 2
+  spawn_cooldown_ms: 500
+  health_check_interval_seconds: 5
+
+mesh:
+  gossip_interval_ms: 1000
+  hebbian_decay_rate: 0.995
+  hebbian_reward: 0.05
+  signal_ttl_seconds: 30
+  capability_broadcast_interval_seconds: 5
+  semantic_matching: true
+
+consensus:
+  min_votes: 3
+  approval_threshold: 0.6
+  use_confidence_weights: true
+  verification_timeout_seconds: 5
+  red_team_pool_size: 2
+  trust_prior_alpha: 2.0
+  trust_prior_beta: 2.0
+  trust_decay_rate: 0.999
+
+cognitive:
+  default_llm_tier: "fast"
+
+  llm_base_url: "http://127.0.0.1:8080/v1"
+  llm_api_key: ""
+  llm_timeout_seconds: 30
+
+  llm_base_url_fast: "http://127.0.0.1:11434"
+  llm_api_key_fast: ""
+  llm_model_fast: "qwen3.5:35b"
+  llm_timeout_fast: 30
+  llm_api_format_fast: "ollama"
+
+  ollama_keep_alive: "30m"
+
+  llm_model_standard: "claude-sonnet-4.6"
+  llm_model_deep: "claude-opus-4.6"
+
+  working_memory_token_budget: 4000
+  decomposition_timeout_seconds: 30
+  dag_execution_timeout_seconds: 60
+  use_consensus_for_writes: true
+  max_concurrent_tasks: 8
+  attention_decay_rate: 0.95
+  focus_history_size: 10
+  background_demotion_factor: 0.25
+
+memory:
+  collection_name: "probos_episodes"
+  max_episodes: 100000
+  relevance_threshold: 0.7
+  similarity_threshold: 0.6
+
+dreaming:
+  idle_threshold_seconds: 300
+  dream_interval_seconds: 600
+  replay_episode_count: 50
+  pathway_strengthening_factor: 0.03
+  pathway_weakening_factor: 0.02
+  prune_threshold: 0.01
+  trust_boost: 0.1
+  trust_penalty: 0.1
+  pre_warm_top_k: 5
+
+scaling:
+  enabled: true
+  scale_up_threshold: 0.8
+  scale_down_threshold: 0.2
+  scale_up_step: 1
+  scale_down_step: 1
+  cooldown_seconds: 30
+  observation_window_seconds: 60
+  idle_scale_down_seconds: 120
 
 federation:
   enabled: true
@@ -19,3 +93,108 @@ federation:
   forward_timeout_ms: 5000
   gossip_interval_seconds: 10
   validate_remote_results: true
+
+self_mod:
+  enabled: true
+  require_user_approval: true
+  max_designed_agents: 5
+  allowed_imports:
+    # === Standard library — always available, no install needed ===
+    # Core
+    - asyncio
+    - pathlib
+    - json
+    - os
+    - sys
+    - re
+    - copy
+    - enum
+    - abc
+    - typing
+    - dataclasses
+    - contextlib
+    - functools
+    - itertools
+    - collections
+    - logging
+    - pprint
+    # Strings & text
+    - string
+    - textwrap
+    - difflib
+    # Numbers & math
+    - math
+    - statistics
+    - struct
+    - decimal
+    - fractions
+    - random
+    # Date & time
+    - datetime
+    - time
+    - calendar
+    # File & path
+    - io
+    - csv
+    - tempfile
+    - shutil
+    - glob
+    - fnmatch
+    # Encoding & hashing
+    - hashlib
+    - base64
+    - secrets
+    - uuid
+    # Web & parsing
+    - urllib
+    - urllib.parse
+    - urllib.request
+    - html
+    - html.parser
+    - xml
+    - xml.etree
+    - xml.etree.ElementTree
+    # Data formats
+    - tomllib
+    - configparser
+    # === Third-party — may need install via uv add ===
+    # Web & HTTP
+    - httpx
+    - feedparser
+    - bs4               # package: beautifulsoup4
+    - lxml
+    - chardet
+    # Data formats
+    - yaml              # package: pyyaml
+    - toml
+    # Data processing
+    - pandas
+    - numpy
+    - openpyxl
+    # Text & templates
+    - markdown
+    - jinja2
+    # Date parsing
+    - dateutil          # package: python-dateutil
+    # Table formatting
+    - tabulate
+
+qa:
+  enabled: true
+  smoke_test_count: 5
+  timeout_per_test_seconds: 10.0
+  total_timeout_seconds: 30.0
+  pass_threshold: 0.6
+  trust_reward_weight: 1.0
+  trust_penalty_weight: 2.0
+  flag_on_fail: true
+  auto_remove_on_total_fail: false
+
+knowledge:
+  enabled: true
+  repo_path: "~/.probos/knowledge-node-1"
+  auto_commit: true
+  commit_debounce_seconds: 5.0
+  max_episodes: 1000
+  max_workflows: 200
+  restore_on_boot: true

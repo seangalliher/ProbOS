@@ -540,7 +540,7 @@ class MockLLMClient(BaseLLMClient):
             )
 
         # Detect agent design requests (AGENT_DESIGN_PROMPT signature)
-        if "UNHANDLED INTENT:" in request.prompt and "Subclass BaseAgent" in request.prompt:
+        if "UNHANDLED INTENT:" in request.prompt and "CognitiveAgent" in request.prompt:
             content = self._make_agent_design_response(request.prompt)
             return LLMResponse(
                 content=content,
@@ -578,6 +578,24 @@ class MockLLMClient(BaseLLMClient):
         # Detect research synthesis requests
         if "DOCUMENTATION FETCHED:" in request.prompt and "reference section" in request.prompt:
             content = "Reference: Use the json module for parsing. Example: json.loads(data)."
+            return LLMResponse(
+                content=content,
+                model="mock",
+                tier=request.tier,
+                tokens_used=len(content) // 4,
+                cached=False,
+                request_id=request.id,
+            )
+
+        # Detect cognitive agent decide() calls — CognitiveAgent sends
+        # instructions as system_prompt and observation as user prompt.
+        # Must be after escalation/reflect/design/skill/research detectors.
+        if (
+            request.system_prompt
+            and "Intent:" in request.prompt
+            and "UNHANDLED INTENT:" not in request.prompt
+        ):
+            content = self._make_cognitive_decide_response(request)
             return LLMResponse(
                 content=content,
                 model="mock",
@@ -864,10 +882,10 @@ class MockLLMClient(BaseLLMClient):
         })
 
     def _make_agent_design_response(self, prompt: str) -> str:
-        """Generate a valid agent source code for an agent design request.
+        """Generate a valid CognitiveAgent subclass for an agent design request.
 
         Parses the intent name from the prompt and returns minimal valid
-        agent Python source code.
+        CognitiveAgent subclass Python source code.
         """
         # Extract intent name from the prompt
         name_match = re.search(r'Name:\s*(\w+)', prompt)
@@ -878,64 +896,35 @@ class MockLLMClient(BaseLLMClient):
         class_name = "".join(p.capitalize() for p in parts) + "Agent"
 
         return (
-            'from probos.substrate.agent import BaseAgent\n'
-            'from probos.types import IntentMessage, IntentResult, IntentDescriptor\n'
+            'from probos.cognitive.cognitive_agent import CognitiveAgent\n'
+            'from probos.types import IntentDescriptor\n'
             '\n'
-            f'class {class_name}(BaseAgent):\n'
-            f'    """Auto-generated agent for {intent_name}."""\n'
+            f'class {class_name}(CognitiveAgent):\n'
+            f'    """Cognitive agent for {intent_name}."""\n'
             '\n'
             f'    agent_type = "{intent_name}"\n'
-            f'    _handled_intents = ["{intent_name}"]\n'
+            f'    _handled_intents = {{"{intent_name}"}}\n'
+            '    instructions = (\n'
+            f'        "You are a specialist for {intent_name} tasks. "\n'
+            '        "Given the input parameters, produce a clear, structured response. "\n'
+            '        "Be concise and accurate."\n'
+            '    )\n'
             '    intent_descriptors = [\n'
             '        IntentDescriptor(\n'
             f'            name="{intent_name}",\n'
             '            params={"text": "input text"},\n'
             f'            description="Handle {intent_name} intent",\n'
             '            requires_consensus=False,\n'
-            '            requires_reflect=False,\n'
+            '            requires_reflect=True,\n'
+            '            tier="domain",\n'
             '        )\n'
             '    ]\n'
             '\n'
-            '    def __init__(self, **kwargs):\n'
-            '        super().__init__(**kwargs)\n'
-            '        self._llm_client = kwargs.get("llm_client")\n'
-            '\n'
-            '    async def perceive(self, intent):\n'
-            '        intent_name = intent.get("intent", "")\n'
-            '        if intent_name not in self._handled_intents:\n'
-            '            return None\n'
-            '        return {"intent": intent_name, "params": intent.get("params", {})}\n'
-            '\n'
-            '    async def decide(self, observation):\n'
-            '        return {"action": "process", "params": observation["params"]}\n'
-            '\n'
-            '    async def act(self, plan):\n'
-            '        text = plan.get("params", {}).get("text", "")\n'
-            '        count = len(text.split())\n'
-            '        return {"success": True, "data": {"result": count}}\n'
-            '\n'
-            '    async def report(self, result):\n'
-            '        return result\n'
-            '\n'
-            '    async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:\n'
-            '        if intent.intent not in self._handled_intents:\n'
-            '            return None\n'
-            '        observation = await self.perceive(intent.__dict__)\n'
-            '        if observation is None:\n'
-            '            return None\n'
-            '        plan = await self.decide(observation)\n'
-            '        result = await self.act(plan)\n'
-            '        report = await self.report(result)\n'
-            '        success = report.get("success", False)\n'
-            '        self.update_confidence(success)\n'
-            '        return IntentResult(\n'
-            '            intent_id=intent.id,\n'
-            '            agent_id=self.id,\n'
-            '            success=success,\n'
-            '            result=report.get("data"),\n'
-            '            error=report.get("error"),\n'
-            '            confidence=self.confidence,\n'
-            '        )\n'
+            '    async def act(self, decision: dict) -> dict:\n'
+            '        if decision.get("action") == "error":\n'
+            '            return {"success": False, "error": decision.get("reason")}\n'
+            '        llm_output = decision.get("llm_output", "")\n'
+            '        return {"success": True, "result": llm_output}\n'
         )
 
     def _make_skill_design_response(self, prompt: str) -> str:
@@ -989,3 +978,15 @@ class MockLLMClient(BaseLLMClient):
             "actual_values": {"text": user_text},
             "requires_consensus": False,
         })
+
+    def _make_cognitive_decide_response(self, request: LLMRequest) -> str:
+        """Generate a mock response for CognitiveAgent.decide() calls.
+
+        The request has instructions as system_prompt and an observation
+        as user prompt.  Returns a reasonable mock output that the
+        agent's act() can parse.
+        """
+        # Extract the intent name from the user prompt
+        intent_match = re.search(r'Intent:\s*(\w+)', request.prompt)
+        intent_name = intent_match.group(1) if intent_match else "unknown"
+        return f"Mock cognitive response for {intent_name}: processed successfully."

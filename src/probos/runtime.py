@@ -50,6 +50,8 @@ from probos.types import (
     IntentResult,
     NodeSelfModel,
     QuorumPolicy,
+    TaskDAG,
+    TaskNode,
 )
 
 logger = logging.getLogger(__name__)
@@ -174,6 +176,15 @@ class ProbOSRuntime:
         # --- Execution history (for introspection) ---
         self._last_execution: dict[str, Any] | None = None
         self._previous_execution: dict[str, Any] | None = None
+
+        # --- DAG Proposal mode (AD-204) ---
+        self._pending_proposal: TaskDAG | None = None
+        self._pending_proposal_text: str = ""
+
+        # --- Feedback-to-learning (AD-219) ---
+        self._last_feedback_applied: bool = False
+        self._last_execution_text: str | None = None
+        self.feedback_engine: Any = None
 
         self._started = False
 
@@ -369,6 +380,7 @@ class ProbOSRuntime:
         if self.config.self_mod.enabled:
             from probos.cognitive.agent_designer import AgentDesigner
             from probos.cognitive.code_validator import CodeValidator
+            from probos.cognitive.dependency_resolver import DependencyResolver
             from probos.cognitive.sandbox import SandboxRunner
             from probos.cognitive.behavioral_monitor import BehavioralMonitor
             from probos.cognitive.self_mod import SelfModificationPipeline
@@ -381,6 +393,9 @@ class ProbOSRuntime:
             self.behavioral_monitor = BehavioralMonitor()
             skill_designer = SkillDesigner(self.llm_client, self.config.self_mod)
             skill_validator = SkillValidator(self.config.self_mod)
+            dependency_resolver = DependencyResolver(
+                allowed_imports=self.config.self_mod.allowed_imports,
+            )
 
             # Optional research phase
             research = None
@@ -406,6 +421,8 @@ class ProbOSRuntime:
                 skill_validator=skill_validator,
                 add_skill_fn=self._add_skill_to_agents,
                 research=research,
+                dependency_resolver=dependency_resolver,
+                event_log=self.event_log,
             )
             logger.info("Self-modification pipeline enabled")
 
@@ -432,6 +449,15 @@ class ProbOSRuntime:
         # Start episodic memory if provided
         if self.episodic_memory:
             await self.episodic_memory.start()
+
+        # Create FeedbackEngine (AD-219)
+        from probos.cognitive.feedback import FeedbackEngine
+        self.feedback_engine = FeedbackEngine(
+            trust_network=self.trust_network,
+            hebbian_router=self.hebbian_router,
+            episodic_memory=self.episodic_memory,
+            event_log=self.event_log,
+        )
 
         # Initialize knowledge store (AD-159) and warm boot (AD-162)
         if self.config.knowledge.enabled:
@@ -791,6 +817,10 @@ class ProbOSRuntime:
         """
         t_start = time.monotonic()
 
+        # Reset feedback state for new execution (AD-219)
+        self._last_feedback_applied = False
+        self._last_execution_text = text
+
         # Snapshot previous execution for introspection (prevents self-overwrite)
         self._previous_execution = self._last_execution
 
@@ -912,7 +942,30 @@ class ProbOSRuntime:
         for node in dag.nodes:
             self.working_memory.record_intent(node.intent, node.params)
 
-        # 3. Execute DAG through mesh + consensus
+        # 3. Execute DAG through shared path
+        execution_result = await self._execute_dag(
+            dag, text, t_start, on_event=on_event,
+        )
+
+        return execution_result
+
+    async def _execute_dag(
+        self,
+        dag: TaskDAG,
+        text: str,
+        t_start: float,
+        on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> dict[str, Any]:
+        """Execute a TaskDAG through the full pipeline.
+
+        Shared by ``process_natural_language()`` and ``execute_proposal()``.
+        Pipeline: DAG execution via mesh + consensus → reflect → episodic
+        storage → workflow cache.
+        """
+        # Reset feedback state (AD-219)
+        self._last_feedback_applied = False
+
+        # Execute DAG through mesh + consensus
         execution_result = await self.dag_executor.execute(dag, on_event=on_event)
 
         # Record results in working memory
@@ -973,10 +1026,224 @@ class ProbOSRuntime:
             if all_success:
                 self.workflow_cache.store(text, dag)
 
-        # Store execution result for introspection
+        # Store execution result for introspection (AD-219: include DAG for feedback)
+        execution_result["dag"] = dag
         self._last_execution = execution_result
 
         return execution_result
+
+    # ------------------------------------------------------------------
+    # DAG Proposal Mode (AD-204, AD-205)
+    # ------------------------------------------------------------------
+
+    async def propose(
+        self,
+        text: str,
+        on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> TaskDAG:
+        """Decompose NL into a TaskDAG without executing it.
+
+        Runs the same pre-decomposition steps as ``process_natural_language()``
+        (attention focus, dream scheduler, pre-warm intents, episodic recall)
+        but does NOT execute the DAG.  Stores the result as
+        ``_pending_proposal`` for later ``execute_proposal()`` or
+        ``reject_proposal()``.
+        """
+        # Track activity for dream scheduler
+        self._last_request_time = time.monotonic()
+        if self.dream_scheduler:
+            self.dream_scheduler.record_activity()
+
+        # Update attention focus with current request
+        self.attention.update_focus(intent=text, context=text)
+
+        # Assemble working memory context
+        context = self.working_memory.assemble(
+            registry=self.registry,
+            trust_network=self.trust_network,
+            hebbian_router=self.hebbian_router,
+            capability_list=[
+                cap.can
+                for caps in self.capability_registry._capabilities.values()
+                for cap in caps
+            ] if hasattr(self.capability_registry, '_capabilities') else [],
+        )
+
+        # Recall similar past episodes
+        similar_episodes = None
+        if self.episodic_memory:
+            try:
+                similar_episodes = await self.episodic_memory.recall(text, k=3)
+            except Exception as e:
+                logger.warning("Episode recall failed: %s", e)
+
+        # Sync pre-warm intents from dreaming engine to decomposer
+        if self.dream_scheduler and self.dream_scheduler.last_dream_report:
+            self.decomposer.pre_warm_intents = (
+                self.dream_scheduler.engine.pre_warm_intents
+            )
+
+        dag = await self.decomposer.decompose(
+            text, context=context, similar_episodes=similar_episodes or None,
+        )
+
+        # Store as pending proposal (replaces any existing proposal)
+        if dag.nodes and not dag.response:
+            self._pending_proposal = dag
+            self._pending_proposal_text = text
+        elif dag.response and not dag.nodes:
+            # Conversational or capability-gap — no proposal to store
+            self._pending_proposal = None
+            self._pending_proposal_text = ""
+        else:
+            # Has both nodes and response, or capability gap with nodes
+            self._pending_proposal = dag
+            self._pending_proposal_text = text
+
+        # Log proposal_created event (AD-209)
+        if self._pending_proposal is not None and dag.nodes:
+            await self.event_log.log(
+                category="cognitive",
+                event="proposal_created",
+                detail=f"text={text[:80]}, node_count={len(dag.nodes)}",
+            )
+
+        return dag
+
+    async def execute_proposal(
+        self,
+        on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> dict[str, Any] | None:
+        """Execute the pending proposal through the normal DAG pipeline.
+
+        Returns the executed DAG result, or None if no pending proposal.
+        Clears ``_pending_proposal`` after execution.
+        """
+        if self._pending_proposal is None:
+            return None
+
+        dag = self._pending_proposal
+        text = self._pending_proposal_text
+        t_start = time.monotonic()
+
+        # Track execution text for feedback (AD-219)
+        self._last_execution_text = text
+
+        # Clear pending proposal before execution
+        self._pending_proposal = None
+        self._pending_proposal_text = ""
+
+        if not dag.nodes:
+            return None
+
+        # Log proposal_approved event (AD-209)
+        await self.event_log.log(
+            category="cognitive",
+            event="proposal_approved",
+            detail=f"node_count={len(dag.nodes)}",
+        )
+
+        # Snapshot previous execution for introspection
+        self._previous_execution = self._last_execution
+
+        # Record intents in working memory
+        for node in dag.nodes:
+            self.working_memory.record_intent(node.intent, node.params)
+
+        # Execute through the shared pipeline
+        execution_result = await self._execute_dag(
+            dag, text, t_start, on_event=on_event,
+        )
+
+        return execution_result
+
+    async def reject_proposal(self) -> bool:
+        """Discard the pending proposal.
+
+        Returns True if there was a proposal to reject, False otherwise.
+        Also records rejection feedback if FeedbackEngine is available (AD-219).
+        """
+        if self._pending_proposal is None:
+            return False
+        node_count = len(self._pending_proposal.nodes)
+        proposal_text = self._pending_proposal_text
+        proposal_dag = self._pending_proposal
+
+        self._pending_proposal = None
+        self._pending_proposal_text = ""
+        # Log proposal_rejected event (AD-209)
+        await self.event_log.log(
+            category="cognitive",
+            event="proposal_rejected",
+            detail=f"node_count={node_count}",
+        )
+
+        # Record rejection feedback (AD-219)
+        if self.feedback_engine and proposal_dag.nodes:
+            try:
+                await self.feedback_engine.apply_rejection_feedback(
+                    proposal_text, proposal_dag,
+                )
+            except Exception:
+                pass  # Never block on feedback failure
+
+        return True
+
+    async def record_feedback(self, positive: bool) -> Any:
+        """Record user feedback on the most recent execution.
+
+        Returns FeedbackResult if successful, None if no execution or
+        already rated.
+        """
+        if self._last_execution is None:
+            return None
+        if self._last_feedback_applied:
+            return None
+        if not self.feedback_engine:
+            return None
+
+        # Extract the DAG from the last execution
+        dag = self._last_execution.get("dag")
+        if dag is None:
+            return None
+
+        original_text = self._last_execution_text or ""
+
+        result = await self.feedback_engine.apply_execution_feedback(
+            dag, positive, original_text,
+        )
+        self._last_feedback_applied = True
+        return result
+
+    async def remove_proposal_node(self, node_index: int) -> TaskNode | None:
+        """Remove a node from the pending proposal by 0-based index.
+
+        Returns the removed node, or None if the index is out of range
+        or there is no pending proposal.  After removal, cleans up
+        dependency references in remaining nodes (removes the deleted
+        node's ID from their ``depends_on`` lists).
+        """
+        if self._pending_proposal is None:
+            return None
+        nodes = self._pending_proposal.nodes
+        if node_index < 0 or node_index >= len(nodes):
+            return None
+
+        removed = nodes.pop(node_index)
+
+        # Clean up dependency references
+        for node in nodes:
+            if removed.id in node.depends_on:
+                node.depends_on.remove(removed.id)
+
+        # Log proposal_node_removed event (AD-209)
+        await self.event_log.log(
+            category="cognitive",
+            event="proposal_node_removed",
+            detail=f"removed_intent={removed.intent}, remaining_count={len(nodes)}",
+        )
+
+        return removed
 
     def status(self) -> dict[str, Any]:
         """Return a snapshot of the full system state."""
@@ -1365,27 +1632,67 @@ class ProbOSRuntime:
         """Return agent types that have LLM client access.
 
         The runtime knows because it injected llm_client into these agents.
+        Includes SkillBasedAgent, IntrospectionAgent, and any CognitiveAgent subclasses.
         """
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+
         types: set[str] = set()
         if self.pools.get("skills"):
             types.add("skill_agent")
         if self.pools.get("introspect"):
             types.add("introspection")
+        # Include all CognitiveAgent subclasses across all pools
+        for pool in self.pools.values():
+            for agent_id in pool.healthy_agents:
+                agent = self.registry.get(agent_id)
+                if agent and isinstance(agent, CognitiveAgent):
+                    types.add(agent.agent_type)
         return types
 
-    async def _add_skill_to_agents(self, skill: Any) -> None:
-        """Add a skill to all agents in the skills pool.
+    def _get_agent_classes(self) -> dict[str, type]:
+        """Return a mapping of agent_type -> agent class for registered agents.
 
-        After adding, refresh decomposer descriptors so the new intent
-        is available for decomposition.
+        Used by StrategyRecommender to read instructions from cognitive agents.
         """
-        pool = self.pools.get("skills")
-        if not pool:
-            return
-        for agent_id in pool.healthy_agents:
-            agent = self.registry.get(agent_id)
-            if agent and isinstance(agent, SkillBasedAgent):
-                agent.add_skill(skill)
+        classes: dict[str, type] = {}
+        for pool in self.pools.values():
+            for agent_id in pool.healthy_agents:
+                agent = self.registry.get(agent_id)
+                if agent and agent.agent_type not in classes:
+                    classes[agent.agent_type] = type(agent)
+        return classes
+
+    async def _add_skill_to_agents(self, skill: Any, target_agent_type: str = "skill_agent") -> None:
+        """Add a skill to agents of the target type across all pools.
+
+        If no agents of the target type are found, falls back to
+        SkillBasedAgent instances in the skills pool (backward compat).
+        After adding, refresh decomposer descriptors.
+        """
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+
+        attached = False
+
+        # Search all pools for agents matching the target type
+        if target_agent_type != "skill_agent":
+            for pool in self.pools.values():
+                for agent_id in pool.healthy_agents:
+                    agent = self.registry.get(agent_id)
+                    if agent and agent.agent_type == target_agent_type:
+                        if hasattr(agent, "add_skill"):
+                            agent.add_skill(skill)
+                            attached = True
+
+        # Fall back to SkillBasedAgent in skills pool if no target found
+        if not attached:
+            pool = self.pools.get("skills")
+            if pool:
+                for agent_id in pool.healthy_agents:
+                    agent = self.registry.get(agent_id)
+                    if agent and isinstance(agent, SkillBasedAgent):
+                        agent.add_skill(skill)
+                        attached = True
+
         # Refresh descriptors
         self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
 

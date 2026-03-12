@@ -47,6 +47,10 @@ class ProbOSShell:
         "/qa":        "Show QA status for designed agents (/qa [agent_type])",
         "/knowledge": "Show knowledge store status and history",
         "/rollback":  "Rollback a knowledge artifact (/rollback <type> <id>)",
+        "/plan":      "Propose a plan (/plan <text> | /plan remove N | /plan)",
+        "/approve":   "Execute pending proposal",
+        "/reject":    "Discard pending proposal",
+        "/feedback":  "Rate last execution (/feedback good|bad)",
         "/explain":   "Explain what happened in the last NL request",
         "/model":     "Show LLM client type, endpoint, and tier config",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
@@ -78,6 +82,12 @@ class ProbOSShell:
             self.runtime.self_mod_pipeline._user_approval_fn = (
                 self._user_self_mod_approval
             )
+
+            # Wire dependency resolver approval callback (AD-214)
+            if self.runtime.self_mod_pipeline._dependency_resolver:
+                self.runtime.self_mod_pipeline._dependency_resolver._approval_fn = (
+                    self._user_dep_install_approval
+                )
 
     # ------------------------------------------------------------------
     # Health and prompt
@@ -156,6 +166,10 @@ class ProbOSShell:
             "/qa":        self._cmd_qa,
             "/knowledge": self._cmd_knowledge,
             "/rollback":  self._cmd_rollback,
+            "/plan":      self._cmd_plan,
+            "/approve":   self._cmd_approve,
+            "/reject":    self._cmd_reject,
+            "/feedback":  self._cmd_feedback,
             "/explain":   self._cmd_explain,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
@@ -378,6 +392,215 @@ class ProbOSShell:
         success = await ks.rollback_artifact(artifact_type, identifier)
         self.console.print(render_rollback_result(artifact_type, identifier, success))
 
+    async def _cmd_plan(self, arg: str) -> None:
+        """Handle /plan command: propose, re-display, or remove nodes."""
+        from probos.cognitive.decomposer import is_capability_gap
+        from probos.experience.panels import render_dag_proposal
+
+        # /plan remove N
+        if arg.startswith("remove "):
+            remainder = arg[len("remove "):].strip()
+            if not remainder:
+                self.console.print("[yellow]Usage: /plan remove <N>[/yellow]")
+                return
+            if self.runtime._pending_proposal is None:
+                self.console.print("[yellow]No pending proposal.[/yellow]")
+                return
+            try:
+                idx = int(remainder)
+            except ValueError:
+                self.console.print(
+                    "[red]Invalid node index. Use /plan to see current proposal.[/red]"
+                )
+                return
+            removed = await self.runtime.remove_proposal_node(idx)
+            if removed is None:
+                self.console.print(
+                    "[red]Invalid node index. Use /plan to see current proposal.[/red]"
+                )
+                return
+            self.console.print(f"[dim]Removed step {idx}: {removed.intent}[/dim]")
+            # Re-display updated proposal
+            dag = self.runtime._pending_proposal
+            if dag and dag.nodes:
+                self.console.print(render_dag_proposal(dag))
+            else:
+                self.console.print("[dim]Proposal is now empty.[/dim]")
+            return
+
+        # /plan (no args) — re-display pending proposal
+        if not arg:
+            if self.runtime._pending_proposal is not None and self.runtime._pending_proposal.nodes:
+                self.console.print(render_dag_proposal(self.runtime._pending_proposal))
+            elif self.runtime._pending_proposal is not None:
+                self.console.print("[dim]Pending proposal is empty (all steps removed).[/dim]")
+            else:
+                self.console.print("[yellow]Usage: /plan <text> to propose a plan[/yellow]")
+            return
+
+        # /plan <text> — propose a new plan
+        self.console.print(f"\n[bold]> /plan {arg}[/bold]")
+        with self.console.status(
+            "[bold blue]Decomposing intent...[/bold blue]",
+            spinner="dots",
+        ):
+            dag = await self.runtime.propose(arg)
+
+        if not dag.nodes:
+            is_gap = dag.capability_gap or (dag.response and is_capability_gap(dag.response))
+            if dag.response and not is_gap:
+                self.console.print(f"[cyan]{dag.response}[/cyan]")
+                return
+
+            # Capability gap — trigger self-mod flow same as normal NL
+            if dag.response:
+                self.console.print(f"[dim]{dag.response}[/dim]")
+
+            if self.runtime.self_mod_pipeline:
+                with self.console.status(
+                    "[bold yellow]Analyzing unhandled request...[/bold yellow]",
+                    spinner="dots",
+                ):
+                    intent_meta = await self.runtime._extract_unhandled_intent(arg)
+                if intent_meta:
+                    self.console.print(
+                        f"[yellow]Capability gap detected: {intent_meta['name']}[/yellow]"
+                    )
+            else:
+                self.console.print("[yellow]No actionable intents recognized.[/yellow]")
+            return
+
+        # Display proposed plan
+        self.console.print(render_dag_proposal(dag))
+        self.console.print(
+            "[dim]Use /approve to execute, /reject to discard, "
+            "or /plan remove N to remove a step[/dim]"
+        )
+
+    async def _cmd_approve(self, arg: str) -> None:
+        """Execute the pending proposal."""
+        if self.runtime._pending_proposal is None:
+            self.console.print(
+                "[yellow]No pending proposal. Use /plan <text> to create one.[/yellow]"
+            )
+            return
+
+        if not self.runtime._pending_proposal.nodes:
+            self.console.print("[yellow]Proposal is empty — nothing to execute.[/yellow]")
+            await self.runtime.reject_proposal()
+            return
+
+        dag = self.runtime._pending_proposal
+        node_count = len(dag.nodes)
+        self.console.print(f"[bold]Executing {node_count} task(s)...[/bold]")
+
+        # Execute through the renderer's event tracking
+        self.renderer._current_dag = dag
+        self.renderer._node_statuses = {n.id: "pending" for n in dag.nodes}
+
+        self.renderer._status = self.console.status(
+            f"[bold blue]Executing {node_count} task(s)...[/bold blue]",
+            spinner="dots",
+        )
+        self.renderer._status.start()
+        try:
+            execution_result = await self.runtime.execute_proposal(
+                on_event=self.renderer._on_execution_event,
+            )
+        finally:
+            if self.renderer._status is not None:
+                self.renderer._status.stop()
+                self.renderer._status = None
+
+        if execution_result is None:
+            self.console.print("[yellow]No pending proposal.[/yellow]")
+            return
+
+        # Print progress table
+        self.console.print(self.renderer._build_progress_table())
+
+        # Force reflect for intents whose descriptors say requires_reflect
+        if not dag.reflect and dag.nodes:
+            reflect_intents: set[str] = set()
+            for desc in self.runtime._collect_intent_descriptors():
+                if desc.requires_reflect:
+                    reflect_intents.add(desc.name)
+            if self.runtime.self_mod_pipeline:
+                for r in self.runtime.self_mod_pipeline._records:
+                    if r.status == "active":
+                        reflect_intents.add(r.intent_name)
+            if any(n.intent in reflect_intents for n in dag.nodes):
+                dag.reflect = True
+
+        # Reflect if needed (already done in _execute_dag for the runtime path)
+        # But we need to check if it wasn't done there
+        if "reflection" not in execution_result and dag.reflect and dag.nodes:
+            with self.console.status(
+                "[bold blue]Reflecting on results...[/bold blue]",
+                spinner="dots",
+            ):
+                try:
+                    reflect_timeout = self.runtime.config.cognitive.decomposition_timeout_seconds
+                    reflection = await asyncio.wait_for(
+                        self.runtime.decomposer.reflect(
+                            execution_result.get("input", ""),
+                            execution_result,
+                        ),
+                        timeout=reflect_timeout,
+                    )
+                    execution_result["reflection"] = reflection
+                except Exception:
+                    execution_result["reflection"] = (
+                        "(Reflection unavailable -- results shown above)"
+                    )
+
+        # Show results
+        from probos.experience.panels import render_dag_result
+        self.console.print(render_dag_result(execution_result, debug=self.debug))
+
+        # Store execution result for introspection
+        self.runtime._last_execution = execution_result
+
+    async def _cmd_reject(self, arg: str) -> None:
+        """Discard the pending proposal."""
+        if await self.runtime.reject_proposal():
+            self.console.print("[dim]Proposal discarded. Feedback recorded for future planning.[/dim]")
+        else:
+            self.console.print("[yellow]No pending proposal.[/yellow]")
+
+    async def _cmd_feedback(self, arg: str) -> None:
+        """Rate the last execution: /feedback good|bad."""
+        arg = arg.strip().lower()
+        if arg not in ("good", "bad"):
+            self.console.print(
+                "[dim]Usage: /feedback good|bad — rate the last execution[/dim]"
+            )
+            return
+
+        if not hasattr(self.runtime, '_last_execution') or self.runtime._last_execution is None:
+            self.console.print("[yellow]No recent execution to rate.[/yellow]")
+            return
+
+        if getattr(self.runtime, '_last_feedback_applied', False):
+            self.console.print("[yellow]Feedback already recorded for this execution.[/yellow]")
+            return
+
+        positive = arg == "good"
+        result = await self.runtime.record_feedback(positive)
+        if result is None:
+            self.console.print("[yellow]Could not record feedback.[/yellow]")
+            return
+
+        label = "positive" if positive else "negative"
+        agents = result.agents_updated
+        if agents:
+            self.console.print(
+                f"[dim]Feedback ({label}) applied to {len(agents)} agent(s). "
+                f"Trust and routing weights updated.[/dim]"
+            )
+        else:
+            self.console.print(f"[dim]Feedback ({label}) recorded.[/dim]")
+
     async def _cmd_explain(self, arg: str) -> None:
         await self._handle_nl("what just happened?")
 
@@ -586,6 +809,32 @@ class ProbOSShell:
         try:
             response = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: input("  Approve? [y/n]: ").strip().lower()
+            )
+            return response in ("y", "yes")
+        except (EOFError, KeyboardInterrupt):
+            return False
+
+    # ------------------------------------------------------------------
+    # Dependency install approval callback (AD-214)
+    # ------------------------------------------------------------------
+
+    async def _user_dep_install_approval(self, packages: list[str]) -> bool:
+        """Prompt the user to approve package installation."""
+        # Stop any active spinner so the user can interact with stdin
+        if self.renderer._status is not None:
+            self.renderer._status.stop()
+            self.renderer._status = None
+
+        self.console.print(
+            "\n[yellow bold]This agent requires packages that are not installed:[/yellow bold]"
+        )
+        for pkg in packages:
+            self.console.print(f"  [bold]\u2022[/bold] {pkg}")
+        self.console.print()
+
+        try:
+            response = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: input("Install with uv add? [y/n]: ").strip().lower()
             )
             return response in ("y", "yes")
         except (EOFError, KeyboardInterrupt):

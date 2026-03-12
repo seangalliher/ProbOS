@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -12,10 +13,12 @@ if TYPE_CHECKING:
     from probos.cognitive.agent_designer import AgentDesigner
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
     from probos.cognitive.code_validator import CodeValidator
+    from probos.cognitive.dependency_resolver import DependencyResolver
     from probos.cognitive.sandbox import SandboxRunner
     from probos.cognitive.skill_designer import SkillDesigner
     from probos.cognitive.skill_validator import SkillValidator
     from probos.config import SelfModConfig
+    from probos.substrate.event_log import EventLog
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +46,12 @@ class SelfModificationPipeline:
     2. Ask user for approval to design an agent (if require_user_approval)
     3. Call AgentDesigner to generate code
     4. Call CodeValidator to statically analyze code
-    5. Call SandboxRunner to test-execute the agent
-    6. Register the agent type via register_fn callback
-    7. Create a pool for the new agent type
-    8. Set probationary trust for all agents in the new pool
-    9. Track with BehavioralMonitor
+    5. DependencyResolver — detect missing packages, prompt user, install
+    6. Call SandboxRunner to test-execute the agent
+    7. Register the agent type via register_fn callback
+    8. Create a pool for the new agent type
+    9. Set probationary trust for all agents in the new pool
+    10. Track with BehavioralMonitor
     """
 
     def __init__(
@@ -65,6 +69,8 @@ class SelfModificationPipeline:
         skill_validator: SkillValidator | None = None,
         add_skill_fn: Callable | None = None,
         research: Any = None,
+        dependency_resolver: DependencyResolver | None = None,
+        event_log: EventLog | None = None,
     ) -> None:
         self._designer = designer
         self._validator = validator
@@ -79,6 +85,8 @@ class SelfModificationPipeline:
         self._skill_validator = skill_validator
         self._add_skill_fn = add_skill_fn
         self._research = research
+        self._dependency_resolver = dependency_resolver
+        self._event_log = event_log
         self._records: list[DesignedAgentRecord] = []
 
     async def handle_unhandled_intent(
@@ -164,6 +172,56 @@ class SelfModificationPipeline:
             )
             self._records.append(record)
             return None
+
+        # 2b. Dependency resolution (AD-213)
+        if self._dependency_resolver:
+            missing = self._dependency_resolver.detect_missing(source_code)
+            # AD-215: dependency_check event
+            if self._event_log:
+                await self._event_log.log(
+                    category="self_mod", event="dependency_check",
+                    detail=json.dumps({"source": "agent", "missing_count": len(missing), "missing": missing}),
+                )
+            dep_result = await self._dependency_resolver.resolve(source_code)
+            if (dep_result.installed or dep_result.failed) and self._event_log:
+                all_packages = dep_result.installed + dep_result.failed
+                await self._event_log.log(
+                    category="self_mod", event="dependency_install_approved",
+                    detail=json.dumps({"packages": all_packages}),
+                )
+            if dep_result.installed and self._event_log:
+                for pkg in dep_result.installed:
+                    await self._event_log.log(
+                        category="self_mod", event="dependency_install_success",
+                        detail=json.dumps({"package": pkg, "import_name": pkg}),
+                    )
+            if dep_result.declined and self._event_log:
+                await self._event_log.log(
+                    category="self_mod", event="dependency_install_declined",
+                    detail=json.dumps({"packages": dep_result.declined}),
+                )
+            if dep_result.failed and self._event_log:
+                for pkg in dep_result.failed:
+                    await self._event_log.log(
+                        category="self_mod", event="dependency_install_failed",
+                        detail=json.dumps({"package": pkg, "error": dep_result.error or "unknown"}),
+                    )
+            if not dep_result.success:
+                reason = "dependencies_declined" if dep_result.declined else "dependencies_failed"
+                logger.warning(
+                    "Dependency resolution failed for %s: %s",
+                    intent_name, dep_result.error or reason,
+                )
+                record = DesignedAgentRecord(
+                    intent_name=intent_name,
+                    agent_type=agent_type,
+                    class_name=class_name,
+                    source_code=source_code,
+                    created_at=time.monotonic(),
+                    status=reason,
+                )
+                self._records.append(record)
+                return None
 
         # 3. Sandbox test
         sandbox_result = await self._sandbox.test_agent(
@@ -282,6 +340,57 @@ class SelfModificationPipeline:
             self._records.append(record)
             return None
 
+        # 2b. Dependency resolution for skills (AD-213)
+        if self._dependency_resolver:
+            missing = self._dependency_resolver.detect_missing(source_code)
+            # AD-215: dependency_check event
+            if self._event_log:
+                await self._event_log.log(
+                    category="self_mod", event="dependency_check",
+                    detail=json.dumps({"source": "skill", "missing_count": len(missing), "missing": missing}),
+                )
+            dep_result = await self._dependency_resolver.resolve(source_code)
+            if (dep_result.installed or dep_result.failed) and self._event_log:
+                all_packages = dep_result.installed + dep_result.failed
+                await self._event_log.log(
+                    category="self_mod", event="dependency_install_approved",
+                    detail=json.dumps({"packages": all_packages}),
+                )
+            if dep_result.installed and self._event_log:
+                for pkg in dep_result.installed:
+                    await self._event_log.log(
+                        category="self_mod", event="dependency_install_success",
+                        detail=json.dumps({"package": pkg, "import_name": pkg}),
+                    )
+            if dep_result.declined and self._event_log:
+                await self._event_log.log(
+                    category="self_mod", event="dependency_install_declined",
+                    detail=json.dumps({"packages": dep_result.declined}),
+                )
+            if dep_result.failed and self._event_log:
+                for pkg in dep_result.failed:
+                    await self._event_log.log(
+                        category="self_mod", event="dependency_install_failed",
+                        detail=json.dumps({"package": pkg, "error": dep_result.error or "unknown"}),
+                    )
+            if not dep_result.success:
+                reason = "dependencies_declined" if dep_result.declined else "dependencies_failed"
+                logger.warning(
+                    "Skill dependency resolution failed for %s: %s",
+                    intent_name, dep_result.error or reason,
+                )
+                record = DesignedAgentRecord(
+                    intent_name=intent_name,
+                    agent_type=target_agent_type,
+                    class_name=self._skill_designer._build_function_name(intent_name),
+                    source_code=source_code,
+                    created_at=time.monotonic(),
+                    status=reason,
+                    strategy="skill",
+                )
+                self._records.append(record)
+                return None
+
         # 3. Compile the handler function
         handler = None
         try:
@@ -340,7 +449,7 @@ class SelfModificationPipeline:
 
         # 5. Attach to skill agents via callback
         try:
-            await self._add_skill_fn(skill)
+            await self._add_skill_fn(skill, target_agent_type=target_agent_type)
         except Exception as e:
             logger.warning("Skill attachment failed for %s: %s", intent_name, e)
             return None

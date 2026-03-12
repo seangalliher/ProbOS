@@ -23,14 +23,32 @@ UNHANDLED INTENT:
   Description: {intent_description}
   Parameters: {parameters}
 
-Your job is to write a Python agent class that handles this intent.
+Your job is to write a CognitiveAgent subclass that handles this intent.
+CognitiveAgent is a base class where decide() consults an LLM guided by
+per-agent instructions.  You write the instructions (system prompt) —
+the LLM does the reasoning at runtime.
+
 The agent MUST:
-1. Subclass BaseAgent
-2. Define intent_descriptors as a class variable
-3. Implement handle_intent(self, intent: IntentMessage) -> IntentResult
-4. Implement the four lifecycle methods: perceive, decide, act, report
-5. Return IntentResult with the correct fields (see signature below)
-6. Be self-contained (~50-100 lines)
+1. Subclass CognitiveAgent (NOT BaseAgent)
+2. Define an `instructions` class attribute — a detailed system prompt that
+   tells the LLM how to reason about this domain
+3. Define `intent_descriptors` as a class variable
+4. Define `agent_type` and `_handled_intents`
+5. Override `act()` to parse the LLM's output into structured results
+6. Be self-contained (~30-60 lines)
+
+CognitiveAgent provides (you inherit these, do NOT redefine them):
+- perceive() — packages the IntentMessage as an observation dict
+- decide() — sends observation to LLM with instructions as system prompt
+- report() — packages result dict as IntentResult
+- handle_intent() — runs the full perceive->decide->act->report lifecycle
+- __init__(**kwargs) — extracts instructions, llm_client, runtime from kwargs
+
+act() receives a decision dict from decide():
+  {{"action": "execute", "llm_output": "...", "tier_used": "..."}}
+  OR {{"action": "error", "reason": "..."}}
+Your act() override should parse the llm_output string. The base class
+act() just returns the raw string — override it for structured output.
 
 IntentResult signature (dataclass):
     IntentResult(intent_id: str, agent_id: str, success: bool, result: Any = None, error: str | None = None, confidence: float = 0.0)
@@ -39,70 +57,22 @@ IntentResult signature (dataclass):
 IntentMessage signature (dataclass):
     IntentMessage(intent: str, params: dict, id: str = auto, source: str = "", priority: float = 0.5)
 
-BaseAgent key attributes (inherited via super().__init__):
-    self.id          — the agent's unique ID (NOT self.agent_id)
-    self.pool        — pool name
-    self.confidence  — current confidence score
-
-LLM ACCESS (for inference — translation, summarization, creative writing):
-    self._llm_client is an LLM client injected at runtime (may be None in sandbox).
-    Use ONLY for tasks where the LLM itself is the tool — translation, summarization,
-    creative writing, text analysis, reformatting. Do NOT use the LLM to answer factual
-    questions — it has no internet access and may hallucinate.
-
-        from probos.types import LLMRequest
-        request = LLMRequest(prompt="Your detailed prompt here...", tier="standard", max_tokens=2048)
-        response = await self._llm_client.complete(request)
-        result_text = response.content  # the LLM's text response
-
-    IMPORTANT: Always check `if self._llm_client:` before calling it.
-    If self._llm_client is None (sandbox testing), return a placeholder result.
-    Use max_tokens=2048 or higher for tasks that need detailed, thorough output.
-    Write clear, specific prompts that tell the LLM exactly what you want and
-    how detailed the response should be.
-
-MESH ACCESS (for external data — web lookups, factual questions, current info):
-    self._runtime is injected at runtime (may be None in sandbox).
-    Use it to dispatch sub-intents to other agents via the intent bus.
-    For any task that needs external/real-world data (person lookup, web search,
-    current events, factual questions), dispatch an http_fetch sub-intent.
-
-    For GENERAL WEB SEARCH (people, topics, current events), use DuckDuckGo HTML search:
-
-        import urllib.parse
-        from probos.types import IntentMessage as IM
-        query = urllib.parse.quote_plus(search_terms)
-        url = f"https://html.duckduckgo.com/html/?q={{query}}"
-        fetch_intent = IM(intent="http_fetch", params={{"url": url, "method": "GET"}})
-        results = await self._runtime.intent_bus.broadcast(fetch_intent, timeout=15.0)
-        successful = [r for r in results if r.success]
-        if successful:
-            raw_html = successful[0].result["body"]
-            # Parse search results from HTML, then optionally use self._llm_client
-            # to summarize/synthesize the fetched content
-
-    For KNOWN TOPICS (specific Wikipedia articles), use the Wikipedia REST API:
-
-        fetch_intent = IM(intent="http_fetch", params={{"url": "https://en.wikipedia.org/api/rest_v1/page/summary/Python_(programming_language)", "method": "GET"}})
-        results = await self._runtime.intent_bus.broadcast(fetch_intent, timeout=15.0)
-
-    IMPORTANT: Always check `if self._runtime:` before using it.
-    If self._runtime is None (sandbox testing), return a placeholder result.
-    For factual/knowledge tasks, ALWAYS fetch from the web first, then optionally
-    use the LLM to synthesize/summarize the fetched content. NEVER use the LLM
-    alone to answer factual questions — it cannot access the internet.
-
-TEMPLATE (fill in the implementation):
+TEMPLATE:
 
 ```python
-from probos.substrate.agent import BaseAgent
-from probos.types import IntentMessage, IntentResult, IntentDescriptor, LLMRequest
+from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.types import IntentDescriptor
 
-class {class_name}(BaseAgent):
-    \"\"\"Auto-generated agent for {intent_name}.\"\"\"
+class {class_name}(CognitiveAgent):
+    \"\"\"Cognitive agent for {intent_name}.\"\"\"
 
     agent_type = "{agent_type}"
-    _handled_intents = ["{intent_name}"]
+    _handled_intents = {{"{intent_name}"}}
+    instructions = (
+        "You are a specialist for {intent_name} tasks. "
+        "... describe the domain, reasoning approach, output format ... "
+        "Respond with a clear, structured answer."
+    )
     intent_descriptors = [
         IntentDescriptor(
             name="{intent_name}",
@@ -110,59 +80,32 @@ class {class_name}(BaseAgent):
             description="{intent_description}",
             requires_consensus={requires_consensus},
             requires_reflect=True,
+            tier="domain",
         )
     ]
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._llm_client = kwargs.get("llm_client")
-
-    async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
-        if intent.intent not in self._handled_intents:
-            return None
-        # YOUR IMPLEMENTATION HERE
-
-    async def perceive(self, intent: dict) -> any:
-        intent_name = intent.get("intent", "")
-        if intent_name not in self._handled_intents:
-            return None
-        return {{"intent": intent_name, "params": intent.get("params", {{}})}}
-
-    async def decide(self, observation: any) -> any:
-        if observation is None:
-            return None
-        return {{"action": observation["intent"], "params": observation["params"]}}
-
-    async def act(self, plan: any) -> any:
-        if plan is None:
-            return {{"success": False, "error": "No plan"}}
-        from probos.types import IntentMessage as IM
-        intent = IM(intent=plan["action"], params=plan["params"])
-        result = await self.handle_intent(intent)
-        if result is None:
-            return {{"success": False, "error": "Unhandled"}}
-        return result.result if result.result else {{"success": result.success}}
-
-    async def report(self, result: any) -> dict:
-        return result if isinstance(result, dict) else {{"result": result}}
+    async def act(self, decision: dict) -> dict:
+        if decision.get("action") == "error":
+            return {{"success": False, "error": decision.get("reason")}}
+        llm_output = decision.get("llm_output", "")
+        return {{"success": True, "result": llm_output}}
 ```
 
+INSTRUCTIONS GUIDELINES — the `instructions` string should include:
+- What domain this agent covers
+- What output format the agent should produce (so act() can parse it)
+- What constraints the agent operates under
+- How the agent should handle edge cases
+- That the agent should be concise and structured
+
 RULES:
-- Only use imports from this whitelist: {allowed_imports}, probos.types.LLMRequest
+- Only use imports from this whitelist: {allowed_imports}, probos.cognitive.cognitive_agent
 - Do NOT use subprocess, eval, exec, __import__, socket, ctypes
-- Do NOT write files (no open() with 'w' mode) — use the existing FileWriterAgent for writes
-- Do NOT make direct network calls (no socket, no urllib.request, no httpx) — \
-dispatch http_fetch sub-intents through self._runtime.intent_bus instead
-- You MUST keep the __init__(self, **kwargs) that calls super().__init__(**kwargs) AND self._llm_client = kwargs.get("llm_client") exactly as shown
-- For INFERENCE tasks (translation, summarization, creative writing, text analysis), use self._llm_client
-- For EXTERNAL DATA tasks (person/topic lookup, factual questions, current events, \
-web search), use self._runtime.intent_bus to dispatch http_fetch sub-intents, \
-then optionally use self._llm_client to synthesize the fetched content
-- NEVER use self._llm_client alone to answer factual/knowledge questions — it has \
-no internet access and will hallucinate
+- Do NOT redefine perceive(), decide(), report(), handle_intent(), or __init__()
+- Do NOT import BaseAgent — use CognitiveAgent instead
+- The instructions string is the CORE output — make it detailed and specific
 - Return the COMPLETE Python file content, nothing else
 - No markdown code fences, no explanation, just the Python code
-- You MUST include ALL four lifecycle methods (perceive, decide, act, report) exactly as shown in the template
 
 RESEARCH CONTEXT:
 {research_context}

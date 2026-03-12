@@ -171,6 +171,9 @@ class ExecutionRenderer:
                         llm_equipped_types=self.runtime._get_llm_equipped_types()
                         if hasattr(self.runtime, "_get_llm_equipped_types")
                         else set(),
+                        agent_classes=self.runtime._get_agent_classes()
+                        if hasattr(self.runtime, "_get_agent_classes")
+                        else None,
                     )
                     proposal = recommender.propose(
                         intent_name=intent_meta["name"],
@@ -207,7 +210,11 @@ class ExecutionRenderer:
                                 f"  [{i}] {star}{opt.label}  "
                                 f"(confidence: {opt.confidence})"
                             )
-                            if opt.target_agent_type:
+                            if opt.target_agent_type and opt.target_agent_type != "skill_agent":
+                                self.console.print(
+                                    f"      Target: {opt.target_agent_type} (domain match)"
+                                )
+                            elif opt.target_agent_type:
                                 self.console.print(
                                     f"      Target: {opt.target_agent_type} (has LLM access)"
                                 )
@@ -241,27 +248,39 @@ class ExecutionRenderer:
                             if chosen_option.strategy == "add_skill" and hasattr(
                                 self.runtime.self_mod_pipeline, "handle_add_skill"
                             ):
-                                with self.console.status(
+                                self._status = self.console.status(
                                     "[bold yellow]Designing skill...[/bold yellow]",
                                     spinner="dots",
-                                ):
+                                )
+                                self._status.start()
+                                try:
                                     record = await self.runtime.self_mod_pipeline.handle_add_skill(
                                         intent_name=intent_meta["name"],
                                         intent_description=intent_meta["description"],
                                         parameters=intent_meta.get("parameters", {}),
                                         target_agent_type=chosen_option.target_agent_type or "skill_agent",
                                     )
+                                finally:
+                                    if self._status is not None:
+                                        self._status.stop()
+                                        self._status = None
                             else:
-                                with self.console.status(
+                                self._status = self.console.status(
                                     "[bold yellow]Designing agent...[/bold yellow]",
                                     spinner="dots",
-                                ):
+                                )
+                                self._status.start()
+                                try:
                                     record = await self.runtime.self_mod_pipeline.handle_unhandled_intent(
                                         intent_name=intent_meta["name"],
                                         intent_description=intent_meta["description"],
                                         parameters=intent_meta.get("parameters", {}),
                                         requires_consensus=intent_meta.get("requires_consensus", False),
                                     )
+                                finally:
+                                    if self._status is not None:
+                                        self._status.stop()
+                                        self._status = None
                         finally:
                             self.runtime.self_mod_pipeline._user_approval_fn = orig_approval
 
