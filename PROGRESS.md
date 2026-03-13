@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 22 — Bundled Agent Suite + Distribution (1520/1520 tests + 11 skipped)
+## Current Status: Phase 23 — HXI MVP "See Your AI Thinking" (1532/1532 tests + 11 skipped)
 
 ---
 
@@ -2407,11 +2407,78 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 
 ---
 
+### Phase 23 — HXI MVP: "See Your AI Thinking" (AD-254 through AD-261)
+
+**Track A (Python — AD-254):** Enriched event stream
+- `runtime.py`: `add_event_listener()` / `remove_event_listener()` / `_emit_event()` — fire-and-forget event dispatch to registered listeners
+- `build_state_snapshot()` — full system state serialized on WebSocket connect (agents, connections, pools, system_mode, tc_n, routing_entropy)
+- Instrumented events: `agent_state` (on wire), `trust_update` (after record_outcome), `hebbian_update` (after record_interaction), `consensus` (after quorum evaluate), `system_mode` (pre/post dream)
+- `dreaming.py`: Added `_pre_dream_fn` callback to DreamScheduler, symmetric with existing `_post_dream_fn`
+
+**Track A (Python — AD-260):** Serve integration
+- `api.py`: CORS middleware for HXI dev server (`localhost:5173`), event listener bridge (runtime → WebSocket), state_snapshot on WS connect, static file serving from `ui/dist/`
+- `__main__.py`: `probos serve` auto-opens browser via `webbrowser.open()`
+- Fallback HTML when `ui/dist/` not built
+
+**Track B (TypeScript/React/Three.js — AD-255 through AD-259):**
+- `ui/package.json`: Vite + React 19 + Three.js + R3F + Zustand + postprocessing
+- `ui/src/store/types.ts`: Full TypeScript type definitions matching Python event schema
+- `ui/src/store/useStore.ts`: Zustand reactive state — handles all event types, computes spatial layout (pool-based radial arrangement)
+- `ui/src/hooks/useWebSocket.ts`: Auto-reconnecting WebSocket with exponential backoff
+- `ui/src/canvas/scene.ts`: HXI visual palette — trust spectrum (amber→blue→violet), pool tints, system mode color grading, confidence→intensity mapping
+- `ui/src/canvas/agents.tsx`: Instanced mesh rendering — per-instance trust color, confidence glow, breathing animation
+- `ui/src/canvas/connections.tsx`: Quadratic bezier Hebbian curves with weight-based opacity
+- `ui/src/canvas/effects.tsx`: Bloom post-processing with mode-based grading
+- `ui/src/canvas/animations.tsx`: Heartbeat pulse, consensus golden flash, self-mod bloom flare, intent routing trace
+- `ui/src/components/CognitiveCanvas.tsx`: Three.js scene — ACES tone mapping, orbit controls, dark-field background
+- `ui/src/components/IntentSurface.tsx`: Chat input + DAG node status visualization (top overlay)
+- `ui/src/components/DecisionSurface.tsx`: Status bar (connection, agent count, health, mode, TC_N, H(r)), feedback strip (approve/correct/reject)
+
+**Track D (Python tests — AD-261):**
+
+| Test | What it validates |
+|------|-------------------|
+| `test_add_event_listener` | Listener registration |
+| `test_remove_event_listener` | Listener removal |
+| `test_remove_nonexistent_listener` | No-crash on removing unregistered listener |
+| `test_emit_event_calls_listeners` | Event delivery to all listeners |
+| `test_emit_no_listeners` | No-crash on emission with no listeners |
+| `test_failing_listener_doesnt_crash_others` | Error isolation between listeners |
+| `test_event_timestamps_increasing` | Monotonic timestamps |
+| `test_state_snapshot_structure` | Snapshot has required keys |
+| `test_state_snapshot_json_serializable` | JSON round-trip clean |
+| `test_state_snapshot_has_agents` | Agent entries have all fields |
+| `test_agent_state_emitted_on_wire` | agent_state fires during boot |
+| `test_system_mode_event_on_dream` | dreaming → idle mode transition events |
+
+**Files changed/created:**
+
+| File | Change |
+|------|--------|
+| `src/probos/runtime.py` | `_event_listeners`, `add_event_listener()`, `remove_event_listener()`, `_emit_event()`, `build_state_snapshot()`, `_on_pre_dream()`. Instrumented `_wire_agent()`, `submit_intent()`, `submit_intent_with_consensus()`, `_run_qa_for_designed_agent()` |
+| `src/probos/api.py` | CORS, event listener bridge, state_snapshot on WS connect, static file serving, fallback HTML |
+| `src/probos/cognitive/dreaming.py` | `_pre_dream_fn` callback in DreamScheduler |
+| `src/probos/__main__.py` | `webbrowser.open()` in serve command |
+| `tests/test_hxi_events.py` | **New.** 12 tests for HXI event system |
+| `ui/` | **New.** Full TypeScript/React/Three.js frontend (14 source files) |
+
+#### Phase 23 design notes
+
+- **Facade pattern honored** — HXI has zero independent logic. All state comes from the runtime via WebSocket events. If the connection drops, the canvas freezes but ProbOS keeps working. Reconnect delivers a full `state_snapshot` to resync
+- **Event listeners are synchronous** — `_emit_event` calls listeners in a tight loop with exception swallowing. This avoids introducing async complexity at the event emission boundary. The API bridge schedules WebSocket sends as asyncio tasks via `_broadcast_event`
+- **Layout is deterministic** — agents are positioned radially by pool in a fixed order. No force simulation (saves complexity; pools don't move). The visual weight comes from trust/confidence mapping, not from layout dynamics
+- **Three.js not optional** — bloom, instanced mesh, tone mapping are impossible in SVG/Canvas2D. The rendering system handles hundreds of instances when federation adds cross-node agents
+- **`hasattr` guards in api.py** — `create_app()` accepts a raw runtime object. Pre-existing tests use a `FakeRuntime` without `add_event_listener`. Guards prevent breakage
+
+1532/1532 tests passing (+ 11 skipped). 12 new tests.
+
+---
+
 ## Active Roadmap — Product + Emergence Track
 
 **Strategic goal:** Build a personal AI assistant that (1) is useful on Day 1 with bundled agents, (2) gets smarter with use via self-modification and learning, (3) produces a "wow" visualization via the HXI, (4) enables the Noöplex thesis to be tested via federation. Each milestone has a clear demo moment and measurable outcome.
 
-**Current phase: 23 (HXI MVP)**
+**Current phase: 24 (Channel Integration)**
 
 ### Phase 22: Bundled Agent Suite + Distribution — "Useful on Day 1" ✅ COMPLETE
 **Goal:** Make ProbOS installable and immediately useful without waiting for self-mod to generate agents.
@@ -2422,13 +2489,14 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 - **Demo moment:** `pip install probos && probos init && probos serve` — ask it anything, it works
 - **Result:** 1520/1520 tests passing (+ 11 skipped). 66 new tests (50 bundled agent + 16 distribution)
 
-### Phase 23: HXI MVP — "See Your AI Thinking"
+### Phase 23: HXI MVP — "See Your AI Thinking" ✅ COMPLETE
 **Goal:** Browser-based visualization of the cognitive mesh — the product differentiator. The GIF that gets shared.
-- Track A (Python): Enriched WebSocket event stream — typed events for all system dynamics (agent lifecycle, trust, Hebbian, consensus, dream cycles, self-mod). State snapshot on connect
-- Track B (TypeScript/React/Three.js): Cognitive Canvas — dark-field WebGL, luminous agent nodes (trust-spectrum colors, confidence glow), Hebbian connection curves, bloom post-processing. React overlays: Intent Surface (chat + DAG display), Decision Surface (results + feedback)
-- Animations: heartbeat pulse, consensus golden flash, self-mod bloom, dream mode color shift, intent routing traces, agent breathing
-- `probos serve` serves HXI as static files, auto-opens browser
+- ✅ Track A (Python): Enriched WebSocket event stream — typed events for all system dynamics (agent lifecycle, trust, Hebbian, consensus, dream cycles, self-mod). State snapshot on connect
+- ✅ Track B (TypeScript/React/Three.js): Cognitive Canvas — dark-field WebGL, luminous agent nodes (trust-spectrum colors, confidence glow), Hebbian connection curves, bloom post-processing. React overlays: Intent Surface (chat + DAG display), Decision Surface (results + feedback)
+- ✅ Animations: heartbeat pulse, consensus golden flash, self-mod bloom, dream mode color shift, intent routing traces, agent breathing
+- ✅ `probos serve` serves HXI as static files, auto-opens browser
 - **Demo moment:** Open browser, watch agents coordinate on your request in real time. The animated GIF that makes people install ProbOS.
+- **Result:** 1532/1532 tests passing (+ 11 skipped). 12 new tests. 14 new TypeScript source files.
 
 ### Phase 24: Channel Integration — "Talk to ProbOS Anywhere"
 **Goal:** Connect ProbOS to messaging channels so users interact on platforms they already use.
@@ -2453,13 +2521,15 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 - Corrections (Phase 18b) train the squad on architectural preferences
 - **Demo moment:** Describe a feature → squad proposes implementation → you review → approve → tests pass → merged
 
-### Phase 27: Abstract Representation + Meta-Learning — "An AI That Learns Concepts"
-**Goal:** The system learns principles from experience and gets better at improving itself.
+### Phase 27: Abstract Representation + Meta-Learning + Long-Horizon Planning — "An AI That Learns Concepts"
+**Goal:** The system learns principles from experience, gets better at improving itself, transfers strategies across domains, and pursues goals that span multiple sessions.
 - Dream cycle abstraction phase — extract patterns from episode clusters ("info gathering before mutation succeeds 90%")
 - Abstraction store in KnowledgeStore, injected into decomposer planning context
 - Meta-learning: design success/failure tracking feeds back into AgentDesigner. The 10th agent is better than the 1st
+- Cross-domain strategy transfer: dream cycle identifies structurally similar successful episodes across different agent pools (e.g., fetch→parse→summarize in both WebSearch and News), propagates domain-general strategies as abstractions tagged with applicable domains. Addresses the AGI cross-domain transfer criterion
+- GoalManager: persistent goals stored in KnowledgeStore (Git-backed, survives restart), progress tracking across sessions, decomposer plans in context of active goals. "Refactor the auth module" decomposes into multiple sessions of work, each building on the previous. Addresses the AGI long-horizon planning criterion
 - Formal Policy Engine — `policies.yaml` with declarative governance rules enforced at runtime
-- **Demo moment:** HXI shows dream cycle extracting a concept. The system's planning improves measurably over time.
+- **Demo moment:** HXI shows dream cycle extracting a concept. A strategy learned in one domain improves planning in another. Multi-session goals show progress across restarts.
 
 ### Phase 28: Federation + Emergence Testing — "The Noöplex Emerges"
 **Goal:** Multiple ProbOS nodes share knowledge and produce measurable emergent intelligence.
@@ -2468,7 +2538,15 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 - Semantic knowledge layer indexes federated knowledge with `source_node` metadata
 - Channel integration enables multi-user federation (each user runs their own node)
 - TC_N measurement across federated nodes with statistical significance
-- **Demo moment:** Two nodes connected. TC_N rises. Federated system solves tasks neither node could alone.
+- Benchmarking framework: standardized task suite, before/after comparison, regression detection. Validates emergence claims with statistical rigor (Noöplex §8.5, §8.6)
+- **Demo moment:** Two nodes connected. TC_N rises. Federated system solves tasks neither node could alone. Benchmark results publishable.
+
+### Pre-Launch: Security Hardening + Documentation
+**Goal:** Prepare ProbOS for public open source release and non-localhost deployment.
+- Security: input sanitization on `/api/chat` (prompt injection defense), rate limiting, authentication for remote access, API access audit logging
+- Documentation: `probos.dev` website, getting-started guide, API docs (auto-generated from FastAPI), architecture overview for contributors, agent development guide
+- README.md rewrite for open source (install instructions, screenshots/GIFs from HXI, contributing guide)
+- License: Apache 2.0 (all code including federation)
 
 ### Future (post-Phase 28, unsequenced)
 - Knowledge Graph — structured relational store complementing ChromaDB vector memory

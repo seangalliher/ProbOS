@@ -260,6 +260,7 @@ class DreamScheduler:
         self._last_dream_report: DreamReport | None = None
         self._stopped = False
         self._post_dream_fn: Any = None  # Optional callback(dream_report) after each cycle
+        self._pre_dream_fn: Any = None  # Optional callback() before each cycle (AD-254)
 
     @property
     def is_dreaming(self) -> bool:
@@ -295,6 +296,11 @@ class DreamScheduler:
     async def force_dream(self) -> DreamReport:
         """Force an immediate dream cycle (for /dream now command)."""
         self._is_dreaming = True
+        if self._pre_dream_fn:
+            try:
+                self._pre_dream_fn()
+            except Exception as e:
+                logger.debug("Pre-dream callback failed: %s", e)
         try:
             report = await self.engine.dream_cycle()
             self._last_dream_report = report
@@ -326,6 +332,11 @@ class DreamScheduler:
                     and time_since_last_dream >= self.dream_interval_seconds
                 ):
                     self._is_dreaming = True
+                    if self._pre_dream_fn:
+                        try:
+                            self._pre_dream_fn()
+                        except Exception as e:
+                            logger.debug("Pre-dream callback failed: %s", e)
                     try:
                         report = await self.engine.dream_cycle()
                         self._last_dream_report = report

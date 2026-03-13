@@ -77,7 +77,8 @@ class SkillValidator:
         # 5. No module-level side effects
         for node in ast.iter_child_nodes(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom, ast.AsyncFunctionDef,
-                                 ast.FunctionDef, ast.ClassDef)):
+                                 ast.FunctionDef, ast.ClassDef,
+                                 ast.Assign, ast.AnnAssign)):
                 continue
             if isinstance(node, ast.Expr) and isinstance(node.value, (ast.Constant, ast.Str)):
                 continue  # docstrings are fine

@@ -211,6 +211,9 @@ class ProbOSRuntime:
         # --- Semantic knowledge layer (AD-243) ---
         self._semantic_layer: SemanticKnowledgeLayer | None = None
 
+        # --- HXI event listeners (AD-254) ---
+        self._event_listeners: list[Callable] = []
+
         self._started = False
 
         # Register built-in agent templates
@@ -242,6 +245,87 @@ class ProbOSRuntime:
         self.spawner.register_template(type_name, agent_class)
         if self.decomposer:
             self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
+
+    # --- HXI event emission (AD-254) ---
+
+    def add_event_listener(self, fn: Callable) -> None:
+        """Register a listener for HXI events."""
+        self._event_listeners.append(fn)
+
+    def remove_event_listener(self, fn: Callable) -> None:
+        """Remove a previously registered event listener."""
+        try:
+            self._event_listeners.remove(fn)
+        except ValueError:
+            pass
+
+    def _emit_event(self, event_type: str, data: dict[str, Any]) -> None:
+        """Fire-and-forget event to all registered listeners (AD-254)."""
+        event = {"type": event_type, "data": data, "timestamp": time.time()}
+        for fn in self._event_listeners:
+            try:
+                fn(event)
+            except Exception:
+                pass
+
+    def build_state_snapshot(self) -> dict[str, Any]:
+        """Build a full state snapshot for HXI clients (AD-254)."""
+        agents = []
+        for agent in self.registry.all():
+            trust_score = self.trust_network.get_score(agent.id)
+            agents.append({
+                "id": agent.id,
+                "agent_type": agent.agent_type,
+                "pool": agent.pool,
+                "state": agent.state.value if hasattr(agent.state, "value") else str(agent.state),
+                "confidence": agent.confidence,
+                "trust": round(trust_score, 4),
+                "tier": getattr(agent, "tier", "core"),
+            })
+
+        connections = []
+        for (source, target, rel_type), weight in self.hebbian_router.all_weights_typed().items():
+            connections.append({
+                "source": source,
+                "target": target,
+                "rel_type": rel_type,
+                "weight": round(weight, 4),
+            })
+
+        pools = []
+        for name, pool in self.pools.items():
+            info = pool.info()
+            pools.append({
+                "name": name,
+                "agent_type": info.get("agent_type", ""),
+                "size": info.get("current_size", 0),
+                "target_size": info.get("target_size", 0),
+            })
+
+        system_mode = "active"
+        if self.dream_scheduler and self.dream_scheduler.is_dreaming:
+            system_mode = "dreaming"
+        elif (time.monotonic() - self._last_request_time) > 30:
+            system_mode = "idle"
+
+        tc_n = 0.0
+        routing_entropy = 0.0
+        if self._emergent_detector:
+            try:
+                snap = self._emergent_detector.summary()
+                tc_n = snap.get("tc_n", 0.0)
+                routing_entropy = snap.get("routing_entropy", 0.0)
+            except Exception:
+                pass
+
+        return {
+            "agents": agents,
+            "connections": connections,
+            "pools": pools,
+            "system_mode": system_mode,
+            "tc_n": round(tc_n, 4),
+            "routing_entropy": round(routing_entropy, 4),
+        }
 
     async def create_pool(
         self,
@@ -579,6 +663,7 @@ class ProbOSRuntime:
         # Wire post-dream analysis callback (AD-237)
         if self.dream_scheduler:
             self.dream_scheduler._post_dream_fn = self._on_post_dream
+            self.dream_scheduler._pre_dream_fn = self._on_pre_dream
 
         # Create SemanticKnowledgeLayer (AD-243) — only when episodic memory available
         if self.episodic_memory:
@@ -724,6 +809,14 @@ class ProbOSRuntime:
                 success=result.success,
             )
 
+            # Emit hebbian_update for HXI (AD-254)
+            self._emit_event("hebbian_update", {
+                "source": msg.id,
+                "target": result.agent_id,
+                "weight": round(self.hebbian_router.get_weight(msg.id, result.agent_id), 4),
+                "rel_type": "intent",
+            })
+
         await self.event_log.log(
             category="mesh",
             event="intent_resolved",
@@ -776,8 +869,25 @@ class ProbOSRuntime:
                 success=result.success,
             )
 
+            # Emit hebbian_update for HXI (AD-254)
+            self._emit_event("hebbian_update", {
+                "source": msg.id,
+                "target": result.agent_id,
+                "weight": round(self.hebbian_router.get_weight(msg.id, result.agent_id), 4),
+                "rel_type": "intent",
+            })
+
         # Step 2: Evaluate quorum
         consensus = self.quorum_engine.evaluate(results, policy=policy)
+
+        # Emit consensus event for HXI (AD-254)
+        self._emit_event("consensus", {
+            "intent": intent,
+            "outcome": consensus.outcome.value,
+            "approval_ratio": round(consensus.approval_ratio, 4),
+            "votes": len(results),
+            "shapley": consensus.shapley_values or {},
+        })
 
         # Store latest Shapley values for introspection (AD-224)
         if consensus.shapley_values:
@@ -820,6 +930,13 @@ class ProbOSRuntime:
                             success=vr.verified,
                             weight=shapley_weight,
                         )
+
+                        # Emit trust_update for HXI (AD-254)
+                        self._emit_event("trust_update", {
+                            "agent_id": result.agent_id,
+                            "new_score": round(self.trust_network.get_score(result.agent_id), 4),
+                            "success": vr.verified,
+                        })
 
                         # Step 5: Update hebbian (agent-to-agent)
                         self.hebbian_router.record_verification(
@@ -1749,8 +1866,15 @@ class ProbOSRuntime:
             return []
         return await self.episodic_memory.recall(query, k=k)
 
+    def _on_pre_dream(self) -> None:
+        """Pre-dream callback: emit system_mode event for HXI (AD-254)."""
+        self._emit_event("system_mode", {"mode": "dreaming", "previous": "idle"})
+
     def _on_post_dream(self, dream_report: Any) -> None:
         """Post-dream callback: run emergent detection and log patterns (AD-237)."""
+        # Emit system_mode event for HXI (AD-254) — dream cycle ended
+        self._emit_event("system_mode", {"mode": "idle", "previous": "dreaming"})
+
         if not self._emergent_detector:
             return
         try:
@@ -1893,6 +2017,15 @@ class ProbOSRuntime:
 
         # Initialize trust record
         self.trust_network.get_or_create(agent.id)
+
+        # Emit agent_state event for HXI (AD-254)
+        self._emit_event("agent_state", {
+            "agent_id": agent.id,
+            "pool": agent.pool,
+            "state": agent.state.value if hasattr(agent.state, "value") else str(agent.state),
+            "confidence": agent.confidence,
+            "trust": round(self.trust_network.get_score(agent.id), 4),
+        })
 
         await self.event_log.log(
             category="lifecycle",
@@ -2449,6 +2582,13 @@ class ProbOSRuntime:
                     self.trust_network.record_outcome(
                         aid, success=test["passed"], weight=weight,
                     )
+
+                    # Emit trust_update for HXI (AD-254)
+                    self._emit_event("trust_update", {
+                        "agent_id": aid,
+                        "new_score": round(self.trust_network.get_score(aid), 4),
+                        "success": test["passed"],
+                    })
 
             # Episodic memory
             if self.episodic_memory:

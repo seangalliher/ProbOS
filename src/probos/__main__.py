@@ -358,6 +358,11 @@ async def _serve(
         f"  [dim]POST /api/chat  |  GET /api/status  |  "
         f"GET /api/health  |  WS /ws/events[/dim]"
     )
+
+    # Open HXI in browser (AD-260)
+    import webbrowser
+    webbrowser.open(f"http://{host}:{port}")
+
     console.print()
 
     try:

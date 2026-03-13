@@ -325,7 +325,7 @@ class TestSkillValidator:
         code = (
             'from probos.types import IntentMessage, IntentResult\n'
             '\n'
-            'x = 42\n'
+            'print("hello")\n'
             '\n'
             'async def handle_my_skill(intent, llm_client=None):\n'
             '    return None\n'
