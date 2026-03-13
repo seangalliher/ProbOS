@@ -1,6 +1,8 @@
-/* Decision Surface — Status bar + Legend (Pulse Input redesign) */
+/* Decision Surface — Status bar + Legend + Audio controls */
 
+import { useState } from 'react';
 import { useStore } from '../store/useStore';
+import { soundEngine } from '../audio/soundEngine';
 
 export function DecisionSurface() {
   const agents = useStore((s) => s.agents);
@@ -10,6 +12,13 @@ export function DecisionSurface() {
   const connected = useStore((s) => s.connected);
   const showLegend = useStore((s) => s.showLegend);
   const setShowLegend = useStore((s) => s.setShowLegend);
+  const soundEnabled = useStore((s) => s.soundEnabled);
+  const setSoundEnabled = useStore((s) => s.setSoundEnabled);
+  const voiceEnabled = useStore((s) => s.voiceEnabled);
+  const setVoiceEnabled = useStore((s) => s.setVoiceEnabled);
+
+  const [showVolume, setShowVolume] = useState(false);
+  const [volume, setVolume] = useState(soundEngine.volume);
 
   const agentCount = agents.size;
   const avgHealth = agentCount > 0
@@ -20,6 +29,13 @@ export function DecisionSurface() {
     : systemMode === 'active' ? '#80c878' : '#6a6a80';
 
   const healthColor = avgHealth > 0.7 ? '#f0b060' : avgHealth > 0.4 ? '#88a4c8' : '#c84858';
+
+  const btnStyle = (active: boolean) => ({
+    background: active ? 'rgba(240, 176, 96, 0.15)' : 'rgba(128, 128, 160, 0.1)',
+    border: '1px solid rgba(128, 128, 160, 0.2)',
+    borderRadius: 4, padding: '2px 8px', cursor: 'pointer',
+    color: active ? '#f0b060' : '#8888a0', fontSize: 11, fontFamily: 'monospace',
+  } as const);
 
   return (
     <div style={{
@@ -81,22 +97,55 @@ export function DecisionSurface() {
         {/* Spacer */}
         <span style={{ flex: 1 }} />
 
-        {/* Legend toggle (Fix 11) */}
+        {/* Sound toggle */}
+        <button
+          onClick={() => setSoundEnabled(!soundEnabled)}
+          onContextMenu={(e) => { e.preventDefault(); setShowVolume(!showVolume); }}
+          style={btnStyle(soundEnabled)}
+          title={soundEnabled ? 'Mute ambient sounds (right-click: volume)' : 'Enable ambient sounds'}
+        >
+          {soundEnabled ? '\uD83D\uDD0A' : '\uD83D\uDD07'}
+        </button>
+
+        {/* Volume slider (shown on right-click of sound button) */}
+        {showVolume && (
+          <input
+            type="range"
+            min="0" max="1" step="0.05"
+            value={volume}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value);
+              setVolume(v);
+              soundEngine.setVolume(v);
+            }}
+            style={{
+              width: 60, height: 4, cursor: 'pointer',
+              accentColor: '#f0b060',
+            }}
+            title={`Volume: ${Math.round(volume * 100)}%`}
+          />
+        )}
+
+        {/* Voice output toggle */}
+        <button
+          onClick={() => setVoiceEnabled(!voiceEnabled)}
+          style={btnStyle(voiceEnabled)}
+          title={voiceEnabled ? 'Disable voice output' : 'Enable voice output'}
+        >
+          {'\uD83D\uDDE3\uFE0F'}
+        </button>
+
+        {/* Legend toggle */}
         <button
           onClick={() => setShowLegend(!showLegend)}
-          style={{
-            background: showLegend ? 'rgba(240, 176, 96, 0.15)' : 'rgba(128, 128, 160, 0.1)',
-            border: '1px solid rgba(128, 128, 160, 0.2)',
-            borderRadius: 4, padding: '2px 8px', cursor: 'pointer',
-            color: showLegend ? '#f0b060' : '#8888a0', fontSize: 11, fontFamily: 'monospace',
-          }}
+          style={btnStyle(showLegend)}
           title="Toggle visual legend"
         >
           ?
         </button>
       </div>
 
-      {/* Legend overlay (Fix 11) */}
+      {/* Legend overlay */}
       {showLegend && (
         <div style={{
           position: 'absolute', bottom: 36, right: 16,

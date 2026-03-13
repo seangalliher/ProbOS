@@ -82,7 +82,8 @@ def create_app(runtime: Any) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173",
-                        "http://localhost:18900", "http://127.0.0.1:18900"],
+                        "http://localhost:18900", "http://127.0.0.1:18900",
+                        "http://192.168.68.56:18900"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -145,9 +146,20 @@ def create_app(runtime: Any) -> FastAPI:
             # Broadcast to WebSocket clients (fire-and-forget)
             _broadcast_event(evt)
 
-        dag_result = await runtime.process_natural_language(
-            req.message, on_event=on_event,
-        )
+        try:
+            dag_result = await asyncio.wait_for(
+                runtime.process_natural_language(
+                    req.message, on_event=on_event,
+                ),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Chat request timed out after 30s: %s", req.message[:80])
+            return {
+                "response": "(Request timed out — the mesh took too long to respond. Try a simpler query.)",
+                "dag": None,
+                "results": None,
+            }
 
         if not dag_result:
             return {"response": "(Processing failed)", "dag": None, "results": None}

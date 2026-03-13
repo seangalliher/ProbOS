@@ -2,6 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../store/useStore';
+import { speakResponse } from '../audio/voice';
+import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
+import { soundEngine } from '../audio/soundEngine';
 
 /* ── spring easing ── */
 const spring = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -21,6 +24,7 @@ export function IntentSurface() {
   const [input, setInput] = useState('');
   const [active, setActive] = useState(false);
   const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackStatus>>({});
+  const [listening, setListening] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -32,6 +36,7 @@ export function IntentSurface() {
   const setProcessing = useStore((s) => s.setProcessing);
   const pendingChar = useStore((s) => s.pendingChar);
   const consumePendingChar = useStore((s) => s.consumePendingChar);
+  const voiceEnabled = useStore((s) => s.voiceEnabled);
 
   /* ── consume pending char from global keydown ── */
   useEffect(() => {
@@ -126,6 +131,12 @@ export function IntentSurface() {
         || '(No response)';
 
       addChatMessage('system', response);
+      // Voice output if enabled
+      if (voiceEnabled && response && !response.startsWith('(')) {
+        speakResponse(response);
+      }
+      // Intent routing chime
+      soundEngine.playIntentRouting();
     } catch {
       addChatMessage('system', '(Connection error)');
     } finally {
@@ -393,6 +404,50 @@ export function IntentSurface() {
                   padding: '6px 0',
                 }}
               />
+              {/* Mic button for voice input */}
+              {isSpeechRecognitionSupported() && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (listening) {
+                      stopListening();
+                      setListening(false);
+                    } else {
+                      setListening(true);
+                      startListening(
+                        (text) => {
+                          setInput(text);
+                          setListening(false);
+                          // Auto-submit after recognition
+                          setTimeout(() => {
+                            const form = inputRef.current?.closest('form');
+                            if (form) form.requestSubmit();
+                          }, 100);
+                        },
+                        () => setListening(false),
+                        () => setListening(false),
+                      );
+                    }
+                  }}
+                  title={listening ? 'Stop listening' : 'Voice input'}
+                  style={{
+                    background: listening ? 'rgba(200, 56, 72, 0.2)' : 'transparent',
+                    border: 'none',
+                    color: listening ? '#c84858' : 'rgba(224, 220, 212, 0.3)',
+                    cursor: 'pointer',
+                    fontSize: 14,
+                    padding: '4px',
+                    borderRadius: 4,
+                    transition: 'color 0.2s',
+                    flexShrink: 0,
+                    animation: listening ? 'pulse-mic 1s ease-in-out infinite' : undefined,
+                  }}
+                  onMouseEnter={(e) => { if (!listening) (e.target as HTMLElement).style.color = 'rgba(240, 176, 96, 0.7)'; }}
+                  onMouseLeave={(e) => { if (!listening) (e.target as HTMLElement).style.color = 'rgba(224, 220, 212, 0.3)'; }}
+                >
+                  {'\uD83C\uDFA4'}
+                </button>
+              )}
               {chatHistory.length > 0 && (
                 <button
                   type="button"
@@ -491,6 +546,10 @@ export function IntentSurface() {
           0% { opacity: 1; }
           70% { opacity: 1; }
           100% { opacity: 0; }
+        }
+        @keyframes pulse-mic {
+          0%, 100% { opacity: 0.6; }
+          50% { opacity: 1; }
         }
       `}</style>
     </>

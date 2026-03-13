@@ -1,6 +1,7 @@
 /* Zustand reactive state store — single source of truth for HXI (AD-255) */
 
 import { create } from 'zustand';
+import { soundEngine } from '../audio/soundEngine';
 import type {
   Agent, Connection, PoolInfo, SystemMode, DagNode, ChatMessage,
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
@@ -130,6 +131,10 @@ export interface HXIState {
   processing: boolean;
   pendingChar: string;
 
+  // Audio state
+  soundEnabled: boolean;
+  voiceEnabled: boolean;
+
   // Actions
   handleEvent: (event: WSEvent) => void;
   addChatMessage: (role: 'user' | 'system', text: string) => void;
@@ -146,6 +151,8 @@ export interface HXIState {
   setProcessing: (v: boolean) => void;
   triggerInput: (char: string) => void;
   consumePendingChar: () => string;
+  setSoundEnabled: (v: boolean) => void;
+  setVoiceEnabled: (v: boolean) => void;
 }
 
 export const useStore = create<HXIState>((set, get) => ({
@@ -173,6 +180,8 @@ export const useStore = create<HXIState>((set, get) => ({
   responseVisible: false,
   processing: false,
   pendingChar: '',
+  soundEnabled: false,
+  voiceEnabled: false,
 
   setConnected: (v) => set({ connected: v }),
   setHoveredAgent: (agent, pos) => set(pos ? { hoveredAgent: agent, tooltipPos: pos } : { hoveredAgent: agent }),
@@ -189,6 +198,16 @@ export const useStore = create<HXIState>((set, get) => ({
     const char = get().pendingChar;
     set({ pendingChar: '' });
     return char;
+  },
+  setSoundEnabled: (v) => {
+    set({ soundEnabled: v });
+    localStorage.setItem('hxi_sound_enabled', v ? '1' : '0');
+    if (v && !soundEngine.initialized) soundEngine.init();
+    soundEngine.setMuted(!v);
+  },
+  setVoiceEnabled: (v) => {
+    set({ voiceEnabled: v });
+    localStorage.setItem('hxi_voice_enabled', v ? '1' : '0');
   },
 
   addChatMessage: (role, text) => {
@@ -281,6 +300,7 @@ export const useStore = create<HXIState>((set, get) => ({
 
       case 'trust_update': {
         const d = data as unknown as TrustUpdateEvent;
+        soundEngine.playTrustPing(d.new_score > (d as any).old_score);
         set((s) => {
           const agents = new Map(s.agents);
           const agent = agents.get(d.agent_id);
@@ -316,17 +336,22 @@ export const useStore = create<HXIState>((set, get) => ({
 
       case 'consensus': {
         const d = data as unknown as ConsensusEvent;
+        soundEngine.playConsensus();
         set({ pendingConsensusFlash: d });
         break;
       }
 
       case 'system_mode': {
         const d = data as unknown as SystemModeEvent;
+        const prev = get().systemMode;
+        if (d.mode === 'dreaming' && prev !== 'dreaming') soundEngine.playDreamEnter();
+        if (d.mode !== 'dreaming' && prev === 'dreaming') soundEngine.playDreamExit();
         set({ systemMode: d.mode });
         break;
       }
 
       case 'node_start': {
+        soundEngine.playIntentRouting();
         set((s) => {
           const target = data.agent_id as string | undefined;
           const source = data.intent as string | undefined;
@@ -362,6 +387,7 @@ export const useStore = create<HXIState>((set, get) => ({
       }
 
       case 'node_failed': {
+        soundEngine.playError();
         set((s) => {
           if (!s.activeDag) return {};
           const nodeId = data.node_id as string;
@@ -391,6 +417,7 @@ export const useStore = create<HXIState>((set, get) => ({
       }
 
       case 'self_mod_success': {
+        soundEngine.playSelfModSpawn();
         const agentType = data.agent_type as string | undefined;
         if (agentType) {
           set({ pendingSelfModBloom: agentType });
