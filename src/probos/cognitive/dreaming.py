@@ -259,6 +259,7 @@ class DreamScheduler:
         self._task: asyncio.Task[None] | None = None
         self._last_dream_report: DreamReport | None = None
         self._stopped = False
+        self._post_dream_fn: Any = None  # Optional callback(dream_report) after each cycle
 
     @property
     def is_dreaming(self) -> bool:
@@ -298,6 +299,11 @@ class DreamScheduler:
             report = await self.engine.dream_cycle()
             self._last_dream_report = report
             self._last_dream_time = time.monotonic()
+            if self._post_dream_fn:
+                try:
+                    self._post_dream_fn(report)
+                except Exception as e:
+                    logger.debug("Post-dream callback failed: %s", e)
             return report
         finally:
             self._is_dreaming = False
@@ -324,6 +330,11 @@ class DreamScheduler:
                         report = await self.engine.dream_cycle()
                         self._last_dream_report = report
                         self._last_dream_time = time.monotonic()
+                        if self._post_dream_fn:
+                            try:
+                                self._post_dream_fn(report)
+                            except Exception as e:
+                                logger.debug("Post-dream callback failed: %s", e)
                     except Exception as e:
                         logger.warning("Dream cycle failed: %s", e)
                     finally:

@@ -18,11 +18,25 @@ from probos.agents.http_fetch import HttpFetchAgent
 from probos.agents.introspect import IntrospectionAgent
 from probos.agents.red_team import RedTeamAgent
 from probos.agents.shell_command import ShellCommandAgent
+from probos.agents.bundled import (
+    WebSearchAgent,
+    PageReaderAgent,
+    WeatherAgent,
+    NewsAgent,
+    TranslateAgent,
+    SummarizerAgent,
+    CalculatorAgent,
+    TodoAgent,
+    NoteTakerAgent,
+    SchedulerAgent,
+)
 from probos.agents.system_qa import SystemQAAgent
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
 from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
+from probos.cognitive.emergent_detector import EmergentDetector
+from probos.knowledge.semantic import SemanticKnowledgeLayer
 from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient, OpenAICompatibleClient
 from probos.cognitive.working_memory import WorkingMemoryManager
 from probos.cognitive.workflow_cache import WorkflowCache
@@ -191,6 +205,12 @@ class ProbOSRuntime:
         self._correction_detector: Any = None
         self._agent_patcher: Any = None
 
+        # --- Emergent detection (AD-236) ---
+        self._emergent_detector: EmergentDetector | None = None
+
+        # --- Semantic knowledge layer (AD-243) ---
+        self._semantic_layer: SemanticKnowledgeLayer | None = None
+
         self._started = False
 
         # Register built-in agent templates
@@ -205,6 +225,17 @@ class ProbOSRuntime:
         self.spawner.register_template("introspect", IntrospectionAgent)
         self.spawner.register_template("skill_agent", SkillBasedAgent)
         self.spawner.register_template("system_qa", SystemQAAgent)
+        # Bundled CognitiveAgent types (Phase 22, AD-252)
+        self.spawner.register_template("web_search", WebSearchAgent)
+        self.spawner.register_template("page_reader", PageReaderAgent)
+        self.spawner.register_template("weather", WeatherAgent)
+        self.spawner.register_template("news", NewsAgent)
+        self.spawner.register_template("translator", TranslateAgent)
+        self.spawner.register_template("summarizer", SummarizerAgent)
+        self.spawner.register_template("calculator", CalculatorAgent)
+        self.spawner.register_template("todo_manager", TodoAgent)
+        self.spawner.register_template("note_taker", NoteTakerAgent)
+        self.spawner.register_template("scheduler", SchedulerAgent)
 
     def register_agent_type(self, type_name: str, agent_class: type) -> None:
         """Register an agent class and refresh the decomposer's intent descriptors."""
@@ -312,6 +343,27 @@ class ProbOSRuntime:
         # Introspect pool (needs runtime kwarg)
         ids = generate_pool_ids("introspect", "introspect", 2)
         await self.create_pool("introspect", "introspect", target_size=2, agent_ids=ids, runtime=self)
+
+        # Bundled CognitiveAgent pools (Phase 22, AD-252)
+        if self.config.bundled_agents.enabled:
+            _bundled_pools = [
+                ("web_search", "web_search", 2),
+                ("page_reader", "page_reader", 2),
+                ("weather", "weather", 2),
+                ("news", "news", 2),
+                ("translator", "translator", 2),
+                ("summarizer", "summarizer", 2),
+                ("calculator", "calculator", 2),
+                ("todo_manager", "todo_manager", 2),
+                ("note_taker", "note_taker", 2),
+                ("scheduler", "scheduler", 2),
+            ]
+            for pool_name, agent_type, size in _bundled_pools:
+                ids = generate_pool_ids(agent_type, pool_name, size)
+                await self.create_pool(
+                    pool_name, agent_type, target_size=size,
+                    agent_ids=ids, llm_client=self.llm_client, runtime=self,
+                )
 
         # Refresh decomposer with intent descriptors from all registered templates
         self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
@@ -517,6 +569,31 @@ class ProbOSRuntime:
             )
             self.dream_scheduler.start()
 
+        # Create EmergentDetector (AD-237) — unconditional, pure observer
+        self._emergent_detector = EmergentDetector(
+            hebbian_router=self.hebbian_router,
+            trust_network=self.trust_network,
+            episodic_memory=self.episodic_memory,
+        )
+
+        # Wire post-dream analysis callback (AD-237)
+        if self.dream_scheduler:
+            self.dream_scheduler._post_dream_fn = self._on_post_dream
+
+        # Create SemanticKnowledgeLayer (AD-243) — only when episodic memory available
+        if self.episodic_memory:
+            try:
+                db_dir = Path(self.episodic_memory.db_path).parent
+                self._semantic_layer = SemanticKnowledgeLayer(
+                    db_path=db_dir / "semantic",
+                    episodic_memory=self.episodic_memory,
+                )
+                await self._semantic_layer.start()
+                logger.info("Semantic knowledge layer started")
+            except Exception as e:
+                logger.warning("Semantic knowledge layer initialization failed: %s — continuing without", e)
+                self._semantic_layer = None
+
         # Persist agent manifest (Phase 14c)
         await self._persist_manifest()
 
@@ -605,6 +682,11 @@ class ProbOSRuntime:
         # Stop episodic memory
         if self.episodic_memory:
             await self.episodic_memory.stop()
+
+        # Stop semantic knowledge layer (AD-243)
+        if self._semantic_layer:
+            await self._semantic_layer.stop()
+            self._semantic_layer = None
 
         self._started = False
         logger.info("ProbOS shutdown complete. Final agent count: %d", self.registry.count)
@@ -983,6 +1065,18 @@ class ProbOSRuntime:
                                 await self._knowledge_store.store_agent(record, record.source_code)
                             except Exception:
                                 pass  # Never block on persistence failure
+                        # Auto-index for semantic search (AD-243)
+                        if self._semantic_layer:
+                            try:
+                                await self._semantic_layer.index_agent(
+                                    agent_type=record.agent_type,
+                                    intent_name=record.intent_name,
+                                    description=record.intent_name,
+                                    strategy=record.strategy,
+                                    source_snippet=record.source_code[:200] if record.source_code else "",
+                                )
+                            except Exception:
+                                pass
                     elif record:
                         self_mod_result = {
                             "status": record.status,
@@ -1341,6 +1435,18 @@ class ProbOSRuntime:
                 )
             except Exception:
                 pass
+        # Auto-index for semantic search (AD-243)
+        if self._semantic_layer:
+            try:
+                await self._semantic_layer.index_agent(
+                    agent_type=original_record.agent_type,
+                    intent_name=original_record.intent_name,
+                    description=original_record.intent_name,
+                    strategy=original_record.strategy,
+                    source_snippet=patch_result.patched_source[:200] if patch_result.patched_source else "",
+                )
+            except Exception:
+                pass
 
         # Auto-retry the original request
         retry_result = None
@@ -1607,6 +1713,16 @@ class ProbOSRuntime:
             "enabled": self._knowledge_store is not None,
             "repo_path": str(self._knowledge_store.repo_path) if self._knowledge_store else None,
         }
+        result["emergent"] = (
+            self._emergent_detector.summary()
+            if self._emergent_detector
+            else {"enabled": False}
+        )
+        result["semantic_knowledge"] = (
+            self._semantic_layer.stats()
+            if self._semantic_layer
+            else {"enabled": False}
+        )
         if self.dream_scheduler:
             dream_status: dict[str, Any] = {
                 "state": "dreaming" if self.dream_scheduler.is_dreaming else "idle",
@@ -1632,6 +1748,26 @@ class ProbOSRuntime:
         if not self.episodic_memory:
             return []
         return await self.episodic_memory.recall(query, k=k)
+
+    def _on_post_dream(self, dream_report: Any) -> None:
+        """Post-dream callback: run emergent detection and log patterns (AD-237)."""
+        if not self._emergent_detector:
+            return
+        try:
+            patterns = self._emergent_detector.analyze(dream_report=dream_report)
+            for pattern in patterns:
+                # Fire-and-forget event logging (sync context, schedule coroutine)
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self.event_log.log(
+                        category="emergent",
+                        event=pattern.pattern_type,
+                        detail=pattern.description,
+                    ))
+                except RuntimeError:
+                    pass  # No running loop — skip logging
+        except Exception as e:
+            logger.debug("Post-dream emergent analysis failed: %s", e)
 
     def _build_episode(
         self,
@@ -2006,6 +2142,16 @@ class ProbOSRuntime:
                 await self._knowledge_store.store_skill(skill.name, skill.source_code, descriptor_dict)
             except Exception:
                 pass  # Never block on persistence failure
+        # Auto-index skill for semantic search (AD-243)
+        if self._semantic_layer:
+            try:
+                await self._semantic_layer.index_skill(
+                    intent_name=skill.name,
+                    description=skill.descriptor.description if skill.descriptor else skill.name,
+                    target_agent=getattr(skill, "target_agent", ""),
+                )
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Knowledge store — warm boot and persistence (AD-162)
@@ -2234,6 +2380,14 @@ class ProbOSRuntime:
         else:
             logger.info("Warm boot: no artifacts to restore (clean repo)")
 
+        # Semantic knowledge re-indexing from restored artifacts (AD-243)
+        if self._semantic_layer and ks:
+            try:
+                counts = await self._semantic_layer.reindex_from_store(ks)
+                logger.info("Semantic knowledge reindexed: %s", counts)
+            except Exception as e:
+                logger.warning("Semantic knowledge reindex failed: %s", e)
+
     # ------------------------------------------------------------------
     # SystemQA helper (AD-154)
     # ------------------------------------------------------------------
@@ -2272,6 +2426,16 @@ class ProbOSRuntime:
                     await self._knowledge_store.store_qa_report(record.agent_type, report_dict)
                 except Exception:
                     pass  # Never block on persistence failure
+            # Auto-index QA report for semantic search (AD-243)
+            if self._semantic_layer:
+                try:
+                    await self._semantic_layer.index_qa_report(
+                        agent_type=record.agent_type,
+                        verdict=report.verdict,
+                        pass_rate=report.passed / report.total_tests if report.total_tests > 0 else 0.0,
+                    )
+                except Exception:
+                    pass
 
             # Trust updates (AD-155)
             for agent_id_or_agent in pool.healthy_agents:

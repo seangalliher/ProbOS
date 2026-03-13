@@ -450,6 +450,86 @@ class MockLLMClient(BaseLLMClient):
             self._make_introspect_system_response,
         )
 
+        # system_anomalies
+        self.add_pattern(
+            r"anomal|system anomal|are there any anomalies|detect.*anomal",
+            self._make_system_anomalies_response,
+        )
+
+        # emergent_patterns
+        self.add_pattern(
+            r"emergent|show emergent|emergent pattern|cooperation cluster|tc_n",
+            self._make_emergent_patterns_response,
+        )
+
+        # search_knowledge
+        self.add_pattern(
+            r"search (?:for|knowledge|across)|find in knowledge|what do you know about",
+            self._make_search_knowledge_response,
+        )
+
+        # --- Bundled agent patterns (AD-252, registered last to avoid shadowing) ---
+
+        # web_search
+        self.add_pattern(
+            r"search (?:the )?web (?:for )?|google|duckduckgo|look up online",
+            self._make_web_search_response,
+        )
+
+        # read_page
+        self.add_pattern(
+            r"read (?:this )?(?:web ?)?page|summarize (?:this )?url|open (?:this )?link",
+            self._make_read_page_response,
+        )
+
+        # get_weather
+        self.add_pattern(
+            r"weather (?:in|for|at)|what.s the weather|temperature (?:in|at)",
+            self._make_get_weather_response,
+        )
+
+        # get_news
+        self.add_pattern(
+            r"news|headlines|current events|what.s happening",
+            self._make_get_news_response,
+        )
+
+        # translate_text
+        self.add_pattern(
+            r"translate|translation|in (?:spanish|french|german|chinese|japanese)",
+            self._make_translate_response,
+        )
+
+        # summarize_text
+        self.add_pattern(
+            r"summarize|summary|tldr|tl;dr|give me (?:the )?gist",
+            self._make_summarize_response,
+        )
+
+        # calculate
+        self.add_pattern(
+            r"calculate|compute|what is \d|how much is|convert \d|math",
+            self._make_calculate_response,
+        )
+
+        # manage_todo
+        self.add_pattern(
+            r"todo|to-do|task list|add.* to (?:my )?list|remind me to",
+            self._make_manage_todo_response,
+        )
+
+        # manage_notes
+        self.add_pattern(
+            r"(?:save|take|write|create|find|search) (?:a )?note|my notes",
+            self._make_manage_notes_response,
+        )
+
+        # manage_schedule
+        self.add_pattern(
+            r"(?:set|create) (?:a )?reminder|schedule|(?:my )?calendar|upcoming|what.s (?:coming )?up",
+            self._make_manage_schedule_response,
+        )
+
         # HTTP fetch — must be before read_file (both can match URLs)
         self.add_pattern(
             r"fetch\s+(https?://[\w./\-:?&=%]+)",
@@ -619,8 +699,15 @@ class MockLLMClient(BaseLLMClient):
 
         prompt = request.prompt.lower()
 
+        # When the decomposer wraps the user text in system state context,
+        # only pattern-match against the "User request: ..." portion to avoid
+        # false positives from pool names and capability listings.
+        user_req_marker = "user request: "
+        marker_pos = prompt.rfind(user_req_marker)
+        match_text = prompt[marker_pos + len(user_req_marker):] if marker_pos >= 0 else prompt
+
         for pattern, handler in self._patterns:
-            match = re.search(pattern, prompt, re.IGNORECASE)
+            match = re.search(pattern, match_text, re.IGNORECASE)
             if match:
                 if callable(handler):
                     content = handler(prompt, match)
@@ -878,6 +965,112 @@ class MockLLMClient(BaseLLMClient):
                 "depends_on": [],
                 "use_consensus": False,
             }],
+            "reflect": True,
+        })
+
+    def _make_system_anomalies_response(self, prompt: str, match: re.Match) -> str:
+        """Generate a system_anomalies intent response."""
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "system_anomalies",
+                "params": {},
+                "depends_on": [],
+                "use_consensus": False,
+            }],
+            "reflect": True,
+        })
+
+    def _make_emergent_patterns_response(self, prompt: str, match: re.Match) -> str:
+        """Generate an emergent_patterns intent response."""
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "emergent_patterns",
+                "params": {},
+                "depends_on": [],
+                "use_consensus": False,
+            }],
+            "reflect": True,
+        })
+
+    def _make_search_knowledge_response(self, prompt: str, match: re.Match) -> str:
+        """Generate a search_knowledge intent response."""
+        # Extract search query from the prompt
+        query = prompt.strip()
+        return json.dumps({
+            "intents": [{
+                "id": "t1",
+                "intent": "search_knowledge",
+                "params": {"query": query},
+                "depends_on": [],
+                "use_consensus": False,
+            }],
+            "reflect": True,
+        })
+
+    # --- Bundled agent response handlers (AD-252) ---
+
+    def _make_web_search_response(self, prompt: str, match: re.Match) -> str:
+        query = prompt.strip()
+        return json.dumps({
+            "intents": [{"id": "t1", "intent": "web_search", "params": {"query": query}, "depends_on": [], "use_consensus": False}],
+            "reflect": True,
+        })
+
+    def _make_read_page_response(self, prompt: str, match: re.Match) -> str:
+        url_match = re.search(r'(https?://\S+)', prompt)
+        url = url_match.group(1) if url_match else "https://example.com"
+        return json.dumps({
+            "intents": [{"id": "t1", "intent": "read_page", "params": {"url": url}, "depends_on": [], "use_consensus": False}],
+            "reflect": True,
+        })
+
+    def _make_get_weather_response(self, prompt: str, match: re.Match) -> str:
+        location = prompt.strip().split()[-1] if prompt.strip() else "London"
+        return json.dumps({
+            "intents": [{"id": "t1", "intent": "get_weather", "params": {"location": location}, "depends_on": [], "use_consensus": False}],
+            "reflect": True,
+        })
+
+    def _make_get_news_response(self, prompt: str, match: re.Match) -> str:
+        return json.dumps({
+            "intents": [{"id": "t1", "intent": "get_news", "params": {"source": "reuters"}, "depends_on": [], "use_consensus": False}],
+            "reflect": True,
+        })
+
+    def _make_translate_response(self, prompt: str, match: re.Match) -> str:
+        return json.dumps({
+            "intents": [{"id": "t1", "intent": "translate_text", "params": {"text": prompt.strip(), "target_language": "Spanish"}, "depends_on": [], "use_consensus": False}],
+            "reflect": True,
+        })
+
+    def _make_summarize_response(self, prompt: str, match: re.Match) -> str:
+        return json.dumps({
+            "intents": [{"id": "t1", "intent": "summarize_text", "params": {"text": prompt.strip()}, "depends_on": [], "use_consensus": False}],
+            "reflect": True,
+        })
+
+    def _make_calculate_response(self, prompt: str, match: re.Match) -> str:
+        expr_match = re.search(r'[\d+\-*/().]+', prompt)
+        expr = expr_match.group(0) if expr_match else "2+2"
+        return json.dumps({
+            "intents": [{"id": "t1", "intent": "calculate", "params": {"expression": expr}, "depends_on": [], "use_consensus": False}],
+        })
+
+    def _make_manage_todo_response(self, prompt: str, match: re.Match) -> str:
+        return json.dumps({
+            "intents": [{"id": "t1", "intent": "manage_todo", "params": {"action": "list"}, "depends_on": [], "use_consensus": False}],
+        })
+
+    def _make_manage_notes_response(self, prompt: str, match: re.Match) -> str:
+        return json.dumps({
+            "intents": [{"id": "t1", "intent": "manage_notes", "params": {"action": "list"}, "depends_on": [], "use_consensus": False}],
+        })
+
+    def _make_manage_schedule_response(self, prompt: str, match: re.Match) -> str:
+        return json.dumps({
+            "intents": [{"id": "t1", "intent": "manage_schedule", "params": {"action": "list"}, "depends_on": [], "use_consensus": False}],
             "reflect": True,
         })
 

@@ -806,6 +806,129 @@ def render_designed_panel(status: dict[str, Any], qa_reports: dict[str, Any] | N
     return Panel(table, title=title, border_style="yellow")
 
 
+def render_anomalies_panel(summary: dict[str, Any], patterns: list[dict]) -> Panel:
+    """Render emergent detection results as a Rich Panel.
+
+    Top section: system dynamics metrics.
+    Bottom section: table of detected patterns with severity coloring.
+    """
+    lines: list[str] = []
+
+    # Metrics section
+    lines.append("[bold]System Dynamics[/bold]")
+    lines.append(f"  TC_N (integration):  {summary.get('tc_n', 0.0):.4f}")
+    lines.append(f"  Routing entropy:     {summary.get('routing_entropy', 0.0):.4f}")
+    lines.append(f"  Cooperation clusters: {summary.get('cooperation_clusters', 0)}")
+    lines.append(f"  Snapshots recorded:  {summary.get('snapshots_recorded', 0)}")
+    lines.append(f"  Patterns detected:   {summary.get('patterns_detected', 0)}")
+
+    if not patterns:
+        lines.append("")
+        lines.append("[dim]No anomalous patterns detected — system operating normally[/dim]")
+        return Panel("\n".join(lines), title="Emergent Behavior", border_style="cyan")
+
+    # Patterns table
+    lines.append("")
+    table = Table(show_header=True, show_lines=False)
+    table.add_column("Type")
+    table.add_column("Description", max_width=60)
+    table.add_column("Confidence", justify="right")
+    table.add_column("Severity")
+
+    _SEVERITY_COLORS = {
+        "info": "dim",
+        "notable": "yellow",
+        "significant": "red",
+    }
+
+    for p in patterns:
+        severity = p.get("severity", "info")
+        color = _SEVERITY_COLORS.get(severity, "dim")
+        severity_text = Text(severity, style=color)
+
+        confidence = p.get("confidence", 0.0)
+        table.add_row(
+            p.get("pattern_type", "?"),
+            p.get("description", ""),
+            f"{confidence:.2f}",
+            severity_text,
+        )
+
+    # Render table to string for embedding in panel
+    from io import StringIO
+    from rich.console import Console as _Console
+    buf = StringIO()
+    c = _Console(file=buf, width=120, force_terminal=True)
+    c.print(table)
+    table_str = buf.getvalue().rstrip()
+
+    lines.append(table_str)
+
+    return Panel("\n".join(lines), title="Emergent Behavior", border_style="cyan")
+
+
+_TYPE_COLORS = {
+    "agent": "cyan",
+    "skill": "green",
+    "episode": "blue",
+    "workflow": "yellow",
+    "qa_report": "magenta",
+    "event": "dim",
+}
+
+
+def render_search_panel(query: str, results: list[dict], stats: dict[str, int]) -> Panel:
+    """Render semantic knowledge search results as a Rich Panel.
+
+    Top section: per-collection document counts.
+    Bottom section: ranked results table with type coloring.
+    """
+    lines: list[str] = []
+
+    # Stats section
+    if stats:
+        stat_parts = [f"{name}: {count}" for name, count in stats.items() if count > 0]
+        if stat_parts:
+            lines.append(f"[dim]Collections: {', '.join(stat_parts)}[/dim]")
+
+    if not results:
+        lines.append("")
+        lines.append("[dim]No matching results found[/dim]")
+        return Panel("\n".join(lines), title=f"Knowledge Search: {query}", border_style="cyan")
+
+    # Results table
+    table = Table(show_header=True, show_lines=False)
+    table.add_column("#", justify="right", width=3)
+    table.add_column("Type", width=10)
+    table.add_column("Score", justify="right", width=6)
+    table.add_column("Document", max_width=80)
+
+    for i, r in enumerate(results, 1):
+        rtype = r.get("type", "?")
+        color = _TYPE_COLORS.get(rtype, "dim")
+        type_text = Text(rtype, style=color)
+
+        score = r.get("score", 0.0)
+        doc = r.get("document", "")
+        if len(doc) > 80:
+            doc = doc[:77] + "..."
+
+        table.add_row(str(i), type_text, f"{score:.0%}", doc)
+
+    # Render table to string for embedding in panel
+    from io import StringIO
+    from rich.console import Console as _Console
+    buf = StringIO()
+    c = _Console(file=buf, width=120, force_terminal=True)
+    c.print(table)
+    table_str = buf.getvalue().rstrip()
+
+    lines.append("")
+    lines.append(table_str)
+
+    return Panel("\n".join(lines), title=f"Knowledge Search: {query}", border_style="cyan")
+
+
 # Known consensus-gated intents (built-in)
 _CONSENSUS_INTENTS = {"write_file", "run_command", "http_fetch"}
 

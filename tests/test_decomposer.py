@@ -470,7 +470,7 @@ class TestCapabilityGapFlag:
             "response": "I don't have an intent for translation yet.",
             "capability_gap": True,
         }))
-        dag = await decomposer.decompose("translate hello to French")
+        dag = await decomposer.decompose("please convert this audio to text")
         assert dag.capability_gap is True
         assert dag.response == "I don't have an intent for translation yet."
         assert len(dag.nodes) == 0
@@ -507,7 +507,7 @@ class TestCapabilityGapFlag:
             '"capability_gap": true}'
         )
         llm.set_default_response(response_with_think)
-        dag = await decomposer.decompose("translate hello to French")
+        dag = await decomposer.decompose("please convert this audio to text")
         assert dag.capability_gap is True
         assert "translation" in dag.response
         assert len(dag.nodes) == 0

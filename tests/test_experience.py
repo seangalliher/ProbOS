@@ -1016,7 +1016,7 @@ class TestRendererSelfModIntegration:
         # Phase 1 (decompose): return a capability-gap response
         gap_json = (
             '{"intents": [], '
-            '"response": "I don\\u2019t have a translation intent yet.", '
+            '"response": "I don\\u2019t have an audio transcription intent yet.", '
             '"capability_gap": true}'
         )
         llm.set_default_response(gap_json)
@@ -1024,12 +1024,12 @@ class TestRendererSelfModIntegration:
         # Because user approval prompt blocks (EOFError → "n"), self-mod
         # will be "rejected" but the proposal text should appear in output.
         result = await renderer.process_with_feedback(
-            "translate hello into japanese"
+            "please transcribe this audio clip"
         )
         output = con.file.getvalue()
 
         # The gap response should be printed (dim)
-        assert "translation intent" in output
+        assert "transcription intent" in output
 
         # Self-mod proposal should appear OR "Analyzing unhandled request"
         # was reached (either way proves we entered the self-mod block).
@@ -1050,11 +1050,11 @@ class TestRendererSelfModIntegration:
         # Return response matching regex but NO capability_gap field
         gap_json = (
             '{"intents": [], '
-            '"response": "I don\'t have an intent for translation yet."}'
+            '"response": "I don\'t have an intent for audio transcription yet."}'
         )
         llm.set_default_response(gap_json)
 
-        await renderer.process_with_feedback("translate hello into japanese")
+        await renderer.process_with_feedback("please transcribe this audio clip")
         output = con.file.getvalue()
 
         entered_self_mod = (
@@ -1086,7 +1086,7 @@ class TestRendererSelfModIntegration:
     async def test_extract_unhandled_intent_returns_data(self, self_mod_env):
         """_extract_unhandled_intent returns valid intent metadata."""
         _, rt, _, _ = self_mod_env
-        meta = await rt._extract_unhandled_intent("translate hello into japanese")
+        meta = await rt._extract_unhandled_intent("please transcribe this audio clip")
         assert meta is not None, "_extract_unhandled_intent returned None"
         assert "name" in meta
         assert "description" in meta
@@ -1098,18 +1098,18 @@ class TestRendererSelfModIntegration:
 
         # Simulate qwen output with <think> tags wrapping the JSON
         gap_with_think = (
-            '<think>\nThe user wants translation. No matching intent. '
+            '<think>\nThe user wants audio transcription. No matching intent. '
             'I should return {"capability_gap": true}.\n</think>\n\n'
             '{"intents": [], '
-            '"response": "I don\\u2019t have a translation intent yet.", '
+            '"response": "I don\\u2019t have an audio transcription intent yet.", '
             '"capability_gap": true}'
         )
         llm.set_default_response(gap_with_think)
 
-        await renderer.process_with_feedback("translate hello into japanese")
+        await renderer.process_with_feedback("please transcribe this audio clip")
         output = con.file.getvalue()
 
-        assert "translation intent" in output
+        assert "transcription intent" in output
         entered_self_mod = (
             "Self-Modification Proposal" in output
             or "Self-modification rejected" in output

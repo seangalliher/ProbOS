@@ -35,9 +35,12 @@ class IntrospectionAgent(BaseAgent):
         IntentDescriptor(name="why", params={"question": "..."}, description="Explain why ProbOS did something", requires_reflect=True),
         IntentDescriptor(name="introspect_memory", params={}, description="Report episodic memory status — episode count, intent type distribution, success/failure rates, storage backend info", requires_reflect=True),
         IntentDescriptor(name="introspect_system", params={}, description="Report comprehensive system status — agent tiers, pool health, trust network summary, Hebbian routing stats, knowledge store status, dream cycle state", requires_reflect=True),
+        IntentDescriptor(name="system_anomalies", params={}, description="Report detected system anomalies — trust outliers, routing shifts, consolidation anomalies, cooperation clusters", requires_reflect=True),
+        IntentDescriptor(name="emergent_patterns", params={}, description="Report emergent behavior metrics — cooperation clusters, total correlation (TC_N), routing entropy, capability growth trends", requires_reflect=True),
+        IntentDescriptor(name="search_knowledge", params={"query": "...", "types": "..."}, description="Search across all ProbOS knowledge — episodes, agents, skills, workflows, QA reports, system events. Semantic similarity matching.", requires_reflect=True),
     ]
 
-    _handled_intents = {"explain_last", "agent_info", "system_health", "why", "introspect_memory", "introspect_system"}
+    _handled_intents = {"explain_last", "agent_info", "system_health", "why", "introspect_memory", "introspect_system", "system_anomalies", "emergent_patterns", "search_knowledge"}
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Full lifecycle: perceive -> decide -> act -> report."""
@@ -96,6 +99,12 @@ class IntrospectionAgent(BaseAgent):
             return await self._introspect_memory(rt)
         elif action == "introspect_system":
             return self._introspect_system(rt)
+        elif action == "system_anomalies":
+            return self._system_anomalies(rt)
+        elif action == "emergent_patterns":
+            return self._emergent_patterns(rt)
+        elif action == "search_knowledge":
+            return await self._search_knowledge(rt, params)
 
         return {"success": False, "error": f"Unknown introspection action: {action}"}
 
@@ -445,5 +454,105 @@ class IntrospectionAgent(BaseAgent):
                 "pool_health": pool_health,
                 "knowledge": knowledge_info,
                 "dreaming": dreaming_info,
+            },
+        }
+
+    def _system_anomalies(self, rt: Any) -> dict[str, Any]:
+        """Report currently detected anomalies and patterns."""
+        detector = getattr(rt, "_emergent_detector", None)
+        if detector is None:
+            return {
+                "success": True,
+                "data": {"message": "Emergent detection not available"},
+            }
+
+        patterns = detector.analyze()
+        pattern_dicts = [
+            {
+                "pattern_type": p.pattern_type,
+                "description": p.description,
+                "confidence": round(p.confidence, 3),
+                "severity": p.severity,
+                "evidence": p.evidence,
+            }
+            for p in patterns
+        ]
+
+        return {
+            "success": True,
+            "data": {
+                "anomaly_count": len(pattern_dicts),
+                "patterns": pattern_dicts,
+            },
+        }
+
+    def _emergent_patterns(self, rt: Any) -> dict[str, Any]:
+        """Report system dynamics overview including TC_N and trends."""
+        detector = getattr(rt, "_emergent_detector", None)
+        if detector is None:
+            return {
+                "success": True,
+                "data": {"message": "Emergent detection not available"},
+            }
+
+        snapshot = detector.get_snapshot()
+        summary = detector.summary()
+
+        # Build trend data from snapshot history
+        trends: dict[str, list] = {"tc_n": [], "routing_entropy": []}
+        for snap in detector._history[-10:]:
+            trends["tc_n"].append(round(snap.tc_n, 4))
+            trends["routing_entropy"].append(round(snap.routing_entropy, 4))
+
+        return {
+            "success": True,
+            "data": {
+                "snapshot": {
+                    "tc_n": round(snapshot.tc_n, 4),
+                    "routing_entropy": round(snapshot.routing_entropy, 4),
+                    "capability_count": snapshot.capability_count,
+                    "cooperation_clusters": len(snapshot.cooperation_clusters),
+                    "dream_consolidation_rate": round(snapshot.dream_consolidation_rate, 2),
+                    "trust_distribution": {
+                        k: round(v, 4) if isinstance(v, float) else v
+                        for k, v in snapshot.trust_distribution.items()
+                        if k != "per_agent"
+                    },
+                },
+                "summary": summary,
+                "trends": trends,
+            },
+        }
+
+    async def _search_knowledge(self, rt: Any, params: dict) -> dict[str, Any]:
+        """Search across all ProbOS knowledge types."""
+        layer = getattr(rt, "_semantic_layer", None)
+        if layer is None:
+            return {
+                "success": True,
+                "data": {"message": "Semantic knowledge layer not available"},
+            }
+
+        query = params.get("query", "")
+        if not query:
+            return {
+                "success": False,
+                "error": "Missing 'query' parameter",
+            }
+
+        # Parse optional types filter
+        types_str = params.get("types", "")
+        types: list[str] | None = None
+        if types_str:
+            types = [t.strip() for t in types_str.split(",") if t.strip()]
+
+        results = await layer.search(query, types=types, limit=10)
+
+        return {
+            "success": True,
+            "data": {
+                "query": query,
+                "results": results,
+                "count": len(results),
             },
         }

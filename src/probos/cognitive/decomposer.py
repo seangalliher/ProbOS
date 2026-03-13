@@ -208,6 +208,9 @@ calculate the conversion yourself (e.g. UTC+9 for Tokyo, UTC-7 for Denver, etc.)
 that were performed.
 4. Each result line starts with [completed] or [failed] \u2014 trust that status.
 5. Even partial or imperfect data is better than saying you couldn\u2019t retrieve it.
+6. If results contain structured data (XML, JSON, HTML, CSV), extract and present \
+the relevant content to answer the user's question. Do NOT describe the format or \
+suggest the user access it themselves \u2014 parse the data and give the answer directly.
 
 Respond with plain text only. No JSON. No markdown code fences.
 """

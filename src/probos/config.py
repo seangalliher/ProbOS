@@ -239,6 +239,12 @@ class KnowledgeConfig(BaseModel):
     restore_on_boot: bool = True    # Warm boot from existing repo
 
 
+class BundledAgentsConfig(BaseModel):
+    """Bundled agent suite configuration (AD-252)."""
+
+    enabled: bool = True  # Create bundled CognitiveAgent pools at boot
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
@@ -262,6 +268,7 @@ class SystemConfig(BaseModel):
     self_mod: SelfModConfig = SelfModConfig()
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
+    bundled_agents: BundledAgentsConfig = BundledAgentsConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

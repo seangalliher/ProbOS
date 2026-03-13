@@ -204,3 +204,6 @@ knowledge:
   max_episodes: 1000               # Oldest-first eviction in KnowledgeStore
   max_workflows: 200
   restore_on_boot: true            # Warm boot: restore trust, routing, agents, skills, episodes (AD-162/AD-181)
+
+bundled_agents:
+  enabled: true                    # Phase 22: bundled CognitiveAgent suite (AD-252)

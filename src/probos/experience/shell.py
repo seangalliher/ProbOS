@@ -52,6 +52,8 @@ class ProbOSShell:
         "/reject":    "Discard pending proposal",
         "/feedback":  "Rate last execution (/feedback good|bad)",
         "/correct":   "Correct the last execution (/correct <what to fix>)",
+        "/anomalies": "Show emergent behavior detection and system anomalies",
+        "/search":    "Search across all knowledge (/search [--type agents,skills] <query>)",
         "/explain":   "Explain what happened in the last NL request",
         "/model":     "Show LLM client type, endpoint, and tier config",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
@@ -172,6 +174,8 @@ class ProbOSShell:
             "/reject":    self._cmd_reject,
             "/feedback":  self._cmd_feedback,
             "/correct":   self._cmd_correct,
+            "/anomalies": self._cmd_anomalies,
+            "/search":    self._cmd_search,
             "/explain":   self._cmd_explain,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
@@ -697,6 +701,50 @@ class ProbOSShell:
             self.console.print(
                 "  [dim]You can try /feedback bad to mark this execution as negative.[/dim]"
             )
+
+    async def _cmd_search(self, arg: str) -> None:
+        layer = getattr(self.runtime, "_semantic_layer", None)
+        if layer is None:
+            self.console.print("[yellow]Semantic knowledge layer not available[/yellow]")
+            return
+
+        # Parse optional --type filter
+        query = arg.strip()
+        types: list[str] | None = None
+        if query.startswith("--type "):
+            parts = query.split(maxsplit=2)
+            if len(parts) >= 3:
+                types = [t.strip() for t in parts[1].split(",") if t.strip()]
+                query = parts[2]
+            else:
+                self.console.print("[yellow]Usage: /search [--type agents,skills] <query>[/yellow]")
+                return
+
+        if not query:
+            self.console.print("[yellow]Usage: /search [--type agents,skills] <query>[/yellow]")
+            return
+
+        results = await layer.search(query, types=types, limit=10)
+        stats = layer.stats()
+        self.console.print(panels.render_search_panel(query, results, stats))
+
+    async def _cmd_anomalies(self, arg: str) -> None:
+        detector = getattr(self.runtime, "_emergent_detector", None)
+        if detector is None:
+            self.console.print("[yellow]Emergent detection not available[/yellow]")
+            return
+        patterns = detector.analyze()
+        summary = detector.summary()
+        pattern_dicts = [
+            {
+                "pattern_type": p.pattern_type,
+                "description": p.description,
+                "confidence": p.confidence,
+                "severity": p.severity,
+            }
+            for p in patterns
+        ]
+        self.console.print(panels.render_anomalies_panel(summary, pattern_dicts))
 
     async def _cmd_explain(self, arg: str) -> None:
         await self._handle_nl("what just happened?")

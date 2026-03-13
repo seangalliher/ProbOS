@@ -15,6 +15,8 @@ dependencies = [
     "httpx>=0.27",
     "pyzmq>=27.1.0",
     "chromadb>=1.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +24,9 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
+
+[project.scripts]
+probos = "probos.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
