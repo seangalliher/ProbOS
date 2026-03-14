@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { soundEngine } from '../audio/soundEngine';
 import type {
-  Agent, Connection, PoolInfo, SystemMode, DagNode, ChatMessage,
+  Agent, Connection, PoolInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
@@ -110,6 +110,7 @@ export interface HXIState {
   // Animation events (consumed by canvas)
   pendingConsensusFlash: ConsensusEvent | null;
   pendingSelfModBloom: string | null;  // agent_id of newly spawned agent
+  selfModProgress: { step: string; current: number; total: number; label: string } | null;
   pendingRoutingPulse: { source: string; target: string } | null;
   pendingFeedbackPulse: 'good' | 'bad' | null;
 
@@ -129,6 +130,7 @@ export interface HXIState {
   responseText: string;
   responseVisible: boolean;
   processing: boolean;
+  pendingRequests: number;
   pendingChar: string;
 
   // Audio state
@@ -137,7 +139,7 @@ export interface HXIState {
 
   // Actions
   handleEvent: (event: WSEvent) => void;
-  addChatMessage: (role: 'user' | 'system', text: string) => void;
+  addChatMessage: (role: 'user' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal }) => void;
   clearAnimationEvent: (key: 'pendingConsensusFlash' | 'pendingSelfModBloom' | 'pendingRoutingPulse' | 'pendingFeedbackPulse') => void;
   setConnected: (v: boolean) => void;
   setHoveredAgent: (agent: Agent | null, pos?: { x: number; y: number }) => void;
@@ -149,6 +151,8 @@ export interface HXIState {
   setResponseText: (text: string) => void;
   setResponseVisible: (v: boolean) => void;
   setProcessing: (v: boolean) => void;
+  incPendingRequests: () => void;
+  decPendingRequests: () => void;
   triggerInput: (char: string) => void;
   consumePendingChar: () => string;
   setSoundEnabled: (v: boolean) => void;
@@ -166,6 +170,7 @@ export const useStore = create<HXIState>((set, get) => ({
   routingEntropy: 0,
   pendingConsensusFlash: null,
   pendingSelfModBloom: null,
+  selfModProgress: null,
   pendingRoutingPulse: null,
   pendingFeedbackPulse: null,
   connected: false,
@@ -179,11 +184,12 @@ export const useStore = create<HXIState>((set, get) => ({
   responseText: '',
   responseVisible: false,
   processing: false,
+  pendingRequests: 0,
   pendingChar: '',
   soundEnabled: false,
   voiceEnabled: false,
 
-  setConnected: (v) => set({ connected: v }),
+  setConnected: (v) => { soundEngine.setConnected(v); set({ connected: v }); },
   setHoveredAgent: (agent, pos) => set(pos ? { hoveredAgent: agent, tooltipPos: pos } : { hoveredAgent: agent }),
   setPinnedAgent: (agent) => set({ pinnedAgent: agent }),
   setShowIntro: (v) => set({ showIntro: v }),
@@ -193,6 +199,8 @@ export const useStore = create<HXIState>((set, get) => ({
   setResponseText: (text) => set({ responseText: text }),
   setResponseVisible: (v) => set({ responseVisible: v }),
   setProcessing: (v) => set({ processing: v }),
+  incPendingRequests: () => set((s) => ({ pendingRequests: s.pendingRequests + 1 })),
+  decPendingRequests: () => set((s) => ({ pendingRequests: Math.max(0, s.pendingRequests - 1) })),
   triggerInput: (char) => set({ pendingChar: char }),
   consumePendingChar: () => {
     const char = get().pendingChar;
@@ -210,12 +218,13 @@ export const useStore = create<HXIState>((set, get) => ({
     localStorage.setItem('hxi_voice_enabled', v ? '1' : '0');
   },
 
-  addChatMessage: (role, text) => {
+  addChatMessage: (role, text, meta) => {
     const msg: ChatMessage = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       role,
       text,
       timestamp: Date.now() / 1000,
+      ...(meta?.selfModProposal ? { selfModProposal: meta.selfModProposal } : {}),
     };
     set((s) => ({
       chatHistory: [...s.chatHistory.slice(-49), msg],
@@ -416,11 +425,47 @@ export const useStore = create<HXIState>((set, get) => ({
         break;
       }
 
+      case 'self_mod_failure':
+      case 'self_mod_retry_complete': {
+        set({ selfModProgress: null });
+        const msg = (data.message || data.response || '') as string;
+        if (msg) {
+          get().addChatMessage('system', msg);
+        }
+        break;
+      }
+
+      case 'self_mod_started':
+      case 'self_mod_import_approved': {
+        const msg = (data.message || data.response || '') as string;
+        if (msg) {
+          get().addChatMessage('system', msg);
+        }
+        break;
+      }
+
+      case 'self_mod_progress': {
+        const step = data.step as string;
+        const current = data.current as number;
+        const total = data.total as number;
+        const label = (data.step_label || data.message || '') as string;
+        set({ selfModProgress: { step, current, total, label } });
+        if (label) {
+          get().addChatMessage('system', label);
+        }
+        break;
+      }
+
       case 'self_mod_success': {
         soundEngine.playSelfModSpawn();
+        set({ selfModProgress: null });
         const agentType = data.agent_type as string | undefined;
         if (agentType) {
           set({ pendingSelfModBloom: agentType });
+        }
+        const msg = (data.message || '') as string;
+        if (msg) {
+          get().addChatMessage('system', msg);
         }
         break;
       }

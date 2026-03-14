@@ -194,7 +194,8 @@ class TestPipelineDependencyResolution:
             intent_description="Count words",
             parameters={"text": "hello"},
         )
-        assert record is None
+        assert record is not None
+        assert record.status == "dependencies_declined"
         assert any(r.status == "dependencies_declined" for r in pipeline._records)
 
     @pytest.mark.asyncio
@@ -213,7 +214,8 @@ class TestPipelineDependencyResolution:
             intent_description="Count words",
             parameters={"text": "hello"},
         )
-        assert record is None
+        assert record is not None
+        assert record.status == "dependencies_failed"
         assert any(r.status == "dependencies_failed" for r in pipeline._records)
 
     @pytest.mark.asyncio

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 23 — HXI MVP "See Your AI Thinking" (1532/1532 tests + 11 skipped)
+## Current Status: Phase 23 — HXI MVP "See Your AI Thinking" (1558/1558 tests + 11 skipped)
 
 ---
 
@@ -2474,6 +2474,106 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 
 ---
 
+### AD-262 + AD-263: Close `run_command` Escape Hatch + Fix Python Interpreter Path
+
+**Problem:** Sonnet routes requests like "generate a QR code" to `run_command` with `python -c "import qrcode; ..."` instead of flagging a capability gap. The `run_command` IntentDescriptor says "anything a shell can do" — a blank check. Additionally, when the LLM does generate `python -c ...`, the bare `python` isn't on PATH (venv's interpreter not exposed).
+
+| AD | Decision |
+|----|----------|
+| AD-262 | Prompt hardening: reworded `run_command` descriptor (removed "anything a shell can do"), added anti-scripting rule (explicit ban on `python -c`/`node -e` workarounds), added QR-code capability gap example to `_GAP_EXAMPLES` |
+| AD-263 | `_rewrite_python_interpreter()` — detects bare `python`/`python3` at command start, replaces with `sys.executable`. Same preprocessing pattern as `_strip_ps_wrapper()`. Applied on all platforms |
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `src/probos/agents/shell_command.py` | Reworded IntentDescriptor description, added `_BARE_PYTHON_RE` + `_rewrite_python_interpreter()`, wired in `_run_command()` |
+| `src/probos/cognitive/prompt_builder.py` | Added anti-scripting rule to `_build_rules()`, added QR code entry to `_GAP_EXAMPLES` |
+| `tests/test_prompt_builder.py` | 4 new tests: descriptor wording, anti-scripting rule, QR gap present, QR gap suppressed |
+| `tests/test_expansion_agents.py` | 4 new tests: python rewrite, python3 rewrite, passthrough, full-path passthrough |
+
+1552/1552 tests passing (+ 11 skipped). 8 new tests.
+
+---
+
+### AD-264: `probos reset` CLI Subcommand
+
+**Problem:** No way to permanently clear learned state during development. `--fresh` skips restore for one session but data persists. Manual deletion of `data/knowledge/` works but has no audit trail and can miss ChromaDB.
+
+| AD | Decision |
+|----|----------|
+| AD-264 | Offline CLI command `probos reset` that clears all KnowledgeStore artifacts (episodes, agents, skills, trust, routing, workflows, QA) + ChromaDB data. Git-commits the empty state. `--yes` skips confirmation, `--keep-trust` preserves trust scores. Does NOT boot the runtime |
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `src/probos/__main__.py` | Added `reset` subcommand to argparse, `_cmd_reset()` implementation |
+| `tests/test_distribution.py` | 4 new tests: clear artifacts, keep-trust flag, clear ChromaDB, empty repo safety |
+
+1556/1556 tests passing (+ 11 skipped). 4 new tests.
+
+---
+
+### AD-265: Designed Agent Pool Size = 1
+
+**Problem:** Self-designed agents spawned in pools of 2. The IntentBus fans out to all pool subscribers, so web-fetching agents with `perceive()` httpx overrides made 2 identical HTTP requests per intent — doubling API quota usage and triggering rate limits (observed: CoinGecko 429 on first request from Bitcoin price agent).
+
+| AD | Decision |
+|----|----------|
+| AD-265 | Designed agent pool default size changed from 2 to 1. The PoolScaler can still scale up later based on demand. One agent per pool eliminates duplicate API calls while preserving all existing scaling infrastructure |
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `src/probos/cognitive/self_mod.py` | `_create_pool_fn(agent_type, pool_name, 2)` → `1` |
+| `src/probos/runtime.py` | `_create_designed_pool` default `size` parameter `2` → `1` |
+| `tests/test_self_mod.py` | Mock `create_pool_fn` default `size` parameter `2` → `1` |
+
+1556/1556 tests passing (+ 11 skipped). 0 new tests.
+
+---
+
+### AD-266: Post-Design Capability Report
+
+**Problem:** When self-mod designs a new agent, the HXI only shows "[ClassName] deployed!" — not enough for users (or demo audiences) to understand what was built.
+
+| AD | Decision |
+|----|----------|
+| AD-266 | After successful agent design, LLM generates a brief capability summary from the agent's `instructions` string (extracted via AST). Included in the `self_mod_success` event message. HXI already renders it — no frontend changes. Graceful fallback to original message on failure |
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `src/probos/api.py` | Added capability report generation in `_run_selfmod()` after successful design, before `self_mod_success` event |
+
+1556/1556 tests passing (+ 11 skipped).
+
+---
+
+### AD-267: Self-Mod Progress Stepper
+
+**Problem:** Self-mod pipeline takes 10-30 seconds with no visual progress feedback in the HXI. User sees "Starting agent design..." then waits with no indication of what's happening.
+
+| AD | Decision |
+|----|----------|
+| AD-267 | Added `on_progress` async callback to `handle_unhandled_intent()`. Backend emits `self_mod_progress` events at each pipeline stage (designing → validating → testing → deploying → executing). HXI renders each step as a chat message with emoji prefix. No new UI component — leverages existing chat message rendering. Progress state cleared on success/failure |
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `src/probos/cognitive/self_mod.py` | Added optional `on_progress` callback parameter to `handle_unhandled_intent()`, called at each pipeline stage |
+| `src/probos/api.py` | Wire `_on_progress` callback to emit `self_mod_progress` events with step labels |
+| `ui/src/store/useStore.ts` | Added `selfModProgress` state, handle `self_mod_progress` event, clear on completion |
+| `tests/test_self_mod.py` | 2 new tests: progress callback called at all stages, backward compat without callback |
+
+1558/1558 tests passing (+ 11 skipped). 2 new tests.
+
+---
+
 ## Active Roadmap — Product + Emergence Track
 
 **Strategic goal:** Build a personal AI assistant that (1) is useful on Day 1 with bundled agents, (2) gets smarter with use via self-modification and learning, (3) produces a "wow" visualization via the HXI, (4) enables the Noöplex thesis to be tested via federation. Each milestone has a clear demo moment and measurable outcome.
@@ -2498,22 +2598,61 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 - **Demo moment:** Open browser, watch agents coordinate on your request in real time. The animated GIF that makes people install ProbOS.
 - **Result:** 1532/1532 tests passing (+ 11 skipped). 12 new tests. 14 new TypeScript source files.
 
-### Phase 24: Channel Integration — "Talk to ProbOS Anywhere"
-**Goal:** Connect ProbOS to messaging channels so users interact on platforms they already use.
+### Self-Mod Pipeline Hardening (future — pre-Phase 24)
+**Goal:** Fix real issues discovered during self-mod demo testing. These are reliability improvements to the existing pipeline, not new features.
+- **Designed agent pool size = 1** — self-designed agents currently spawn in pools of 2. The IntentBus fans out to all subscribers, so web-fetching agents with `perceive()` httpx overrides make N identical HTTP requests (one per pool member). This wastes API quota and triggers rate limits. Designed agent pools should default to size 1 until trust is established, then scale up via the existing `PoolScaler`
+- **AgentDesigner `_mesh_fetch()` template** — the bundled agents use `_mesh_fetch()` to route HTTP through the IntentBus (preserving consensus, trust scoring, and deduplication). But the `AGENT_DESIGN_PROMPT` teaches the httpx pattern instead. Add a mesh-fetch template option so designed agents that need web data route through the mesh like bundled agents do. This eliminates duplicate requests at the architectural level, not just by reducing pool size
+- **Motivated by:** self-mod Bitcoin price agent hitting CoinGecko 429 on first request — the pool of 2 agents both called the API simultaneously from `perceive()`, exhausting the free tier rate limit instantly
+
+### Phase 24: Channel Integration + Tool Connectors — "Talk to ProbOS Anywhere, Connect Everything"
+**Goal:** Connect ProbOS to messaging channels AND external tools so it can act as a real productivity hub.
 - Discord bot adapter (discord.py) — messages → IntentBus, results → channel replies
 - Slack bot adapter (Slack Bolt) — same bridge pattern
+- **Tool Connectors Framework** — pluggable connector architecture for SaaS integrations:
+  - Gmail connector (read/send email, search inbox, label management)
+  - Google Calendar connector (read events, create/modify events, check availability)
+  - Notion connector (read/write pages, query databases)
+  - GitHub connector (issues, PRs, repo status — via existing git CLI or GitHub API)
+  - Extensible pattern: each connector is a CognitiveAgent with tool-specific intents
 - Channel → IntentBus bridge pattern reusable for future channels
-- **Demo moment:** Talk to ProbOS on Discord. Ask it to summarize a URL. It works.
+- Server-side TTS via tiered approach: (1) try browser neural voices first (Edge Azure Neural, Chrome on Mac/Android), (2) fall back to Piper TTS (free, local, neural) via `/api/tts`, (3) optional ElevenLabs/OpenAI TTS premium. Cross-platform
+- Always-listening conversation mode: continuous speech recognition (no wake word), silence detection, natural conversation flow
+- **Routing Learner** — utility-tier `RoutingLearnerAgent` that observes decomposer routing failures and learns corrective rules:
+  - Monitors `/feedback bad` episodes where the executed intent was `run_command` (or any intent that failed after routing)
+  - Detects pattern: "user asked for X → routed to intent Y → failed or got negative feedback"
+  - Proposes new `_GAP_EXAMPLES` entries or prompt rules via the existing self-mod / KnowledgeStore pattern
+  - Stores learned routing constraints in KnowledgeStore (Git-backed, survives restart)
+  - On warm boot, learned routing rules are injected into the PromptBuilder alongside the static rules
+  - **Motivated by AD-262:** manual diagnosis of `run_command` being used as a universal fallback for scripting tasks. The RoutingLearner automates this: observe the failure, classify the failure mode, patch the prompt data. No code changes needed — just prompt/example data, governed by the same validation pipeline
+- **Demo moment:** "Check my email and add any meetings to my calendar" — ProbOS reads Gmail, creates calendar events, confirms. All through the mesh with consensus governance on writes.
 
-### Phase 25: Inter-Agent Deliberation — "Agents That Think Together"
-**Goal:** Agents debate and build on each other's reasoning, producing genuinely novel coordination.
-- `DeliberationProtocol` — structured multi-turn exchange between cognitive agents
+### Phase 25: Persistent Tasks + Browser Automation — "Computer That Works While You Sleep"
+**Goal:** Long-running autonomous tasks and full browser control, competing directly with Perplexity Computer.
+- **Persistent Background Tasks** — agents execute multi-step workflows that run for hours/days/months:
+  - Task Runner: managed asyncio tasks with progress tracking, checkpointing, and resume-after-restart
+  - Scheduled execution: cron-like recurring tasks ("monitor these stocks every morning", "weekly project status report")
+  - Decision surfacing: when a background task needs human judgment, it queues a decision in the HXI Task Queue
+  - Task history: all background task executions stored in KnowledgeStore with full provenance
+- **Browser Automation** — full CDP browser control via Playwright or Puppeteer:
+  - `BrowserAgent` — CognitiveAgent that controls a headless Chrome/Chromium instance
+  - Actions: navigate, click, type, screenshot, extract data, fill forms, download files
+  - Governed: browser actions go through consensus (writes/form submissions) — the mesh governs what the browser does
+  - Web scraping + data extraction workflows as composable DAGs
+- **HXI Agent Roster View** — every agent has a profile: bio, creation history, track record, current status (idle/working/waiting), skills, trust trajectory. Click to inspect, assign tasks, or interact directly
+- **HXI Task Queue** — feed of items needing user attention: decisions, approvals, goal checkpoints, anomalies, completed background tasks
+- **Demo moment:** "Monitor the top 10 AI stocks and alert me if any drop more than 5% — check every hour" → ProbOS creates a persistent task, runs autonomously, surfaces alerts. User sees it working in the HXI Task Queue.
+
+### Phase 26: Inter-Agent Deliberation + Discourse — "Agents That Think Together"
+**Goal:** Agents debate, coordinate, and explore ideas together — visible to the human in the HXI.
+- `DeliberationProtocol` — structured multi-turn exchange between cognitive agents for task-related decisions
+- Agent-to-agent direct messaging via mesh — lateral coordination without decomposer micromanagement ("FileReader, I need config.yaml before I can analyze")
+- **Discourse mode** — open-ended agent conversations about topics. User prompts "agents, discuss the pros and cons of X" and watches two CognitiveAgents reason together in real time. Transcripts stored as episodes. Hebbian learns which agent pairs produce good discourse
+- **HXI Agent Forum** — a view within the HXI canvas that surfaces agent-to-agent conversations, deliberations, and discourse. Not a separate page — the canvas morphs to show the forum when discourse is active. Human can observe, inject thoughts, or join as a participant
 - Decomposer spawns deliberations for ambiguous/complex tasks
-- Deliberation transcripts stored as episodes, Hebbian learns which pairs deliberate well
 - Consensus governs deliberation outcomes
-- **Demo moment:** "Should I refactor this module?" — watch an analyzer and critic debate approaches, reach consensus. HXI shows the dialogue flow.
+- **Demo moment:** "Agents, discuss whether ProbOS should add a knowledge graph" — watch two agents debate architecture, cite episodic memory, reach a conclusion. The human joins the discussion mid-stream.
 
-### Phase 26: Self-Maintaining Dev Squad — "ProbOS Builds ProbOS"
+### Phase 27: Self-Maintaining Dev Squad — "ProbOS Builds ProbOS"
 **Goal:** Cognitive agents that help develop and maintain ProbOS's own codebase, unblocking the solo developer.
 - CodeAnalyzerAgent, PlannerAgent, CoderAgent, ReviewerAgent — all CognitiveAgent subclasses
 - All changes go through consensus governance. Test suite is the QA gate. Git-backed audit trail
@@ -2521,17 +2660,17 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 - Corrections (Phase 18b) train the squad on architectural preferences
 - **Demo moment:** Describe a feature → squad proposes implementation → you review → approve → tests pass → merged
 
-### Phase 27: Abstract Representation + Meta-Learning + Long-Horizon Planning — "An AI That Learns Concepts"
+### Phase 28: Abstract Representation + Meta-Learning + Long-Horizon Planning — "An AI That Learns Concepts"
 **Goal:** The system learns principles from experience, gets better at improving itself, transfers strategies across domains, and pursues goals that span multiple sessions.
 - Dream cycle abstraction phase — extract patterns from episode clusters ("info gathering before mutation succeeds 90%")
 - Abstraction store in KnowledgeStore, injected into decomposer planning context
 - Meta-learning: design success/failure tracking feeds back into AgentDesigner. The 10th agent is better than the 1st
-- Cross-domain strategy transfer: dream cycle identifies structurally similar successful episodes across different agent pools (e.g., fetch→parse→summarize in both WebSearch and News), propagates domain-general strategies as abstractions tagged with applicable domains. Addresses the AGI cross-domain transfer criterion
-- GoalManager: persistent goals stored in KnowledgeStore (Git-backed, survives restart), progress tracking across sessions, decomposer plans in context of active goals. "Refactor the auth module" decomposes into multiple sessions of work, each building on the previous. Addresses the AGI long-horizon planning criterion
+- Cross-domain strategy transfer: dream cycle identifies structurally similar successful episodes across different agent pools, propagates domain-general strategies as abstractions tagged with applicable domains
+- GoalManager: persistent goals stored in KnowledgeStore (Git-backed, survives restart), progress tracking across sessions, decomposer plans in context of active goals
 - Formal Policy Engine — `policies.yaml` with declarative governance rules enforced at runtime
 - **Demo moment:** HXI shows dream cycle extracting a concept. A strategy learned in one domain improves planning in another. Multi-session goals show progress across restarts.
 
-### Phase 28: Federation + Emergence Testing — "The Noöplex Emerges"
+### Phase 29: Federation + Emergence Testing — "The Noöplex Emerges"
 **Goal:** Multiple ProbOS nodes share knowledge and produce measurable emergent intelligence.
 - Knowledge federation via Git remotes — designed agents, skills, episodes shared between nodes
 - Trust transitivity: `T(A→C) = T(A→B) · T(B→C) · δ`
@@ -2539,20 +2678,32 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 - Channel integration enables multi-user federation (each user runs their own node)
 - TC_N measurement across federated nodes with statistical significance
 - Benchmarking framework: standardized task suite, before/after comparison, regression detection. Validates emergence claims with statistical rigor (Noöplex §8.5, §8.6)
-- **Demo moment:** Two nodes connected. TC_N rises. Federated system solves tasks neither node could alone. Benchmark results publishable.
+- `probos cluster --nodes N` — one command spawns N federated nodes as child processes on one machine
+- **Demo moment:** `probos cluster --nodes 3` — three cognitive meshes connect, share knowledge, TC_N rises.
 
-### Pre-Launch: Security Hardening + Documentation
-**Goal:** Prepare ProbOS for public open source release and non-localhost deployment.
+### Pre-Launch: Personalization + Security + Documentation
+**Goal:** Prepare ProbOS for public release with a personalized first-run experience and security hardening.
+- **First-run induction interview** — no tutorial. ProbOS asks: what to call the agent, preferred voice, interaction mode (typing/speaking/both), information density, color theme, first goal. Produces a `HumanCognitiveModel` stored in KnowledgeStore. The HXI renders into the human's configuration immediately
+- **Custom agent name** — human chooses what to call ProbOS ("Jarvis", "Friday", etc.). Stored persistently, used in all responses and voice
+- **Voice selection** — human picks from available voices. Tiered TTS applies (browser neural → Piper → ElevenLabs)
+- **Color theme** — warm/cool/custom accent. Shifts the entire HXI color palette via shader uniforms
+- **Information density** — brief/standard/detailed. Affects response length, panel depth, progressive disclosure defaults
 - Security: input sanitization on `/api/chat` (prompt injection defense), rate limiting, authentication for remote access, API access audit logging
 - Documentation: `probos.dev` website, getting-started guide, API docs (auto-generated from FastAPI), architecture overview for contributors, agent development guide
 - README.md rewrite for open source (install instructions, screenshots/GIFs from HXI, contributing guide)
 - License: Apache 2.0 (all code including federation)
 
-### Future (post-Phase 28, unsequenced)
+### Future (post-Phase 29, unsequenced)
+- **HXI Spatial Experience Philosophy** — the HXI is not an app with pages. It's a single adaptive canvas that morphs to show whatever the human needs: mesh topology, agent forum, task queue, roster, discourse, goals. No navigation, no tabs, no "go to page X." The canvas presents what's relevant. Agent deliberations surface as visible conversations within the canvas. Task results emerge from the mesh. Goals appear as persistent structures. The human doesn't use the HXI — they inhabit it
+- **** —  the Noöplex. Agents are 3D entities you stand next to, observe, and interact with. Deliberations happen as spatial conversations you can join. The heartbeat pulses around you. Dream mode transforms the entire space. Federation means traversing between mesh volumes — walking from your local mesh into a connected peer's mesh. Think VRChat but with AI agents and human agents interacting together in a shared cognitive space. . This is the ultimate form of the HXI: you don't look at cognition — you're inside it
+- **Bundled Agent Quality Pass** — all 10 bundled agents must be excellent, not just functional. Users judge ProbOS by the bundled agents. Specific improvements: WeatherAgent should parse wttr.in 3-day forecast (not just current conditions), NewsAgent should support more sources and present headlines with links, WebSearchAgent should extract richer snippets from DuckDuckGo results, PageReaderAgent should handle JavaScript-rendered pages better, CalculatorAgent should handle unit conversions and currency with live rates, SchedulerAgent needs a background timer for due reminders, TodoAgent needs priority sorting and due date reminders, NoteTakerAgent needs tags and better search. Each agent should be tested with 20+ real-world queries and refined until the responses are consistently helpful
+- **Artifact Creation** — generate production-ready apps, websites, reports, spreadsheets, presentations, GIFs from natural language. Self-mod can design artifact-creation agents on demand
+- **** — responsive HXI that works on phones/tablets. . 
+- **Additional Tool Connectors** — Jira, Linear, Asana (project management), Dropbox/OneDrive (file storage), Spotify (media control), Home Assistant (smart home), custom webhook connectors. Each connector = a CognitiveAgent. Dev Squad builds these autonomously once it's operational
+- **** — community-designed agents shared publicly. Trust scores serve as ratings. Revenue share on premium agents
 - Knowledge Graph — structured relational store complementing ChromaDB vector memory
 - Provenance System — derivation chains on all knowledge
 - Knowledge Lifecycle Management — confidence decay, deprecation, archival
-- Perception Gateways — ambient monitoring agents (FileWatcher, ScheduledFetch, SystemState)
 - Semantic Schemas — typed contracts for agent I/O
 - State Reconciliation Protocol — structured argumentation and precedent
 - Agent Versioning — shadow deployment and comparative evaluation

@@ -7,12 +7,14 @@ import { modeGrading } from './scene';
 
 export function Effects() {
   const systemMode = useStore((s) => s.systemMode);
+  const connected = useStore((s) => s.connected);
   const grading = modeGrading(systemMode);
+  const bloomIntensity = connected ? grading.bloomStrength : 0.2;
 
   return (
     <EffectComposer>
       <Bloom
-        intensity={grading.bloomStrength}
+        intensity={bloomIntensity}
         luminanceThreshold={0.1}
         luminanceSmoothing={0.4}
         mipmapBlur

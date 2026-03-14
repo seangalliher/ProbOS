@@ -598,7 +598,7 @@ class TestSelfModPipeline:
         async def register_fn(agent_class):
             registered_types.append(agent_class)
 
-        async def create_pool_fn(agent_type, pool_name, size=2):
+        async def create_pool_fn(agent_type, pool_name, size=1):
             created_pools.append((agent_type, pool_name, size))
 
         async def set_trust_fn(agent_ids):
@@ -679,7 +679,8 @@ class TestSelfModPipeline:
             set_trust_fn=noop,
         )
         record = await pipeline.handle_unhandled_intent("bad", "bad intent", {})
-        assert record is None
+        assert record is not None
+        assert record.status == "failed_validation"
         records = pipeline.designed_agents()
         assert len(records) == 1
         assert records[0].status == "failed_validation"
@@ -744,7 +745,8 @@ class TestSelfModPipeline:
             set_trust_fn=noop,
         )
         record = await pipeline.handle_unhandled_intent("hang", "hangs", {})
-        assert record is None
+        assert record is not None
+        assert record.status == "failed_sandbox"
         records = pipeline.designed_agents()
         assert len(records) == 1
         assert records[0].status == "failed_sandbox"
@@ -760,7 +762,8 @@ class TestSelfModPipeline:
             user_approval_fn=reject_fn,
         )
         record = await pipeline.handle_unhandled_intent("test", "test", {})
-        assert record is None
+        assert record is not None
+        assert record.status == "rejected_by_user"
         records = pipeline.designed_agents()
         assert len(records) == 1
         assert records[0].status == "rejected_by_user"
@@ -782,7 +785,42 @@ class TestSelfModPipeline:
 
         # Second should be blocked by limit
         r2 = await pipeline.handle_unhandled_intent("parse_json", "parse json", {"text": "x"})
-        assert r2 is None
+        assert r2 is not None
+        assert r2.status == "max_limit"
+
+    @pytest.mark.asyncio
+    async def test_selfmod_progress_callback_called(self):
+        """Progress callback fires at each pipeline stage."""
+        progress_calls = []
+
+        async def track_progress(step: str, current: int, total: int) -> None:
+            progress_calls.append((step, current, total))
+
+        pipeline, mocks = self._make_pipeline()
+        record = await pipeline.handle_unhandled_intent(
+            intent_name="count_words",
+            intent_description="Count the number of words",
+            parameters={"text": "input text"},
+            on_progress=track_progress,
+        )
+        assert record is not None
+        assert record.status == "active"
+        assert ("designing", 1, 5) in progress_calls
+        assert ("validating", 2, 5) in progress_calls
+        assert ("testing", 3, 5) in progress_calls
+        assert ("deploying", 4, 5) in progress_calls
+
+    @pytest.mark.asyncio
+    async def test_selfmod_progress_callback_optional(self):
+        """Pipeline works without on_progress (backward compat)."""
+        pipeline, mocks = self._make_pipeline()
+        record = await pipeline.handle_unhandled_intent(
+            intent_name="count_words",
+            intent_description="Count the number of words",
+            parameters={"text": "input text"},
+        )
+        assert record is not None
+        assert record.status == "active"
 
 
 # ---------------------------------------------------------------------------

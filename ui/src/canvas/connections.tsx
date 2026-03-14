@@ -4,10 +4,11 @@ import { useMemo } from 'react';
 import * as THREE from 'three';
 import { useStore } from '../store/useStore';
 
-function ConnectionTube({ start, end, weight }: {
+function ConnectionTube({ start, end, weight, connected }: {
   start: [number, number, number];
   end: [number, number, number];
   weight: number;
+  connected: boolean;
 }) {
   const { geometry, material } = useMemo(() => {
     const s = new THREE.Vector3(...start);
@@ -20,7 +21,7 @@ function ConnectionTube({ start, end, weight }: {
     const curve = new THREE.QuadraticBezierCurve3(s, mid, e);
     const radius = 0.015 + weight * 0.025;
     const geo = new THREE.TubeGeometry(curve, 16, radius, 6, false);
-    const opacity = Math.min(0.4 + weight * 0.5, 0.9);
+    const opacity = connected ? Math.min(0.4 + weight * 0.5, 0.9) : 0.05;
     const mat = new THREE.MeshBasicMaterial({
       color: '#00d4ff',
       transparent: true,
@@ -28,7 +29,7 @@ function ConnectionTube({ start, end, weight }: {
       toneMapped: false,
     });
     return { geometry: geo, material: mat };
-  }, [start, end, weight]);
+  }, [start, end, weight, connected]);
 
   return <primitive object={new THREE.Mesh(geometry, material)} />;
 }
@@ -52,6 +53,7 @@ function poolCenter(
 export function Connections() {
   const connections = useStore((s) => s.connections);
   const agents = useStore((s) => s.agents);
+  const connected = useStore((s) => s.connected);
 
   const validConnections = useMemo(() => {
     return connections
@@ -100,6 +102,7 @@ export function Connections() {
           start={c.startPos}
           end={c.endPos}
           weight={c.weight}
+          connected={connected}
         />
       ))}
     </group>

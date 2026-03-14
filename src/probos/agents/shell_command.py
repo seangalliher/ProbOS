@@ -22,6 +22,12 @@ _PS_WRAPPER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Regex to detect bare `python` / `python3` at the start of a command.
+_BARE_PYTHON_RE = re.compile(
+    r"^(python3?(?:\.exe)?)\s",
+    re.IGNORECASE,
+)
+
 
 class ShellCommandAgent(BaseAgent):
     """Concrete agent that executes shell commands.
@@ -42,7 +48,7 @@ class ShellCommandAgent(BaseAgent):
     ]
     initial_confidence: float = 0.8
     intent_descriptors = [
-        IntentDescriptor(name="run_command", params={"command": "<shell_command>"}, description="Execute a shell command (use for calculations, dates, system info, or anything a shell can do)", requires_consensus=True, requires_reflect=True),
+        IntentDescriptor(name="run_command", params={"command": "<shell_command>"}, description="Execute an OS shell command (dates, system info, process management, package install). NOT for scripting workarounds.", requires_consensus=True, requires_reflect=True),
     ]
 
     _handled_intents = {"run_command"}
@@ -124,6 +130,8 @@ class ShellCommandAgent(BaseAgent):
             # runs commands under powershell via Popen.
             command = self._strip_ps_wrapper(command)
 
+        command = self._rewrite_python_interpreter(command)
+
         loop = asyncio.get_running_loop()
         try:
             result = await asyncio.wait_for(
@@ -154,6 +162,20 @@ class ShellCommandAgent(BaseAgent):
             if inner.startswith('"') and inner.endswith('"'):
                 inner = inner[1:-1]
             return inner
+        return command
+
+    @staticmethod
+    def _rewrite_python_interpreter(command: str) -> str:
+        """Replace bare ``python``/``python3`` with the current interpreter.
+
+        When the LLM generates ``python -c "..."``, the bare name may not
+        be on PATH.  Replace it with ``sys.executable`` which is guaranteed
+        to be the running interpreter (inside the venv).
+        """
+        m = _BARE_PYTHON_RE.match(command)
+        if m:
+            prefix = '& ' if sys.platform == 'win32' else ''
+            return f'{prefix}"{sys.executable}"' + command[m.end(1):]
         return command
 
     def _run_sync(self, command: str) -> dict[str, Any]:

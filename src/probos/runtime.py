@@ -903,63 +903,77 @@ class ProbOSRuntime:
         )
 
         # Step 3: Red team verification (verify a sample of results)
+        # Parallelized to avoid serial O(results × agents × timeout) blocking.
         verification_results = []
         if results and self._red_team_agents:
             verification_timeout = self.config.consensus.verification_timeout_seconds
-            for result in results:
-                if not result.success:
-                    continue  # Only verify successful results
-                # Pick a red team agent to verify
-                for rt_agent in self._red_team_agents:
-                    try:
-                        vr = await asyncio.wait_for(
-                            rt_agent.verify(result.agent_id, msg, result),
-                            timeout=verification_timeout,
-                        )
-                        verification_results.append(vr)
 
-                        # Step 4: Update trust network (AD-224: Shapley-weighted)
-                        shapley_weight = 1.0
-                        if consensus.shapley_values:
-                            shapley_weight = max(
-                                consensus.shapley_values.get(result.agent_id, 0.0),
-                                0.1,  # floor: even redundant agents get minimal update
-                            )
-                        self.trust_network.record_outcome(
-                            result.agent_id,
-                            success=vr.verified,
-                            weight=shapley_weight,
-                        )
+            async def _verify_one(
+                rt_agent: Any, result: Any,
+            ) -> None:
+                try:
+                    vr = await asyncio.wait_for(
+                        rt_agent.verify(result.agent_id, msg, result),
+                        timeout=verification_timeout,
+                    )
+                    verification_results.append(vr)
 
-                        # Emit trust_update for HXI (AD-254)
-                        self._emit_event("trust_update", {
-                            "agent_id": result.agent_id,
-                            "new_score": round(self.trust_network.get_score(result.agent_id), 4),
-                            "success": vr.verified,
-                        })
+                    # Step 4: Update trust network (AD-224: Shapley-weighted)
+                    shapley_weight = 1.0
+                    if consensus.shapley_values:
+                        shapley_weight = max(
+                            consensus.shapley_values.get(result.agent_id, 0.0),
+                            0.1,
+                        )
+                    self.trust_network.record_outcome(
+                        result.agent_id,
+                        success=vr.verified,
+                        weight=shapley_weight,
+                    )
 
-                        # Step 5: Update hebbian (agent-to-agent)
-                        self.hebbian_router.record_verification(
-                            verifier_id=rt_agent.id,
-                            target_id=result.agent_id,
-                            verified=vr.verified,
-                        )
+                    self._emit_event("trust_update", {
+                        "agent_id": result.agent_id,
+                        "new_score": round(self.trust_network.get_score(result.agent_id), 4),
+                        "success": vr.verified,
+                    })
 
-                        await self.event_log.log(
-                            category="consensus",
-                            event="verification_complete",
-                            agent_id=result.agent_id,
-                            detail=(
-                                f"verifier={rt_agent.id[:8]} verified={vr.verified} "
-                                f"intent={intent}"
-                            ),
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "Verification timeout: verifier=%s target=%s",
-                            rt_agent.id[:8],
-                            result.agent_id[:8],
-                        )
+                    # Step 5: Update hebbian (agent-to-agent)
+                    self.hebbian_router.record_verification(
+                        verifier_id=rt_agent.id,
+                        target_id=result.agent_id,
+                        verified=vr.verified,
+                    )
+
+                    await self.event_log.log(
+                        category="consensus",
+                        event="verification_complete",
+                        agent_id=result.agent_id,
+                        detail=(
+                            f"verifier={rt_agent.id[:8]} verified={vr.verified} "
+                            f"intent={intent}"
+                        ),
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Verification timeout: verifier=%s target=%s",
+                        rt_agent.id[:8],
+                        result.agent_id[:8],
+                    )
+                except Exception:
+                    logger.warning(
+                        "Verification error: verifier=%s target=%s",
+                        rt_agent.id[:8],
+                        result.agent_id[:8],
+                        exc_info=True,
+                    )
+
+            verify_tasks = [
+                _verify_one(rt_agent, result)
+                for result in results if result.success
+                for rt_agent in self._red_team_agents
+            ]
+            if verify_tasks:
+                await asyncio.gather(*verify_tasks)
 
         await self.event_log.log(
             category="mesh",
@@ -1032,6 +1046,7 @@ class ProbOSRuntime:
         self,
         text: str,
         on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+        auto_selfmod: bool = True,
     ) -> dict[str, Any]:
         """Process a natural language request through the full cognitive pipeline.
 
@@ -1144,65 +1159,79 @@ class ProbOSRuntime:
             if self.self_mod_pipeline and (
                 not dag.response or is_gap
             ):
-                intent_meta = await self._extract_unhandled_intent(text)
-                if intent_meta:
-                    # Build execution context from prior execution (AD-235)
-                    exec_context = ""
-                    if self._last_execution and self._was_last_execution_successful():
-                        exec_context = self._format_execution_context()
+                if auto_selfmod:
+                    intent_meta = await self._extract_unhandled_intent(text)
+                    if intent_meta:
+                        # Build execution context from prior execution (AD-235)
+                        exec_context = ""
+                        if self._last_execution and self._was_last_execution_successful():
+                            exec_context = self._format_execution_context()
 
-                    record = await self.self_mod_pipeline.handle_unhandled_intent(
-                        intent_name=intent_meta["name"],
-                        intent_description=intent_meta["description"],
-                        parameters=intent_meta.get("parameters", {}),
-                        requires_consensus=intent_meta.get("requires_consensus", False),
-                        execution_context=exec_context,
-                    )
-                    if record and record.status == "active":
-                        self_mod_result = {
-                            "status": "active",
-                            "intent": intent_meta["name"],
-                            "agent_type": record.agent_type,
-                        }
-                        # Retry the original request now that a new agent exists
-                        dag = await self.decomposer.decompose(
-                            text, context=context, similar_episodes=similar_episodes or None,
+                        record = await self.self_mod_pipeline.handle_unhandled_intent(
+                            intent_name=intent_meta["name"],
+                            intent_description=intent_meta["description"],
+                            parameters=intent_meta.get("parameters", {}),
+                            requires_consensus=intent_meta.get("requires_consensus", False),
+                            execution_context=exec_context,
                         )
-                        if dag.nodes:
-                            # Successfully re-decomposed — continue with normal execution
-                            pass
-                        # AD-154: Schedule QA as background task (non-blocking)
-                        if self._system_qa is not None:
-                            asyncio.create_task(
-                                self._run_qa_for_designed_agent(record)
+                        if record and record.status == "active":
+                            self_mod_result = {
+                                "status": "active",
+                                "intent": intent_meta["name"],
+                                "agent_type": record.agent_type,
+                            }
+                            # Retry the original request now that a new agent exists
+                            dag = await self.decomposer.decompose(
+                                text, context=context, similar_episodes=similar_episodes or None,
                             )
-                        # Persist designed agent to knowledge store
-                        if self._knowledge_store:
-                            try:
-                                await self._knowledge_store.store_agent(record, record.source_code)
-                            except Exception:
-                                pass  # Never block on persistence failure
-                        # Auto-index for semantic search (AD-243)
-                        if self._semantic_layer:
-                            try:
-                                await self._semantic_layer.index_agent(
-                                    agent_type=record.agent_type,
-                                    intent_name=record.intent_name,
-                                    description=record.intent_name,
-                                    strategy=record.strategy,
-                                    source_snippet=record.source_code[:200] if record.source_code else "",
-                                )
-                            except Exception:
+                            if dag.nodes:
+                                # Successfully re-decomposed — continue with normal execution
                                 pass
-                    elif record:
+                            # AD-154: Schedule QA as background task (non-blocking)
+                            if self._system_qa is not None:
+                                asyncio.create_task(
+                                    self._run_qa_for_designed_agent(record)
+                                )
+                            # Persist designed agent to knowledge store
+                            if self._knowledge_store:
+                                try:
+                                    await self._knowledge_store.store_agent(record, record.source_code)
+                                except Exception:
+                                    pass  # Never block on persistence failure
+                            # Auto-index for semantic search (AD-243)
+                            if self._semantic_layer:
+                                try:
+                                    await self._semantic_layer.index_agent(
+                                        agent_type=record.agent_type,
+                                        intent_name=record.intent_name,
+                                        description=record.intent_name,
+                                        strategy=record.strategy,
+                                        source_snippet=record.source_code[:200] if record.source_code else "",
+                                    )
+                                except Exception:
+                                    pass
+                        elif record:
+                            self_mod_result = {
+                                "status": record.status,
+                                "intent": intent_meta["name"],
+                                "error": record.error,
+                            }
+                        else:
+                            self_mod_result = {
+                                "status": "failed",
+                                "intent": intent_meta["name"],
+                                "error": "design returned no record",
+                            }
+                else:
+                    # API mode: return the capability gap as a proposal
+                    # without running inline self-mod
+                    intent_meta = await self._extract_unhandled_intent(text)
+                    if intent_meta:
                         self_mod_result = {
-                            "status": record.status,
+                            "status": "proposed",
                             "intent": intent_meta["name"],
-                        }
-                    else:
-                        self_mod_result = {
-                            "status": "failed",
-                            "intent": intent_meta["name"],
+                            "description": intent_meta.get("description", ""),
+                            "parameters": intent_meta.get("parameters", {}),
                         }
 
             if not dag.nodes:
@@ -2088,7 +2117,7 @@ class ProbOSRuntime:
         agent_type = getattr(agent_class, "agent_type", "unknown")
         self.register_agent_type(agent_type, agent_class)
 
-    async def _create_designed_pool(self, agent_type: str, pool_name: str, size: int = 2) -> None:
+    async def _create_designed_pool(self, agent_type: str, pool_name: str, size: int = 1) -> None:
         """Create a pool for a self-designed agent type."""
         ids = generate_pool_ids(agent_type, pool_name, size)
         await self.create_pool(

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -275,21 +277,20 @@ class RedTeamAgent(BaseAgent):
         claimed: IntentResult,
         params: dict[str, Any],
     ) -> VerificationResult:
-        """Verify command execution by re-running the same command."""
+        """Verify command execution by re-running the same command.
+
+        Uses subprocess.Popen via run_in_executor (matching ShellCommandAgent)
+        to avoid asyncio.create_subprocess_shell issues on Windows.
+        """
         command = params.get("command", "")
         try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            loop = asyncio.get_running_loop()
+            run_result = await asyncio.wait_for(
+                loop.run_in_executor(None, self._run_verify_sync, command),
+                timeout=5.0,
             )
-            try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(), timeout=30.0
-                )
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
+
+            if run_result is None:
                 self.update_confidence(False)
                 return VerificationResult(
                     verifier_id=self.id,
@@ -300,10 +301,9 @@ class RedTeamAgent(BaseAgent):
                     confidence=self.confidence,
                 )
 
-            expected_exit_code = proc.returncode
+            expected_exit_code, expected_stdout = run_result
 
             if not claimed.success:
-                # Agent claims failure but we could run the command
                 self.update_confidence(True)
                 return VerificationResult(
                     verifier_id=self.id,
@@ -332,7 +332,6 @@ class RedTeamAgent(BaseAgent):
                 )
 
             # Compare stdout
-            expected_stdout = stdout_bytes[:64 * 1024].decode("utf-8", errors="replace")
             claimed_stdout = claimed_data.get("stdout", "")
             if expected_stdout.strip() != claimed_stdout.strip():
                 self.update_confidence(True)
@@ -364,6 +363,29 @@ class RedTeamAgent(BaseAgent):
                 discrepancy=f"Verification error: {e}",
                 confidence=self.confidence,
             )
+
+    @staticmethod
+    def _run_verify_sync(command: str) -> tuple[int, str] | None:
+        """Blocking subprocess for verification (called via run_in_executor)."""
+        try:
+            if sys.platform == "win32":
+                args = ["powershell", "-NoProfile", "-Command", command]
+                proc = subprocess.Popen(
+                    args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+            else:
+                proc = subprocess.Popen(
+                    command, shell=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+            stdout_bytes, _ = proc.communicate(timeout=5)
+            stdout = stdout_bytes[:64 * 1024].decode("utf-8", errors="replace")
+            return (proc.returncode, stdout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            return None
+        except Exception:
+            return None
 
     async def _verify_http_fetch(
         self,

@@ -35,11 +35,20 @@ export interface DagNode {
   dependsOn: string[];
 }
 
+export interface SelfModProposal {
+  intent_name: string;
+  intent_description: string;
+  parameters: Record<string, string>;
+  original_message: string;
+  status: 'proposed' | 'approved' | 'rejected';
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'system';
   text: string;
   timestamp: number;
+  selfModProposal?: SelfModProposal;
 }
 
 export interface WSEvent {

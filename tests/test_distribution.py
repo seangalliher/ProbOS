@@ -218,6 +218,119 @@ class TestProbOSInit:
         assert content == "existing: true"
 
 
+class TestProbOSReset:
+    """Tests for ``probos reset`` CLI subcommand (AD-264)."""
+
+    def _make_repo(self, tmp_path):
+        """Create a fake KnowledgeStore directory with sample files."""
+        from probos.__main__ import _RESET_SUBDIRS
+        repo = tmp_path / "knowledge"
+        for sub in _RESET_SUBDIRS:
+            d = repo / sub
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "sample.json").write_text("{}")
+            (d / "sample.py").write_text("# code")
+            (d / ".gitkeep").write_text("")
+        return repo
+
+    def test_reset_clears_artifacts(self, tmp_path):
+        """Reset deletes *.json and *.py from all subdirs, keeps dirs and .gitkeep."""
+        import argparse
+        from probos.__main__ import _cmd_reset, _RESET_SUBDIRS
+
+        repo = self._make_repo(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        args = argparse.Namespace(
+            yes=True, keep_trust=False, config=None, data_dir=data_dir,
+        )
+        with patch("probos.__main__._load_config_with_fallback") as mock_cfg:
+            from types import SimpleNamespace
+            mock_cfg.return_value = (
+                SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
+                None,
+            )
+            _cmd_reset(args)
+
+        for sub in _RESET_SUBDIRS:
+            d = repo / sub
+            assert d.is_dir(), f"{sub}/ directory should still exist"
+            assert not list(d.glob("*.json")), f"{sub}/ should have no .json files"
+            assert not list(d.glob("*.py")), f"{sub}/ should have no .py files"
+            assert (d / ".gitkeep").exists(), f"{sub}/.gitkeep should survive"
+
+    def test_reset_keeps_trust_with_flag(self, tmp_path):
+        """--keep-trust preserves trust/ but clears everything else."""
+        import argparse
+        from probos.__main__ import _cmd_reset
+
+        repo = self._make_repo(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        args = argparse.Namespace(
+            yes=True, keep_trust=True, config=None, data_dir=data_dir,
+        )
+        with patch("probos.__main__._load_config_with_fallback") as mock_cfg:
+            from types import SimpleNamespace
+            mock_cfg.return_value = (
+                SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
+                None,
+            )
+            _cmd_reset(args)
+
+        # Trust files should survive
+        assert (repo / "trust" / "sample.json").exists()
+        assert (repo / "trust" / "sample.py").exists()
+        # Other dirs should be cleared
+        assert not list((repo / "episodes").glob("*.json"))
+        assert not list((repo / "agents").glob("*.py"))
+
+    def test_reset_clears_chromadb(self, tmp_path):
+        """Reset removes the chroma/ directory."""
+        import argparse
+        from probos.__main__ import _cmd_reset
+
+        repo = self._make_repo(tmp_path)
+        data_dir = tmp_path / "data"
+        chroma_dir = data_dir / "chroma"
+        chroma_dir.mkdir(parents=True)
+        (chroma_dir / "chroma.sqlite3").write_text("fake")
+
+        args = argparse.Namespace(
+            yes=True, keep_trust=False, config=None, data_dir=data_dir,
+        )
+        with patch("probos.__main__._load_config_with_fallback") as mock_cfg:
+            from types import SimpleNamespace
+            mock_cfg.return_value = (
+                SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
+                None,
+            )
+            _cmd_reset(args)
+
+        assert not chroma_dir.exists()
+
+    def test_reset_no_crash_empty_repo(self, tmp_path):
+        """Reset on a nonexistent knowledge dir doesn't crash."""
+        import argparse
+        from probos.__main__ import _cmd_reset
+
+        repo = tmp_path / "nonexistent_knowledge"
+        data_dir = tmp_path / "data"
+
+        args = argparse.Namespace(
+            yes=True, keep_trust=False, config=None, data_dir=data_dir,
+        )
+        with patch("probos.__main__._load_config_with_fallback") as mock_cfg:
+            from types import SimpleNamespace
+            mock_cfg.return_value = (
+                SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
+                None,
+            )
+            _cmd_reset(args)  # Should not raise
+
+
 # ------------------------------------------------------------------
 # Distribution tests: FastAPI endpoints
 # ------------------------------------------------------------------

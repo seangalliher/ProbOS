@@ -98,8 +98,15 @@ class CognitiveAgent(BaseAgent):
         """Package result as a dict (compatible with BaseAgent contract)."""
         return result
 
-    async def handle_intent(self, intent: IntentMessage) -> IntentResult:
-        """Skills first, then cognitive lifecycle."""
+    async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
+        """Skills first, then cognitive lifecycle.
+
+        Returns None (self-deselect) for intents not in _handled_intents.
+        """
+        # Fast path: self-deselect for unrecognized intents before any LLM call
+        if intent.intent not in self._handled_intents:
+            return None
+
         # Skill dispatch — direct handler call, no LLM reasoning
         if intent.intent in self._skills:
             skill = self._skills[intent.intent]

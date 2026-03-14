@@ -191,7 +191,9 @@ INSTRUCTIONS GUIDELINES — the `instructions` string should include:
 - If the agent fetches web data: how to parse the fetched_content field
 
 RULES:
-- Only use imports from this whitelist: {allowed_imports}, probos.cognitive.cognitive_agent
+- Only use imports from this whitelist: {allowed_imports}
+  ProbOS internals are also available: probos.types, probos.substrate.agent, probos.cognitive.cognitive_agent
+- If you need HTTP requests, use httpx (it is whitelisted)
 - Do NOT use subprocess, eval, exec, __import__, socket, ctypes
 - Do NOT redefine decide(), report(), handle_intent(), or __init__()
 - You MAY override perceive() for real-time data fetching (web, APIs, RSS)
@@ -201,6 +203,9 @@ RULES:
 - The instructions string is the CORE output — make it detailed and specific
 - Return the COMPLETE Python file content, nothing else
 - No markdown code fences, no explanation, just the Python code
+- If a needed library is NOT in the whitelist, accomplish the task using
+  ONLY whitelisted imports. For example, use httpx instead of requests,
+  use json instead of orjson, use urllib.parse instead of furl.
 
 RESEARCH CONTEXT:
 {research_context}

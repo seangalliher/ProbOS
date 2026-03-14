@@ -155,6 +155,18 @@ class TestPromptBuilder:
         assert '"intents": [...]' in prompt
         assert '"reflect": false' in prompt
 
+    def test_run_command_description_no_blank_check(self):
+        """run_command descriptor should NOT say 'anything a shell can do'."""
+        builder = PromptBuilder()
+        prompt = builder.build_system_prompt(_all_current_descriptors())
+        assert "anything a shell can do" not in prompt
+
+    def test_anti_scripting_rule_present(self):
+        """Prompt should contain explicit rule against python -c workarounds."""
+        builder = PromptBuilder()
+        prompt = builder.build_system_prompt(_all_current_descriptors())
+        assert "NEVER use run_command to run Python" in prompt
+
 
 class TestCapabilityGapExamples:
     """Capability-gap examples must be suppressed when matching intents exist."""
@@ -264,6 +276,26 @@ class TestCapabilityGapExamples:
         assert 'User: "read the file at /tmp/test.txt"' in prompt
         assert 'User: "write hello to /tmp/out.txt"' in prompt
         assert '## Examples' in prompt
+
+    def test_qr_gap_example_present(self):
+        """QR code gap example should appear when no QR intent exists."""
+        builder = PromptBuilder()
+        prompt = builder.build_system_prompt(_all_current_descriptors())
+        assert "QR code" in prompt or "qr" in prompt.lower()
+        assert "capability_gap" in prompt
+
+    def test_qr_gap_suppressed_when_qr_intent_exists(self):
+        """QR code gap example suppressed when a qr-related intent exists."""
+        builder = PromptBuilder()
+        descs = _all_current_descriptors() + [
+            IntentDescriptor(
+                name="generate_qr_code",
+                params={"data": "..."},
+                description="Generate a QR code",
+            ),
+        ]
+        prompt = builder.build_system_prompt(descs)
+        assert "I don't have an intent for QR code generation yet" not in prompt
 
 
 # ---------------------------------------------------------------------------

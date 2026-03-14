@@ -56,10 +56,34 @@ function AgentRaycastLayer() {
 
 export function CognitiveCanvas() {
   const systemMode = useStore((s) => s.systemMode);
+  const connected = useStore((s) => s.connected);
   const grading = modeGrading(systemMode);
 
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
+      {/* Disconnected overlay */}
+      {!connected && (
+        <div style={{
+          position: 'absolute',
+          top: '50%', left: '50%',
+          transform: 'translate(-50%, -50%)',
+          color: 'rgba(200, 56, 72, 0.6)',
+          fontSize: 16,
+          fontFamily: "'Inter', sans-serif",
+          textAlign: 'center',
+          zIndex: 15,
+          pointerEvents: 'none',
+          animation: 'pulse-reconnect 2s ease-in-out infinite',
+        }}>
+          Connection lost &mdash; reconnecting...
+        </div>
+      )}
+      <style>{`
+        @keyframes pulse-reconnect {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 0.8; }
+        }
+      `}</style>
       <Canvas
         camera={{ position: [0, 5, 16], fov: 50, near: 0.1, far: 100 }}
         gl={{ antialias: true, alpha: false, powerPreference: 'high-performance', depth: true, stencil: false }}
@@ -99,7 +123,7 @@ export function CognitiveCanvas() {
           enablePan
           enableZoom
           enableRotate
-          autoRotate
+          autoRotate={connected}
           autoRotateSpeed={0.15}
           maxPolarAngle={Math.PI * 0.85}
           minDistance={3}

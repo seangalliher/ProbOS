@@ -38,22 +38,23 @@ cognitive:
   llm_api_key: ""
   llm_timeout_seconds: 30
 
-  # Fast tier: local Ollama (native API, thinking disabled)
-  llm_base_url_fast: "http://127.0.0.1:11434"
+  # Fast tier — Sonnet via Copilot proxy
+  llm_base_url_fast: "http://127.0.0.1:8080/v1"
   llm_api_key_fast: ""
-  llm_model_fast: "qwen3.5:35b"
+  llm_model_fast: "claude-sonnet-4-20250514"
   llm_timeout_fast: 30
-  llm_api_format_fast: "ollama"
+  llm_api_format_fast: "openai"
 
-  # How long Ollama keeps the model loaded after the last request.
-  # Prevents cold-start delays. Examples: "5m", "30m", "1h", "-1" (forever).
-  ollama_keep_alive: "30m"
+  # To switch back to Ollama, uncomment below and comment out the lines above:
+  # llm_base_url_fast: "http://127.0.0.1:11434"
+  # llm_model_fast: "qwen3.5:35b"
+  # llm_api_format_fast: "ollama"
 
-  # Standard tier: Copilot proxy (uses shared endpoint)
-  llm_model_standard: "claude-sonnet-4.6"
+  # Standard tier — Sonnet via Copilot proxy
+  llm_model_standard: "claude-sonnet-4-20250514"
 
-  # Deep tier: Copilot proxy (uses shared endpoint)
-  llm_model_deep: "claude-opus-4.6"
+  # Deep tier — Opus via Copilot proxy
+  llm_model_deep: "claude-opus-4-20250514"
 
   working_memory_token_budget: 4000
   decomposition_timeout_seconds: 30
@@ -184,6 +185,10 @@ self_mod:
     - dateutil          # package: python-dateutil
     # Table formatting
     - tabulate
+    # System monitoring
+    - psutil
+    # Validation & models
+    - pydantic
 
 qa:
   enabled: true                    # Phase 13: SystemQA smoke-tests designed agents (AD-153)

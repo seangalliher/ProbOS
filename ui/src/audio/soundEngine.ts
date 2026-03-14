@@ -5,6 +5,7 @@ class SoundEngine {
   private masterGain: GainNode | null = null;
   private _muted: boolean = true; // OFF by default
   private _volume: number = 0.3;
+  private _connected: boolean = true;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private dreamDrone: OscillatorNode | null = null;
   private dreamNoise: AudioBufferSourceNode | null = null;
@@ -47,12 +48,25 @@ class SoundEngine {
     else this.stopHeartbeat();
   }
 
+  /** Sync with WebSocket connection state — silence the mesh on disconnect. */
+  setConnected(c: boolean): void {
+    this._connected = c;
+    if (!c) {
+      this.stopHeartbeat();
+      this.playDreamExit(); // fade out any ambient drone
+    } else if (!this._muted) {
+      this.startHeartbeat();
+    }
+  }
+
   // ── Heartbeat: low thump at ~1.2s intervals ──
 
   startHeartbeat(): void {
     if (this.heartbeatInterval) return;
     this.playHeartbeat();
-    this.heartbeatInterval = setInterval(() => this.playHeartbeat(), 1200);
+    this.heartbeatInterval = setInterval(() => {
+      if (this._connected) this.playHeartbeat();
+    }, 1200);
   }
 
   stopHeartbeat(): void {
@@ -80,7 +94,7 @@ class SoundEngine {
   // ── Intent routing: ascending chime ──
 
   playIntentRouting(): void {
-    if (!this.ctx || !this.masterGain) return;
+    if (!this.ctx || !this.masterGain || !this._connected) return;
     const t = this.ctx.currentTime;
 
     [440, 660].forEach((freq, i) => {
@@ -101,7 +115,7 @@ class SoundEngine {
   // ── Consensus: three tones resolving to unison ──
 
   playConsensus(): void {
-    if (!this.ctx || !this.masterGain) return;
+    if (!this.ctx || !this.masterGain || !this._connected) return;
     const t = this.ctx.currentTime;
     const target = 440;
 
@@ -122,7 +136,7 @@ class SoundEngine {
   // ── Self-mod spawn: rising shimmer sweep ──
 
   playSelfModSpawn(): void {
-    if (!this.ctx || !this.masterGain) return;
+    if (!this.ctx || !this.masterGain || !this._connected) return;
     const t = this.ctx.currentTime;
 
     // Main sweep
@@ -153,7 +167,7 @@ class SoundEngine {
   // ── Dream mode enter: warm ambient drone ──
 
   playDreamEnter(): void {
-    if (!this.ctx || !this.masterGain) return;
+    if (!this.ctx || !this.masterGain || !this._connected) return;
     const t = this.ctx.currentTime;
 
     // Sine pad
@@ -212,7 +226,7 @@ class SoundEngine {
   // ── Trust update: quiet ping ──
 
   playTrustPing(positive: boolean): void {
-    if (!this.ctx || !this.masterGain) return;
+    if (!this.ctx || !this.masterGain || !this._connected) return;
     const t = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
@@ -228,7 +242,7 @@ class SoundEngine {
   // ── Error: dissonant muted note ──
 
   playError(): void {
-    if (!this.ctx || !this.masterGain) return;
+    if (!this.ctx || !this.masterGain || !this._connected) return;
     const t = this.ctx.currentTime;
 
     [200, 207].forEach((freq) => {

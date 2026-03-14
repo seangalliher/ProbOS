@@ -36,16 +36,19 @@ cognitive:
   llm_api_key: ""
   llm_timeout_seconds: 30
 
-  llm_base_url_fast: "http://127.0.0.1:11434"
+  llm_base_url_fast: "http://127.0.0.1:8080/v1"
   llm_api_key_fast: ""
-  llm_model_fast: "qwen3.5:35b"
+  llm_model_fast: "claude-sonnet-4-20250514"
   llm_timeout_fast: 30
-  llm_api_format_fast: "ollama"
+  llm_api_format_fast: "openai"
 
-  ollama_keep_alive: "30m"
+  # To switch back to Ollama, uncomment below and comment out the lines above:
+  # llm_base_url_fast: "http://127.0.0.1:11434"
+  # llm_model_fast: "qwen3.5:35b"
+  # llm_api_format_fast: "ollama"
 
-  llm_model_standard: "claude-sonnet-4.6"
-  llm_model_deep: "claude-opus-4.6"
+  llm_model_standard: "claude-sonnet-4-20250514"
+  llm_model_deep: "claude-opus-4-20250514"
 
   working_memory_token_budget: 4000
   decomposition_timeout_seconds: 30

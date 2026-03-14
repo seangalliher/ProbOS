@@ -58,6 +58,7 @@ class ProbOSShell:
         "/model":     "Show LLM client type, endpoint, and tier config",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
         "/prune":     "Permanently remove an agent (/prune <agent_id>)",
+        "/imports":   "Manage allowed imports (/imports | /imports add <pkg> | /imports remove <pkg>)",
         "/debug":     "Toggle debug mode (/debug on|off)",
         "/help":      "Show this help message",
         "/quit":      "Exit ProbOS",
@@ -84,6 +85,9 @@ class ProbOSShell:
         if self.runtime.self_mod_pipeline:
             self.runtime.self_mod_pipeline._user_approval_fn = (
                 self._user_self_mod_approval
+            )
+            self.runtime.self_mod_pipeline._import_approval_fn = (
+                self._user_import_approval
             )
 
             # Wire dependency resolver approval callback (AD-214)
@@ -180,6 +184,7 @@ class ProbOSShell:
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
             "/prune":   self._cmd_prune,
+            "/imports": self._cmd_imports,
             "/debug":   self._cmd_debug,
             "/help":    self._cmd_help,
             "/quit":    self._cmd_quit,
@@ -825,6 +830,39 @@ class ProbOSShell:
             f"{ti['model']} at {ti['base_url']}"
         )
 
+    async def _cmd_imports(self, arg: str) -> None:
+        """List, add, or remove allowed imports for self-mod."""
+        config = self.runtime.config.self_mod
+        parts = arg.split(maxsplit=1)
+        sub = parts[0].lower() if parts else ""
+
+        if sub == "add" and len(parts) > 1:
+            name = parts[1].strip()
+            if name in config.allowed_imports:
+                self.console.print(f"[dim]{name} is already in the whitelist[/dim]")
+            else:
+                config.allowed_imports.append(name)
+                if self.runtime.self_mod_pipeline:
+                    self.runtime.self_mod_pipeline._validator._allowed_imports.add(name)
+                self.console.print(f"[green]Added '{name}' to allowed imports[/green]")
+        elif sub == "remove" and len(parts) > 1:
+            name = parts[1].strip()
+            if name not in config.allowed_imports:
+                self.console.print(f"[dim]{name} is not in the whitelist[/dim]")
+            else:
+                config.allowed_imports.remove(name)
+                if self.runtime.self_mod_pipeline:
+                    self.runtime.self_mod_pipeline._validator._allowed_imports.discard(name)
+                self.console.print(f"[yellow]Removed '{name}' from allowed imports[/yellow]")
+        else:
+            # List current imports
+            imports = sorted(config.allowed_imports)
+            self.console.print(f"[bold]Allowed imports ({len(imports)}):[/bold]")
+            # Group into lines of 6
+            for i in range(0, len(imports), 6):
+                chunk = ", ".join(imports[i:i + 6])
+                self.console.print(f"  {chunk}")
+
     async def _cmd_debug(self, arg: str) -> None:
         if arg.lower() == "on":
             self.debug = True
@@ -959,6 +997,32 @@ class ProbOSShell:
         except (EOFError, KeyboardInterrupt):
             return False
 
+    # ------------------------------------------------------------------
+    # Import whitelist approval callback
+    # ------------------------------------------------------------------
+
+    async def _user_import_approval(self, import_names: list[str]) -> bool:
+        """Prompt the user to approve adding imports to the whitelist."""
+        if self.renderer._status is not None:
+            self.renderer._status.stop()
+            self.renderer._status = None
+
+        self.console.print(
+            "\n[yellow bold]This agent uses imports not on the whitelist:[/yellow bold]"
+        )
+        for name in import_names:
+            self.console.print(f"  [bold]\u2022[/bold] {name}")
+        self.console.print(
+            "  [dim]'y' = allow (adds to whitelist)  |  'n' = block[/dim]"
+        )
+
+        try:
+            response = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: input("  Allow? [y/n]: ").strip().lower()
+            )
+            return response in ("y", "yes")
+        except (EOFError, KeyboardInterrupt):
+            return False
     # ------------------------------------------------------------------
     # Dependency install approval callback (AD-214)
     # ------------------------------------------------------------------

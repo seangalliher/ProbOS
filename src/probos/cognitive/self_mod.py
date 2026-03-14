@@ -36,6 +36,7 @@ class DesignedAgentRecord:
     pool_name: str = ""
     status: str = "active"  # "active", "removed", "failed_validation", "rejected_by_user"
     strategy: str = "new_agent"  # "new_agent" or "skill"
+    error: str = ""  # human-readable failure detail (empty on success)
 
 
 class SelfModificationPipeline:
@@ -87,6 +88,7 @@ class SelfModificationPipeline:
         self._research = research
         self._dependency_resolver = dependency_resolver
         self._event_log = event_log
+        self._import_approval_fn: Callable[[list[str]], Awaitable[bool]] | None = None
         self._records: list[DesignedAgentRecord] = []
 
     async def handle_unhandled_intent(
@@ -96,6 +98,7 @@ class SelfModificationPipeline:
         parameters: dict[str, str],
         requires_consensus: bool = False,
         execution_context: str = "",
+        on_progress: Callable[[str, int, int], Awaitable[None]] | None = None,
     ) -> DesignedAgentRecord | None:
         """Full pipeline: design -> validate -> sandbox -> register -> track.
 
@@ -108,7 +111,17 @@ class SelfModificationPipeline:
                 "Max designed agents (%d) reached, skipping design for %s",
                 self._config.max_designed_agents, intent_name,
             )
-            return None
+            record = DesignedAgentRecord(
+                intent_name=intent_name,
+                agent_type=intent_name,
+                class_name="",
+                source_code="",
+                created_at=time.monotonic(),
+                status="max_limit",
+                error=f"Max designed agents ({self._config.max_designed_agents}) reached",
+            )
+            self._records.append(record)
+            return record
 
         # User approval gate
         if self._config.require_user_approval and self._user_approval_fn:
@@ -129,9 +142,10 @@ class SelfModificationPipeline:
                     source_code="",
                     created_at=time.monotonic(),
                     status="rejected_by_user",
+                    error="User declined self-modification",
                 )
                 self._records.append(record)
-                return None
+                return record
 
         # Research phase (optional)
         research_context = "No research available."
@@ -144,6 +158,11 @@ class SelfModificationPipeline:
                 logger.warning("Research failed for %s: %s", intent_name, e)
 
         # 1. Design agent
+        if on_progress:
+            try:
+                await on_progress("designing", 1, 5)
+            except Exception:
+                pass
         try:
             source_code = await self._designer.design_agent(
                 intent_name=intent_name,
@@ -155,25 +174,60 @@ class SelfModificationPipeline:
             )
         except Exception as e:
             logger.warning("Agent design failed for %s: %s", intent_name, e)
-            return None
+            record = DesignedAgentRecord(
+                intent_name=intent_name,
+                agent_type=intent_name,
+                class_name="",
+                source_code="",
+                created_at=time.monotonic(),
+                status="failed_design",
+                error=f"LLM design failed: {e}",
+            )
+            self._records.append(record)
+            return record
 
         class_name = self._designer._build_class_name(intent_name)
         agent_type = self._designer._build_agent_type(intent_name)
 
         # 2. Validate
+        if on_progress:
+            try:
+                await on_progress("validating", 2, 5)
+            except Exception:
+                pass
         errors = self._validator.validate(source_code)
         if errors:
-            logger.warning("Validation failed for %s: %s", intent_name, errors)
-            record = DesignedAgentRecord(
-                intent_name=intent_name,
-                agent_type=agent_type,
-                class_name=class_name,
-                source_code=source_code,
-                created_at=time.monotonic(),
-                status="failed_validation",
-            )
-            self._records.append(record)
-            return None
+            # Check if failures are ONLY about forbidden imports
+            forbidden = [e for e in errors if e.startswith("Forbidden import:")]
+            other = [e for e in errors if not e.startswith("Forbidden import:")]
+
+            if forbidden and not other and self._import_approval_fn:
+                import_names = [e.split(":", 1)[1].strip() for e in forbidden]
+                try:
+                    approved = await self._import_approval_fn(import_names)
+                except Exception:
+                    approved = False
+                if approved:
+                    for name in import_names:
+                        if name not in self._config.allowed_imports:
+                            self._config.allowed_imports.append(name)
+                        self._validator._allowed_imports.add(name)
+                    # Re-validate with expanded whitelist
+                    errors = self._validator.validate(source_code)
+
+            if errors:
+                logger.warning("Validation failed for %s: %s", intent_name, errors)
+                record = DesignedAgentRecord(
+                    intent_name=intent_name,
+                    agent_type=agent_type,
+                    class_name=class_name,
+                    source_code=source_code,
+                    created_at=time.monotonic(),
+                    status="failed_validation",
+                    error="Validation: " + "; ".join(errors),
+                )
+                self._records.append(record)
+                return record
 
         # 2b. Dependency resolution (AD-213)
         if self._dependency_resolver:
@@ -221,11 +275,17 @@ class SelfModificationPipeline:
                     source_code=source_code,
                     created_at=time.monotonic(),
                     status=reason,
+                    error=f"Dependencies: {dep_result.error or reason}",
                 )
                 self._records.append(record)
-                return None
+                return record
 
         # 3. Sandbox test
+        if on_progress:
+            try:
+                await on_progress("testing", 3, 5)
+            except Exception:
+                pass
         sandbox_result = await self._sandbox.test_agent(
             source_code, intent_name, test_params=parameters or {},
         )
@@ -239,25 +299,53 @@ class SelfModificationPipeline:
                 created_at=time.monotonic(),
                 sandbox_time_ms=sandbox_result.execution_time_ms,
                 status="failed_sandbox",
+                error=f"Sandbox: {sandbox_result.error}",
             )
             self._records.append(record)
-            return None
+            return record
 
         # 4. Register agent type
+        if on_progress:
+            try:
+                await on_progress("deploying", 4, 5)
+            except Exception:
+                pass
         agent_class = sandbox_result.agent_class
         try:
             await self._register_fn(agent_class)
         except Exception as e:
             logger.warning("Registration failed for %s: %s", intent_name, e)
-            return None
+            record = DesignedAgentRecord(
+                intent_name=intent_name,
+                agent_type=agent_type,
+                class_name=class_name,
+                source_code=source_code,
+                created_at=time.monotonic(),
+                sandbox_time_ms=sandbox_result.execution_time_ms,
+                status="failed_registration",
+                error=f"Registration: {e}",
+            )
+            self._records.append(record)
+            return record
 
         # 5. Create pool
         pool_name = f"designed_{agent_type}"
         try:
-            await self._create_pool_fn(agent_type, pool_name, 2)
+            await self._create_pool_fn(agent_type, pool_name, 1)
         except Exception as e:
             logger.warning("Pool creation failed for %s: %s", intent_name, e)
-            return None
+            record = DesignedAgentRecord(
+                intent_name=intent_name,
+                agent_type=agent_type,
+                class_name=class_name,
+                source_code=source_code,
+                created_at=time.monotonic(),
+                sandbox_time_ms=sandbox_result.execution_time_ms,
+                status="failed_pool",
+                error=f"Pool creation: {e}",
+            )
+            self._records.append(record)
+            return record
 
         # 6. Set probationary trust on newly spawned agents
         try:

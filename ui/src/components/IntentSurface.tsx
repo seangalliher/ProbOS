@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../store/useStore';
+import type { SelfModProposal } from '../store/types';
 import { speakResponse } from '../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
 import { soundEngine } from '../audio/soundEngine';
@@ -33,7 +34,9 @@ export function IntentSurface() {
   const activeDag = useStore((s) => s.activeDag);
   const addChatMessage = useStore((s) => s.addChatMessage);
   const processing = useStore((s) => s.processing);
-  const setProcessing = useStore((s) => s.setProcessing);
+  const pendingRequests = useStore((s) => s.pendingRequests);
+  const incPendingRequests = useStore((s) => s.incPendingRequests);
+  const decPendingRequests = useStore((s) => s.decPendingRequests);
   const pendingChar = useStore((s) => s.pendingChar);
   const consumePendingChar = useStore((s) => s.consumePendingChar);
   const voiceEnabled = useStore((s) => s.voiceEnabled);
@@ -103,47 +106,51 @@ export function IntentSurface() {
     setTimeout(() => inputRef.current?.focus(), 50);
   }
 
-  /* ── submit ── */
-  async function handleSubmit(e: React.FormEvent) {
+  /* ── submit (non-blocking) ── */
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const text = input.trim();
-    if (!text || processing) return;
+    if (!text) return;
 
     addChatMessage('user', text);
     setInput('');
-    // Keep active — pill stays open, input stays focused
-    setProcessing(true);
+    incPendingRequests();
 
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
+    // Fire-and-forget — user can keep typing immediately
+    fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        const response = data.response
+          || data.reflection
+          || (data.results && Object.keys(data.results).length > 0
+              ? Object.values(data.results as Record<string, { output?: string }>)
+                  .map((r) => r.output).filter(Boolean).join('\n') || 'Done.'
+              : '')
+          || (data.correction ? `Correction applied: ${data.correction.changes || 'OK'}` : '')
+          || '(No response)';
+
+        if (data.self_mod_proposal) {
+          addChatMessage('system', response, {
+            selfModProposal: data.self_mod_proposal as SelfModProposal,
+          });
+        } else {
+          addChatMessage('system', response);
+        }
+        if (voiceEnabled && response && !response.startsWith('(')) {
+          speakResponse(response);
+        }
+        soundEngine.playIntentRouting();
+      })
+      .catch(() => {
+        addChatMessage('system', '(Request failed or timed out)');
+      })
+      .finally(() => {
+        decPendingRequests();
       });
-      const data = await res.json();
-      const response = data.response
-        || data.reflection
-        || (data.results && Object.keys(data.results).length > 0
-            ? Object.values(data.results as Record<string, { output?: string }>)
-                .map((r) => r.output).filter(Boolean).join('\n') || 'Done.'
-            : '')
-        || (data.correction ? `Correction applied: ${data.correction.changes || 'OK'}` : '')
-        || '(No response)';
-
-      addChatMessage('system', response);
-      // Voice output if enabled
-      if (voiceEnabled && response && !response.startsWith('(')) {
-        speakResponse(response);
-      }
-      // Intent routing chime
-      soundEngine.playIntentRouting();
-    } catch {
-      addChatMessage('system', '(Connection error)');
-    } finally {
-      setProcessing(false);
-      // Re-focus input after response
-      setTimeout(() => inputRef.current?.focus(), 50);
-    }
   }
 
   /* ── Escape key ── */
@@ -198,6 +205,32 @@ export function IntentSurface() {
       setFeedbackMap((m) => ({ ...m, [msgId]: { disabled: true, confirmText: '\u2717 Failed' } }));
     }
   }
+
+  /* ── approve self-mod proposal ── */
+  const approveSelfMod = useCallback(async (proposal: SelfModProposal) => {
+    addChatMessage('system', 'Starting agent design...');
+
+    try {
+      await fetch('/api/selfmod/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          intent_name: proposal.intent_name,
+          intent_description: proposal.intent_description,
+          parameters: proposal.parameters || {},
+          original_message: proposal.original_message || '',
+        }),
+      });
+      // Progress and results come via WebSocket events
+    } catch {
+      addChatMessage('system', '(Self-mod request failed)');
+    }
+  }, [addChatMessage]);
+
+  /* ── skip self-mod proposal ── */
+  const skipSelfMod = useCallback(() => {
+    addChatMessage('system', 'Skipped \u2014 no agent created.');
+  }, [addChatMessage]);
 
   return (
     <>
@@ -281,6 +314,40 @@ export function IntentSurface() {
                       {msg.text}
                     </div>
 
+                    {/* Self-mod approval buttons */}
+                    {msg.selfModProposal && msg.selfModProposal.status === 'proposed' && (
+                      <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                        <button
+                          onClick={() => approveSelfMod(msg.selfModProposal!)}
+                          style={{
+                            background: 'rgba(80, 200, 120, 0.2)',
+                            border: '1px solid rgba(80, 200, 120, 0.4)',
+                            borderRadius: 8, padding: '6px 16px',
+                            color: '#80c878', cursor: 'pointer', fontSize: 13,
+                            fontFamily: "'Inter', sans-serif",
+                          }}
+                          onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(80, 200, 120, 0.35)'; }}
+                          onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(80, 200, 120, 0.2)'; }}
+                        >
+                          {'\u2728'} Build Agent
+                        </button>
+                        <button
+                          onClick={skipSelfMod}
+                          style={{
+                            background: 'rgba(128, 128, 160, 0.1)',
+                            border: '1px solid rgba(128, 128, 160, 0.2)',
+                            borderRadius: 8, padding: '6px 16px',
+                            color: '#8888a0', cursor: 'pointer', fontSize: 13,
+                            fontFamily: "'Inter', sans-serif",
+                          }}
+                          onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(128, 128, 160, 0.2)'; }}
+                          onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(128, 128, 160, 0.1)'; }}
+                        >
+                          {'\u274C'} Skip
+                        </button>
+                      </div>
+                    )}
+
                     {/* Inline feedback icons for system messages */}
                     {msg.role === 'system' && (
                       <div style={{
@@ -348,8 +415,8 @@ export function IntentSurface() {
               </div>
             )}
 
-            {/* ── Processing indicator ── */}
-            {processing && (
+            {/* ── Pending requests indicator ── */}
+            {pendingRequests > 0 && (
               <div style={{
                 padding: '4px 20px 8px',
                 display: 'flex', gap: 6, alignItems: 'center',
@@ -372,6 +439,12 @@ export function IntentSurface() {
                         }}
                       />
                     ))}
+                    <span style={{
+                      fontSize: 12, fontFamily: 'monospace', color: '#f0b060',
+                      marginLeft: 4,
+                    }}>
+                      {pendingRequests} pending
+                    </span>
                   </div>
                 )}
               </div>
@@ -490,7 +563,7 @@ export function IntentSurface() {
               cursor: 'pointer',
               pointerEvents: 'auto',
               position: 'relative',
-              animation: !processing ? 'pulse-pill 1.2s ease-in-out infinite' : undefined,
+              animation: pendingRequests === 0 ? 'pulse-pill 1.2s ease-in-out infinite' : undefined,
               boxShadow: '0 0 8px rgba(240, 176, 96, 0.05)',
               transition: 'box-shadow 0.3s ease',
             }}

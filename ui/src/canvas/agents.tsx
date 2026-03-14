@@ -1,6 +1,6 @@
 /* Agent node rendering — instanced spheres with trust+pool color, confidence glow (Fix 2,3,5) */
 
-import { useRef, useMemo, forwardRef } from 'react';
+import { useRef, useMemo, useEffect } from 'react';
 import { useFrame, ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useStore } from '../store/useStore';
@@ -34,17 +34,34 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
     return arr;
   }, [agentList, count]);
 
+  // Eagerly populate instance matrices so raycasting works on first frame
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh || count === 0) return;
+
+    agentList.forEach((agent, i) => {
+      const baseSize = agentNodeSize(agent.tier, agent.confidence);
+      _tempObj.position.set(...agent.position);
+      _tempObj.scale.setScalar(baseSize);
+      _tempObj.updateMatrix();
+      mesh.setMatrixAt(i, _tempObj.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+  }, [agentList, count]);
+
   // Animation: breathing + position + color updates
   useFrame((state) => {
     const mesh = meshRef.current;
     if (!mesh || count === 0) return;
 
     const t = state.clock.elapsedTime;
+    const connected = useStore.getState().connected;
 
     agentList.forEach((agent, i) => {
-      // Breathing: +/-3% radius oscillation, offset per agent
+      // Breathing only when connected
       const breathPhase = t * 1.5 + i * 0.7;
-      const breathScale = 1 + Math.sin(breathPhase) * 0.03;
+      const breathScale = connected ? (1 + Math.sin(breathPhase) * 0.03) : 1.0;
 
       // Tier-based sizing (Fix 5)
       const baseSize = agentNodeSize(agent.tier, agent.confidence);
@@ -55,15 +72,16 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
       _tempObj.updateMatrix();
       mesh.setMatrixAt(i, _tempObj.matrix);
 
-      // Update color: trust+pool blend * confidence intensity (Fix 2,3)
+      // Update color: dim to near-dark when disconnected
       _tempColor.copy(poolTintBlend(agent.trust, agent.pool));
-      const intensity = confidenceToIntensity(agent.confidence);
+      const intensity = connected ? confidenceToIntensity(agent.confidence) : 0.05;
       _tempColor.multiplyScalar(intensity);
       mesh.setColorAt(i, _tempColor);
     });
 
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.computeBoundingSphere();
   });
 
   if (count === 0) return null;

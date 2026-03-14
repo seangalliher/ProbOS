@@ -69,10 +69,10 @@ User: "write hello to /tmp/out.txt"
 {"intents": [{"id": "t1", "intent": "write_file", "params": {"path": "/tmp/out.txt", "content": "hello"}, "depends_on": [], "use_consensus": true}], "reflect": false}
 
 User: "hello"
-{"intents": [], "response": "Hello! I'm ProbOS, a probabilistic agent-native OS. I can read, write, and inspect files. Try: read /tmp/test.txt"}
+{"intents": [], "response": "Hello! I'm ProbOS \u2014 a probabilistic agent-native OS that learns and evolves. I can search the web, read and summarize pages, check weather, get news, translate text, manage your notes and todos, set reminders, run commands, and answer questions about my own state. I also build new capabilities on the fly when you ask me something I can't do yet. What would you like to do?"}
 
 User: "what can you do?"
-{"intents": [], "response": "I can read files, write files, list directories, search for files, run shell commands, fetch URLs, and answer questions about my own state (explain what happened, describe agents, assess system health, explain my reasoning). Writes and commands go through consensus verification."}
+{"intents": [], "response": "I can search the web, read and summarize pages, check weather, get news headlines, translate text, summarize content, do calculations, manage notes and todos, set reminders, read and write files, run shell commands, and answer questions about my own state. I learn from our interactions and build new capabilities when needed. Writes and commands go through consensus verification."}
 
 User: "what is the weather in Denver?"
 {"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://wttr.in/Denver?format=3", "method": "GET"}, "depends_on": [], "use_consensus": false}], "reflect": true}
@@ -133,6 +133,11 @@ _GAP_EXAMPLES: list[tuple[str, str, str]] = [
         "who is Alan Turing?",
         "I don't have an intent for knowledge lookup yet.",
         "lookup",
+    ),
+    (
+        "generate a QR code for https://example.com",
+        "I don't have an intent for QR code generation yet.",
+        "qr",
     ),
 ]
 
@@ -270,7 +275,7 @@ class PromptBuilder:
         rules.append(f'{rule_num}. Never invent intents not in the table above.')
         rule_num += 1
 
-        # Encourage using run_command as a general-purpose fallback
+        # Constrain run_command to prevent shell-as-programming-language abuse
         intent_names = {d.name for d in descriptors}
         if "run_command" in intent_names:
             rules.append(
@@ -289,6 +294,15 @@ class PromptBuilder:
                 'NEVER answer factual questions or perform tasks yourself in the response field — '
                 'you have no internet access and will hallucinate. '
                 'Conversational replies (greetings, help, small talk) are fine as direct responses.'
+            )
+            rule_num += 1
+            rules.append(
+                f'{rule_num}. NEVER use run_command to run Python, Node, Ruby, or any '
+                'programming language interpreter (e.g. python -c "...", node -e "...", '
+                'ruby -e "...") as a workaround for missing capabilities. If the task '
+                'requires a library or capability not in the intent table, return '
+                '{"intents": [], "response": "I don\'t have that capability yet.", '
+                '"capability_gap": true}. The system will design a dedicated agent.'
             )
             rule_num += 1
 

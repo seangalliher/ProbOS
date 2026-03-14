@@ -238,6 +238,40 @@ class TestShellCommandAgent:
         result = await agent.handle_intent(intent)
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_rewrite_bare_python(self):
+        """Bare 'python -c ...' should be rewritten to sys.executable."""
+        import sys
+        result = ShellCommandAgent._rewrite_python_interpreter('python -c "print(1)"')
+        assert sys.executable in result
+        if sys.platform == 'win32':
+            assert result.startswith('& "')
+        else:
+            assert result.startswith('"')
+
+    @pytest.mark.asyncio
+    async def test_rewrite_python3(self):
+        """Bare 'python3 -c ...' should be rewritten too."""
+        import sys
+        result = ShellCommandAgent._rewrite_python_interpreter('python3 -c "print(1)"')
+        assert sys.executable in result
+        if sys.platform == 'win32':
+            assert result.startswith('& "')
+        else:
+            assert result.startswith('"')
+
+    @pytest.mark.asyncio
+    async def test_no_rewrite_other_commands(self):
+        """Non-python commands should pass through unchanged."""
+        cmd = "echo hello"
+        assert ShellCommandAgent._rewrite_python_interpreter(cmd) == cmd
+
+    @pytest.mark.asyncio
+    async def test_no_rewrite_full_path_python(self):
+        """Full path python should NOT be rewritten (already qualified)."""
+        cmd = '/usr/bin/python -c "print(1)"'
+        assert ShellCommandAgent._rewrite_python_interpreter(cmd) == cmd
+
 
 # ---------------------------------------------------------------
 # Unit Tests: HttpFetchAgent

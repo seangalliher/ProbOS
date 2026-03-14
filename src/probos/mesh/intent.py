@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import logging
 import time
 from datetime import datetime, timezone
@@ -158,7 +159,15 @@ class IntentBus:
     ) -> None:
         """Invoke a single subscriber's handler, catching errors."""
         try:
+            t0 = time.monotonic()
             result = await handler(intent)
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            if elapsed_ms > 100:
+                logger.warning(
+                    "Slow handler: agent=%s intent=%s elapsed=%.0fms result=%s",
+                    agent_id[:16], intent.intent, elapsed_ms,
+                    "responded" if result else "declined",
+                )
             if result is not None:
                 # Agent accepted and responded
                 if intent.id in self._pending_results:

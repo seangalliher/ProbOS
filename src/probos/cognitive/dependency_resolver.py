@@ -1,4 +1,4 @@
-"""DependencyResolver — detect missing packages and install via uv add."""
+"""DependencyResolver — detect missing packages and install via pip/uv."""
 
 from __future__ import annotations
 
@@ -7,6 +7,9 @@ import asyncio
 import dataclasses
 import importlib.util
 import logging
+import shutil
+import subprocess
+import sys
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -37,7 +40,7 @@ class DependencyResult:
 
 
 class DependencyResolver:
-    """Detects missing-but-allowed imports and installs them via uv add."""
+    """Detects missing-but-allowed imports and installs them via pip/uv."""
 
     def __init__(
         self,
@@ -161,27 +164,63 @@ class DependencyResolver:
         return DependencyResult(success=True, installed=installed)
 
     async def _install_package(self, package_name: str) -> tuple[bool, str]:
-        """Install a package via uv add.
+        """Install a package using the best available method.
+
+        Fallback chain:
+        1. sys.executable -m pip install (uses the running venv Python)
+        2. uv pip install (if uv is available)
+        3. uv add (if uv is available and we're in a uv project)
 
         Returns (success, output).
         """
         if self._install_fn:
             return await self._install_fn(package_name)
 
+        loop = asyncio.get_running_loop()
+
+        # Method 1: pip via the running Python (most reliable)
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "uv", "add", package_name,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    [sys.executable, "-m", "pip", "install", package_name],
+                    capture_output=True, text=True, timeout=120,
+                ),
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=60.0,
-            )
-            output = (stdout or b"").decode() + (stderr or b"").decode()
-            if proc.returncode == 0:
-                return True, output
-            return False, output
-        except asyncio.TimeoutError:
-            return False, f"Installation of {package_name} timed out after 60s"
+            if result.returncode == 0:
+                return True, result.stdout + result.stderr
+            logger.warning("pip install failed for %s: %s", package_name, result.stderr[:200])
         except Exception as e:
-            return False, f"Installation error: {e}"
+            logger.warning("pip install exception for %s: %s", package_name, e)
+
+        # Method 2: uv pip install (faster if available)
+        uv_path = shutil.which("uv")
+        if uv_path:
+            try:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: subprocess.run(
+                        [uv_path, "pip", "install", package_name],
+                        capture_output=True, text=True, timeout=120,
+                    ),
+                )
+                if result.returncode == 0:
+                    return True, result.stdout + result.stderr
+            except Exception as e:
+                logger.debug("uv pip install failed for %s: %s", package_name, e)
+
+            # Method 3: uv add (for uv-managed projects)
+            try:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: subprocess.run(
+                        [uv_path, "add", package_name],
+                        capture_output=True, text=True, timeout=120,
+                    ),
+                )
+                if result.returncode == 0:
+                    return True, result.stdout + result.stderr
+            except Exception:
+                pass
+
+        return False, f"All installation methods failed for {package_name}"

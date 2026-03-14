@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -323,9 +324,16 @@ async def _boot_and_run(config_path: Path | None = None, fresh: bool = False, da
     try:
         await shell.run()
     finally:
-        with console.status("[bold red]Shutting down...[/bold red]"):
-            await runtime.stop()
-        console.print("[dim]ProbOS stopped.[/dim]")
+        console.print("[bold red]ProbOS shutting down...[/bold red]")
+        try:
+            await asyncio.wait_for(runtime.stop(), timeout=5)
+        except asyncio.TimeoutError:
+            logger.warning("Graceful shutdown timed out after 5s — forcing exit")
+        except Exception as e:
+            logger.warning("Shutdown error: %s", e)
+        finally:
+            console.print("[dim]ProbOS stopped.[/dim]")
+            os._exit(0)
 
 
 async def _serve(
@@ -384,9 +392,16 @@ async def _serve(
             console.print()
             await server.serve()
     finally:
-        with console.status("[bold red]Shutting down...[/bold red]"):
-            await runtime.stop()
-        console.print("[dim]ProbOS stopped.[/dim]")
+        console.print("[bold red]ProbOS shutting down...[/bold red]")
+        try:
+            await asyncio.wait_for(runtime.stop(), timeout=5)
+        except asyncio.TimeoutError:
+            logger.warning("Graceful shutdown timed out after 5s — forcing exit")
+        except Exception as e:
+            logger.warning("Shutdown error: %s", e)
+        finally:
+            console.print("[dim]ProbOS stopped.[/dim]")
+            os._exit(0)
 
 
 def _cmd_init(args: argparse.Namespace) -> None:
@@ -405,11 +420,11 @@ def _cmd_init(args: argparse.Namespace) -> None:
     console.print()
 
     # Prompt for LLM endpoint
-    default_url = "http://127.0.0.1:11434"
+    default_url = "http://127.0.0.1:8080/v1"
     llm_url = input(f"  LLM endpoint URL [{default_url}]: ").strip() or default_url
 
     # Prompt for model
-    default_model = "qwen3.5:35b"
+    default_model = "claude-sonnet-4-20250514"
     llm_model = input(f"  LLM model [{default_model}]: ").strip() or default_model
 
     # Auto-detect API format from URL
@@ -455,6 +470,68 @@ bundled_agents:
     console.print("ProbOS initialized. Run [bold]probos serve[/bold] to start.")
 
 
+_RESET_SUBDIRS = ("episodes", "agents", "skills", "trust", "routing", "workflows", "qa")
+
+
+def _cmd_reset(args: argparse.Namespace) -> None:
+    """Handle ``probos reset`` — clear all learned state from the KnowledgeStore."""
+    console = Console()
+
+    # Load config to find knowledge repo_path
+    config, _ = _load_config_with_fallback(args.config)
+    repo_path = Path(config.knowledge.repo_path).expanduser() if config.knowledge.repo_path else Path.home() / ".probos" / "knowledge"
+    data_dir = args.data_dir or _default_data_dir()
+    data_dir = Path(data_dir)
+
+    if not args.yes:
+        answer = input(
+            "This will permanently delete all learned state "
+            "(designed agents, trust, routing weights, episodes, workflows, QA reports). "
+            "Continue? [y/N]: "
+        ).strip().lower()
+        if answer != "y":
+            console.print("[dim]Aborted.[/dim]")
+            return
+
+    # Clear KnowledgeStore subdirectories
+    cleared = []
+    for sub in _RESET_SUBDIRS:
+        if sub == "trust" and args.keep_trust:
+            continue
+        sub_dir = repo_path / sub
+        if not sub_dir.is_dir():
+            continue
+        for fp in sub_dir.glob("*"):
+            if fp.is_file() and fp.suffix in (".json", ".py"):
+                fp.unlink()
+        cleared.append(sub)
+
+    # Clear ChromaDB persistence
+    chroma_dir = data_dir / "chroma"
+    chroma_cleared = False
+    if chroma_dir.is_dir():
+        shutil.rmtree(chroma_dir)
+        chroma_cleared = True
+
+    # Git commit if repo is git-initialized
+    if (repo_path / ".git").is_dir():
+        try:
+            subprocess.run(
+                ["git", "-C", str(repo_path), "add", "-A"],
+                capture_output=True, text=True, timeout=30,
+            )
+            subprocess.run(
+                ["git", "-C", str(repo_path), "commit", "-m", "probos reset: cleared all artifacts"],
+                capture_output=True, text=True, timeout=30,
+            )
+        except Exception:
+            pass  # Best-effort commit
+
+    summary = ", ".join(cleared) if cleared else "nothing"
+    chroma_msg = " ChromaDB wiped." if chroma_cleared else ""
+    console.print(f"[bold green]Reset complete.[/bold green] Cleared: {summary}.{chroma_msg}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="ProbOS \u2014 Probabilistic Agent-Native OS",
@@ -497,6 +574,13 @@ def main() -> None:
     serve_parser.add_argument("--port", type=int, default=18900, help="Bind port")
     serve_parser.add_argument("--interactive", action="store_true", help="Also run interactive shell")
 
+    # --- probos reset ---
+    reset_parser = subparsers.add_parser("reset", help="Clear all learned state (designed agents, trust, episodes, etc.)")
+    reset_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+    reset_parser.add_argument("--keep-trust", action="store_true", help="Preserve trust scores")
+    reset_parser.add_argument("--config", "-c", type=Path, default=None, help="Path to config YAML")
+    reset_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")
+
     args = parser.parse_args()
 
     # Windows ProactorEventLoop doesn't support add_reader required by pyzmq.
@@ -506,6 +590,10 @@ def main() -> None:
 
     if args.command == "init":
         _cmd_init(args)
+        return
+
+    if args.command == "reset":
+        _cmd_reset(args)
         return
 
     if args.command == "serve":

@@ -20,9 +20,11 @@ export function BackgroundParticles() {
 
   const ref = useRef<THREE.Points>(null);
 
-  // Slow upward drift (Fix 7)
+  // Slow upward drift — freeze when disconnected (Fix 7)
   useFrame(() => {
     if (!ref.current) return;
+    const connected = useStore.getState().connected;
+    if (!connected) return; // particles freeze
     const pos = ref.current.geometry.attributes.position as THREE.BufferAttribute;
     for (let i = 0; i < count; i++) {
       let y = pos.getY(i);
@@ -59,6 +61,12 @@ export function HeartbeatPulse() {
 
   useFrame((state) => {
     if (!outerRef.current || !innerRef.current) return;
+    const connected = useStore.getState().connected;
+    if (!connected) {
+      outerRef.current.visible = false;
+      innerRef.current.visible = false;
+      return;
+    }
     const t = state.clock.elapsedTime;
     // Sharp attack, slow decay (like a real heartbeat)
     const raw = Math.sin(t * (Math.PI / 0.6));

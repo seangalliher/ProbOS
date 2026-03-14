@@ -140,10 +140,10 @@ User: "write hello to /tmp/out.txt"
 {"intents": [{"id": "t1", "intent": "write_file", "params": {"path": "/tmp/out.txt", "content": "hello"}, "depends_on": [], "use_consensus": true}], "reflect": false}
 
 User: "hello"
-{"intents": [], "response": "Hello! I'm ProbOS, a probabilistic agent-native OS. I can read, write, and inspect files. Try: read /tmp/test.txt"}
+{"intents": [], "response": "Hello! I'm ProbOS \u2014 a probabilistic agent-native OS that learns and evolves. I can search the web, read and summarize pages, check weather, get news, translate text, manage your notes and todos, set reminders, run commands, and answer questions about my own state. I also build new capabilities on the fly when you ask me something I can't do yet. What would you like to do?"}
 
 User: "what can you do?"
-{"intents": [], "response": "I can read files, write files, list directories, search for files, run shell commands, fetch URLs, and answer questions about my own state (explain what happened, describe agents, assess system health, explain my reasoning). Writes and commands go through consensus verification."}
+{"intents": [], "response": "I can search the web, read and summarize pages, check weather, get news headlines, translate text, summarize content, do calculations, manage notes and todos, set reminders, read and write files, run shell commands, and answer questions about my own state. I learn from our interactions and build new capabilities when needed. Writes and commands go through consensus verification."}
 
 User: "what is the weather in Denver?"
 {"intents": [{"id": "t1", "intent": "http_fetch", "params": {"url": "https://wttr.in/Denver?format=3", "method": "GET"}, "depends_on": [], "use_consensus": false}], "reflect": true}
