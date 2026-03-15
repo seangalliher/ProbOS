@@ -65,23 +65,29 @@ IntentMessage signature (dataclass):
 
 WEB DATA FETCHING — when the intent requires real-time data from the internet:
   Override perceive() to fetch the data and include it in the observation.
-  Use httpx for HTTP requests (it is in the allowed imports list).
-  The LLM in decide() will then process the REAL fetched content.
+  Route HTTP requests through the mesh via self._runtime.intent_bus.broadcast()
+  so they go through the governed HttpFetchAgent (rate-limited, logged, deduplicated).
+  Do NOT use httpx directly — use the mesh-fetch pattern below.
 
   Example perceive() override for web-fetching agents:
   ```python
   async def perceive(self, intent) -> dict:
-      import httpx
+      from probos.types import IntentMessage as _IM
       params = intent.params if hasattr(intent, 'params') else intent.get('params', {{}})
       url = params.get("url", "https://example.com")
       fetched_content = ""
-      try:
-          async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-              resp = await client.get(url)
-              resp.raise_for_status()
-              fetched_content = resp.text[:8000]  # Truncate to fit LLM context
-      except Exception as e:
-          fetched_content = f"FETCH_ERROR: {{e}}"
+      if self._runtime and hasattr(self._runtime, 'intent_bus'):
+          msg = _IM(intent="http_fetch", params={{"url": url}})
+          results = await self._runtime.intent_bus.broadcast(msg)
+          for r in results:
+              if r.success and r.result:
+                  body = r.result
+                  if isinstance(body, dict):
+                      body = body.get("body", body.get("content", str(body)))
+                  fetched_content = str(body)[:8000]
+                  break
+      if not fetched_content:
+          fetched_content = "FETCH_ERROR: runtime not available or fetch failed"
       obs = await super().perceive(intent)
       obs["fetched_content"] = fetched_content
       return obs
@@ -130,12 +136,11 @@ class {class_name}(CognitiveAgent):
 TEMPLATE (web-fetching — use when the intent needs live data from the internet):
 
 ```python
-import httpx
 from probos.cognitive.cognitive_agent import CognitiveAgent
-from probos.types import IntentDescriptor
+from probos.types import IntentDescriptor, IntentMessage as _IM
 
 class {class_name}(CognitiveAgent):
-    \"\"\"Cognitive agent for {intent_name} (web-fetching).\"\"\"
+    \"\"\"Cognitive agent for {intent_name} (web-fetching via mesh).\"\"\"
 
     agent_type = "{agent_type}"
     _handled_intents = {{"{intent_name}"}}
@@ -159,16 +164,21 @@ class {class_name}(CognitiveAgent):
 
     async def perceive(self, intent) -> dict:
         params = intent.params if hasattr(intent, 'params') else intent.get('params', {{}})
-        # Fetch live data — adapt URL construction to the domain
+        # Construct the URL for your data source
         url = params.get("url", "https://example.com")
         fetched_content = ""
-        try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                fetched_content = resp.text[:8000]
-        except Exception as e:
-            fetched_content = f"FETCH_ERROR: {{e}}"
+        if self._runtime and hasattr(self._runtime, 'intent_bus'):
+            msg = _IM(intent="http_fetch", params={{"url": url}})
+            results = await self._runtime.intent_bus.broadcast(msg)
+            for r in results:
+                if r.success and r.result:
+                    body = r.result
+                    if isinstance(body, dict):
+                        body = body.get("body", body.get("content", str(body)))
+                    fetched_content = str(body)[:8000]
+                    break
+        if not fetched_content:
+            fetched_content = "FETCH_ERROR: unable to fetch data"
         obs = await super().perceive(intent)
         obs["fetched_content"] = fetched_content
         return obs
@@ -193,7 +203,7 @@ INSTRUCTIONS GUIDELINES — the `instructions` string should include:
 RULES:
 - Only use imports from this whitelist: {allowed_imports}
   ProbOS internals are also available: probos.types, probos.substrate.agent, probos.cognitive.cognitive_agent
-- If you need HTTP requests, use httpx (it is whitelisted)
+- For HTTP requests, route through the mesh via self._runtime.intent_bus.broadcast() as shown in the web-fetching template. Do NOT use httpx directly — the mesh provides governance, rate limiting, and deduplication.
 - Do NOT use subprocess, eval, exec, __import__, socket, ctypes
 - Do NOT redefine decide(), report(), handle_intent(), or __init__()
 - You MAY override perceive() for real-time data fetching (web, APIs, RSS)

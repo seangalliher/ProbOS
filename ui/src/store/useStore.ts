@@ -165,7 +165,13 @@ export const useStore = create<HXIState>((set, get) => ({
   pools: [],
   systemMode: 'active',
   activeDag: null,
-  chatHistory: [],
+  chatHistory: (() => {
+    try {
+      const stored = localStorage.getItem('hxi_chat_history');
+      if (stored) return JSON.parse(stored) as ChatMessage[];
+    } catch {}
+    return [];
+  })(),
   tcN: 0,
   routingEntropy: 0,
   pendingConsensusFlash: null,
@@ -226,9 +232,16 @@ export const useStore = create<HXIState>((set, get) => ({
       timestamp: Date.now() / 1000,
       ...(meta?.selfModProposal ? { selfModProposal: meta.selfModProposal } : {}),
     };
-    set((s) => ({
-      chatHistory: [...s.chatHistory.slice(-49), msg],
-    }));
+    set((s) => {
+      const updated = [...s.chatHistory.slice(-49), msg];
+      try {
+        const serializable = updated.map(m => ({
+          id: m.id, role: m.role, text: m.text, timestamp: m.timestamp,
+        }));
+        localStorage.setItem('hxi_chat_history', JSON.stringify(serializable));
+      } catch {}
+      return { chatHistory: updated };
+    });
   },
 
   clearAnimationEvent: (key) => set({ [key]: null }),
@@ -239,6 +252,10 @@ export const useStore = create<HXIState>((set, get) => ({
     switch (type) {
       case 'state_snapshot': {
         const snap = data as unknown as StateSnapshot;
+        // Fresh boot: clear persisted chat history
+        if (snap.fresh_boot) {
+          localStorage.removeItem('hxi_chat_history');
+        }
         const agentMap = new Map<string, Agent>();
         for (const a of snap.agents) {
           agentMap.set(a.id, {
@@ -271,6 +288,7 @@ export const useStore = create<HXIState>((set, get) => ({
           systemMode: snap.system_mode as SystemMode,
           tcN: snap.tc_n,
           routingEntropy: snap.routing_entropy,
+          ...(snap.fresh_boot ? { chatHistory: [] } : {}),
         });
         break;
       }
@@ -289,18 +307,19 @@ export const useStore = create<HXIState>((set, get) => ({
             });
           } else {
             // New agent — self-mod bloom!
+            const agentType = d.pool.startsWith('designed_') ? d.pool.slice(9) : d.pool;
             const newAgent: Agent = {
               id: d.agent_id,
-              agentType: '',
+              agentType,
               pool: d.pool,
               state: d.state as Agent['state'],
               confidence: d.confidence,
               trust: d.trust,
               tier: 'domain',
               position: [0, 0, 0],
+              createdAt: Date.now(),
             };
             agents.set(d.agent_id, newAgent);
-            set({ pendingSelfModBloom: d.agent_id });
           }
           return { agents: computeLayout(agents) };
         });

@@ -351,6 +351,9 @@ async def _serve(
     console = Console()
     runtime, config, console = await _boot_runtime(config_path, fresh, data_dir, console)
 
+    if fresh:
+        runtime._fresh_boot = True
+
     app = create_app(runtime)
 
     uv_config = uvicorn.Config(
@@ -482,6 +485,11 @@ def _cmd_reset(args: argparse.Namespace) -> None:
     repo_path = Path(config.knowledge.repo_path).expanduser() if config.knowledge.repo_path else Path.home() / ".probos" / "knowledge"
     data_dir = args.data_dir or _default_data_dir()
     data_dir = Path(data_dir)
+
+    # Use data_dir-based knowledge path if the config path doesn't exist
+    data_dir_knowledge = data_dir / "knowledge"
+    if not repo_path.is_dir() and data_dir_knowledge.is_dir():
+        repo_path = data_dir_knowledge
 
     if not args.yes:
         answer = input(

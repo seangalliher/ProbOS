@@ -92,6 +92,13 @@ class SelfModRequest(BaseModel):
     original_message: str = ""
 
 
+class EnrichRequest(BaseModel):
+    intent_name: str
+    intent_description: str
+    parameters: dict[str, str] = {}
+    user_guidance: str
+
+
 def create_app(runtime: Any) -> FastAPI:
     """Build the FastAPI application wired to *runtime*."""
 
@@ -342,6 +349,54 @@ def create_app(runtime: Any) -> FastAPI:
             "status": "started",
         }
 
+    @app.post("/api/selfmod/enrich")
+    async def enrich_selfmod(req: EnrichRequest) -> dict[str, Any]:
+        """Enrich a rough agent description into a detailed implementation spec."""
+        if not getattr(runtime, 'llm_client', None):
+            return {"enriched": req.user_guidance, "status": "no_llm"}
+
+        from probos.types import LLMRequest
+
+        enrich_prompt = (
+            f"A user wants to create a new ProbOS agent. They provided this guidance:\n\n"
+            f"Intent name: {req.intent_name}\n"
+            f"Basic description: {req.intent_description}\n"
+            f"Parameters: {req.parameters}\n"
+            f"User's guidance: {req.user_guidance}\n\n"
+            f"Expand this into a detailed, specific implementation plan for the agent. Include:\n"
+            f"1. Exactly which URLs/APIs to use (prefer free, no-auth sources like DuckDuckGo)\n"
+            f"2. How to parse the response data\n"
+            f"3. What output format to return\n"
+            f"4. Error handling approach\n"
+            f"5. Any important constraints or limitations\n\n"
+            f"Write this as a clear, concise specification (3-5 bullet points). "
+            f"This will be given to an AI code generator to build the agent."
+        )
+
+        try:
+            response = await runtime.llm_client.complete(LLMRequest(
+                prompt=enrich_prompt,
+                system_prompt=(
+                    "You are a technical architect helping design an AI agent. "
+                    "Produce a clear, actionable implementation spec from the user's rough description. "
+                    "Be specific about data sources, parsing strategies, and output format. "
+                    "Keep it concise — 3-5 bullet points. No code, just the spec."
+                ),
+                tier="fast",
+                max_tokens=400,
+            ))
+            enriched = response.content.strip() if response and response.content else req.user_guidance
+        except Exception:
+            enriched = req.user_guidance
+
+        return {
+            "enriched": enriched,
+            "intent_name": req.intent_name,
+            "intent_description": req.intent_description,
+            "parameters": req.parameters,
+            "status": "ok",
+        }
+
     async def _run_selfmod(
         req: SelfModRequest,
         rt: Any,
@@ -397,8 +452,6 @@ def create_app(runtime: Any) -> FastAPI:
 
             if record and record.status == "active":
                 # Post-creation work
-                if rt._system_qa is not None:
-                    asyncio.create_task(rt._run_qa_for_designed_agent(record))
                 if rt._knowledge_store:
                     try:
                         await rt._knowledge_store.store_agent(record, record.source_code)
@@ -475,7 +528,10 @@ def create_app(runtime: Any) -> FastAPI:
                         "message": "\u26a1 Executing your request...",
                     })
                     try:
-                        result = await rt.process_natural_language(req.original_message)
+                        # Use the intent description for retry, not the original meta-request.
+                        # "I want you to design an agent that can X" should retry as just "X"
+                        retry_message = req.intent_description or req.original_message
+                        result = await rt.process_natural_language(retry_message)
                         response = (
                             result.get("response", "")
                             or result.get("reflection", "")
@@ -492,6 +548,10 @@ def create_app(runtime: Any) -> FastAPI:
                             "intent": req.intent_name,
                             "message": f"Agent deployed but retry failed: {retry_err}",
                         })
+
+                # QA after user gets their result — don't compete for rate limiter
+                if rt._system_qa is not None:
+                    asyncio.create_task(rt._run_qa_for_designed_agent(record))
             else:
                 error_detail = getattr(record, 'error', '') if record else "design returned no result"
                 status = getattr(record, 'status', 'unknown') if record else "failed"

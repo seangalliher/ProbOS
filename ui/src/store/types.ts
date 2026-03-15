@@ -9,6 +9,7 @@ export interface Agent {
   trust: number;
   tier: 'core' | 'utility' | 'domain';
   position: [number, number, number];
+  createdAt?: number;
 }
 
 export interface Connection {
@@ -82,6 +83,7 @@ export interface StateSnapshot {
   system_mode: string;
   tc_n: number;
   routing_entropy: number;
+  fresh_boot?: boolean;
 }
 
 // Animation event types for the canvas

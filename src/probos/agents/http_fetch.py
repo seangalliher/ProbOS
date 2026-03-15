@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Any
+import time
+import urllib.parse
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
 
 import httpx
 
@@ -11,6 +15,18 @@ from probos.substrate.agent import BaseAgent
 from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DomainRateState:
+    """Per-domain rate-limit tracking (AD-270)."""
+
+    last_request_time: float = 0.0
+    min_interval_seconds: float = 2.0
+    retry_after: float | None = None
+    remaining: int | None = None
+    reset_time: float | None = None
+    consecutive_429s: int = 0
 
 
 class HttpFetchAgent(BaseAgent):
@@ -52,7 +68,23 @@ class HttpFetchAgent(BaseAgent):
         "server",
         "date",
         "last-modified",
+        "retry-after",
+        "x-ratelimit-remaining",
+        "x-ratelimit-reset",
+        "x-ratelimit-limit",
     })
+
+    # Class-level shared state — all pool members share rate limit knowledge (AD-270)
+    _domain_state: ClassVar[dict[str, DomainRateState]] = {}
+
+    _KNOWN_RATE_LIMITS: ClassVar[dict[str, float]] = {
+        "api.coingecko.com": 3.0,
+        "wttr.in": 2.0,
+        "feeds.reuters.com": 1.0,
+        "feeds.bbci.co.uk": 1.0,
+        "feeds.npr.org": 1.0,
+        "html.duckduckgo.com": 2.0,
+    }
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Full lifecycle: perceive -> decide -> act -> report."""
@@ -117,7 +149,10 @@ class HttpFetchAgent(BaseAgent):
         return result
 
     async def _fetch_url(self, url: str, method: str) -> dict[str, Any]:
-        """Fetch a URL with timeout and body capping."""
+        """Fetch a URL with timeout, body capping, and per-domain rate limiting."""
+        domain, state = self._get_domain_state(url)
+        delay = await self._wait_for_rate_limit(domain, state)
+
         try:
             async with httpx.AsyncClient(
                 timeout=self.DEFAULT_TIMEOUT,
@@ -125,6 +160,16 @@ class HttpFetchAgent(BaseAgent):
                 follow_redirects=True,
             ) as client:
                 response = await client.request(method, url)
+
+                self._update_rate_state(state, response)
+
+                # Auto-retry once on 429 (AD-270)
+                if response.status_code == 429:
+                    retry_delay = await self._wait_for_rate_limit(domain, state)
+                    state.last_request_time = time.monotonic()
+                    response = await client.request(method, url)
+                    self._update_rate_state(state, response)
+                    delay += retry_delay
 
                 body = response.content[:self.MAX_BODY_BYTES].decode(
                     "utf-8", errors="replace"
@@ -144,6 +189,7 @@ class HttpFetchAgent(BaseAgent):
                         "headers": safe_headers,
                         "body": body,
                         "body_length": len(body),
+                        "rate_limit_delay": round(delay, 2),
                     },
                 }
         except httpx.ConnectError as e:
@@ -155,3 +201,70 @@ class HttpFetchAgent(BaseAgent):
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _get_domain_state(self, url: str) -> tuple[str, DomainRateState]:
+        """Look up or create rate-limit state for the URL's domain."""
+        domain = urllib.parse.urlparse(url).netloc
+        if domain not in self._domain_state:
+            interval = self._KNOWN_RATE_LIMITS.get(domain, 2.0)
+            self._domain_state[domain] = DomainRateState(min_interval_seconds=interval)
+        return domain, self._domain_state[domain]
+
+    async def _wait_for_rate_limit(self, domain: str, state: DomainRateState) -> float:
+        """Sleep if the domain was requested too recently. Returns delay in seconds."""
+        now = time.monotonic()
+
+        # Respect Retry-After if set
+        wait = 0.0
+        if state.retry_after is not None and state.retry_after > now:
+            wait = state.retry_after - now
+            state.retry_after = None
+        elif state.last_request_time > 0:
+            elapsed = now - state.last_request_time
+            if elapsed < state.min_interval_seconds:
+                wait = state.min_interval_seconds - elapsed
+
+        if wait > 0:
+            wait = min(wait, 10.0)  # Never wait more than 10s — fail fast
+            logger.debug("Rate limit courtesy delay: %.1fs for %s", wait, domain)
+            await asyncio.sleep(wait)
+
+        state.last_request_time = time.monotonic()
+        return wait
+
+    def _update_rate_state(self, state: DomainRateState, response: httpx.Response) -> None:
+        """Update domain rate state from response status and headers."""
+        if response.status_code == 429:
+            state.consecutive_429s = min(state.consecutive_429s + 1, 3)
+            # Retry-After header (seconds or HTTP-date — we only handle seconds)
+            retry_after = response.headers.get("retry-after")
+            if retry_after:
+                try:
+                    state.retry_after = time.monotonic() + float(retry_after)
+                except (ValueError, TypeError):
+                    pass
+            # Exponential backoff capped at 60s
+            state.min_interval_seconds = min(2 ** state.consecutive_429s, 60)
+        else:
+            state.consecutive_429s = 0
+
+        # X-RateLimit-Remaining: pre-emptively slow down when near limit
+        remaining = response.headers.get("x-ratelimit-remaining")
+        if remaining is not None:
+            try:
+                state.remaining = int(remaining)
+                if state.remaining <= 2:
+                    state.min_interval_seconds = max(state.min_interval_seconds, state.min_interval_seconds * 2)
+            except (ValueError, TypeError):
+                pass
+
+        # X-RateLimit-Reset: Unix timestamp
+        reset_hdr = response.headers.get("x-ratelimit-reset")
+        if reset_hdr is not None:
+            try:
+                reset_unix = float(reset_hdr)
+                now_unix = time.time()
+                if reset_unix > now_unix:
+                    state.reset_time = time.monotonic() + (reset_unix - now_unix)
+            except (ValueError, TypeError):
+                pass

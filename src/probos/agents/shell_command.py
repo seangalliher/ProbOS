@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shutil
 import subprocess
 import sys
 from typing import Any
@@ -100,7 +101,34 @@ class ShellCommandAgent(BaseAgent):
         if not command or not command.strip():
             return {"action": "error", "error": "No command specified"}
 
+        # Validate the primary command exists before executing
+        primary_cmd = command.split()[0].strip('"').strip("'")
+        if not self._command_exists(primary_cmd):
+            return {
+                "action": "error",
+                "error": (
+                    f"Command '{primary_cmd}' not found on this system. "
+                    "This task may need a dedicated agent — try asking ProbOS to build one."
+                ),
+            }
+
         return {"action": "run", "command": command}
+
+    @staticmethod
+    def _command_exists(cmd: str) -> bool:
+        """Check whether *cmd* is a shell builtin, PowerShell cmdlet, or on PATH."""
+        # PowerShell cmdlets contain a hyphen (e.g. Get-Date)
+        if '-' in cmd:
+            return True
+        _BUILTINS = {
+            'echo', 'cd', 'set', 'dir', 'type', 'copy', 'move', 'del',
+            'mkdir', 'rmdir', 'cls', 'exit', 'where', 'if', 'for',
+            'powershell', 'cmd', 'python', 'pip', 'git', 'node', 'npm',
+            'curl', 'wget', 'tar', 'ssh', 'scp',
+        }
+        if cmd.lower() in _BUILTINS:
+            return True
+        return shutil.which(cmd) is not None
 
     async def act(self, plan: Any) -> Any:
         """Execute the planned operation."""

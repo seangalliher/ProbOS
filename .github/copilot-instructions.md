@@ -32,6 +32,9 @@ When writing code in this codebase:
 - Restored designed agent code must pass `CodeValidator` validation before `importlib` loading. No exceptions on warm boot.
 - **Test gates**: After each logical build step, run the full test suite. Do not proceed to the next step if tests fail. Report the test count after each step.
 - Run tests with: `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q`
+- **UI test requirement**: Every UI change (TypeScript/React) must include a Vitest component test. The HXI has broken from untested UI changes multiple times — tooltips, bloom position, chat rendering. No UI PR without tests.
+- **API test requirement**: Every new API endpoint (`api.py`) must have at least 2 tests — happy path and error case. Test in `tests/test_distribution.py` or `tests/test_hxi_chat_integration.py`.
+- **UI tests run with**: `cd ui && npx vitest run` (when Vitest is set up)
 
 ---
 
@@ -60,6 +63,9 @@ When reviewing PROGRESS.md or evaluating changes, check for:
 - **Tier misclassification**: "This domain agent is accessing internal system state directly -- it should go through the runtime API or be reclassified as utility."
 - **Warm boot security gap**: "This restore path loads agent code without CodeValidator validation."
 - **Scope creep**: "This change adds [feature] which was not in the prompt. Revert and keep to the stated deliverables."
+- **Prompt text triggering gap regex**: "This response/example text contains phrases ('can't', 'don't have', 'unable to') that match `_CAPABILITY_GAP_RE`. Review all prompt example text against the gap regex before shipping."
+- **IntentBus fan-out side effects**: "This change adds HTTP calls in agent code. Remember: `IntentBus.broadcast()` fans out to ALL subscribers. 3 HttpFetchAgents × N broadcasts = 3N HTTP calls. Use `_mesh_fetch()` for designed agents — rate limiter handles the rest."
+- **HXI Canvas regression**: "This UI change touches agents.tsx, animations.tsx, or CognitiveCanvas.tsx. Verify tooltips, bloom position, and raycasting still work after the change."
 
 ## Architect: Claude Code Prompt Drafting
 
@@ -119,6 +125,8 @@ Cross-cutting: `federation/` (bridge, router, transport), `knowledge/` (Git-back
 7. **Dynamic intent discovery**: Agents declare `IntentDescriptor` metadata. The decomposer's system prompt is built at runtime from whatever agents are registered. New agents self-integrate.
 8. **Episodic learning**: ChromaDB semantic memory. Every interaction stored, similar past recalled, dreaming consolidates during idle.
 9. **Correction feedback loop**: Human corrections are the richest learning signal. CorrectionDetector -> AgentPatcher -> hot-reload -> auto-retry -> trust/Hebbian/episodic update.
+10. **Mesh-fetch for HTTP**: Designed agents must route HTTP through `self._runtime.intent_bus.broadcast(IntentMessage(intent="http_fetch"))` — not raw httpx. This preserves governance (consensus, trust, event logging) and benefits from the per-domain rate limiter in HttpFetchAgent. The AgentDesigner template enforces this pattern.
+11. **Per-domain rate limiting**: HttpFetchAgent has a class-level `_domain_state` dict with per-domain request intervals (default 2s, CoinGecko 3s). Adaptive: reads `Retry-After` and `X-RateLimit-*` headers. Auto-retries once on 429. All mesh HTTP goes through this.
 
 ### Agent Classification Framework
 

@@ -59,9 +59,10 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
     const connected = useStore.getState().connected;
 
     agentList.forEach((agent, i) => {
-      // Breathing only when connected
-      const breathPhase = t * 1.5 + i * 0.7;
-      const breathScale = connected ? (1 + Math.sin(breathPhase) * 0.03) : 1.0;
+      // New agents (< 5 min) pulse faster and brighter
+      const isNew = agent.createdAt != null && (Date.now() - agent.createdAt < 300000);
+      const breathPhase = t * (isNew ? 4.0 : 1.5) + i * 0.7;
+      const breathScale = connected ? (1 + Math.sin(breathPhase) * (isNew ? 0.15 : 0.03)) : 1.0;
 
       // Tier-based sizing (Fix 5)
       const baseSize = agentNodeSize(agent.tier, agent.confidence);
@@ -74,7 +75,9 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
 
       // Update color: dim to near-dark when disconnected
       _tempColor.copy(poolTintBlend(agent.trust, agent.pool));
-      const intensity = connected ? confidenceToIntensity(agent.confidence) : 0.05;
+      const intensity = connected
+        ? confidenceToIntensity(agent.confidence) * (isNew ? 1.5 : 1.0)
+        : 0.05;
       _tempColor.multiplyScalar(intensity);
       mesh.setColorAt(i, _tempColor);
     });
@@ -88,6 +91,7 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
 
   return (
     <instancedMesh
+      key={`agents-${count}`}
       ref={meshRef}
       args={[undefined, undefined, count]}
       onPointerMove={onPointerMove}

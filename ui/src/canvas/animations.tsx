@@ -1,6 +1,8 @@
 /* Animation system — heartbeat, consensus, self-mod, routing, particles (Fix 4,6,7) */
+/* All animation components use useFrame + getState() — NEVER reactive useStore subscriptions.
+   Reactive subscriptions inside the R3F Canvas cause re-renders that break raycasting/tooltips. */
 
-import { useRef, useEffect, useMemo } from 'react';
+import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useStore } from '../store/useStore';
@@ -101,24 +103,27 @@ export function HeartbeatPulse() {
   );
 }
 
-// Consensus golden flash
+// Consensus golden flash — non-reactive (reads store in useFrame)
 export function ConsensusFlash() {
-  const flash = useStore((s) => s.pendingConsensusFlash);
-  const clearEvent = useStore((s) => s.clearAnimationEvent);
   const meshRef = useRef<THREE.Mesh>(null);
   const progressRef = useRef(0);
   const activeRef = useRef(false);
+  const lastFlashRef = useRef<object | null>(null);
 
-  useEffect(() => {
-    if (flash) {
+  useFrame((_, delta) => {
+    const store = useStore.getState();
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    // Detect new flash trigger (identity comparison — each event is a new object)
+    if (store.pendingConsensusFlash && store.pendingConsensusFlash !== lastFlashRef.current) {
+      lastFlashRef.current = store.pendingConsensusFlash;
       activeRef.current = true;
       progressRef.current = 0;
     }
-  }, [flash]);
 
-  useFrame((_, delta) => {
-    if (!meshRef.current || !activeRef.current) {
-      if (meshRef.current) meshRef.current.visible = false;
+    if (!activeRef.current) {
+      mesh.visible = false;
       return;
     }
 
@@ -127,15 +132,16 @@ export function ConsensusFlash() {
 
     if (p > 1) {
       activeRef.current = false;
-      meshRef.current.visible = false;
-      clearEvent('pendingConsensusFlash');
+      mesh.visible = false;
+      lastFlashRef.current = null;
+      store.clearAnimationEvent('pendingConsensusFlash');
       return;
     }
 
-    meshRef.current.visible = true;
-    const mat = meshRef.current.material as THREE.MeshBasicMaterial;
+    mesh.visible = true;
+    const mat = mesh.material as THREE.MeshBasicMaterial;
     mat.opacity = (1 - p) * 0.6;
-    meshRef.current.scale.setScalar(1 + p * 4);
+    mesh.scale.setScalar(1 + p * 4);
   });
 
   return (
@@ -146,70 +152,85 @@ export function ConsensusFlash() {
   );
 }
 
-// Self-mod bloom — rapid bright flare when new agent spawns
+// Self-mod bloom — bright cyan-white ring flare when new agent spawns (non-reactive)
 export function SelfModBloom() {
-  const bloomAgent = useStore((s) => s.pendingSelfModBloom);
-  const clearEvent = useStore((s) => s.clearAnimationEvent);
   const meshRef = useRef<THREE.Mesh>(null);
   const progressRef = useRef(0);
   const activeRef = useRef(false);
-
-  useEffect(() => {
-    if (bloomAgent) {
-      activeRef.current = true;
-      progressRef.current = 0;
-    }
-  }, [bloomAgent]);
+  const currentBloomRef = useRef<string | null>(null);
 
   useFrame((_, delta) => {
-    if (!meshRef.current || !activeRef.current) {
-      if (meshRef.current) meshRef.current.visible = false;
+    const store = useStore.getState();
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    // Check for new bloom trigger (non-reactive)
+    if (store.pendingSelfModBloom && store.pendingSelfModBloom !== currentBloomRef.current) {
+      currentBloomRef.current = store.pendingSelfModBloom;
+      activeRef.current = true;
+      progressRef.current = 0;
+      // Position at new agent
+      const target = [...store.agents.values()].find(a => a.agentType === store.pendingSelfModBloom);
+      if (target) {
+        mesh.position.set(target.position[0], target.position[1], target.position[2]);
+      }
+    }
+
+    if (!activeRef.current) {
+      mesh.visible = false;
       return;
     }
 
-    progressRef.current += delta * 1.5;
+    // 800ms total duration (delta * 1.25 → 0..1 in 0.8s)
+    progressRef.current += delta * 1.25;
     const p = progressRef.current;
 
-    if (p > 1.5) {
+    if (p > 1.0) {
       activeRef.current = false;
-      meshRef.current.visible = false;
-      clearEvent('pendingSelfModBloom');
+      mesh.visible = false;
+      currentBloomRef.current = null;
+      store.clearAnimationEvent('pendingSelfModBloom');
       return;
     }
 
-    meshRef.current.visible = true;
-    const mat = meshRef.current.material as THREE.MeshBasicMaterial;
-    const flare = p < 0.3 ? p / 0.3 : Math.max(0, 1 - (p - 0.3) / 1.2);
-    mat.opacity = flare * 0.8;
-    meshRef.current.scale.setScalar(0.3 + flare * 2.5);
+    mesh.visible = true;
+    const mat = mesh.material as THREE.MeshBasicMaterial;
+    // Fast attack, smooth decay — 2x brighter than heartbeat
+    const flare = p < 0.15 ? p / 0.15 : Math.max(0, 1 - (p - 0.15) / 0.85);
+    mat.opacity = flare * 1.0;
+    // Expanding ring effect
+    mesh.scale.setScalar(0.2 + flare * 3.0);
   });
 
   return (
     <mesh ref={meshRef} visible={false}>
-      <sphereGeometry args={[1, 16, 16]} />
-      <meshBasicMaterial color="#f0e0c0" transparent opacity={0} toneMapped={false} />
+      <ringGeometry args={[0.8, 1.0, 32]} />
+      <meshBasicMaterial color="#80f0ff" transparent opacity={0} toneMapped={false} side={THREE.DoubleSide} />
     </mesh>
   );
 }
 
-// Intent routing pulse
+// Intent routing pulse — non-reactive
 export function RoutingPulse() {
-  const pulse = useStore((s) => s.pendingRoutingPulse);
-  const clearEvent = useStore((s) => s.clearAnimationEvent);
   const meshRef = useRef<THREE.Mesh>(null);
   const progressRef = useRef(0);
   const activeRef = useRef(false);
+  const lastPulseRef = useRef<object | null>(null);
 
-  useEffect(() => {
-    if (pulse) {
+  useFrame((_, delta) => {
+    const store = useStore.getState();
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    // Detect new pulse trigger (identity comparison)
+    if (store.pendingRoutingPulse && store.pendingRoutingPulse !== lastPulseRef.current) {
+      lastPulseRef.current = store.pendingRoutingPulse;
       activeRef.current = true;
       progressRef.current = 0;
     }
-  }, [pulse]);
 
-  useFrame((_, delta) => {
-    if (!meshRef.current || !activeRef.current) {
-      if (meshRef.current) meshRef.current.visible = false;
+    if (!activeRef.current) {
+      mesh.visible = false;
       return;
     }
 
@@ -218,15 +239,16 @@ export function RoutingPulse() {
 
     if (p > 1) {
       activeRef.current = false;
-      meshRef.current.visible = false;
-      clearEvent('pendingRoutingPulse');
+      mesh.visible = false;
+      lastPulseRef.current = null;
+      store.clearAnimationEvent('pendingRoutingPulse');
       return;
     }
 
-    meshRef.current.visible = true;
-    const mat = meshRef.current.material as THREE.MeshBasicMaterial;
+    mesh.visible = true;
+    const mat = mesh.material as THREE.MeshBasicMaterial;
     mat.opacity = (1 - p) * 0.6;
-    meshRef.current.scale.setScalar(0.1 + p * 0.3);
+    mesh.scale.setScalar(0.1 + p * 0.3);
   });
 
   return (
@@ -237,26 +259,29 @@ export function RoutingPulse() {
   );
 }
 
-// Feedback pulse — golden (approve) or cool-blue (reject) radial pulse from center
+// Feedback pulse — golden (approve) or cool-blue (reject) radial pulse from center (non-reactive)
 export function FeedbackPulse() {
-  const feedbackPulse = useStore((s) => s.pendingFeedbackPulse);
-  const clearEvent = useStore((s) => s.clearAnimationEvent);
   const meshRef = useRef<THREE.Mesh>(null);
   const progressRef = useRef(0);
   const activeRef = useRef(false);
+  const currentFeedbackRef = useRef<string | null>(null);
   const colorRef = useRef('#f0b060');
 
-  useEffect(() => {
-    if (feedbackPulse) {
+  useFrame((_, delta) => {
+    const store = useStore.getState();
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    // Detect new feedback trigger
+    if (store.pendingFeedbackPulse && store.pendingFeedbackPulse !== currentFeedbackRef.current) {
+      currentFeedbackRef.current = store.pendingFeedbackPulse;
       activeRef.current = true;
       progressRef.current = 0;
-      colorRef.current = feedbackPulse === 'good' ? '#f0b060' : '#4488cc';
+      colorRef.current = store.pendingFeedbackPulse === 'good' ? '#f0b060' : '#4488cc';
     }
-  }, [feedbackPulse]);
 
-  useFrame((_, delta) => {
-    if (!meshRef.current || !activeRef.current) {
-      if (meshRef.current) meshRef.current.visible = false;
+    if (!activeRef.current) {
+      mesh.visible = false;
       return;
     }
 
@@ -265,16 +290,17 @@ export function FeedbackPulse() {
 
     if (p > 1) {
       activeRef.current = false;
-      meshRef.current.visible = false;
-      clearEvent('pendingFeedbackPulse');
+      mesh.visible = false;
+      currentFeedbackRef.current = null;
+      store.clearAnimationEvent('pendingFeedbackPulse');
       return;
     }
 
-    meshRef.current.visible = true;
-    const mat = meshRef.current.material as THREE.MeshBasicMaterial;
+    mesh.visible = true;
+    const mat = mesh.material as THREE.MeshBasicMaterial;
     mat.color.set(colorRef.current);
     mat.opacity = (1 - p) * 0.1; // subtle — opacity 0.1 max
-    meshRef.current.scale.setScalar(0.5 + p * 6);
+    mesh.scale.setScalar(0.5 + p * 6);
   });
 
   return (

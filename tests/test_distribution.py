@@ -412,3 +412,56 @@ class TestFastAPIEndpoints:
         app = create_app(FakeRuntime())
         assert isinstance(app, FastAPI)
         assert app.title == "ProbOS"
+
+    @pytest.mark.asyncio
+    async def test_enrich_endpoint_returns_enriched(self, app_and_runtime):
+        """POST /api/selfmod/enrich returns enriched spec from LLM."""
+        from httpx import ASGITransport, AsyncClient
+
+        app, rt = app_and_runtime
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/api/selfmod/enrich",
+                json={
+                    "intent_name": "lookup_person",
+                    "intent_description": "Look up a person online",
+                    "parameters": {"name": "<person_name>"},
+                    "user_guidance": "Search DuckDuckGo, find LinkedIn profiles",
+                },
+                timeout=30.0,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "enriched" in data
+        assert len(data["enriched"]) > 0
+        assert data["status"] == "ok"
+        assert data["intent_name"] == "lookup_person"
+
+    @pytest.mark.asyncio
+    async def test_enrich_endpoint_fallback_without_llm(self):
+        """Enrich returns user_guidance when no LLM is available."""
+        from httpx import ASGITransport, AsyncClient
+
+        class NoLLMRuntime:
+            def status(self):
+                return {"total_agents": 0}
+
+        app = create_app(NoLLMRuntime())
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/api/selfmod/enrich",
+                json={
+                    "intent_name": "test_intent",
+                    "intent_description": "A test",
+                    "parameters": {},
+                    "user_guidance": "My raw guidance text",
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["enriched"] == "My raw guidance text"
+        assert data["status"] == "no_llm"

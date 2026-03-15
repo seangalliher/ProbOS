@@ -364,6 +364,133 @@ class TestHttpFetchAgent:
         assert result is None
 
 
+class TestHttpFetchRateLimiter:
+    """AD-270: Per-domain rate limiter tests."""
+
+    def setup_method(self):
+        # Clear shared domain state between tests
+        HttpFetchAgent._domain_state.clear()
+
+    @pytest.mark.asyncio
+    async def test_domain_state_created(self, monkeypatch):
+        """Fetching a URL creates domain state with last_request_time > 0."""
+        import httpx
+
+        class MockResponse:
+            status_code = 200
+            url = "https://example.com/test"
+            content = b"ok"
+            headers = {"content-type": "text/plain"}
+
+        class MockAsyncClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                pass
+            async def request(self, method, url):
+                return MockResponse()
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
+
+        agent = HttpFetchAgent()
+        intent = IntentMessage(intent="http_fetch", params={"url": "https://example.com/test"})
+        await agent.handle_intent(intent)
+
+        assert "example.com" in HttpFetchAgent._domain_state
+        assert HttpFetchAgent._domain_state["example.com"].last_request_time > 0
+
+    def test_known_domain_interval(self):
+        """api.coingecko.com should get 3.0s interval."""
+        agent = HttpFetchAgent()
+        _, state = agent._get_domain_state("https://api.coingecko.com/api/v3/simple/price")
+        assert state.min_interval_seconds == 3.0
+
+    def test_unknown_domain_default_interval(self):
+        """Unknown domain should get 2.0s default."""
+        agent = HttpFetchAgent()
+        _, state = agent._get_domain_state("https://unknown-api.example.org/data")
+        assert state.min_interval_seconds == 2.0
+
+    def test_consecutive_429_backoff(self):
+        """Two consecutive 429s should escalate the interval."""
+        import httpx
+
+        agent = HttpFetchAgent()
+        _, state = agent._get_domain_state("https://test429.example.com")
+
+        # Simulate first 429
+        resp1 = httpx.Response(429, headers={}, request=httpx.Request("GET", "https://test429.example.com"))
+        agent._update_rate_state(state, resp1)
+        assert state.consecutive_429s == 1
+        assert state.min_interval_seconds == 2  # 2^1
+
+        # Simulate second 429
+        resp2 = httpx.Response(429, headers={}, request=httpx.Request("GET", "https://test429.example.com"))
+        agent._update_rate_state(state, resp2)
+        assert state.consecutive_429s == 2
+        assert state.min_interval_seconds == 4  # 2^2
+
+    def test_success_resets_429_counter(self):
+        """A 200 after 429s should reset the counter."""
+        import httpx
+
+        agent = HttpFetchAgent()
+        _, state = agent._get_domain_state("https://testreset.example.com")
+
+        # Simulate 429 then 200
+        resp_429 = httpx.Response(429, headers={}, request=httpx.Request("GET", "https://testreset.example.com"))
+        agent._update_rate_state(state, resp_429)
+        assert state.consecutive_429s == 1
+
+        resp_200 = httpx.Response(200, headers={}, request=httpx.Request("GET", "https://testreset.example.com"))
+        agent._update_rate_state(state, resp_200)
+        assert state.consecutive_429s == 0
+
+    def test_retry_after_header_respected(self):
+        """Retry-After header should set retry_after on state."""
+        import httpx
+        import time
+
+        agent = HttpFetchAgent()
+        _, state = agent._get_domain_state("https://testretry.example.com")
+
+        before = time.monotonic()
+        resp = httpx.Response(429, headers={"retry-after": "5"}, request=httpx.Request("GET", "https://testretry.example.com"))
+        agent._update_rate_state(state, resp)
+
+        assert state.retry_after is not None
+        assert state.retry_after >= before + 5
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_delay_in_result(self, monkeypatch):
+        """Successful result should contain rate_limit_delay field."""
+        import httpx
+
+        class MockResponse:
+            status_code = 200
+            url = "https://delaytest.example.com"
+            content = b"ok"
+            headers = {"content-type": "text/plain"}
+
+        class MockAsyncClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                pass
+            async def request(self, method, url):
+                return MockResponse()
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
+
+        agent = HttpFetchAgent()
+        intent = IntentMessage(intent="http_fetch", params={"url": "https://delaytest.example.com"})
+        result = await agent.handle_intent(intent)
+
+        assert result is not None
+        assert result.success
+        assert "rate_limit_delay" in result.result
+
+
 # ---------------------------------------------------------------
 # Integration Tests (full runtime)
 # ---------------------------------------------------------------

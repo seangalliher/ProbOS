@@ -1,6 +1,7 @@
 /* Intent Surface — Conversation Anchor: "The Process Is Everything" */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { useStore } from '../store/useStore';
 import type { SelfModProposal } from '../store/types';
 import { speakResponse } from '../audio/voice';
@@ -26,6 +27,10 @@ export function IntentSurface() {
   const [active, setActive] = useState(false);
   const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackStatus>>({});
   const [listening, setListening] = useState(false);
+  const [vibeMode, setVibeMode] = useState<Record<string, boolean>>({});
+  const [vibeInput, setVibeInput] = useState<Record<string, string>>({});
+  const [enrichedSpec, setEnrichedSpec] = useState<Record<string, string | null>>({});
+  const [enriching, setEnriching] = useState<Record<string, boolean>>({});
   const inputRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -141,7 +146,18 @@ export function IntentSurface() {
           addChatMessage('system', response);
         }
         if (voiceEnabled && response && !response.startsWith('(')) {
-          speakResponse(response);
+          // Strip markdown formatting for cleaner TTS
+          const cleanText = response
+            .replace(/\*\*(.+?)\*\*/g, '$1')
+            .replace(/\*(.+?)\*/g, '$1')
+            .replace(/#{1,6}\s/g, '')
+            .replace(/[-•]\s/g, '')
+            .replace(/---+/g, '')
+            .replace(/`(.+?)`/g, '$1')
+            .replace(/\[(.+?)\]\(.+?\)/g, '$1')
+            .replace(/\n{2,}/g, '. ')
+            .trim();
+          speakResponse(cleanText);
         }
         soundEngine.playIntentRouting();
       })
@@ -249,7 +265,7 @@ export function IntentSurface() {
         ref={containerRef}
         style={{
           position: 'fixed',
-          bottom: 48,
+          bottom: 44,
           left: '50%',
           transform: 'translateX(-50%)',
           zIndex: 20,
@@ -280,7 +296,7 @@ export function IntentSurface() {
               <div
                 ref={threadRef}
                 style={{
-                  maxHeight: '40vh',
+                  maxHeight: 'calc(100vh - 200px)',
                   overflowY: 'auto',
                   padding: '16px 20px',
                   display: 'flex',
@@ -308,43 +324,218 @@ export function IntentSurface() {
                       border: msg.role === 'user'
                         ? '1px solid rgba(240, 176, 96, 0.15)'
                         : '1px solid rgba(136, 164, 200, 0.12)',
-                      whiteSpace: 'pre-wrap',
+                      whiteSpace: msg.role === 'user' ? 'pre-wrap' : undefined,
                       wordBreak: 'break-word',
                     }}>
-                      {msg.text}
+                      {msg.role === 'user' ? msg.text : (
+                        <ReactMarkdown
+                          components={{
+                            p: ({children}) => <p style={{ margin: '4px 0' }}>{children}</p>,
+                            strong: ({children}) => <strong style={{ color: '#f0d0a0' }}>{children}</strong>,
+                            h2: ({children}) => <h2 style={{ fontSize: 14, margin: '8px 0 4px', color: '#f0d0a0' }}>{children}</h2>,
+                            h3: ({children}) => <h3 style={{ fontSize: 13, margin: '6px 0 3px', color: '#f0d0a0' }}>{children}</h3>,
+                            ul: ({children}) => <ul style={{ margin: '4px 0', paddingLeft: 20 }}>{children}</ul>,
+                            ol: ({children}) => <ol style={{ margin: '4px 0', paddingLeft: 20 }}>{children}</ol>,
+                            li: ({children}) => <li style={{ margin: '2px 0' }}>{children}</li>,
+                            code: ({children}) => <code style={{ background: 'rgba(240, 176, 96, 0.1)', padding: '1px 4px', borderRadius: 3, fontSize: 12 }}>{children}</code>,
+                            hr: () => <hr style={{ border: 'none', borderTop: '1px solid rgba(136, 164, 200, 0.15)', margin: '8px 0' }} />,
+                            a: ({href, children}) => <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: '#88a4c8' }}>{children}</a>,
+                          }}
+                        >
+                          {msg.text}
+                        </ReactMarkdown>
+                      )}
                     </div>
 
                     {/* Self-mod approval buttons */}
                     {msg.selfModProposal && msg.selfModProposal.status === 'proposed' && (
-                      <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                        <button
-                          onClick={() => approveSelfMod(msg.selfModProposal!)}
-                          style={{
-                            background: 'rgba(80, 200, 120, 0.2)',
-                            border: '1px solid rgba(80, 200, 120, 0.4)',
-                            borderRadius: 8, padding: '6px 16px',
-                            color: '#80c878', cursor: 'pointer', fontSize: 13,
-                            fontFamily: "'Inter', sans-serif",
-                          }}
-                          onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(80, 200, 120, 0.35)'; }}
-                          onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(80, 200, 120, 0.2)'; }}
-                        >
-                          {'\u2728'} Build Agent
-                        </button>
-                        <button
-                          onClick={skipSelfMod}
-                          style={{
-                            background: 'rgba(128, 128, 160, 0.1)',
-                            border: '1px solid rgba(128, 128, 160, 0.2)',
-                            borderRadius: 8, padding: '6px 16px',
-                            color: '#8888a0', cursor: 'pointer', fontSize: 13,
-                            fontFamily: "'Inter', sans-serif",
-                          }}
-                          onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(128, 128, 160, 0.2)'; }}
-                          onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(128, 128, 160, 0.1)'; }}
-                        >
-                          {'\u274C'} Skip
-                        </button>
+                      <div style={{ marginTop: 8 }}>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button
+                            onClick={() => approveSelfMod(msg.selfModProposal!)}
+                            style={{
+                              background: 'rgba(80, 200, 120, 0.2)',
+                              border: '1px solid rgba(80, 200, 120, 0.4)',
+                              borderRadius: 8, padding: '6px 16px',
+                              color: '#80c878', cursor: 'pointer', fontSize: 13,
+                              fontFamily: "'Inter', sans-serif",
+                            }}
+                            onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(80, 200, 120, 0.35)'; }}
+                            onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(80, 200, 120, 0.2)'; }}
+                          >
+                            {'\u2728'} Build Agent
+                          </button>
+                          <button
+                            onClick={() => setVibeMode(prev => ({ ...prev, [msg.id]: true }))}
+                            style={{
+                              background: 'rgba(200, 160, 80, 0.15)',
+                              border: '1px solid rgba(200, 160, 80, 0.35)',
+                              borderRadius: 8, padding: '6px 16px',
+                              color: '#e8b860', cursor: 'pointer', fontSize: 13,
+                              fontFamily: "'Inter', sans-serif",
+                            }}
+                            onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(200, 160, 80, 0.3)'; }}
+                            onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(200, 160, 80, 0.15)'; }}
+                          >
+                            {'\uD83C\uDFA8'} Design Agent
+                          </button>
+                          <button
+                            onClick={skipSelfMod}
+                            style={{
+                              background: 'rgba(128, 128, 160, 0.1)',
+                              border: '1px solid rgba(128, 128, 160, 0.2)',
+                              borderRadius: 8, padding: '6px 16px',
+                              color: '#8888a0', cursor: 'pointer', fontSize: 13,
+                              fontFamily: "'Inter', sans-serif",
+                            }}
+                            onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(128, 128, 160, 0.2)'; }}
+                            onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(128, 128, 160, 0.1)'; }}
+                          >
+                            {'\u274C'} Skip
+                          </button>
+                        </div>
+
+                        {/* Vibe mode: description input */}
+                        {vibeMode[msg.id] && !enrichedSpec[msg.id] && (
+                          <div style={{ marginTop: 12, width: '100%' }}>
+                            <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>
+                              Describe how this agent should work:
+                            </div>
+                            <textarea
+                              value={vibeInput[msg.id] || ''}
+                              onChange={(e) => setVibeInput(prev => ({ ...prev, [msg.id]: e.target.value }))}
+                              placeholder="e.g., Search DuckDuckGo for the person's name, parse the top results, find LinkedIn profile links..."
+                              style={{
+                                width: '100%', minHeight: 60, padding: 8,
+                                background: 'rgba(10, 10, 18, 0.6)',
+                                border: '1px solid rgba(240, 176, 96, 0.2)',
+                                borderRadius: 8, color: '#c8d0e0', fontSize: 13,
+                                fontFamily: "'Inter', sans-serif", resize: 'vertical',
+                              }}
+                            />
+                            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                              <button
+                                onClick={async () => {
+                                  setEnriching(prev => ({ ...prev, [msg.id]: true }));
+                                  try {
+                                    const res = await fetch('/api/selfmod/enrich', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        intent_name: msg.selfModProposal!.intent_name,
+                                        intent_description: msg.selfModProposal!.intent_description,
+                                        parameters: msg.selfModProposal!.parameters,
+                                        user_guidance: vibeInput[msg.id] || '',
+                                      }),
+                                    });
+                                    const data = await res.json();
+                                    setEnrichedSpec(prev => ({ ...prev, [msg.id]: data.enriched }));
+                                  } catch {
+                                    setEnrichedSpec(prev => ({ ...prev, [msg.id]: vibeInput[msg.id] || '' }));
+                                  } finally {
+                                    setEnriching(prev => ({ ...prev, [msg.id]: false }));
+                                  }
+                                }}
+                                disabled={!(vibeInput[msg.id] || '').trim() || enriching[msg.id]}
+                                style={{
+                                  background: 'rgba(80, 200, 120, 0.2)',
+                                  border: '1px solid rgba(80, 200, 120, 0.4)',
+                                  borderRadius: 8, padding: '6px 16px',
+                                  color: '#80c878', cursor: 'pointer', fontSize: 13,
+                                  fontFamily: "'Inter', sans-serif",
+                                  opacity: (!(vibeInput[msg.id] || '').trim() || enriching[msg.id]) ? 0.5 : 1,
+                                }}
+                              >
+                                {enriching[msg.id] ? '\uD83D\uDD04 Enriching...' : '\u2728 Enrich Spec'}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setVibeMode(prev => ({ ...prev, [msg.id]: false }));
+                                  setVibeInput(prev => ({ ...prev, [msg.id]: '' }));
+                                }}
+                                style={{
+                                  background: 'rgba(128, 128, 160, 0.1)',
+                                  border: '1px solid rgba(128, 128, 160, 0.2)',
+                                  borderRadius: 8, padding: '6px 16px',
+                                  color: '#8888a0', cursor: 'pointer', fontSize: 13,
+                                  fontFamily: "'Inter', sans-serif",
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Enriched spec display */}
+                        {enrichedSpec[msg.id] && (
+                          <div style={{ marginTop: 12, width: '100%' }}>
+                            <div style={{ fontSize: 12, color: '#f0b060', marginBottom: 6 }}>
+                              {'\uD83D\uDCCB'} Enriched Agent Spec:
+                            </div>
+                            <div style={{
+                              padding: 12, borderRadius: 8,
+                              background: 'rgba(240, 176, 96, 0.06)',
+                              border: '1px solid rgba(240, 176, 96, 0.15)',
+                              fontSize: 13, lineHeight: 1.6, color: '#c8d0e0',
+                              whiteSpace: 'pre-wrap',
+                            }}>
+                              {enrichedSpec[msg.id]}
+                            </div>
+                            <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                              <button
+                                onClick={() => {
+                                  approveSelfMod({
+                                    ...msg.selfModProposal!,
+                                    intent_description: enrichedSpec[msg.id]!,
+                                  });
+                                  setVibeMode(prev => ({ ...prev, [msg.id]: false }));
+                                  setEnrichedSpec(prev => ({ ...prev, [msg.id]: null }));
+                                  setVibeInput(prev => ({ ...prev, [msg.id]: '' }));
+                                }}
+                                style={{
+                                  background: 'rgba(80, 200, 120, 0.2)',
+                                  border: '1px solid rgba(80, 200, 120, 0.4)',
+                                  borderRadius: 8, padding: '6px 16px',
+                                  color: '#80c878', cursor: 'pointer', fontSize: 13,
+                                  fontFamily: "'Inter', sans-serif",
+                                }}
+                                onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(80, 200, 120, 0.35)'; }}
+                                onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(80, 200, 120, 0.2)'; }}
+                              >
+                                {'\uD83D\uDE80'} Build This Agent
+                              </button>
+                              <button
+                                onClick={() => setEnrichedSpec(prev => ({ ...prev, [msg.id]: null }))}
+                                style={{
+                                  background: 'rgba(128, 128, 160, 0.1)',
+                                  border: '1px solid rgba(128, 128, 160, 0.2)',
+                                  borderRadius: 8, padding: '6px 16px',
+                                  color: '#8888a0', cursor: 'pointer', fontSize: 13,
+                                  fontFamily: "'Inter', sans-serif",
+                                }}
+                              >
+                                {'\u270F\uFE0F'} Edit
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setVibeMode(prev => ({ ...prev, [msg.id]: false }));
+                                  setEnrichedSpec(prev => ({ ...prev, [msg.id]: null }));
+                                  setVibeInput(prev => ({ ...prev, [msg.id]: '' }));
+                                }}
+                                style={{
+                                  background: 'rgba(128, 128, 160, 0.1)',
+                                  border: '1px solid rgba(128, 128, 160, 0.2)',
+                                  borderRadius: 8, padding: '6px 16px',
+                                  color: '#8888a0', cursor: 'pointer', fontSize: 13,
+                                  fontFamily: "'Inter', sans-serif",
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -526,6 +717,7 @@ export function IntentSurface() {
                   type="button"
                   onClick={() => {
                     useStore.setState({ chatHistory: [] });
+                    localStorage.removeItem('hxi_chat_history');
                   }}
                   title="Clear conversation"
                   style={{

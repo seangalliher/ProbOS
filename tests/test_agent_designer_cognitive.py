@@ -272,3 +272,10 @@ class TestEndToEndCognitiveDesign:
         assert record.class_name == "ExtractKeywordsAgent"
         assert len(registered_classes) == 1
         assert issubclass(registered_classes[0], CognitiveAgent)
+
+    def test_design_prompt_uses_mesh_fetch_not_httpx(self):
+        """AD-268: web-fetching template uses mesh broadcast, not raw httpx."""
+        from probos.cognitive.agent_designer import AGENT_DESIGN_PROMPT
+        assert "intent_bus.broadcast" in AGENT_DESIGN_PROMPT
+        assert "http_fetch" in AGENT_DESIGN_PROMPT
+        assert "httpx.AsyncClient" not in AGENT_DESIGN_PROMPT

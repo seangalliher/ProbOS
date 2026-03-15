@@ -1,8 +1,9 @@
 /* Decision Surface — Status bar + Legend + Audio controls */
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { soundEngine } from '../audio/soundEngine';
+import { getAvailableVoices, setPreferredVoiceName, getCurrentVoiceName, speakResponse } from '../audio/voice';
 
 export function DecisionSurface() {
   const agents = useStore((s) => s.agents);
@@ -19,6 +20,26 @@ export function DecisionSurface() {
 
   const [showVolume, setShowVolume] = useState(false);
   const [volume, setVolume] = useState(soundEngine.volume);
+  const [showVoicePicker, setShowVoicePicker] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const voicePickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (showVoicePicker) {
+      setAvailableVoices(getAvailableVoices());
+    }
+  }, [showVoicePicker]);
+
+  useEffect(() => {
+    if (!showVoicePicker) return;
+    const handler = (e: MouseEvent) => {
+      if (voicePickerRef.current && !voicePickerRef.current.contains(e.target as Node)) {
+        setShowVoicePicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showVoicePicker]);
 
   const agentCount = agents.size;
   const avgHealth = agentCount > 0
@@ -129,11 +150,64 @@ export function DecisionSurface() {
         {/* Voice output toggle */}
         <button
           onClick={() => setVoiceEnabled(!voiceEnabled)}
+          onContextMenu={(e) => { e.preventDefault(); setShowVoicePicker(!showVoicePicker); }}
           style={btnStyle(voiceEnabled)}
-          title={voiceEnabled ? 'Disable voice output' : 'Enable voice output'}
+          title={voiceEnabled ? 'Disable voice (right-click: choose voice)' : 'Enable voice output'}
         >
           {'\uD83D\uDDE3\uFE0F'}
         </button>
+
+        {showVoicePicker && (
+          <div ref={voicePickerRef} style={{
+            position: 'absolute',
+            bottom: 40,
+            right: 60,
+            background: 'rgba(10, 10, 18, 0.92)',
+            backdropFilter: 'blur(12px)',
+            border: '1px solid rgba(240, 176, 96, 0.2)',
+            borderRadius: 8,
+            padding: '8px 0',
+            maxHeight: 200,
+            overflowY: 'auto',
+            zIndex: 30,
+            minWidth: 250,
+          }}>
+            <div style={{
+              padding: '4px 12px 8px',
+              fontSize: 11,
+              color: '#888',
+              borderBottom: '1px solid rgba(240, 176, 96, 0.1)',
+            }}>
+              Choose voice
+            </div>
+            {availableVoices.map((voice) => (
+              <div
+                key={voice.name}
+                onClick={() => {
+                  setPreferredVoiceName(voice.name);
+                  setShowVoicePicker(false);
+                  if (voiceEnabled) {
+                    speakResponse('Voice selected');
+                  }
+                }}
+                style={{
+                  padding: '6px 12px',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  color: voice.name === getCurrentVoiceName() ? '#f0b060' : '#c8d0e0',
+                  background: voice.name === getCurrentVoiceName() ? 'rgba(240, 176, 96, 0.08)' : 'transparent',
+                  fontFamily: "'Inter', sans-serif",
+                }}
+                onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(240, 176, 96, 0.15)'; }}
+                onMouseLeave={(e) => { (e.target as HTMLElement).style.background = voice.name === getCurrentVoiceName() ? 'rgba(240, 176, 96, 0.08)' : 'transparent'; }}
+              >
+                {voice.name.replace(/ - English.*$/, '')}
+                {voice.name.includes('Online (Natural)') && ' \u2728'}
+                {voice.name.includes('Online') && !voice.name.includes('Natural') && ' \uD83D\uDD35'}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Legend toggle */}
         <button

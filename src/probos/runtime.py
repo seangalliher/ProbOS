@@ -215,6 +215,7 @@ class ProbOSRuntime:
         self._event_listeners: list[Callable] = []
 
         self._started = False
+        self._fresh_boot = False
 
         # Register built-in agent templates
         self.spawner.register_template("system_heartbeat", SystemHeartbeatAgent)
@@ -325,6 +326,7 @@ class ProbOSRuntime:
             "system_mode": system_mode,
             "tc_n": round(tc_n, 4),
             "routing_entropy": round(routing_entropy, 4),
+            "fresh_boot": self._fresh_boot,
         }
 
     async def create_pool(
@@ -665,6 +667,9 @@ class ProbOSRuntime:
             self.dream_scheduler._post_dream_fn = self._on_post_dream
             self.dream_scheduler._pre_dream_fn = self._on_pre_dream
 
+        # Start periodic flush of trust + routing weights
+        self._flush_task = asyncio.create_task(self._periodic_flush_loop())
+
         # Create SemanticKnowledgeLayer (AD-243) — only when episodic memory available
         if self.episodic_memory:
             try:
@@ -699,6 +704,10 @@ class ProbOSRuntime:
 
         logger.info("ProbOS shutting down...")
         await self.event_log.log(category="system", event="stopping")
+
+        # Cancel periodic flush
+        if hasattr(self, '_flush_task'):
+            self._flush_task.cancel()
 
         # Stop red team agents
         for agent in self._red_team_agents:
@@ -1224,15 +1233,18 @@ class ProbOSRuntime:
                             }
                 else:
                     # API mode: return the capability gap as a proposal
-                    # without running inline self-mod
-                    intent_meta = await self._extract_unhandled_intent(text)
-                    if intent_meta:
-                        self_mod_result = {
-                            "status": "proposed",
-                            "intent": intent_meta["name"],
-                            "description": intent_meta.get("description", ""),
-                            "parameters": intent_meta.get("parameters", {}),
-                        }
+                    # without running inline self-mod.
+                    # Only propose when there's an actual capability gap,
+                    # not for conversational replies (AD-269).
+                    if is_gap or not dag.response:
+                        intent_meta = await self._extract_unhandled_intent(text)
+                        if intent_meta:
+                            self_mod_result = {
+                                "status": "proposed",
+                                "intent": intent_meta["name"],
+                                "description": intent_meta.get("description", ""),
+                                "parameters": intent_meta.get("parameters", {}),
+                            }
 
             if not dag.nodes:
                 logger.warning("No intents parsed from NL input: %s", text[:50])
@@ -1921,6 +1933,32 @@ class ProbOSRuntime:
                     pass  # No running loop — skip logging
         except Exception as e:
             logger.debug("Post-dream emergent analysis failed: %s", e)
+
+    async def _periodic_flush(self) -> None:
+        """Save trust scores and routing weights to KnowledgeStore."""
+        if self._knowledge_store is None:
+            return
+        try:
+            await self._knowledge_store.store_trust_snapshot(
+                self.trust_network.raw_scores()
+            )
+            weights = [
+                {"source": s, "target": t, "rel_type": rt, "weight": w}
+                for (s, t, rt), w in self.hebbian_router.all_weights_typed().items()
+            ]
+            await self._knowledge_store.store_routing_weights(weights)
+            logger.debug("Periodic flush: trust + routing saved")
+        except Exception:
+            logger.debug("Periodic flush failed", exc_info=True)
+
+    async def _periodic_flush_loop(self) -> None:
+        """Background loop that flushes trust + routing every 60s."""
+        try:
+            while True:
+                await asyncio.sleep(60)
+                await self._periodic_flush()
+        except asyncio.CancelledError:
+            return
 
     def _build_episode(
         self,
