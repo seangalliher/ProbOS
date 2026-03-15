@@ -428,10 +428,10 @@ def create_app(runtime: Any) -> FastAPI:
 
             async def _on_progress(step: str, current: int, total: int) -> None:
                 step_labels = {
-                    "designing": "\U0001f528 Designing agent code...",
-                    "validating": "\U0001f50d Validating & security scanning...",
-                    "testing": "\U0001f9ea Sandbox testing...",
-                    "deploying": "\U0001f680 Deploying to mesh...",
+                    "designing": "\u2b21 Designing agent code...",
+                    "validating": "\u25ce Validating & security scan...",
+                    "testing": "\u25b3 Sandbox testing...",
+                    "deploying": "\u25c8 Deploying to mesh...",
                 }
                 rt._emit_event("self_mod_progress", {
                     "intent": req.intent_name,
@@ -505,7 +505,7 @@ def create_app(runtime: Any) -> FastAPI:
                 except Exception:
                     logger.debug("Capability report generation failed", exc_info=True)
 
-                deploy_msg = f"\u2705 {record.class_name} deployed!"
+                deploy_msg = f"\u2b22 {record.class_name} deployed!"
                 if capability_report:
                     deploy_msg += f"\n\n{capability_report}\n\nHandling your request..."
                 else:
@@ -522,10 +522,10 @@ def create_app(runtime: Any) -> FastAPI:
                     rt._emit_event("self_mod_progress", {
                         "intent": req.intent_name,
                         "step": "executing",
-                        "step_label": "\u26a1 Executing your request...",
+                        "step_label": "\u26ac Executing your request...",
                         "current": 5,
                         "total": 5,
-                        "message": "\u26a1 Executing your request...",
+                        "message": "\u26ac Executing your request...",
                     })
                     try:
                         # Use the intent description for retry, not the original meta-request.

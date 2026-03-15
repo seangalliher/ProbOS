@@ -61,7 +61,7 @@ export function IntentSurface() {
     if (threadRef.current) {
       threadRef.current.scrollTop = threadRef.current.scrollHeight;
     }
-  }, [chatHistory]);
+  }, [chatHistory, pendingRequests]);
 
   /* ── scroll to bottom when conversation opens ── */
   useEffect(() => {
@@ -359,11 +359,13 @@ export function IntentSurface() {
                               borderRadius: 8, padding: '6px 16px',
                               color: '#80c878', cursor: 'pointer', fontSize: 13,
                               fontFamily: "'Inter', sans-serif",
+                              display: 'flex', alignItems: 'center',
                             }}
-                            onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(80, 200, 120, 0.35)'; }}
-                            onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(80, 200, 120, 0.2)'; }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(80, 200, 120, 0.35)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(80, 200, 120, 0.2)'; }}
                           >
-                            {'\u2728'} Build Agent
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" style={{ marginRight: 6, verticalAlign: 'middle' }}><polygon points="8,1 14,4.5 14,11.5 8,15 2,11.5 2,4.5" /></svg>
+                            Build Agent
                           </button>
                           <button
                             onClick={() => setVibeMode(prev => ({ ...prev, [msg.id]: true }))}
@@ -373,11 +375,13 @@ export function IntentSurface() {
                               borderRadius: 8, padding: '6px 16px',
                               color: '#e8b860', cursor: 'pointer', fontSize: 13,
                               fontFamily: "'Inter', sans-serif",
+                              display: 'flex', alignItems: 'center',
                             }}
-                            onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(200, 160, 80, 0.3)'; }}
-                            onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(200, 160, 80, 0.15)'; }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(200, 160, 80, 0.3)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(200, 160, 80, 0.15)'; }}
                           >
-                            {'\uD83C\uDFA8'} Design Agent
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ marginRight: 6 }}><path d="M4 2c0 4 8 4 8 8s-8 4-8 8" /><path d="M12 2c0 4-8 4-8 8s8 4 8 8" /></svg>
+                            Design Agent
                           </button>
                           <button
                             onClick={skipSelfMod}
@@ -388,10 +392,10 @@ export function IntentSurface() {
                               color: '#8888a0', cursor: 'pointer', fontSize: 13,
                               fontFamily: "'Inter', sans-serif",
                             }}
-                            onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(128, 128, 160, 0.2)'; }}
-                            onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(128, 128, 160, 0.1)'; }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(128, 128, 160, 0.2)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(128, 128, 160, 0.1)'; }}
                           >
-                            {'\u274C'} Skip
+                            {'\u2014'} Skip
                           </button>
                         </div>
 
@@ -446,7 +450,7 @@ export function IntentSurface() {
                                   opacity: (!(vibeInput[msg.id] || '').trim() || enriching[msg.id]) ? 0.5 : 1,
                                 }}
                               >
-                                {enriching[msg.id] ? '\uD83D\uDD04 Enriching...' : '\u2728 Enrich Spec'}
+                                {enriching[msg.id] ? '\u25CB Enriching...' : '\u25C7 Enrich Spec'}
                               </button>
                               <button
                                 onClick={() => {
@@ -471,7 +475,7 @@ export function IntentSurface() {
                         {enrichedSpec[msg.id] && (
                           <div style={{ marginTop: 12, width: '100%' }}>
                             <div style={{ fontSize: 12, color: '#f0b060', marginBottom: 6 }}>
-                              {'\uD83D\uDCCB'} Enriched Agent Spec:
+                              {'\u25CE'} Enriched Agent Spec:
                             </div>
                             <div style={{
                               padding: 12, borderRadius: 8,
@@ -500,10 +504,10 @@ export function IntentSurface() {
                                   color: '#80c878', cursor: 'pointer', fontSize: 13,
                                   fontFamily: "'Inter', sans-serif",
                                 }}
-                                onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(80, 200, 120, 0.35)'; }}
-                                onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(80, 200, 120, 0.2)'; }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(80, 200, 120, 0.35)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(80, 200, 120, 0.2)'; }}
                               >
-                                {'\uD83D\uDE80'} Build This Agent
+                                {'\u2B22'} Build This Agent
                               </button>
                               <button
                                 onClick={() => setEnrichedSpec(prev => ({ ...prev, [msg.id]: null }))}
@@ -515,7 +519,7 @@ export function IntentSurface() {
                                   fontFamily: "'Inter', sans-serif",
                                 }}
                               >
-                                {'\u270F\uFE0F'} Edit
+                                {'\u25C7'} Edit
                               </button>
                               <button
                                 onClick={() => {
@@ -548,10 +552,10 @@ export function IntentSurface() {
                         {(() => {
                           const fb = feedbackMap[msg.id];
                           const disabled = fb?.disabled ?? false;
-                          const buttons = [
-                            { icon: '\uD83D\uDC4D', kind: 'good' as const, title: 'Approve' },
-                            { icon: '\uD83D\uDC4E', kind: 'bad' as const, title: 'Reject' },
-                            { icon: '\u270F\uFE0F', kind: 'correct' as const, title: 'Correct' },
+                          const buttons: { icon: React.ReactNode; kind: 'good' | 'bad' | 'correct'; title: string }[] = [
+                            { icon: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4,10 8,5 12,10" /></svg>, kind: 'good', title: 'Approve' },
+                            { icon: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4,6 8,11 12,6" /></svg>, kind: 'bad', title: 'Reject' },
+                            { icon: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><polygon points="8,2 14,8 8,14 2,8" /></svg>, kind: 'correct', title: 'Correct' },
                           ];
                           return (
                             <>
@@ -573,14 +577,14 @@ export function IntentSurface() {
                                   }}
                                   onMouseEnter={(e) => {
                                     if (!disabled) {
-                                      (e.target as HTMLElement).style.opacity = '1';
-                                      (e.target as HTMLElement).style.background = 'rgba(240, 176, 96, 0.15)';
+                                      e.currentTarget.style.opacity = '1';
+                                      e.currentTarget.style.background = 'rgba(240, 176, 96, 0.15)';
                                     }
                                   }}
                                   onMouseLeave={(e) => {
                                     if (!disabled) {
-                                      (e.target as HTMLElement).style.opacity = '0.5';
-                                      (e.target as HTMLElement).style.background = 'rgba(128, 128, 160, 0.08)';
+                                      e.currentTarget.style.opacity = '0.5';
+                                      e.currentTarget.style.background = 'rgba(128, 128, 160, 0.08)';
                                     }
                                   }}
                                 >
@@ -606,11 +610,16 @@ export function IntentSurface() {
               </div>
             )}
 
-            {/* ── Pending requests indicator ── */}
+            {/* ── Neural pulse processing indicator ── */}
             {pendingRequests > 0 && (
               <div style={{
-                padding: '4px 20px 8px',
-                display: 'flex', gap: 6, alignItems: 'center',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '12px 20px',
+                color: 'rgba(240, 176, 96, 0.6)',
+                fontSize: 12,
+                fontFamily: "'Inter', sans-serif",
               }}>
                 {dagProgress ? (
                   <span style={{
@@ -619,24 +628,24 @@ export function IntentSurface() {
                     {dagProgress}
                   </span>
                 ) : (
-                  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                    {[0, 1, 2].map((i) => (
-                      <span
-                        key={i}
-                        style={{
-                          width: 5, height: 5, borderRadius: '50%',
-                          background: '#f0b060',
-                          animation: `pulse-dot 1.2s ease-in-out ${i * 0.2}s infinite`,
-                        }}
-                      />
-                    ))}
+                  <>
+                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                      {[0, 1, 2].map((i) => (
+                        <div key={i} style={{
+                          width: 6, height: 6,
+                          borderRadius: '50%',
+                          background: 'linear-gradient(135deg, #f0b060, #88a4c8)',
+                          animation: `neural-pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
+                        }} />
+                      ))}
+                    </div>
                     <span style={{
-                      fontSize: 12, fontFamily: 'monospace', color: '#f0b060',
-                      marginLeft: 4,
+                      animation: 'neural-pulse 2s ease-in-out infinite',
+                      letterSpacing: '0.5px',
                     }}>
-                      {pendingRequests} pending
+                      thinking
                     </span>
-                  </div>
+                  </>
                 )}
               </div>
             )}
@@ -706,10 +715,15 @@ export function IntentSurface() {
                     flexShrink: 0,
                     animation: listening ? 'pulse-mic 1s ease-in-out infinite' : undefined,
                   }}
-                  onMouseEnter={(e) => { if (!listening) (e.target as HTMLElement).style.color = 'rgba(240, 176, 96, 0.7)'; }}
-                  onMouseLeave={(e) => { if (!listening) (e.target as HTMLElement).style.color = 'rgba(224, 220, 212, 0.3)'; }}
+                  onMouseEnter={(e) => { if (!listening) e.currentTarget.style.color = 'rgba(240, 176, 96, 0.7)'; }}
+                  onMouseLeave={(e) => { if (!listening) e.currentTarget.style.color = 'rgba(224, 220, 212, 0.3)'; }}
                 >
-                  {'\uD83C\uDFA4'}
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={listening ? '#c84858' : 'currentColor'} strokeWidth="1.5" strokeLinecap="round">
+                    <line x1="8" y1="2" x2="8" y2="9" />
+                    <path d="M5 7c0 1.7 1.3 3 3 3s3-1.3 3-3" />
+                    <line x1="8" y1="12" x2="8" y2="14" />
+                    <line x1="6" y1="14" x2="10" y2="14" />
+                  </svg>
                 </button>
               )}
               {chatHistory.length > 0 && (
@@ -731,10 +745,14 @@ export function IntentSurface() {
                     transition: 'color 0.2s',
                     flexShrink: 0,
                   }}
-                  onMouseEnter={(e) => { (e.target as HTMLElement).style.color = 'rgba(200, 56, 72, 0.7)'; }}
-                  onMouseLeave={(e) => { (e.target as HTMLElement).style.color = 'rgba(224, 220, 212, 0.3)'; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'rgba(200, 56, 72, 0.7)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(224, 220, 212, 0.3)'; }}
                 >
-                  🗑
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <circle cx="8" cy="8" r="6" opacity="0.5" />
+                    <line x1="5" y1="5" x2="11" y2="11" />
+                    <line x1="11" y1="5" x2="5" y2="11" />
+                  </svg>
                 </button>
               )}
             </form>
@@ -799,9 +817,9 @@ export function IntentSurface() {
           0%, 100% { opacity: 0.85; }
           50% { opacity: 0.95; }
         }
-        @keyframes pulse-dot {
-          0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
-          40% { opacity: 1; transform: scale(1.2); }
+        @keyframes neural-pulse {
+          0%, 100% { opacity: 0.2; transform: scale(0.8); }
+          50% { opacity: 1.0; transform: scale(1.2); }
         }
         @keyframes rise-in {
           from { opacity: 0; transform: translateY(30px); }

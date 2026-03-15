@@ -125,7 +125,18 @@ export function DecisionSurface() {
           style={btnStyle(soundEnabled)}
           title={soundEnabled ? 'Mute ambient sounds (right-click: volume)' : 'Enable ambient sounds'}
         >
-          {soundEnabled ? '\uD83D\uDD0A' : '\uD83D\uDD07'}
+          {soundEnabled ? (
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#f0b060" strokeWidth="1.5" strokeLinecap="round">
+              <path d="M2 6v4l3 3h1V3H5L2 6z" />
+              <path d="M9 5.5c.7.7 1 1.5 1 2.5s-.3 1.8-1 2.5" />
+              <path d="M11 3.5c1.2 1.2 2 2.7 2 4.5s-.8 3.3-2 4.5" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#666680" strokeWidth="1.5" strokeLinecap="round">
+              <path d="M2 6v4l3 3h1V3H5L2 6z" />
+              <path d="M14 5l-5 6" />
+            </svg>
+          )}
         </button>
 
         {/* Volume slider (shown on right-click of sound button) */}
@@ -154,7 +165,11 @@ export function DecisionSurface() {
           style={btnStyle(voiceEnabled)}
           title={voiceEnabled ? 'Disable voice (right-click: choose voice)' : 'Enable voice output'}
         >
-          {'\uD83D\uDDE3\uFE0F'}
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={voiceEnabled ? '#f0b060' : '#666680'} strokeWidth="1.5" strokeLinecap="round">
+            <line x1="4" y1="5" x2="4" y2="11" />
+            <line x1="8" y1="3" x2="8" y2="13" />
+            <line x1="12" y1="6" x2="12" y2="10" />
+          </svg>
         </button>
 
         {showVoicePicker && (
@@ -202,8 +217,8 @@ export function DecisionSurface() {
                 onMouseLeave={(e) => { (e.target as HTMLElement).style.background = voice.name === getCurrentVoiceName() ? 'rgba(240, 176, 96, 0.08)' : 'transparent'; }}
               >
                 {voice.name.replace(/ - English.*$/, '')}
-                {voice.name.includes('Online (Natural)') && ' \u2728'}
-                {voice.name.includes('Online') && !voice.name.includes('Natural') && ' \uD83D\uDD35'}
+                {voice.name.includes('Online (Natural)') && ' \u2726'}
+                {voice.name.includes('Online') && !voice.name.includes('Natural') && ' \u25CB'}
               </div>
             ))}
           </div>
@@ -215,7 +230,10 @@ export function DecisionSurface() {
           style={btnStyle(showLegend)}
           title="Toggle visual legend"
         >
-          ?
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" strokeWidth="1.5">
+            <circle cx="8" cy="8" r="5" stroke={showLegend ? '#f0b060' : '#666680'} />
+            <circle cx="8" cy="8" r="1.5" fill={showLegend ? '#f0b060' : '#666680'} />
+          </svg>
         </button>
       </div>
 

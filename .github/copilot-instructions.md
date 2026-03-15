@@ -66,6 +66,7 @@ When reviewing PROGRESS.md or evaluating changes, check for:
 - **Prompt text triggering gap regex**: "This response/example text contains phrases ('can't', 'don't have', 'unable to') that match `_CAPABILITY_GAP_RE`. Review all prompt example text against the gap regex before shipping."
 - **IntentBus fan-out side effects**: "This change adds HTTP calls in agent code. Remember: `IntentBus.broadcast()` fans out to ALL subscribers. 3 HttpFetchAgents × N broadcasts = 3N HTTP calls. Use `_mesh_fetch()` for designed agents — rate limiter handles the rest."
 - **HXI Canvas regression**: "This UI change touches agents.tsx, animations.tsx, or CognitiveCanvas.tsx. Verify tooltips, bloom position, and raycasting still work after the change."
+- **HXI emoji violation**: "This UI code uses emoji (👍, 🔊, ✨, etc.) instead of inline SVG glyphs. Replace with stroke-based SVG icons per HXI Design Principle #3."
 
 ## Architect: Claude Code Prompt Drafting
 
@@ -127,6 +128,18 @@ Cross-cutting: `federation/` (bridge, router, transport), `knowledge/` (Git-back
 9. **Correction feedback loop**: Human corrections are the richest learning signal. CorrectionDetector -> AgentPatcher -> hot-reload -> auto-retry -> trust/Hebbian/episodic update.
 10. **Mesh-fetch for HTTP**: Designed agents must route HTTP through `self._runtime.intent_bus.broadcast(IntentMessage(intent="http_fetch"))` — not raw httpx. This preserves governance (consensus, trust, event logging) and benefits from the per-domain rate limiter in HttpFetchAgent. The AgentDesigner template enforces this pattern.
 11. **Per-domain rate limiting**: HttpFetchAgent has a class-level `_domain_state` dict with per-domain request intervals (default 2s, CoinGecko 3s). Adaptive: reads `Retry-After` and `X-RateLimit-*` headers. Auto-retries once on 429. All mesh HTTP goes through this.
+
+### HXI Design Principles
+
+The HXI (Human Experience Interface) is not a dashboard or a chat app. It is the sensory surface through which a human participates in the cognitive mesh. Every visual element must follow these principles:
+
+1. **The system understands the human, not the reverse.** Never require the user to learn terminology, memorize commands, or decode symbols. Every affordance communicates its purpose through form. If someone has to ask "what does this button do?" — the design failed.
+2. **Organic but digitally authentic.** The aesthetic is bioluminescent — living light rendered through a digital lens. Not skeuomorphic nature, not sterile minimalism. Icons are geometric SVG glyphs (stroke-based, no fills), not emoji or Material Design. The color palette is amber/blue/violet trust spectrum.
+3. **No emoji in the UI.** All icons are inline SVG with `strokeWidth: 1.5`, `strokeLinecap: round`. Active state: amber (`#f0b060`). Inactive: dim (`#666680`). Glow on hover via `drop-shadow`. Emoji break the immersion — they belong to messaging apps, not an alien intelligence interface.
+4. **Motion communicates state.** Pulsing = alive/processing. Breathing = healthy/idle. Flash = event occurred. Fade = dissolving/removing. Static = disconnected/dead. Motion is never decorative — it always encodes information.
+5. **Progressive disclosure driven by engagement.** Show less by default. Expand when the human engages. First-time users see calm, structured, high-contrast views. Experienced users see denser, more ambient displays. The interface recedes as fluency grows.
+6. **The canvas IS the information.** Veteran users don't need `/agents` or `/trust` commands — luminance = confidence, color temperature = trust, pulse rate = activity, spatial density = population health. The visual language is self-documenting.
+7. **Delight through competence, not decoration.** The "wow" comes from the system doing something impressive (designing an agent live), not from gratuitous animation. Every visual flourish must earn its place by communicating real system state.
 
 ### Agent Classification Framework
 
