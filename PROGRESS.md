@@ -2711,9 +2711,10 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 
 ### Self-Mod Pipeline Hardening (future — pre-Phase 24)
 **Goal:** Fix real issues discovered during self-mod demo testing. These are reliability improvements to the existing pipeline, not new features.
-- **Designed agent pool size = 1** — self-designed agents currently spawn in pools of 2. The IntentBus fans out to all subscribers, so web-fetching agents with `perceive()` httpx overrides make N identical HTTP requests (one per pool member). This wastes API quota and triggers rate limits. Designed agent pools should default to size 1 until trust is established, then scale up via the existing `PoolScaler`
-- **AgentDesigner `_mesh_fetch()` template** — the bundled agents use `_mesh_fetch()` to route HTTP through the IntentBus (preserving consensus, trust scoring, and deduplication). But the `AGENT_DESIGN_PROMPT` teaches the httpx pattern instead. Add a mesh-fetch template option so designed agents that need web data route through the mesh like bundled agents do. This eliminates duplicate requests at the architectural level, not just by reducing pool size
-- **Motivated by:** self-mod Bitcoin price agent hitting CoinGecko 429 on first request — the pool of 2 agents both called the API simultaneously from `perceive()`, exhausting the free tier rate limit instantly
+- ✅ **Designed agent pool size = 1** (AD-265)
+- ✅ **AgentDesigner `_mesh_fetch()` template** (AD-268)
+- ✅ **Per-domain rate limiter** (AD-270)
+- **Agent-generated SVG icons** — when the AgentDesigner creates a new agent, also generate a simple 16x16 SVG icon (stroke-based, single path) that visually represents the agent's function. Store alongside agent source in KnowledgeStore. Render on the canvas as the agent's unique glyph instead of a generic sphere. Each designed agent gets its own visual identity — a crypto agent gets a diamond, a weather agent gets a cloud arc, a translation agent gets overlapping speech bubbles. The self-mod pipeline already generates code — generating an icon is a natural extension
 
 ### Phase 24: Channel Integration + Tool Connectors — "Talk to ProbOS Anywhere, Connect Everything"
 **Goal:** Connect ProbOS to messaging channels AND external tools so it can act as a real productivity hub.

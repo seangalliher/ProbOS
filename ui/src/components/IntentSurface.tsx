@@ -354,33 +354,35 @@ export function IntentSurface() {
                           <button
                             onClick={() => approveSelfMod(msg.selfModProposal!)}
                             style={{
-                              background: 'rgba(80, 200, 120, 0.2)',
-                              border: '1px solid rgba(80, 200, 120, 0.4)',
+                              background: 'rgba(102, 255, 136, 0.1)',
+                              border: '1px solid rgba(102, 255, 136, 0.35)',
                               borderRadius: 8, padding: '6px 16px',
-                              color: '#80c878', cursor: 'pointer', fontSize: 13,
+                              color: '#66ff88', cursor: 'pointer', fontSize: 13,
                               fontFamily: "'Inter', sans-serif",
                               display: 'flex', alignItems: 'center',
+                              textShadow: '0 0 8px rgba(102, 255, 136, 0.5)',
                             }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(80, 200, 120, 0.35)'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(80, 200, 120, 0.2)'; }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(102, 255, 136, 0.2)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(102, 255, 136, 0.1)'; }}
                           >
-                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" style={{ marginRight: 6, verticalAlign: 'middle' }}><polygon points="8,1 14,4.5 14,11.5 8,15 2,11.5 2,4.5" /></svg>
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#66ff88" strokeWidth="2" strokeLinejoin="round" style={{ marginRight: 6, filter: 'drop-shadow(0 0 4px #66ff88) drop-shadow(0 0 8px rgba(102, 255, 136, 0.4))' }}><polygon points="8,1 14,4.5 14,11.5 8,15 2,11.5 2,4.5" /></svg>
                             Build Agent
                           </button>
                           <button
                             onClick={() => setVibeMode(prev => ({ ...prev, [msg.id]: true }))}
                             style={{
-                              background: 'rgba(200, 160, 80, 0.15)',
-                              border: '1px solid rgba(200, 160, 80, 0.35)',
+                              background: 'rgba(187, 136, 255, 0.1)',
+                              border: '1px solid rgba(187, 136, 255, 0.35)',
                               borderRadius: 8, padding: '6px 16px',
-                              color: '#e8b860', cursor: 'pointer', fontSize: 13,
+                              color: '#bb88ff', cursor: 'pointer', fontSize: 13,
                               fontFamily: "'Inter', sans-serif",
                               display: 'flex', alignItems: 'center',
+                              textShadow: '0 0 8px rgba(187, 136, 255, 0.5)',
                             }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(200, 160, 80, 0.3)'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(200, 160, 80, 0.15)'; }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(187, 136, 255, 0.2)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(187, 136, 255, 0.1)'; }}
                           >
-                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ marginRight: 6 }}><path d="M4 2c0 4 8 4 8 8s-8 4-8 8" /><path d="M12 2c0 4-8 4-8 8s8 4 8 8" /></svg>
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#bb88ff" strokeWidth="2" strokeLinecap="round" style={{ marginRight: 6, filter: 'drop-shadow(0 0 4px #bb88ff) drop-shadow(0 0 8px rgba(187, 136, 255, 0.4))' }}><path d="M4 2c0 4 8 4 8 8s-8 4-8 8" /><path d="M12 2c0 4-8 4-8 8s8 4 8 8" /></svg>
                             Design Agent
                           </button>
                           <button
@@ -442,12 +444,13 @@ export function IntentSurface() {
                                 }}
                                 disabled={!(vibeInput[msg.id] || '').trim() || enriching[msg.id]}
                                 style={{
-                                  background: 'rgba(80, 200, 120, 0.2)',
-                                  border: '1px solid rgba(80, 200, 120, 0.4)',
+                                  background: 'rgba(102, 255, 136, 0.1)',
+                                  border: '1px solid rgba(102, 255, 136, 0.35)',
                                   borderRadius: 8, padding: '6px 16px',
-                                  color: '#80c878', cursor: 'pointer', fontSize: 13,
+                                  color: '#66ff88', cursor: 'pointer', fontSize: 13,
                                   fontFamily: "'Inter', sans-serif",
                                   opacity: (!(vibeInput[msg.id] || '').trim() || enriching[msg.id]) ? 0.5 : 1,
+                                  textShadow: '0 0 8px rgba(102, 255, 136, 0.5)',
                                 }}
                               >
                                 {enriching[msg.id] ? '\u25CB Enriching...' : '\u25C7 Enrich Spec'}
@@ -474,7 +477,7 @@ export function IntentSurface() {
                         {/* Enriched spec display */}
                         {enrichedSpec[msg.id] && (
                           <div style={{ marginTop: 12, width: '100%' }}>
-                            <div style={{ fontSize: 12, color: '#f0b060', marginBottom: 6 }}>
+                            <div style={{ fontSize: 12, color: '#ffcc66', marginBottom: 6, textShadow: '0 0 6px rgba(255, 204, 102, 0.4)' }}>
                               {'\u25CE'} Enriched Agent Spec:
                             </div>
                             <div style={{
@@ -498,14 +501,15 @@ export function IntentSurface() {
                                   setVibeInput(prev => ({ ...prev, [msg.id]: '' }));
                                 }}
                                 style={{
-                                  background: 'rgba(80, 200, 120, 0.2)',
-                                  border: '1px solid rgba(80, 200, 120, 0.4)',
+                                  background: 'rgba(102, 255, 136, 0.1)',
+                                  border: '1px solid rgba(102, 255, 136, 0.35)',
                                   borderRadius: 8, padding: '6px 16px',
-                                  color: '#80c878', cursor: 'pointer', fontSize: 13,
+                                  color: '#66ff88', cursor: 'pointer', fontSize: 13,
                                   fontFamily: "'Inter', sans-serif",
+                                  textShadow: '0 0 8px rgba(102, 255, 136, 0.5)',
                                 }}
-                                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(80, 200, 120, 0.35)'; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(80, 200, 120, 0.2)'; }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(102, 255, 136, 0.2)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(102, 255, 136, 0.1)'; }}
                               >
                                 {'\u2B22'} Build This Agent
                               </button>
@@ -553,9 +557,9 @@ export function IntentSurface() {
                           const fb = feedbackMap[msg.id];
                           const disabled = fb?.disabled ?? false;
                           const buttons: { icon: React.ReactNode; kind: 'good' | 'bad' | 'correct'; title: string }[] = [
-                            { icon: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4,10 8,5 12,10" /></svg>, kind: 'good', title: 'Approve' },
-                            { icon: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4,6 8,11 12,6" /></svg>, kind: 'bad', title: 'Reject' },
-                            { icon: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><polygon points="8,2 14,8 8,14 2,8" /></svg>, kind: 'correct', title: 'Correct' },
+                            { icon: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#8888aa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))' }}><polyline points="4,10 8,5 12,10" /></svg>, kind: 'good', title: 'Approve' },
+                            { icon: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#8888aa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))' }}><polyline points="4,6 8,11 12,6" /></svg>, kind: 'bad', title: 'Reject' },
+                            { icon: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#8888aa" strokeWidth="2" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))' }}><polygon points="8,2 14,8 8,14 2,8" /></svg>, kind: 'correct', title: 'Correct' },
                           ];
                           return (
                             <>
@@ -578,13 +582,17 @@ export function IntentSurface() {
                                   onMouseEnter={(e) => {
                                     if (!disabled) {
                                       e.currentTarget.style.opacity = '1';
-                                      e.currentTarget.style.background = 'rgba(240, 176, 96, 0.15)';
+                                      e.currentTarget.style.background = 'rgba(102, 255, 255, 0.1)';
+                                      const svg = e.currentTarget.querySelector('svg');
+                                      if (svg) { svg.setAttribute('stroke', '#66ffff'); svg.style.filter = 'drop-shadow(0 0 4px #66ffff)'; }
                                     }
                                   }}
                                   onMouseLeave={(e) => {
                                     if (!disabled) {
                                       e.currentTarget.style.opacity = '0.5';
                                       e.currentTarget.style.background = 'rgba(128, 128, 160, 0.08)';
+                                      const svg = e.currentTarget.querySelector('svg');
+                                      if (svg) { svg.setAttribute('stroke', '#8888aa'); svg.style.filter = 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))'; }
                                     }
                                   }}
                                 >
@@ -617,13 +625,14 @@ export function IntentSurface() {
                 alignItems: 'center',
                 gap: 6,
                 padding: '12px 20px',
-                color: 'rgba(240, 176, 96, 0.6)',
+                color: 'rgba(255, 204, 102, 0.7)',
                 fontSize: 12,
                 fontFamily: "'Inter', sans-serif",
               }}>
                 {dagProgress ? (
                   <span style={{
-                    fontSize: 12, fontFamily: 'monospace', color: '#f0b060',
+                    fontSize: 12, fontFamily: 'monospace', color: '#ffcc66',
+                    textShadow: '0 0 6px rgba(255, 204, 102, 0.5)',
                   }}>
                     {dagProgress}
                   </span>
@@ -634,12 +643,15 @@ export function IntentSurface() {
                         <div key={i} style={{
                           width: 6, height: 6,
                           borderRadius: '50%',
-                          background: 'linear-gradient(135deg, #f0b060, #88a4c8)',
+                          background: 'linear-gradient(135deg, #ffcc66, #66ccff)',
+                          filter: 'drop-shadow(0 0 3px #ffcc66)',
                           animation: `neural-pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
                         }} />
                       ))}
                     </div>
                     <span style={{
+                      color: '#ffcc66',
+                      textShadow: '0 0 6px rgba(255, 204, 102, 0.4)',
                       animation: 'neural-pulse 2s ease-in-out infinite',
                       letterSpacing: '0.5px',
                     }}>
@@ -704,21 +716,22 @@ export function IntentSurface() {
                   }}
                   title={listening ? 'Stop listening' : 'Voice input'}
                   style={{
-                    background: listening ? 'rgba(200, 56, 72, 0.2)' : 'transparent',
+                    background: listening ? 'rgba(255, 102, 102, 0.15)' : 'transparent',
                     border: 'none',
-                    color: listening ? '#c84858' : 'rgba(224, 220, 212, 0.3)',
+                    color: listening ? '#ff6666' : '#8888aa',
                     cursor: 'pointer',
                     fontSize: 14,
                     padding: '4px',
                     borderRadius: 4,
-                    transition: 'color 0.2s',
+                    transition: 'color 0.2s, filter 0.2s',
                     flexShrink: 0,
                     animation: listening ? 'pulse-mic 1s ease-in-out infinite' : undefined,
+                    filter: listening ? 'drop-shadow(0 0 4px #ff6666)' : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
                   }}
-                  onMouseEnter={(e) => { if (!listening) e.currentTarget.style.color = 'rgba(240, 176, 96, 0.7)'; }}
-                  onMouseLeave={(e) => { if (!listening) e.currentTarget.style.color = 'rgba(224, 220, 212, 0.3)'; }}
+                  onMouseEnter={(e) => { if (!listening) { e.currentTarget.style.color = '#ffcc66'; e.currentTarget.style.filter = 'drop-shadow(0 0 4px #ffcc66)'; } }}
+                  onMouseLeave={(e) => { if (!listening) { e.currentTarget.style.color = '#8888aa'; e.currentTarget.style.filter = 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))'; } }}
                 >
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={listening ? '#c84858' : 'currentColor'} strokeWidth="1.5" strokeLinecap="round">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={listening ? '#ff6666' : 'currentColor'} strokeWidth="2" strokeLinecap="round">
                     <line x1="8" y1="2" x2="8" y2="9" />
                     <path d="M5 7c0 1.7 1.3 3 3 3s3-1.3 3-3" />
                     <line x1="8" y1="12" x2="8" y2="14" />
@@ -737,18 +750,19 @@ export function IntentSurface() {
                   style={{
                     background: 'transparent',
                     border: 'none',
-                    color: 'rgba(224, 220, 212, 0.3)',
+                    color: '#8888aa',
                     cursor: 'pointer',
                     fontSize: 14,
                     padding: '4px',
                     borderRadius: 4,
-                    transition: 'color 0.2s',
+                    transition: 'color 0.2s, filter 0.2s',
                     flexShrink: 0,
+                    filter: 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = 'rgba(200, 56, 72, 0.7)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(224, 220, 212, 0.3)'; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = '#ff6666'; e.currentTarget.style.filter = 'drop-shadow(0 0 4px #ff6666) drop-shadow(0 0 8px rgba(255, 102, 102, 0.4))'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = '#8888aa'; e.currentTarget.style.filter = 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))'; }}
                 >
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                     <circle cx="8" cy="8" r="6" opacity="0.5" />
                     <line x1="5" y1="5" x2="11" y2="11" />
                     <line x1="11" y1="5" x2="5" y2="11" />

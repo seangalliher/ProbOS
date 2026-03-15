@@ -140,6 +140,7 @@ The HXI (Human Experience Interface) is not a dashboard or a chat app. It is the
 5. **Progressive disclosure driven by engagement.** Show less by default. Expand when the human engages. First-time users see calm, structured, high-contrast views. Experienced users see denser, more ambient displays. The interface recedes as fluency grows.
 6. **The canvas IS the information.** Veteran users don't need `/agents` or `/trust` commands — luminance = confidence, color temperature = trust, pulse rate = activity, spatial density = population health. The visual language is self-documenting.
 7. **Delight through competence, not decoration.** The "wow" comes from the system doing something impressive (designing an agent live), not from gratuitous animation. Every visual flourish must earn its place by communicating real system state.
+8. **Generative, not designed.** Fixed UI elements are bootstrap — the minimum viable visual language before the system knows the human. As the mesh evolves, the UI should be increasingly generated: agent icons created by the agents themselves, layout driven by Hebbian topology, density adapted to cognitive style, labels generated contextually by LLMs. Nothing is pre-designed that could be emergent. The HXI is not a skin applied on top — it is a visual projection of the mesh's internal state.
 
 ### Agent Classification Framework
 

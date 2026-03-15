@@ -126,13 +126,13 @@ export function DecisionSurface() {
           title={soundEnabled ? 'Mute ambient sounds (right-click: volume)' : 'Enable ambient sounds'}
         >
           {soundEnabled ? (
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#f0b060" strokeWidth="1.5" strokeLinecap="round">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#ffcc66" strokeWidth="2" strokeLinecap="round" style={{ filter: 'drop-shadow(0 0 4px #ffcc66) drop-shadow(0 0 8px rgba(255, 204, 102, 0.5))' }}>
               <path d="M2 6v4l3 3h1V3H5L2 6z" />
               <path d="M9 5.5c.7.7 1 1.5 1 2.5s-.3 1.8-1 2.5" />
               <path d="M11 3.5c1.2 1.2 2 2.7 2 4.5s-.8 3.3-2 4.5" />
             </svg>
           ) : (
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#666680" strokeWidth="1.5" strokeLinecap="round">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#8888aa" strokeWidth="2" strokeLinecap="round" style={{ filter: 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))' }}>
               <path d="M2 6v4l3 3h1V3H5L2 6z" />
               <path d="M14 5l-5 6" />
             </svg>
@@ -165,7 +165,7 @@ export function DecisionSurface() {
           style={btnStyle(voiceEnabled)}
           title={voiceEnabled ? 'Disable voice (right-click: choose voice)' : 'Enable voice output'}
         >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={voiceEnabled ? '#f0b060' : '#666680'} strokeWidth="1.5" strokeLinecap="round">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={voiceEnabled ? '#ffcc66' : '#8888aa'} strokeWidth="2" strokeLinecap="round" style={{ filter: voiceEnabled ? 'drop-shadow(0 0 4px #ffcc66) drop-shadow(0 0 8px rgba(255, 204, 102, 0.5))' : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))' }}>
             <line x1="4" y1="5" x2="4" y2="11" />
             <line x1="8" y1="3" x2="8" y2="13" />
             <line x1="12" y1="6" x2="12" y2="10" />
@@ -230,9 +230,9 @@ export function DecisionSurface() {
           style={btnStyle(showLegend)}
           title="Toggle visual legend"
         >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" strokeWidth="1.5">
-            <circle cx="8" cy="8" r="5" stroke={showLegend ? '#f0b060' : '#666680'} />
-            <circle cx="8" cy="8" r="1.5" fill={showLegend ? '#f0b060' : '#666680'} />
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" strokeWidth="2" style={{ filter: showLegend ? 'drop-shadow(0 0 4px #ffcc66) drop-shadow(0 0 8px rgba(255, 204, 102, 0.5))' : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))' }}>
+            <circle cx="8" cy="8" r="5" stroke={showLegend ? '#ffcc66' : '#8888aa'} />
+            <circle cx="8" cy="8" r="1.5" fill={showLegend ? '#ffcc66' : '#8888aa'} />
           </svg>
         </button>
       </div>
