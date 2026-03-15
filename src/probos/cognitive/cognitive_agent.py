@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import time
 from typing import Any
 
 from probos.substrate.agent import BaseAgent
 from probos.types import IntentMessage, IntentResult, LLMRequest, Skill
 
 logger = logging.getLogger(__name__)
+
+# Module-level decision cache keyed by agent_type (AD-272)
+_DECISION_CACHES: dict[str, dict[str, tuple[dict, float, float]]] = {}
+# {agent_type: {hash: (decision_dict, created_at_monotonic, ttl_seconds)}}
+_CACHE_HITS: dict[str, int] = {}
+_CACHE_MISSES: dict[str, int] = {}
 
 
 class CognitiveAgent(BaseAgent):
@@ -22,6 +31,9 @@ class CognitiveAgent(BaseAgent):
     """
 
     tier = "domain"  # Cognitive agents are domain-tier by default
+
+    # Default cache TTL — overridden by _get_cache_ttl() based on instructions
+    _cache_ttl_seconds: float = 300.0  # 5 minutes
 
     # Subclasses MUST set these (or pass via __init__)
     instructions: str | None = None
@@ -65,11 +77,30 @@ class CognitiveAgent(BaseAgent):
         }
 
     async def decide(self, observation: dict) -> dict:
-        """Consult the LLM with instructions + observation."""
+        """Consult the LLM with instructions + observation.
+
+        Decision Distillation (AD-272): checks in-memory cache before
+        calling LLM. Cache hits return instantly (<1ms, $0).
+        """
         if not self._llm_client:
             return {"action": "error", "reason": "No LLM client available"}
 
-        # Build user message from observation
+        # --- Decision cache lookup ---
+        cache = _DECISION_CACHES.setdefault(self.agent_type, {})
+        cache_key = self._compute_cache_key(observation)
+
+        if cache_key in cache:
+            decision, created_at, ttl = cache[cache_key]
+            if time.monotonic() - created_at < ttl:
+                _CACHE_HITS[self.agent_type] = _CACHE_HITS.get(self.agent_type, 0) + 1
+                logger.debug("Decision cache hit for %s (key=%s)", self.agent_type, cache_key[:8])
+                return {**decision, "cached": True}
+            else:
+                del cache[cache_key]
+
+        _CACHE_MISSES[self.agent_type] = _CACHE_MISSES.get(self.agent_type, 0) + 1
+
+        # --- LLM call (cache miss) ---
         user_message = self._build_user_message(observation)
 
         request = LLMRequest(
@@ -79,11 +110,22 @@ class CognitiveAgent(BaseAgent):
         )
         response = await self._llm_client.complete(request)
 
-        return {
+        decision = {
             "action": "execute",
             "llm_output": response.content,
             "tier_used": response.tier,
         }
+
+        # --- Store in cache ---
+        ttl = self._get_cache_ttl()
+        cache[cache_key] = (decision, time.monotonic(), ttl)
+
+        # Evict oldest entry if cache exceeds 1000 per agent type
+        if len(cache) > 1000:
+            oldest_key = min(cache, key=lambda k: cache[k][1])
+            del cache[oldest_key]
+
+        return decision
 
     async def act(self, decision: dict) -> dict:
         """Execute based on LLM decision.  Override for structured output."""
@@ -186,3 +228,46 @@ class CognitiveAgent(BaseAgent):
         """Determine which LLM tier to use.  Default: 'standard'.
         Override in subclasses for tier-specific routing."""
         return "standard"
+
+    # --- Decision cache helpers (AD-272) ---
+
+    def _compute_cache_key(self, observation: dict) -> str:
+        """Compute a deterministic hash from instructions + observation."""
+        obs_str = json.dumps(observation, sort_keys=True, default=str)
+        key_material = f"{self.instructions}|{obs_str}"
+        return hashlib.sha256(key_material.encode()).hexdigest()[:16]
+
+    def _get_cache_ttl(self) -> float:
+        """Determine TTL based on agent instructions."""
+        if not self.instructions:
+            return self._cache_ttl_seconds
+        lower = self.instructions.lower()
+        if any(kw in lower for kw in ("real-time", "current", "live", "latest", "now", "price", "weather", "stock")):
+            return 120.0  # 2 minutes
+        if any(kw in lower for kw in ("translate", "define", "calculate", "convert", "summarize")):
+            return 3600.0  # 1 hour
+        return self._cache_ttl_seconds
+
+    @classmethod
+    def evict_cache_for_type(cls, agent_type: str, observation: dict | None = None) -> int:
+        """Evict cache entries for an agent type. Returns count of evicted entries."""
+        cache = _DECISION_CACHES.get(agent_type, {})
+        if not cache:
+            return 0
+        if observation is None:
+            count = len(cache)
+            cache.clear()
+            return count
+        return 0
+
+    @classmethod
+    def cache_stats(cls) -> dict[str, dict[str, int]]:
+        """Return cache statistics per agent type."""
+        stats = {}
+        for agent_type, cache in _DECISION_CACHES.items():
+            stats[agent_type] = {
+                "entries": len(cache),
+                "hits": _CACHE_HITS.get(agent_type, 0),
+                "misses": _CACHE_MISSES.get(agent_type, 0),
+            }
+        return stats

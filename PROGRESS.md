@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 23 — HXI MVP "See Your AI Thinking" (1568/1568 tests + 11 skipped)
+## Current Status: Phase 23 — HXI MVP "See Your AI Thinking" (1575/1575 tests + 11 skipped)
 
 ---
 
@@ -2667,6 +2667,22 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 
 1568/1568 tests passing (+ 11 skipped). 2 new tests.
 
+### AD-272: Decision Distillation — Deterministic Learning Loop
+
+**Problem:** Every CognitiveAgent call made an LLM request even for identical repetitive queries. "Bitcoin price" 100 times = 100 LLM calls (2-5s, ~$1-5 total).
+
+| AD | Decision |
+|----|----------|
+| AD-272 | In-memory decision cache in `CognitiveAgent.decide()`. Cache key: SHA256 of instructions + observation. Cache hit returns instantly (<1ms, $0) with `"cached": True` flag. TTL per entry — time-sensitive agents (price, weather) get 2min TTL, static knowledge (translate, calculate) gets 1hr. Module-level cache dict keyed by agent_type (each agent type has its own cache). 1000-entry cap per type with oldest eviction. Cache metrics (hits/misses) exposed via `cache_stats()` |
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `src/probos/cognitive/cognitive_agent.py` | Added `_DECISION_CACHES`, `_CACHE_HITS`, `_CACHE_MISSES` module-level dicts. `_compute_cache_key()`, `_get_cache_ttl()` methods. `decide()` checks cache before LLM, stores result after. `evict_cache_for_type()`, `cache_stats()` class methods. 1000-entry cap with oldest eviction |
+
+1575/1575 tests passing (+ 11 skipped). 7 new tests.
+
 ---
 
 ## Active Roadmap — Product + Emergence Track
@@ -2781,6 +2797,7 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 
 ### Phase 28: Abstract Representation + Meta-Learning + Long-Horizon Planning — "An AI That Learns Concepts"
 **Goal:** The system learns principles from experience, gets better at improving itself, transfers strategies across domains, and pursues goals that span multiple sessions.
+- **Decision Distillation / Deterministic Learning Loop** — CognitiveAgents progressively compile LLM reasoning into deterministic cached decisions. On each query: (1) check decision cache (keyed by semantic hash of observation), (2) cache hit → return instantly (no LLM, <50ms, $0), (3) cache miss → LLM reasoning → cache result → return. Over time, agents handle 90%+ of repetitive tasks without LLM calls. TTL per entry (time-sensitive data like prices expire, stable translations persist). Semantic key matching via `compute_similarity()` (not exact string). Negative feedback evicts bad cache entries. Cache persisted in KnowledgeStore (survives restarts). Trust still scored on cache hits. **Effect: agents start as reasoning engines and progressively compile themselves into deterministic functions — the LLM becomes a bootstrapping mechanism, not a permanent dependency.**
 - Dream cycle abstraction phase — extract patterns from episode clusters ("info gathering before mutation succeeds 90%")
 - Abstraction store in KnowledgeStore, injected into decomposer planning context
 - Meta-learning: design success/failure tracking feeds back into AgentDesigner. The 10th agent is better than the 1st

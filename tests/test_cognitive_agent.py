@@ -300,3 +300,145 @@ class TestCognitiveAgentOverrides:
         obs = await agent.perceive(intent)
         assert obs["extra"] == "custom_field"
         assert obs["intent"] == "perceive_test"
+
+
+# ---------------------------------------------------------------------------
+# Decision Distillation (AD-272)
+# ---------------------------------------------------------------------------
+
+class TestDecisionCache:
+    """Tests for the decision cache in CognitiveAgent.decide()."""
+
+    @pytest.fixture(autouse=True)
+    def clear_caches(self):
+        from probos.cognitive.cognitive_agent import _DECISION_CACHES, _CACHE_HITS, _CACHE_MISSES
+        _DECISION_CACHES.clear()
+        _CACHE_HITS.clear()
+        _CACHE_MISSES.clear()
+
+    @pytest.mark.asyncio
+    async def test_decision_cache_hit(self):
+        """Second call with same observation returns cached result (no LLM call)."""
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, pool="test")
+        obs = {"intent": "test_intent", "params": {"q": "hello"}, "context": ""}
+
+        result1 = await agent.decide(obs)
+        result2 = await agent.decide(obs)
+
+        assert result1["action"] == "execute"
+        assert result2["cached"] is True
+        assert llm.call_count == 1  # LLM called only once
+
+    @pytest.mark.asyncio
+    async def test_decision_cache_miss_different_observation(self):
+        """Different observations produce different cache entries."""
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, pool="test")
+        obs1 = {"intent": "test_intent", "params": {"q": "hello"}, "context": ""}
+        obs2 = {"intent": "test_intent", "params": {"q": "world"}, "context": ""}
+
+        await agent.decide(obs1)
+        await agent.decide(obs2)
+
+        assert llm.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_decision_cache_ttl_expiry(self, monkeypatch):
+        """Expired cache entries trigger a new LLM call."""
+        import probos.cognitive.cognitive_agent as ca
+
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, pool="test")
+        obs = {"intent": "test_intent", "params": {"q": "hello"}, "context": ""}
+
+        await agent.decide(obs)
+        assert llm.call_count == 1
+
+        # Expire the entry by rewinding created_at
+        cache = ca._DECISION_CACHES[agent.agent_type]
+        key = list(cache.keys())[0]
+        decision, _, ttl = cache[key]
+        cache[key] = (decision, 0.0, ttl)  # created_at=0 → expired
+
+        await agent.decide(obs)
+        assert llm.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_decision_cache_key_includes_instructions(self):
+        """Two agents with different instructions get different cache entries."""
+        from probos.cognitive.cognitive_agent import _DECISION_CACHES
+
+        class AgentA(CognitiveAgent):
+            agent_type = "agent_a"
+            _handled_intents = {"test"}
+            instructions = "You translate text."
+            intent_descriptors = []
+
+        class AgentB(CognitiveAgent):
+            agent_type = "agent_b"
+            _handled_intents = {"test"}
+            instructions = "You summarize text."
+            intent_descriptors = []
+
+        llm = MockLLMClient()
+        a = AgentA(llm_client=llm, pool="test")
+        b = AgentB(llm_client=llm, pool="test")
+        obs = {"intent": "test", "params": {"q": "same"}, "context": ""}
+
+        await a.decide(obs)
+        await b.decide(obs)
+
+        assert llm.call_count == 2
+        assert "agent_a" in _DECISION_CACHES
+        assert "agent_b" in _DECISION_CACHES
+
+    def test_cache_stats_reports_hits_misses(self):
+        """cache_stats() reflects correct counts after operations."""
+        from probos.cognitive.cognitive_agent import _DECISION_CACHES, _CACHE_HITS, _CACHE_MISSES
+
+        _DECISION_CACHES["test_type"] = {"k1": ({}, 0.0, 300.0)}
+        _CACHE_HITS["test_type"] = 5
+        _CACHE_MISSES["test_type"] = 3
+
+        stats = CognitiveAgent.cache_stats()
+        assert stats["test_type"]["entries"] == 1
+        assert stats["test_type"]["hits"] == 5
+        assert stats["test_type"]["misses"] == 3
+
+    @pytest.mark.asyncio
+    async def test_cache_eviction_on_overflow(self):
+        """Cache evicts oldest entry when exceeding 1000 entries."""
+        import time as _time
+        from probos.cognitive.cognitive_agent import _DECISION_CACHES
+
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, pool="test")
+
+        # Pre-fill cache with 1000 entries, oldest at created_at=1.0
+        cache = _DECISION_CACHES.setdefault(agent.agent_type, {})
+        for i in range(1000):
+            cache[f"key_{i}"] = ({"action": "execute"}, 1.0 + i, 9999.0)
+
+        assert len(cache) == 1000
+
+        # Next decide() should add one and evict the oldest
+        obs = {"intent": "test_intent", "params": {"q": "overflow"}, "context": ""}
+        await agent.decide(obs)
+
+        assert len(cache) == 1000  # Still 1000 after eviction
+        assert "key_0" not in cache  # oldest (created_at=1.0) evicted
+
+    @pytest.mark.asyncio
+    async def test_cached_response_has_cached_flag(self):
+        """Cache hits include 'cached': True in the decision dict."""
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, pool="test")
+        obs = {"intent": "test_intent", "params": {"q": "flag"}, "context": ""}
+
+        result1 = await agent.decide(obs)
+        assert "cached" not in result1
+
+        result2 = await agent.decide(obs)
+        assert result2["cached"] is True
+        assert result2["action"] == "execute"
