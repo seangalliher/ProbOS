@@ -18,11 +18,10 @@ class _MockEpisodicMemory:
 
     def __init__(self, stats: dict | None = None):
         self._stats = stats or {
-            "total_episodes": 42,
-            "unique_intents": 5,
+            "total": 42,
             "intent_distribution": {"read_file": 20, "write_file": 10, "list_directory": 8, "run_command": 3, "http_fetch": 1},
-            "success_rate": 0.89,
-            "backend": "chromadb",
+            "avg_success_rate": 0.89,
+            "most_used_agents": {"file_reader-0": 20},
         }
 
     async def get_stats(self) -> dict:

@@ -930,18 +930,19 @@ class TestWarmBoot:
         )
 
         # Pre-seed trust snapshot into the knowledge repo
+        # Use a real deterministic agent ID that will exist after boot
         kcfg = KnowledgeConfig(repo_path=str(repo), auto_commit=False)
         ks = KnowledgeStore(kcfg)
         await ks.initialize()
         await ks.store_trust_snapshot({
-            "test_agent_001": {"alpha": 8.0, "beta": 2.0, "observations": 6.0},
+            "file_reader_filesystem_0_0c288a5b": {"alpha": 8.0, "beta": 2.0, "observations": 6.0},
         })
 
         # Boot runtime — should restore trust
         rt = ProbOSRuntime(config=cfg, data_dir=tmp_path / "data", llm_client=MockLLMClient())
         await rt.start()
         try:
-            record = rt.trust_network.get_record("test_agent_001")
+            record = rt.trust_network.get_record("file_reader_filesystem_0_0c288a5b")
             assert record is not None
             assert record.alpha == 8.0
             assert record.beta == 2.0
@@ -1090,19 +1091,20 @@ class TestWarmBoot:
             enabled=True, repo_path=str(repo), auto_commit=False,
         )
 
-        # Pre-seed trust (but no agents)
+        # Pre-seed trust (but no designed agents)
+        # Use a real deterministic agent ID that will exist after boot
         kcfg = KnowledgeConfig(repo_path=str(repo), auto_commit=False)
         ks = KnowledgeStore(kcfg)
         await ks.initialize()
         await ks.store_trust_snapshot({
-            "some_agent": {"alpha": 10.0, "beta": 1.0, "observations": 8.0},
+            "file_reader_filesystem_0_0c288a5b": {"alpha": 10.0, "beta": 1.0, "observations": 8.0},
         })
 
         rt = ProbOSRuntime(config=cfg, data_dir=tmp_path / "data", llm_client=MockLLMClient())
         await rt.start()
         try:
             # Trust was loaded before any agent restore attempted
-            record = rt.trust_network.get_record("some_agent")
+            record = rt.trust_network.get_record("file_reader_filesystem_0_0c288a5b")
             assert record is not None
             assert record.alpha == 10.0
         finally:
@@ -1123,11 +1125,12 @@ class TestWarmBoot:
         cfg.self_mod.enabled = True
 
         # Pre-seed valid trust + corrupted agent
+        # Use a real deterministic agent ID for trust to survive reconciliation
         kcfg = KnowledgeConfig(repo_path=str(repo), auto_commit=False)
         ks = KnowledgeStore(kcfg)
         await ks.initialize()
         await ks.store_trust_snapshot({
-            "partial_agent": {"alpha": 5.0, "beta": 3.0, "observations": 4.0},
+            "file_reader_filesystem_0_0c288a5b": {"alpha": 5.0, "beta": 3.0, "observations": 4.0},
         })
 
         # Write corrupted agent file (invalid JSON sidecar)
@@ -1140,7 +1143,7 @@ class TestWarmBoot:
         await rt.start()
         try:
             # Trust should still be restored even though agent failed
-            record = rt.trust_network.get_record("partial_agent")
+            record = rt.trust_network.get_record("file_reader_filesystem_0_0c288a5b")
             assert record is not None
             assert record.alpha == 5.0
         finally:

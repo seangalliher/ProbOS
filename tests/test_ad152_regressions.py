@@ -573,6 +573,10 @@ class TestHttpFetchTimeoutMessage:
                 raise httpx.TimeoutException("timed out")
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("93.184.216.34", 0))],
+        )
 
         agent = HttpFetchAgent()
         intent = IntentMessage(

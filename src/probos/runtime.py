@@ -687,6 +687,12 @@ class ProbOSRuntime:
         # Persist agent manifest (Phase 14c)
         await self._persist_manifest()
 
+        # Reconcile trust store — remove stale entries from previous sessions (AD-280)
+        active_ids = {a.id for a in self.registry.all()}
+        removed = self.trust_network.reconcile(active_ids)
+        if removed:
+            logger.info("trust-reconcile removed=%d stale entries", removed)
+
         self._started = True
 
         await self.event_log.log(category="system", event="started")
@@ -2397,7 +2403,10 @@ class ProbOSRuntime:
                 for agent_id, params in snapshot.items():
                     alpha = params.get("alpha", 2.0)
                     beta = params.get("beta", 2.0)
-                    self.trust_network.create_with_prior(agent_id, alpha=alpha, beta=beta)
+                    # Force-set even if record already exists from pool creation
+                    record = self.trust_network.get_or_create(agent_id)
+                    record.alpha = alpha
+                    record.beta = beta
                 restored.append(f"trust({len(snapshot)} agents)")
         except Exception as e:
             logger.warning("Warm boot: trust restore failed: %s", e)

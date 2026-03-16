@@ -177,6 +177,13 @@ class TrustNetwork:
         """Remove an agent's trust record (agent recycled)."""
         self._records.pop(agent_id, None)
 
+    def reconcile(self, active_agent_ids: set[str]) -> int:
+        """Remove trust records for agents not in the active set. Returns count removed."""
+        stale = [aid for aid in self._records if aid not in active_agent_ids]
+        for aid in stale:
+            del self._records[aid]
+        return len(stale)
+
     @property
     def agent_count(self) -> int:
         return len(self._records)

@@ -395,10 +395,10 @@ class IntrospectionAgent(BaseAgent):
             "success": True,
             "data": {
                 "enabled": True,
-                "total_episodes": stats.get("total_episodes", 0),
-                "unique_intents": stats.get("unique_intents", 0),
+                "total_episodes": stats.get("total", 0),
+                "unique_intents": len(stats.get("intent_distribution", {})),
                 "intent_distribution": stats.get("intent_distribution", {}),
-                "success_rate": stats.get("success_rate"),
+                "success_rate": stats.get("avg_success_rate"),
                 "storage_backend": stats.get("backend", "chromadb"),
             },
         }
