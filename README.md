@@ -404,3 +404,7 @@ Dev: pytest >=8.0, pytest-asyncio >=0.23, vitest (UI)
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
+
+## Disclaimer
+
+This is a personal research project. It is not affiliated with, endorsed by, or supported by my employer.

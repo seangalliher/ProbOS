@@ -219,6 +219,6 @@ channels:
     enabled: false
     token: ""                       # Set via PROBOS_DISCORD_TOKEN env var
     allowed_channel_ids: []         # Empty = all channels
-    allowed_user_ids: [143987278455373824]  # Sean's Discord user ID
+    allowed_user_ids: []                   # Empty = all users
     command_prefix: "!"             # "!status" -> "/status"
     mention_required: false         # Only respond when @mentioned
