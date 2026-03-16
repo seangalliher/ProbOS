@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 23 — HXI MVP "See Your AI Thinking" (1575/1575 tests + 11 skipped)
+## Current Status: Phase 23 — HXI MVP "See Your AI Thinking" (1587/1587 tests + 11 skipped)
 
 ---
 
@@ -2701,6 +2701,12 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 | `ui/src/components/IntentSurface.tsx` | Sends last 10 messages as history in /api/chat request |
 
 1578/1578 tests passing (+ 11 skipped). 3 new tests.
+
+### E2E Self-Mod Pipeline Tests
+
+Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full self-mod chain through the FastAPI API layer using httpx AsyncClient with ASGITransport. Covers: capability gap detection, self-mod approve + agent creation, pool size 1, auto-retry message routing, QA ordering, hello response, conversation history passthrough, enrich endpoint, empty message, self-mod disabled, slash commands. No production code modified.
+
+1590/1590 tests passing (+ 11 skipped). 12 new tests.
 
 ---
 
