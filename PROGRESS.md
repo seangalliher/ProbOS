@@ -2736,6 +2736,32 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 
 1612/1612 tests passing (+ 11 skipped). 22 new tests.
 
+### Phase 24b: Self-Assessment Bug Fixes (AD-279, AD-280)
+
+**Problem:** ProbOS demonstrated functional self-awareness by diagnosing its own gaps via Discord conversation. Investigation of its self-assessment revealed two bugs causing partially inaccurate self-reporting.
+
+| AD | Decision |
+|----|----------|
+| AD-279 | Fix key name mismatch in `_introspect_memory()`: reads `total_episodes` but `get_stats()` returns `total`. Same mismatch for `unique_intents` and `success_rate`. ProbOS always reports 0 episodes even when episodes are stored correctly |
+| AD-280 | Add `TrustNetwork.reconcile(active_agent_ids)` called after warm boot. Removes stale trust entries from previous sessions. Fixes 72-vs-43 agent count discrepancy in self-assessment. `TrustNetwork.remove()` was dead code — never called anywhere |
+
+**Status:** Build prompt ready at `prompts/phase-24b-self-assessment-fixes.md`
+
+### Phase 24c: Lightweight Task Scheduler (AD-281 through AD-284)
+
+**Problem:** ProbOS identified its own lack of background scheduling as an architectural gap during a Discord self-assessment conversation ("I don't have a background timer"). The existing `SchedulerAgent` stores reminders to file but cannot execute them on a timer.
+
+| AD | Decision |
+|----|----------|
+| AD-281 | `TaskScheduler` engine in `cognitive/task_scheduler.py`: background asyncio loop (1s tick), `ScheduledTask` dataclass, one-shot and recurring tasks, session-scoped (does not survive restart) |
+| AD-282 | Wire `TaskScheduler` into `ProbOSRuntime` lifecycle (start/stop), expose as property |
+| AD-283 | Upgrade `SchedulerAgent`: remove "no background timer" disclaimer, `act()` calls `task_scheduler.schedule/cancel/list`, reminders.json reload on boot |
+| AD-284 | Channel delivery for scheduled tasks: results sent to Discord/Slack channel when `channel_id` is set on the task |
+
+**Scope boundary:** In-session scheduling only. Persistent tasks with checkpointing and resume-after-restart remain in Phase 25.
+
+**Status:** Build prompt ready at `prompts/phase-24c-task-scheduler.md`
+
 ---
 
 ## Active Roadmap — Product + Emergence Track
@@ -2793,6 +2819,7 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
   - The Workspace Ontology (Phase 28) provides the provider-agnostic abstraction — ProbOS agents reason about typed objects (customers, orders, metrics) regardless of whether they live in Fabric, Snowflake, or a local CSV. The Ontology decouples intelligence from infrastructure
   - **Dev Squad builds data connectors autonomously** — once Phase 27 ships, the squad designs connector agents for each new data platform on demand
 - **HXI Configuration Management** — all system configuration (channels, connectors, pool sizes, LLM endpoints) editable from within the HXI. Settings panel with validated forms, runtime config reload without restart. Users should never need to touch YAML files directly. Slash command `/settings` and REST endpoint `/api/config` for programmatic access. See Design Principle: HXI Self-Sufficiency
+- **EmergentDetector Early-Session Guards** — cooperation cluster detection currently reports normal initial routing topology as "emergent cooperation" in fresh sessions. Add minimum interaction count or `fresh_boot` awareness so the detector distinguishes genuine emergent behavior from initial routing assignment noise. Trust anomaly, routing shift, and consolidation detectors already have proper guards — only cooperation clusters need fixing
 - Channel → IntentBus bridge pattern reusable for future channels
 - Server-side TTS via tiered approach: (1) try browser neural voices first (Edge Azure Neural, Chrome on Mac/Android), (2) fall back to Piper TTS (free, local, neural) via `/api/tts`, (3) optional ElevenLabs/OpenAI TTS premium. Cross-platform
 - Always-listening conversation mode: continuous speech recognition (no wake word), silence detection, natural conversation flow
@@ -2814,7 +2841,7 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 
 ### Phase 25: Persistent Tasks + Browser Automation — "Computer That Works While You Sleep"
 **Goal:** Long-running autonomous tasks and full browser control, competing directly with Perplexity Computer.
-- **Persistent Background Tasks** — agents execute multi-step workflows that run for hours/days/months:
+- **Persistent Background Tasks** — agents execute multi-step workflows that run for hours/days/months (Phase 24c provides in-session scheduling; this phase adds persistence across restarts):
   - Task Runner: managed asyncio tasks with progress tracking, checkpointing, and resume-after-restart
   - Scheduled execution: cron-like recurring tasks ("monitor these stocks every morning", "weekly project status report")
   - Decision surfacing: when a background task needs human judgment, it queues a decision in the HXI Task Queue
