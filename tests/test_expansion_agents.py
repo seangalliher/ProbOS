@@ -335,6 +335,11 @@ class TestHttpFetchAgent:
                 raise httpx.ConnectError("unreachable")
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
+        # Mock DNS so SSRF validation passes (test is about connection errors, not DNS)
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("93.184.216.34", 0))],
+        )
 
         agent = HttpFetchAgent()
         intent = IntentMessage(
@@ -364,6 +369,85 @@ class TestHttpFetchAgent:
         assert result is None
 
 
+class TestHttpFetchSSRF:
+    """AD-285: SSRF protection tests."""
+
+    def test_ssrf_blocks_localhost(self, monkeypatch):
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("127.0.0.1", 0))],
+        )
+        agent = HttpFetchAgent()
+        error = agent._validate_url("http://127.0.0.1/secret")
+        assert error is not None
+        assert "private" in error.lower() or "loopback" in error.lower()
+
+    def test_ssrf_blocks_private_10(self, monkeypatch):
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("10.0.0.1", 0))],
+        )
+        agent = HttpFetchAgent()
+        error = agent._validate_url("http://10.0.0.1/internal")
+        assert error is not None
+        assert "private" in error.lower()
+
+    def test_ssrf_blocks_private_172(self, monkeypatch):
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("172.16.0.1", 0))],
+        )
+        agent = HttpFetchAgent()
+        error = agent._validate_url("http://172.16.0.1/internal")
+        assert error is not None
+        assert "private" in error.lower()
+
+    def test_ssrf_blocks_private_192(self, monkeypatch):
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("192.168.1.1", 0))],
+        )
+        agent = HttpFetchAgent()
+        error = agent._validate_url("http://192.168.1.1/admin")
+        assert error is not None
+        assert "private" in error.lower()
+
+    def test_ssrf_blocks_metadata(self, monkeypatch):
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("169.254.169.254", 0))],
+        )
+        agent = HttpFetchAgent()
+        error = agent._validate_url("http://169.254.169.254/latest/meta-data/")
+        assert error is not None
+
+    def test_ssrf_blocks_file_scheme(self):
+        agent = HttpFetchAgent()
+        error = agent._validate_url("file:///etc/passwd")
+        assert error is not None
+        assert "scheme" in error.lower()
+
+    def test_ssrf_allows_public_url(self, monkeypatch):
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("93.184.216.34", 0))],
+        )
+        agent = HttpFetchAgent()
+        error = agent._validate_url("http://example.com")
+        assert error is None
+
+    def test_ssrf_dns_rebinding(self, monkeypatch):
+        """evil.com DNS returning 127.0.0.1 should be blocked."""
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("127.0.0.1", 0))],
+        )
+        agent = HttpFetchAgent()
+        error = agent._validate_url("http://evil.com/steal-secrets")
+        assert error is not None
+        assert "private" in error.lower() or "loopback" in error.lower()
+
+
 class TestHttpFetchRateLimiter:
     """AD-270: Per-domain rate limiter tests."""
 
@@ -391,6 +475,10 @@ class TestHttpFetchRateLimiter:
                 return MockResponse()
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("93.184.216.34", 0))],
+        )
 
         agent = HttpFetchAgent()
         intent = IntentMessage(intent="http_fetch", params={"url": "https://example.com/test"})
@@ -481,6 +569,10 @@ class TestHttpFetchRateLimiter:
                 return MockResponse()
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("93.184.216.34", 0))],
+        )
 
         agent = HttpFetchAgent()
         intent = IntentMessage(intent="http_fetch", params={"url": "https://delaytest.example.com"})
@@ -559,6 +651,10 @@ class TestExpansionIntegration:
                 return MockResponse()
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("34.117.59.81", 0))],
+        )
 
         result = await runtime.process_natural_language(
             "fetch https://httpbin.org/get"

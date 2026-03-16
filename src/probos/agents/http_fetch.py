@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
+import socket
 import time
 import urllib.parse
 from dataclasses import dataclass, field
@@ -148,8 +150,45 @@ class HttpFetchAgent(BaseAgent):
         """Package the result for the mesh."""
         return result
 
+    # Blocked metadata hostnames
+    _BLOCKED_HOSTS = frozenset({"metadata.google.internal"})
+
+    def _validate_url(self, url: str) -> str | None:
+        """Validate URL is safe to fetch. Returns error message or None if safe."""
+        parsed = urllib.parse.urlparse(url)
+
+        # Scheme check
+        if parsed.scheme not in ("http", "https"):
+            return f"Blocked scheme: {parsed.scheme}"
+
+        # Extract hostname
+        hostname = parsed.hostname
+        if not hostname:
+            return "No hostname in URL"
+
+        # Cloud metadata hostnames
+        if hostname.lower() in self._BLOCKED_HOSTS:
+            return f"Blocked metadata endpoint: {hostname}"
+
+        # Resolve DNS to catch rebinding attacks
+        try:
+            addrinfo = socket.getaddrinfo(hostname, None)
+        except socket.gaierror:
+            return f"Cannot resolve hostname: {hostname}"
+
+        for family, _, _, _, sockaddr in addrinfo:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return f"Blocked private/reserved IP: {ip}"
+
+        return None
+
     async def _fetch_url(self, url: str, method: str) -> dict[str, Any]:
         """Fetch a URL with timeout, body capping, and per-domain rate limiting."""
+        error = self._validate_url(url)
+        if error:
+            return {"success": False, "error": f"SSRF protection: {error}"}
+
         domain, state = self._get_domain_state(url)
         delay = await self._wait_for_rate_limit(domain, state)
 
