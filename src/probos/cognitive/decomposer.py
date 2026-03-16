@@ -320,7 +320,7 @@ class IntentDecomposer:
             prompt_parts.append("## CONVERSATION CONTEXT")
             prompt_parts.append("Recent messages in this conversation (most recent last):")
             for role, msg_text in conversation_history[-5:]:
-                label = "User" if role == "user" else "ProbOS"
+                label = "User" if role == "user" else ("Context" if role == "context" else "ProbOS")
                 truncated = msg_text[:200] + "..." if len(msg_text) > 200 else msg_text
                 prompt_parts.append(f"{label}: {truncated}")
             prompt_parts.append("")

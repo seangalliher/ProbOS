@@ -120,6 +120,7 @@ export function IntentSurface() {
     addChatMessage('user', text);
     setInput('');
     incPendingRequests();
+    useStore.setState({ activeDag: [] }); // Clear stale DAG so neural pulse shows
 
     // Send last 10 messages as conversation context for reference resolution
     const recentHistory = chatHistory.slice(-10).map(m => ({

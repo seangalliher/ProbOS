@@ -1150,6 +1150,19 @@ class ProbOSRuntime:
             except Exception:
                 logger.debug("Correction detection failed", exc_info=True)
 
+        # Enrich conversation context with last execution's structured intent data
+        if conversation_history and self._last_execution:
+            last_dag = self._last_execution.get("dag")
+            if last_dag and hasattr(last_dag, "nodes") and last_dag.nodes:
+                intent_summary = "; ".join(
+                    f'{n.intent}({", ".join(f"{k}={v}" for k, v in n.params.items())})'
+                    for n in last_dag.nodes
+                )
+                if intent_summary:
+                    conversation_history = list(conversation_history) + [
+                        ("context", f"[Last execution: {intent_summary}]")
+                    ]
+
         dag = await self.decomposer.decompose(
             text, context=context, similar_episodes=similar_episodes or None,
             conversation_history=conversation_history,

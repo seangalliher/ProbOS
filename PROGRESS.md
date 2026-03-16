@@ -2739,6 +2739,7 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 **Goal:** Connect ProbOS to messaging channels AND external tools so it can act as a real productivity hub.
 - Discord bot adapter (discord.py) — messages → IntentBus, results → channel replies
 - Slack bot adapter (Slack Bolt) — same bridge pattern
+- Telegram bot adapter (python-telegram-bot) — high priority, large solo dev/startup user base
 - **Tool Connectors Framework** — pluggable connector architecture for SaaS integrations:
   - Gmail connector (read/send email, search inbox, label management)
   - Google Calendar connector (read events, create/modify events, check availability)
@@ -2843,6 +2844,41 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 - `probos cluster --nodes N` — one command spawns N federated nodes as child processes on one machine
 - **Demo moment:** `probos cluster --nodes 3` — three cognitive meshes connect, share knowledge, TC_N rises.
 
+### Agent Packs + Competitive Migration — "Replace Your Stack"
+**Goal:** Pre-built agent packs for specific use cases + migration tools to absorb users from competing frameworks.
+
+**** — agents for running a solo/small company:
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- Each is a CognitiveAgent with OAuth connector (Phase 24 framework)
+- **Dogfooding:** ProbOS runs Nooplex LLC — every agent is battle-tested on the founder's own company
+
+**Personal Agent Packs** — competing with OpenClaw, Rabbit R1, Perplexity:
+- **Productivity Pack** — email, calendar, notes, todos, reminders (bundled agents already cover some)
+- **Research Pack** — web search, page reader, summarizer, citation tracker, topic monitoring
+- **Creative Pack** — writing assistant, image prompt generator, brainstorming partner, content scheduler
+- **Health & Wellness Pack** — workout tracking, meal planning, habit monitoring, sleep analysis
+- **Finance Pack** — budget tracking, investment monitoring, bill reminders, crypto prices
+- **Learning Pack** — flashcard generation, study planner, concept explainer, quiz generator
+- **Home Pack** — smart home integration (via MQTT/REST), grocery lists, recipe finder, maintenance reminders
+
+**Agent Migration Framework** — absorb users from competing frameworks:
+- **OpenClaw/CrewAI/AutoGPT importer** — parse agent definitions from competing formats, map capabilities to ProbOS IntentDescriptors, auto-generate CognitiveAgent subclasses. The self-mod pipeline already generates agents from descriptions — the importer just feeds structured descriptions from other frameworks
+- `probos import --from crewai agents.yaml` — CLI command that reads another framework's agent config and creates ProbOS equivalents
+- `probos import --from openfang` — import OpenFang Hands (HAND.toml → CognitiveAgent with mesh integration)
+- Migration guide + comparison docs: "Why ProbOS is better than X" with concrete architectural advantages (trust scoring, consensus governance, self-modification, Hebbian routing — none of which exist in CrewAI/AutoGPT/OpenFang)
+- **Pattern absorption** (HXI Design Principle #8): study OpenFang, Composio, LangGraph adapter patterns. Don't copy code — understand the migration pattern and implement it natively within ProbOS's mesh architecture
+- **Key differentiator:** migrated agents gain ProbOS superpowers automatically — trust scoring, consensus governance, episodic learning, Hebbian routing, self-modification. An agent that was static in CrewAI becomes adaptive in ProbOS
+- **** — share designed agents between ProbOS users. Git-backed via KnowledgeStore. Designed agents exported as manifest (source + metadata + SVG icon). `probos publish <agent_type>` and `probos install <agent_type>`. 
+
 ### Pre-Launch: Personalization + Security + Documentation
 **Goal:** Prepare ProbOS for public release with a personalized first-run experience and security hardening.
 - **First-run induction interview** — no tutorial. ProbOS asks: what to call the agent, preferred voice, interaction mode (typing/speaking/both), information density, color theme, first goal. Produces a `HumanCognitiveModel` stored in KnowledgeStore. The HXI renders into the human's configuration immediately
@@ -2850,7 +2886,11 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 - **Voice selection** — human picks from available voices. Tiered TTS applies (browser neural → Piper → ElevenLabs)
 - **Color theme** — warm/cool/custom accent. Shifts the entire HXI color palette via shader uniforms
 - **Information density** — brief/standard/detailed. Affects response length, panel depth, progressive disclosure defaults
-- Security: input sanitization on `/api/chat` (prompt injection defense), rate limiting, authentication for remote access, API access audit logging
+- Security: input sanitization on `/api/chat` (prompt injection defense), rate limiting per user/IP (GCRA-style token bucket), authentication for remote access, API access audit logging
+- **SSRF protection** — block private IPs, cloud metadata endpoints, and DNS rebinding in HttpFetchAgent. Currently the agent fetches any URL without restriction
+- **Prompt injection scanner** — detect override attempts, data exfiltration patterns in user input before passing to LLM
+- **** —  entries (each event cryptographically linked to previous). 
+- **Single-command deployment** — `pip install probos && probos init && probos serve` already works, but evaluate PyInstaller/Docker for true single-binary distribution. Competitive with OpenFang's `curl | sh` install
 - Documentation: `probos.dev` website, getting-started guide, API docs (auto-generated from FastAPI), architecture overview for contributors, agent development guide
 - README.md rewrite for open source (install instructions, screenshots/GIFs from HXI, contributing guide)
 - License: Apache 2.0 (all code including federation)
