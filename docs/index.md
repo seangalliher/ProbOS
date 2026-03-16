@@ -1,5 +1,7 @@
 # ProbOS
 
+> **Alpha** — ProbOS is under active development. APIs will change, features may break, and documentation may lag behind the code. Contributions and feedback welcome.
+
 **Probabilistic agent-native OS runtime** — an operating system kernel where every component is an autonomous agent, coordination happens through consensus, and the system learns from its own behavior.
 
 > *"What if an OS didn't execute instructions — it negotiated them?"*

@@ -26,11 +26,15 @@ uv run python -m probos
 uv run python demo.py
 ```
 
-## LLM Configuration
+## LLM Backend
 
-ProbOS connects to an OpenAI-compatible LLM endpoint at `http://127.0.0.1:8080/v1` (configurable in `config/system.yaml`).
+ProbOS connects to an OpenAI-compatible LLM endpoint (configurable in `config/system.yaml`). Three options:
 
-If the endpoint is unavailable, it falls back to a built-in `MockLLMClient` with regex pattern matching for deterministic operation without any external dependencies.
+| Option | Setup |
+|--------|-------|
+| **No LLM (default)** | Works out of the box — falls back to a built-in `MockLLMClient` with regex pattern matching. Good for exploring the architecture and running tests. |
+| **Ollama (local)** | Install [Ollama](https://ollama.com/), pull a model (`ollama pull qwen3.5:35b`), update `config/system.yaml` endpoints to `http://127.0.0.1:11434`. |
+| **OpenAI-compatible API** | Point `llm_base_url` in `config/system.yaml` to any OpenAI-compatible endpoint and set your API key. |
 
 !!! tip "No LLM required for testing"
     The mock client handles all standard operations, so you can explore ProbOS without setting up a local LLM. The full test suite (1605 tests) runs entirely on the mock client.
