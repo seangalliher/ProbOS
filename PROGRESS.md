@@ -2708,6 +2708,34 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 
 1590/1590 tests passing (+ 11 skipped). 12 new tests.
 
+### Phase 24a: Discord Bot Adapter (AD-274 through AD-278)
+
+**Problem:** ProbOS had no external channel integrations — users could only interact via CLI shell or HXI web UI. Phase 24 calls for channel adapters to bridge external messaging platforms.
+
+| AD | Decision |
+|----|----------|
+| AD-274 | `ChannelAdapter` ABC + `ChannelMessage` dataclass + shared `extract_response_text()` in `src/probos/channels/`. Reusable base for Discord, Slack, email, Teams |
+| AD-275 | `probos serve --discord` flag wires `DiscordAdapter` lifecycle into `_serve()`. Startup after app creation, shutdown before runtime.stop(). Token resolved from `PROBOS_DISCORD_TOKEN` env var or config |
+| AD-276 | `discord.py>=2.0` added as optional dependency in pyproject.toml. Commented channel config section added to system.yaml |
+| AD-277 | 14 tests in `test_channel_base.py`: response formatter (8), ChannelMessage (2), handle_message routing + history (4) |
+| AD-278 | 8 tests in `test_discord_adapter.py`: message chunking (4), adapter init (2), config parsing (2) |
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `src/probos/channels/__init__.py` | Package init, re-exports |
+| `src/probos/channels/base.py` | ChannelAdapter ABC, ChannelMessage, per-channel conversation history |
+| `src/probos/channels/response_formatter.py` | Shared `extract_response_text()` extracted from api.py |
+| `src/probos/channels/discord_adapter.py` | Full Discord bot: message routing, mention filtering, channel filtering, chunked replies |
+| `src/probos/config.py` | DiscordConfig + ChannelsConfig models |
+| `src/probos/api.py` | Refactored to use shared response formatter |
+| `src/probos/__main__.py` | `--discord` flag, adapter lifecycle in _serve() |
+| `pyproject.toml` | Optional `[discord]` dependency group |
+| `config/system.yaml` | Commented channels config section |
+
+1612/1612 tests passing (+ 11 skipped). 22 new tests.
+
 ---
 
 ## Active Roadmap — Product + Emergence Track
@@ -2873,19 +2901,6 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 ### Agent Packs + Competitive Migration — "Replace Your Stack"
 **Goal:** Pre-built agent packs for specific use cases + migration tools to absorb users from competing frameworks.
 
-**** — agents for running a solo/small company:
-- 
-- 
-- 
-- 
-- 
-- 
-- 
-- 
-- 
-- 
-- Each is a CognitiveAgent with OAuth connector (Phase 24 framework)
-
 **Personal Agent Packs:**
 - **Productivity Pack** — email, calendar, notes, todos, reminders (bundled agents already cover some)
 - **Research Pack** — web search, page reader, summarizer, citation tracker, topic monitoring
@@ -2902,7 +2917,7 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 - Migration guide + comparison docs: "Why ProbOS is better than X" with concrete architectural advantages (trust scoring, consensus governance, self-modification, Hebbian routing — none of which exist in CrewAI/AutoGPT/OpenFang)
 - **Pattern absorption** (HXI Design Principle #8): study OpenFang, Composio, LangGraph adapter patterns. Don't copy code — understand the migration pattern and implement it natively within ProbOS's mesh architecture
 - **Key differentiator:** migrated agents gain ProbOS superpowers automatically — trust scoring, consensus governance, episodic learning, Hebbian routing, self-modification. An agent that was static in CrewAI becomes adaptive in ProbOS
-- **** — share designed agents between ProbOS users. Git-backed via KnowledgeStore. Designed agents exported as manifest (source + metadata + SVG icon). `probos publish <agent_type>` and `probos install <agent_type>`. 
+- **Agent Sharing** — `probos publish <agent_type>` and `probos install <agent_type>` CLI commands. Agent export manifest format (source + metadata + SVG icon). Git-based sharing mechanism via KnowledgeStore
 
 ### Pre-Launch: Personalization + Security + Documentation
 **Goal:** Prepare ProbOS for public release with a personalized first-run experience and security hardening.
@@ -2914,7 +2929,6 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 - Security: input sanitization on `/api/chat` (prompt injection defense), rate limiting per user/IP (GCRA-style token bucket), authentication for remote access, API access audit logging
 - **SSRF protection** — block private IPs, cloud metadata endpoints, and DNS rebinding in HttpFetchAgent. Currently the agent fetches any URL without restriction
 - **Prompt injection scanner** — detect override attempts, data exfiltration patterns in user input before passing to LLM
-- **** —  entries (each event cryptographically linked to previous). 
 - **Single-command deployment** — `pip install probos && probos init && probos serve` already works, but evaluate PyInstaller/Docker for true single-binary distribution. Competitive with OpenFang's `curl | sh` install
 - Documentation: `probos.dev` website, getting-started guide, API docs (auto-generated from FastAPI), architecture overview for contributors, agent development guide
 - README.md rewrite for open source (install instructions, screenshots/GIFs from HXI, contributing guide)
@@ -2922,12 +2936,9 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 
 ### Future (post-Phase 29, unsequenced)
 - **HXI Spatial Experience Philosophy** — the HXI is not an app with pages. It's a single adaptive canvas that morphs to show whatever the human needs: mesh topology, agent forum, task queue, roster, discourse, goals. No navigation, no tabs, no "go to page X." The canvas presents what's relevant. Agent deliberations surface as visible conversations within the canvas. Task results emerge from the mesh. Goals appear as persistent structures. The human doesn't use the HXI — they inhabit it
-- **** —  the Noöplex. Agents are 3D entities you stand next to, observe, and interact with. Deliberations happen as spatial conversations you can join. The heartbeat pulses around you. Dream mode transforms the entire space. Federation means traversing between mesh volumes — walking from your local mesh into a connected peer's mesh. Think VRChat but with AI agents and human agents interacting together in a shared cognitive space. . This is the ultimate form of the HXI: you don't look at cognition — you're inside it
 - **Bundled Agent Quality Pass** — all 10 bundled agents must be excellent, not just functional. Users judge ProbOS by the bundled agents. Specific improvements: WeatherAgent should parse wttr.in 3-day forecast (not just current conditions), NewsAgent should support more sources and present headlines with links, WebSearchAgent should extract richer snippets from DuckDuckGo results, PageReaderAgent should handle JavaScript-rendered pages better, CalculatorAgent should handle unit conversions and currency with live rates, SchedulerAgent needs a background timer for due reminders, TodoAgent needs priority sorting and due date reminders, NoteTakerAgent needs tags and better search. Each agent should be tested with 20+ real-world queries and refined until the responses are consistently helpful
 - **Artifact Creation** — generate production-ready apps, websites, reports, spreadsheets, presentations, GIFs from natural language. Self-mod can design artifact-creation agents on demand
-- **** — responsive HXI that works on phones/tablets. . 
 - **Additional Tool Connectors** — Jira, Linear, Asana (project management), Dropbox/OneDrive (file storage), Spotify (media control), Home Assistant (smart home), custom webhook connectors. Each connector = a CognitiveAgent. Dev Squad builds these autonomously once it's operational
-- **** — community-designed agents shared publicly. Trust scores serve as quality ratings
 - **Container-based sandbox** — replace process-based SandboxRunner with container isolation (Docker/Podman) for self-mod agent testing. More secure at scale, prevents designed agents from accessing host resources. (Pattern ref: Daytona's secure sandboxing — implement natively with ProbOS consensus governing container lifecycle)
 - **Event-driven agent mesh** — extend the intent bus with pub/sub event streams so agents can react to system events without being explicitly dispatched. Agents subscribe to event patterns ("notify me when trust drops below 0.3 for any agent"). Enables proactive agent behavior without polling. (Pattern ref: Solace Agent Mesh's event-driven architecture — implement natively in ProbOS's existing intent bus + event log)
 - **Massive-scale agent simulation** — test ProbOS with 10K+ agents to validate federation and routing at scale. Synthetic agent populations for benchmarking TC_N, routing entropy, and emergence metrics. (Pattern ref: CAMEL-AI OASIS's million-agent simulation — adapt for ProbOS's trust/consensus architecture)
