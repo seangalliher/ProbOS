@@ -2819,6 +2819,8 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 - All changes go through consensus governance. Test suite is the QA gate. Git-backed audit trail
 - User approves/rejects proposals via existing `/approve` and `/reject` commands
 - Corrections (Phase 18b) train the squad on architectural preferences
+- **Codebase knowledge graph** — index ProbOS's own codebase into a graph (functions → call chains → dependencies → clusters). Dev Squad agents query the graph to understand impact before proposing changes. Prevents the class of bugs where changing one file breaks another (e.g., tooltip regression from animation changes). (Pattern ref: GitNexus — precomputed relational intelligence, impact analysis with blast radius + confidence scores, process tracing through call chains)
+- **Impact analysis before code changes** — ImpactAnalysisAgent runs blast radius analysis: "if I change `CognitiveAgent.decide()`, what else breaks?" Graph-powered, not file-search-based. Confidence-scored dependency chains
 - **GitHub Action mode** — ProbOS dev squad as a GitHub Action for CI/CD: automated PR review, test analysis, code quality suggestions, dependency auditing. All governed by consensus. (Pattern from Deep Agents GitHub Action — implemented as ProbOS agents operating through the mesh)
 - **Demo moment:** Describe a feature → squad proposes implementation → you review → approve → tests pass → merged
 
