@@ -563,6 +563,13 @@ def _cmd_reset(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    # Load .env file before anything reads env vars (AD-286)
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
     parser = argparse.ArgumentParser(
         description="ProbOS \u2014 Probabilistic Agent-Native OS",
     )

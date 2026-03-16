@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 27 complete — Phase 24 in progress (1590/1590 tests + 15 Vitest + 11 skipped)
+## Current Status: Phase 27 complete — Phase 24 in progress (1632/1632 tests + 15 Vitest + 11 skipped)
 
 ---
 
@@ -2745,7 +2745,7 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 | AD-279 | Fix key name mismatch in `_introspect_memory()`: reads `total_episodes` but `get_stats()` returns `total`. Same mismatch for `unique_intents` and `success_rate`. ProbOS always reports 0 episodes even when episodes are stored correctly |
 | AD-280 | Add `TrustNetwork.reconcile(active_agent_ids)` called after warm boot. Removes stale trust entries from previous sessions. Fixes 72-vs-43 agent count discrepancy in self-assessment. `TrustNetwork.remove()` was dead code — never called anywhere |
 
-**Status:** Build prompt ready at `prompts/phase-24b-self-assessment-fixes.md`
+**Status:** Complete — both bugs identified by ProbOS's own self-assessment via Discord. 9 new tests (4 introspect memory + 5 trust reconcile). Also fixed pre-existing bug where `_restore_from_knowledge()` used `create_with_prior()` (no-op if record exists) instead of force-setting alpha/beta on warm boot restore.
 
 ### Phase 24c: Lightweight Task Scheduler (AD-281 through AD-284)
 
@@ -2957,7 +2957,8 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 - **Color theme** — warm/cool/custom accent. Shifts the entire HXI color palette via shader uniforms
 - **Information density** — brief/standard/detailed. Affects response length, panel depth, progressive disclosure defaults
 - Security: input sanitization on `/api/chat` (prompt injection defense), rate limiting per user/IP (GCRA-style token bucket), authentication for remote access, API access audit logging
-- **SSRF protection** — block private IPs, cloud metadata endpoints, and DNS rebinding in HttpFetchAgent. Currently the agent fetches any URL without restriction
+- ✅ **SSRF protection** (AD-285) — `_validate_url()` in HttpFetchAgent blocks private IPs (10/172.16/192.168/127), cloud metadata (169.254.169.254), link-local, file:// scheme, and DNS rebinding attacks. 8 tests
+- ✅ **.env file support** (AD-286) — `python-dotenv` loads `.env` from cwd at startup. `.env.example` documents available vars (`PROBOS_DISCORD_TOKEN`, `PROBOS_LLM_API_KEY`). Import-guarded so it degrades gracefully. 3 tests
 - **Prompt injection scanner** — detect override attempts, data exfiltration patterns in user input before passing to LLM
 - **Safe mode** — a config profile (`safe_mode: true`) that restricts ProbOS for untrusted multi-user environments (public Discord, demos, streaming). Disables: shell commands, file writes, self-mod, HTTP fetch to non-allowlisted domains. Enables: conversation, introspection, bundled read-only agents (weather, news, calculator), HXI canvas. Per-user rate limiting (GCRA token bucket) to prevent abuse. File reads restricted to a demo directory. Safe mode is enforced at the config level — capability descriptors and consensus gates already exist, this just sets restrictive defaults
 - **Docker deployment** — `Dockerfile` + `docker-compose.yml` for containerized ProbOS. Single command: `docker compose up`. Includes safe mode preset for public-facing instances. Enables cloud VM deployment (Azure, AWS) without host filesystem exposure
