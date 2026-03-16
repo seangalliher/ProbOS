@@ -15,7 +15,6 @@ You have two modes depending on what's asked:
 This file contains **durable architectural knowledge** that changes rarely. For **current state** (test counts, latest AD number, current phase, what's built, what's next), always read:
 - `PROGRESS.md` -- the living source of truth, updated every build session
 - `Vibes/Nooplex_Final.md` -- the theoretical foundation (stable)
-- `Vibes/ProbOS Vision.md` -- strategic direction: prioritized roadmap, design lessons learned, current limitations, and governance axioms (read in Architect mode)
 
 ---
 
@@ -49,8 +48,8 @@ When reviewing PROGRESS.md or evaluating changes, check for:
 - **Test coverage**: Check the test count in `PROGRESS.md` line 2. New features need tests. Flag untested code paths.
 - **Episodic completeness**: Every execution path should store an episode, or the learning loop breaks.
 - **Agent tier correctness**: Is this agent classified as core/utility/domain appropriately? Domain agents should not have direct access to internal system state. Utility agents operate on the system, not for the user.
-- **Governance axioms**: Evaluate against the three axioms in `Vibes/ProbOS Vision.md` — Safety Budget (risk-proportional consensus), Reversibility Preference (prefer reversible strategies), Minimal Authority (scoped capabilities, earned trust).
-- **Nooplex alignment**: Check `docs/nooplex-alignment-tracker.md` — does this change close a gap, maintain alignment, or introduce a regression against the Nooplex paper? Update the tracker when shipping new features.
+- **Governance axioms**: Evaluate against the three axioms — Safety Budget (risk-proportional consensus), Reversibility Preference (prefer reversible strategies), Minimal Authority (scoped capabilities, earned trust).
+- **Nooplex alignment**: Does this change close a gap, maintain alignment, or introduce a regression against the Nooplex paper (`Vibes/Nooplex_Final.md`)?
 
 ### Common Review Flags
 
@@ -89,7 +88,7 @@ Before proposing ANY new AD, read PROGRESS.md and find the actual highest AD num
 When asked about project direction, evaluate:
 - The roadmap items in PROGRESS.md (look for "Roadmap" or "What's Next" sections).
 - Architectural gaps relative to the Nooplex paper (`Vibes/Nooplex_Final.md`).
-- The three governance axioms in `Vibes/ProbOS Vision.md` (Safety Budget, Reversibility Preference, Minimal Authority) -- does the proposed work respect or advance these?
+- The three governance axioms (Safety Budget, Reversibility Preference, Minimal Authority) -- does the proposed work respect or advance these?
 - Competitive positioning vs projects like OpenClaw, AutoGPT, CrewAI.
 - Open-source readiness (what needs cleanup before public release).
 
@@ -224,7 +223,6 @@ Core pools (stable):
 | `src/probos/knowledge/store.py` | Git-backed artifact persistence. |
 | `PROGRESS.md` | Comprehensive status tracker. Source of truth. |
 | `Vibes/Nooplex_Final.md` | The Nooplex paper (theoretical foundation). |
-| `Vibes/ProbOS Vision.md` | Strategic direction, governance axioms, design lessons. |
 | `config/system.yaml` | System configuration. |
 
 ### AD (Architecture Decision) Numbering — Hard Rule

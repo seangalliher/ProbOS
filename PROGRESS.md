@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 23 — HXI MVP "See Your AI Thinking" (1587/1587 tests + 11 skipped)
+## Current Status: Phase 27 complete — Phase 24 in progress (1590/1590 tests + 15 Vitest + 11 skipped)
 
 ---
 
@@ -2753,7 +2753,7 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
   - GitHub connector (issues, PRs, repo status — via existing git CLI or GitHub API)
   - Extensible pattern: each connector is a CognitiveAgent with tool-specific intents
   - **Pluggable auth/OAuth abstraction** — handle OAuth2 flows, API key management, and token refresh generically. Each connector declares its auth requirements; the framework handles the flow. (Pattern ref: Composio's auth management — implement natively in ProbOS with KnowledgeStore-backed credential storage)
-- **Data Platform Connectors** — ProbOS doesn't store the world's data; it stores how to access, interpret, and act on it (The Brain Principle). Pluggable data connector agents that operate on data WHERE IT LIVES:
+- **Data Platform Connectors** — ProbOS is the agentic intelligence layer that sits ON TOP of data platforms, not a data platform itself. It doesn't replicate what Fabric, Snowflake, or BigQuery do — it provides the AI reasoning, governance, and learning that operates on data WHERE IT LIVES. Pluggable data connector agents are the bridge:
   - SQL databases (PostgreSQL, MySQL, SQL Server, Oracle)
   - Cloud data warehouses (Snowflake, BigQuery, Databricks, Redshift)
   - Microsoft Fabric (Lakehouse, Warehouse, KQL)
@@ -2762,6 +2762,7 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
   - File stores (S3, Azure Blob, GCS)
   - Streaming (Kafka, Event Hubs, Kinesis)
   - Each data connector is a CognitiveAgent: knows the schema, can query/transform/write, goes through consensus for writes, builds trust through successful operations. The semantic knowledge layer indexes available data sources
+  - The Workspace Ontology (Phase 28) provides the provider-agnostic abstraction — ProbOS agents reason about typed objects (customers, orders, metrics) regardless of whether they live in Fabric, Snowflake, or a local CSV. The Ontology decouples intelligence from infrastructure
   - **Dev Squad builds data connectors autonomously** — once Phase 27 ships, the squad designs connector agents for each new data platform on demand
 - Channel → IntentBus bridge pattern reusable for future channels
 - Server-side TTS via tiered approach: (1) try browser neural voices first (Edge Azure Neural, Chrome on Mac/Android), (2) fall back to Piper TTS (free, local, neural) via `/api/tts`, (3) optional ElevenLabs/OpenAI TTS premium. Cross-platform
@@ -2830,28 +2831,44 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 - Dream cycle abstraction phase — extract patterns from episode clusters ("info gathering before mutation succeeds 90%")
 - Abstraction store in KnowledgeStore, injected into decomposer planning context
 - Meta-learning: design success/failure tracking feeds back into AgentDesigner. The 10th agent is better than the 1st
-- **Structured memory categorization** — extend episodic memory with typed categories: facts (persistent knowledge), preferences (human-specific learned behaviors), procedures (how to do things), abstractions (learned principles). Each category has different confidence decay rates and recall priority. (Pattern ref: mem0's memory categorization — implement natively in ProbOS's ChromaDB collections with per-type metadata)
+- **Structured memory categorization** — extend episodic memory with typed categories: facts (persistent knowledge), preferences (human-specific learned behaviors), procedures (how to do things), abstractions (learned principles). Each category has different confidence decay rates and recall priority. These categories become first-class types in the Workspace Ontology — episodes are ontology objects with typed relationships to the agents, intents, and entities that produced them. Knowledge confidence decay (§7.6) is implemented per category: facts decay slowly, preferences moderately, procedures rarely, abstractions never (they're validated principles). (Pattern ref: mem0's memory categorization — implement natively in ProbOS's Ontology + ChromaDB collections with per-type metadata)
 - **Session Context Frame** — persistent per-session cognitive model tracking inferred state: geographic context ("we're talking about Colorado"), topical context ("we're talking about weather"), temporal context ("current/real-time"), entities mentioned, inferred user location. The frame persists across the session and biases all decomposition. When "Evergreen" follows "Denver, CO," the frame provides geographic_context: Colorado without the user specifying it. This is the foundation of the Human Cognitive Model — the system understanding what the conversation IMPLIES, not just what was said. The frame is maintained in working memory, updated after each query, and injected into the decomposer prompt alongside conversation history
 - **Agent evolution quality tracking** — systematic comparison of designed agent versions: v1 vs v2 success rates, trust trajectories, failure patterns. Dream cycle identifies which design patterns produce the most reliable agents. (Pattern ref: EvoAgentX's self-evolving ecosystem — implement natively with ProbOS's BehavioralMonitor + QA pipeline + episodic history)
 - Cross-domain strategy transfer: dream cycle identifies structurally similar successful episodes across different agent pools, propagates domain-general strategies as abstractions tagged with applicable domains
 - GoalManager: persistent goals stored in KnowledgeStore (Git-backed, survives restart), progress tracking across sessions, decomposer plans in context of active goals
-- Formal Policy Engine — `policies.yaml` with declarative governance rules enforced at runtime
+- Formal Policy Engine — `policies.yaml` with declarative governance rules enforced at runtime. Policies reference Ontology types ("all writes to customer objects require consensus"). Part of the Nooplex Governance & Alignment Layer (§4.3)
 - **Shadow deployment for model updates** — when switching LLM models (e.g., Sonnet 4 → Sonnet 5, or Ollama model update), deploy the new model alongside the existing one in shadow mode. Compare outputs for a defined evaluation period. Detect regressions before cutover. Rollback if quality drops. (Nooplex §7.10 — agent versioning + model update protocol)
 - **Multi-provider LLM diversity** — maintain agents backed by models from at least two independent providers per mesh. Ensures deprecation of any single model doesn't break the system. Per-tier provider fallback: if fast tier (Sonnet) is unreachable, fall back to standard tier (local Qwen) automatically. (Nooplex §7.10 — model provider lock-in mitigation)
-- **Demo moment:** HXI shows dream cycle extracting a concept. A strategy learned in one domain improves planning in another. Multi-session goals show progress across restarts.
+- **Workspace Ontology + Schema Registry** — implements the Nooplex's **Semantic Schemas Phi** (§3.1) and lays the single-mesh foundation for the **Global Knowledge Fabric Gamma = \<O, S, F\>** (§3.2). Two sub-components:
+  - **Unified Ontology (O)** — typed semantic object graph defining "top-level categories, relationships, and constraints" (§4.3.1). Objects are semantically typed (customers, files, events, metrics, agents themselves) with named relationships. The paper specifies this as "a living, evolving framework that grows as new domains are integrated and new relationships are discovered" (§4.3.1) — ProbOS implements this by growing the Ontology from agent interactions, connector registrations, and dream cycle discovery. Agents "commit to shared ontological frameworks when reading from or writing to the shared memory fabric" (§3.1) — every agent's observations and assertions flow through the Ontology's type system. The Ontology unifies ProbOS's fragmented knowledge stores (ChromaDB vectors, SQLite events, Hebbian weights, KnowledgeStore artifacts, episodic memory) under a single queryable semantic model
+  - **Schema Registry (S)** — "formal definitions of all data structures, message formats, and knowledge representations... supports versioning, backwards compatibility, and schema evolution" (§4.3.1). Each data connector (Phase 24) registers its object types into the registry. IntentDescriptors evolve into schema-aware contracts. Object type definitions are versioned — the Ontology Versioning protocol (§4.3.1: impact analysis → deprecation → automated migration → cutover) is implemented progressively, starting with simple version numbers and evolving toward the full 4-step protocol at federation scale
+  - **Embedding Alignment Functions (F)** — deferred to Phase 29. Single-mesh ProbOS uses one embedding space; alignment functions become necessary when federating meshes with different vector stores (§3.2)
+  - **Provider-agnostic by design** — critically, the Ontology decouples ProbOS from any data platform. A "customer" object has the same type and relationships whether its data lives in Microsoft Fabric, Snowflake, a local CSV, or a REST API. Data platform connectors (Phase 24) hydrate Ontology objects from external sources; ProbOS agents reason about typed objects without knowing or caring about the underlying provider. This **exceeds** the Nooplex paper, which assumes self-contained meshes — ProbOS's Ontology is explicitly designed to sit atop heterogeneous external data estates. For personal use: unifies files, notes, todos, contacts, and learned patterns. For enterprise: provides the semantic interop layer that lets one mesh work on Fabric today and BigQuery tomorrow
+  - **Adaptive Ontologies** (§9.3 future research) — dream cycle discovers new object types from episodic interaction patterns. "Ontologies that evolve autonomously in response to new domains" — ProbOS implements this through the learning loop: agents encounter new entity patterns → dream cycle clusters them → proposes new types → human approves → Ontology grows. Ontological Pluralism (§9.4): multiple data connectors may have different schemas for the same real-world concept; the Ontology maps rather than forces unification, respecting "cognitive sovereignty" (§9.4)
+  - No competing agent framework (OpenFang, CrewAI, AutoGPT) has a typed ontology — this is a unique differentiator. (Pattern refs: Nooplex §3.1, §3.2, §4.3.1, §9.3, §9.4; Palantir Foundry Ontology — reimagined for an agent-native, provider-agnostic runtime)
+- **Demo moment:** HXI shows dream cycle extracting a concept. A strategy learned in one domain improves planning in another. Multi-session goals show progress across restarts. Ontology view shows typed objects flowing through the mesh — a "customer" hydrated from Snowflake triggers an email via Gmail, all mediated by consensus. Schema Registry shows registered types from each connected data platform. Dream cycle proposes a new object type discovered from repeated interaction patterns.
 
 ### Phase 29: Federation + Emergence Testing — "The Noöplex Emerges"
-**Goal:** Multiple ProbOS nodes share knowledge and produce measurable emergent intelligence.
+**Goal:** Multiple ProbOS nodes share knowledge and produce measurable emergent intelligence. This phase implements the **Nooplex Core Fabric** (§4.3) — transforming independent meshes into a unified cognitive ecosystem.
 - Knowledge federation via Git remotes — designed agents, skills, episodes shared between nodes
 - Trust transitivity: `T(A→C) = T(A→B) · T(B→C) · δ`
+- **Global Knowledge Fabric (Gamma)** (§3.2, §4.3.1) — the cross-mesh knowledge integration layer. Phase 28's Workspace Ontology becomes the **Unified Ontology (O)** shared across federated nodes. The Schema Registry (S) ensures meshes produce and consume data according to globally registered schemas. New sub-components:
+  - **Embedding Alignment Functions (F)** — learned mappings between different meshes' vector spaces (§3.2, §4.3.1). "Projects between the embedding spaces of different meshes" enabling "semantic similarity queries that span mesh boundaries." Federated meshes may use different embedding models; alignment functions translate without forcing a single shared embedding. Implemented as trained linear projections O(d_i * d_j) per vector
+  - **Multi-mesh Knowledge Graph** — "captures cross-domain relationships, inter-mesh dependencies, and emergent patterns visible only at the system level" (§4.3.2). Constructed through automated link discovery, cross-mesh inference, and human-contributed annotations
+  - **Cross-domain Entity Resolution** — κ : K_i × K_j → K_ij linking knowledge graphs through "entity resolution and relationship discovery" (§3.2). When mesh A's "customer" and mesh B's "client" refer to the same concept, the entity resolver detects and links them
+  - **Ontology Versioning Protocol** — full 4-step protocol from §4.3.1: (i) impact analysis — identify all meshes referencing affected categories, (ii) deprecation period, (iii) automated migration agents re-classify entries, (iv) cutover and validation. "Human approval required for all breaking changes to the top three levels of the ontological hierarchy"
+  - **Semantic Update Propagation** — "as the unified ontology evolves, semantic updates propagate throughout the system... versioned and backwards-compatible" (§5.3). Meshes "adapt their local schemas accordingly"
 - Semantic knowledge layer indexes federated knowledge with `source_node` metadata
 - Channel integration enables multi-user federation (each user runs their own node)
 - **Domain-specific meshes** — separate cognitive meshes per knowledge domain (finance, legal, health, etc.) with cross-mesh query routing and semantic alignment. Single-mesh is correct for personal use; domain separation enables organizational scale. (Nooplex §7.2 — scaling to multi-mesh systems)
 - **Federated query routing** — decompose cross-domain queries, dispatch to relevant meshes, aggregate results. Handle latency differences and partial results. (Nooplex §7.2 — memory federation)
+- **Semantic Coherence monitoring** — "across all meshes and all layers, the Nooplex maintains semantic consistency through shared ontologies, aligned embedding spaces, and schema registries" (§3.3). Detect and flag semantic drift — "gradual divergence in the meanings assigned to shared concepts across different meshes" (§9.2) — through automated alignment regression tests (§7.7)
+- **Knowledge Graph Import** — existing knowledge graphs (RDF, property graph, or custom formats) can be imported through "schema mapping tools that align the existing ontology with the Nooplex's ontological framework" (§7.9). Mapping identifies: (a) direct matches to global ontology, (b) domain-specific extensions, (c) structural incompatibilities requiring human resolution
 - TC_N measurement across federated nodes with statistical significance
 - Benchmarking framework: standardized task suite, before/after comparison, regression detection. Validates emergence claims with statistical rigor (Noöplex §8.5, §8.6)
+- **Ablation testing** — systematically remove capabilities to measure contribution: "without semantic alignment" measures cross-domain generalization loss, "without learning" measures static vs adaptive performance (§8.3)
 - `probos cluster --nodes N` — one command spawns N federated nodes as child processes on one machine
-- **Demo moment:** `probos cluster --nodes 3` — three cognitive meshes connect, share knowledge, TC_N rises.
+- **Demo moment:** `probos cluster --nodes 3` — three cognitive meshes connect, share knowledge via the Global Knowledge Fabric. A finance mesh's "supplier" entity links to a regulatory mesh's "compliance" entity through cross-domain entity resolution. TC_N rises. Ablation proves each capability's contribution.
 
 ### Agent Packs + Competitive Migration — "Replace Your Stack"
 **Goal:** Pre-built agent packs for specific use cases + migration tools to absorb users from competing frameworks.
@@ -2868,9 +2885,8 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 - 
 - 
 - Each is a CognitiveAgent with OAuth connector (Phase 24 framework)
-- **Dogfooding:** ProbOS runs Nooplex LLC — every agent is battle-tested on the founder's own company
 
-**Personal Agent Packs** — competing with OpenClaw, Rabbit R1, Perplexity:
+**Personal Agent Packs:**
 - **Productivity Pack** — email, calendar, notes, todos, reminders (bundled agents already cover some)
 - **Research Pack** — web search, page reader, summarizer, citation tracker, topic monitoring
 - **Creative Pack** — writing assistant, image prompt generator, brainstorming partner, content scheduler
@@ -2903,25 +2919,6 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 - Documentation: `probos.dev` website, getting-started guide, API docs (auto-generated from FastAPI), architecture overview for contributors, agent development guide
 - README.md rewrite for open source (install instructions, screenshots/GIFs from HXI, contributing guide)
 - License: Apache 2.0 (all code including federation)
-- **Repo separation** — split into public `probos` (Apache 2.0) and private `probos-enterprise` before public launch:
-  - Public repo: full runtime, all agents, 2D HXI, federation (open mode), all learning systems, CLI, API
-  - Private repo: RBAC, SSO, admin dashboard, private federation key management, compliance extensions, enterprise HXI views
-  - Move business plan, pricing docs, sales materials to private repo
-  - Verify no proprietary code or business-sensitive documents in public repo
-  - Architecture: enterprise package imports from open source core (overlay, not fork)
-
-### Post-Launch: ProbOS Enterprise — Private Noöplex
-**Goal:** Enable companies to deploy private cognitive meshes with enterprise governance, sold as a commercial product.
-- **Private Federation** — nodes only connect within the company's mesh, no public federation. Air-gapped option for classified environments. Same federation protocol (ZeroMQ), different discovery/routing config
-- **Multi-user RBAC** — different employees access different nodes with different permissions. Role-based: admin, operator, viewer
-- **Centralized admin dashboard** — IT manages all nodes from one HXI view: provision, monitor, update, revoke. Node health, cross-node TC_N, global agent inventory
-- **Cross-node governance** — policies propagate across the corporate federation. Data classification rules, compliance constraints, access controls. Same Formal Policy Engine (Phase 28), applied across nodes
-- **SSO integration** — Active Directory, Okta, Azure AD. Employees authenticate with corporate credentials
-- **Audit trail** — every cross-node knowledge transfer logged with full provenance: who, what, when, why, which nodes. SOC2-compatible event logging
-- **Data sovereignty** — configurable per-node data boundaries: which knowledge can flow to which nodes. "HR data stays on the HR node" as an enforceable policy
-- **Architecture:** same open source ProbOS core + an enterprise overlay package (`probos-enterprise`) containing: RBAC middleware, SSO adapters, admin dashboard, audit extensions, private federation config, compliance reporting. The overlay imports from the open source core — it doesn't fork it
-- **Pricing tiers:** Team (5 nodes, $2K/mo), Department (20 nodes, $8K/mo), Enterprise (100+ nodes, custom)
-- **Demo moment:** "Your engineering team's agents discovered a cost optimization by correlating code deployment patterns from Engineering Node with cloud spend data from Finance Node. Neither team asked for this — the corporate Noöplex found it through federation."
 
 ### Future (post-Phase 29, unsequenced)
 - **HXI Spatial Experience Philosophy** — the HXI is not an app with pages. It's a single adaptive canvas that morphs to show whatever the human needs: mesh topology, agent forum, task queue, roster, discourse, goals. No navigation, no tabs, no "go to page X." The canvas presents what's relevant. Agent deliberations surface as visible conversations within the canvas. Task results emerge from the mesh. Goals appear as persistent structures. The human doesn't use the HXI — they inhabit it
@@ -2930,7 +2927,7 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 - **Artifact Creation** — generate production-ready apps, websites, reports, spreadsheets, presentations, GIFs from natural language. Self-mod can design artifact-creation agents on demand
 - **** — responsive HXI that works on phones/tablets. . 
 - **Additional Tool Connectors** — Jira, Linear, Asana (project management), Dropbox/OneDrive (file storage), Spotify (media control), Home Assistant (smart home), custom webhook connectors. Each connector = a CognitiveAgent. Dev Squad builds these autonomously once it's operational
-- **** — community-designed agents shared publicly. Trust scores serve as ratings. Revenue share on premium agents
+- **** — community-designed agents shared publicly. Trust scores serve as quality ratings
 - **Container-based sandbox** — replace process-based SandboxRunner with container isolation (Docker/Podman) for self-mod agent testing. More secure at scale, prevents designed agents from accessing host resources. (Pattern ref: Daytona's secure sandboxing — implement natively with ProbOS consensus governing container lifecycle)
 - **Event-driven agent mesh** — extend the intent bus with pub/sub event streams so agents can react to system events without being explicitly dispatched. Agents subscribe to event patterns ("notify me when trust drops below 0.3 for any agent"). Enables proactive agent behavior without polling. (Pattern ref: Solace Agent Mesh's event-driven architecture — implement natively in ProbOS's existing intent bus + event log)
 - **Massive-scale agent simulation** — test ProbOS with 10K+ agents to validate federation and routing at scale. Synthetic agent populations for benchmarking TC_N, routing entropy, and emergence metrics. (Pattern ref: CAMEL-AI OASIS's million-agent simulation — adapt for ProbOS's trust/consensus architecture)

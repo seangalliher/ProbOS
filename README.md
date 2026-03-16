@@ -9,7 +9,7 @@
 ProbOS reimagines the OS as a mesh of probabilistic agents rather than deterministic processes. Instead of syscalls, you speak natural language. Instead of a scheduler, agents self-organize through Hebbian learning and trust networks. Instead of permissions, destructive operations require multi-agent consensus.
 
 ```
-[24 agents | health: 0.95] probos> read pyproject.toml and tell me about this project
+[47 agents | health: 0.95] probos> read pyproject.toml and tell me about this project
 
   ✓ t1: read_file
 
@@ -80,7 +80,7 @@ A Rich-powered interactive shell with 16 slash commands, real-time DAG execution
 
 ## Agents
 
-ProbOS boots with 24 agents across 8 pools (+ 2 red team verifiers):
+ProbOS boots with 47 agents across 20+ pools (+ 2 red team verifiers):
 
 | Pool | Agents | Capabilities | Consensus |
 |------|--------|-------------|-----------|
@@ -106,7 +106,7 @@ git clone https://github.com/seangalliher/ProbOS.git
 cd ProbOS
 uv sync
 
-# Run tests (477 tests)
+# Run tests (1590 Python + 15 Vitest = 1605 total)
 uv run pytest tests/ -v
 
 # Launch interactive shell
@@ -227,10 +227,11 @@ src/probos/
 
 ## Tests
 
-477 tests covering every layer:
+1605 tests covering every layer (1590 Python + 15 Vitest):
 
 ```bash
-uv run pytest tests/ -v
+uv run pytest tests/ -v          # Python tests
+cd ui && npx vitest run           # UI tests
 ```
 
 | Layer | Tests |
@@ -265,7 +266,7 @@ uv run pytest tests/ -v
 
 ## Development Status
 
-**Phase 6b complete — 477/477 tests passing.**
+**Phase 27 complete — 1605 tests passing.**
 
 | Phase | Description | Status |
 |-------|-------------|--------|
@@ -303,4 +304,4 @@ Dev: pytest >=8.0, pytest-asyncio >=0.23
 
 ## License
 
-Not yet specified.
+Apache License 2.0. See [LICENSE](LICENSE).

@@ -1,10 +1,43 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 .venv/
+venv/
 .pytest_cache/
 *.egg-info/
 dist/
 build/
+*.egg
+
+# Data / artifacts
 data/
 *.db
+*.sqlite3
+MagicMock/
+
+# Environment
+.env
+.env.*
+.env.local
+
+# Node / UI
+node_modules/
+ui/dist/
+ui/coverage/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
