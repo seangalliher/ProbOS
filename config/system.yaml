@@ -219,5 +219,6 @@ bundled_agents:
 #     enabled: false
 #     token: ""                     # Set via PROBOS_DISCORD_TOKEN env var
 #     allowed_channel_ids: []       # Empty = all channels
+#     allowed_user_ids: []          # Empty = all users (SECURITY RISK — set your Discord user ID)
 #     command_prefix: "!"           # "!status" -> "/status"
 #     mention_required: false       # Only respond when @mentioned

@@ -251,6 +251,7 @@ class DiscordConfig(BaseModel):
     enabled: bool = False
     token: str = ""                          # Bot token (prefer env var PROBOS_DISCORD_TOKEN)
     allowed_channel_ids: list[int] = []      # Empty = respond in all channels
+    allowed_user_ids: list[int] = []         # Empty = respond to all users (SECURITY RISK)
     command_prefix: str = "!"                # "!status" -> "/status"
     mention_required: bool = False           # Only respond when @mentioned
 

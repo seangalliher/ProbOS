@@ -163,6 +163,14 @@ class DiscordAdapter(ChannelAdapter):
             ):
                 return
 
+            # User filter — only respond to allowed users
+            if (
+                self.discord_config.allowed_user_ids
+                and message.author.id
+                not in self.discord_config.allowed_user_ids
+            ):
+                return
+
             text = message.content.strip()
 
             # Mention-required mode
