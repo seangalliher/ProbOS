@@ -2959,7 +2959,8 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 - Security: input sanitization on `/api/chat` (prompt injection defense), rate limiting per user/IP (GCRA-style token bucket), authentication for remote access, API access audit logging
 - **SSRF protection** — block private IPs, cloud metadata endpoints, and DNS rebinding in HttpFetchAgent. Currently the agent fetches any URL without restriction
 - **Prompt injection scanner** — detect override attempts, data exfiltration patterns in user input before passing to LLM
-- **Single-command deployment** — `pip install probos && probos init && probos serve` already works, but evaluate PyInstaller/Docker for true single-binary distribution. Competitive with OpenFang's `curl | sh` install
+- **Safe mode** — a config profile (`safe_mode: true`) that restricts ProbOS for untrusted multi-user environments (public Discord, demos, streaming). Disables: shell commands, file writes, self-mod, HTTP fetch to non-allowlisted domains. Enables: conversation, introspection, bundled read-only agents (weather, news, calculator), HXI canvas. Per-user rate limiting (GCRA token bucket) to prevent abuse. File reads restricted to a demo directory. Safe mode is enforced at the config level — capability descriptors and consensus gates already exist, this just sets restrictive defaults
+- **Docker deployment** — `Dockerfile` + `docker-compose.yml` for containerized ProbOS. Single command: `docker compose up`. Includes safe mode preset for public-facing instances. Enables cloud VM deployment (Azure, AWS) without host filesystem exposure
 - Documentation: `probos.dev` website, getting-started guide, API docs (auto-generated from FastAPI), architecture overview for contributors, agent development guide
 - README.md rewrite for open source (install instructions, screenshots/GIFs from HXI, contributing guide)
 - License: Apache 2.0 (all code including federation)
