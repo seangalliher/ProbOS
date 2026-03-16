@@ -2882,19 +2882,6 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 - **GitHub Action mode** — ProbOS dev squad as a GitHub Action for CI/CD: automated PR review, test analysis, code quality suggestions, dependency auditing. All governed by consensus. (Pattern from Deep Agents GitHub Action — implemented as ProbOS agents operating through the mesh)
 - **Demo moment:** Describe a feature → squad proposes implementation → you review → approve → tests pass → merged
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 ### Phase 28: Abstract Representation + Meta-Learning + Long-Horizon Planning — "An AI That Learns Concepts"
 **Goal:** The system learns principles from experience, gets better at improving itself, transfers strategies across domains, and pursues goals that span multiple sessions.
 - **Recursive DAG decomposition** — when a DAG node's output exceeds working memory budget, trigger automatic sub-decomposition instead of truncating. The decomposer recursively breaks oversized sub-tasks into further DAG levels, producing a recursive execution tree. Enables arbitrarily complex multi-step tasks without hitting context limits. Governance applies at every level — consensus governs sub-DAGs the same as top-level DAGs. (Inspired by RLM framework — Zhang, Kraska, Khattab 2025 — which enables LLMs to process inputs 100x beyond context windows via recursive self-invocation)
