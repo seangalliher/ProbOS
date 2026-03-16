@@ -27,9 +27,10 @@ node_modules/
 ui/dist/
 ui/coverage/
 
-# IDE
+# IDE / Workspace
 .idea/
 .vscode/
+*.code-workspace
 *.swp
 *.swo
 *~

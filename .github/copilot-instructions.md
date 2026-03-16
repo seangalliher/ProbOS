@@ -92,6 +92,18 @@ When asked about project direction, evaluate:
 - Competitive positioning vs projects like OpenClaw, AutoGPT, CrewAI.
 - Open-source readiness (what needs cleanup before public release).
 
+## Repository Boundary — OSS vs Commercial
+
+This is the **public open-source repo** (Apache 2.0). A separate private repo (`probos-commercial`) holds enterprise strategy, pricing, and competitive intelligence.
+
+**Boundary rule:**
+- **How the product works** → this repo
+- **How the product makes money** → commercial repo
+- **Enterprise-only features** (RBAC, SSO, admin dashboard) → commercial repo
+- **Extension points** that enable enterprise features → this repo (the plumbing is public)
+
+**Never add to this repo:** pricing, revenue projections, competitive analysis tables, "Great Artists Steal" patterns, enterprise tier specs, demo scripts with sales positioning, business strategy.
+
 ---
 
 ## ProbOS Architecture Reference
