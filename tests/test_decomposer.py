@@ -633,3 +633,53 @@ class TestReflectHardeningExtended:
         assert isinstance(reflection, str)
         assert len(reflection) > 0
         assert "agent results" in reflection.lower()
+
+
+class TestConversationContext:
+    @pytest.fixture
+    def llm(self):
+        return MockLLMClient()
+
+    @pytest.fixture
+    def wm(self):
+        return WorkingMemoryManager()
+
+    @pytest.fixture
+    def decomposer(self, llm, wm):
+        return IntentDecomposer(llm_client=llm, working_memory=wm)
+
+    @pytest.mark.asyncio
+    async def test_conversation_context_in_prompt(self, decomposer, llm):
+        """Conversation history should appear in the LLM prompt."""
+        history = [
+            ("user", "What is the weather in Seattle?"),
+            ("system", "The weather in Seattle is 72F, partly cloudy."),
+        ]
+        await decomposer.decompose(
+            "What about Portland?",
+            conversation_history=history,
+        )
+        prompt = llm._call_log[-1].prompt
+        assert "CONVERSATION CONTEXT" in prompt
+        assert "User: What is the weather in Seattle?" in prompt
+        assert "ProbOS: The weather in Seattle is 72F, partly cloudy." in prompt
+        assert "What about Portland?" in prompt
+
+    @pytest.mark.asyncio
+    async def test_conversation_context_truncation(self, decomposer, llm):
+        """Long messages in conversation history should be truncated to 200 chars."""
+        long_message = "A" * 300
+        history = [("system", long_message)]
+        await decomposer.decompose("summarize", conversation_history=history)
+        prompt = llm._call_log[-1].prompt
+        # Should contain truncated version (200 chars + "...")
+        assert "A" * 200 + "..." in prompt
+        assert "A" * 300 not in prompt
+
+    @pytest.mark.asyncio
+    async def test_conversation_context_optional(self, decomposer, llm):
+        """Decompose without conversation_history still works (backward compat)."""
+        dag = await decomposer.decompose("read the file at /tmp/test.txt")
+        assert dag is not None
+        prompt = llm._call_log[-1].prompt
+        assert "CONVERSATION CONTEXT" not in prompt

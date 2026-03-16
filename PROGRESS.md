@@ -2683,6 +2683,25 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 
 1575/1575 tests passing (+ 11 skipped). 7 new tests.
 
+### AD-273: Conversation Context for Decomposer
+
+**Problem:** Each message was stateless — the decomposer couldn't resolve references like "What about Portland?" after a Seattle weather query. The system felt "born 5 minutes ago" every time.
+
+| AD | Decision |
+|----|----------|
+| AD-273 | HXI sends last 10 chat messages as `history` in ChatRequest. Runtime passes to decomposer as `conversation_history`. Decomposer injects last 5 messages (truncated to 200 chars) as CONVERSATION CONTEXT section in LLM prompt. LLM resolves references naturally. Optional parameter — backward compatible with shell/tests |
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `src/probos/api.py` | ChatMessage model, history field on ChatRequest, passed to process_natural_language() |
+| `src/probos/runtime.py` | conversation_history parameter on process_natural_language(), passed to decomposer |
+| `src/probos/cognitive/decomposer.py` | conversation_history parameter on decompose(), CONVERSATION CONTEXT prompt section |
+| `ui/src/components/IntentSurface.tsx` | Sends last 10 messages as history in /api/chat request |
+
+1578/1578 tests passing (+ 11 skipped). 3 new tests.
+
 ---
 
 ## Active Roadmap — Product + Emergence Track
@@ -2807,6 +2826,8 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 - Cross-domain strategy transfer: dream cycle identifies structurally similar successful episodes across different agent pools, propagates domain-general strategies as abstractions tagged with applicable domains
 - GoalManager: persistent goals stored in KnowledgeStore (Git-backed, survives restart), progress tracking across sessions, decomposer plans in context of active goals
 - Formal Policy Engine — `policies.yaml` with declarative governance rules enforced at runtime
+- **Shadow deployment for model updates** — when switching LLM models (e.g., Sonnet 4 → Sonnet 5, or Ollama model update), deploy the new model alongside the existing one in shadow mode. Compare outputs for a defined evaluation period. Detect regressions before cutover. Rollback if quality drops. (Nooplex §7.10 — agent versioning + model update protocol)
+- **Multi-provider LLM diversity** — maintain agents backed by models from at least two independent providers per mesh. Ensures deprecation of any single model doesn't break the system. Per-tier provider fallback: if fast tier (Sonnet) is unreachable, fall back to standard tier (local Qwen) automatically. (Nooplex §7.10 — model provider lock-in mitigation)
 - **Demo moment:** HXI shows dream cycle extracting a concept. A strategy learned in one domain improves planning in another. Multi-session goals show progress across restarts.
 
 ### Phase 29: Federation + Emergence Testing — "The Noöplex Emerges"
@@ -2815,6 +2836,8 @@ All bundled agents subclass `CognitiveAgent` and use `_BundledMixin` for self-de
 - Trust transitivity: `T(A→C) = T(A→B) · T(B→C) · δ`
 - Semantic knowledge layer indexes federated knowledge with `source_node` metadata
 - Channel integration enables multi-user federation (each user runs their own node)
+- **Domain-specific meshes** — separate cognitive meshes per knowledge domain (finance, legal, health, etc.) with cross-mesh query routing and semantic alignment. Single-mesh is correct for personal use; domain separation enables organizational scale. (Nooplex §7.2 — scaling to multi-mesh systems)
+- **Federated query routing** — decompose cross-domain queries, dispatch to relevant meshes, aggregate results. Handle latency differences and partial results. (Nooplex §7.2 — memory federation)
 - TC_N measurement across federated nodes with statistical significance
 - Benchmarking framework: standardized task suite, before/after comparison, regression detection. Validates emergence claims with statistical rigor (Noöplex §8.5, §8.6)
 - `probos cluster --nodes N` — one command spawns N federated nodes as child processes on one machine

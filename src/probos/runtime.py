@@ -1056,6 +1056,7 @@ class ProbOSRuntime:
         text: str,
         on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
         auto_selfmod: bool = True,
+        conversation_history: list[tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
         """Process a natural language request through the full cognitive pipeline.
 
@@ -1151,6 +1152,7 @@ class ProbOSRuntime:
 
         dag = await self.decomposer.decompose(
             text, context=context, similar_episodes=similar_episodes or None,
+            conversation_history=conversation_history,
         )
 
         if on_event:

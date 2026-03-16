@@ -121,11 +121,17 @@ export function IntentSurface() {
     setInput('');
     incPendingRequests();
 
+    // Send last 10 messages as conversation context for reference resolution
+    const recentHistory = chatHistory.slice(-10).map(m => ({
+      role: m.role,
+      text: m.text.slice(0, 300),
+    }));
+
     // Fire-and-forget — user can keep typing immediately
     fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({ message: text, history: recentHistory }),
     })
       .then((res) => res.json())
       .then((data) => {

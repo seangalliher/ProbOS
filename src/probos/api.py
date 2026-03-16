@@ -75,8 +75,14 @@ async def _handle_slash_command(text: str, runtime: Any) -> dict[str, Any]:
     return {"response": response_text, "dag": None, "results": None}
 
 
+class ChatMessage(BaseModel):
+    role: str
+    text: str
+
+
 class ChatRequest(BaseModel):
     message: str
+    history: list[ChatMessage] = []
 
 
 class ChatResponse(BaseModel):
@@ -175,7 +181,10 @@ def create_app(runtime: Any) -> FastAPI:
         try:
             dag_result = await asyncio.wait_for(
                 runtime.process_natural_language(
-                    req.message, on_event=on_event, auto_selfmod=False,
+                    req.message,
+                    on_event=on_event,
+                    auto_selfmod=False,
+                    conversation_history=[(m.role, m.text) for m in req.history[-10:]],
                 ),
                 timeout=30.0,
             )

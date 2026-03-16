@@ -50,6 +50,7 @@ When reviewing PROGRESS.md or evaluating changes, check for:
 - **Episodic completeness**: Every execution path should store an episode, or the learning loop breaks.
 - **Agent tier correctness**: Is this agent classified as core/utility/domain appropriately? Domain agents should not have direct access to internal system state. Utility agents operate on the system, not for the user.
 - **Governance axioms**: Evaluate against the three axioms in `Vibes/ProbOS Vision.md` — Safety Budget (risk-proportional consensus), Reversibility Preference (prefer reversible strategies), Minimal Authority (scoped capabilities, earned trust).
+- **Nooplex alignment**: Check `docs/nooplex-alignment-tracker.md` — does this change close a gap, maintain alignment, or introduce a regression against the Nooplex paper? Update the tracker when shipping new features.
 
 ### Common Review Flags
 

@@ -258,6 +258,7 @@ class IntentDecomposer:
         text: str,
         context: WorkingMemorySnapshot | None = None,
         similar_episodes: list[Episode] | None = None,
+        conversation_history: list[tuple[str, str]] | None = None,
     ) -> TaskDAG:
         """Decompose natural language text into a TaskDAG.
 
@@ -311,6 +312,21 @@ class IntentDecomposer:
             )
             prompt_parts.append(
                 "Consider using these intents if they match the user's request."
+            )
+            prompt_parts.append("")
+
+        # Add conversation history for context resolution
+        if conversation_history:
+            prompt_parts.append("## CONVERSATION CONTEXT")
+            prompt_parts.append("Recent messages in this conversation (most recent last):")
+            for role, msg_text in conversation_history[-5:]:
+                label = "User" if role == "user" else "ProbOS"
+                truncated = msg_text[:200] + "..." if len(msg_text) > 200 else msg_text
+                prompt_parts.append(f"{label}: {truncated}")
+            prompt_parts.append("")
+            prompt_parts.append(
+                "Use this context to resolve references like 'it', 'that', "
+                "'the same thing', 'what about X', 'do it again', etc."
             )
             prompt_parts.append("")
 
