@@ -1155,12 +1155,15 @@ class ProbOSRuntime:
             last_dag = self._last_execution.get("dag")
             if last_dag and hasattr(last_dag, "nodes") and last_dag.nodes:
                 intent_summary = "; ".join(
-                    f'{n.intent}({", ".join(f"{k}={v}" for k, v in n.params.items())})'
+                    f'{n.intent}: {", ".join(f"{k}={v}" for k, v in n.params.items())}'
                     for n in last_dag.nodes
                 )
                 if intent_summary:
                     conversation_history = list(conversation_history) + [
-                        ("context", f"[Last execution: {intent_summary}]")
+                        ("context",
+                         f"Previous action: {intent_summary}. "
+                         f"When the user references a place, person, or topic without full qualification, "
+                         f"assume the same context (location, region, domain) as the previous query.")
                     ]
 
         dag = await self.decomposer.decompose(

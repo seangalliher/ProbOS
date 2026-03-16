@@ -97,7 +97,7 @@ export function IntentSurface() {
   const dagProgress = activeDag && activeDag.length > 0
     ? (() => {
         const done = activeDag.filter((n) => n.status === 'completed').length;
-        return `\u26A1 ${done}/${activeDag.length} tasks`;
+        return `\u25C8 ${done}/${activeDag.length} tasks`;
       })()
     : null;
 
@@ -636,36 +636,25 @@ export function IntentSurface() {
                 fontSize: 12,
                 fontFamily: "'Inter', sans-serif",
               }}>
-                {dagProgress ? (
-                  <span style={{
-                    fontSize: 12, fontFamily: 'monospace', color: '#ffcc66',
-                    textShadow: '0 0 6px rgba(255, 204, 102, 0.5)',
-                  }}>
-                    {dagProgress}
-                  </span>
-                ) : (
-                  <>
-                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                      {[0, 1, 2].map((i) => (
-                        <div key={i} style={{
-                          width: 6, height: 6,
-                          borderRadius: '50%',
-                          background: 'linear-gradient(135deg, #ffcc66, #66ccff)',
-                          filter: 'drop-shadow(0 0 3px #ffcc66)',
-                          animation: `neural-pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
-                        }} />
-                      ))}
-                    </div>
-                    <span style={{
-                      color: '#ffcc66',
-                      textShadow: '0 0 6px rgba(255, 204, 102, 0.4)',
-                      animation: 'neural-pulse 2s ease-in-out infinite',
-                      letterSpacing: '0.5px',
-                    }}>
-                      thinking
-                    </span>
-                  </>
-                )}
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} style={{
+                      width: 6, height: 6,
+                      borderRadius: '50%',
+                      background: 'linear-gradient(135deg, #ffcc66, #66ccff)',
+                      filter: 'drop-shadow(0 0 3px #ffcc66)',
+                      animation: `neural-pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
+                    }} />
+                  ))}
+                </div>
+                <span style={{
+                  color: '#ffcc66',
+                  textShadow: '0 0 6px rgba(255, 204, 102, 0.4)',
+                  animation: 'neural-pulse 2s ease-in-out infinite',
+                  letterSpacing: '0.5px',
+                }}>
+                  {dagProgress || 'thinking'}
+                </span>
               </div>
             )}
 
