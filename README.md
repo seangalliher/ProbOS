@@ -35,24 +35,32 @@ Every agent maintains a confidence score and trust reputation. The system doesn'
 
 ## Architecture
 
-Five layers, each built on the one below:
+Five layers plus two cross-cutting concerns, each built on the one below:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Experience    Shell, renderer, Rich panels         │
+│  Experience    CLI shell, HXI (WebGL canvas),       │
+│                FastAPI + WebSocket, Rich panels     │
 ├─────────────────────────────────────────────────────┤
 │  Cognitive     LLM decomposer, working memory,      │
 │                episodic memory, attention, dreaming, │
+│                self-modification, agent design,      │
 │                workflow cache, dynamic prompts       │
 ├─────────────────────────────────────────────────────┤
 │  Consensus     Quorum voting, trust network,         │
-│                red team verification                 │
+│                Shapley attribution, escalation       │
 ├─────────────────────────────────────────────────────┤
 │  Mesh          Intent bus, Hebbian routing,           │
 │                gossip protocol, capability registry  │
 ├─────────────────────────────────────────────────────┤
 │  Substrate     Agent lifecycle, pools, spawner,       │
 │                registry, heartbeat, event log        │
+├─────────────────────────────────────────────────────┤
+│  Federation    ZeroMQ transport, node bridge,         │
+│                intent router, gossip exchange        │
+├─────────────────────────────────────────────────────┤
+│  Knowledge     Git-backed store, ChromaDB semantic,   │
+│                warm boot, per-artifact rollback      │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -82,17 +90,42 @@ A Rich-powered interactive shell with 16 slash commands, real-time DAG execution
 
 ProbOS boots with 47 agents across 20+ pools (+ 2 red team verifiers):
 
-| Pool | Agents | Capabilities | Consensus |
-|------|--------|-------------|-----------|
+### Core Agents (always active)
+
+| Pool | Count | Capabilities | Consensus |
+|------|-------|-------------|-----------|
 | `system` | 2 | Heartbeat monitoring (CPU, load, PID) | No |
 | `filesystem` | 3 | `read_file`, `stat_file` | No |
 | `filesystem_writers` | 3 | `write_file` | Yes |
 | `directory` | 3 | `list_directory` | No |
 | `search` | 3 | `search_files` (recursive glob) | No |
 | `shell` | 3 | `run_command` (30s timeout) | Yes |
-| `http` | 3 | `http_fetch` (1MB cap) | Yes |
+| `http` | 3 | `http_fetch` (1MB cap, per-domain rate limiting) | Yes |
 | `introspect` | 2 | `explain_last`, `agent_info`, `system_health`, `why` | No |
 | `red_team` | 2 | Independent result verification | N/A |
+
+### Bundled Cognitive Agents (10 pools, "useful on Day 1")
+
+| Pool | Capabilities |
+|------|-------------|
+| `web_search` | Search the web via mesh-routed HTTP |
+| `page_reader` | Extract and summarize web page content |
+| `weather` | Weather lookups via public APIs |
+| `news` | News search and summarization |
+| `translator` | Language translation |
+| `summarizer` | Text summarization |
+| `calculator` | Mathematical calculations |
+| `todo_manager` | Task list management |
+| `note_taker` | Note creation and retrieval |
+| `scheduler` | Scheduling and reminders |
+
+### System Agents (conditional)
+
+| Pool | Purpose | When active |
+|------|---------|-------------|
+| `skills` | Dynamic skill execution (SkillBasedAgent) | Self-mod enabled |
+| `system_qa` | Smoke tests for designed agents | QA enabled |
+| `designed_*` | Self-designed agents (CognitiveAgent subclasses) | Created at runtime |
 
 A test agent (`CorruptedFileReaderAgent`) deliberately returns fabricated data to verify that the consensus layer detects and rejects it.
 
@@ -180,36 +213,70 @@ All tuning lives in [`config/system.yaml`](config/system.yaml):
 ```
 src/probos/
 ├── __init__.py              # Package root
-├── __main__.py              # Entry point (uv run python -m probos)
+├── __main__.py              # Entry point (probos CLI)
+├── api.py                   # FastAPI server + WebSocket events
 ├── config.py                # Pydantic config models
-├── runtime.py               # Top-level orchestrator
-├── types.py                 # Core types (20+ dataclasses)
-├── agents/                  # 9 agent implementations
+├── runtime.py               # Top-level orchestrator (~2500 lines)
+├── types.py                 # Core types (30+ dataclasses)
+├── agents/                  # Tool agents (deterministic)
 │   ├── file_reader.py       #   read_file, stat_file
 │   ├── file_writer.py       #   write_file (consensus-gated)
 │   ├── directory_list.py    #   list_directory
 │   ├── file_search.py       #   search_files
 │   ├── shell_command.py     #   run_command (consensus-gated)
-│   ├── http_fetch.py        #   http_fetch (consensus-gated)
+│   ├── http_fetch.py        #   http_fetch (rate-limited, consensus-gated)
 │   ├── introspect.py        #   explain_last, agent_info, system_health, why
+│   ├── system_qa.py         #   Smoke tests for designed agents
 │   ├── red_team.py          #   Independent verification
-│   └── corrupted.py         #   Test agent (deliberately wrong)
-├── cognitive/               # LLM pipeline
+│   ├── corrupted.py         #   Test agent (deliberately wrong)
+│   └── bundled/             #   10 CognitiveAgent types ("useful on Day 1")
+│       ├── web_agents.py    #     WebSearch, PageReader, Weather, News
+│       ├── language_agents.py #   Translator, Summarizer
+│       ├── productivity_agents.py # Calculator, Todo, NoteTaker
+│       └── organizer_agents.py #  Scheduler
+├── cognitive/               # LLM pipeline + self-modification
 │   ├── decomposer.py        #   NL → TaskDAG + DAG executor
 │   ├── prompt_builder.py    #   Dynamic system prompt assembly
 │   ├── llm_client.py        #   OpenAI-compatible + mock client
+│   ├── cognitive_agent.py   #   Instructions-first LLM agent base
 │   ├── working_memory.py    #   Bounded context assembly
-│   ├── episodic.py          #   SQLite long-term memory
+│   ├── episodic.py          #   ChromaDB semantic long-term memory
 │   ├── attention.py         #   Priority scoring + focus tracking
-│   ├── dreaming.py          #   Offline consolidation
-│   └── workflow_cache.py    #   LRU pattern cache
+│   ├── dreaming.py          #   Offline consolidation + pre-warm
+│   ├── workflow_cache.py    #   LRU pattern cache
+│   ├── agent_designer.py    #   LLM designs new agents from capability gaps
+│   ├── self_mod.py          #   Self-modification pipeline orchestrator
+│   ├── code_validator.py    #   Static analysis for generated code
+│   ├── sandbox.py           #   Isolated execution for untrusted agents
+│   ├── skill_designer.py    #   Skill template generation
+│   ├── skill_validator.py   #   Skill safety validation
+│   ├── behavioral_monitor.py #  Runtime behavior tracking post-deploy
+│   ├── feedback.py          #   Human feedback → trust/Hebbian/episodic
+│   ├── correction_detector.py # Distinguishes corrections from new requests
+│   ├── agent_patcher.py     #   Hot-patches designed agent code
+│   ├── strategy.py          #   StrategyRecommender (skill attachment)
+│   ├── dependency_resolver.py # Auto-install agent dependencies (uv)
+│   ├── emergent_detector.py #   5 algorithms for emergent behavior
+│   ├── embeddings.py        #   Embedding utilities
+│   └── research.py          #   Web research phase for agent design
 ├── consensus/               # Multi-agent agreement
 │   ├── quorum.py            #   Confidence-weighted voting
-│   └── trust.py             #   Bayesian Beta(α,β) reputation
+│   ├── trust.py             #   Bayesian Beta(α,β) reputation
+│   ├── shapley.py           #   Shapley value attribution
+│   └── escalation.py        #   3-tier failure cascade
 ├── experience/              # User interface
-│   ├── shell.py             #   Async REPL (16 commands)
+│   ├── shell.py             #   Async REPL (20+ commands)
 │   ├── renderer.py          #   Real-time DAG execution display
-│   └── panels.py            #   Rich panel/table rendering
+│   ├── panels.py            #   Rich panel/table rendering
+│   ├── knowledge_panel.py   #   Knowledge store panels
+│   └── qa_panel.py          #   QA result panels
+├── federation/              # Multi-node mesh
+│   ├── bridge.py            #   ZeroMQ node bridge
+│   ├── router.py            #   Intent forwarding + loop prevention
+│   └── transport.py         #   Transport abstraction
+├── knowledge/               # Persistent storage
+│   ├── store.py             #   Git-backed artifact persistence
+│   └── semantic.py          #   SemanticKnowledgeLayer (5 ChromaDB collections)
 ├── mesh/                    # Agent coordination
 │   ├── intent.py            #   Pub/sub bus with fan-out
 │   ├── routing.py           #   Hebbian learning (SQLite)
@@ -221,8 +288,18 @@ src/probos/
     ├── registry.py          #   Async-safe agent index
     ├── spawner.py           #   Template-based factory
     ├── pool.py              #   Resource pools + health checks
+    ├── scaler.py            #   Demand-based pool scaling
     ├── heartbeat.py         #   Periodic pulse loop
-    └── event_log.py         #   Append-only SQLite audit log
+    ├── event_log.py         #   Append-only SQLite audit log
+    ├── identity.py          #   Persistent agent identity
+    └── skill_agent.py       #   SkillBasedAgent (dynamic skill dispatch)
+
+ui/src/                      # HXI — Human Experience Interface (React + Three.js)
+├── canvas/                  #   WebGL cognitive mesh visualization
+├── components/              #   CognitiveCanvas, AgentTooltip, overlays
+├── audio/                   #   TTS, speech input, sound engine
+├── store/                   #   Zustand state management
+└── hooks/                   #   WebSocket connection to runtime
 ```
 
 ## Tests
@@ -234,22 +311,6 @@ uv run pytest tests/ -v          # Python tests
 cd ui && npx vitest run           # UI tests
 ```
 
-| Layer | Tests |
-|-------|-------|
-| Substrate | 50 |
-| Mesh | 38 |
-| Consensus | 46 |
-| Cognitive | 81 |
-| Experience | 69 |
-| Episodic memory | 16 |
-| Attention | 27 |
-| Dreaming | 31 |
-| Workflow cache | 22 |
-| Introspection | 19 |
-| Dynamic discovery | 21 |
-| Prompt builder | 25 |
-| Runtime integration | 32 |
-
 ## Key Concepts
 
 **Self-selection.** Agents decide whether to handle an intent via `perceive()`. The system doesn't assign work — agents volunteer based on capability matching.
@@ -258,11 +319,19 @@ cd ui && npx vitest run           # UI tests
 
 **Hebbian learning.** "Neurons that fire together wire together." When an agent successfully handles an intent, the connection weight between that intent and agent strengthens. Over time, the system learns optimal routing.
 
-**Consensus pipeline.** Destructive operations follow: broadcast → quorum evaluation → red team verification → trust update → Hebbian learning. A single corrupted agent cannot cause damage.
+**Consensus pipeline.** Destructive operations follow: broadcast → quorum evaluation → red team verification → Shapley attribution → trust update → Hebbian learning. A single corrupted agent cannot cause damage.
+
+**Self-modification.** When ProbOS encounters a capability gap (no agent can handle a request), it designs a new agent: LLM generates code → CodeValidator static analysis → SandboxRunner isolation test → probationary trust → SystemQA smoke tests → BehavioralMonitor tracks post-deployment. Agents can also be designed collaboratively via `/design`.
+
+**Correction feedback loop.** Human corrections are the richest learning signal. CorrectionDetector identifies when the user is correcting a previous result → AgentPatcher modifies the responsible agent → hot-reload → auto-retry → trust/Hebbian/episodic updates.
 
 **Dreaming.** During idle periods, the system replays recent episodes to strengthen successful pathways, weaken failed ones, prune dead connections, adjust trust scores, and pre-warm predictions for likely upcoming requests.
 
 **Dynamic intent discovery.** Each agent class declares structured `IntentDescriptor` metadata. The decomposer's system prompt is assembled at runtime from whatever agents are registered. New agent types self-integrate without any configuration changes.
+
+**Federation.** Multiple ProbOS nodes form a Nooplex — a cognitive mesh of meshes. Each node is sovereign (its own agents, trust, memory). Nodes exchange capabilities via ZeroMQ gossip protocol and can forward intents across the federation.
+
+**HXI (Human Experience Interface).** A WebGL visualization of the cognitive mesh rendered in Three.js. Agent nodes glow with trust-mapped colors, pulse with activity, and connect with Hebbian-weighted edges. Real-time WebSocket streaming from the runtime.
 
 ## Development Status
 
@@ -273,22 +342,38 @@ cd ui && npx vitest run           # UI tests
 | 1 | Substrate + Mesh (agent lifecycle, intent bus, Hebbian routing, gossip) | Done |
 | 2 | Consensus (quorum voting, trust network, red team verification) | Done |
 | 3a | Cognitive core (LLM decomposer, working memory, DAG execution) | Done |
-| 3b-1 | Episodic memory (SQLite-backed, keyword similarity recall) | Done |
-| 3b-2 | Attention mechanism (priority scoring, focus tracking) | Done |
-| 3b-3a | Cross-request attention + background demotion | Done |
-| 3b-4 | Dreaming engine (offline consolidation, pre-warm predictions) | Done |
-| 3b-5 | Workflow cache (LRU pattern caching, fuzzy matching) | Done |
+| 3b | Episodic memory, attention, dreaming, workflow cache | Done |
 | 4 | Experience layer (shell, renderer, panels) | Done |
 | 5 | Expansion agents (search, directory, shell, HTTP, introspect) | Done |
-| 6a | Introspection + self-awareness | Done |
-| 6b | Dynamic intent discovery (self-assembling prompts) | Done |
-| 7 | Escalation cascades + error recovery | Next |
+| 6 | Introspection + dynamic intent discovery (self-assembling prompts) | Done |
+| 7 | Escalation cascades + error recovery | Done |
+| 8 | Adaptive pool scaling (demand-based sizing) | Done |
+| 9 | Federation (ZeroMQ transport, router, gossip, multi-node) | Done |
+| 10 | Self-modification (agent designer, code validator, sandbox, behavioral monitor) | Done |
+| 11 | Skills + transparency + web research | Done |
+| 12 | Per-tier LLM endpoints (fast/standard/deep) | Done |
+| 13 | Workflow caching (LRU, exact + fuzzy matching, pre-warm) | Done |
+| 14 | Persistent knowledge (Git-backed store, warm boot, rollback) | Done |
+| 15 | CognitiveAgent base class + domain-aware skill attachment | Done |
+| 16 | DAG proposal mode (/plan, /approve, /reject) | Done |
+| 17 | Dependency resolution (auto-install agent imports) | Done |
+| 18 | Feedback-to-learning loop + correction detection + agent patching | Done |
+| 19 | Shapley value trust attribution + trust-weighted matching | Done |
+| 20 | Emergent behavior detection (5 algorithms) | Done |
+| 21 | Semantic Knowledge Layer (ChromaDB, 5 collections) | Done |
+| 22 | Bundled agent suite + distribution (`pip install`, `probos serve`) | Done |
+| 23 | HXI MVP (WebSocket events, React/Three.js cognitive canvas) | Done |
+| 27 | Codebase knowledge graph + impact analysis | Done |
 
 ## Roadmap
 
-- **Phase 7: Escalation Cascades** — When consensus rejects an operation or an agent fails, escalate through a 3-tier cascade: retry with a different agent → LLM arbitration → user consultation
-- **Phase 3b-3b: Task Preemption** — Interrupt already-running tasks when higher-priority work arrives
-- **Phase 6 continued: New agent types** — Process management, calendar, email, code execution
+| Phase | Title | Goal |
+|-------|-------|------|
+| 24 | Channel Integration | Discord, Slack, Telegram adapters + external tool connectors |
+| 25 | Persistent Tasks | Long-running autonomous tasks with checkpointing, browser automation |
+| 26 | Inter-Agent Deliberation | Structured multi-turn agent debates, agent-to-agent messaging |
+| 28 | Meta-Learning | Workspace Ontology, dream cycle abstractions, session context, goal planning |
+| 29 | Federation + Emergence | Knowledge federation, trust transitivity, TC_N measurement |
 
 ## Dependencies
 
@@ -299,8 +384,12 @@ cd ui && npx vitest run           # UI tests
 | [aiosqlite](https://github.com/omnilib/aiosqlite) >=0.19 | Async SQLite (event log, Hebbian weights, trust, episodic memory) |
 | [rich](https://rich.readthedocs.io/) >=13.0 | Terminal UI (panels, tables, Live display, spinners) |
 | [httpx](https://www.python-httpx.org/) >=0.27 | HTTP client (LLM API, HTTP fetch agent) |
+| [pyzmq](https://pyzmq.readthedocs.io/) >=27.1 | ZeroMQ transport (federation) |
+| [chromadb](https://docs.trychroma.com/) >=1.0 | Vector database (semantic memory, knowledge layer) |
+| [fastapi](https://fastapi.tiangolo.com/) >=0.115 | API server + WebSocket events (HXI backend) |
+| [uvicorn](https://www.uvicorn.org/) >=0.34 | ASGI server |
 
-Dev: pytest >=8.0, pytest-asyncio >=0.23
+Dev: pytest >=8.0, pytest-asyncio >=0.23, vitest (UI)
 
 ## License
 
