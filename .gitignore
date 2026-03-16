@@ -42,3 +42,6 @@ Desktop.ini
 
 # Logs
 *.log
+
+# MkDocs build output
+site/
