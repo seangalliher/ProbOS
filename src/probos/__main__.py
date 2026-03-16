@@ -343,6 +343,7 @@ async def _serve(
     host: str = "127.0.0.1",
     port: int = 18900,
     interactive: bool = False,
+    discord: bool = False,
 ) -> None:
     """Boot runtime and start the FastAPI/uvicorn server."""
     import uvicorn
@@ -355,6 +356,22 @@ async def _serve(
         runtime._fresh_boot = True
 
     app = create_app(runtime)
+
+    # Start channel adapters
+    adapters: list = []
+    if discord or config.channels.discord.enabled:
+        import os
+        from probos.channels.discord_adapter import DiscordAdapter
+        discord_cfg = config.channels.discord
+        token = os.environ.get("PROBOS_DISCORD_TOKEN", "") or discord_cfg.token
+        if token:
+            discord_cfg = discord_cfg.model_copy(update={"token": token})
+            adapter = DiscordAdapter(runtime, discord_cfg)
+            await adapter.start()
+            adapters.append(adapter)
+            console.print("  [green]\u2713[/green] Discord bot adapter started")
+        else:
+            console.print("  [yellow]![/yellow] Discord enabled but no token set (PROBOS_DISCORD_TOKEN)")
 
     uv_config = uvicorn.Config(
         app, host=host, port=port, log_level="warning",
@@ -396,6 +413,11 @@ async def _serve(
             await server.serve()
     finally:
         console.print("[bold red]ProbOS shutting down...[/bold red]")
+        for adapter in adapters:
+            try:
+                await adapter.stop()
+            except Exception as e:
+                logger.warning("Adapter shutdown error: %s", e)
         try:
             await asyncio.wait_for(runtime.stop(), timeout=5)
         except asyncio.TimeoutError:
@@ -581,6 +603,7 @@ def main() -> None:
     serve_parser.add_argument("--host", type=str, default="127.0.0.1", help="Bind address")
     serve_parser.add_argument("--port", type=int, default=18900, help="Bind port")
     serve_parser.add_argument("--interactive", action="store_true", help="Also run interactive shell")
+    serve_parser.add_argument("--discord", action="store_true", help="Also start Discord bot adapter")
 
     # --- probos reset ---
     reset_parser = subparsers.add_parser("reset", help="Clear all learned state (designed agents, trust, episodes, etc.)")
@@ -613,6 +636,7 @@ def main() -> None:
                 host=args.host,
                 port=args.port,
                 interactive=args.interactive,
+                discord=args.discord,
             ))
         except KeyboardInterrupt:
             pass

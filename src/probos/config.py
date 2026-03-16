@@ -245,6 +245,22 @@ class BundledAgentsConfig(BaseModel):
     enabled: bool = True  # Create bundled CognitiveAgent pools at boot
 
 
+class DiscordConfig(BaseModel):
+    """Discord bot adapter configuration."""
+
+    enabled: bool = False
+    token: str = ""                          # Bot token (prefer env var PROBOS_DISCORD_TOKEN)
+    allowed_channel_ids: list[int] = []      # Empty = respond in all channels
+    command_prefix: str = "!"                # "!status" -> "/status"
+    mention_required: bool = False           # Only respond when @mentioned
+
+
+class ChannelsConfig(BaseModel):
+    """Channel adapter configurations."""
+
+    discord: DiscordConfig = DiscordConfig()
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
@@ -269,6 +285,7 @@ class SystemConfig(BaseModel):
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
     bundled_agents: BundledAgentsConfig = BundledAgentsConfig()
+    channels: ChannelsConfig = ChannelsConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

@@ -218,55 +218,10 @@ def create_app(runtime: Any) -> FastAPI:
 
         results_dict: dict[str, Any] | None = dag_result.get("results", None)
 
-        # Extract reflection if present and no direct response
-        reflection = dag_result.get("reflection", "")
-        if reflection and not response_text:
-            response_text = reflection
-
-        # Extract correction info
-        correction = dag_result.get("correction")
-        if correction and not response_text:
-            response_text = correction.get("changes", "Correction applied")
-
-        # Extract from execution results if still no response text
-        # (Path 3: functional DAG — output is inside results[node_id])
-        if not response_text and results_dict:
-            parts: list[str] = []
-            for _node_id, node_result in results_dict.items():
-                if isinstance(node_result, dict):
-                    # Error case
-                    if "error" in node_result:
-                        parts.append(f"Error: {node_result['error']}")
-                        continue
-                    # Normal intent results — list of IntentResult dataclasses
-                    intent_results = node_result.get("results")
-                    if isinstance(intent_results, list):
-                        for r in intent_results:
-                            # IntentResult is a dataclass with .result, .error, .success
-                            if hasattr(r, "result") and r.result is not None:
-                                val = r.result
-                                if isinstance(val, dict) and "stdout" in val:
-                                    out = val["stdout"]
-                                    if val.get("stderr"):
-                                        out += f"\n{val['stderr']}"
-                                    parts.append(str(out))
-                                else:
-                                    parts.append(str(val))
-                            elif hasattr(r, "error") and r.error:
-                                parts.append(f"Error: {r.error}")
-                            elif isinstance(r, dict):
-                                out = r.get("output") or r.get("result") or r.get("text")
-                                if out:
-                                    parts.append(str(out))
-                    # Single output field
-                    elif "output" in node_result:
-                        parts.append(str(node_result["output"]))
-                elif isinstance(node_result, str) and node_result:
-                    parts.append(node_result)
-            if parts:
-                response_text = "\n".join(parts)
-            else:
-                logger.info("dag_result results_dict: %r", results_dict)
+        # Use shared response extraction for reflection/correction/results fallback
+        if not response_text:
+            from probos.channels.response_formatter import extract_response_text
+            response_text = extract_response_text(dag_result)
 
         # Diagnose empty response — check decomposer state for LLM issues
         if not response_text:
