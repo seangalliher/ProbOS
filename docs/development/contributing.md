@@ -19,7 +19,7 @@ uv run pytest tests/ -v
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Make your changes
-4. Run the test suite — all 1605 tests must pass
+4. Run the test suite — all tests must pass
 5. Submit a pull request
 
 ## Code Style
