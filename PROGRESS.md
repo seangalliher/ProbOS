@@ -19,6 +19,25 @@
 - **[Roadmap](docs/development/roadmap.md)** — crew structure, future phases, team details
 - **[Project Structure](docs/development/structure.md)** — file tree and module descriptions
 
+## Release Tagging Policy
+
+Tags use the format `v{major}.{minor}.{patch}-phase{N}` (e.g., `v0.4.0-phase29c`).
+
+| Event | Tag? | Example |
+|-------|------|---------|
+| Phase completed | Yes — bump minor version | `v0.5.0-phase30` |
+| Critical bug fix between phases | Yes — bump patch version | `v0.4.1-phase29c` |
+| Roadmap/docs-only changes | No | — |
+| Mid-phase work (partial features) | No | — |
+| First production-ready release | Yes — `v1.0.0` | After security hardening (Phase 31) |
+
+**Current tags:**
+
+| Tag | Commit | Date | Notes |
+|-----|--------|------|-------|
+| `v0.1.0-phase12` | — | — | End of Era I: Genesis |
+| `v0.4.0-phase29c` | `13d52a7` | 2026-03-17 | End of Phase 29c: Codebase Knowledge |
+
 ## Design Principles
 
 ### HXI Self-Sufficiency
