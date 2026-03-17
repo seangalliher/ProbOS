@@ -1,7 +1,7 @@
 /* Team cluster boundary shells — translucent wireframe spheres per crew team (AD-294) */
 
 import { useStore } from '../store/useStore';
-import { Text } from '@react-three/drei';
+import { Text, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
 
 export function TeamClusters() {
@@ -38,18 +38,18 @@ export function TeamClusters() {
               depthWrite={false}
             />
           </mesh>
-          {/* Team name label — floats above the cluster */}
-          <Text
-            position={[0, radius * 1.3, 0]}
-            fontSize={0.25}
-            color={tintHex}
-            anchorX="center"
-            anchorY="bottom"
-            fillOpacity={0.5}
-            font={undefined}
-          >
-            {displayName}
-          </Text>
+          {/* Team name label — floats above the cluster, always faces camera */}
+          <Billboard position={[0, radius * 1.3, 0]} follow>
+            <Text
+              fontSize={0.25}
+              color={tintHex}
+              anchorX="center"
+              anchorY="bottom"
+              fillOpacity={0.5}
+            >
+              {displayName}
+            </Text>
+          </Billboard>
         </group>
       ))}
     </group>
