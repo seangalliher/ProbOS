@@ -192,10 +192,18 @@ ProbOS stopped.
 - ✅ **Medical team pool + Codebase Knowledge Service** (AD-290) — Created `medical` pool with 5 specialized agents: VitalsMonitorAgent (HeartbeatAgent subclass, continuous metric collection with sliding window + threshold alerting), DiagnosticianAgent (LLM-guided root-cause analysis), SurgeonAgent (acute remediation: force_dream, surge_pool, recycle_agent), PharmacistAgent (config tuning recommendations without mutation), PathologistAgent (post-mortem failure analysis with codebase_knowledge skill). Built CodebaseIndex runtime service — pure AST-based source tree analysis (<1s build, read-only, no LLM calls) with query(), read_source(), get_agent_map(), get_api_surface() methods. Created codebase_knowledge skill wrapping CodebaseIndex for CognitiveAgent use. Added MedicalConfig to SystemConfig. Medical pools excluded from PoolScaler. 31 tests (9 CodebaseIndex + 22 medical team)
 - ✅ **Pool groups — crew team abstraction** (AD-291) — Added `PoolGroup` dataclass + `PoolGroupRegistry` to organize pools into named teams (core, bundled, medical, self_mod). Groups are first-class in runtime: `pool_groups.excluded_pools()` replaces hardcoded scaler exclusions, `status()` and `build_state_snapshot()` include group health aggregation. Status panel now displays "Crew Teams" headings with per-group agent counts. HXI layout sorts by group then pool for cluster adjacency on Fibonacci spheres. Added `PoolGroupInfo` to TypeScript types. Medical pool tints added to scene.ts (warm red/pink family). Adding future crew teams requires only pool creation + one `PoolGroup` registration. 13 tests (9 unit + 4 integration)
 
-### Crew Team Introspection (AD-293) — pending build
+### Crew Team Introspection (AD-293) — in progress
 
 **Problem:** Pool groups (AD-291) are invisible to the intent system. Asking "tell me about the medical team" fails because `agent_info` searches by `agent_type` and no agent has type "medical" — the "medical_" prefix is on pool names, not agent types.
 
 **Solution:** Add `team_info` intent to IntrospectionAgent + pool name fallback on `agent_info`.
 
-**Status:** Build prompt ready at `prompts/team-introspection.md`
+**Status:** Builder executing `prompts/team-introspection.md`
+
+### HXI Crew Team Sub-Clusters (AD-294) — pending build
+
+**Problem:** Agents are positioned on a flat Fibonacci sphere sorted by group, but there's no visual boundary — 52 agents look like an undifferentiated cloud. Users can't identify crew teams without hovering on each sphere.
+
+**Solution:** Gravitational sub-clusters with translucent boundary shells. Each pool group gets its own spatial cluster center, agents orbit within it on a mini Fibonacci sphere, and a faint wireframe shell + team name label marks the boundary.
+
+**Status:** Build prompt ready at `prompts/hxi-crew-clusters.md`
