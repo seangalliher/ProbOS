@@ -54,6 +54,12 @@ During idle periods, the system replays recent episodes to strengthen successful
 
 Each agent class declares structured `IntentDescriptor` metadata. The decomposer's system prompt is assembled at runtime from whatever agents are registered. Adding a new agent type makes its intents available to the LLM without editing any prompt, configuration, or routing table.
 
+## Crew Structure
+
+Agents aren't a flat pool — they're organized into specialized teams, like departments on a starship. Each team is a dedicated agent pool with distinct responsibilities: Medical monitors and heals the system, Engineering optimizes performance, Security detects threats, Operations manages resources, Communications handles external channels, Science drives research, and the Bridge coordinates strategy with human approval.
+
+Each ProbOS instance is a ship. Multiple instances form a federation (see below). The [Roadmap](../development/roadmap.md) describes the full crew structure and team build phases.
+
 ## Federation
 
 Multiple ProbOS nodes form a **Nooplex** — a cognitive mesh of meshes. Each node is sovereign (its own agents, trust, memory). Nodes exchange capabilities via ZeroMQ gossip protocol and can forward intents across the federation.

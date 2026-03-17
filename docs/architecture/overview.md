@@ -101,6 +101,24 @@ flowchart LR
     style J fill:#dc2626,color:#fff
 ```
 
+## Crew Organization
+
+Agents are organized into specialized teams, analogous to departments on a starship. Each team is an agent pool with a distinct responsibility:
+
+| Team | Function | Key Agents |
+|------|----------|------------|
+| **Medical** | Health monitoring, diagnosis, remediation | Vitals Monitor, Diagnostician, Surgeon, Pharmacist, Pathologist |
+| **Engineering** | Performance optimization, maintenance, builds | Performance Monitor, Maintenance Agent, Builder Agent |
+| **Science** | Research, discovery, architectural analysis | Research Agent, Architect Agent |
+| **Security** | Threat detection, defense, trust integrity | Threat Detector, Trust Integrity Monitor, Red Team Lead |
+| **Operations** | Resource management, scheduling, coordination | Resource Allocator, Scheduler, PoolScaler |
+| **Communications** | Channel adapters, federation, external interfaces | Discord Adapter, Slack Adapter, Federation Bridge |
+| **Bridge** | Strategic decisions, human approval gate | Introspection Agent, Human Approval Gate |
+
+The **Ship's Computer** provides shared infrastructure across all teams: the Intent Bus (intercom), Trust Network (crew records), Hebbian Router (navigation), Episodic Memory (ship's log), and CodebaseIndex (technical manual).
+
+Each ProbOS instance is a ship. Multiple instances form a [Federation](federation.md). See the [Roadmap](../development/roadmap.md) for the full crew structure and build phases.
+
 ## Design Principles
 
 1. **Agents all the way down.** There is no central controller. Every capability is an agent.
