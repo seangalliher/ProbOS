@@ -183,6 +183,21 @@ ProbOS stopped.
 
 1705/1705 tests passing (+ 11 skipped).
 
+### AD-293: Crew Team Introspection
+
+**Problem:** Pool groups (AD-291) were invisible to the intent system — asking about a crew team returned no results.
+
+| AD | Decision |
+|----|----------|
+| AD-293 | `team_info` intent on IntrospectionAgent — list all teams or get detailed health/roster/pools for a specific team. Fuzzy substring matching. `agent_info` pool name fallback for defense-in-depth |
+
+| File | Change |
+|------|--------|
+| `src/probos/agents/introspect.py` | `team_info` IntentDescriptor + `_team_info()` method, pool name fallback in `_agent_info()` |
+| `tests/test_team_introspection.py` | 6 tests |
+
+1711/1711 tests passing (+ 11 skipped).
+
 ### Pre-Launch: Personalization + Security + Documentation (completed items)
 - ✅ **SSRF protection** (AD-285) — `_validate_url()` in HttpFetchAgent blocks private IPs (10/172.16/192.168/127), cloud metadata (169.254.169.254), link-local, file:// scheme, and DNS rebinding attacks. 8 tests
 - ✅ **.env file support** (AD-286) — `python-dotenv` loads `.env` from cwd at startup. `.env.example` documents available vars (`PROBOS_DISCORD_TOKEN`, `PROBOS_LLM_API_KEY`). Import-guarded so it degrades gracefully. 3 tests
@@ -192,13 +207,9 @@ ProbOS stopped.
 - ✅ **Medical team pool + Codebase Knowledge Service** (AD-290) — Created `medical` pool with 5 specialized agents: VitalsMonitorAgent (HeartbeatAgent subclass, continuous metric collection with sliding window + threshold alerting), DiagnosticianAgent (LLM-guided root-cause analysis), SurgeonAgent (acute remediation: force_dream, surge_pool, recycle_agent), PharmacistAgent (config tuning recommendations without mutation), PathologistAgent (post-mortem failure analysis with codebase_knowledge skill). Built CodebaseIndex runtime service — pure AST-based source tree analysis (<1s build, read-only, no LLM calls) with query(), read_source(), get_agent_map(), get_api_surface() methods. Created codebase_knowledge skill wrapping CodebaseIndex for CognitiveAgent use. Added MedicalConfig to SystemConfig. Medical pools excluded from PoolScaler. 31 tests (9 CodebaseIndex + 22 medical team)
 - ✅ **Pool groups — crew team abstraction** (AD-291) — Added `PoolGroup` dataclass + `PoolGroupRegistry` to organize pools into named teams (core, bundled, medical, self_mod). Groups are first-class in runtime: `pool_groups.excluded_pools()` replaces hardcoded scaler exclusions, `status()` and `build_state_snapshot()` include group health aggregation. Status panel now displays "Crew Teams" headings with per-group agent counts. HXI layout sorts by group then pool for cluster adjacency on Fibonacci spheres. Added `PoolGroupInfo` to TypeScript types. Medical pool tints added to scene.ts (warm red/pink family). Adding future crew teams requires only pool creation + one `PoolGroup` registration. 13 tests (9 unit + 4 integration)
 
-### Crew Team Introspection (AD-293) — in progress
+### Crew Team Introspection (AD-293) — ✅ COMPLETE
 
-**Problem:** Pool groups (AD-291) are invisible to the intent system. Asking "tell me about the medical team" fails because `agent_info` searches by `agent_type` and no agent has type "medical" — the "medical_" prefix is on pool names, not agent types.
-
-**Solution:** Add `team_info` intent to IntrospectionAgent + pool name fallback on `agent_info`.
-
-**Status:** Builder executing `prompts/team-introspection.md`
+See detailed AD-293 section above. 6 tests. 1711/1711 tests passing (+ 11 skipped).
 
 ### HXI Crew Team Sub-Clusters (AD-294) — pending build
 

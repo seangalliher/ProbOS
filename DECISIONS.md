@@ -1661,3 +1661,18 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 **Status:** Complete — 17 tests, 1705/1705 passing
 
 ---
+
+### AD-293: Crew Team Introspection
+
+**Problem:** Asking "tell me about the medical team" failed — `agent_info` searches by `agent_type` and no agent has type `"medical"`. Pool groups (AD-291) were invisible to the intent system.
+
+| AD | Decision |
+|----|----------|
+| AD-293 | Add `team_info` intent to IntrospectionAgent. Lists all crew teams (no param) or returns detailed health/roster/pools for a specific team. Fuzzy substring matching on team names. Defense-in-depth: `agent_info` now falls back to pool name search when agent_type match fails |
+
+| File | Change |
+|------|--------|
+| `src/probos/agents/introspect.py` | Added `team_info` IntentDescriptor, routing, `_team_info()` method (list all / specific with fuzzy match), pool name fallback in `_agent_info()` |
+| `tests/test_team_introspection.py` | 6 tests: specific team, all teams, unknown team, fuzzy match, pool name fallback, core team |
+
+**Status:** Complete — 6 tests, 1711/1711 passing

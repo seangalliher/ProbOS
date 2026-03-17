@@ -24,13 +24,14 @@ class IntrospectionAgent(BaseAgent):
     default_capabilities = [
         CapabilityDescriptor(
             can="introspect",
-            detail="Introspect ProbOS internals: explain_last, agent_info, system_health, why",
+            detail="Introspect ProbOS internals: explain_last, agent_info, team_info, system_health, why",
         ),
     ]
     initial_confidence: float = 0.9
     intent_descriptors = [
         IntentDescriptor(name="explain_last", params={}, description="Explain what happened in the last request", requires_reflect=True),
         IntentDescriptor(name="agent_info", params={"agent_type": "...", "agent_id": "..."}, description="Get info about a specific agent", requires_reflect=True),
+        IntentDescriptor(name="team_info", params={"team": "crew team name (e.g. medical, core, bundled, self_mod)"}, description="Get info about a crew team (pool group) — health, agent roster, pool statuses", requires_reflect=True),
         IntentDescriptor(name="system_health", params={}, description="Get system health assessment", requires_reflect=True),
         IntentDescriptor(name="why", params={"question": "..."}, description="Explain why ProbOS did something", requires_reflect=True),
         IntentDescriptor(name="introspect_memory", params={}, description="Report episodic memory status — episode count, intent type distribution, success/failure rates, storage backend info", requires_reflect=True),
@@ -40,7 +41,7 @@ class IntrospectionAgent(BaseAgent):
         IntentDescriptor(name="search_knowledge", params={"query": "...", "types": "..."}, description="Search across all ProbOS knowledge — episodes, agents, skills, workflows, QA reports, system events. Semantic similarity matching.", requires_reflect=True),
     ]
 
-    _handled_intents = {"explain_last", "agent_info", "system_health", "why", "introspect_memory", "introspect_system", "system_anomalies", "emergent_patterns", "search_knowledge"}
+    _handled_intents = {"explain_last", "agent_info", "team_info", "system_health", "why", "introspect_memory", "introspect_system", "system_anomalies", "emergent_patterns", "search_knowledge"}
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Full lifecycle: perceive -> decide -> act -> report."""
@@ -91,6 +92,8 @@ class IntrospectionAgent(BaseAgent):
             return await self._explain_last(rt)
         elif action == "agent_info":
             return self._agent_info(rt, params)
+        elif action == "team_info":
+            return self._team_info(rt, params)
         elif action == "system_health":
             return self._system_health(rt)
         elif action == "why":
@@ -201,6 +204,12 @@ class IntrospectionAgent(BaseAgent):
                     a for a in rt.registry.all()
                     if needle in a.agent_type.lower() or a.agent_type.lower().startswith(needle)
                 ]
+            if not agents:
+                # Pool name fallback — search for agents in pools matching the query
+                needle = agent_type.lower()
+                for pool_name, pool in rt.pools.items():
+                    if needle in pool_name.lower():
+                        agents.extend(pool.healthy_agents)
         else:
             # No filter — return all agents
             agents = list(rt.registry.all())
@@ -242,6 +251,87 @@ class IntrospectionAgent(BaseAgent):
             agent_infos.append(info)
 
         return {"success": True, "data": {"agents": agent_infos}}
+
+    def _team_info(self, rt: Any, params: dict[str, Any]) -> dict[str, Any]:
+        """Return details about a crew team (pool group)."""
+        team_name = params.get("team", "").strip().lower()
+
+        if not team_name:
+            # No specific team — list all teams
+            groups = rt.pool_groups.all_groups()
+            if not groups:
+                return {
+                    "success": True,
+                    "data": {"message": "No crew teams registered."},
+                }
+            team_summaries = []
+            for group in groups:
+                health = rt.pool_groups.group_health(group.name, rt.pools)
+                team_summaries.append({
+                    "name": group.name,
+                    "display_name": group.display_name,
+                    "total_agents": health.get("total_agents", 0),
+                    "healthy_agents": health.get("healthy_agents", 0),
+                    "health_ratio": health.get("health_ratio", 1.0),
+                    "pool_count": len(group.pool_names),
+                })
+            return {
+                "success": True,
+                "data": {"teams": team_summaries, "count": len(team_summaries)},
+            }
+
+        # Look up the specific team
+        group = rt.pool_groups.get_group(team_name)
+
+        # Fuzzy fallback: try substring match on group names
+        if group is None:
+            for g in rt.pool_groups.all_groups():
+                if team_name in g.name or team_name in g.display_name.lower():
+                    group = g
+                    break
+
+        if group is None:
+            return {
+                "success": True,
+                "data": {
+                    "message": f"No crew team found matching '{team_name}'.",
+                    "available_teams": [g.name for g in rt.pool_groups.all_groups()],
+                },
+            }
+
+        # Get aggregate health
+        health = rt.pool_groups.group_health(group.name, rt.pools)
+
+        # Get individual agent details for all pools in this group
+        agent_details = []
+        for pool_name in sorted(group.pool_names):
+            pool = rt.pools.get(pool_name)
+            if pool is None:
+                continue
+            for agent in pool.healthy_agents:
+                info: dict[str, Any] = agent.info()
+                trust = rt.trust_network.get_score(agent.id)
+                info["trust_score"] = round(trust, 4)
+                info["pool"] = pool_name
+                agent_details.append(info)
+
+        return {
+            "success": True,
+            "data": {
+                "team": {
+                    "name": group.name,
+                    "display_name": group.display_name,
+                    "exclude_from_scaler": group.exclude_from_scaler,
+                },
+                "health": {
+                    "total_agents": health.get("total_agents", 0),
+                    "healthy_agents": health.get("healthy_agents", 0),
+                    "health_ratio": round(health.get("health_ratio", 1.0), 4),
+                },
+                "pools": health.get("pools", {}),
+                "agents": agent_details,
+            },
+        }
 
     def _system_health(self, rt: Any) -> dict[str, Any]:
         """Compute a structured health assessment."""
