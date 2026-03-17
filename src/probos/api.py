@@ -105,6 +105,38 @@ class EnrichRequest(BaseModel):
     user_guidance: str
 
 
+class BuildRequest(BaseModel):
+    """Request to trigger the BuilderAgent."""
+    title: str
+    description: str
+    target_files: list[str] = []
+    reference_files: list[str] = []
+    test_files: list[str] = []
+    ad_number: int = 0
+    constraints: list[str] = []
+
+
+class BuildApproveRequest(BaseModel):
+    """Request to approve and execute a generated build."""
+    build_id: str
+    file_changes: list[dict[str, Any]] = []
+    title: str = ""
+    description: str = ""
+    ad_number: int = 0
+    branch_name: str = ""
+
+
+class DesignRequest(BaseModel):
+    """Request to trigger the ArchitectAgent."""
+    feature: str
+    phase: str = ""
+
+
+class DesignApproveRequest(BaseModel):
+    """Request to approve an architect proposal — forwards BuildSpec to builder."""
+    design_id: str
+
+
 def create_app(runtime: Any) -> FastAPI:
     """Build the FastAPI application wired to *runtime*."""
 
@@ -122,6 +154,9 @@ def create_app(runtime: Any) -> FastAPI:
 
     # Active WebSocket connections for event broadcasting
     _ws_clients: list[WebSocket] = []
+
+    # Pending architect proposals awaiting Captain approval (AD-308)
+    _pending_designs: dict[str, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------
     # Event listener bridge: runtime -> WebSocket clients (AD-254)
@@ -163,6 +198,57 @@ def create_app(runtime: Any) -> FastAPI:
 
         # Handle slash commands directly (don't send through NL decomposer)
         if text.startswith('/'):
+            # /build command handled here (needs _run_build closure) — AD-304
+            parts = text.split(None, 1)
+            if parts[0].lower() == "/build":
+                args = parts[1] if len(parts) > 1 else ""
+                build_parts = args.split(":", 1) if args else ["", ""]
+                title = build_parts[0].strip()
+                description = build_parts[1].strip() if len(build_parts) > 1 else ""
+                if not title:
+                    return {"response": "Usage: /build <title>: <description>", "dag": None, "results": None}
+                import uuid
+                build_id = uuid.uuid4().hex[:12]
+                asyncio.create_task(_run_build(
+                    BuildRequest(title=title, description=description),
+                    build_id,
+                    runtime,
+                ))
+                return {
+                    "response": f"Build '{title}' submitted (id: {build_id}). Progress will appear below.",
+                    "build_id": build_id,
+                    "dag": None,
+                    "results": None,
+                }
+            # /design command handled here (needs _run_design closure) — AD-308
+            elif parts[0].lower() == "/design":
+                args = parts[1] if len(parts) > 1 else ""
+                design_parts = args.split(":", 1) if args else ["", ""]
+                feature = design_parts[0].strip()
+                phase = ""
+                if len(design_parts) > 1:
+                    feature = design_parts[1].strip()
+                    phase = design_parts[0].strip()
+                    if not phase.lower().startswith("phase") and not phase.isdigit():
+                        feature = args.strip()
+                        phase = ""
+                elif feature:
+                    pass
+                if not feature:
+                    return {"response": "Usage: /design <feature description> or /design phase 31: <feature>", "dag": None, "results": None}
+                import uuid as _uuid_design
+                design_id = _uuid_design.uuid4().hex[:12]
+                asyncio.create_task(_run_design(
+                    DesignRequest(feature=feature, phase=phase),
+                    design_id,
+                    runtime,
+                ))
+                return {
+                    "response": f"Design request submitted (id: {design_id}). The Architect is analyzing...",
+                    "design_id": design_id,
+                    "dag": None,
+                    "results": None,
+                }
             return await _handle_slash_command(text, runtime)
 
         events: list[dict[str, Any]] = []
@@ -529,6 +615,364 @@ def create_app(runtime: Any) -> FastAPI:
             rt._emit_event("self_mod_failure", {
                 "intent": req.intent_name,
                 "message": f"Agent design failed: {e}",
+            })
+
+    # ------------------------------------------------------------------
+    # Builder Agent API (AD-304)
+    # ------------------------------------------------------------------
+
+    @app.post("/api/build/submit")
+    async def submit_build(req: BuildRequest) -> dict[str, Any]:
+        """Start async build generation. Progress via WebSocket events."""
+        import uuid
+        build_id = uuid.uuid4().hex[:12]
+
+        asyncio.create_task(_run_build(req, build_id, runtime))
+
+        return {
+            "status": "started",
+            "build_id": build_id,
+            "message": f"Build '{req.title}' started...",
+        }
+
+    @app.post("/api/build/approve")
+    async def approve_build(req: BuildApproveRequest) -> dict[str, Any]:
+        """Execute an approved build — write files, test, commit."""
+        from probos.cognitive.builder import BuildSpec, execute_approved_build
+        import pathlib
+
+        spec = BuildSpec(
+            title=req.title,
+            description=req.description,
+            ad_number=req.ad_number,
+            branch_name=req.branch_name,
+        )
+
+        work_dir = str(pathlib.Path(__file__).resolve().parent.parent.parent)
+
+        asyncio.create_task(_execute_build(req.build_id, req.file_changes, spec, work_dir, runtime))
+
+        return {
+            "status": "started",
+            "build_id": req.build_id,
+            "message": "Executing approved build...",
+        }
+
+    async def _run_build(
+        req: BuildRequest,
+        build_id: str,
+        rt: Any,
+    ) -> None:
+        """Background build pipeline with WebSocket progress events."""
+        try:
+            rt._emit_event("build_started", {
+                "build_id": build_id,
+                "title": req.title,
+                "message": f"Starting build: {req.title}...",
+            })
+
+            rt._emit_event("build_progress", {
+                "build_id": build_id,
+                "step": "preparing",
+                "step_label": "\u2692 Preparing build context...",
+                "current": 1,
+                "total": 3,
+                "message": "\u2692 Reading reference files...",
+            })
+
+            rt._emit_event("build_progress", {
+                "build_id": build_id,
+                "step": "generating",
+                "step_label": "\u2b21 Generating code...",
+                "current": 2,
+                "total": 3,
+                "message": "\u2b21 Generating code via deep LLM...",
+            })
+
+            from probos.types import IntentMessage
+            intent = IntentMessage(
+                intent="build_code",
+                params={
+                    "title": req.title,
+                    "description": req.description,
+                    "target_files": req.target_files,
+                    "reference_files": req.reference_files,
+                    "test_files": req.test_files,
+                    "ad_number": req.ad_number,
+                    "constraints": req.constraints,
+                },
+            )
+
+            results = await rt.intent_bus.broadcast(intent)
+
+            build_result = None
+            for r in results:
+                if r and r.success and r.result:
+                    build_result = r
+                    break
+
+            if not build_result or not build_result.result:
+                error_msg = "BuilderAgent returned no results"
+                if results:
+                    errors = [r.error for r in results if r and r.error]
+                    if errors:
+                        error_msg = "; ".join(errors)
+                rt._emit_event("build_failure", {
+                    "build_id": build_id,
+                    "message": f"Build failed: {error_msg}",
+                    "error": error_msg,
+                })
+                return
+
+            rt._emit_event("build_progress", {
+                "build_id": build_id,
+                "step": "review",
+                "step_label": "\u25ce Ready for review",
+                "current": 3,
+                "total": 3,
+                "message": "\u25ce Code generated \u2014 awaiting Captain approval",
+            })
+
+            result_data = build_result.result
+            if isinstance(result_data, str):
+                import json as _json
+                try:
+                    result_data = _json.loads(result_data)
+                except Exception:
+                    result_data = {"llm_output": result_data, "file_changes": [], "change_count": 0}
+
+            file_changes = result_data.get("file_changes", [])
+            change_count = result_data.get("change_count", len(file_changes))
+            llm_output = result_data.get("llm_output", "")
+
+            rt._emit_event("build_generated", {
+                "build_id": build_id,
+                "title": req.title,
+                "description": req.description,
+                "ad_number": req.ad_number,
+                "file_changes": file_changes,
+                "change_count": change_count,
+                "llm_output": llm_output,
+                "message": f"Generated {change_count} file(s) for '{req.title}' \u2014 review and approve to apply.",
+            })
+
+        except Exception as e:
+            logger.warning("Build pipeline failed: %s", e, exc_info=True)
+            rt._emit_event("build_failure", {
+                "build_id": build_id,
+                "message": f"Build failed: {e}",
+                "error": str(e),
+            })
+
+    async def _execute_build(
+        build_id: str,
+        file_changes: list[dict],
+        spec: Any,
+        work_dir: str,
+        rt: Any,
+    ) -> None:
+        """Background execution of approved build."""
+        from probos.cognitive.builder import execute_approved_build
+
+        try:
+            rt._emit_event("build_progress", {
+                "build_id": build_id,
+                "step": "writing",
+                "step_label": "\u270d Writing files...",
+                "current": 1,
+                "total": 3,
+                "message": "\u270d Writing files to disk...",
+            })
+
+            result = await execute_approved_build(
+                file_changes=file_changes,
+                spec=spec,
+                work_dir=work_dir,
+                run_tests=True,
+            )
+
+            if result.success:
+                rt._emit_event("build_success", {
+                    "build_id": build_id,
+                    "branch": result.branch_name,
+                    "commit": result.commit_hash,
+                    "files_written": result.files_written,
+                    "tests_passed": result.tests_passed,
+                    "test_result": result.test_result[:500] if result.test_result else "",
+                    "message": (
+                        f"\u2b22 Build complete! Branch: {result.branch_name}, "
+                        f"Commit: {result.commit_hash}, "
+                        f"Files: {len(result.files_written)}, "
+                        f"Tests: {'passed' if result.tests_passed else 'FAILED'}"
+                    ),
+                })
+            else:
+                rt._emit_event("build_failure", {
+                    "build_id": build_id,
+                    "message": f"Build execution failed: {result.error}",
+                    "error": result.error,
+                    "test_result": result.test_result[:500] if result.test_result else "",
+                })
+        except Exception as e:
+            logger.warning("Build execution failed: %s", e, exc_info=True)
+            rt._emit_event("build_failure", {
+                "build_id": build_id,
+                "message": f"Build execution failed: {e}",
+                "error": str(e),
+            })
+
+    # ------------------------------------------------------------------
+    # Architect Agent API (AD-308)
+    # ------------------------------------------------------------------
+
+    @app.post("/api/design/submit")
+    async def submit_design(req: DesignRequest) -> dict[str, Any]:
+        """Start async architectural design. Progress via WebSocket events."""
+        import uuid
+        design_id = uuid.uuid4().hex[:12]
+        asyncio.create_task(_run_design(req, design_id, runtime))
+        return {
+            "status": "started",
+            "design_id": design_id,
+            "message": f"Design request for '{req.feature}' started...",
+        }
+
+    @app.post("/api/design/approve")
+    async def approve_design(req: DesignApproveRequest) -> dict[str, Any]:
+        """Approve architect proposal — forwards embedded BuildSpec to builder."""
+        if req.design_id not in _pending_designs:
+            return {"status": "error", "message": f"Design {req.design_id} not found or already processed"}
+
+        proposal_data = _pending_designs.pop(req.design_id)
+        build_spec = proposal_data["build_spec"]
+
+        import uuid
+        build_id = uuid.uuid4().hex[:12]
+        build_req = BuildRequest(
+            title=build_spec.get("title", ""),
+            description=build_spec.get("description", ""),
+            target_files=build_spec.get("target_files", []),
+            reference_files=build_spec.get("reference_files", []),
+            test_files=build_spec.get("test_files", []),
+            ad_number=build_spec.get("ad_number", 0),
+            constraints=build_spec.get("constraints", []),
+        )
+        asyncio.create_task(_run_build(build_req, build_id, runtime))
+
+        return {
+            "status": "forwarded",
+            "design_id": req.design_id,
+            "build_id": build_id,
+            "message": f"Proposal approved \u2014 forwarded to Builder (build_id: {build_id})",
+        }
+
+    async def _run_design(
+        req: DesignRequest,
+        design_id: str,
+        rt: Any,
+    ) -> None:
+        """Background design pipeline with WebSocket progress events."""
+        try:
+            rt._emit_event("design_started", {
+                "design_id": design_id,
+                "feature": req.feature,
+                "message": f"Architect analyzing: {req.feature}...",
+            })
+
+            rt._emit_event("design_progress", {
+                "design_id": design_id,
+                "step": "surveying",
+                "step_label": "\u2609 Surveying codebase...",
+                "current": 1,
+                "total": 3,
+                "message": "\u2609 Surveying codebase and roadmap...",
+            })
+
+            rt._emit_event("design_progress", {
+                "design_id": design_id,
+                "step": "designing",
+                "step_label": "\u2b21 Designing specification...",
+                "current": 2,
+                "total": 3,
+                "message": "\u2b21 Generating architectural proposal via deep LLM...",
+            })
+
+            from probos.types import IntentMessage
+            intent = IntentMessage(
+                intent="design_feature",
+                params={
+                    "feature": req.feature,
+                    "phase": req.phase,
+                },
+            )
+
+            results = await rt.intent_bus.broadcast(intent)
+
+            design_result = None
+            for r in results:
+                if r and r.success and r.result:
+                    design_result = r
+                    break
+
+            if not design_result or not design_result.result:
+                error_msg = "ArchitectAgent returned no results"
+                if results:
+                    errors = [r.error for r in results if r and r.error]
+                    if errors:
+                        error_msg = "; ".join(errors)
+                rt._emit_event("design_failure", {
+                    "design_id": design_id,
+                    "message": f"Design failed: {error_msg}",
+                    "error": error_msg,
+                })
+                return
+
+            rt._emit_event("design_progress", {
+                "design_id": design_id,
+                "step": "review",
+                "step_label": "\u25ce Ready for review",
+                "current": 3,
+                "total": 3,
+                "message": "\u25ce Proposal ready \u2014 awaiting Captain review",
+            })
+
+            result_data = design_result.result
+            if isinstance(result_data, str):
+                import json as _json
+                try:
+                    result_data = _json.loads(result_data)
+                except Exception:
+                    result_data = {"proposal": {}, "llm_output": result_data}
+
+            proposal = result_data.get("proposal", {})
+            llm_output = result_data.get("llm_output", "")
+
+            # Store proposal for later approval
+            _pending_designs[design_id] = {
+                "proposal": proposal,
+                "build_spec": proposal.get("build_spec", {}),
+            }
+
+            rt._emit_event("design_generated", {
+                "design_id": design_id,
+                "title": proposal.get("title", req.feature),
+                "summary": proposal.get("summary", ""),
+                "rationale": proposal.get("rationale", ""),
+                "roadmap_ref": proposal.get("roadmap_ref", ""),
+                "priority": proposal.get("priority", "medium"),
+                "dependencies": proposal.get("dependencies", []),
+                "risks": proposal.get("risks", []),
+                "build_spec": proposal.get("build_spec", {}),
+                "llm_output": llm_output,
+                "message": f"Architect proposes: {proposal.get('title', req.feature)} \u2014 review and approve to forward to Builder.",
+            })
+
+        except Exception as e:
+            logger.warning("Design pipeline failed: %s", e, exc_info=True)
+            rt._emit_event("design_failure", {
+                "design_id": design_id,
+                "message": f"Design failed: {e}",
+                "error": str(e),
             })
 
     # ------------------------------------------------------------------

@@ -38,6 +38,8 @@ from probos.agents.medical import (
     PharmacistAgent,
     PathologistAgent,
 )
+from probos.cognitive.builder import BuilderAgent
+from probos.cognitive.architect import ArchitectAgent
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
@@ -259,6 +261,10 @@ class ProbOSRuntime:
         self.spawner.register_template("surgeon", SurgeonAgent)
         self.spawner.register_template("pharmacist", PharmacistAgent)
         self.spawner.register_template("pathologist", PathologistAgent)
+        # Engineering team (AD-302)
+        self.spawner.register_template("builder", BuilderAgent)
+        # Science team (AD-306)
+        self.spawner.register_template("architect", ArchitectAgent)
 
         # --- CodebaseIndex (AD-290) ---
         self.codebase_index: Any = None
@@ -475,6 +481,20 @@ class ProbOSRuntime:
                     agent_ids=ids, llm_client=self.llm_client, runtime=self,
                 )
 
+        # Engineering team — Builder Agent (AD-302)
+        if self.config.bundled_agents.enabled:
+            await self.create_pool(
+                "builder", "builder", target_size=1,
+                llm_client=self.llm_client, runtime=self,
+            )
+
+        # Science team — Architect Agent (AD-307)
+        if self.config.bundled_agents.enabled:
+            await self.create_pool(
+                "architect", "architect", target_size=1,
+                llm_client=self.llm_client, runtime=self,
+            )
+
         # Build CodebaseIndex — ship's library, available to all agents (AD-297)
         from probos.cognitive.codebase_index import CodebaseIndex
         self.codebase_index = CodebaseIndex(source_root=Path(__file__).resolve().parent)
@@ -519,6 +539,16 @@ class ProbOSRuntime:
                     for agent in pool.healthy_agents:
                         if hasattr(agent, "add_skill"):
                             agent.add_skill(codebase_skill)
+
+        # Attach codebase_knowledge skill to architect pool (AD-307)
+        if self.config.bundled_agents.enabled:
+            from probos.cognitive.codebase_skill import create_codebase_skill as _create_cb_skill
+            _cb_skill = _create_cb_skill(self.codebase_index)
+            pool = self.pools.get("architect")
+            if pool:
+                for agent in pool.healthy_agents:
+                    if hasattr(agent, "add_skill"):
+                        agent.add_skill(_cb_skill)
 
         # Refresh decomposer with intent descriptors from all registered templates
         self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
@@ -566,6 +596,22 @@ class ProbOSRuntime:
             display_name="Security",
             pool_names={"red_team"},
             exclude_from_scaler=False,
+        ))
+
+        # Engineering pool group (AD-302)
+        self.pool_groups.register(PoolGroup(
+            name="engineering",
+            display_name="Engineering",
+            pool_names={"builder"},
+            exclude_from_scaler=True,
+        ))
+
+        # Science pool group (AD-307)
+        self.pool_groups.register(PoolGroup(
+            name="science",
+            display_name="Science",
+            pool_names={"architect"},
+            exclude_from_scaler=True,
         ))
 
         # Start pool scaler if scaling is enabled

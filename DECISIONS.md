@@ -1761,3 +1761,51 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 | AD-300 | Store section line numbers in `_analyze_doc()` alongside section names. New `read_doc_sections(file_path, keywords, max_lines=200)` scores sections by keyword overlap and reads only matching sections. `_introspect_design()` uses section-targeted reading for `docs:` files instead of fixed 80-line read. Imports `_STOP_WORDS` to extract keywords from the question for section matching |
 
 **Status:** Complete — 6 new Python tests, 1746 Python total
+
+### AD-302: BuilderAgent — Code Generation via LLM
+
+| AD | Decision |
+|----|----------|
+| AD-302 | BuilderAgent — CognitiveAgent (domain/Engineering) that generates code from BuildSpec via deep LLM tier. Parses file blocks from LLM output, returns for Captain approval. Registered as `builder` in `engineering` pool group with consensus required |
+| AD-303 | Git integration — async git helpers (branch, commit, checkout) via asyncio.create_subprocess_exec. `execute_approved_build()` pipeline: branch → write → test → commit. ProbOS Builder as git co-author |
+
+**Status:** Complete — 29 new Python tests, 1775 Python total
+
+---
+
+## Phase 32b: Builder API + HXI (AD-304–305)
+
+*"Engineering to Bridge — the blueprints are ready for your review, Captain."*
+
+| AD | Decision |
+|----|----------|
+| AD-304 | Builder API — `POST /api/build/submit` triggers BuilderAgent via intent bus, `/api/build/approve` executes `execute_approved_build()`. `/build` slash command parses `title: description` format. WebSocket events: build_started, build_progress, build_generated, build_success, build_failure. Fire-and-forget async pattern matching selfmod |
+| AD-305 | Builder HXI — BuildProposal type, Zustand build_* event handlers, IntentSurface inline approval UI with file summary, code review toggle, Approve/Reject buttons. Transient buildProposal on ChatMessage (not persisted to localStorage) |
+
+**Status:** Complete — 15 new Python tests, 1790 Python + 21 Vitest total
+
+---
+
+## Phase 32c: Architect Agent (AD-306–307)
+
+*"The First Officer surveys the star charts, identifies the next heading, and drafts the orders."*
+
+| AD | Decision |
+|----|----------|
+| AD-306 | ArchitectAgent — Science-team CognitiveAgent (deep tier) that analyzes roadmap and codebase to produce structured ArchitectProposal containing a BuildSpec. Parses ===PROPOSAL=== blocks from LLM output. `perceive()` gathers codebase context via CodebaseIndex (files, agents, layers, roadmap sections, DECISIONS tail). `requires_consensus=False`, `requires_reflect=True` |
+| AD-307 | Runtime integration — architect template registered, `architect` pool (target_size=1), `science` PoolGroup, codebase_skill attached independently of medical config, HXI teal color `#50a0b0` |
+
+**Status:** Complete — 25 new Python tests, 1815 Python + 21 Vitest total
+
+---
+
+## Phase 32d: Architect API + HXI (AD-308–309)
+
+*"The First Officer presents the schematics; the Captain decides whether to build."*
+
+| AD | Decision |
+|----|----------|
+| AD-308 | Architect API — `POST /api/design/submit`, `POST /api/design/approve`, `/design` slash command (supports `/design <feature>` and `/design phase N: <feature>`), `_run_design` background pipeline, `design_*` WebSocket events (design_started, design_progress, design_generated, design_failure). `_pending_designs` in-memory store. Approval forwards embedded BuildSpec to existing `_run_build` pipeline |
+| AD-309 | Architect HXI — `ArchitectProposalView` TypeScript type, Zustand `design_*` event handlers with `designProgress` state, IntentSurface inline proposal review UI (teal theme `#50a0b0`) with summary/rationale/roadmap/priority/target-files/risks/dependencies card, collapsible full spec, Approve & Build / Reject buttons |
+
+**Status:** Complete — 14 new Python tests, 1826 Python + 21 Vitest total

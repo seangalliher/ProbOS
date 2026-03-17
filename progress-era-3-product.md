@@ -283,6 +283,76 @@ Built gravitational sub-clusters with translucent boundary shells. Each pool gro
 
 **Status:** Complete — 6 new tests (1746 Python total)
 
+### BuilderAgent — Code Generation via LLM (AD-302/303) — ✅ COMPLETE
+
+**Problem:** ProbOS had no way to generate code changes programmatically. The path from "architect designs a spec" to "code gets written" required a human. This is the first step toward the automated federation northstar.
+
+**Solution:** `BuilderAgent` — a CognitiveAgent in the Engineering team that accepts `BuildSpec` dataclasses, generates code via the deep LLM tier, parses file changes from `===FILE:===` / `===MODIFY:===` markers, and returns them for Captain approval. After approval, `execute_approved_build()` orchestrates: git branch → write files → pytest → commit → return to main. All git operations are async (`asyncio.create_subprocess_exec`). MODIFY mode is parsed but not yet applied (logged and skipped).
+
+| File | Change |
+|------|--------|
+| `src/probos/cognitive/builder.py` | **NEW** — `BuildSpec`, `BuildResult` dataclasses, `BuilderAgent` (CognitiveAgent, domain tier), `_parse_file_blocks()`, git helpers (`_git_create_branch`, `_git_add_and_commit`, `_git_checkout_main`), `execute_approved_build()` pipeline |
+| `src/probos/runtime.py` | Import `BuilderAgent`, register template, create `builder` pool (gated on `bundled_agents.enabled`), register `engineering` PoolGroup |
+| `ui/src/store/useStore.ts` | Added `engineering: '#b0a050'` to `GROUP_TINT_HEXES` |
+| `tests/test_builder_agent.py` | **NEW** — 29 tests across 10 test classes |
+
+**Status:** Complete — 29 new tests (1775 Python total)
+
+### Builder API + HXI Approval Surface (AD-304/305) — ✅ COMPLETE
+
+**Problem:** BuilderAgent existed but had no way to trigger it from the UI or API. No endpoint to submit build requests, no approval surface for the Captain to review generated code, and no WebSocket events for real-time progress tracking.
+
+**Solution:** API endpoints + HXI frontend wired end-to-end:
+- **AD-304** Builder API — `POST /api/build/submit` triggers BuilderAgent via intent bus (fire-and-forget async). `POST /api/build/approve` calls `execute_approved_build()` to write files, test, and commit. `/build <title>: <description>` chat command handled inside `create_app()` closure. WebSocket events: `build_started`, `build_progress`, `build_generated`, `build_success`, `build_failure`
+- **AD-305** Builder HXI — `BuildProposal` TypeScript interface with file changes, LLM output, and review status. Zustand store handles all `build_*` events with `buildProgress` state. IntentSurface renders inline approval UI: file change summary, collapsible code view, Approve/Reject buttons. `buildProposal` on ChatMessage is transient (not serialized to localStorage)
+
+| File | Change |
+|------|--------|
+| `src/probos/api.py` | `BuildRequest`, `BuildApproveRequest` models. `POST /api/build/submit`, `POST /api/build/approve` endpoints. `_run_build()`, `_execute_build()` async background functions. `/build` slash command in chat endpoint |
+| `ui/src/store/types.ts` | `BuildProposal` interface, `buildProposal` field on `ChatMessage` |
+| `ui/src/store/useStore.ts` | `buildProgress` state, `build_started/progress/generated/success/failure` event handlers, `addChatMessage` updated for `buildProposal` meta |
+| `ui/src/components/IntentSurface.tsx` | `approveBuild`/`rejectBuild` callbacks, inline approval UI with file summary, collapsible code view, Approve/Reject buttons |
+| `tests/test_builder_api.py` | **NEW** — 15 tests across 7 test classes |
+
+**Status:** Complete — 15 new tests (1790 Python + 21 Vitest total)
+
+### Architect Agent — Roadmap-Driven BuildSpec Generation (AD-306/307) — ✅ COMPLETE
+
+**Problem:** ProbOS had a Builder Agent that could generate code from specs, but no automated way to *produce* those specs. The Captain still hand-wrote build prompts. The Architect Agent is the "First Officer" that surveys the codebase and roadmap to draft structured BuildSpec proposals.
+
+**Solution:** `ArchitectAgent` — a CognitiveAgent in the Science team (deep LLM tier) that:
+- Reads codebase context via `CodebaseIndex` (files, agents, layers, roadmap sections, DECISIONS tail)
+- Produces structured `ArchitectProposal` containing an embedded `BuildSpec` for the Builder Agent
+- Parses `===PROPOSAL===...===END PROPOSAL===` blocks from LLM output with field extraction (TITLE, SUMMARY, RATIONALE, TARGET_FILES, REFERENCE_FILES, TEST_FILES, CONSTRAINTS, DEPENDENCIES, RISKS, DESCRIPTION)
+- `requires_consensus=False` (proposals go to Captain, not agent consensus), `requires_reflect=True`
+
+| File | Change |
+|------|--------|
+| `src/probos/cognitive/architect.py` | **NEW** — `ArchitectProposal` dataclass, `ArchitectAgent` (CognitiveAgent, Science team), `_parse_proposal()`, `perceive()` gathers codebase context, `_build_user_message()` formats design request |
+| `src/probos/runtime.py` | Import `ArchitectAgent`, register template, create `architect` pool, register `science` PoolGroup, attach `codebase_skill` independently of medical config |
+| `ui/src/store/useStore.ts` | Added `science: '#50a0b0'` to `GROUP_TINT_HEXES` |
+| `tests/test_architect_agent.py` | **NEW** — 25 tests across 15 test classes |
+
+**Status:** Complete — 25 new tests (1815 Python + 21 Vitest total)
+
+### Architect API + HXI — Design Proposals from the Bridge (AD-308/309) — ✅ COMPLETE
+
+**Problem:** The ArchitectAgent existed but had no API surface or HXI approval flow. No way to trigger it from the chat, no visual representation of proposals, and no approval path to forward specs to the Builder Agent.
+
+**Solution:** API endpoints + HXI frontend mirroring the Builder API pattern:
+- **AD-308** Architect API — `POST /api/design/submit` triggers ArchitectAgent via intent bus, `POST /api/design/approve` pops from `_pending_designs` and forwards the embedded BuildSpec to `_run_build()`. `/design` slash command supports `/design <feature>` and `/design phase N: <feature>`. WebSocket events: `design_started`, `design_progress`, `design_generated`, `design_failure`
+- **AD-309** Architect HXI — `ArchitectProposalView` TypeScript interface. Zustand handles `design_*` events with `designProgress` state. IntentSurface renders teal-themed proposal review card showing summary, rationale, roadmap ref, priority, target files, risks, and dependencies. Collapsible full spec view. "Approve & Build" forwards to builder, "Reject" discards
+
+| File | Change |
+|------|--------|
+| `src/probos/api.py` | `DesignRequest`, `DesignApproveRequest` models. `POST /api/design/submit`, `POST /api/design/approve` endpoints. `_run_design()` async pipeline. `_pending_designs` dict. `/design` slash command in chat endpoint |
+| `ui/src/store/types.ts` | `ArchitectProposalView` interface, `architectProposal` field on `ChatMessage` |
+| `ui/src/store/useStore.ts` | `designProgress` state, `design_started/progress/generated/success/failure` event handlers, `addChatMessage` updated for `architectProposal` meta |
+| `ui/src/components/IntentSurface.tsx` | `approveDesign`/`rejectDesign` callbacks, teal proposal review card with summary/rationale/risks/dependencies, collapsible full spec, Approve & Build / Reject buttons |
+| `tests/test_architect_api.py` | **NEW** — 14 tests across 8 test classes |
+
+**Status:** Complete — 14 new tests (1826 Python + 21 Vitest total)
+
 ### Causal Attribution for Emergent Behavior + Self-Introspection (AD-295) — ✅ COMPLETE
 
 **Problem:** ProbOS detects emergent patterns (trust anomalies, routing shifts, cooperation clusters) but cannot explain *why* they're happening. No causal trail linking trust changes to intents and Shapley scores. IntrospectionAgent cannot examine ProbOS's own source code for architecture questions.

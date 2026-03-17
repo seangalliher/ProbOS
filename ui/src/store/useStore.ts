@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import { soundEngine } from '../audio/soundEngine';
 import type {
   Agent, Connection, PoolInfo, PoolGroupInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
+  BuildProposal, ArchitectProposalView,
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
@@ -46,6 +47,8 @@ const GROUP_TINT_HEXES: Record<string, string> = {
   self_mod: '#a078b0',   // purple — self-modification
   consensus: '#c85068',  // red — tactical
   security: '#c85068',   // red — tactical (matches red_team pool tint)
+  engineering: '#b0a050', // amber — engineering/builder
+  science: '#50a0b0',    // teal — science/architect
 };
 
 function computeLayout(
@@ -184,6 +187,8 @@ export interface HXIState {
   pendingConsensusFlash: ConsensusEvent | null;
   pendingSelfModBloom: string | null;  // agent_id of newly spawned agent
   selfModProgress: { step: string; current: number; total: number; label: string } | null;
+  buildProgress: { step: string; current: number; total: number; label: string } | null;
+  designProgress: { step: string; current: number; total: number; label: string } | null;
   pendingRoutingPulse: { source: string; target: string } | null;
   pendingFeedbackPulse: 'good' | 'bad' | null;
 
@@ -212,7 +217,7 @@ export interface HXIState {
 
   // Actions
   handleEvent: (event: WSEvent) => void;
-  addChatMessage: (role: 'user' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal }) => void;
+  addChatMessage: (role: 'user' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal; buildProposal?: BuildProposal; architectProposal?: ArchitectProposalView }) => void;
   clearAnimationEvent: (key: 'pendingConsensusFlash' | 'pendingSelfModBloom' | 'pendingRoutingPulse' | 'pendingFeedbackPulse') => void;
   setConnected: (v: boolean) => void;
   setHoveredAgent: (agent: Agent | null, pos?: { x: number; y: number }) => void;
@@ -251,6 +256,8 @@ export const useStore = create<HXIState>((set, get) => ({
   pendingConsensusFlash: null,
   pendingSelfModBloom: null,
   selfModProgress: null,
+  buildProgress: null,
+  designProgress: null,
   pendingRoutingPulse: null,
   pendingFeedbackPulse: null,
   connected: false,
@@ -305,6 +312,8 @@ export const useStore = create<HXIState>((set, get) => ({
       text,
       timestamp: Date.now() / 1000,
       ...(meta?.selfModProposal ? { selfModProposal: meta.selfModProposal } : {}),
+      ...(meta?.buildProposal ? { buildProposal: meta.buildProposal } : {}),
+      ...(meta?.architectProposal ? { architectProposal: meta.architectProposal } : {}),
     };
     set((s) => {
       const updated = [...s.chatHistory.slice(-49), msg];
@@ -582,6 +591,121 @@ export const useStore = create<HXIState>((set, get) => ({
         if (agentType) {
           set({ pendingSelfModBloom: agentType });
         }
+        const msg = (data.message || '') as string;
+        if (msg) {
+          get().addChatMessage('system', msg);
+        }
+        break;
+      }
+
+      case 'build_started': {
+        const msg = (data.message || '') as string;
+        if (msg) {
+          get().addChatMessage('system', msg);
+        }
+        break;
+      }
+
+      case 'build_progress': {
+        const step = data.step as string;
+        const current = data.current as number;
+        const total = data.total as number;
+        const label = (data.step_label || data.message || '') as string;
+        set({ buildProgress: { step, current, total, label } });
+        if (label) {
+          get().addChatMessage('system', label);
+        }
+        break;
+      }
+
+      case 'build_generated': {
+        set({ buildProgress: null });
+        const msg = (data.message || '') as string;
+        const proposal: BuildProposal = {
+          build_id: data.build_id as string,
+          title: data.title as string,
+          description: data.description as string,
+          ad_number: data.ad_number as number,
+          file_changes: data.file_changes as BuildProposal['file_changes'],
+          change_count: data.change_count as number,
+          llm_output: data.llm_output as string,
+          status: 'review',
+        };
+        get().addChatMessage('system', msg, { buildProposal: proposal });
+        break;
+      }
+
+      case 'build_success': {
+        soundEngine.playSelfModSpawn();
+        set({ buildProgress: null });
+        const msg = (data.message || '') as string;
+        if (msg) {
+          get().addChatMessage('system', msg);
+        }
+        break;
+      }
+
+      case 'build_failure': {
+        set({ buildProgress: null });
+        const msg = (data.message || '') as string;
+        if (msg) {
+          get().addChatMessage('system', msg);
+        }
+        break;
+      }
+
+      case 'design_started': {
+        const msg = (data.message || '') as string;
+        if (msg) {
+          get().addChatMessage('system', msg);
+        }
+        break;
+      }
+
+      case 'design_progress': {
+        const step = data.step as string;
+        const current = data.current as number;
+        const total = data.total as number;
+        const label = (data.step_label || data.message || '') as string;
+        set({ designProgress: { step, current, total, label } });
+        if (label) {
+          get().addChatMessage('system', label);
+        }
+        break;
+      }
+
+      case 'design_generated': {
+        set({ designProgress: null });
+        const msg = (data.message || '') as string;
+        const proposal: ArchitectProposalView = {
+          design_id: data.design_id as string,
+          title: data.title as string,
+          summary: data.summary as string,
+          rationale: data.rationale as string,
+          roadmap_ref: data.roadmap_ref as string,
+          priority: (data.priority as string || 'medium') as 'high' | 'medium' | 'low',
+          dependencies: data.dependencies as string[],
+          risks: data.risks as string[],
+          build_spec: data.build_spec as ArchitectProposalView['build_spec'],
+          llm_output: data.llm_output as string,
+          status: 'review',
+        };
+        get().addChatMessage('system', msg, { architectProposal: proposal });
+        break;
+      }
+
+      case 'design_success': {
+        soundEngine.playSelfModSpawn();
+        set({ designProgress: null });
+        const msg = (data.message || '') as string;
+        if (msg) {
+          get().addChatMessage('system', msg);
+        }
+        break;
+      }
+
+      case 'design_failure': {
+        set({ designProgress: null });
         const msg = (data.message || '') as string;
         if (msg) {
           get().addChatMessage('system', msg);

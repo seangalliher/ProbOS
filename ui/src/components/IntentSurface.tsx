@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useStore } from '../store/useStore';
-import type { SelfModProposal } from '../store/types';
+import type { SelfModProposal, BuildProposal, ArchitectProposalView } from '../store/types';
 import { speakResponse } from '../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
 import { soundEngine } from '../audio/soundEngine';
@@ -31,6 +31,8 @@ export function IntentSurface() {
   const [vibeInput, setVibeInput] = useState<Record<string, string>>({});
   const [enrichedSpec, setEnrichedSpec] = useState<Record<string, string | null>>({});
   const [enriching, setEnriching] = useState<Record<string, boolean>>({});
+  const [buildCodeExpanded, setBuildCodeExpanded] = useState<Record<string, boolean>>({});
+  const [designSpecExpanded, setDesignSpecExpanded] = useState<Record<string, boolean>>({});
   const inputRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -253,6 +255,52 @@ export function IntentSurface() {
   /* ── skip self-mod proposal ── */
   const skipSelfMod = useCallback(() => {
     addChatMessage('system', 'Skipped \u2014 no agent created.');
+  }, [addChatMessage]);
+
+  /* ── approve build proposal ── */
+  const approveBuild = useCallback(async (proposal: BuildProposal) => {
+    addChatMessage('system', `Executing build: ${proposal.title}...`);
+    try {
+      await fetch('/api/build/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          build_id: proposal.build_id,
+          file_changes: proposal.file_changes,
+          title: proposal.title,
+          description: proposal.description,
+          ad_number: proposal.ad_number,
+        }),
+      });
+    } catch {
+      addChatMessage('system', '(Build approval request failed)');
+    }
+  }, [addChatMessage]);
+
+  /* ── reject build proposal ── */
+  const rejectBuild = useCallback(() => {
+    addChatMessage('system', 'Build rejected by Captain.');
+  }, [addChatMessage]);
+
+  /* ── approve architect proposal → forward to builder ── */
+  const approveDesign = useCallback(async (proposal: ArchitectProposalView) => {
+    addChatMessage('system', `Forwarding "${proposal.title}" to Builder...`);
+    try {
+      await fetch('/api/design/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          design_id: proposal.design_id,
+        }),
+      });
+    } catch {
+      addChatMessage('system', '(Design approval request failed)');
+    }
+  }, [addChatMessage]);
+
+  /* ── reject architect proposal ── */
+  const rejectDesign = useCallback(() => {
+    addChatMessage('system', 'Design proposal rejected by Captain.');
   }, [addChatMessage]);
 
   return (
@@ -551,6 +599,226 @@ export function IntentSurface() {
                             </div>
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {/* Build proposal approval buttons */}
+                    {msg.buildProposal && msg.buildProposal.status === 'review' && (
+                      <div style={{ marginTop: 8, maxWidth: '80%' }}>
+                        {/* File change summary */}
+                        <div style={{
+                          padding: '8px 12px',
+                          borderRadius: 8,
+                          background: 'rgba(176, 160, 80, 0.08)',
+                          border: '1px solid rgba(176, 160, 80, 0.2)',
+                          fontSize: 12,
+                          color: '#c8d0e0',
+                          marginBottom: 8,
+                        }}>
+                          <div style={{ color: '#b0a050', marginBottom: 4, fontWeight: 600 }}>
+                            Generated {msg.buildProposal.change_count} file(s):
+                          </div>
+                          {msg.buildProposal.file_changes.map((fc, i) => (
+                            <div key={i} style={{ marginLeft: 8, color: '#a0a8b8' }}>
+                              {'\u2022'} {fc.path} ({fc.mode})
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Collapsible code view */}
+                        <button
+                          onClick={() => setBuildCodeExpanded(prev => ({ ...prev, [msg.id]: !prev[msg.id] }))}
+                          style={{
+                            background: 'rgba(128, 128, 160, 0.08)',
+                            border: '1px solid rgba(128, 128, 160, 0.15)',
+                            borderRadius: 6, padding: '4px 12px',
+                            color: '#8888a0', cursor: 'pointer', fontSize: 12,
+                            fontFamily: "'Inter', sans-serif",
+                            marginBottom: 8,
+                          }}
+                        >
+                          {buildCodeExpanded[msg.id] ? '\u25BC Hide Code' : '\u25B6 View Code'}
+                        </button>
+                        {buildCodeExpanded[msg.id] && (
+                          <pre style={{
+                            padding: 12, borderRadius: 8,
+                            background: 'rgba(10, 10, 18, 0.8)',
+                            border: '1px solid rgba(128, 128, 160, 0.15)',
+                            fontSize: 11, lineHeight: 1.4, color: '#a0a8b8',
+                            maxHeight: 300, overflowY: 'auto',
+                            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                            marginBottom: 8,
+                          }}>
+                            {msg.buildProposal.llm_output}
+                          </pre>
+                        )}
+
+                        {/* Action buttons */}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button
+                            onClick={() => approveBuild(msg.buildProposal!)}
+                            style={{
+                              background: 'rgba(102, 255, 136, 0.1)',
+                              border: '1px solid rgba(102, 255, 136, 0.35)',
+                              borderRadius: 8, padding: '6px 16px',
+                              color: '#66ff88', cursor: 'pointer', fontSize: 13,
+                              fontFamily: "'Inter', sans-serif",
+                              textShadow: '0 0 8px rgba(102, 255, 136, 0.5)',
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(102, 255, 136, 0.2)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(102, 255, 136, 0.1)'; }}
+                          >
+                            {'\u2B22'} Approve Build
+                          </button>
+                          <button
+                            onClick={rejectBuild}
+                            style={{
+                              background: 'rgba(128, 128, 160, 0.1)',
+                              border: '1px solid rgba(128, 128, 160, 0.2)',
+                              borderRadius: 8, padding: '6px 16px',
+                              color: '#8888a0', cursor: 'pointer', fontSize: 13,
+                              fontFamily: "'Inter', sans-serif",
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(128, 128, 160, 0.2)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(128, 128, 160, 0.1)'; }}
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Architect proposal review */}
+                    {msg.architectProposal && msg.architectProposal.status === 'review' && (
+                      <div style={{ marginTop: 8, maxWidth: '80%' }}>
+                        {/* Proposal overview card */}
+                        <div style={{
+                          padding: '10px 14px',
+                          borderRadius: 8,
+                          background: 'rgba(80, 160, 176, 0.08)',
+                          border: '1px solid rgba(80, 160, 176, 0.2)',
+                          fontSize: 12,
+                          color: '#c8d0e0',
+                          marginBottom: 8,
+                        }}>
+                          <div style={{ color: '#50a0b0', marginBottom: 6, fontWeight: 600, fontSize: 13 }}>
+                            {'\u2609'} {msg.architectProposal.title}
+                          </div>
+                          <div style={{ marginBottom: 4 }}>
+                            <strong style={{ color: '#a0a8b8' }}>Summary:</strong> {msg.architectProposal.summary}
+                          </div>
+                          <div style={{ marginBottom: 4 }}>
+                            <strong style={{ color: '#a0a8b8' }}>Rationale:</strong> {msg.architectProposal.rationale}
+                          </div>
+                          {msg.architectProposal.roadmap_ref && (
+                            <div style={{ marginBottom: 4 }}>
+                              <strong style={{ color: '#a0a8b8' }}>Roadmap:</strong> {msg.architectProposal.roadmap_ref}
+                            </div>
+                          )}
+                          <div style={{ marginBottom: 4 }}>
+                            <strong style={{ color: '#a0a8b8' }}>Priority:</strong>{' '}
+                            <span style={{ color: msg.architectProposal.priority === 'high' ? '#ff8866' : msg.architectProposal.priority === 'low' ? '#88aa88' : '#b0a050' }}>
+                              {msg.architectProposal.priority}
+                            </span>
+                          </div>
+
+                          {/* Build spec file targets */}
+                          {msg.architectProposal.build_spec.target_files.length > 0 && (
+                            <div style={{ marginTop: 6 }}>
+                              <strong style={{ color: '#a0a8b8' }}>Target files:</strong>
+                              {msg.architectProposal.build_spec.target_files.map((f, i) => (
+                                <div key={i} style={{ marginLeft: 8, color: '#80c8a0' }}>
+                                  {'\u2022'} {f}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Risks */}
+                          {msg.architectProposal.risks.length > 0 && (
+                            <div style={{ marginTop: 6 }}>
+                              <strong style={{ color: '#cc8866' }}>Risks:</strong>
+                              {msg.architectProposal.risks.map((r, i) => (
+                                <div key={i} style={{ marginLeft: 8, color: '#cc9977' }}>
+                                  {'\u26A0'} {r}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Dependencies */}
+                          {msg.architectProposal.dependencies.length > 0 && (
+                            <div style={{ marginTop: 6 }}>
+                              <strong style={{ color: '#a0a8b8' }}>Dependencies:</strong>
+                              {msg.architectProposal.dependencies.map((d, i) => (
+                                <div key={i} style={{ marginLeft: 8, color: '#8888a0' }}>
+                                  {'\u2192'} {d}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Collapsible full spec */}
+                        <button
+                          onClick={() => setDesignSpecExpanded(prev => ({ ...prev, [msg.id]: !prev[msg.id] }))}
+                          style={{
+                            background: 'rgba(80, 160, 176, 0.08)',
+                            border: '1px solid rgba(80, 160, 176, 0.15)',
+                            borderRadius: 6, padding: '4px 12px',
+                            color: '#50a0b0', cursor: 'pointer', fontSize: 12,
+                            fontFamily: "'Inter', sans-serif",
+                            marginBottom: 8,
+                          }}
+                        >
+                          {designSpecExpanded[msg.id] ? '\u25BC Hide Full Spec' : '\u25B6 View Full Spec'}
+                        </button>
+                        {designSpecExpanded[msg.id] && (
+                          <pre style={{
+                            padding: 12, borderRadius: 8,
+                            background: 'rgba(10, 10, 18, 0.8)',
+                            border: '1px solid rgba(80, 160, 176, 0.15)',
+                            fontSize: 11, lineHeight: 1.4, color: '#a0a8b8',
+                            maxHeight: 300, overflowY: 'auto',
+                            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                            marginBottom: 8,
+                          }}>
+                            {msg.architectProposal.build_spec.description || msg.architectProposal.llm_output}
+                          </pre>
+                        )}
+
+                        {/* Action buttons */}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button
+                            onClick={() => approveDesign(msg.architectProposal!)}
+                            style={{
+                              background: 'rgba(80, 160, 176, 0.1)',
+                              border: '1px solid rgba(80, 160, 176, 0.35)',
+                              borderRadius: 8, padding: '6px 16px',
+                              color: '#50d0e0', cursor: 'pointer', fontSize: 13,
+                              fontFamily: "'Inter', sans-serif",
+                              textShadow: '0 0 8px rgba(80, 160, 176, 0.5)',
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(80, 160, 176, 0.2)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(80, 160, 176, 0.1)'; }}
+                          >
+                            {'\u2609'} Approve & Build
+                          </button>
+                          <button
+                            onClick={rejectDesign}
+                            style={{
+                              background: 'rgba(128, 128, 160, 0.1)',
+                              border: '1px solid rgba(128, 128, 160, 0.2)',
+                              borderRadius: 8, padding: '6px 16px',
+                              color: '#8888a0', cursor: 'pointer', fontSize: 13,
+                              fontFamily: "'Inter', sans-serif",
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(128, 128, 160, 0.2)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(128, 128, 160, 0.1)'; }}
+                          >
+                            Reject
+                          </button>
+                        </div>
                       </div>
                     )}
 

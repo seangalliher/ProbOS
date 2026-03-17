@@ -54,12 +54,52 @@ export interface SelfModProposal {
   status: 'proposed' | 'approved' | 'rejected';
 }
 
+export interface BuildProposal {
+  build_id: string;
+  title: string;
+  description: string;
+  ad_number: number;
+  file_changes: Array<{
+    path: string;
+    content: string;
+    mode: 'create' | 'modify';
+    after_line: string | null;
+  }>;
+  change_count: number;
+  llm_output: string;
+  status: 'generating' | 'review' | 'approved' | 'rejected';
+}
+
+export interface ArchitectProposalView {
+  design_id: string;
+  title: string;
+  summary: string;
+  rationale: string;
+  roadmap_ref: string;
+  priority: 'high' | 'medium' | 'low';
+  dependencies: string[];
+  risks: string[];
+  build_spec: {
+    title: string;
+    description: string;
+    target_files: string[];
+    reference_files: string[];
+    test_files: string[];
+    ad_number: number;
+    constraints: string[];
+  };
+  llm_output: string;
+  status: 'analyzing' | 'review' | 'approved' | 'rejected';
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'system';
   text: string;
   timestamp: number;
   selfModProposal?: SelfModProposal;
+  buildProposal?: BuildProposal;
+  architectProposal?: ArchitectProposalView;
 }
 
 export interface WSEvent {
