@@ -43,6 +43,7 @@ from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
 from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
 from probos.cognitive.emergent_detector import EmergentDetector
+from probos.cognitive.task_scheduler import TaskScheduler
 from probos.knowledge.semantic import SemanticKnowledgeLayer
 from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient, OpenAICompatibleClient
 from probos.cognitive.working_memory import WorkingMemoryManager
@@ -176,6 +177,9 @@ class ProbOSRuntime:
         # --- Dreaming ---
         self.dream_scheduler: DreamScheduler | None = None
         self._last_request_time: float = time.monotonic()
+
+        # --- Task Scheduler ---
+        self.task_scheduler: TaskScheduler | None = None
 
         # --- Pool scaling ---
         self.pool_scaler: PoolScaler | None = None
@@ -765,6 +769,12 @@ class ProbOSRuntime:
             self.dream_scheduler._pre_dream_fn = self._on_pre_dream
             self.dream_scheduler._post_micro_dream_fn = self._on_post_micro_dream
 
+        # Start task scheduler (AD-282)
+        self.task_scheduler = TaskScheduler(
+            process_fn=self.process_natural_language,
+        )
+        self.task_scheduler.start()
+
         # Start periodic flush of trust + routing weights
         self._flush_task = asyncio.create_task(self._periodic_flush_loop())
 
@@ -896,6 +906,11 @@ class ProbOSRuntime:
         if self.dream_scheduler:
             await self.dream_scheduler.stop()
             self.dream_scheduler = None
+
+        # Stop task scheduler (AD-282)
+        if self.task_scheduler:
+            await self.task_scheduler.stop()
+            self.task_scheduler = None
 
         # Stop episodic memory
         if self.episodic_memory:
@@ -2045,6 +2060,11 @@ class ProbOSRuntime:
             result["dreaming"] = dream_status
         else:
             result["dreaming"] = {"state": "disabled", "enabled": False}
+        result["task_scheduler"] = (
+            self.task_scheduler.get_stats()
+            if self.task_scheduler
+            else {"enabled": False}
+        )
         return result
 
     async def recall_similar(self, query: str, k: int = 5) -> list[Episode]:

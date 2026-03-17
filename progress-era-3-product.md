@@ -162,6 +162,27 @@ ProbOS stopped.
 
 ### Phase 24c: Lightweight Task Scheduler (AD-281 through AD-284)
 
+**Problem:** ProbOS identified its own inability to deliver timed messages during a Discord self-assessment conversation. The SchedulerAgent stored reminders to file but had no background timer to execute them.
+
+| AD | Decision |
+|----|----------|
+| AD-281 | `TaskScheduler` engine: `ScheduledTask` dataclass, background 1-second tick loop (follows `DreamScheduler` pattern), `schedule()`/`cancel()`/`list_tasks()`/`get_stats()`. One-shot and recurring tasks. Per-task error isolation |
+| AD-282 | Wire `TaskScheduler` into `ProbOSRuntime` lifecycle (start/stop), expose as property, add to `status()` output |
+| AD-283 | Upgrade `SchedulerAgent`: removed "no background timer" disclaimer, `act()` calls `task_scheduler.schedule/cancel/list`, `perceive()` includes live scheduled tasks alongside saved reminders |
+| AD-284 | Channel delivery for scheduled tasks: results sent to Discord/Slack channel when `channel_id` is set on the task. `__main__.py` passes channel adapters to TaskScheduler after adapter creation |
+
+| File | Change |
+|------|--------|
+| `src/probos/cognitive/task_scheduler.py` | New — `ScheduledTask` dataclass, `TaskScheduler` engine with background loop, channel delivery |
+| `src/probos/runtime.py` | Import TaskScheduler, create in `start()`, stop in `stop()`, add to `status()` |
+| `src/probos/agents/bundled/organizer_agents.py` | SchedulerAgent upgraded: new instructions, `act()` interacts with TaskScheduler, `perceive()` includes live tasks |
+| `src/probos/__main__.py` | Wire channel adapters into task scheduler for delivery |
+| `tests/test_task_scheduler.py` | 17 tests (7 core scheduler + 2 runtime integration + 4 SchedulerAgent + 1 persistence + 3 channel delivery) |
+
+**Scope boundary:** In-session scheduling only. Persistent tasks with checkpointing and resume-after-restart remain in Phase 25.
+
+1705/1705 tests passing (+ 11 skipped).
+
 ### Pre-Launch: Personalization + Security + Documentation (completed items)
 - ✅ **SSRF protection** (AD-285) — `_validate_url()` in HttpFetchAgent blocks private IPs (10/172.16/192.168/127), cloud metadata (169.254.169.254), link-local, file:// scheme, and DNS rebinding attacks. 8 tests
 - ✅ **.env file support** (AD-286) — `python-dotenv` loads `.env` from cwd at startup. `.env.example` documents available vars (`PROBOS_DISCORD_TOKEN`, `PROBOS_LLM_API_KEY`). Import-guarded so it degrades gracefully. 3 tests

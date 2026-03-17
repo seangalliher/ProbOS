@@ -185,25 +185,30 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
 # ------------------------------------------------------------------
 
 class SchedulerAgent(_BundledMixin, CognitiveAgent):
-    """Set reminders and manage schedule (file-backed, no background timer)."""
+    """Set reminders and manage schedule — tasks execute on timer within the session."""
 
     agent_type = "scheduler"
     instructions = (
         "You are a scheduling and reminder agent. You help the user set reminders "
         "and manage time.\n\n"
         "Operations:\n"
-        "- remind: Set a reminder (stored with timestamp)\n"
-        "- list: Show upcoming reminders\n"
-        "- cancel: Cancel a reminder\n"
+        "- remind: Set a reminder (will be delivered on schedule while ProbOS is running)\n"
+        "- list: Show upcoming reminders and scheduled tasks\n"
+        "- cancel: Cancel a reminder by task_id\n"
         "- check: Check what's coming up today/this week\n\n"
-        "Reminders are stored in ~/.probos/reminders.json. The current reminders are "
-        "provided to you.\n\n"
+        "Reminders will now be delivered on schedule as long as ProbOS is running. "
+        "For recurring tasks, specify an interval (e.g., 'every hour', 'every day'). "
+        "Tasks do not survive server restarts — they will be re-loaded from saved "
+        "reminders on next boot.\n\n"
         "Return a JSON object with:\n"
         "  action: the action performed\n"
-        "  reminders: the updated list (array of {text, when, created} objects)\n"
-        "  message: a human-readable summary\n\n"
-        "Note: ProbOS currently has no background timer \u2014 reminders are checked "
-        "when the user interacts or at boot. Be transparent about this limitation."
+        "  For 'remind': delay_seconds (number), text (what to do), "
+        "interval_seconds (optional, for recurring), message (confirmation)\n"
+        "  For 'list': message (a human-readable summary)\n"
+        "  For 'cancel': task_id (string), message (confirmation)\n"
+        "  For 'check': message (a human-readable summary)\n"
+        "  reminders: the updated list (array of {text, when, created} objects) "
+        "for file persistence\n"
     )
     intent_descriptors = [
         IntentDescriptor(
@@ -227,10 +232,20 @@ class SchedulerAgent(_BundledMixin, CognitiveAgent):
         if self._runtime:
             path = os.path.expanduser(self._REMINDERS_PATH)
             content = await _mesh_read_file(self._runtime, path)
+            parts = []
             if content:
-                obs["fetched_content"] = f"Current reminders:\n{content}"
+                parts.append(f"Saved reminders:\n{content}")
             else:
-                obs["fetched_content"] = "Current reminders:\n[]"
+                parts.append("Saved reminders:\n[]")
+            # Include live scheduled tasks from TaskScheduler (AD-283)
+            if hasattr(self._runtime, "task_scheduler") and self._runtime.task_scheduler:
+                tasks = self._runtime.task_scheduler.list_tasks()
+                if tasks:
+                    lines = [f"  {t.id}: {t.intent_text} (status={t.status})" for t in tasks]
+                    parts.append(f"Active scheduled tasks ({len(tasks)}):\n" + "\n".join(lines))
+                else:
+                    parts.append("Active scheduled tasks: none")
+            obs["fetched_content"] = "\n\n".join(parts)
         return obs
 
     async def act(self, decision: dict) -> dict:
@@ -239,16 +254,49 @@ class SchedulerAgent(_BundledMixin, CognitiveAgent):
 
         llm_output = decision.get("llm_output", "")
 
-        # Persist changes
         if self._runtime:
             try:
                 data = json.loads(llm_output)
-                if isinstance(data, dict) and "reminders" in data:
-                    path = os.path.expanduser(self._REMINDERS_PATH)
-                    await _mesh_write_file(
-                        self._runtime, path,
-                        json.dumps(data["reminders"], indent=2),
-                    )
+                if isinstance(data, dict):
+                    action = data.get("action", "")
+
+                    # --- Schedule a task via TaskScheduler (AD-283) ---
+                    if action == "remind" and hasattr(self._runtime, "task_scheduler") and self._runtime.task_scheduler:
+                        delay = data.get("delay_seconds", 60)
+                        text = data.get("text", "")
+                        interval = data.get("interval_seconds")
+                        channel_id = data.get("channel_id")
+                        if text:
+                            self._runtime.task_scheduler.schedule(
+                                text,
+                                delay_seconds=float(delay),
+                                interval_seconds=float(interval) if interval else None,
+                                channel_id=channel_id,
+                            )
+
+                    # --- List tasks from TaskScheduler ---
+                    elif action == "list" and hasattr(self._runtime, "task_scheduler") and self._runtime.task_scheduler:
+                        tasks = self._runtime.task_scheduler.list_tasks()
+                        if tasks:
+                            lines = [f"  {t.id}: {t.intent_text} (status={t.status})" for t in tasks]
+                            return {"success": True, "result": f"{len(tasks)} scheduled task(s):\n" + "\n".join(lines)}
+                        return {"success": True, "result": data.get("message", "No scheduled tasks.")}
+
+                    # --- Cancel a task ---
+                    elif action == "cancel" and hasattr(self._runtime, "task_scheduler") and self._runtime.task_scheduler:
+                        task_id = data.get("task_id", "")
+                        if task_id:
+                            removed = self._runtime.task_scheduler.cancel(task_id)
+                            msg = f"Cancelled task {task_id}" if removed else f"Task {task_id} not found"
+                            return {"success": True, "result": msg}
+
+                    # Persist reminders to file
+                    if "reminders" in data:
+                        path = os.path.expanduser(self._REMINDERS_PATH)
+                        await _mesh_write_file(
+                            self._runtime, path,
+                            json.dumps(data["reminders"], indent=2),
+                        )
             except (json.JSONDecodeError, TypeError):
                 pass
 

@@ -1658,6 +1658,6 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 
 **Scope boundary:** In-session scheduling only. Persistent tasks with checkpointing and resume-after-restart remain in Phase 25.
 
-**Status:** Build prompt ready at `prompts/phase-24c-task-scheduler.md`
+**Status:** Complete — 17 tests, 1705/1705 passing
 
 ---

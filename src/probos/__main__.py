@@ -372,6 +372,10 @@ async def _serve(
         else:
             console.print("  [yellow]![/yellow] Discord enabled but no token set (PROBOS_DISCORD_TOKEN)")
 
+    # Wire channel adapters into task scheduler for delivery (AD-284)
+    if adapters and runtime.task_scheduler:
+        runtime.task_scheduler._channel_adapters = adapters
+
     uv_config = uvicorn.Config(
         app, host=host, port=port, log_level="warning",
     )
