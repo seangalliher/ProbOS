@@ -10,13 +10,7 @@
 
 ProbOS reimagines the OS as a mesh of probabilistic agents rather than deterministic processes. Instead of syscalls, you speak natural language. Instead of a scheduler, agents self-organize through Hebbian learning and trust networks. Instead of permissions, destructive operations require multi-agent consensus.
 
-```
-[47 agents | health: 0.95] probos> read pyproject.toml and tell me about this project
-
-  ✓ t1: read_file
-
-  This project is ProbOS v0.1.0, a probabilistic agent-native OS runtime...
-```
+<img width="1911" height="1042" alt="image" src="https://github.com/user-attachments/assets/bb4a20d1-bd63-4f0a-a3bb-9fcf48605173" />
 
 ## Design Philosophy
 
