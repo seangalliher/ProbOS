@@ -383,10 +383,20 @@ export const useStore = create<HXIState>((set, get) => ({
         set((s) => {
           const target = data.agent_id as string | undefined;
           const source = data.intent as string | undefined;
+          const updates: Partial<typeof s> = {};
+
           if (target && source) {
-            return { pendingRoutingPulse: { source, target } };
+            updates.pendingRoutingPulse = { source, target };
+
+            // Flash the target agent
+            const agents = new Map(s.agents);
+            const agent = agents.get(target);
+            if (agent) {
+              agents.set(target, { ...agent, activatedAt: Date.now() });
+              updates.agents = agents;
+            }
           }
-          return {};
+          return updates;
         });
         // Also update DAG node status
         set((s) => {

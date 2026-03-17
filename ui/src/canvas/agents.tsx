@@ -79,6 +79,14 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
         ? confidenceToIntensity(agent.confidence) * (isNew ? 1.5 : 1.0)
         : 0.05;
       _tempColor.multiplyScalar(intensity);
+
+      // Activity flash: boost brightness for 500ms after activation (AD-287)
+      const timeSinceActive = Date.now() - (agent.activatedAt ?? 0);
+      if (timeSinceActive < 500) {
+        const flash = 1 + 2 * (1 - timeSinceActive / 500); // 3x -> 1x over 500ms
+        _tempColor.multiplyScalar(flash);
+      }
+
       mesh.setColorAt(i, _tempColor);
     });
 

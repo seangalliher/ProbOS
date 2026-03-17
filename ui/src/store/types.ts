@@ -10,6 +10,7 @@ export interface Agent {
   tier: 'core' | 'utility' | 'domain';
   position: [number, number, number];
   createdAt?: number;
+  activatedAt?: number;
 }
 
 export interface Connection {

@@ -747,7 +747,21 @@ class DAGExecutor:
         """Execute a single node."""
         node.status = "running"
         if on_event:
-            event_data: dict[str, Any] = {"node": node}
+            event_data: dict[str, Any] = {"node": node, "intent": node.intent}
+            # Look up a representative agent for this intent (for HXI visualization)
+            if self.runtime and hasattr(self.runtime, 'pools'):
+                for pool_name, pool in self.runtime.pools.items():
+                    if pool.agent_type and hasattr(pool, 'healthy_agents'):
+                        # Check if this pool handles this intent
+                        template = self.runtime.spawner._templates.get(pool.agent_type)
+                        if template:
+                            descriptors = getattr(template, 'intent_descriptors', [])
+                            if any(d.name == node.intent for d in descriptors):
+                                agents = list(pool.healthy_agents)
+                                if agents:
+                                    agent = agents[0]
+                                    event_data["agent_id"] = agent if isinstance(agent, str) else agent.id
+                                break
             if self.attention:
                 # Include attention info in event
                 snapshot = self.attention.get_queue_snapshot()

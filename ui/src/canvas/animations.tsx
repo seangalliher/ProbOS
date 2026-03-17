@@ -227,6 +227,11 @@ export function RoutingPulse() {
       lastPulseRef.current = store.pendingRoutingPulse;
       activeRef.current = true;
       progressRef.current = 0;
+      // Position at target agent
+      const target = [...store.agents.values()].find(a => a.id === store.pendingRoutingPulse!.target);
+      if (target && mesh) {
+        mesh.position.set(target.position[0], target.position[1], target.position[2]);
+      }
     }
 
     if (!activeRef.current) {
