@@ -94,8 +94,8 @@ Each ProbOS instance is a ship. Multiple instances form a federation:
 | 29b | Medical Team | Medical | Vitals monitor, diagnostician, surgeon, pharmacist, pathologist |
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
 | 30 | Self-Improvement Pipeline | All Teams | Capability proposals, stage contracts, QA pool, evolution store, human gate |
-| 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring |
-| 32 | Engineering Team | Engineering | Automated performance optimization, maintenance agents, build agents, LLM resilience, observability export |
+| 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring, secrets management |
+| 32 | Engineering Team | Engineering | Automated performance optimization, maintenance agents, build agents, LLM resilience, observability export, CI/CD, backup/restore |
 | 33 | Operations Team | Ops | Formalized resource management, workload balancing, system coordination, LLM cost tracking |
 
 ---
@@ -185,6 +185,13 @@ Formalize threat detection and defense as a dedicated agent pool. Builds on exis
 - **Red Team Lead** — coordinates existing red team agents, schedules adversarial verification campaigns
 - Existing: Red team agents (built), SSRF protection (AD-285), prompt injection scanner (roadmap)
 
+**Secrets Management**
+
+- **Secure credential store** — integrate with system keyring, HashiCorp Vault, or AWS KMS for API keys, tokens, and sensitive config values
+- **Runtime injection** — secrets resolved at startup and injected into agents/tools that need them, never stored in config files or logs
+- **Rotation support** — automatic credential rotation without restart; agents notified when credentials change
+- Existing: `.env` file support (basic), config values in `system.yaml` (not encrypted)
+
 ---
 
 ### Engineering Team (Phase 32)
@@ -198,6 +205,26 @@ Automated performance optimization, maintenance, and construction. The team that
 - **Builder Agent** — executes build prompts, constructs new capabilities (bridges to external coding agents initially)
 - **Infrastructure Agent** — disk space monitoring, dependency health, environment validation
 - Existing: PoolScaler handles some Ops/Engineering overlap
+
+**Backup & Restore**
+
+- **Episodic memory snapshots** — periodic ChromaDB backup to disk or cloud storage; restore from snapshot on corruption or migration
+- **System state export** — export trust scores, Hebbian weights, agent registry, and config as a portable snapshot for migration between instances
+- **Point-in-time recovery** — roll back episodic memory to a known-good state after bad dream consolidation or corrupted imports
+
+**CI/CD Pipeline**
+
+- **GitHub Actions test suite** — run full pytest suite (1700+ tests) on every PR and push to main
+- **Vitest for HXI** — run frontend tests alongside Python tests
+- **Quality gates** — block merge if tests fail, lint errors, or type check issues
+- **Automated release** — tag-based releases with changelog generation from commit history
+- Existing: GitHub Actions for docs deployment to probos.dev (built)
+
+**Performance & Load Testing**
+
+- **Benchmarks** — reproducible performance baselines for DAG execution, consensus rounds, LLM latency, and intent routing throughput
+- **Load simulation** — synthetic concurrent user workloads to identify scaling bottlenecks before production
+- **Regression detection** — CI compares benchmark results against baselines, flags performance regressions on PRs
 
 **LLM Resilience — Graceful Degradation**
 
