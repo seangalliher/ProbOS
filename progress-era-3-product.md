@@ -218,3 +218,15 @@ See detailed AD-293 section above. 6 tests. 1711/1711 tests passing (+ 11 skippe
 **Solution:** Gravitational sub-clusters with translucent boundary shells. Each pool group gets its own spatial cluster center, agents orbit within it on a mini Fibonacci sphere, and a faint wireframe shell + team name label marks the boundary.
 
 **Status:** Build prompt ready at `prompts/hxi-crew-clusters.md`
+
+### Causal Attribution for Emergent Behavior + Self-Introspection (AD-295) — pending build
+
+**Problem:** ProbOS detects emergent patterns (trust anomalies, routing shifts, cooperation clusters) but cannot explain *why* they're happening. When asked "what is causing the adaptation?", the system has no causal trail linking trust changes to the intents and Shapley scores that caused them. Additionally, the IntrospectionAgent cannot examine ProbOS's own source code to answer architecture/design questions — that capability is only available to medical team agents.
+
+**Solution:** Four-part fix:
+- **AD-295a** Trust Event Log — ring buffer of `TrustEvent` in TrustNetwork, records intent, Shapley weight, verifier, episode_id for every trust change
+- **AD-295b** Episode Enrichment — Episodes now carry `shapley_values` and `trust_deltas` for post-hoc analysis
+- **AD-295c** Causal Back-References — EmergentPattern.evidence includes recent trust events that explain each detected anomaly
+- **AD-295d** Self-Introspection — IntrospectionAgent gets `codebase_knowledge` skill + `introspect_design` intent for architecture questions
+
+**Status:** Build prompt ready at `prompts/causal-attribution.md`
