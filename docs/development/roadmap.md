@@ -65,7 +65,7 @@ Each ProbOS instance is a ship. Multiple instances form a federation:
 | 25 | Persistent Tasks | Ops | Long-running autonomous tasks with checkpointing, browser automation |
 | 26 | Inter-Agent Deliberation | Bridge | Structured multi-turn agent debates, agent-to-agent messaging |
 | 28 | Meta-Learning | Science | Workspace ontology, dream cycle abstractions, session context, goal planning |
-| 29 | Federation + Emergence | Comms | Knowledge federation, trust transitivity, TC_N measurement |
+| 29 | Federation + Emergence | Comms | Knowledge federation, trust transitivity, MCP adapter, TC_N measurement |
 | 29b | Medical Team | Medical | Vitals monitor, diagnostician, surgeon, pharmacist, pathologist |
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
 | 30 | Self-Improvement Pipeline | All Teams | Capability proposals, stage contracts, QA pool, evolution store, human gate |
@@ -186,6 +186,84 @@ Formalize resource management and system coordination as an agent pool.
 - **Scheduler** — task prioritization, queue management, deadline enforcement (extends Phase 24c TaskScheduler)
 - **Coordinator** — cross-team orchestration during high-load or emergency events
 - Existing: PoolScaler (built), TaskScheduler (Phase 24c roadmap), IntentBus demand tracking (built)
+
+---
+
+### MCP Federation Adapter (Phase 29)
+
+*A universal translator for the wider agent ecosystem.*
+
+MCP (Model Context Protocol) is becoming the standard for inter-agent tool sharing. ProbOS supports it as a federation transport alongside ZeroMQ — connecting ProbOS to external agent frameworks, IDEs, and MCP-compatible tools without requiring them to run ProbOS.
+
+**Inbound (MCP Server)**
+
+- ProbOS exposes its agent capabilities as MCP tools
+- MCP tool calls are translated to `IntentMessage` and dispatched through the intent bus
+- MCP-originated intents go through the same governance pipeline as any federated intent: consensus, red team verification, escalation
+- The MCP adapter is a transport, not a trust bypass
+
+**Outbound (MCP Client)**
+
+- ProbOS discovers and invokes capabilities on external MCP servers
+- External tool definitions translated to `IntentDescriptor` and registered as federated capabilities
+- `FederationRouter` routes intents to MCP-connected systems alongside ZeroMQ-connected ProbOS nodes
+- External capabilities carry federated trust discount (same δ factor as trust transitivity)
+
+**MCP Client Trust**
+
+- MCP clients treated as federated peers with configurable trust
+- New clients start with probationary trust (same `Beta(alpha, beta)` prior as new agents — AD-110)
+- Trust updated based on outcome quality of submitted intents
+- Destructive intents from MCP clients always require full consensus regardless of accumulated trust
+
+**Transport Coexistence**
+
+- ZeroMQ remains the primary intra-Nooplex transport (fast, binary, low-latency)
+- MCP serves the boundary between ProbOS and the wider agent ecosystem
+- `FederationBridge` becomes transport-polymorphic: ZeroMQ and MCP implementations behind a shared interface
+
+---
+
+### Skill Manifest Format (Phase 30)
+
+*A standard manifest for portable, publishable skills.*
+
+Inspired by OpenClaw's declarative skill metadata. Standardizes how skills are described, discovered, and distributed — foundation for the Agent Marketplace.
+
+- **Manifest file** (`skill.yaml`) — name, description, version, author, license, required dependencies, platform constraints, ProbOS version compatibility
+- **Dependency declaration** — Python packages, system binaries, external services needed
+- **Auto-installation** — skills declare their dependencies; runtime installs them on first use
+- **Discovery protocol** — skills can be searched, browsed, and installed from registries
+- **Testing contract** — manifest includes test commands, expected coverage, integration test requirements
+- Pairs with the commercial Agent Marketplace for publishing and distribution
+
+---
+
+### Task Ledger (Phase 33 — Operations Team)
+
+*Two-loop architecture for long-horizon task management.*
+
+Inspired by Microsoft Magentic-One's Task Ledger + Progress Ledger pattern. Structured tracking for multi-step, multi-agent tasks with adaptive replanning.
+
+- **Task Ledger** — tracks facts (confirmed), guesses (unverified), plan (ordered steps), and blockers for each active long-horizon task
+- **Progress Ledger** — per-subtask tracking: assigned agent, status, output, retries, duration
+- **Adaptive replanning** — when progress stalls or a subtask fails, revise the plan using updated facts and lessons learned
+- Extends Phase 24c TaskScheduler from "schedule and run" to "schedule, track, and adapt"
+- Integrates with Evolution Store — task outcomes feed back as lessons for future planning
+
+---
+
+### Agent-as-Tool Invocation (Phase 26)
+
+*Explicit agent-to-agent capability consumption.*
+
+Allows one agent to explicitly invoke another agent's capability as a typed function call, complementing the implicit collaboration that already happens through the intent bus.
+
+- **`AgentTool` wrapper** — any agent can be consumed as a tool by another agent with typed input/output contracts
+- Intent bus remains the primary collaboration mechanism for loosely-coupled work
+- AgentTool is for tightly-coupled cases where one agent always needs another's output (e.g., Diagnostician consumes Vitals Monitor metrics)
+- Trust and consensus still apply — wrapping doesn't bypass governance
+- Natural fit for Phase 26 Inter-Agent Deliberation
 
 ---
 
