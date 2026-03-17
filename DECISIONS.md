@@ -1719,3 +1719,13 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 | `tests/test_introspect_design.py` | 3 tests |
 
 **Status:** Complete — 16 new tests
+
+### AD-296: HXI Cluster Label Billboarding + Security Pool Group
+
+**Problem:** Team name labels rotated with the 3D scene, becoming unreadable. Red team agents had no pool group, floating in "_ungrouped" cluster.
+
+| AD | Decision |
+|----|----------|
+| AD-296 | Wrap team name `<Text>` in `<Billboard follow>` from `@react-three/drei` so labels always face the camera. Add `security` PoolGroup for `red_team` pool (not excluded from scaler). Add `security: '#c85068'` to `GROUP_TINT_HEXES`. 5 crew teams: Core, Bundled, Medical, Self-Mod, Security |
+
+**Status:** Complete — 1 new Vitest test, 21 Vitest total

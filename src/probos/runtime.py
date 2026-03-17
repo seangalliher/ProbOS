@@ -558,6 +558,14 @@ class ProbOSRuntime:
                 exclude_from_scaler=True,
             ))
 
+        # Security pool group — red team agents (AD-296)
+        self.pool_groups.register(PoolGroup(
+            name="security",
+            display_name="Security",
+            pool_names={"red_team"},
+            exclude_from_scaler=False,
+        ))
+
         # Start pool scaler if scaling is enabled
         if self.config.scaling.enabled:
             pool_intent_map = self._build_pool_intent_map()

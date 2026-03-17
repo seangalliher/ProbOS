@@ -350,5 +350,25 @@ describe('useStore', () => {
       expect(gc.has('medical')).toBe(true);
       expect(gc.has('core')).toBe(true);
     });
+    it('red_team agents are in security group', () => {
+      const agents = new Map<string, Agent>();
+      agents.set('rt-0', makeAgent('rt-0', 'red_team'));
+      agents.set('rt-1', makeAgent('rt-1', 'red_team'));
+      agents.set('med-0', makeAgent('med-0', 'medical_vitals'));
+
+      const poolToGroup: Record<string, string> = {
+        red_team: 'security',
+        medical_vitals: 'medical',
+      };
+
+      const { groupCenters } = computeLayout(agents, poolToGroup);
+
+      // Security group should exist, _ungrouped should not
+      expect(groupCenters.has('security')).toBe(true);
+      expect(groupCenters.has('_ungrouped')).toBe(false);
+
+      const sec = groupCenters.get('security')!;
+      expect(sec.tintHex).toBe('#c85068');
+    });
   });
 });

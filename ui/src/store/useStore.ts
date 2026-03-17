@@ -45,6 +45,7 @@ const GROUP_TINT_HEXES: Record<string, string> = {
   medical: '#c06060',    // warm red — sickbay
   self_mod: '#a078b0',   // purple — self-modification
   consensus: '#c85068',  // red — tactical
+  security: '#c85068',   // red — tactical (matches red_team pool tint)
 };
 
 function computeLayout(

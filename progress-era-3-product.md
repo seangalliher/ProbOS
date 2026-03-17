@@ -215,13 +215,18 @@ See detailed AD-293 section above. 6 tests. 1711/1711 tests passing (+ 11 skippe
 
 Built gravitational sub-clusters with translucent boundary shells. Each pool group gets its own spatial cluster center, agents orbit within it on a mini Fibonacci sphere, and a faint wireframe shell + team name label marks the boundary.
 
-### HXI Cluster Fixes + Security Pool Group (AD-296) — pending build
+### HXI Cluster Fixes + Security Pool Group (AD-296) — ✅ COMPLETE
 
-**Problem:** Team name labels rotate with the scene and become unreadable. Red team agents are ungrouped (no pool group), floating in an orphaned cluster.
+**Problem:** Team name labels rotated with the scene and became unreadable. Red team agents were ungrouped (no pool group), floating in an orphaned "_ungrouped" cluster.
 
-**Solution:** Billboard text labels (always face camera) + new `security` PoolGroup for the red_team pool. Crew teams become 5: Core, Bundled, Medical, Self-Mod, Security.
+**Solution:** Billboard text labels (always face camera) via `@react-three/drei` `Billboard` component. New `security` PoolGroup for the `red_team` pool. Crew teams now 5: Core, Bundled, Medical, Self-Mod, Security.
 
-**Status:** Build prompt ready at `prompts/hxi-cluster-fixes.md`
+| File | Change |
+|------|--------|
+| `ui/src/canvas/clusters.tsx` | Wrapped `<Text>` in `<Billboard follow>` for camera-facing labels |
+| `src/probos/runtime.py` | Added `security` PoolGroup with `red_team` pool |
+| `ui/src/store/useStore.ts` | Added `security: '#c85068'` to `GROUP_TINT_HEXES` |
+| `ui/src/__tests__/useStore.test.ts` | 1 test: red_team agents in security group |
 
 ### Causal Attribution for Emergent Behavior + Self-Introspection (AD-295) — ✅ COMPLETE
 
