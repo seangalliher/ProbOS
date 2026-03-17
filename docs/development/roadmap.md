@@ -94,8 +94,8 @@ Each ProbOS instance is a ship. Multiple instances form a federation:
 | 29b | Medical Team | Medical | Vitals monitor, diagnostician, surgeon, pharmacist, pathologist |
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
 | 30 | Self-Improvement Pipeline | All Teams | Capability proposals, stage contracts, QA pool, evolution store, human gate |
-| 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring, secrets management, runtime sandboxing, data governance |
-| 32 | Engineering Team | Engineering | Automated performance optimization, maintenance agents, build agents, LLM resilience, observability export, CI/CD, backup/restore, storage abstraction layers |
+| 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring, secrets management, runtime sandboxing, network egress policy, inference audit, data governance |
+| 32 | Engineering Team | Engineering | Automated performance optimization, maintenance agents, build agents, LLM resilience, observability export, CI/CD, backup/restore, storage abstraction layers, containerized deployment |
 | 33 | Operations Team | Ops | Formalized resource management, workload balancing, system coordination, LLM cost tracking |
 
 ---
@@ -233,6 +233,30 @@ Formalize threat detection and defense as a dedicated agent pool. Builds on exis
 - **Graduated trust → graduated access** — new/untrusted agents get tighter sandboxes; high-trust agents get relaxed constraints
 - Existing: AST validation for self-mod agents (built), restricted imports whitelist (built), red team source scanning (built)
 
+**Network Egress Policy**
+
+*Inspired by NVIDIA NemoClaw's outbound connection control.*
+
+ProbOS has SSRF protection (AD-285) for inbound attack patterns, but no outbound egress control. Agents — especially imported or self-designed ones — should not have unrestricted internet access:
+
+- **Domain allowlist** — per-agent (or per-pool) list of permitted outbound domains. Agents can only reach URLs on their allowlist; all other requests are blocked
+- **Trust-graduated access** — new/imported agents start with no network access. As trust increases, domains can be unlocked. High-trust agents get broader access
+- **Real-time approval** — when an agent attempts to contact an unlisted domain, surface the request to the Captain via HXI for approve/deny (NemoClaw pattern). Approved domains are added to the allowlist
+- **Hot-reloadable** — egress rules can be updated at runtime without restarting agents
+- Existing: SSRF protection blocks dangerous inbound patterns (AD-285, built). Egress policy blocks unauthorized outbound connections
+
+**Inference Audit Layer**
+
+*Inspired by NemoClaw's inference gateway that intercepts all LLM calls.*
+
+ProbOS centralizes LLM calls through the tiered client, but doesn't audit the content of agent-to-LLM communications. An adversarial designed agent could embed sensitive data in its prompts:
+
+- **Prompt logging** — log all LLM requests (prompt content, system prompt, tier, requesting agent) to the event log for audit
+- **Anomaly detection** — flag unusual patterns: agents sending base64-encoded data, agents including file contents they shouldn't have access to, sudden prompt size spikes
+- **PII scrubbing** — optionally redact detected PII from LLM prompts before they leave the system (complements Data Governance)
+- **Per-agent LLM access control** — allow/deny specific agents from using specific LLM tiers (e.g., imported agents restricted to fast tier only)
+- Existing: Tiered LLM client centralizes all LLM calls (built), decision cache tracks LLM usage (AD-272, built)
+
 **Data Governance & Privacy**
 
 - **PII detection** — scan agent conversations and episodic memory for personally identifiable information; flag or redact before storage
@@ -254,6 +278,21 @@ Automated performance optimization, maintenance, and construction. The team that
 - **Builder Agent** — executes build prompts, constructs new capabilities (bridges to external coding agents initially)
 - **Infrastructure Agent** — disk space monitoring, dependency health, environment validation
 - Existing: PoolScaler handles some Ops/Engineering overlap
+
+**Containerized Deployment (Docker)**
+
+*"The ship in a bottle — portable, isolated, cross-platform."*
+
+ProbOS currently runs directly on the host OS. A Docker-based deployment provides security isolation (agents can't reach the host filesystem), cross-platform parity (Windows, Linux, macOS from one image), and simplified setup:
+
+- **Official Dockerfile** — multi-stage build: Python base with ProbOS deps, Ollama for local LLM, optional HXI frontend served via the built-in FastAPI static mount
+- **docker-compose.yml** — one-command startup: ProbOS runtime + Ollama + optional ChromaDB (persistent volume for data)
+- **Cross-platform parity** — same container image runs identically on Windows (Docker Desktop), Linux (native), and macOS (Docker Desktop). Eliminates platform-specific setup issues (pip not found, path separators, venv activation)
+- **Security boundary** — containerized ProbOS can't access host filesystem, network, or processes beyond explicitly mapped volumes and ports. Essential for the public Twitch demo and any scenario with untrusted agents
+- **Safe mode profile** — container startup flag (`--safe-mode`) that enables restricted config: disabled shell commands, disabled file writes outside `/sandbox`, rate limiting, SSRF protection enforced
+- **Volume mounts** — `data/` (episodic memory, knowledge store, event log), `config/` (system.yaml), optional `agents/` (designed agents). Everything else is ephemeral
+- **Ollama sidecar** — Ollama runs as a separate container on the same Docker network. ProbOS connects to it via `http://ollama:11434/v1`. No GPU passthrough required for CPU-only models; GPU passthrough available for CUDA-enabled hosts
+- Existing: Twitch demo plan already specifies Docker-based deployment (commercial roadmap)
 
 **Backup & Restore**
 
