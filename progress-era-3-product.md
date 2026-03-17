@@ -223,14 +223,25 @@ Built gravitational sub-clusters with translucent boundary shells. Each pool gro
 
 **Status:** Build prompt ready at `prompts/hxi-cluster-fixes.md`
 
-### Causal Attribution for Emergent Behavior + Self-Introspection (AD-295) — pending build
+### Causal Attribution for Emergent Behavior + Self-Introspection (AD-295) — ✅ COMPLETE
 
-**Problem:** ProbOS detects emergent patterns (trust anomalies, routing shifts, cooperation clusters) but cannot explain *why* they're happening. When asked "what is causing the adaptation?", the system has no causal trail linking trust changes to the intents and Shapley scores that caused them. Additionally, the IntrospectionAgent cannot examine ProbOS's own source code to answer architecture/design questions — that capability is only available to medical team agents.
+**Problem:** ProbOS detects emergent patterns (trust anomalies, routing shifts, cooperation clusters) but cannot explain *why* they're happening. No causal trail linking trust changes to intents and Shapley scores. IntrospectionAgent cannot examine ProbOS's own source code for architecture questions.
 
 **Solution:** Four-part fix:
-- **AD-295a** Trust Event Log — ring buffer of `TrustEvent` in TrustNetwork, records intent, Shapley weight, verifier, episode_id for every trust change
-- **AD-295b** Episode Enrichment — Episodes now carry `shapley_values` and `trust_deltas` for post-hoc analysis
-- **AD-295c** Causal Back-References — EmergentPattern.evidence includes recent trust events that explain each detected anomaly
-- **AD-295d** Self-Introspection — IntrospectionAgent gets `codebase_knowledge` skill + `introspect_design` intent for architecture questions
+- **AD-295a** Trust Event Log — `TrustEvent` dataclass + ring buffer (deque maxlen=500) in `TrustNetwork`. Records intent_type, Shapley weight, verifier_id, episode_id, old/new scores for every `record_outcome()` call. Query methods: `get_recent_events()`, `get_events_for_agent()`, `get_events_since()`
+- **AD-295b** Episode Enrichment — `Episode` dataclass gains `shapley_values: dict[str, float]` and `trust_deltas: list[dict]`. `_build_episode()` captures both from last consensus + trust event log. ChromaDB serialization updated for roundtrip
+- **AD-295c** Causal Back-References — `detect_trust_anomalies()` adds `causal_events` list to `EmergentPattern.evidence` (last 5 trust events per anomalous agent). `detect_routing_shifts()` adds `agent_trust` and `hebbian_weight` to routing shift evidence
+- **AD-295d** Self-Introspection — `introspect_design` intent on IntrospectionAgent. Uses `rt.codebase_index.query()` + `get_agent_map()` + `get_layer_map()` to answer architecture questions. Graceful fallback when CodebaseIndex unavailable
 
-**Status:** Build prompt ready at `prompts/causal-attribution.md`
+| File | Change |
+|------|--------|
+| `src/probos/consensus/trust.py` | `TrustEvent` dataclass, `_event_log` deque, enriched `record_outcome()`, 3 query methods |
+| `src/probos/types.py` | `Episode.shapley_values`, `Episode.trust_deltas` fields |
+| `src/probos/runtime.py` | Causal kwargs in verification `record_outcome()`, `_build_episode()` captures Shapley + trust deltas |
+| `src/probos/cognitive/episodic.py` | Serialize/deserialize `shapley_values_json`, `trust_deltas_json` |
+| `src/probos/cognitive/emergent_detector.py` | `causal_events` in trust anomaly evidence, trust/Hebbian context in routing shifts |
+| `src/probos/agents/introspect.py` | `introspect_design` intent + `_introspect_design()` method |
+| `tests/test_trust_events.py` | 6 tests: event recording, scores, cap, agent filter, time filter, backward compat |
+| `tests/test_episode_attribution.py` | 4 tests: Shapley storage, trust deltas, serialization roundtrip, backward compat |
+| `tests/test_causal_attribution.py` | 3 tests: causal events in anomalies, routing shift context, introspection surfacing |
+| `tests/test_introspect_design.py` | 3 tests: architecture query, no-codebase fallback, intent registration |

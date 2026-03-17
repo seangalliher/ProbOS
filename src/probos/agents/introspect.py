@@ -24,7 +24,7 @@ class IntrospectionAgent(BaseAgent):
     default_capabilities = [
         CapabilityDescriptor(
             can="introspect",
-            detail="Introspect ProbOS internals: explain_last, agent_info, team_info, system_health, why",
+            detail="Introspect ProbOS internals: explain_last, agent_info, team_info, system_health, why, introspect_design",
         ),
     ]
     initial_confidence: float = 0.9
@@ -39,9 +39,10 @@ class IntrospectionAgent(BaseAgent):
         IntentDescriptor(name="system_anomalies", params={}, description="Report detected system anomalies — trust outliers, routing shifts, consolidation anomalies, cooperation clusters", requires_reflect=True),
         IntentDescriptor(name="emergent_patterns", params={}, description="Report emergent behavior metrics — cooperation clusters, total correlation (TC_N), routing entropy, capability growth trends", requires_reflect=True),
         IntentDescriptor(name="search_knowledge", params={"query": "...", "types": "..."}, description="Search across all ProbOS knowledge — episodes, agents, skills, workflows, QA reports, system events. Semantic similarity matching.", requires_reflect=True),
+        IntentDescriptor(name="introspect_design", params={"question": "question about ProbOS architecture or design"}, description="Answer questions about ProbOS architecture, design limitations, and internal structure using source code knowledge", requires_reflect=True),
     ]
 
-    _handled_intents = {"explain_last", "agent_info", "team_info", "system_health", "why", "introspect_memory", "introspect_system", "system_anomalies", "emergent_patterns", "search_knowledge"}
+    _handled_intents = {"explain_last", "agent_info", "team_info", "system_health", "why", "introspect_memory", "introspect_system", "system_anomalies", "emergent_patterns", "search_knowledge", "introspect_design"}
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Full lifecycle: perceive -> decide -> act -> report."""
@@ -108,6 +109,8 @@ class IntrospectionAgent(BaseAgent):
             return self._emergent_patterns(rt)
         elif action == "search_knowledge":
             return await self._search_knowledge(rt, params)
+        elif action == "introspect_design":
+            return self._introspect_design(rt, params)
 
         return {"success": False, "error": f"Unknown introspection action: {action}"}
 
@@ -644,5 +647,35 @@ class IntrospectionAgent(BaseAgent):
                 "query": query,
                 "results": results,
                 "count": len(results),
+            },
+        }
+
+    def _introspect_design(self, rt: Any, params: dict[str, Any]) -> dict[str, Any]:
+        """Answer architectural questions using codebase knowledge."""
+        question = params.get("question", "")
+        if not question:
+            return {"success": False, "error": "No question provided"}
+
+        codebase_index = getattr(rt, "codebase_index", None)
+        if codebase_index is None:
+            return {
+                "success": True,
+                "data": {
+                    "message": "Codebase knowledge not available. Cannot introspect source architecture.",
+                },
+            }
+
+        # Query architecture for the concept
+        arch_data = codebase_index.query(question)
+        agent_map = codebase_index.get_agent_map()
+        layer_map = codebase_index.get_layer_map()
+
+        return {
+            "success": True,
+            "data": {
+                "question": question,
+                "architecture_context": arch_data,
+                "agent_count": len(agent_map) if agent_map else 0,
+                "layers": list(layer_map.keys()) if layer_map else [],
             },
         }

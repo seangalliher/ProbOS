@@ -279,6 +279,18 @@ class EmergentDetector:
                 if deviation > 2.0:
                     direction = "high" if score > mean else "low"
                     severity = "significant" if deviation > 3.0 else "notable"
+                    # Causal back-references (AD-295c)
+                    recent_events = self._trust.get_events_for_agent(agent_id, n=5)
+                    causal_events = [
+                        {
+                            "intent_type": event.intent_type,
+                            "success": event.success,
+                            "weight": round(event.weight, 4),
+                            "score_change": round(event.new_score - event.old_score, 4),
+                            "episode_id": event.episode_id,
+                        }
+                        for event in recent_events
+                    ]
                     patterns.append(EmergentPattern(
                         pattern_type="trust_anomaly",
                         description=f"Agent {agent_id[:8]} has {direction} trust ({score:.3f}) — {deviation:.1f}σ from mean ({mean:.3f})",
@@ -290,6 +302,7 @@ class EmergentDetector:
                             "std": std,
                             "deviation_sigma": deviation,
                             "direction": direction,
+                            "causal_events": causal_events,
                         },
                         timestamp=now,
                         severity=severity,
@@ -365,6 +378,9 @@ class EmergentDetector:
             prev_agents = self._prev_intent_agent_map.get(intent, set())
             new_agents = agents - prev_agents
             for agent in new_agents:
+                # Include trust and Hebbian context (AD-295c)
+                agent_trust = self._trust.get_score(agent)
+                hebbian_weight = self._router.get_weight(intent, agent, rel_type=REL_INTENT)
                 patterns.append(EmergentPattern(
                     pattern_type="routing_shift",
                     description=f"New routing: agent {agent[:8]} now handles '{intent}'",
@@ -373,6 +389,8 @@ class EmergentDetector:
                         "intent": intent,
                         "agent": agent,
                         "is_new_connection": True,
+                        "agent_trust": round(agent_trust, 4),
+                        "hebbian_weight": round(hebbian_weight, 4),
                     },
                     timestamp=now,
                     severity="notable",

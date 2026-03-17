@@ -310,6 +310,8 @@ class EpisodicMemory:
             "reflection": ep.reflection or "",
             "agent_ids_json": json.dumps(ep.agent_ids),
             "duration_ms": ep.duration_ms,
+            "shapley_values_json": json.dumps(ep.shapley_values),
+            "trust_deltas_json": json.dumps(ep.trust_deltas),
         }
 
     @staticmethod
@@ -327,4 +329,6 @@ class EpisodicMemory:
             agent_ids=json.loads(metadata.get("agent_ids_json", "[]")),
             duration_ms=metadata.get("duration_ms", 0.0),
             embedding=[],  # ChromaDB manages embeddings internally
+            shapley_values=json.loads(metadata.get("shapley_values_json", "{}")),
+            trust_deltas=json.loads(metadata.get("trust_deltas_json", "[]")),
         )

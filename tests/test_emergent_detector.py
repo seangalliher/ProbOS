@@ -45,6 +45,15 @@ class _FakeTrustNetwork:
             for aid, r in self._data.items()
         }
 
+    def get_score(self, agent_id: str) -> float:
+        r = self._data.get(agent_id)
+        if r is None:
+            return 0.5
+        return r["alpha"] / (r["alpha"] + r["beta"])
+
+    def get_events_for_agent(self, agent_id: str, n: int = 20) -> list:
+        return []
+
 
 class _FakeRouter:
     """Minimal Hebbian router stub."""
@@ -58,6 +67,9 @@ class _FakeRouter:
     @property
     def weight_count(self) -> int:
         return len(self._weights)
+
+    def get_weight(self, source: str, target: str, rel_type: str | None = None) -> float:
+        return self._weights.get((source, target), 0.0)
 
 
 def _make_detector(

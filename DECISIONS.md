@@ -1676,3 +1676,46 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 | `tests/test_team_introspection.py` | 6 tests: specific team, all teams, unknown team, fuzzy match, pool name fallback, core team |
 
 **Status:** Complete — 6 tests, 1711/1711 passing
+
+### AD-294: HXI Crew Team Sub-Clusters
+
+**Problem:** Agents on the HXI canvas were on a flat Fibonacci sphere, sorted by group for adjacency but with no visual boundary. Users couldn't distinguish teams without hovering.
+
+| AD | Decision |
+|----|----------|
+| AD-294 | Replace flat Fibonacci sphere layout with gravitational sub-clusters. Each pool group gets its own center on a spacing sphere (radius 6.0), agents orbit within on mini Fibonacci spheres. Cluster radius scales: `0.8 + √n × 0.4`. Faint wireframe boundary shell + BackSide solid glow + floating text label per team. `GROUP_TINT_HEXES` color map. Falls back to flat layout when no pool group data available |
+
+| File | Change |
+|------|--------|
+| `ui/src/store/useStore.ts` | `GroupCenter` interface, `GROUP_TINT_HEXES`, group-aware `computeLayout()`, `groupCenters` in state |
+| `ui/src/canvas/clusters.tsx` | New — `TeamClusters` component with wireframe shells and text labels |
+| `ui/src/components/CognitiveCanvas.tsx` | Added `<TeamClusters />` to scene |
+| `ui/src/__tests__/useStore.test.ts` | 5 tests: cluster grouping, groupCenters metadata, ungrouped agents, heartbeat center, state_snapshot |
+
+**Status:** Complete — 5 Vitest tests, 20/20 Vitest passing
+
+### AD-295: Causal Attribution for Emergent Behavior + Self-Introspection
+
+**Problem:** ProbOS detects emergent patterns but cannot explain *why* they're happening. No causal trail for trust changes — `record_outcome()` updated alpha/beta without recording which intent, Shapley values, or verifier caused the change. Episodes lacked Shapley attribution. IntrospectionAgent couldn't examine ProbOS's own source code.
+
+| AD | Decision |
+|----|----------|
+| AD-295a | `TrustEvent` dataclass + ring buffer (`deque(maxlen=500)`) in TrustNetwork. `record_outcome()` gains optional `intent_type`, `episode_id`, `verifier_id` kwargs. Old/new scores captured per event. Query methods: `get_recent_events()`, `get_events_for_agent()`, `get_events_since()` |
+| AD-295b | `Episode` gains `shapley_values: dict[str, float]` and `trust_deltas: list[dict]`. `_build_episode()` captures from `_last_shapley_values` and `trust_network.get_events_since(t_start)`. ChromaDB serialization updated with `shapley_values_json` and `trust_deltas_json` |
+| AD-295c | `detect_trust_anomalies()` adds `causal_events` list (last 5 trust events per anomalous agent) to `EmergentPattern.evidence`. `detect_routing_shifts()` adds `agent_trust` and `hebbian_weight` context to routing shift evidence |
+| AD-295d | `introspect_design` intent on IntrospectionAgent. Uses `rt.codebase_index.query()` + `get_agent_map()` + `get_layer_map()` to answer architecture questions. Graceful fallback when CodebaseIndex unavailable |
+
+| File | Change |
+|------|--------|
+| `src/probos/consensus/trust.py` | `TrustEvent` dataclass, `_event_log` deque, enriched `record_outcome()`, 3 query methods |
+| `src/probos/types.py` | `Episode.shapley_values`, `Episode.trust_deltas` fields |
+| `src/probos/runtime.py` | Causal context in verification `record_outcome()`, `_build_episode()` captures Shapley + trust deltas |
+| `src/probos/cognitive/episodic.py` | Serialize/deserialize new Episode fields in ChromaDB metadata |
+| `src/probos/cognitive/emergent_detector.py` | `causal_events` in trust anomaly evidence, trust/Hebbian context in routing shifts |
+| `src/probos/agents/introspect.py` | `introspect_design` intent + `_introspect_design()` method |
+| `tests/test_trust_events.py` | 6 tests |
+| `tests/test_episode_attribution.py` | 4 tests |
+| `tests/test_causal_attribution.py` | 3 tests |
+| `tests/test_introspect_design.py` | 3 tests |
+
+**Status:** Complete — 16 new tests

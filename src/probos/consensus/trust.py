@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import math
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -58,6 +60,21 @@ class TrustRecord:
         return math.sqrt((self.alpha * self.beta) / (n * n * (n + 1)))
 
 
+@dataclass
+class TrustEvent:
+    """A single trust change with causal context."""
+
+    timestamp: float
+    agent_id: str
+    success: bool
+    old_score: float
+    new_score: float
+    weight: float  # Shapley weight used
+    intent_type: str  # which intent was being processed
+    episode_id: str  # which episode this belongs to
+    verifier_id: str  # which red-team agent verified
+
+
 class TrustNetwork:
     """Network-wide Bayesian trust scoring.
 
@@ -81,6 +98,7 @@ class TrustNetwork:
         self.db_path = db_path
         self._records: dict[AgentID, TrustRecord] = {}
         self._db: aiosqlite.Connection | None = None
+        self._event_log: deque[TrustEvent] = deque(maxlen=500)
 
     async def start(self) -> None:
         """Initialize — load trust scores from SQLite if configured."""
@@ -130,6 +148,9 @@ class TrustNetwork:
         agent_id: AgentID,
         success: bool,
         weight: float = 1.0,
+        intent_type: str = "",
+        episode_id: str = "",
+        verifier_id: str = "",
     ) -> float:
         """Record an observation and return the updated trust score.
 
@@ -137,10 +158,26 @@ class TrustNetwork:
         The weight parameter scales the update (partial trust/distrust).
         """
         record = self.get_or_create(agent_id)
+        old_score = record.score
         if success:
             record.alpha += weight
         else:
             record.beta += weight
+
+        new_score = record.score
+
+        # Append causal event to the ring buffer
+        self._event_log.append(TrustEvent(
+            timestamp=time.monotonic(),
+            agent_id=agent_id,
+            success=success,
+            old_score=old_score,
+            new_score=new_score,
+            weight=weight,
+            intent_type=intent_type,
+            episode_id=episode_id,
+            verifier_id=verifier_id,
+        ))
 
         logger.debug(
             "Trust updated: agent=%s success=%s alpha=%.2f beta=%.2f score=%.3f",
@@ -162,6 +199,20 @@ class TrustNetwork:
     def get_record(self, agent_id: AgentID) -> TrustRecord | None:
         """Get the full trust record for an agent."""
         return self._records.get(agent_id)
+
+    def get_recent_events(self, n: int = 50) -> list[TrustEvent]:
+        """Return last N trust events."""
+        events = list(self._event_log)
+        return events[-n:]
+
+    def get_events_for_agent(self, agent_id: str, n: int = 20) -> list[TrustEvent]:
+        """Return last N trust events for a specific agent."""
+        filtered = [e for e in self._event_log if e.agent_id == agent_id]
+        return filtered[-n:]
+
+    def get_events_since(self, timestamp: float) -> list[TrustEvent]:
+        """Return all trust events since a given monotonic timestamp."""
+        return [e for e in self._event_log if e.timestamp >= timestamp]
 
     def decay_all(self) -> None:
         """Apply decay to all trust records, pulling them toward the prior.

@@ -308,6 +308,8 @@ class Episode:
     agent_ids: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
     embedding: list[float] = field(default_factory=list)
+    shapley_values: dict[str, float] = field(default_factory=dict)
+    trust_deltas: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------

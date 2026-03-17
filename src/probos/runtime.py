@@ -1077,6 +1077,9 @@ class ProbOSRuntime:
                         result.agent_id,
                         success=vr.verified,
                         weight=shapley_weight,
+                        intent_type=intent,
+                        episode_id=msg.id,
+                        verifier_id=rt_agent.id,
                     )
 
                     self._emit_event("trust_update", {
@@ -2176,6 +2179,23 @@ class ProbOSRuntime:
 
         reflection = execution_result.get("reflection")
 
+        # Capture Shapley attribution from the most recent consensus (AD-295b)
+        shapley_values = dict(self._last_shapley_values) if hasattr(self, '_last_shapley_values') and self._last_shapley_values else {}
+
+        # Capture trust deltas generated during this episode (AD-295b)
+        trust_deltas: list[dict[str, Any]] = []
+        if hasattr(self, 'trust_network') and self.trust_network:
+            recent_events = self.trust_network.get_events_since(t_start)
+            trust_deltas = [
+                {
+                    "agent_id": e.agent_id,
+                    "old": round(e.old_score, 4),
+                    "new": round(e.new_score, 4),
+                    "weight": round(e.weight, 4),
+                }
+                for e in recent_events
+            ]
+
         return Episode(
             timestamp=time.time(),
             user_input=text,
@@ -2184,6 +2204,8 @@ class ProbOSRuntime:
             reflection=reflection if isinstance(reflection, str) else None,
             agent_ids=agent_ids,
             duration_ms=(t_end - t_start) * 1000,
+            shapley_values=shapley_values,
+            trust_deltas=trust_deltas,
         )
 
     # ------------------------------------------------------------------
