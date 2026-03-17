@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 27 complete — Phase 24 in progress (1632/1632 tests + 15 Vitest + 11 skipped)
+## Current Status: Phase 27 complete — Phase 24 in progress (1644/1644 tests + 15 Vitest + 11 skipped)
 
 ---
 
@@ -2961,6 +2961,13 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 - ✅ **.env file support** (AD-286) — `python-dotenv` loads `.env` from cwd at startup. `.env.example` documents available vars (`PROBOS_DISCORD_TOKEN`, `PROBOS_LLM_API_KEY`). Import-guarded so it degrades gracefully. 3 tests
 - ✅ **HXI agent activity visualization** (AD-287) — Fixed 3 bugs preventing agent node flashes: (1) `node_start` event now includes `agent_id` + `intent` at top level, (2) `RoutingPulse` positions at target agent instead of `[0,0,0]`, (3) `activatedAt` timestamp on Agent type triggers 500ms brightness flash in `AgentNodes` useFrame loop
 - ✅ **Dream consolidation — dolphin sleep model** (AD-288) — Three-tier dreaming: Tier 1 micro-dream (every 10s, replays new episodes only), Tier 2 idle dream (after 120s idle, full cycle with pruning/trust), Tier 3 shutdown flush (final `dream_cycle()` on stop). Fixed `_build_episode()` agent_id extraction for dicts. Added early-session guard to cooperation detector (requires 10+ episodes). `dream_consolidation_rate` now reflects micro-dream activity
+- ✅ **Performance bottleneck optimization — P0 fixes** (AD-289) — Three critical-at-scale fixes: (1) Intent bus pre-filtering via reverse index (`_intent_index: dict[str, set[str]]`) — only agents registered for a specific intent receive broadcasts instead of fan-out to all 43+ agents, (2) Shapley value factorial explosion guard — coalitions >10 agents switch to Monte Carlo approximation (1000 random permutation samples) instead of exact enumeration (12 agents = 479M iterations), (3) `Registry.all()` caching — cached list invalidated only on register/unregister, avoiding list creation on every call from 11+ call sites
+
+#### Performance Optimization Roadmap (P1, AD-289)
+- **Pool health check optimization** — cache `healthy_agents` list (invalidate on state change), replace `list.remove()` with batch rebuild in `check_health()`, stagger health intervals with jitter, build `intent → pool → agent_id` index
+- **WebSocket delta updates** — remove `json.dumps`/`json.loads` roundtrip in `_safe_serialize()`, cache `all_weights_typed()` with short TTL, send delta updates instead of full state, throttle event broadcast rate (batch within 100ms window)
+- **Event log write batching** — batch SQLite commits (flush every 100ms or 10 events), enable WAL mode, consider in-memory append buffer with periodic flush
+- **Episodic memory query optimization** — add timestamp index to ChromaDB collection, cache recent episodes with TTL for repeated access
 - **Prompt injection scanner** — detect override attempts, data exfiltration patterns in user input before passing to LLM
 - **Safe mode** — a config profile (`safe_mode: true`) that restricts ProbOS for untrusted multi-user environments (public Discord, demos, streaming). Disables: shell commands, file writes, self-mod, HTTP fetch to non-allowlisted domains. Enables: conversation, introspection, bundled read-only agents (weather, news, calculator), HXI canvas. Per-user rate limiting (GCRA token bucket) to prevent abuse. File reads restricted to a demo directory. Safe mode is enforced at the config level — capability descriptors and consensus gates already exist, this just sets restrictive defaults
 - **Docker deployment** — `Dockerfile` + `docker-compose.yml` for containerized ProbOS. Single command: `docker compose up`. Includes safe mode preset for public-facing instances. Enables cloud VM deployment (Azure, AWS) without host filesystem exposure

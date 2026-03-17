@@ -22,11 +22,13 @@ class AgentRegistry:
 
     def __init__(self) -> None:
         self._agents: dict[AgentID, BaseAgent] = {}
+        self._all_cache: list[BaseAgent] | None = None
         self._lock = asyncio.Lock()
 
     async def register(self, agent: BaseAgent) -> None:
         async with self._lock:
             self._agents[agent.id] = agent
+            self._all_cache = None  # invalidate
             logger.debug(
                 "Registered agent: type=%s id=%s pool=%s",
                 agent.agent_type,
@@ -38,6 +40,7 @@ class AgentRegistry:
         async with self._lock:
             agent = self._agents.pop(agent_id, None)
             if agent:
+                self._all_cache = None  # invalidate
                 logger.debug(
                     "Unregistered agent: type=%s id=%s",
                     agent.agent_type,
@@ -59,7 +62,9 @@ class AgentRegistry:
         ]
 
     def all(self) -> list[BaseAgent]:
-        return list(self._agents.values())
+        if self._all_cache is None:
+            self._all_cache = list(self._agents.values())
+        return self._all_cache
 
     @property
     def count(self) -> int:

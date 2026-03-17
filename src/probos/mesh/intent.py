@@ -30,19 +30,32 @@ class IntentBus:
     def __init__(self, signal_manager: SignalManager) -> None:
         self._signal_manager = signal_manager
         self._subscribers: dict[str, IntentHandler] = {}  # agent_id -> handler
+        self._intent_index: dict[str, set[str]] = {}  # intent_name -> set of agent_ids
         self._pending_results: dict[str, list[IntentResult]] = {}  # intent_id -> results
         self._result_events: dict[str, asyncio.Event] = {}
         self._broadcast_timestamps: list[tuple[float, str]] = []  # (monotonic_time, intent_name)
         self._window_seconds: float = 60.0
         self._federation_fn: Callable[[IntentMessage], Awaitable[list[IntentResult]]] | None = None
 
-    def subscribe(self, agent_id: str, handler: IntentHandler) -> None:
-        """Register an agent's intent handler."""
+    def subscribe(self, agent_id: str, handler: IntentHandler, intent_names: list[str] | None = None) -> None:
+        """Register an agent's intent handler.
+
+        If intent_names is provided, the agent is indexed for those intents
+        and will only be invoked when a matching intent is broadcast.
+        Agents subscribed without intent_names receive all broadcasts (fallback).
+        """
         self._subscribers[agent_id] = handler
+        if intent_names:
+            for name in intent_names:
+                if name not in self._intent_index:
+                    self._intent_index[name] = set()
+                self._intent_index[name].add(agent_id)
 
     def unsubscribe(self, agent_id: str) -> None:
-        """Remove an agent's subscription."""
+        """Remove an agent's subscription and intent index entries."""
         self._subscribers.pop(agent_id, None)
+        for agent_set in self._intent_index.values():
+            agent_set.discard(agent_id)
 
     @property
     def subscriber_count(self) -> int:
@@ -75,9 +88,26 @@ class IntentBus:
             len(self._subscribers),
         )
 
-        # Fan out to all subscribers concurrently
+        # Determine which agents to fan out to
+        indexed_agents = self._intent_index.get(intent.intent)
+        if indexed_agents is not None:
+            # Pre-filtered: only invoke agents indexed for this intent
+            # Plus any agents not in the index at all (fallback subscribers)
+            all_indexed = set()
+            for agent_set in self._intent_index.values():
+                all_indexed.update(agent_set)
+            candidates = {
+                aid: handler
+                for aid, handler in self._subscribers.items()
+                if aid in indexed_agents or aid not in all_indexed
+            }
+        else:
+            # No index entry: fall back to all subscribers
+            candidates = dict(self._subscribers)
+
+        # Fan out to selected subscribers concurrently
         tasks = []
-        for agent_id, handler in list(self._subscribers.items()):
+        for agent_id, handler in list(candidates.items()):
             tasks.append(
                 asyncio.create_task(
                     self._invoke_handler(intent, agent_id, handler),

@@ -710,7 +710,10 @@ class ProbOSRuntime:
             return
 
         logger.info("ProbOS shutting down...")
-        await self.event_log.log(category="system", event="stopping")
+        try:
+            await self.event_log.log(category="system", event="stopping")
+        except (asyncio.CancelledError, Exception):
+            pass  # event log may be unavailable during shutdown
 
         # Cancel periodic flush
         if hasattr(self, '_flush_task'):
@@ -769,7 +772,10 @@ class ProbOSRuntime:
         await self.signal_manager.stop()
         await self.hebbian_router.stop()
         await self.trust_network.stop()
-        await self.event_log.log(category="system", event="stopped")
+        try:
+            await self.event_log.log(category="system", event="stopped")
+        except (asyncio.CancelledError, Exception):
+            pass
         await self.event_log.stop()
 
         # Clean up LLM client
@@ -786,7 +792,7 @@ class ProbOSRuntime:
                     report.weights_strengthened,
                     report.weights_pruned,
                 )
-            except Exception as e:
+            except (asyncio.CancelledError, Exception) as e:
                 logger.warning("Shutdown consolidation failed: %s", e)
 
         # Stop dreaming scheduler
@@ -1714,7 +1720,10 @@ class ProbOSRuntime:
                     )
                     new_agent._id = aid  # preserve agent identity
                     self.registry.register(new_agent)
-                    self.intent_bus.subscribe(aid, new_agent.handle_intent)
+                    self.intent_bus.subscribe(
+                        aid, new_agent.handle_intent,
+                        intent_names=[d.name for d in getattr(new_agent, "intent_descriptors", [])] or None,
+                    )
                     if hasattr(new_agent, "capabilities") and new_agent.capabilities:
                         self.capability_registry.register(aid, new_agent.capabilities)
                 except Exception as exc:
@@ -2129,7 +2138,8 @@ class ProbOSRuntime:
 
         # If agent has handle_intent, subscribe to intent bus
         if hasattr(agent, "handle_intent"):
-            self.intent_bus.subscribe(agent.id, agent.handle_intent)
+            intent_names = [d.name for d in getattr(agent, "intent_descriptors", [])] or None
+            self.intent_bus.subscribe(agent.id, agent.handle_intent, intent_names=intent_names)
 
         # Initialize trust record
         self.trust_network.get_or_create(agent.id)
