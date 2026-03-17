@@ -95,8 +95,8 @@ Each ProbOS instance is a ship. Multiple instances form a federation:
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
 | 30 | Self-Improvement Pipeline | All Teams | Capability proposals, stage contracts, QA pool, evolution store, human gate |
 | 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring |
-| 32 | Engineering Team | Engineering | Automated performance optimization, maintenance agents, build agents |
-| 33 | Operations Team | Ops | Formalized resource management, workload balancing, system coordination |
+| 32 | Engineering Team | Engineering | Automated performance optimization, maintenance agents, build agents, LLM resilience, observability export |
+| 33 | Operations Team | Ops | Formalized resource management, workload balancing, system coordination, LLM cost tracking |
 
 ---
 
@@ -199,6 +199,22 @@ Automated performance optimization, maintenance, and construction. The team that
 - **Infrastructure Agent** — disk space monitoring, dependency health, environment validation
 - Existing: PoolScaler handles some Ops/Engineering overlap
 
+**LLM Resilience — Graceful Degradation**
+
+- **Provider failover** — if the primary LLM provider is down or rate-limited, fall back to a secondary provider (e.g., OpenAI → Anthropic → local model)
+- **Cached response mode** — when all providers are unavailable, serve cached responses from the decision cache for previously-seen patterns
+- **Degraded operation** — agents that don't require LLM calls (HeartbeatAgents, mesh agents) continue operating; cognitive agents queue work until LLM access is restored
+- **Circuit breaker** — after N consecutive LLM failures, stop retrying and notify the Captain rather than burning through rate limits
+- **Health indicator** — LLM provider status surfaced through Vitals Monitor and HXI
+
+**Observability Export**
+
+- **OpenTelemetry integration** — structured traces for intent routing, DAG execution, consensus rounds, and LLM calls
+- **Prometheus metrics** — agent trust scores, pool utilization, Hebbian weights, dream consolidation rates, LLM latency/cost exposed as scrapeable metrics
+- **Grafana dashboards** — pre-built dashboards for system health, agent performance, and cost tracking
+- **Log aggregation** — structured JSON logging with correlation IDs for tracing a user request through decomposition → routing → execution → reflection
+- Existing: Python logging throughout, HXI real-time visualization (built)
+
 **P1 Performance Optimizations (deferred from AD-289)**
 
 - **Pool health check caching** — cache healthy_agents list with short TTL, invalidate on agent state change
@@ -223,6 +239,7 @@ Formalize resource management and system coordination as an agent pool.
 - **Scheduler** — task prioritization, queue management, deadline enforcement (extends Phase 24c TaskScheduler)
 - **Coordinator** — cross-team orchestration during high-load or emergency events
 - **Response-Time Scaling** (deferred from Phase 8) — latency-aware pool scaling. Instrument `broadcast()` with per-intent latency tracking, scale up pools where response times exceed SLA thresholds
+- **LLM Cost Tracker** — per-agent and per-intent token usage accounting, budget caps (daily/monthly), cost attribution via Shapley (which agents are expensive vs. valuable), alerts when spend exceeds thresholds
 - Existing: PoolScaler (built), TaskScheduler (Phase 24c roadmap), IntentBus demand tracking (built)
 
 ---
@@ -569,6 +586,22 @@ Self-designed agents currently live in the evolution store (KnowledgeStore) as r
 *"The Federation shares its finest officers."*
 
 When users make their agent repos public, a decentralized agent-sharing ecosystem emerges — like P2P file sharing but for ProbOS agents, with GitHub as the transport layer.
+
+---
+
+### Multi-User / Multi-Tenant (Future)
+
+*"Multiple Captains on the bridge."*
+
+Currently ProbOS assumes a single Captain — one human operator with full authority. Multi-user support enables shared ProbOS instances where multiple users connect simultaneously without interfering with each other.
+
+- **Session isolation** — each connected user gets their own conversation context, decomposer state, and episodic memory namespace
+- **User identity** — authenticated users via channel adapters (Discord user ID, API key, SSO token) mapped to ProbOS user profiles
+- **Permission model** — role-based access: Captain (full authority, approval gate), Officer (can issue intents, no self-mod approval), Observer (read-only, monitor HXI)
+- **Approval routing** — self-mod and destructive intents route to the Captain regardless of which user triggered them
+- **Per-user trust context** — agents may have different trust scores per user (optional, advanced)
+- **Shared resources** — all users share the same agent pools, knowledge store, and trust network, but conversation state is isolated
+- Foundation for team deployments and the commercial multi-tenant hosting model
 
 **Discovery**
 
