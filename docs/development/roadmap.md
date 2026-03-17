@@ -42,6 +42,29 @@ Not a team — shared infrastructure that all teams use:
 - **Intent Bus** — internal communications, the ship's intercom
 - **Hebbian Router** — navigation, learned routing pathways
 
+### Capability Tiers (Crew, Instruments, Knowledge)
+
+ProbOS has three tiers of capability, modeled after a starship crew:
+
+```
+Agents  (Crew)        → who decides what    → crew members who think and collaborate
+Tools   (Instruments) → what you can do     → tricorder, transporter, phaser
+Skills  (Knowledge)   → what you know       → ship's library, reference data
+```
+
+| Tier | Star Trek Analog | ProbOS | Governance | Examples |
+|------|-----------------|--------|------------|----------|
+| **Agent** | Crew member (Crusher, Worf) | Intent handler with full lifecycle | Trust, Hebbian, consensus, Shapley | DiagnosticianAgent, SurgeonAgent |
+| **Tool** | Tricorder, transporter, phaser | Typed callable function, shared across agents | Tool-level trust tracking, no per-call consensus | File read/write, HTTP fetch, API calls, MCP tools |
+| **Skill** | Ship's library, computer database | Read-only data access attached to agents | None (internal) | `codebase_knowledge`, search indexes |
+
+**When to use each:**
+- **Agent** — handles a user intent, needs to decide/reason, should participate in trust and Hebbian routing
+- **Tool** — performs a specific action, any authorized agent can use it, doesn't need consensus for each call
+- **Skill** — provides data access internally, no behavior, read-only
+
+Tools are the natural mapping target for MCP — external MCP tools become ProbOS tools, and ProbOS tools are exposed as MCP tools to external systems.
+
 ### The Federation
 
 Each ProbOS instance is a ship. Multiple instances form a federation:
@@ -64,6 +87,7 @@ Each ProbOS instance is a ship. Multiple instances form a federation:
 |-------|-------|-----------|------|
 | 24 | Channel Integration | Comms | Discord, Slack, Telegram adapters + external tool connectors |
 | 25 | Persistent Tasks | Ops | Long-running autonomous tasks with checkpointing, browser automation |
+| 25b | Tool Layer | Ship's Computer | Typed callable instruments (tricorders) shared across agents, ToolRegistry, MCP mapping |
 | 26 | Inter-Agent Deliberation | Bridge | Structured multi-turn agent debates, agent-to-agent messaging, interactive execution |
 | 28 | Meta-Learning | Science | Workspace ontology, dream cycle abstractions, session context, goal management |
 | 29 | Federation + Emergence | Comms | Knowledge federation, trust transitivity, MCP adapter, TC_N measurement |
@@ -296,16 +320,92 @@ Inspired by Microsoft Magentic-One's Task Ledger + Progress Ledger pattern. Stru
 
 ---
 
+### Tool Layer — Instruments (Phase 25b)
+
+*"Tricorder readings, Captain."*
+
+A lightweight callable abstraction for operations that don't need full agent lifecycle. Tools are the ship's instruments — trusted, shared, and purpose-built. Any authorized crew member (agent) can pick up a tricorder and use it without filing a request through the chain of command.
+
+**Why this tier exists:**
+
+Currently, reading a file routes through the full agent lifecycle: Hebbian routing → trust scoring → consensus → Shapley attribution. That's a committee meeting to pick up a tricorder. Tools provide a direct-call path for operations that need reliability but not deliberation.
+
+**`Tool` base class:**
+
+```python
+class Tool:
+    name: str                           # "file_reader", "http_fetch", "stripe_api"
+    description: str                    # Human-readable purpose
+    input_schema: dict                  # JSON schema for typed inputs
+    output_schema: dict                 # JSON schema for typed outputs
+    trust_score: float                  # Tool-level reliability tracking
+    requires_approval: bool = False     # Some tools (shell, delete) need Captain approval
+
+    async def execute(self, **kwargs) -> ToolResult
+```
+
+**`ToolRegistry`:**
+
+- Central registry of available tools, analogous to agent Registry
+- `register(tool)`, `get(name)`, `list()`, `search(capability)`
+- Any CognitiveAgent can discover and invoke registered tools via `self.use_tool(name, **kwargs)`
+- Tool results include execution metadata (duration, success, error) for trust tracking
+
+**Tool Trust (lightweight):**
+
+- Tools carry a simple success/failure trust score (same Beta distribution as agents)
+- Trust is updated per-call but does NOT feed into Hebbian routing or Shapley attribution
+- Below-threshold trust triggers a warning to the using agent, not a consensus vote
+- Captain can disable untrusted tools globally
+
+**Migration Path:**
+
+Current mesh agents that are pure function wrappers can be optionally demoted to tools:
+
+| Current Agent | Tool Equivalent | Governance Change |
+|---------------|----------------|-------------------|
+| FileReaderAgent | `file_reader` tool | Direct call, no consensus |
+| FileWriterAgent | `file_writer` tool | Requires approval for write paths |
+| HttpFetchAgent | `http_fetch` tool | SSRF validation stays, no consensus |
+| ShellCommandAgent | `shell_command` tool | Always requires Captain approval |
+| DirectoryListAgent | `directory_list` tool | Direct call, no consensus |
+| FileSearchAgent | `file_search` tool | Direct call, no consensus |
+
+Migration is optional and gradual — agents remain as fallback. Tools supplement, not replace.
+
+**MCP Compatibility:**
+
+- External MCP tools register as ProbOS tools automatically (with probationary trust)
+- ProbOS tools are exposed as MCP tools to external systems via the MCP adapter (Phase 29)
+- `Tool.input_schema` / `Tool.output_schema` map directly to MCP tool schemas
+- This makes the MCP adapter implementation straightforward: MCP tool ↔ ProbOS tool is 1:1
+
+**External Integration Pattern:**
+
+Third-party tools (Stripe, GitHub, database, etc.) follow the same pattern:
+
+```python
+class StripeTool(Tool):
+    name = "stripe_checkout"
+    description = "Create a Stripe checkout session"
+    input_schema = {"amount": "int", "currency": "str", "description": "str"}
+    requires_approval = True  # financial operations need Captain approval
+```
+
+No need to build a full StripeAgent with intent handling, Hebbian routing, and Shapley attribution — just a validated instrument.
+
+---
+
 ### Agent-as-Tool Invocation (Phase 26)
 
 *Explicit agent-to-agent capability consumption.*
 
-Allows one agent to explicitly invoke another agent's capability as a typed function call, complementing the implicit collaboration that already happens through the intent bus.
+Allows one agent to explicitly invoke another agent's capability as a typed function call, complementing the implicit collaboration that already happens through the intent bus. Builds on the Tool Layer (Phase 25b) — agents can be wrapped as tools for direct invocation.
 
 - **`AgentTool` wrapper** — any agent can be consumed as a tool by another agent with typed input/output contracts
 - Intent bus remains the primary collaboration mechanism for loosely-coupled work
 - AgentTool is for tightly-coupled cases where one agent always needs another's output (e.g., Diagnostician consumes Vitals Monitor metrics)
-- Trust and consensus still apply — wrapping doesn't bypass governance
+- Trust and consensus still apply — wrapping doesn't bypass governance (unlike plain tools, AgentTools are full agents underneath)
 - Natural fit for Phase 26 Inter-Agent Deliberation
 
 **Interactive Execution Mode (deferred from Phase 16)**

@@ -31,7 +31,7 @@ uv run pytest tests/ -v
 
 ## Architecture Guidelines
 
-- **Agents are the unit of behavior; Skills are the unit of knowledge.** New behaviors (anything that handles a user intent) should be new agent types. Shared data access and tools (anything an agent needs internally) should be Skills attached via `add_skill()`. Rule of thumb: if someone would ask for it, it's an agent. If an agent needs it to do its job, it's a skill.
+- **Three capability tiers: Agents, Tools, Skills.** Agents are the unit of behavior (crew members who think and decide). Tools are the unit of action (instruments like tricorders — typed callables shared across agents). Skills are the unit of knowledge (data access attached to agents). Rule of thumb: if someone would ask for it, it's an agent. If it performs a specific action any agent might need, it's a tool. If an agent needs reference data to do its job, it's a skill.
 - **Self-describing agents.** Every agent declares `IntentDescriptor` metadata so the system discovers it automatically.
 - **Consensus for side effects.** Any operation that modifies external state must go through the consensus layer.
 - **Test everything.** Each layer has comprehensive tests. New code should maintain coverage.
