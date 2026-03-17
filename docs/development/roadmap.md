@@ -94,7 +94,7 @@ Each ProbOS instance is a ship. Multiple instances form a federation:
 | 29b | Medical Team | Medical | Vitals monitor, diagnostician, surgeon, pharmacist, pathologist |
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
 | 30 | Self-Improvement Pipeline | All Teams | Capability proposals, stage contracts, QA pool, evolution store, human gate |
-| 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring, secrets management |
+| 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring, secrets management, runtime sandboxing, data governance |
 | 32 | Engineering Team | Engineering | Automated performance optimization, maintenance agents, build agents, LLM resilience, observability export, CI/CD, backup/restore |
 | 33 | Operations Team | Ops | Formalized resource management, workload balancing, system coordination, LLM cost tracking |
 
@@ -191,6 +191,22 @@ Formalize threat detection and defense as a dedicated agent pool. Builds on exis
 - **Runtime injection** — secrets resolved at startup and injected into agents/tools that need them, never stored in config files or logs
 - **Rotation support** — automatic credential rotation without restart; agents notified when credentials change
 - Existing: `.env` file support (basic), config values in `system.yaml` (not encrypted)
+
+**Runtime Sandboxing**
+
+- **Process isolation** — imported and self-designed agents execute in sandboxed subprocesses with restricted filesystem, network, and memory access
+- **Capability whitelisting** — agents declare required capabilities in their manifest; runtime grants only those capabilities at startup
+- **Resource limits** — per-agent CPU time, memory, and network quotas enforced by the sandbox; violations terminate the agent and report to Trust Network
+- **Graduated trust → graduated access** — new/untrusted agents get tighter sandboxes; high-trust agents get relaxed constraints
+- Existing: AST validation for self-mod agents (built), restricted imports whitelist (built), red team source scanning (built)
+
+**Data Governance & Privacy**
+
+- **PII detection** — scan agent conversations and episodic memory for personally identifiable information; flag or redact before storage
+- **Data retention policies** — configurable TTLs for episodic memory, conversation history, and knowledge store entries; auto-purge expired data
+- **Right-to-erasure** — delete all data associated with a specific user or session on request (GDPR/CCPA compliance)
+- **Audit trail** — immutable log of who accessed what data, when, and why; required for enterprise and regulated deployments
+- **Consent tracking** — record user consent for data collection and processing; respect opt-out preferences across all agents
 
 ---
 
