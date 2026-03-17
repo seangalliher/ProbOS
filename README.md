@@ -12,6 +12,8 @@ ProbOS reimagines the OS as a mesh of probabilistic agents rather than determini
 
 <img width="1911" height="1042" alt="image" src="https://github.com/user-attachments/assets/bb4a20d1-bd63-4f0a-a3bb-9fcf48605173" />
 
+**See it in action:** [My AI OS Told Me What's Wrong With Itself](https://youtu.be/0cFoQ3QOmh0)
+
 ## Design Philosophy
 
 Traditional operating systems use rigid, deterministic mechanisms: syscalls, schedulers, ACLs. ProbOS replaces each with a probabilistic, self-organizing equivalent:
