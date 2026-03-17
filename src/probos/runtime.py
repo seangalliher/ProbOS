@@ -666,6 +666,7 @@ class ProbOSRuntime:
         if self.dream_scheduler:
             self.dream_scheduler._post_dream_fn = self._on_post_dream
             self.dream_scheduler._pre_dream_fn = self._on_pre_dream
+            self.dream_scheduler._post_micro_dream_fn = self._on_post_micro_dream
 
         # Start periodic flush of trust + routing weights
         self._flush_task = asyncio.create_task(self._periodic_flush_loop())
@@ -773,6 +774,20 @@ class ProbOSRuntime:
 
         # Clean up LLM client
         await self.llm_client.close()
+
+        # Tier 3: Shutdown consolidation — flush remaining episodes (AD-288)
+        if self.dream_scheduler and self.episodic_memory:
+            logger.info("Consolidating session memories...")
+            try:
+                report = await self.dream_scheduler.engine.dream_cycle()
+                logger.info(
+                    "Session consolidation complete: replayed=%d strengthened=%d pruned=%d",
+                    report.episodes_replayed,
+                    report.weights_strengthened,
+                    report.weights_pruned,
+                )
+            except Exception as e:
+                logger.warning("Shutdown consolidation failed: %s", e)
 
         # Stop dreaming scheduler
         if self.dream_scheduler:
@@ -1958,6 +1973,15 @@ class ProbOSRuntime:
         except Exception as e:
             logger.debug("Post-dream emergent analysis failed: %s", e)
 
+    def _on_post_micro_dream(self, micro_report: dict) -> None:
+        """Post-micro-dream callback: update emergent detector (AD-288)."""
+        if not self._emergent_detector:
+            return
+        try:
+            self._emergent_detector.analyze(dream_report=micro_report)
+        except Exception as e:
+            logger.debug("Post-micro-dream analysis failed: %s", e)
+
     async def _periodic_flush(self) -> None:
         """Save trust scores and routing weights to KnowledgeStore."""
         if self._knowledge_store is None:
@@ -2018,8 +2042,9 @@ class ProbOSRuntime:
                     node_results = node_result.get("results", [])
                     if isinstance(node_results, list):
                         for r in node_results:
-                            if hasattr(r, "agent_id"):
-                                agent_ids.append(r.agent_id)
+                            aid = r.get("agent_id") if isinstance(r, dict) else getattr(r, "agent_id", None)
+                            if aid:
+                                agent_ids.append(aid)
                 outcomes.append(outcome)
 
         reflection = execution_result.get("reflection")

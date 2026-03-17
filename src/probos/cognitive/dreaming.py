@@ -38,6 +38,40 @@ class DreamingEngine:
         self.config = config
         self.pre_warm_intents: list[str] = []
         self._idle_scale_down_fn = idle_scale_down_fn
+        self._last_consolidated_count: int = 0  # Cursor for micro-dream dedup
+
+    async def micro_dream(self) -> dict[str, Any]:
+        """Lightweight consolidation of recent episodes only (Tier 1).
+
+        Unlike dream_cycle(), this only replays new episodes to update
+        Hebbian weights. Pruning and trust consolidation happen in the
+        full idle dream. Returns a summary dict.
+        """
+        if not self.episodic_memory:
+            return {"episodes_replayed": 0, "weights_strengthened": 0, "weights_weakened": 0}
+
+        stats = await self.episodic_memory.get_stats()
+        current_count = stats.get("total", 0)
+
+        if current_count <= self._last_consolidated_count:
+            return {"episodes_replayed": 0, "weights_strengthened": 0, "weights_weakened": 0}
+
+        new_count = current_count - self._last_consolidated_count
+        episodes = await self.episodic_memory.recent(k=min(new_count, 10))
+
+        if not episodes:
+            return {"episodes_replayed": 0, "weights_strengthened": 0, "weights_weakened": 0}
+
+        strengthened = self._replay_episodes(episodes)
+        self._last_consolidated_count = current_count
+
+        logger.debug("micro-dream: replayed=%d strengthened=%d", len(episodes), strengthened)
+
+        return {
+            "episodes_replayed": len(episodes),
+            "weights_strengthened": strengthened,
+            "weights_weakened": 0,
+        }
 
     async def dream_cycle(self) -> DreamReport:
         """Execute one full dream pass.
@@ -86,16 +120,17 @@ class DreamingEngine:
             duration_ms=duration_ms,
         )
 
-        logger.debug(
-            "Dream cycle complete: %d episodes, %d strengthened, %d pruned, "
-            "%d trust adjustments, %d pre-warm intents (%.1fms)",
+        logger.info(
+            "dream-cycle: replayed=%d strengthened=%d pruned=%d trust_adjusted=%d",
             report.episodes_replayed,
             report.weights_strengthened,
             report.weights_pruned,
             report.trust_adjustments,
-            len(report.pre_warm_intents),
-            report.duration_ms,
         )
+
+        # Reset micro-dream cursor — full cycle replayed everything
+        stats = await self.episodic_memory.get_stats()
+        self._last_consolidated_count = stats.get("total", 0)
 
         return report
 
@@ -248,19 +283,24 @@ class DreamScheduler:
         engine: DreamingEngine,
         idle_threshold_seconds: float = 300.0,
         dream_interval_seconds: float = 600.0,
+        micro_dream_interval_seconds: float = 10.0,
     ) -> None:
         self.engine = engine
         self.idle_threshold_seconds = idle_threshold_seconds
         self.dream_interval_seconds = dream_interval_seconds
+        self.micro_dream_interval_seconds = micro_dream_interval_seconds
 
         self._last_activity_time: float = time.monotonic()
         self._last_dream_time: float = 0.0
+        self._last_micro_dream_time: float = 0.0
+        self._micro_dream_count: int = 0
         self._is_dreaming: bool = False
         self._task: asyncio.Task[None] | None = None
         self._last_dream_report: DreamReport | None = None
         self._stopped = False
         self._post_dream_fn: Any = None  # Optional callback(dream_report) after each cycle
         self._pre_dream_fn: Any = None  # Optional callback() before each cycle (AD-254)
+        self._post_micro_dream_fn: Any = None  # Optional callback(micro_report) after micro-dream
 
     @property
     def is_dreaming(self) -> bool:
@@ -315,7 +355,7 @@ class DreamScheduler:
             self._is_dreaming = False
 
     async def _monitor_loop(self) -> None:
-        """Background loop: check idle time and trigger dreams."""
+        """Background loop: micro-dream every 10s, full dream when idle."""
         while not self._stopped:
             try:
                 await asyncio.sleep(1.0)
@@ -324,6 +364,23 @@ class DreamScheduler:
                     continue
 
                 now = time.monotonic()
+
+                # Tier 1: Micro-dream every N seconds (unconditional, lightweight)
+                if now - self._last_micro_dream_time >= self.micro_dream_interval_seconds:
+                    try:
+                        report = await self.engine.micro_dream()
+                        self._last_micro_dream_time = now
+                        if report.get("episodes_replayed", 0) > 0:
+                            self._micro_dream_count += 1
+                            if self._post_micro_dream_fn:
+                                try:
+                                    self._post_micro_dream_fn(report)
+                                except Exception as e:
+                                    logger.debug("Post-micro-dream callback failed: %s", e)
+                    except Exception as e:
+                        logger.debug("Micro-dream failed: %s", e)
+
+                # Tier 2: Full dream when idle long enough
                 idle_time = now - self._last_activity_time
                 time_since_last_dream = now - self._last_dream_time
 

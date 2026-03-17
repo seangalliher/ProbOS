@@ -93,6 +93,13 @@ class EmergentDetector:
         """Main analysis entry point. Runs all detectors and returns detected patterns."""
         now = time.monotonic()
 
+        # Cache episode total for early-session guards (AD-288)
+        if dream_report is not None:
+            replayed = getattr(dream_report, 'episodes_replayed', 0)
+            if isinstance(dream_report, dict):
+                replayed = dream_report.get('episodes_replayed', 0)
+            self._cached_episode_total = getattr(self, '_cached_episode_total', 0) + replayed
+
         # Take snapshot
         snapshot = self.get_snapshot()
 
@@ -170,6 +177,16 @@ class EmergentDetector:
 
     def detect_cooperation_clusters(self) -> list[dict]:
         """Analyze Hebbian weight graph for agent cooperation clusters."""
+        # Don't detect cooperation clusters until we have enough data (AD-288)
+        if self._episodic_memory:
+            try:
+                # Use cached stats if available; avoid async call from sync method
+                total = getattr(self, '_cached_episode_total', 0)
+                if total < 10:
+                    return []
+            except Exception:
+                pass
+
         weights = self._router.all_weights_typed()
         intent_weights = {k: v for k, v in weights.items() if k[2] == REL_INTENT}
 
@@ -408,12 +425,20 @@ class EmergentDetector:
             return patterns
 
         # Store dream report for baseline computation
-        report_data = {
-            "weights_strengthened": getattr(dream_report, "weights_strengthened", 0),
-            "weights_pruned": getattr(dream_report, "weights_pruned", 0),
-            "trust_adjustments": getattr(dream_report, "trust_adjustments", 0),
-            "pre_warm_intents": getattr(dream_report, "pre_warm_intents", []),
-        }
+        if isinstance(dream_report, dict):
+            report_data = {
+                "weights_strengthened": dream_report.get("weights_strengthened", 0),
+                "weights_pruned": dream_report.get("weights_pruned", 0),
+                "trust_adjustments": dream_report.get("trust_adjustments", 0),
+                "pre_warm_intents": dream_report.get("pre_warm_intents", []),
+            }
+        else:
+            report_data = {
+                "weights_strengthened": getattr(dream_report, "weights_strengthened", 0),
+                "weights_pruned": getattr(dream_report, "weights_pruned", 0),
+                "trust_adjustments": getattr(dream_report, "trust_adjustments", 0),
+                "pre_warm_intents": getattr(dream_report, "pre_warm_intents", []),
+            }
         self._dream_history.append(report_data)
 
         # Need at least 2 dream reports for baseline

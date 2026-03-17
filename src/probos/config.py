@@ -140,7 +140,7 @@ class MemoryConfig(BaseModel):
 class DreamingConfig(BaseModel):
     """Dreaming / offline consolidation configuration."""
 
-    idle_threshold_seconds: float = 300.0
+    idle_threshold_seconds: float = 120.0  # Tier 2: full dream after idle (AD-288)
     dream_interval_seconds: float = 600.0
     replay_episode_count: int = 50
     pathway_strengthening_factor: float = 0.03
