@@ -95,6 +95,7 @@ export interface StateSnapshot {
   routing_entropy: number;
   fresh_boot?: boolean;
   pool_groups?: Record<string, PoolGroupInfo>;
+  pool_to_group?: Record<string, string>;
 }
 
 // Animation event types for the canvas
