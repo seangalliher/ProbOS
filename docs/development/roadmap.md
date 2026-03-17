@@ -36,7 +36,8 @@ Not a team — shared infrastructure that all teams use:
 
 - **CodebaseIndex** — structural self-awareness, the ship's technical manual (Phase 29c)
 - **Knowledge Store** — long-term memory, the ship's library
-- **Episodic Memory + Dreaming** — experiential learning, the ship's log
+- **Episodic Memory + Dreaming** — experiential learning, the ship's log. Three-tier dreaming model (AD-288): micro-dreams (continuous, every 10s during active sessions), idle dreams (after 120s idle), and shutdown dreams (final consolidation flush)
+- **Decision Cache** — LLM reasoning cache inside CognitiveAgent (AD-272). Identical observations skip LLM re-evaluation. Future: feedback-driven cache eviction, KnowledgeStore persistence for warm boot
 - **Trust Network** — reputation system, crew performance records
 - **Intent Bus** — internal communications, the ship's intercom
 - **Hebbian Router** — navigation, learned routing pathways
@@ -63,8 +64,8 @@ Each ProbOS instance is a ship. Multiple instances form a federation:
 |-------|-------|-----------|------|
 | 24 | Channel Integration | Comms | Discord, Slack, Telegram adapters + external tool connectors |
 | 25 | Persistent Tasks | Ops | Long-running autonomous tasks with checkpointing, browser automation |
-| 26 | Inter-Agent Deliberation | Bridge | Structured multi-turn agent debates, agent-to-agent messaging |
-| 28 | Meta-Learning | Science | Workspace ontology, dream cycle abstractions, session context, goal planning |
+| 26 | Inter-Agent Deliberation | Bridge | Structured multi-turn agent debates, agent-to-agent messaging, interactive execution |
+| 28 | Meta-Learning | Science | Workspace ontology, dream cycle abstractions, session context, goal management |
 | 29 | Federation + Emergence | Comms | Knowledge federation, trust transitivity, MCP adapter, TC_N measurement |
 | 29b | Medical Team | Medical | Vitals monitor, diagnostician, surgeon, pharmacist, pathologist |
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
@@ -174,6 +175,18 @@ Automated performance optimization, maintenance, and construction. The team that
 - **Infrastructure Agent** — disk space monitoring, dependency health, environment validation
 - Existing: PoolScaler handles some Ops/Engineering overlap
 
+**P1 Performance Optimizations (deferred from AD-289)**
+
+- **Pool health check caching** — cache healthy_agents list with short TTL, invalidate on agent state change
+- **WebSocket delta updates** — send state deltas instead of full snapshots, throttle event broadcast rate (batch within 100ms window)
+- **Event log write batching** — batch SQLite commits (flush every 100ms or 10 events), enable WAL mode
+- **Episodic memory query optimization** — add timestamp index to ChromaDB collection, cache recent episodes with TTL
+
+**Decision Cache Persistence (deferred from AD-272)**
+
+- Persist CognitiveAgent decision caches to KnowledgeStore for warm boot — returning users get instant responses for previously-seen patterns
+- Feedback-driven cache eviction: `/feedback bad` invalidates cached decisions for involved agents, preventing stale bad judgments from persisting
+
 ---
 
 ### Operations Team (Phase 33)
@@ -185,7 +198,37 @@ Formalize resource management and system coordination as an agent pool.
 - **Resource Allocator** — workload balancing across pools, demand prediction, capacity planning
 - **Scheduler** — task prioritization, queue management, deadline enforcement (extends Phase 24c TaskScheduler)
 - **Coordinator** — cross-team orchestration during high-load or emergency events
+- **Response-Time Scaling** (deferred from Phase 8) — latency-aware pool scaling. Instrument `broadcast()` with per-intent latency tracking, scale up pools where response times exceed SLA thresholds
 - Existing: PoolScaler (built), TaskScheduler (Phase 24c roadmap), IntentBus demand tracking (built)
+
+---
+
+### Meta-Learning (Phase 28)
+
+*"Fascinating." — The ship learns to learn.*
+
+Move beyond per-session learning to cross-session concept formation, persistent goals, and abstract reasoning.
+
+- **Workspace Ontology** — auto-discovered conceptual vocabulary from the user's usage patterns, stored in Knowledge Store
+- **Dream Cycle Abstractions** — dreaming produces not just weight updates but abstract rules and recognized patterns
+- **Session Context** — conversation history carries across sessions, decomposer resolves references to past interactions (AD-273 provides foundation)
+- **Goal Management** (deferred from Phase 16) — persistent goals with progress tracking, conflict arbitration between competing goals, goal decomposition into sub-goals with dependency tracking
+- Existing: Episodic memory (built), dreaming engine with three-tier model (built), conversation context (AD-273, built)
+
+---
+
+### Federation Hardening (Phase 29)
+
+*Additional federation capabilities deferred from Phase 9.*
+
+Beyond the core federation transport (ZeroMQ, gossip, intent forwarding) already built:
+
+- **Dynamic Peer Discovery** — multicast/broadcast-based automatic node discovery on local networks, replacing manual `--config` peer lists
+- **Cross-Node Episodic Memory** — federated memory queries that span multiple ProbOS instances, enabling a ship to recall experiences from allied ships
+- **Cross-Node Agent Sharing** — propagate self-designed agents to federated peers (deferred from Phase 10). Agents carry their trust history and design provenance
+- **Smart Capability Routing** — cost-benefit routing between federation nodes, factoring in capability scores, latency, trust, and load. Beyond the current "all peers" routing
+- **Federation TLS/Authentication** — encrypted transport and node identity verification for federation channels. Required before any production multi-node deployment
+- **Cluster Management** — node health monitoring, auto-restart, graceful handoff of responsibilities when a node goes down
 
 ---
 
@@ -265,6 +308,13 @@ Allows one agent to explicitly invoke another agent's capability as a typed func
 - Trust and consensus still apply — wrapping doesn't bypass governance
 - Natural fit for Phase 26 Inter-Agent Deliberation
 
+**Interactive Execution Mode (deferred from Phase 16)**
+
+- Pause, inject, or redirect a running DAG mid-flight during execution
+- Human can add constraints, modify node parameters, or insert new nodes into an active plan
+- CollaborationEvent type for HXI visualization of human-agent co-editing
+- Foundation for real-time human-agent pair programming on complex tasks
+
 ---
 
 ### Self-Improvement Pipeline (Phase 30)
@@ -327,6 +377,18 @@ The infrastructure for a closed-loop improvement cycle: discover capabilities, e
 - Classifications: VERIFIED (high confidence), SUSPICIOUS (needs review), HALLUCINATED (fabricated), SKIPPED (unverifiable)
 - Extends the trust network from binary success/fail to graduated confidence scoring
 - Applied to research findings, generated references, claimed capabilities, and factual assertions
+
+**Agent Versioning + Shadow Deployment (deferred from Phase 14c)**
+
+- Track version history of designed agents — each modification produces a new version with provenance chain
+- Shadow deployment: run new agent versions alongside existing ones, compare performance on identical intents via Shapley scoring, promote or rollback based on observed metrics
+- Depends on persistent agent identity (AD-177, built)
+
+**Vibe Agent Creation (AD-271, built)**
+
+- Human-guided agent design: user provides natural language guidance ("make it focus on security" or "it should be conservative") before generation
+- An alternative mode alongside fully automated self-mod — the Captain can shape agent design without writing code
+- Extends the Human Approval Gate from binary approve/reject to collaborative design
 
 !!! info "Want to contribute?"
     See the [Contributing guide](contributing.md) for how to get involved.
