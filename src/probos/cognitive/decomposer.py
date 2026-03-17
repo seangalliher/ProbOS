@@ -367,8 +367,9 @@ class IntentDecomposer:
         dag = self._parse_response(response.content, text)
         return dag
 
-    # Payload budget for reflect prompt (~2000 tokens ≈ 8000 chars).
-    REFLECT_PAYLOAD_BUDGET: int = 8000
+    # Payload budget for reflect prompt (~3000 tokens ≈ 12000 chars).
+    # Bumped from 8000 to accommodate doc_snippets in AD-301.
+    REFLECT_PAYLOAD_BUDGET: int = 12000
 
     async def reflect(
         self, original_request: str, execution_result: dict[str, Any]
@@ -583,6 +584,21 @@ def _summarize_node_result(node_result: Any) -> str:
                         entry += f" (exit_code: {exit_code})"
                     if entry and entry not in seen_outputs:
                         seen_outputs.append(entry)
+                elif isinstance(data, dict) and "doc_snippets" in data:
+                    # AD-301: Give doc_snippets their own budget so they
+                    # aren't truncated by semantic layer results.
+                    base = {k: v for k, v in data.items()
+                            if k != "doc_snippets"}
+                    entry = str(base)[:400]
+                    if entry not in seen_outputs:
+                        seen_outputs.append(entry)
+                    for snip in data["doc_snippets"]:
+                        doc_entry = (
+                            f"[doc: {snip.get('path', '?')}]\n"
+                            f"{snip.get('source', '')[:1500]}"
+                        )
+                        if doc_entry not in seen_outputs:
+                            seen_outputs.append(doc_entry)
                 else:
                     entry = str(data)[:500]
                     if entry not in seen_outputs:

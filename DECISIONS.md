@@ -1729,3 +1729,35 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 | AD-296 | Wrap team name `<Text>` in `<Billboard follow>` from `@react-three/drei` so labels always face the camera. Add `security` PoolGroup for `red_team` pool (not excluded from scaler). Add `security: '#c85068'` to `GROUP_TINT_HEXES`. 5 crew teams: Core, Bundled, Medical, Self-Mod, Security |
 
 **Status:** Complete — 1 new Vitest test, 21 Vitest total
+
+### AD-297: CodebaseIndex as Ship's Library
+
+| AD | Decision |
+|----|----------|
+| AD-297 | Decouple CodebaseIndex from `config.medical.enabled` — build unconditionally at startup so all agents (including IntrospectionAgent) can access source knowledge. Enhance `_introspect_design()` to call `read_source()` on top 3 matching files (first 80 lines each) so ProbOS can analyze its own source code, not just metadata |
+
+**Status:** Complete — 4 new Python tests, 1731 Python total
+
+### AD-298: Word-Level Query Matching in CodebaseIndex
+
+| AD | Decision |
+|----|----------|
+| AD-298 | Replace exact-substring matching in `CodebaseIndex.query()` with word-level keyword scoring. Split concept into keywords, filter stop words (`_STOP_WORDS` frozenset), score each keyword independently against file paths (+3), docstrings (+2), and class names (+2). Additive scoring ranks multi-keyword matches higher. Fallback to full string if all words are stop words |
+
+**Status:** Complete — 4 new Python tests, 1735 Python total
+
+### AD-299: Project Docs in CodebaseIndex
+
+| AD | Decision |
+|----|----------|
+| AD-299 | Index whitelisted project Markdown files (`DECISIONS.md`, `PROGRESS.md`, roadmap, progress-era-* files) alongside Python source code. Store with `docs:` prefix in `_file_tree`. Parse `# title` as docstring and `## section` headings as searchable "classes". `read_source()` handles `docs:` paths against `_project_root` with path traversal protection. No changes to `_introspect_design()` — docs flow through existing `query()` → `read_source()` pipeline |
+
+**Status:** Complete — 5 new Python tests, 1740 Python total
+
+### AD-300: Section-Targeted Doc Reading in CodebaseIndex
+
+| AD | Decision |
+|----|----------|
+| AD-300 | Store section line numbers in `_analyze_doc()` alongside section names. New `read_doc_sections(file_path, keywords, max_lines=200)` scores sections by keyword overlap and reads only matching sections. `_introspect_design()` uses section-targeted reading for `docs:` files instead of fixed 80-line read. Imports `_STOP_WORDS` to extract keywords from the question for section matching |
+
+**Status:** Complete — 6 new Python tests, 1746 Python total

@@ -27,6 +27,20 @@ _DIR_TO_LAYER: dict[str, str] = {
     "knowledge": "knowledge",
 }
 
+# Common words to ignore in keyword matching
+_STOP_WORDS = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "can", "shall", "to", "of", "in", "for",
+    "on", "with", "at", "by", "from", "as", "into", "about", "between",
+    "through", "during", "before", "after", "above", "below", "and", "but",
+    "or", "not", "no", "if", "then", "than", "so", "up", "out", "it",
+    "its", "this", "that", "these", "those", "my", "your", "our", "their",
+    "i", "you", "we", "they", "he", "she", "me", "him", "her", "us",
+    "them", "what", "which", "who", "whom", "how", "when", "where", "why",
+    "own", "very", "just", "also", "any", "each", "all", "both", "more",
+})
+
 # Key classes whose public API we extract
 _KEY_CLASSES = {
     "ProbOSRuntime",
@@ -41,12 +55,25 @@ _KEY_CLASSES = {
     "AttentionManager",
 }
 
+# Project documents to index alongside source code (AD-299)
+_PROJECT_DOCS = [
+    "DECISIONS.md",
+    "PROGRESS.md",
+    "progress-era-1-genesis.md",
+    "progress-era-2-emergence.md",
+    "progress-era-3-product.md",
+    "progress-era-4-evolution.md",
+    "docs/development/roadmap.md",
+    "docs/development/contributing.md",
+]
+
 
 class CodebaseIndex:
     """Read-only structural map of the ProbOS source tree."""
 
     def __init__(self, source_root: Path) -> None:
         self._source_root = Path(source_root)
+        self._project_root = self._source_root.parent.parent  # src/probos/ → project root (AD-299)
         self._file_tree: dict[str, dict[str, Any]] = {}  # rel_path → metadata
         self._agent_map: list[dict[str, Any]] = []
         self._layer_map: dict[str, list[str]] = {}
@@ -66,20 +93,30 @@ class CodebaseIndex:
             self._built = True
             return
 
+        # Scan Python source files
         py_files = sorted(src.rglob("*.py"))
         for py in py_files:
             rel = str(py.relative_to(src)).replace("\\", "/")
             meta = self._analyze_file(py, rel)
             self._file_tree[rel] = meta
 
+        # Scan project documents (AD-299)
+        for doc_rel in _PROJECT_DOCS:
+            doc_path = self._project_root / doc_rel
+            if doc_path.is_file():
+                meta = self._analyze_doc(doc_path, doc_rel)
+                # Prefix with "docs:" to distinguish from source files
+                self._file_tree[f"docs:{doc_rel}"] = meta
+
         self._build_layer_map()
         self._extract_config_schema()
         self._built = True
         logger.info(
-            "CodebaseIndex built: %d files, %d agents, %d layers",
-            len(self._file_tree),
+            "CodebaseIndex built: %d files, %d agents, %d layers, %d docs",
+            len([k for k in self._file_tree if not k.startswith("docs:")]),
             len(self._agent_map),
             len(self._layer_map),
+            len([k for k in self._file_tree if k.startswith("docs:")]),
         )
 
     # ------------------------------------------------------------------
@@ -88,18 +125,31 @@ class CodebaseIndex:
 
     def query(self, concept: str) -> dict[str, Any]:
         """Keyword-based lookup across files, agents, methods, and layers."""
-        concept_lower = concept.lower()
+        # Split concept into meaningful keywords (AD-298)
+        keywords = [
+            w for w in concept.lower().split()
+            if w not in _STOP_WORDS and len(w) > 1
+        ]
+        if not keywords:
+            # Fallback: use the whole concept if all words were stop words
+            keywords = [concept.lower().strip()]
 
         matching_files: list[dict[str, Any]] = []
         for rel, meta in self._file_tree.items():
             relevance = 0
-            if concept_lower in rel.lower():
-                relevance += 3
-            if concept_lower in (meta.get("docstring") or "").lower():
-                relevance += 2
-            for cls in meta.get("classes", []):
-                if concept_lower in cls.lower():
+            rel_lower = rel.lower()
+            doc_lower = (meta.get("docstring") or "").lower()
+            cls_names_lower = [c.lower() for c in meta.get("classes", [])]
+
+            for kw in keywords:
+                if kw in rel_lower:
+                    relevance += 3
+                if kw in doc_lower:
                     relevance += 2
+                for cls in cls_names_lower:
+                    if kw in cls:
+                        relevance += 2
+
             if relevance > 0:
                 matching_files.append({
                     "path": rel,
@@ -110,22 +160,24 @@ class CodebaseIndex:
 
         matching_agents = [
             a for a in self._agent_map
-            if concept_lower in a.get("type", "").lower()
-            or concept_lower in (a.get("module") or "").lower()
+            if any(
+                kw in a.get("type", "").lower()
+                or kw in (a.get("module") or "").lower()
+                for kw in keywords
+            )
         ]
 
         matching_methods: list[dict[str, str]] = []
         for cls_name, methods in self._api_surface.items():
+            cls_lower = cls_name.lower()
             for m in methods:
-                if (
-                    concept_lower in m["method"].lower()
-                    or concept_lower in cls_name.lower()
-                ):
+                method_lower = m["method"].lower()
+                if any(kw in method_lower or kw in cls_lower for kw in keywords):
                     matching_methods.append({**m, "class": cls_name})
 
         layer: str | None = None
         for layer_name, files in self._layer_map.items():
-            if concept_lower in layer_name:
+            if any(kw in layer_name for kw in keywords):
                 layer = layer_name
                 break
 
@@ -162,16 +214,25 @@ class CodebaseIndex:
         start_line: int | None = None,
         end_line: int | None = None,
     ) -> str:
-        """Read source file contents.  Bounded to source_root only."""
+        """Read source or doc file contents.  Bounded to source_root / project_root only."""
         # Normalize separators
         file_path = file_path.replace("\\", "/")
 
-        # Resolve the absolute path and ensure it stays within source root
-        target = (self._source_root / file_path).resolve()
-        try:
-            target.relative_to(self._source_root.resolve())
-        except ValueError:
-            return ""
+        # Resolve against the correct root (AD-299)
+        if file_path.startswith("docs:"):
+            actual_path = file_path[5:]  # strip "docs:" prefix
+            target = (self._project_root / actual_path).resolve()
+            try:
+                target.relative_to(self._project_root.resolve())
+            except ValueError:
+                return ""
+        else:
+            # Resolve the absolute path and ensure it stays within source root
+            target = (self._source_root / file_path).resolve()
+            try:
+                target.relative_to(self._source_root.resolve())
+            except ValueError:
+                return ""
 
         if not target.is_file():
             return ""
@@ -185,6 +246,63 @@ class CodebaseIndex:
             lines = lines[s:e]
 
         return "".join(lines)
+
+    def read_doc_sections(
+        self,
+        file_path: str,
+        keywords: list[str],
+        max_lines: int = 200,
+    ) -> str:
+        """Read sections of a doc file that match the given keywords.
+
+        Returns concatenated text of matching sections, up to max_lines total.
+        Falls back to reading the first max_lines if no sections match.
+        """
+        meta = self._file_tree.get(file_path)
+        if meta is None or meta.get("type") != "doc":
+            return self.read_source(file_path, end_line=max_lines)
+
+        sections = meta.get("sections", [])
+        if not sections:
+            return self.read_source(file_path, end_line=max_lines)
+
+        # Score each section by keyword matches
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for sec in sections:
+            name_lower = sec["name"].lower()
+            score = sum(1 for kw in keywords if kw in name_lower)
+            if score > 0:
+                scored.append((score, sec))
+        scored.sort(key=lambda t: -t[0])
+
+        # If no sections matched keywords, read the full doc from the top
+        if not scored:
+            return self.read_source(file_path, end_line=max_lines)
+
+        # Build section line ranges: each section runs from its start to the next section's start
+        all_lines = sorted(s["line"] for s in sections)
+
+        # Read the full file to slice sections
+        full_text = self.read_source(file_path)
+        if not full_text:
+            return ""
+        file_lines = full_text.splitlines(keepends=True)
+
+        result_lines: list[str] = []
+        for _score, sec in scored:
+            start = sec["line"] - 1  # 0-indexed
+            # Find the next section start after this one
+            idx = all_lines.index(sec["line"])
+            end = all_lines[idx + 1] - 1 if idx + 1 < len(all_lines) else len(file_lines)
+
+            section_lines = file_lines[start:end]
+            result_lines.extend(section_lines)
+
+            if len(result_lines) >= max_lines:
+                result_lines = result_lines[:max_lines]
+                break
+
+        return "".join(result_lines)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -230,6 +348,35 @@ class CodebaseIndex:
                 self._api_surface[node.name] = self._extract_methods(node)
 
         return meta
+
+    def _analyze_doc(self, path: Path, rel: str) -> dict[str, Any]:
+        """Extract metadata from a Markdown document (AD-299)."""
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return {"docstring": None, "classes": [], "sections": [], "type": "doc"}
+
+        lines = text.splitlines()
+
+        # First # heading is the title (equivalent to docstring)
+        title: str | None = None
+        sections: list[dict[str, Any]] = []  # AD-300: section name + line number
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("# ") and title is None:
+                title = stripped[2:].strip()
+            elif stripped.startswith("## ") or stripped.startswith("### "):
+                sections.append({
+                    "name": stripped.lstrip("#").strip(),
+                    "line": i + 1,  # 1-indexed
+                })
+
+        return {
+            "docstring": title,
+            "classes": [s["name"] for s in sections],  # keep for backward compat with query()
+            "sections": sections,  # AD-300: structured section data
+            "type": "doc",
+        }
 
     def _base_class_names(self, node: ast.ClassDef) -> list[str]:
         """Extract base class name strings from a ClassDef."""

@@ -39,7 +39,7 @@ class IntrospectionAgent(BaseAgent):
         IntentDescriptor(name="system_anomalies", params={}, description="Report detected system anomalies — trust outliers, routing shifts, consolidation anomalies, cooperation clusters", requires_reflect=True),
         IntentDescriptor(name="emergent_patterns", params={}, description="Report emergent behavior metrics — cooperation clusters, total correlation (TC_N), routing entropy, capability growth trends", requires_reflect=True),
         IntentDescriptor(name="search_knowledge", params={"query": "...", "types": "..."}, description="Search across all ProbOS knowledge — episodes, agents, skills, workflows, QA reports, system events. Semantic similarity matching.", requires_reflect=True),
-        IntentDescriptor(name="introspect_design", params={"question": "question about ProbOS architecture or design"}, description="Answer questions about ProbOS architecture, design limitations, and internal structure using source code knowledge", requires_reflect=True),
+        IntentDescriptor(name="introspect_design", params={"question": "question about ProbOS architecture or design"}, description="Answer questions about ProbOS architecture, design, roadmap, project documentation, decisions, progress, and internal structure using source code and project doc knowledge", requires_reflect=True),
     ]
 
     _handled_intents = {"explain_last", "agent_info", "team_info", "system_health", "why", "introspect_memory", "introspect_system", "system_anomalies", "emergent_patterns", "search_knowledge", "introspect_design"}
@@ -625,13 +625,6 @@ class IntrospectionAgent(BaseAgent):
 
     async def _search_knowledge(self, rt: Any, params: dict) -> dict[str, Any]:
         """Search across all ProbOS knowledge types."""
-        layer = getattr(rt, "_semantic_layer", None)
-        if layer is None:
-            return {
-                "success": True,
-                "data": {"message": "Semantic knowledge layer not available"},
-            }
-
         query = params.get("query", "")
         if not query:
             return {
@@ -639,13 +632,56 @@ class IntrospectionAgent(BaseAgent):
                 "error": "Missing 'query' parameter",
             }
 
-        # Parse optional types filter
-        types_str = params.get("types", "")
-        types: list[str] | None = None
-        if types_str:
-            types = [t.strip() for t in types_str.split(",") if t.strip()]
+        results: list = []
 
-        results = await layer.search(query, types=types, limit=10)
+        # Search semantic layer (episodes, agents, skills, workflows)
+        layer = getattr(rt, "_semantic_layer", None)
+        if layer is not None:
+            # Parse optional types filter
+            types_str = params.get("types", "")
+            types: list[str] | None = None
+            if types_str:
+                types = [t.strip() for t in types_str.split(",") if t.strip()]
+            results = await layer.search(query, types=types, limit=10)
+
+        # Also search project docs via CodebaseIndex (AD-301)
+        doc_snippets: list[dict[str, str]] = []
+        codebase_index = getattr(rt, "codebase_index", None)
+        if codebase_index is not None:
+            from probos.cognitive.codebase_index import _STOP_WORDS
+
+            arch_data = codebase_index.query(query)
+            matching_files = arch_data.get("matching_files", [])
+
+            query_keywords = [
+                w for w in query.lower().split()
+                if w not in _STOP_WORDS and len(w) > 1
+            ]
+
+            for file_info in matching_files[:3]:
+                file_path = file_info.get("path", "")
+                if not file_path:
+                    continue
+                if file_path.startswith("docs:"):
+                    source = codebase_index.read_doc_sections(file_path, query_keywords)
+                else:
+                    source = codebase_index.read_source(file_path, end_line=80)
+                if source:
+                    doc_snippets.append({"path": file_path, "source": source})
+
+        if doc_snippets:
+            logger.info("search_knowledge found %d doc snippets: %s",
+                        len(doc_snippets),
+                        [s["path"] for s in doc_snippets])
+
+        if not results and not doc_snippets:
+            return {
+                "success": True,
+                "data": {
+                    "message": "Knowledge search not available — no semantic layer or codebase index found.",
+                    "query": query,
+                },
+            }
 
         return {
             "success": True,
@@ -653,6 +689,7 @@ class IntrospectionAgent(BaseAgent):
                 "query": query,
                 "results": results,
                 "count": len(results),
+                "doc_snippets": doc_snippets,
             },
         }
 
@@ -676,6 +713,34 @@ class IntrospectionAgent(BaseAgent):
         agent_map = codebase_index.get_agent_map()
         layer_map = codebase_index.get_layer_map()
 
+        # Read source snippets from the top matching files (AD-297)
+        source_snippets: list[dict[str, str]] = []
+        matching_files = arch_data.get("matching_files", [])
+
+        # Extract keywords for section targeting (AD-300)
+        from probos.cognitive.codebase_index import _STOP_WORDS
+        query_keywords = [
+            w for w in question.lower().split()
+            if w not in _STOP_WORDS and len(w) > 1
+        ]
+
+        for file_info in matching_files[:3]:  # top 3 most relevant files
+            file_path = file_info.get("path", "")
+            if not file_path:
+                continue
+
+            # Use section-targeted reading for docs, fixed 80-line for source (AD-300)
+            if file_path.startswith("docs:"):
+                source = codebase_index.read_doc_sections(file_path, query_keywords)
+            else:
+                source = codebase_index.read_source(file_path, end_line=80)
+
+            if source:
+                source_snippets.append({
+                    "path": file_path,
+                    "source": source,
+                })
+
         return {
             "success": True,
             "data": {
@@ -683,5 +748,6 @@ class IntrospectionAgent(BaseAgent):
                 "architecture_context": arch_data,
                 "agent_count": len(agent_map) if agent_map else 0,
                 "layers": list(layer_map.keys()) if layer_map else [],
+                "source_snippets": source_snippets,
             },
         }

@@ -228,6 +228,61 @@ Built gravitational sub-clusters with translucent boundary shells. Each pool gro
 | `ui/src/store/useStore.ts` | Added `security: '#c85068'` to `GROUP_TINT_HEXES` |
 | `ui/src/__tests__/useStore.test.ts` | 1 test: red_team agents in security group |
 
+### CodebaseIndex as Ship's Library (AD-297) — ✅ COMPLETE
+
+**Problem:** CodebaseIndex was gated behind `config.medical.enabled` — if medical team disabled, the introspect agent couldn't examine source code. Additionally, `_introspect_design()` only returned metadata (file paths, class names), never actual source code.
+
+**Solution:** Decoupled CodebaseIndex from medical config — builds unconditionally at startup. Enhanced `_introspect_design()` to call `read_source()` on the top 3 matching files (first 80 lines each), returning actual source code snippets alongside architecture metadata.
+
+| File | Change |
+|------|--------|
+| `src/probos/runtime.py` | Moved CodebaseIndex build out of `if config.medical.enabled:` block |
+| `src/probos/agents/introspect.py` | `_introspect_design()` reads source snippets via `read_source()` (top 3 files, 80 lines) |
+| `tests/test_introspect_design.py` | Updated mock + 4 new tests (source snippets, 3-file limit, skip empty, always available) |
+
+**Status:** Complete — 4 new tests (1731 Python total)
+
+### Word-Level Query Matching in CodebaseIndex (AD-298) — ✅ COMPLETE
+
+**Problem:** `CodebaseIndex.query()` used exact substring matching against the full concept string. Multi-word queries like "trust network scoring" matched nothing because no file path or docstring contains that exact phrase.
+
+**Solution:** Split query concepts into individual keywords, filter stop words, and score each keyword independently. Files matching more keywords rank higher. Additive scoring means "trust consensus" finds `consensus/trust.py` at the top.
+
+| File | Change |
+|------|--------|
+| `src/probos/cognitive/codebase_index.py` | Added `_STOP_WORDS` frozenset, replaced substring matching in `query()` with per-keyword scoring |
+| `tests/test_codebase_index.py` | 4 new tests (word-level matching, stop words filtered, multi-keyword scoring, all-stop-words fallback) |
+
+**Status:** Complete — 4 new tests (1735 Python total)
+
+### Project Docs in CodebaseIndex (AD-299) — ✅ COMPLETE
+
+**Problem:** CodebaseIndex only indexed Python source files under `src/probos/`. Project documents (roadmap, decisions, progress) were invisible to the introspection agent, so questions like "what's on the roadmap?" returned nothing.
+
+**Solution:** Added `_PROJECT_DOCS` whitelist and `_project_root` to CodebaseIndex. `build()` now scans whitelisted Markdown docs with lightweight parsing (title from `# heading`, sections from `## headings`). Files stored with `docs:` prefix in `_file_tree`. `read_source()` resolves `docs:` paths against project root with path traversal protection.
+
+| File | Change |
+|------|--------|
+| `src/probos/cognitive/codebase_index.py` | `_PROJECT_DOCS` whitelist, `_project_root`, `_analyze_doc()`, `build()` scans docs, `read_source()` handles `docs:` prefix |
+| `tests/test_codebase_index.py` | 5 new tests (doc indexing, section query matching, doc reading, path traversal, missing docs) |
+
+**Status:** Complete — 5 new tests (1740 Python total)
+
+### Section-Targeted Doc Reading (AD-300) — ✅ COMPLETE
+
+**Problem:** `_introspect_design()` read the first 80 lines of every matched file, including Markdown docs. The roadmap is 530+ lines — 80 lines captures only the table of contents, not the content. ProbOS couldn't read relevant doc sections.
+
+**Solution:** `_analyze_doc()` now stores section line numbers alongside names. New `read_doc_sections()` method scores sections by keyword overlap and reads only the matching sections (up to `max_lines=200`). `_introspect_design()` detects `docs:` prefixed files and uses section-targeted reading instead of the fixed 80-line source read.
+
+| File | Change |
+|------|--------|
+| `src/probos/cognitive/codebase_index.py` | `_analyze_doc()` stores `sections` with `name` + `line`. New `read_doc_sections()` method |
+| `src/probos/agents/introspect.py` | `_introspect_design()` uses `read_doc_sections()` for `docs:` files, imports `_STOP_WORDS` for keyword extraction |
+| `tests/test_codebase_index.py` | 5 new tests (section line storage, keyword matching, multi-keyword scoring, fallback, max_lines) |
+| `tests/test_introspect_design.py` | 1 new test (doc files use `read_doc_sections` instead of `read_source`) |
+
+**Status:** Complete — 6 new tests (1746 Python total)
+
 ### Causal Attribution for Emergent Behavior + Self-Introspection (AD-295) — ✅ COMPLETE
 
 **Problem:** ProbOS detects emergent patterns (trust anomalies, routing shifts, cooperation clusters) but cannot explain *why* they're happening. No causal trail linking trust changes to intents and Shapley scores. IntrospectionAgent cannot examine ProbOS's own source code for architecture questions.

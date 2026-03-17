@@ -90,7 +90,7 @@ Each ProbOS instance is a ship. Multiple instances form a federation:
 | 25b | Tool Layer | Ship's Computer | Typed callable instruments (tricorders) shared across agents, ToolRegistry, MCP mapping |
 | 26 | Inter-Agent Deliberation | Bridge | Structured multi-turn agent debates, agent-to-agent messaging, interactive execution |
 | 28 | Meta-Learning | Science | Workspace ontology, dream cycle abstractions, session context, goal management |
-| 29 | Federation + Emergence | Comms | Knowledge federation, trust transitivity, MCP adapter, TC_N measurement |
+| 29 | Federation + Emergence | Comms | Knowledge federation, trust transitivity, MCP adapter, A2A adapter, TC_N measurement |
 | 29b | Medical Team | Medical | Vitals monitor, diagnostician, surgeon, pharmacist, pathologist |
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
 | 30 | Self-Improvement Pipeline | All Teams | Capability proposals, stage contracts, QA pool, evolution store, human gate |
@@ -227,6 +227,20 @@ Formalize resource management and system coordination as an agent pool.
 
 ---
 
+### Bundled Agent Reorganization (Future)
+
+*"All hands, report to your departments."*
+
+Bundled agents currently share a single "Bundled" pool group, but they serve different departments of the ship. "Bundled" is a **distribution label** (ships with ProbOS out of the box), not an organizational role. Future work will reassign bundled agents to their functional crew teams:
+
+- **Communications** — TranslateAgent, SummarizerAgent
+- **Science/Research** — WebSearchAgent, PageReaderAgent, NewsAgent, WeatherAgent
+- **Operations** — CalculatorAgent, TodoAgent, NoteTakerAgent, SchedulerAgent
+
+The `bundled` designation becomes agent metadata (`origin: "bundled"`) rather than a crew assignment. The pool group system and HXI clustering already support this — it's a data change, not an architectural change.
+
+---
+
 ### Meta-Learning (Phase 28)
 
 *"Fascinating." — The ship learns to learn.*
@@ -286,8 +300,55 @@ MCP (Model Context Protocol) is becoming the standard for inter-agent tool shari
 **Transport Coexistence**
 
 - ZeroMQ remains the primary intra-Nooplex transport (fast, binary, low-latency)
-- MCP serves the boundary between ProbOS and the wider agent ecosystem
-- `FederationBridge` becomes transport-polymorphic: ZeroMQ and MCP implementations behind a shared interface
+- MCP serves the tool boundary between ProbOS and the wider ecosystem
+- A2A serves the agent boundary between ProbOS and external agent frameworks
+- `FederationBridge` becomes transport-polymorphic: ZeroMQ, MCP, and A2A implementations behind a shared interface
+
+---
+
+### A2A Federation Adapter (Phase 29)
+
+*"Hailing frequencies open — to all ships, not just ours."*
+
+Google's Agent-to-Agent (A2A) protocol is the agent-communication complement to MCP (which is tool-communication). MCP lets agents use external tools; A2A lets agents collaborate with external agents. ProbOS supports both as federation transports.
+
+```
+External World ←→ ProbOS
+─────────────────────────────────
+Tools:   MCP Protocol  ←→ Intent Bus (tool calls)
+Agents:  A2A Protocol  ←→ Intent Bus (agent collaboration)
+Nodes:   ZeroMQ        ←→ Federation (ProbOS-to-ProbOS)
+```
+
+**Inbound (A2A Server)**
+
+- ProbOS exposes agent capabilities as A2A-discoverable services
+- External agents can send tasks to ProbOS agents via A2A task protocol
+- A2A tasks are translated to `IntentMessage` and dispatched through the intent bus
+- Full governance applies: consensus, red team verification, trust scoring
+- ProbOS publishes an Agent Card describing available capabilities, authentication requirements, and supported modalities
+
+**Outbound (A2A Client)**
+
+- ProbOS discovers external agents via A2A Agent Card discovery
+- External agent capabilities registered as federated agents (not tools — key distinction from MCP)
+- `FederationRouter` routes intents to A2A-connected agents alongside ZeroMQ and MCP peers
+- Supports A2A streaming for long-running collaborative tasks
+
+**A2A Trust Model**
+
+- External A2A agents treated as federated crew members with discounted trust (same δ factor as trust transitivity)
+- New A2A peers start with probationary trust, same as MCP clients
+- Trust updated based on task outcome quality, measured by Shapley attribution
+- A2A agents never bypass consensus — they're collaborators, not privileged operators
+- Agent Card metadata (publisher, version, capabilities) stored for provenance tracking
+
+**MCP vs A2A Decision Matrix**
+
+- Use **MCP** when: consuming a stateless capability (file read, API call, database query) — tools
+- Use **A2A** when: delegating a task that requires reasoning, context, multi-step work — agents
+- ProbOS agents can use both: MCP for instruments, A2A for collaboration with external crew
+- Phase 26 Agent-as-Tool works internally; A2A extends the pattern across framework boundaries
 
 ---
 
@@ -489,6 +550,53 @@ The infrastructure for a closed-loop improvement cycle: discover capabilities, e
 - Human-guided agent design: user provides natural language guidance ("make it focus on security" or "it should be conservative") before generation
 - An alternative mode alongside fully automated self-mod — the Captain can shape agent design without writing code
 - Extends the Human Approval Gate from binary approve/reject to collaborative design
+
+**Git-Backed Agent Persistence**
+
+Self-designed agents currently live in the evolution store (KnowledgeStore) as runtime artifacts. To become permanent crew members, they need to be version-controlled:
+
+- **Write-to-disk serialization** — promote approved agents from evolution store to `src/probos/agents/designed/` as clean `.py` files
+- **Git integration** — ProbOS creates a branch, commits the agent file, opens a PR. ProbOS becomes a git contributor (`Co-Authored-By: ProbOS <probos@probos.dev>`)
+- **Code quality gate** — lint, test, security scan (red team), and behavioral validation before commit
+- **Provenance chain** — each agent file carries metadata: which conversation spawned it, design intent, trust score earned, Shapley contribution, version history
+- **Rollback** — if an agent degrades post-promotion, revert the commit and demote back to evolution store
+- **User-owned repos** — each ProbOS user's designed agents sync to their own git repo (local or GitHub). The user chooses private or public visibility
+
+---
+
+### Agent Sharing Ecosystem (Future)
+
+*"The Federation shares its finest officers."*
+
+When users make their agent repos public, a decentralized agent-sharing ecosystem emerges — like P2P file sharing but for ProbOS agents, with GitHub as the transport layer.
+
+**Discovery**
+
+- GitHub repos tagged with `probos-agent` topic are discoverable by any ProbOS instance
+- Discovery agent (Science team) periodically indexes public agent repos via GitHub API search
+- Agent catalog: name, description, trust score history, design provenance, compatibility info
+- No central registry needed — GitHub is the index
+
+**Import with Review**
+
+- Captain browses discovered agents, previews trust history, provenance chain, and source code
+- Import creates a branch in the user's local repo with the external agent
+- Red team scans imported agent source for security issues (prompt injection, data exfiltration, sandbox escapes)
+- QA pool runs behavioral tests before the agent joins the crew
+- Imported agents start with a low trust score and earn trust through performance (same onboarding as self-designed agents)
+
+**Trust and Provenance**
+
+- Agents carry a signed provenance chain: who designed them (human or ProbOS), which instance, what version
+- Trust scores from the source instance are visible but not inherited — each ship builds its own trust independently
+- Community trust signals: how many instances have imported this agent, aggregate success/failure rates
+- License compatibility checks: agents inherit the license of their source repo
+
+**Sharing Back**
+
+- If a user improves an imported agent, they can contribute the improvement back to the source repo via PR
+- ProbOS-to-ProbOS collaboration: one ship's agent evolves and the improvement propagates across the fleet
+- Opt-in only — no automatic propagation, every change goes through Captain approval
 
 !!! info "Want to contribute?"
     See the [Contributing guide](contributing.md) for how to get involved.

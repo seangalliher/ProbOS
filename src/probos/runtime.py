@@ -475,13 +475,14 @@ class ProbOSRuntime:
                     agent_ids=ids, llm_client=self.llm_client, runtime=self,
                 )
 
+        # Build CodebaseIndex — ship's library, available to all agents (AD-297)
+        from probos.cognitive.codebase_index import CodebaseIndex
+        self.codebase_index = CodebaseIndex(source_root=Path(__file__).resolve().parent)
+        self.codebase_index.build()
+
         # Medical team pool (AD-290)
         if self.config.medical.enabled:
             med_cfg = self.config.medical
-            # Build CodebaseIndex
-            from probos.cognitive.codebase_index import CodebaseIndex
-            self.codebase_index = CodebaseIndex(source_root=Path(__file__).resolve().parent)
-            self.codebase_index.build()
 
             # Create vitals monitor pool entry (HeartbeatAgent — no LLM)
             ids = generate_pool_ids("vitals_monitor", "medical_vitals", 1)
