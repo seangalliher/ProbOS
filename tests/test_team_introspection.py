@@ -36,14 +36,14 @@ def _make_agent(agent_type: str, agent_id: str, pool: str):
     return agent
 
 
-def _make_pool(agents, agent_type: str = "unknown"):
-    """Create a mock pool holding the given agents."""
+def _make_pool(agent_ids, agent_type: str = "unknown"):
+    """Create a mock pool holding the given agent IDs (matching real ResourcePool)."""
     pool = MagicMock()
-    pool.healthy_agents = agents
-    pool.target_size = len(agents)
+    pool.healthy_agents = agent_ids
+    pool.target_size = len(agent_ids)
     pool.info.return_value = {
-        "current_size": len(agents),
-        "target_size": len(agents),
+        "current_size": len(agent_ids),
+        "target_size": len(agent_ids),
         "agent_type": agent_type,
     }
     return pool
@@ -64,9 +64,10 @@ def _build_runtime():
 
     all_agents = [med_vitals, med_diag, med_surg, med_pharm, med_path, fs_reader, shell_agent]
 
-    # Registry
+    # Registry — resolve agent IDs to agent objects
     rt.registry.all.return_value = all_agents
-    rt.registry.get.return_value = None
+    agent_by_id = {a.id: a for a in all_agents}
+    rt.registry.get.side_effect = lambda aid: agent_by_id.get(aid)
     rt.registry.count = len(all_agents)
 
     # Trust
@@ -77,15 +78,15 @@ def _build_runtime():
     rt.hebbian_router.all_weights_typed.return_value = {}
     rt.hebbian_router.weight_count = 0
 
-    # Pools
+    # Pools — healthy_agents returns IDs (matching real ResourcePool)
     rt.pools = {
-        "medical_vitals": _make_pool([med_vitals], "vitals_monitor"),
-        "medical_diagnostician": _make_pool([med_diag], "diagnostician"),
-        "medical_surgeon": _make_pool([med_surg], "surgeon"),
-        "medical_pharmacist": _make_pool([med_pharm], "pharmacist"),
-        "medical_pathologist": _make_pool([med_path], "pathologist"),
-        "filesystem": _make_pool([fs_reader], "file_reader"),
-        "shell": _make_pool([shell_agent], "shell_command"),
+        "medical_vitals": _make_pool([med_vitals.id], "vitals_monitor"),
+        "medical_diagnostician": _make_pool([med_diag.id], "diagnostician"),
+        "medical_surgeon": _make_pool([med_surg.id], "surgeon"),
+        "medical_pharmacist": _make_pool([med_pharm.id], "pharmacist"),
+        "medical_pathologist": _make_pool([med_path.id], "pathologist"),
+        "filesystem": _make_pool([fs_reader.id], "file_reader"),
+        "shell": _make_pool([shell_agent.id], "shell_command"),
     }
 
     # Pool groups

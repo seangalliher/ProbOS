@@ -212,7 +212,10 @@ class IntrospectionAgent(BaseAgent):
                 needle = agent_type.lower()
                 for pool_name, pool in rt.pools.items():
                     if needle in pool_name.lower():
-                        agents.extend(pool.healthy_agents)
+                        for aid in pool.healthy_agents:
+                            resolved = rt.registry.get(aid)
+                            if resolved:
+                                agents.append(resolved)
         else:
             # No filter — return all agents
             agents = list(rt.registry.all())
@@ -311,9 +314,12 @@ class IntrospectionAgent(BaseAgent):
             pool = rt.pools.get(pool_name)
             if pool is None:
                 continue
-            for agent in pool.healthy_agents:
+            for agent_id in pool.healthy_agents:
+                agent = rt.registry.get(agent_id)
+                if agent is None:
+                    continue
                 info: dict[str, Any] = agent.info()
-                trust = rt.trust_network.get_score(agent.id)
+                trust = rt.trust_network.get_score(agent_id)
                 info["trust_score"] = round(trust, 4)
                 info["pool"] = pool_name
                 agent_details.append(info)
