@@ -70,7 +70,7 @@ When you type natural language:
 
     47 agents across 20+ pools — core, cognitive, and self-designed.
 
--   :fontawesome-brands-discord: **[Discord](https://discord.gg/QxfaAMun)**
+-   :fontawesome-brands-discord: **[Discord](https://discord.gg/cbprTVfsjt)**
 
     Join the community.
 
