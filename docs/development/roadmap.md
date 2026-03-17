@@ -95,7 +95,7 @@ Each ProbOS instance is a ship. Multiple instances form a federation:
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
 | 30 | Self-Improvement Pipeline | All Teams | Capability proposals, stage contracts, QA pool, evolution store, human gate |
 | 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring, secrets management, runtime sandboxing, data governance |
-| 32 | Engineering Team | Engineering | Automated performance optimization, maintenance agents, build agents, LLM resilience, observability export, CI/CD, backup/restore |
+| 32 | Engineering Team | Engineering | Automated performance optimization, maintenance agents, build agents, LLM resilience, observability export, CI/CD, backup/restore, storage abstraction layers |
 | 33 | Operations Team | Ops | Formalized resource management, workload balancing, system coordination, LLM cost tracking |
 
 ---
@@ -291,6 +291,26 @@ Automated performance optimization, maintenance, and construction. The team that
 - **Log aggregation** — structured JSON logging with correlation IDs for tracing a user request through decomposition → routing → execution → reflection
 - Existing: Python logging throughout, HXI real-time visualization (built)
 
+**Storage Abstraction Layer**
+
+ProbOS currently uses aiosqlite (SQLite) for event log and episodic memory, and ChromaDB for vector storage. Both are ideal for local-first, single-ship deployment (zero config, embedded, pip install). For enterprise and cloud deployment, swappable backends are needed:
+
+- **`StorageBackend` ABC** — abstract interface for relational/event storage operations (write event, query events, store episode, recall episodes)
+- **`SQLiteBackend`** — default implementation wrapping current aiosqlite usage. Remains the zero-config default for OSS
+- **Future backends** — PostgreSQL, etc. implemented as drop-in replacements behind the same interface
+- **Migration path** — existing `EventLog` and `EpisodicMemory` classes code against the ABC, not raw aiosqlite. Backend selected via config
+- SQLite is proven for single-node: zero config, WAL mode handles modest concurrency, file-based backup. The abstraction exists so cloud/enterprise can swap without changing agent code
+
+**Vector Store Abstraction Layer**
+
+ChromaDB is the right default for OSS (embedded, zero config, works offline), but enterprise/cloud needs backends with clustering, replication, and multi-tenant isolation:
+
+- **`VectorStore` ABC** — abstract interface for vector operations (add, query, get, delete, count). Small surface — ~50 lines
+- **`ChromaDBBackend`** — default implementation wrapping current ChromaDB usage. Remains the zero-config default for OSS
+- **Future backends** — pgvector, Qdrant, Pinecone implemented as drop-in replacements behind the same interface
+- **Migration path** — existing `KnowledgeStore` and `EpisodicMemory` (vector side) code against the ABC, not raw ChromaDB API. Backend selected via config
+- Key insight: PostgreSQL + pgvector could serve as the single enterprise backend for both relational and vector storage, reducing operational complexity
+
 **P1 Performance Optimizations (deferred from AD-289)**
 
 - **Pool health check caching** — cache healthy_agents list with short TTL, invalidate on agent state change
@@ -315,7 +335,7 @@ Formalize resource management and system coordination as an agent pool.
 - **Scheduler** — task prioritization, queue management, deadline enforcement (extends Phase 24c TaskScheduler)
 - **Coordinator** — cross-team orchestration during high-load or emergency events
 - **Response-Time Scaling** (deferred from Phase 8) — latency-aware pool scaling. Instrument `broadcast()` with per-intent latency tracking, scale up pools where response times exceed SLA thresholds
-- **LLM Cost Tracker** — per-agent, per-intent, and per-DAG token usage accounting. Budget caps (daily/monthly), cost attribution via Shapley (which agents are expensive vs. valuable), per-workflow cost breakdowns for end-to-end visibility, alerts when spend exceeds thresholds. Provides the data foundation for commercial ROI analytics
+- **LLM Cost Tracker** — per-agent, per-intent, and per-DAG token usage accounting. Budget caps (daily/monthly), cost attribution via Shapley (which agents are expensive vs. valuable), per-workflow cost breakdowns for end-to-end visibility, alerts when spend exceeds thresholds. Provides the data foundation for commercial ROI analytics. Note: accurate cost attribution will require a proper tokenizer library (e.g., `tiktoken` for OpenAI models, model-specific tokenizers for others) — current `len(content) // 4` estimation is insufficient for billing-grade accuracy
 - Existing: PoolScaler (built), TaskScheduler (Phase 24c roadmap), IntentBus demand tracking (built)
 
 ---
