@@ -1809,3 +1809,15 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 | AD-309 | Architect HXI — `ArchitectProposalView` TypeScript type, Zustand `design_*` event handlers with `designProgress` state, IntentSurface inline proposal review UI (teal theme `#50a0b0`) with summary/rationale/roadmap/priority/target-files/risks/dependencies card, collapsible full spec, Approve & Build / Reject buttons |
 
 **Status:** Complete — 14 new Python tests, 1826 Python + 21 Vitest total
+
+---
+
+## Phase 32e: Architect Agent Quality (AD-310)
+
+*"An officer who makes decisions without reading the ship's logs is no officer at all."*
+
+| AD | Decision |
+|----|----------|
+| AD-310 | ArchitectAgent perceive() upgraded with 7 context layers (file tree with actual paths, source snippets of top-5 matches, slash commands from shell.py + inline API commands, API route extraction from @app decorators, pool group crew structure, documentation with 80-line DECISIONS tail, sample build prompt for format calibration). Instructions hardened with 5 verification rules preventing path hallucination, duplicate slash commands, duplicate API routes, duplicate agents, and ungrounded proposals |
+
+**Status:** Complete — 12 new Python tests, 1838 Python + 21 Vitest total

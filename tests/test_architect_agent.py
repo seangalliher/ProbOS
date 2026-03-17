@@ -288,7 +288,7 @@ class TestUserMessageFormatting:
         assert "Network Egress" in msg
         assert "Phase: 31" in msg
         assert "Relevant Files" in msg
-        assert "===PROPOSAL===" in msg
+        assert "verify all file paths" in msg
 
     def test_no_context(self):
         """_build_user_message handles missing codebase context."""
@@ -317,15 +317,15 @@ class TestPerceiveWithRuntime:
         mock_index = MagicMock()
         mock_index.query.return_value = {
             "matching_files": [
-                {"path": "src/probos/mesh/routing.py", "score": 5, "docstring": "Routing"},
+                {"path": "src/probos/mesh/routing.py", "relevance": 5, "docstring": "Routing"},
             ],
         }
         mock_index.get_agent_map.return_value = [
-            {"type": "builder", "tier": "domain", "bases": ["CognitiveAgent"]},
+            {"type": "builder", "tier": "domain", "module": "cognitive.builder", "bases": ["CognitiveAgent"]},
         ]
         mock_index.read_doc_sections.return_value = "## Phase 31\nSecurity stuff"
         mock_index.read_source.return_value = "| AD-305 | Last decision |\n"
-        mock_index.get_layer_map.return_value = {"cognitive": ["a.py", "b.py"]}
+        mock_index.get_layer_map.return_value = {"cognitive": ["cognitive/builder.py", "cognitive/architect.py"]}
 
         mock_runtime = MagicMock()
         mock_runtime.codebase_index = mock_index
@@ -346,9 +346,9 @@ class TestPerceiveWithRuntime:
         ctx = obs["codebase_context"]
         assert "Relevant Files" in ctx
         assert "routing.py" in ctx
-        assert "Existing Agents" in ctx
+        assert "Registered Agents" in ctx
         assert "builder" in ctx
-        assert "Architecture Layers" in ctx
+        assert "File Tree" in ctx
         assert "cognitive" in ctx
 
 
@@ -421,3 +421,261 @@ class TestActNoProposalBlock:
         assert result["success"] is False
         assert "No ===PROPOSAL=== block" in result["error"]
         assert result["llm_output"] == "Just some text, no markers."
+
+
+# ---------------------------------------------------------------------------
+# Perceive quality tests (AD-310)
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_index(**overrides):
+    """Helper to build a MagicMock codebase_index with sensible defaults."""
+    mock = MagicMock()
+    mock.query.return_value = overrides.get("query", {"matching_files": []})
+    mock.get_agent_map.return_value = overrides.get("agent_map", [])
+    mock.get_layer_map.return_value = overrides.get("layer_map", {})
+    mock.read_doc_sections.return_value = overrides.get("doc_sections", "")
+    mock.read_source.return_value = overrides.get("read_source", "")
+    return mock
+
+
+def _make_agent(mock_index, mock_runtime=None):
+    """Helper to build an ArchitectAgent with mock runtime."""
+    if mock_runtime is None:
+        mock_runtime = MagicMock()
+    mock_runtime.codebase_index = mock_index
+    return ArchitectAgent(
+        agent_id="test-arch-q",
+        llm_client=MagicMock(),
+        runtime=mock_runtime,
+    )
+
+
+def _make_intent(feature="test feature"):
+    return IntentMessage(
+        intent="design_feature",
+        params={"feature": feature, "phase": ""},
+    )
+
+
+class TestPerceiveFileTree:
+    @pytest.mark.asyncio
+    async def test_file_tree_appears_in_context(self):
+        """Layer 1: Full file tree with actual paths appears in context."""
+        mock_index = _make_mock_index(layer_map={
+            "cognitive": ["cognitive/builder.py", "cognitive/architect.py"],
+            "mesh": ["mesh/routing.py"],
+        })
+        agent = _make_agent(mock_index)
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        assert "## File Tree" in ctx
+        assert "cognitive/builder.py" in ctx
+        assert "cognitive/architect.py" in ctx
+        assert "mesh/routing.py" in ctx
+
+    @pytest.mark.asyncio
+    async def test_file_tree_shows_layer_counts(self):
+        """Layer 1: File tree shows file count per layer."""
+        mock_index = _make_mock_index(layer_map={
+            "cognitive": ["cognitive/a.py", "cognitive/b.py", "cognitive/c.py"],
+        })
+        agent = _make_agent(mock_index)
+        obs = await agent.perceive(_make_intent())
+        assert "cognitive (3 files)" in obs["codebase_context"]
+
+
+class TestPerceiveSourceSnippets:
+    @pytest.mark.asyncio
+    async def test_source_code_in_context(self):
+        """Layer 2: Source code of matching files appears with python fencing."""
+        mock_index = _make_mock_index(
+            query={"matching_files": [
+                {"path": "cognitive/builder.py", "relevance": 8, "docstring": "Builder stuff"},
+            ]},
+        )
+        mock_index.read_source.return_value = "class BuilderAgent:\n    pass\n"
+        agent = _make_agent(mock_index)
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        assert "## Relevant Files (with source)" in ctx
+        assert "```python" in ctx
+        assert "class BuilderAgent" in ctx
+
+    @pytest.mark.asyncio
+    async def test_relevance_shown(self):
+        """Layer 2: Relevance score is shown for each file."""
+        mock_index = _make_mock_index(
+            query={"matching_files": [
+                {"path": "foo.py", "relevance": 12, "docstring": ""},
+            ]},
+        )
+        mock_index.read_source.return_value = "# foo"
+        agent = _make_agent(mock_index)
+        obs = await agent.perceive(_make_intent())
+        assert "relevance: 12" in obs["codebase_context"]
+
+
+class TestPerceiveSlashCommands:
+    @pytest.mark.asyncio
+    async def test_shell_commands_in_context(self):
+        """Layer 3: Existing slash commands from shell.py appear in context."""
+        mock_index = _make_mock_index()
+
+        # Make read_source return shell commands when asked for shell.py
+        def _read_source(path, **kwargs):
+            if "shell.py" in str(path):
+                return 'COMMANDS = {\n    "/status": ...,\n    "/health": ...,\n}'
+            return ""
+        mock_index.read_source.side_effect = _read_source
+
+        agent = _make_agent(mock_index)
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        assert "Existing Slash Commands" in ctx
+        assert "/status" in ctx
+
+    @pytest.mark.asyncio
+    async def test_inline_api_commands_always_present(self):
+        """Layer 3: Inline API commands (/build, /design) always listed."""
+        mock_index = _make_mock_index()
+        agent = _make_agent(mock_index)
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        assert "Inline API Commands" in ctx
+        assert "/build" in ctx
+        assert "/design" in ctx
+
+
+class TestPerceiveApiRoutes:
+    @pytest.mark.asyncio
+    async def test_api_routes_extracted(self):
+        """Layer 4: API routes extracted from @app decorators."""
+        mock_index = _make_mock_index()
+
+        def _read_source(path, **kwargs):
+            if path == "api.py":
+                return (
+                    '    @app.post("/api/build/submit")\n'
+                    '    async def submit_build(req: BuildRequest):\n'
+                    '        pass\n'
+                )
+            return ""
+        mock_index.read_source.side_effect = _read_source
+
+        agent = _make_agent(mock_index)
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        assert "Existing API Routes" in ctx
+        assert "/api/build/submit" in ctx
+        assert "submit_build" in ctx
+
+
+class TestPerceivePoolGroups:
+    @pytest.mark.asyncio
+    async def test_pool_groups_in_context(self):
+        """Layer 5: Pool group crew structure appears in context."""
+        mock_index = _make_mock_index()
+        mock_runtime = MagicMock()
+        mock_runtime.codebase_index = mock_index
+        mock_runtime.pool_groups.status.return_value = {
+            "engineering": {
+                "display_name": "Engineering",
+                "pools": {"builder": {}},
+            },
+            "science": {
+                "display_name": "Science",
+                "pools": {"architect": {}},
+            },
+        }
+
+        agent = _make_agent(mock_index, mock_runtime)
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        assert "Pool Groups (Crew Structure)" in ctx
+        assert "Engineering" in ctx
+        assert "Science" in ctx
+
+
+class TestPerceiveDecisionsTail:
+    @pytest.mark.asyncio
+    async def test_decisions_tail_80_lines(self):
+        """Layer 6: DECISIONS.md tail is 80 lines (not 30)."""
+        mock_index = _make_mock_index()
+
+        # Build a DECISIONS file with 100 lines
+        lines = [f"| AD-{i} | Decision {i} |" for i in range(100)]
+        full_content = "\n".join(lines)
+
+        def _read_source(path, **kwargs):
+            if "DECISIONS" in str(path):
+                return full_content
+            return ""
+        mock_index.read_source.side_effect = _read_source
+
+        agent = _make_agent(mock_index)
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        assert "last 80 lines" in ctx
+        # Should contain AD-99 (last line) but not AD-19 (line 20, excluded)
+        assert "AD-99" in ctx
+        assert "AD-19" not in ctx
+
+
+class TestPerceiveSamplePrompt:
+    @pytest.mark.asyncio
+    async def test_sample_prompt_in_context(self):
+        """Layer 7: Sample build prompt appears with format reference framing."""
+        mock_index = _make_mock_index()
+
+        def _read_source(path, **kwargs):
+            if "add-architect-api-hxi" in str(path):
+                return "# AD-308/309: Architect API + HXI\n\nSample content..."
+            return ""
+        mock_index.read_source.side_effect = _read_source
+
+        agent = _make_agent(mock_index)
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        assert "Sample Build Prompt (for format reference)" in ctx
+        assert "AD-308/309" in ctx
+
+
+class TestPerceiveGracefulDegradation:
+    @pytest.mark.asyncio
+    async def test_layer_failures_dont_crash(self):
+        """All layers wrapped in try/except — failures don't crash perceive."""
+        mock_index = MagicMock()
+        mock_index.get_layer_map.side_effect = RuntimeError("boom")
+        mock_index.query.side_effect = RuntimeError("boom")
+        mock_index.get_agent_map.side_effect = RuntimeError("boom")
+        mock_index.read_source.side_effect = RuntimeError("boom")
+        mock_index.read_doc_sections.side_effect = RuntimeError("boom")
+
+        agent = _make_agent(mock_index)
+        obs = await agent.perceive(_make_intent())
+
+        # Should still return valid obs with codebase_context
+        assert "codebase_context" in obs
+        # Inline API commands are always present (no try/except needed)
+        assert "/build" in obs["codebase_context"]
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_keeps_other_layers(self):
+        """If one layer fails, other layers still contribute to context."""
+        mock_index = MagicMock()
+        mock_index.get_layer_map.side_effect = RuntimeError("layer boom")
+        mock_index.query.return_value = {"matching_files": []}
+        mock_index.get_agent_map.return_value = [
+            {"type": "builder", "tier": "domain", "module": "m", "bases": []},
+        ]
+        mock_index.read_source.return_value = ""
+        mock_index.read_doc_sections.return_value = ""
+
+        agent = _make_agent(mock_index)
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        # File tree failed but agents should still be present
+        assert "File Tree" not in ctx
+        assert "Registered Agents" in ctx
+        assert "builder" in ctx

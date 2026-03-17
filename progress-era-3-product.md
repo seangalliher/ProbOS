@@ -353,6 +353,28 @@ Built gravitational sub-clusters with translucent boundary shells. Each pool gro
 
 **Status:** Complete — 14 new tests (1826 Python + 21 Vitest total)
 
+### Architect Agent Quality — Perceive Depth + Instruction Hardening (AD-310) — ✅ COMPLETE
+
+**Problem:** First live test of the Architect Agent revealed two critical failures: hallucinated file paths that don't exist and proposed a feature (`/agents`) that's already built. Root cause: thin context — file paths without source code, no awareness of existing slash commands or API routes, no file tree for path validation.
+
+**Solution:** Upgraded `perceive()` with 7 context layers and hardened `instructions` with 5 verification rules:
+- **Layer 1** Full file tree by architectural layer (prevents path hallucination)
+- **Layer 2** Relevant files with source snippets — top 5 matches, first 80 lines each (enables pattern matching)
+- **Layer 3** Existing slash commands from shell.py + inline API commands (/build, /design)
+- **Layer 4** API route extraction from `@app.get`/`@app.post` decorators
+- **Layer 5** Pool group crew structure from runtime
+- **Layer 6** Documentation: roadmap sections, PROGRESS.md, 80-line DECISIONS.md tail (was 30)
+- **Layer 7** Sample build prompt for format calibration
+
+Verification rules: (1) only propose file paths from File Tree, (2) check existing slash commands, (3) check existing API routes, (4) check existing agents, (5) reference specific patterns from source code.
+
+| File | Change |
+|------|--------|
+| `src/probos/cognitive/architect.py` | `perceive()` rewritten with 7 try/except wrapped layers, `instructions` hardened with verification rules, `_build_user_message()` updated |
+| `tests/test_architect_agent.py` | 12 new tests across 8 classes + 1 existing test updated |
+
+**Status:** Complete — 12 new tests (1838 Python + 21 Vitest total)
+
 ### Causal Attribution for Emergent Behavior + Self-Introspection (AD-295) — ✅ COMPLETE
 
 **Problem:** ProbOS detects emergent patterns (trust anomalies, routing shifts, cooperation clusters) but cannot explain *why* they're happening. No causal trail linking trust changes to intents and Shapley scores. IntrospectionAgent cannot examine ProbOS's own source code for architecture questions.
