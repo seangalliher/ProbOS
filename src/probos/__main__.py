@@ -360,7 +360,6 @@ async def _serve(
     # Start channel adapters
     adapters: list = []
     if discord or config.channels.discord.enabled:
-        import os
         from probos.channels.discord_adapter import DiscordAdapter
         discord_cfg = config.channels.discord
         token = os.environ.get("PROBOS_DISCORD_TOKEN", "") or discord_cfg.token
