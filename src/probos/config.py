@@ -262,6 +262,19 @@ class ChannelsConfig(BaseModel):
     discord: DiscordConfig = DiscordConfig()
 
 
+class MedicalConfig(BaseModel):
+    """Medical team pool configuration (AD-290)."""
+
+    enabled: bool = True
+    vitals_interval_seconds: float = 5.0
+    vitals_window_size: int = 12
+    pool_health_min: float = 0.5
+    trust_floor: float = 0.3
+    health_floor: float = 0.6
+    max_trust_outliers: int = 3
+    scheduled_diagnosis_interval: float = 300.0
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
@@ -287,6 +300,7 @@ class SystemConfig(BaseModel):
     knowledge: KnowledgeConfig = KnowledgeConfig()
     bundled_agents: BundledAgentsConfig = BundledAgentsConfig()
     channels: ChannelsConfig = ChannelsConfig()
+    medical: MedicalConfig = MedicalConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

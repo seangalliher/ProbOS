@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 27 complete — Phase 24 in progress (1644/1644 tests + 15 Vitest + 11 skipped)
+## Current Status: Phase 27 complete — Phase 24 in progress (1675/1675 tests + 15 Vitest + 11 skipped)
 
 ---
 
@@ -2968,6 +2968,7 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 - **WebSocket delta updates** — remove `json.dumps`/`json.loads` roundtrip in `_safe_serialize()`, cache `all_weights_typed()` with short TTL, send delta updates instead of full state, throttle event broadcast rate (batch within 100ms window)
 - **Event log write batching** — batch SQLite commits (flush every 100ms or 10 events), enable WAL mode, consider in-memory append buffer with periodic flush
 - **Episodic memory query optimization** — add timestamp index to ChromaDB collection, cache recent episodes with TTL for repeated access
+- ✅ **Medical team pool + Codebase Knowledge Service** (AD-290) — Created `medical` pool with 5 specialized agents: VitalsMonitorAgent (HeartbeatAgent subclass, continuous metric collection with sliding window + threshold alerting), DiagnosticianAgent (LLM-guided root-cause analysis), SurgeonAgent (acute remediation: force_dream, surge_pool, recycle_agent), PharmacistAgent (config tuning recommendations without mutation), PathologistAgent (post-mortem failure analysis with codebase_knowledge skill). Built CodebaseIndex runtime service — pure AST-based source tree analysis (<1s build, read-only, no LLM calls) with query(), read_source(), get_agent_map(), get_api_surface() methods. Created codebase_knowledge skill wrapping CodebaseIndex for CognitiveAgent use. Added MedicalConfig to SystemConfig. Medical pools excluded from PoolScaler. 31 tests (9 CodebaseIndex + 22 medical team)
 - **Prompt injection scanner** — detect override attempts, data exfiltration patterns in user input before passing to LLM
 - **Safe mode** — a config profile (`safe_mode: true`) that restricts ProbOS for untrusted multi-user environments (public Discord, demos, streaming). Disables: shell commands, file writes, self-mod, HTTP fetch to non-allowlisted domains. Enables: conversation, introspection, bundled read-only agents (weather, news, calculator), HXI canvas. Per-user rate limiting (GCRA token bucket) to prevent abuse. File reads restricted to a demo directory. Safe mode is enforced at the config level — capability descriptors and consensus gates already exist, this just sets restrictive defaults
 - **Docker deployment** — `Dockerfile` + `docker-compose.yml` for containerized ProbOS. Single command: `docker compose up`. Includes safe mode preset for public-facing instances. Enables cloud VM deployment (Azure, AWS) without host filesystem exposure

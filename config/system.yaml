@@ -222,3 +222,14 @@ channels:
     allowed_user_ids: []                   # Empty = all users
     command_prefix: "!"             # "!status" -> "/status"
     mention_required: false         # Only respond when @mentioned
+
+# --- Medical Team (AD-290) ---
+# medical:
+#   enabled: true
+#   vitals_interval_seconds: 5.0
+#   vitals_window_size: 12
+#   pool_health_min: 0.5
+#   trust_floor: 0.3
+#   health_floor: 0.6
+#   max_trust_outliers: 3
+#   scheduled_diagnosis_interval: 300.0

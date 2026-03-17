@@ -31,6 +31,13 @@ from probos.agents.bundled import (
     SchedulerAgent,
 )
 from probos.agents.system_qa import SystemQAAgent
+from probos.agents.medical import (
+    VitalsMonitorAgent,
+    DiagnosticianAgent,
+    SurgeonAgent,
+    PharmacistAgent,
+    PathologistAgent,
+)
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
@@ -240,6 +247,15 @@ class ProbOSRuntime:
         self.spawner.register_template("todo_manager", TodoAgent)
         self.spawner.register_template("note_taker", NoteTakerAgent)
         self.spawner.register_template("scheduler", SchedulerAgent)
+        # Medical team (AD-290)
+        self.spawner.register_template("vitals_monitor", VitalsMonitorAgent)
+        self.spawner.register_template("diagnostician", DiagnosticianAgent)
+        self.spawner.register_template("surgeon", SurgeonAgent)
+        self.spawner.register_template("pharmacist", PharmacistAgent)
+        self.spawner.register_template("pathologist", PathologistAgent)
+
+        # --- CodebaseIndex (AD-290) ---
+        self.codebase_index: Any = None
 
     def register_agent_type(self, type_name: str, agent_class: type) -> None:
         """Register an agent class and refresh the decomposer's intent descriptors."""
@@ -451,6 +467,50 @@ class ProbOSRuntime:
                     agent_ids=ids, llm_client=self.llm_client, runtime=self,
                 )
 
+        # Medical team pool (AD-290)
+        if self.config.medical.enabled:
+            med_cfg = self.config.medical
+            # Build CodebaseIndex
+            from probos.cognitive.codebase_index import CodebaseIndex
+            self.codebase_index = CodebaseIndex(source_root=Path(__file__).resolve().parent)
+            self.codebase_index.build()
+
+            # Create vitals monitor pool entry (HeartbeatAgent — no LLM)
+            ids = generate_pool_ids("vitals_monitor", "medical_vitals", 1)
+            await self.create_pool(
+                "medical_vitals", "vitals_monitor", target_size=1,
+                agent_ids=ids, runtime=self,
+                window_size=med_cfg.vitals_window_size,
+                pool_health_min=med_cfg.pool_health_min,
+                trust_floor=med_cfg.trust_floor,
+                health_floor=med_cfg.health_floor,
+                max_trust_outliers=med_cfg.max_trust_outliers,
+            )
+
+            # CognitiveAgent medical agents — all share "medical" pool
+            _medical_cognitive = [
+                ("diagnostician", "diagnostician"),
+                ("surgeon", "surgeon"),
+                ("pharmacist", "pharmacist"),
+                ("pathologist", "pathologist"),
+            ]
+            for agent_type_name, pool_suffix in _medical_cognitive:
+                ids = generate_pool_ids(agent_type_name, f"medical_{pool_suffix}", 1)
+                await self.create_pool(
+                    f"medical_{pool_suffix}", agent_type_name, target_size=1,
+                    agent_ids=ids, llm_client=self.llm_client, runtime=self,
+                )
+
+            # Register codebase_knowledge skill on CognitiveAgent medical agents
+            from probos.cognitive.codebase_skill import create_codebase_skill
+            codebase_skill = create_codebase_skill(self.codebase_index)
+            for pool_name in ["medical_pathologist"]:
+                pool = self.pools.get(pool_name)
+                if pool:
+                    for agent in pool.healthy_agents:
+                        if hasattr(agent, "add_skill"):
+                            agent.add_skill(codebase_skill)
+
         # Refresh decomposer with intent descriptors from all registered templates
         self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
 
@@ -467,7 +527,7 @@ class ProbOSRuntime:
                 pool_config=self.config.pools,
                 scaling_config=self.config.scaling,
                 pool_intent_map=pool_intent_map,
-                excluded_pools={"system", "system_qa"},
+                excluded_pools={"system", "system_qa", "medical_vitals", "medical_diagnostician", "medical_surgeon", "medical_pharmacist", "medical_pathologist"},
                 trust_network=self.trust_network,
                 consensus_pools=consensus_pools,
                 consensus_min_agents=self.config.consensus.min_votes,
