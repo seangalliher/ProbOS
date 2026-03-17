@@ -6,6 +6,7 @@ import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { AgentNodes } from '../canvas/agents';
 import { Connections } from '../canvas/connections';
+import { TeamClusters } from '../canvas/clusters';
 import { Effects } from '../canvas/effects';
 import {
   HeartbeatPulse, ConsensusFlash, SelfModBloom, RoutingPulse, BackgroundParticles, FeedbackPulse,
@@ -106,6 +107,7 @@ export function CognitiveCanvas() {
 
         {/* Agent nodes with raycasting (Fix 10) */}
         <AgentRaycastLayer />
+        <TeamClusters />
         <Connections />
 
         {/* Animations */}

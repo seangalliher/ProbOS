@@ -8,6 +8,13 @@ import type {
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
 
+export interface GroupCenter {
+  center: [number, number, number];
+  radius: number;
+  displayName: string;
+  tintHex: string;
+}
+
 // Pool-based layout — Fibonacci sphere distribution
 const POOL_HUES: Record<string, [number, number, number]> = {
   system: [0.15, 0.08, 0.04],
@@ -32,71 +39,132 @@ const POOL_HUES: Record<string, [number, number, number]> = {
   skills: [0.10, 0.06, 0.12],
 };
 
-function computeLayout(agents: Map<string, Agent>, poolToGroup?: Record<string, string>): Map<string, Agent> {
-  // Collect all agents by tier
-  const heartbeat: string[] = [];
-  const core: string[] = [];
-  const utility: string[] = [];
-  const domain: string[] = [];
+const GROUP_TINT_HEXES: Record<string, string> = {
+  core: '#7090c0',       // cool blue — infrastructure
+  bundled: '#70a080',    // teal green — user-facing tools
+  medical: '#c06060',    // warm red — sickbay
+  self_mod: '#a078b0',   // purple — self-modification
+  consensus: '#c85068',  // red — tactical
+};
 
-  agents.forEach((a, id) => {
-    if (a.pool === 'system') heartbeat.push(id);
-    else if (a.tier === 'core') core.push(id);
-    else if (a.tier === 'utility') utility.push(id);
-    else domain.push(id);
-  });
-
-  // Sort by group then pool for cluster adjacency on the sphere
-  const byGroupThenPool = (a: string, b: string) => {
-    const agentA = agents.get(a);
-    const agentB = agents.get(b);
-    const groupA = poolToGroup?.[agentA?.pool || ''] || 'zzz';
-    const groupB = poolToGroup?.[agentB?.pool || ''] || 'zzz';
-    if (groupA !== groupB) return groupA.localeCompare(groupB);
-    return (agentA?.pool || '').localeCompare(agentB?.pool || '');
-  };
-  core.sort(byGroupThenPool);
-  utility.sort(byGroupThenPool);
-  domain.sort(byGroupThenPool);
-
+function computeLayout(
+  agents: Map<string, Agent>,
+  poolToGroup?: Record<string, string>,
+  poolGroups?: Record<string, PoolGroupInfo>,
+): { agents: Map<string, Agent>; groupCenters: Map<string, GroupCenter> } {
   const updated = new Map(agents);
+  const groupCenters = new Map<string, GroupCenter>();
 
-  // Heartbeat at center — tight cluster
-  heartbeat.forEach((id, i) => {
+  // 1. Heartbeat agents at center
+  const heartbeatIds: string[] = [];
+  agents.forEach((a, id) => {
+    if (a.pool === 'system') heartbeatIds.push(id);
+  });
+  heartbeatIds.forEach((id, i) => {
     const agent = updated.get(id);
     if (!agent) return;
-    const offset = (i - (heartbeat.length - 1) / 2) * 0.25;
+    const offset = (i - (heartbeatIds.length - 1) / 2) * 0.25;
     updated.set(id, { ...agent, position: [offset * 0.5, 0, offset * 0.3] });
   });
 
-  // Fibonacci sphere distribution for even spacing
-  function fibonacciSphere(ids: string[], radius: number) {
-    const n = ids.length;
-    if (n === 0) return;
-    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  // If no pool group data, fall back to flat Fibonacci sphere layout
+  if (!poolToGroup || Object.keys(poolToGroup).length === 0) {
+    const core: string[] = [];
+    const utility: string[] = [];
+    const domain: string[] = [];
 
-    ids.forEach((id, i) => {
-      const agent = updated.get(id);
-      if (!agent) return;
-
-      const y = 1 - (i / (n - 1 || 1)) * 2; // y from 1 to -1
-      const radiusAtY = Math.sqrt(1 - y * y);
-      const theta = goldenAngle * i;
-
-      const x = Math.cos(theta) * radiusAtY * radius;
-      const z = Math.sin(theta) * radiusAtY * radius;
-      const yPos = y * radius * 0.6; // compress Y so it's not too tall
-
-      updated.set(id, { ...agent, position: [x, yPos, z] });
+    agents.forEach((a, id) => {
+      if (a.pool === 'system') return;
+      if (a.tier === 'core') core.push(id);
+      else if (a.tier === 'utility') utility.push(id);
+      else domain.push(id);
     });
+
+    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+    function fibonacciSphere(ids: string[], radius: number) {
+      const n = ids.length;
+      if (n === 0) return;
+      ids.forEach((id, i) => {
+        const agent = updated.get(id);
+        if (!agent) return;
+        const y = 1 - (i / (n - 1 || 1)) * 2;
+        const radiusAtY = Math.sqrt(1 - y * y);
+        const theta = goldenAngle * i;
+        const x = Math.cos(theta) * radiusAtY * radius;
+        const z = Math.sin(theta) * radiusAtY * radius;
+        const yPos = y * radius * 0.6;
+        updated.set(id, { ...agent, position: [x, yPos, z] });
+      });
+    }
+    fibonacciSphere(core, 3.5);
+    fibonacciSphere(utility, 5.5);
+    fibonacciSphere(domain, 7.5);
+
+    return { agents: updated, groupCenters };
   }
 
-  // Place tiers on concentric spheres
-  fibonacciSphere(core, 3.5);     // inner sphere
-  fibonacciSphere(utility, 5.5);  // middle sphere
-  fibonacciSphere(domain, 7.5);   // outer sphere
+  // 2. Bucket non-heartbeat agents by group
+  const groups: Record<string, string[]> = {};
+  const ungrouped: string[] = [];
 
-  return updated;
+  agents.forEach((a, id) => {
+    if (a.pool === 'system') return;
+    const groupName = poolToGroup[a.pool];
+    if (groupName) {
+      (groups[groupName] ??= []).push(id);
+    } else {
+      ungrouped.push(id);
+    }
+  });
+
+  // 3. Compute group center positions on a spacing sphere
+  const groupNames = Object.keys(groups).sort();
+  if (ungrouped.length > 0) groupNames.push('_ungrouped');
+
+  const groupCenterRadius = 6.0;
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  const totalGroups = groupNames.length;
+
+  groupNames.forEach((gName, gi) => {
+    const ids = gName === '_ungrouped' ? ungrouped : groups[gName];
+    if (!ids || ids.length === 0) return;
+
+    // Fibonacci point for this group's center
+    const y = 1 - (gi / (totalGroups - 1 || 1)) * 2;
+    const radiusAtY = Math.sqrt(1 - y * y);
+    const theta = goldenAngle * gi;
+    const cx = Math.cos(theta) * radiusAtY * groupCenterRadius;
+    const cz = Math.sin(theta) * radiusAtY * groupCenterRadius;
+    const cy = y * groupCenterRadius * 0.5;  // compress Y
+
+    // Mini Fibonacci sphere for agents within this group
+    const clusterRadius = 0.8 + Math.sqrt(ids.length) * 0.4;
+
+    ids.forEach((id, ai) => {
+      const agent = updated.get(id);
+      if (!agent) return;
+      const n = ids.length;
+      const ay = 1 - (ai / (n - 1 || 1)) * 2;
+      const ar = Math.sqrt(1 - ay * ay);
+      const at = goldenAngle * ai;
+      const ax = Math.cos(at) * ar * clusterRadius + cx;
+      const az = Math.sin(at) * ar * clusterRadius + cz;
+      const ayPos = ay * clusterRadius * 0.6 + cy;
+      updated.set(id, { ...agent, position: [ax, ayPos, az] });
+    });
+
+    // Store group center for shell rendering
+    const displayName = poolGroups?.[gName]?.display_name || gName;
+    const tintHex = GROUP_TINT_HEXES[gName] || '#8888a0';
+    groupCenters.set(gName, {
+      center: [cx, cy, cz],
+      radius: clusterRadius,
+      displayName,
+      tintHex,
+    });
+  });
+
+  return { agents: updated, groupCenters };
 }
 
 export interface HXIState {
@@ -104,6 +172,7 @@ export interface HXIState {
   agents: Map<string, Agent>;
   connections: Connection[];
   pools: PoolInfo[];
+  groupCenters: Map<string, GroupCenter>;
   systemMode: SystemMode;
   activeDag: DagNode[] | null;
   chatHistory: ChatMessage[];
@@ -166,6 +235,7 @@ export const useStore = create<HXIState>((set, get) => ({
   agents: new Map(),
   connections: [],
   pools: [],
+  groupCenters: new Map(),
   systemMode: 'active',
   activeDag: null,
   chatHistory: (() => {
@@ -293,8 +363,10 @@ export const useStore = create<HXIState>((set, get) => ({
             }
           }
         }
+        const layoutResult = computeLayout(agentMap, poolToGroup, snap.pool_groups);
         set({
-          agents: computeLayout(agentMap, poolToGroup),
+          agents: layoutResult.agents,
+          groupCenters: layoutResult.groupCenters,
           connections,
           pools,
           systemMode: snap.system_mode as SystemMode,
@@ -333,7 +405,7 @@ export const useStore = create<HXIState>((set, get) => ({
             };
             agents.set(d.agent_id, newAgent);
           }
-          return { agents: computeLayout(agents) };
+          return { agents: computeLayout(agents).agents };
         });
         break;
       }
@@ -517,4 +589,4 @@ export const useStore = create<HXIState>((set, get) => ({
   },
 }));
 
-export { POOL_HUES };
+export { POOL_HUES, GROUP_TINT_HEXES, computeLayout };
