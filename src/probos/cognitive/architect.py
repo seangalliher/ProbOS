@@ -176,7 +176,7 @@ IMPORTANT RULES:
             query_results = codebase_index.query(feature)
             if query_results.get("matching_files"):
                 context_parts.append("## Relevant Files\n" + "\n".join(
-                    f"- {f['path']} (score: {f['score']}, summary: {f.get('docstring', 'N/A')})"
+                    f"- {f['path']} (relevance: {f['relevance']}, summary: {f.get('docstring', 'N/A')})"
                     for f in query_results["matching_files"][:10]
                 ))
 
