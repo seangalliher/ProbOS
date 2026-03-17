@@ -13,7 +13,9 @@ You have two modes depending on what's asked:
 ## Current State
 
 This file contains **durable architectural knowledge** that changes rarely. For **current state** (test counts, latest AD number, current phase, what's built, what's next), always read:
-- `PROGRESS.md` -- the living source of truth, updated every build session
+- `PROGRESS.md` -- slim hub with status, era links, design principles, and environment
+- `DECISIONS.md` -- append-only architectural decisions log (AD-1 through AD-291+)
+- `progress-era-{1,2,3,4}-*.md` -- per-era progress files (what's built, tests, milestones)
 - `Vibes/Nooplex_Final.md` -- the theoretical foundation (stable)
 
 ---
