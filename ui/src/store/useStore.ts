@@ -355,9 +355,14 @@ export const useStore = create<HXIState>((set, get) => ({
           size: p.size,
           targetSize: p.target_size,
         }));
-        // Build pool→group reverse map for layout clustering (AD-291)
-        const poolToGroup: Record<string, string> = {};
-        if (snap.pool_groups) {
+        // Build pool→group reverse map for layout clustering (AD-291, AD-296)
+        // Prefer the authoritative pool_to_group from the registry (includes pools
+        // not managed by ResourcePool, like red_team). Fall back to deriving from
+        // pool_groups health status for backward compatibility.
+        let poolToGroup: Record<string, string> = {};
+        if (snap.pool_to_group) {
+          poolToGroup = snap.pool_to_group;
+        } else if (snap.pool_groups) {
           for (const [groupName, groupInfo] of Object.entries(snap.pool_groups)) {
             for (const poolName of Object.keys(groupInfo.pools || {})) {
               poolToGroup[poolName] = groupName;

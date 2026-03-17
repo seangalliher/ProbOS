@@ -350,6 +350,7 @@ class ProbOSRuntime:
             "routing_entropy": round(routing_entropy, 4),
             "fresh_boot": self._fresh_boot,
             "pool_groups": self.pool_groups.status(self.pools),
+            "pool_to_group": dict(self.pool_groups._pool_to_group),
         }
 
     async def create_pool(
