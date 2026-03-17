@@ -171,6 +171,17 @@ ProbOS already has runtime self-awareness — it knows what agents are doing, th
 - Returns structured, context-aware answers rather than raw file contents
 - Used by: Medical (Pathologist, Diagnostician), Science (Architect, Research), Engineering (Builder), Bridge (IntrospectAgent)
 
+**Self-Knowledge Comprehension**
+
+*"ProbOS's biggest cognitive gap is not knowing what it already knows."*
+
+The CodebaseIndex delivers data (source code, doc sections, architecture maps) to the reflection LLM, but the LLM's synthesis is shallow — it gives generic distributed systems advice rather than reasoning about what's actually built. Improving comprehension quality:
+
+- **Structured reflection prompts** — format context with explicit sections ("Source code from X shows...", "Roadmap section Y describes...") instead of dumping raw dicts; guide the LLM to reason about specific evidence
+- **Capability inventory** — maintain a "what's already built" summary that gets injected into reflection context, preventing ProbOS from recommending building things it already has
+- **Evidence-grounded responses** — reflection prompt instructs LLM to cite specific code/docs when making claims, and to verify claims against provided snippets before stating them
+- **Self-contradiction detection** — flag when a response contradicts data in the provided context (e.g., "no episodic memory" when episodic memory source code is in the snippets)
+
 ---
 
 ### Security Team (Phase 31)
