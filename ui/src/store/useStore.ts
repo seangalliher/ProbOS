@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { soundEngine } from '../audio/soundEngine';
 import type {
-  Agent, Connection, PoolInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
+  Agent, Connection, PoolInfo, PoolGroupInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
@@ -32,7 +32,7 @@ const POOL_HUES: Record<string, [number, number, number]> = {
   skills: [0.10, 0.06, 0.12],
 };
 
-function computeLayout(agents: Map<string, Agent>): Map<string, Agent> {
+function computeLayout(agents: Map<string, Agent>, poolToGroup?: Record<string, string>): Map<string, Agent> {
   // Collect all agents by tier
   const heartbeat: string[] = [];
   const core: string[] = [];
@@ -46,15 +46,18 @@ function computeLayout(agents: Map<string, Agent>): Map<string, Agent> {
     else domain.push(id);
   });
 
-  // Sort by pool for cluster adjacency on the sphere
-  const byPool = (a: string, b: string) => {
-    const poolA = agents.get(a)?.pool || '';
-    const poolB = agents.get(b)?.pool || '';
-    return poolA.localeCompare(poolB);
+  // Sort by group then pool for cluster adjacency on the sphere
+  const byGroupThenPool = (a: string, b: string) => {
+    const agentA = agents.get(a);
+    const agentB = agents.get(b);
+    const groupA = poolToGroup?.[agentA?.pool || ''] || 'zzz';
+    const groupB = poolToGroup?.[agentB?.pool || ''] || 'zzz';
+    if (groupA !== groupB) return groupA.localeCompare(groupB);
+    return (agentA?.pool || '').localeCompare(agentB?.pool || '');
   };
-  core.sort(byPool);
-  utility.sort(byPool);
-  domain.sort(byPool);
+  core.sort(byGroupThenPool);
+  utility.sort(byGroupThenPool);
+  domain.sort(byGroupThenPool);
 
   const updated = new Map(agents);
 
@@ -281,8 +284,17 @@ export const useStore = create<HXIState>((set, get) => ({
           size: p.size,
           targetSize: p.target_size,
         }));
+        // Build pool→group reverse map for layout clustering (AD-291)
+        const poolToGroup: Record<string, string> = {};
+        if (snap.pool_groups) {
+          for (const [groupName, groupInfo] of Object.entries(snap.pool_groups)) {
+            for (const poolName of Object.keys(groupInfo.pools || {})) {
+              poolToGroup[poolName] = groupName;
+            }
+          }
+        }
         set({
-          agents: computeLayout(agentMap),
+          agents: computeLayout(agentMap, poolToGroup),
           connections,
           pools,
           systemMode: snap.system_mode as SystemMode,

@@ -77,12 +77,29 @@ def render_status_panel(status: dict[str, Any]) -> Panel:
     lines.append(f"  Started: {'[green]yes[/green]' if status.get('started') else '[red]no[/red]'}")
     lines.append(f"  Agents:  {status.get('total_agents', 0)}")
 
-    # Pools
+    # Pool Groups (crew teams) — AD-291
+    pool_groups = status.get("pool_groups", {})
     pools = status.get("pools", {})
-    if pools:
+
+    if pool_groups:
         lines.append("")
-        lines.append("[bold]Pools[/bold]")
-        for name, info in pools.items():
+        lines.append("[bold]Crew Teams[/bold]")
+        for group_name, group_info in sorted(pool_groups.items()):
+            healthy = group_info.get("healthy_agents", 0)
+            total = group_info.get("total_agents", 0)
+            lines.append(f"  [bold]{group_info.get('display_name', group_name)}[/bold]: {healthy}/{total} agents")
+            for pname, pinfo in group_info.get("pools", {}).items():
+                lines.append(f"    {pname}: {pinfo.get('current_size', '?')}/{pinfo.get('target_size', '?')} ({pinfo.get('agent_type', '?')})")
+
+    # Ungrouped pools (if any exist that aren't in a group)
+    grouped_pool_names: set[str] = set()
+    for g in pool_groups.values():
+        grouped_pool_names.update(g.get("pools", {}).keys())
+    ungrouped = {k: v for k, v in pools.items() if k not in grouped_pool_names}
+    if ungrouped:
+        lines.append("")
+        lines.append("[bold]Other Pools[/bold]")
+        for name, info in ungrouped.items():
             lines.append(f"  {name}: {info.get('current_size', '?')}/{info.get('target_size', '?')} ({info.get('agent_type', '?')})")
 
     # Mesh

@@ -59,6 +59,7 @@ from probos.mesh.signal import SignalManager
 from probos.substrate.event_log import EventLog
 from probos.substrate.heartbeat import HeartbeatAgent
 from probos.substrate.pool import ResourcePool
+from probos.substrate.pool_group import PoolGroup, PoolGroupRegistry
 from probos.substrate.registry import AgentRegistry
 from probos.substrate.scaler import PoolScaler
 from probos.substrate.spawner import AgentSpawner
@@ -100,6 +101,7 @@ class ProbOSRuntime:
         self.registry = AgentRegistry()
         self.spawner = AgentSpawner(self.registry)
         self.pools: dict[str, ResourcePool] = {}
+        self.pool_groups = PoolGroupRegistry()
 
         # --- Mesh ---
         self.signal_manager = SignalManager(reap_interval=1.0)
@@ -343,6 +345,7 @@ class ProbOSRuntime:
             "tc_n": round(tc_n, 4),
             "routing_entropy": round(routing_entropy, 4),
             "fresh_boot": self._fresh_boot,
+            "pool_groups": self.pool_groups.status(self.pools),
         }
 
     async def create_pool(
@@ -517,6 +520,40 @@ class ProbOSRuntime:
         # Spawn red team agents
         await self._spawn_red_team(self.config.consensus.red_team_pool_size)
 
+        # Register pool groups (crew teams) — AD-291
+        self.pool_groups.register(PoolGroup(
+            name="core",
+            display_name="Core Systems",
+            pool_names={"system", "filesystem", "filesystem_writers", "directory", "search", "shell", "http", "introspect"},
+            exclude_from_scaler=True,
+        ))
+
+        if self.config.bundled_agents.enabled:
+            self.pool_groups.register(PoolGroup(
+                name="bundled",
+                display_name="Bundled Agents",
+                pool_names={"web_search", "page_reader", "weather", "news", "translator", "summarizer", "calculator", "todo_manager", "note_taker", "scheduler"},
+            ))
+
+        if self.config.medical.enabled:
+            self.pool_groups.register(PoolGroup(
+                name="medical",
+                display_name="Medical",
+                pool_names={"medical_vitals", "medical_diagnostician", "medical_surgeon", "medical_pharmacist", "medical_pathologist"},
+                exclude_from_scaler=True,
+            ))
+
+        if self.config.self_mod.enabled:
+            sm_pools = {"skills"}
+            if self.config.qa.enabled:
+                sm_pools.add("system_qa")
+            self.pool_groups.register(PoolGroup(
+                name="self_mod",
+                display_name="Self-Modification",
+                pool_names=sm_pools,
+                exclude_from_scaler=True,
+            ))
+
         # Start pool scaler if scaling is enabled
         if self.config.scaling.enabled:
             pool_intent_map = self._build_pool_intent_map()
@@ -527,7 +564,7 @@ class ProbOSRuntime:
                 pool_config=self.config.pools,
                 scaling_config=self.config.scaling,
                 pool_intent_map=pool_intent_map,
-                excluded_pools={"system", "system_qa", "medical_vitals", "medical_diagnostician", "medical_surgeon", "medical_pharmacist", "medical_pathologist"},
+                excluded_pools=self.pool_groups.excluded_pools(),
                 trust_network=self.trust_network,
                 consensus_pools=consensus_pools,
                 consensus_min_agents=self.config.consensus.min_votes,
@@ -1921,6 +1958,7 @@ class ProbOSRuntime:
             "started": self._started,
             "total_agents": self.registry.count,
             "pools": {name: pool.info() for name, pool in self.pools.items()},
+            "pool_groups": self.pool_groups.status(self.pools),
             "registry_summary": self.registry.summary(),
             "mesh": {
                 "intent_subscribers": self.intent_bus.subscriber_count,

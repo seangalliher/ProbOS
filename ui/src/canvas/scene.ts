@@ -51,6 +51,12 @@ const POOL_TINT_HEXES: Record<string, string> = {
   scheduler: '#a08880',
   skills: '#a078b0',
   system_qa: '#a0a058',
+  // Medical team — warm reds/pinks (AD-291)
+  medical_vitals: '#c06060',
+  medical_diagnostician: '#b06870',
+  medical_surgeon: '#a07078',
+  medical_pharmacist: '#907880',
+  medical_pathologist: '#808088',
 };
 
 // 70% trust color + 30% pool tint for visual variety even when trust is similar (Fix 3)

@@ -27,6 +27,15 @@ export interface PoolInfo {
   targetSize: number;
 }
 
+export interface PoolGroupInfo {
+  name: string;
+  display_name: string;
+  total_agents: number;
+  healthy_agents: number;
+  health_ratio: number;
+  pools: Record<string, { current_size: number; target_size: number; agent_type: string }>;
+}
+
 export type SystemMode = 'active' | 'idle' | 'dreaming';
 
 export interface DagNode {
@@ -85,6 +94,7 @@ export interface StateSnapshot {
   tc_n: number;
   routing_entropy: number;
   fresh_boot?: boolean;
+  pool_groups?: Record<string, PoolGroupInfo>;
 }
 
 // Animation event types for the canvas
