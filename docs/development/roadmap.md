@@ -315,7 +315,7 @@ Formalize resource management and system coordination as an agent pool.
 - **Scheduler** — task prioritization, queue management, deadline enforcement (extends Phase 24c TaskScheduler)
 - **Coordinator** — cross-team orchestration during high-load or emergency events
 - **Response-Time Scaling** (deferred from Phase 8) — latency-aware pool scaling. Instrument `broadcast()` with per-intent latency tracking, scale up pools where response times exceed SLA thresholds
-- **LLM Cost Tracker** — per-agent and per-intent token usage accounting, budget caps (daily/monthly), cost attribution via Shapley (which agents are expensive vs. valuable), alerts when spend exceeds thresholds
+- **LLM Cost Tracker** — per-agent, per-intent, and per-DAG token usage accounting. Budget caps (daily/monthly), cost attribution via Shapley (which agents are expensive vs. valuable), per-workflow cost breakdowns for end-to-end visibility, alerts when spend exceeds thresholds
 - Existing: PoolScaler (built), TaskScheduler (Phase 24c roadmap), IntentBus demand tracking (built)
 
 ---
