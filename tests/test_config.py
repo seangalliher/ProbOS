@@ -18,7 +18,7 @@ class TestConfig:
         config_path = Path(__file__).resolve().parent.parent / "config" / "system.yaml"
         cfg = load_config(config_path)
         assert cfg.system.name == "ProbOS"
-        assert cfg.system.version == "0.1.0"
+        assert cfg.system.version == "0.4.0"
         assert cfg.pools.default_pool_size == 3
         assert cfg.mesh.signal_ttl_seconds == 30.0
 

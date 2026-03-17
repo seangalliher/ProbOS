@@ -1,7 +1,7 @@
 # ProbOS System Configuration
 system:
   name: "ProbOS"
-  version: "0.1.0"
+  version: "0.4.0"
   log_level: "INFO"
 
 pools:
@@ -224,12 +224,12 @@ channels:
     mention_required: false         # Only respond when @mentioned
 
 # --- Medical Team (AD-290) ---
-# medical:
-#   enabled: true
-#   vitals_interval_seconds: 5.0
-#   vitals_window_size: 12
-#   pool_health_min: 0.5
-#   trust_floor: 0.3
-#   health_floor: 0.6
-#   max_trust_outliers: 3
-#   scheduled_diagnosis_interval: 300.0
+medical:
+  enabled: true
+  vitals_interval_seconds: 5.0
+  vitals_window_size: 12
+  pool_health_min: 0.5
+  trust_floor: 0.3
+  health_floor: 0.6
+  max_trust_outliers: 3
+  scheduled_diagnosis_interval: 300.0
