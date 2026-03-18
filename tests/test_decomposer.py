@@ -7,7 +7,7 @@ import pytest
 from probos.cognitive.decomposer import IntentDecomposer, DAGExecutor
 from probos.cognitive.llm_client import MockLLMClient
 from probos.cognitive.working_memory import WorkingMemoryManager, WorkingMemorySnapshot
-from probos.types import LLMRequest, LLMResponse, TaskDAG, TaskNode
+from probos.types import IntentDescriptor, LLMRequest, LLMResponse, TaskDAG, TaskNode
 
 
 class TestIntentDecomposer:
@@ -683,3 +683,152 @@ class TestConversationContext:
         assert dag is not None
         prompt = llm._call_log[-1].prompt
         assert "CONVERSATION CONTEXT" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Ship's Computer Identity tests (AD-317)
+# ---------------------------------------------------------------------------
+
+
+class TestShipsComputerIdentity:
+    @pytest.fixture
+    def llm(self):
+        return MockLLMClient()
+
+    @pytest.fixture
+    def wm(self):
+        return WorkingMemoryManager()
+
+    @pytest.fixture
+    def decomposer(self, llm, wm):
+        return IntentDecomposer(llm_client=llm, working_memory=wm)
+
+    def _make_descriptors(self):
+        """Create a set of test descriptors spanning all tiers."""
+        return [
+            IntentDescriptor(
+                name="read_file",
+                params={"path": "<absolute_path>"},
+                description="Read a file",
+                tier="core",
+            ),
+            IntentDescriptor(
+                name="system_health",
+                params={},
+                description="Get system health",
+                tier="utility",
+            ),
+            IntentDescriptor(
+                name="build_code",
+                params={"title": "str"},
+                description="Generate code changes",
+                tier="domain",
+                requires_consensus=True,
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_identity_preamble_in_prompt(self, decomposer, llm):
+        """System prompt contains Ship's Computer identity when descriptors are set."""
+        decomposer.refresh_descriptors(self._make_descriptors())
+        await decomposer.decompose("hello")
+        system_prompt = llm._call_log[-1].system_prompt
+        assert "Ship's Computer" in system_prompt
+
+    @pytest.mark.asyncio
+    async def test_grounding_rules_in_prompt(self, decomposer, llm):
+        """System prompt contains GROUNDING RULES when descriptors are set."""
+        decomposer.refresh_descriptors(self._make_descriptors())
+        await decomposer.decompose("hello")
+        system_prompt = llm._call_log[-1].system_prompt
+        assert "GROUNDING RULES" in system_prompt
+
+    @pytest.mark.asyncio
+    async def test_system_configuration_section(self, decomposer, llm):
+        """System Configuration section shows correct tier counts."""
+        descriptors = self._make_descriptors()  # 1 core, 1 utility, 1 domain
+        decomposer.refresh_descriptors(descriptors)
+        await decomposer.decompose("hello")
+        system_prompt = llm._call_log[-1].system_prompt
+        assert "System Configuration" in system_prompt
+        assert "3 registered capabilities" in system_prompt
+        assert "1 core" in system_prompt
+        assert "1 utility" in system_prompt
+        assert "1 domain" in system_prompt
+        assert "1 require consensus" in system_prompt
+
+    @pytest.mark.asyncio
+    async def test_runtime_summary_in_user_prompt(self, decomposer, llm):
+        """Runtime summary appears as SYSTEM CONTEXT in user prompt."""
+        decomposer.refresh_descriptors(self._make_descriptors())
+        await decomposer.decompose(
+            "how healthy is the system?",
+            runtime_summary="Active pools: 5, Total agents: 12\nDepartments: Bridge, Engineering",
+        )
+        prompt = llm._call_log[-1].prompt
+        assert "SYSTEM CONTEXT" in prompt
+        assert "Active pools: 5" in prompt
+        assert "Departments: Bridge, Engineering" in prompt
+
+    @pytest.mark.asyncio
+    async def test_runtime_summary_absent_when_none(self, decomposer, llm):
+        """SYSTEM CONTEXT does not appear when runtime_summary is None."""
+        decomposer.refresh_descriptors(self._make_descriptors())
+        await decomposer.decompose("hello")
+        prompt = llm._call_log[-1].prompt
+        assert "SYSTEM CONTEXT" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_hello_example_no_confabulation(self, decomposer, llm):
+        """System prompt does not contain confabulating capability claims."""
+        decomposer.refresh_descriptors(self._make_descriptors())
+        await decomposer.decompose("hello")
+        system_prompt = llm._call_log[-1].system_prompt
+        confabulations = [
+            "search the web",
+            "check weather",
+            "manage your notes",
+            "set reminders",
+            "manage notes and todos",
+        ]
+        for phrase in confabulations:
+            assert phrase not in system_prompt, f"Confabulation found: {phrase!r}"
+
+    @pytest.mark.asyncio
+    async def test_legacy_prompt_unchanged(self, decomposer, llm):
+        """Legacy prompt (no descriptors) does NOT contain Ship's Computer."""
+        # Do NOT refresh descriptors — use the legacy path
+        await decomposer.decompose("hello")
+        system_prompt = llm._call_log[-1].system_prompt
+        assert "Ship's Computer" not in system_prompt
+
+    def test_build_runtime_summary(self):
+        """_build_runtime_summary returns pool/agent/department counts."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+
+        runtime = MagicMock(spec=ProbOSRuntime)
+
+        # Set up pools
+        pool1 = MagicMock()
+        pool1.current_size = 3
+        pool2 = MagicMock()
+        pool2.current_size = 2
+        runtime.pools = {"filesystem": pool1, "shell": pool2}
+
+        # Pool groups
+        group = MagicMock()
+        group.name = "Engineering"
+        runtime.pool_groups = MagicMock()
+        runtime.pool_groups.all_groups.return_value = [group]
+
+        # Decomposer descriptors
+        runtime.decomposer = MagicMock()
+        runtime.decomposer._intent_descriptors = [MagicMock(), MagicMock(), MagicMock()]
+
+        # Call the real method on the mock
+        summary = ProbOSRuntime._build_runtime_summary(runtime)
+        assert "Active pools: 2" in summary
+        assert "Total agents: 5" in summary
+        assert "Engineering" in summary
+        assert "Registered intents: 3" in summary

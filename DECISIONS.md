@@ -1846,3 +1846,25 @@ Added `tests/test_selfmod_e2e.py` — 12 integration tests exercising the full s
 | AD-313 | Builder MODIFY mode — search-and-replace (`===SEARCH===`/`===REPLACE===`/`===END REPLACE===`) execution for existing files. `_parse_file_blocks()` parses SEARCH/REPLACE pairs within MODIFY blocks. `execute_approved_build()` applies replacements sequentially (first occurrence only). `perceive()` reads `target_files` so the LLM sees current content for accurate SEARCH blocks. `_validate_python()` runs `ast.parse()` on .py files after write/modify. Old `===AFTER LINE:===` format deprecated with warning |
 
 **Status:** Complete — 20 new Python tests, 1891 Python + 21 Vitest total
+
+## Phase 32i: Ship's Computer Identity (AD-317)
+
+| AD | Decision |
+|----|----------|
+| AD-317 | Ship's Computer Identity — The Decomposer's system prompt now carries a LCARS-era Ship's Computer identity: calm, precise, never fabricates. PROMPT_PREAMBLE in prompt_builder.py includes 6 grounding rules. Dynamic System Configuration section counts intents by tier. Hardcoded example responses no longer claim unregistered capabilities. runtime.py builds a lightweight runtime_summary (pool count, agent count, departments, intent count) injected into the decompose() user prompt as SYSTEM CONTEXT. Legacy prompt path unchanged. |
+
+**Status:** Complete — 8 new Python tests, 1899 Python + 21 Vitest total
+
+## Self-Knowledge Grounding Progression (AD-318, AD-319, AD-320)
+
+The Ship's Computer Identity (AD-317) established Level 1: prompt-level grounding rules that prevent the worst confabulation. The following three ADs complete the progression from rules → data → verification → delegation, closing the gap between ProbOS's self-knowledge and the scaffolding quality of tools like Claude Code (which verify claims by reading files before responding).
+
+| AD | Decision |
+|----|----------|
+| AD-318 | **SystemSelfModel** — A lightweight, always-current in-memory object maintained by runtime.py that holds verified facts: pool count, agent roster (name + type + tier), registered intents, recent errors (last 10), uptime, last capability gap event, department summary. Updated reactively on every pool/agent add/remove/change. Injected automatically into the Decomposer's working memory (WorkingMemorySnapshot) so the LLM never starts cold. Analogous to Claude Code's MEMORY.md but for live runtime state. Replaces the ad-hoc `runtime_summary` dict from AD-317 with a structured, typed dataclass. **Design note:** AD-317's `_build_runtime_summary()` in runtime.py (line ~1252) currently reaches into `self.decomposer._intent_descriptors` to count intents — a runtime → decomposer internal coupling. AD-318 should own intent counts directly (updated when agents register/deregister), so the Decomposer reads from SystemSelfModel instead of the reverse. The existing `_build_runtime_summary()` method and the `runtime_summary` parameter on `decompose()` should be replaced by SystemSelfModel injection. |
+| AD-319 | **Pre-Response Verification** — Before the Decomposer returns a natural language response to the human, a fast validation pass checks the response text against the SystemSelfModel: (1) regex scan for capability claims not in the registered intent table, (2) agent name references not in the agent roster, (3) feature descriptions that reference unbuilt systems. For simple responses, this is a pure-Python string check against the SystemSelfModel (zero LLM cost). For complex reflective responses, optionally invoke a fast-tier LLM call with the response + SystemSelfModel to flag contradictions. Failed checks trigger rewording or an honest uncertainty qualifier. This is the "read before you speak" pattern — the Decomposer verifies its own output before the Captain sees it. |
+| AD-320 | **Introspection Delegation** — For "how do I work?" and self-knowledge questions, the Decomposer routes to IntrospectionAgent first instead of answering directly. IntrospectionAgent queries SystemSelfModel + CodebaseIndex + episodic memory, assembles grounded facts, and returns a structured response. The Decomposer then synthesizes the final natural language answer from verified data rather than generating it from LLM training knowledge. Detection heuristic: intent classification tags self-referential queries ("what agents do you have", "how does trust work", "what can you do") as `introspect_self` intent type. The Decomposer becomes a dispatcher for self-knowledge, not the answerer. |
+
+**Progression:** AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-320 (delegation). Each level makes ProbOS's self-knowledge more reliable — not because the LLM gets smarter, but because the scaffolding gets richer.
+
+**Status:** Planned

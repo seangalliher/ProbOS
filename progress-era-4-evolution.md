@@ -32,3 +32,19 @@ See [docs/development/roadmap.md](docs/development/roadmap.md) for the crew stru
 | AD-313 | Builder MODIFY mode — search-and-replace (`===SEARCH===`/`===REPLACE===`/`===END REPLACE===`) execution for existing files. `_parse_file_blocks()` parses SEARCH/REPLACE pairs within MODIFY blocks. `execute_approved_build()` applies replacements sequentially (first occurrence only). `perceive()` reads `target_files` so the LLM sees current content for accurate SEARCH blocks. `_validate_python()` runs `ast.parse()` on .py files after write/modify. `_build_user_message()` includes target file content. Old `===AFTER LINE:===` format deprecated with warning. `BuildResult.files_modified` now populated |
 
 **Status:** Complete — 20 new Python tests (6 parse + 6 execute + 3 validate + 3 perceive + 2 existing updated), 1891 Python + 21 Vitest total
+
+## Phase 32i: Ship's Computer Identity (AD-317)
+
+**Decision:** AD-317 — The Decomposer is the Ship's Computer. LCARS-era identity (TNG/Voyager): calm, precise, authoritative, never fabricates. Grounding rules prevent confabulation about unbuilt features. Dynamic capability summary from registered intents. Runtime state injection for accurate status reports. Hardcoded examples cleaned of fabricated capabilities.
+
+**Status:** Phase 32i complete — 1899 Python + 21 Vitest
+
+## Self-Knowledge Grounding Progression (AD-318, AD-319, AD-320)
+
+Progression: AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-320 (delegation).
+
+| AD | Title | Status |
+|----|-------|--------|
+| AD-318 | SystemSelfModel — structured runtime facts dataclass, replaces ad-hoc runtime_summary | Planned |
+| AD-319 | Pre-Response Verification — Decomposer validates its own output against SystemSelfModel before responding | Planned |
+| AD-320 | Introspection Delegation — self-knowledge questions route to IntrospectionAgent first | Planned |

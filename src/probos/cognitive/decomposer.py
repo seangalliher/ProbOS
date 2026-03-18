@@ -259,6 +259,7 @@ class IntentDecomposer:
         context: WorkingMemorySnapshot | None = None,
         similar_episodes: list[Episode] | None = None,
         conversation_history: list[tuple[str, str]] | None = None,
+        runtime_summary: str | None = None,
     ) -> TaskDAG:
         """Decompose natural language text into a TaskDAG.
 
@@ -313,6 +314,11 @@ class IntentDecomposer:
             prompt_parts.append(
                 "Consider using these intents if they match the user's request."
             )
+            prompt_parts.append("")
+
+        # Add runtime grounding context (AD-317)
+        if runtime_summary:
+            prompt_parts.append(f"## SYSTEM CONTEXT\n{runtime_summary}")
             prompt_parts.append("")
 
         # Add conversation history for context resolution

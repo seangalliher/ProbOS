@@ -1249,6 +1249,27 @@ class ProbOSRuntime:
         result["committed"] = committed
         return result
 
+    def _build_runtime_summary(self) -> str:
+        """Build grounded system state summary for the Ship's Computer (AD-317)."""
+        lines = []
+
+        # Pool status
+        pool_count = len(self.pools)
+        agent_count = sum(p.current_size for p in self.pools.values())
+        lines.append(f"Active pools: {pool_count}, Total agents: {agent_count}")
+
+        # Pool group structure (departments)
+        groups = self.pool_groups.all_groups()
+        if groups:
+            group_names = [g.name for g in groups]
+            lines.append(f"Departments: {', '.join(group_names)}")
+
+        # Intent count from descriptors
+        if self.decomposer._intent_descriptors:
+            lines.append(f"Registered intents: {len(self.decomposer._intent_descriptors)}")
+
+        return "\n".join(lines)
+
     async def process_natural_language(
         self,
         text: str,
@@ -1364,9 +1385,11 @@ class ProbOSRuntime:
                          f"assume the same context (location, region, domain) as the previous query.")
                     ]
 
+        runtime_summary = self._build_runtime_summary()
         dag = await self.decomposer.decompose(
             text, context=context, similar_episodes=similar_episodes or None,
             conversation_history=conversation_history,
+            runtime_summary=runtime_summary,
         )
 
         if on_event:
