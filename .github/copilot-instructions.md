@@ -228,16 +228,73 @@ Core pools (stable):
 | `src/probos/cognitive/feedback.py` | Human feedback -> trust/Hebbian/episodic updates. |
 | `src/probos/cognitive/correction_detector.py` | Distinguishes corrections from new requests. |
 | `src/probos/cognitive/agent_patcher.py` | Hot-patches designed agent code. |
+| `src/probos/cognitive/architect.py` | ArchitectAgent. Deep-localize + LLM proposal generation. |
+| `src/probos/cognitive/builder.py` | BuilderAgent. Executes BuildSpecs, writes/tests code. |
+| `src/probos/cognitive/codebase_index.py` | CodebaseIndex. AST-based structural self-awareness. |
+| `src/probos/cognitive/llm_client.py` | Tiered LLM client (deep/fast/standard via Copilot proxy). |
 | `src/probos/consensus/trust.py` | Bayesian Beta trust network. |
 | `src/probos/consensus/quorum.py` | Confidence-weighted quorum voting. |
 | `src/probos/consensus/shapley.py` | Shapley value attribution for voters. |
 | `src/probos/mesh/routing.py` | Hebbian connection weights. |
 | `src/probos/mesh/intent.py` | Pub/sub intent bus. |
 | `src/probos/experience/shell.py` | Interactive REPL with slash commands. |
+| `src/probos/experience/panels.py` | Rich-rendered output panels for shell commands. |
 | `src/probos/knowledge/store.py` | Git-backed artifact persistence. |
 | `PROGRESS.md` | Comprehensive status tracker. Source of truth. |
 | `Vibes/Nooplex_Final.md` | The Nooplex paper (theoretical foundation). |
 | `config/system.yaml` | System configuration. |
+| `docs/development/roadmap.md` | Full roadmap with crew structure and phase details. |
+
+### Northstar: Automated Build Pipeline (AD-311+)
+
+The Architect and Builder agents form an automated design-and-build pipeline:
+
+```
+Captain types /design → Architect perceives (7 layers) → LLM generates proposal
+  → Captain reviews & approves → Builder executes BuildSpec → git branch/commit
+  → Captain reviews & merges
+```
+
+**Architect Agent** (`cognitive/architect.py`):
+- `perceive()` assembles 7 context layers: file tree, LLM-selected source files (2000-line budget, 300/file cap), test/caller/API discovery, slash commands, API routes, agent map, docs
+- Layer 2a: fast-tier LLM selects 8 most relevant files from 20 keyword candidates
+- Layer 2a+: import graph expansion adds collaborating modules (up to 12 files total)
+- Contextual file hints: slash command requests guarantee `shell.py`/`panels.py`; API requests guarantee `api.py`
+- Selective API surface: only includes method signatures for classes found in selected files
+- `instructions` string has 6 verification rules including "never reference an unverified method"
+- Enhancement proposals: when a feature partially exists, Architect must produce a FULL proposal (not punt)
+- Uses deep tier (Opus) through Copilot proxy at `127.0.0.1:8080`
+
+**Builder Agent** (`cognitive/builder.py`):
+- Accepts `BuildSpec` (title, description, target_files, reference_files)
+- Currently CREATE-only (new files). AD-313 will add MODIFY mode (search-and-replace edits)
+- `ast.parse()` validation after writes
+- Single test pass — AD-314 will add retry loop
+
+**CodebaseIndex** (`cognitive/codebase_index.py`):
+- AST-based, no LLM calls, built at startup
+- `_import_graph` / `_reverse_import_graph`: forward and reverse import relationships
+- `get_imports(path)` / `find_importers(path)`: query import relationships
+- `find_callers(method)` / `find_tests_for(path)` / `get_full_api_surface()`: structural queries
+- `query(concept)`: word-level keyword scoring across files and docs
+- `read_doc_sections(doc_path, keywords, max_lines)`: targeted doc reading
+
+**LLM Tiers** (configured in `config/system.yaml`):
+- `deep`: Claude Opus via Copilot proxy, 300s timeout. Used by Architect.
+- `fast`: Claude Sonnet via Copilot proxy, 30s timeout. Used for file selection.
+- `standard`: Claude Sonnet, 30s timeout. General use + fallback.
+- All tiers route through `127.0.0.1:8080` (Copilot proxy extension, `REQUEST_TIMEOUT_MS` = 300s hardcoded)
+- Fallback chain: deep → fast → standard (deduped)
+
+**Context Budget Constraints** (critical for avoiding timeouts):
+- Source budget: 2000 lines total across all selected files
+- Per-file cap: 300 lines (truncated with note)
+- Import expansion: up to 12 files total (8 LLM-selected + 4 import-traced)
+- Docs: roadmap 100 lines, progress 50 lines, decisions 40 lines
+- Test file headers: 5 lines each (imports + class name only)
+- Agent map: compact format (type + tier, no module paths)
+- Total context target: ~60K-100K chars (~15K-25K tokens)
+- If context grows beyond this, Opus will timeout through the Copilot proxy
 
 ### AD (Architecture Decision) Numbering — Hard Rule
 
