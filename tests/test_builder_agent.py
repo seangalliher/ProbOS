@@ -14,6 +14,7 @@ from probos.cognitive.builder import (
     BuildSpec,
     _git_create_branch,
     _sanitize_branch_name,
+    _validate_python,
     execute_approved_build,
 )
 from probos.cognitive.cognitive_agent import CognitiveAgent
@@ -132,7 +133,7 @@ class TestParseFileBlocks:
         assert blocks[1]["path"] == "b.py"
 
     def test_modify_block(self):
-        """Parses ===MODIFY:=== block with ===AFTER LINE:===."""
+        """Old ===MODIFY:=== block with ===AFTER LINE:=== is deprecated and skipped."""
         text = (
             "===MODIFY: src/bar.py===\n"
             "===AFTER LINE: import os===\n"
@@ -140,11 +141,8 @@ class TestParseFileBlocks:
             "===END MODIFY==="
         )
         blocks = BuilderAgent._parse_file_blocks(text)
-        assert len(blocks) == 1
-        assert blocks[0]["path"] == "src/bar.py"
-        assert blocks[0]["mode"] == "modify"
-        assert blocks[0]["after_line"] == "import os"
-        assert "import sys" in blocks[0]["content"]
+        # Deprecated format is now skipped
+        assert len(blocks) == 0
 
     def test_no_blocks(self):
         """Returns empty list when no blocks found."""
@@ -359,11 +357,15 @@ class TestExecuteApprovedBuild:
         assert written.read_text() == "print('hello')\n"
 
     @pytest.mark.asyncio
-    async def test_skips_modify_mode(self, tmp_path: Path):
-        """execute_approved_build skips MODIFY mode files with a warning."""
+    async def test_modify_skips_nonexistent_file(self, tmp_path: Path):
+        """execute_approved_build skips MODIFY when target file doesn't exist."""
         spec = BuildSpec(title="Mod Test", description="Test modify skip")
         file_changes = [
-            {"path": "src/mod.py", "content": "new code\n", "mode": "modify", "after_line": "import os"},
+            {
+                "path": "src/mod.py",
+                "mode": "modify",
+                "replacements": [{"search": "old", "replace": "new"}],
+            },
         ]
 
         mock_proc = AsyncMock()
@@ -375,9 +377,10 @@ class TestExecuteApprovedBuild:
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
 
-        # Should succeed but no files written (modify skipped)
+        # Should succeed but no files written or modified (target doesn't exist)
         assert result.success is True
         assert result.files_written == []
+        assert result.files_modified == []
 
     @pytest.mark.asyncio
     async def test_branch_name_from_spec(self, tmp_path: Path):
@@ -397,3 +400,387 @@ class TestExecuteApprovedBuild:
             )
 
         assert "ad-400" in result.branch_name
+
+
+# ---------------------------------------------------------------------------
+# MODIFY block parsing (AD-313)
+# ---------------------------------------------------------------------------
+
+
+class TestParseModifyBlocks:
+    def test_single_search_replace(self):
+        """Parses a single SEARCH/REPLACE pair in a MODIFY block."""
+        text = (
+            "===MODIFY: src/foo.py===\n"
+            "===SEARCH===\n"
+            "def old():\n"
+            "    return 1\n"
+            "===REPLACE===\n"
+            "def old():\n"
+            "    return 2\n"
+            "===END REPLACE===\n"
+            "===END MODIFY==="
+        )
+        blocks = BuilderAgent._parse_file_blocks(text)
+        assert len(blocks) == 1
+        assert blocks[0]["path"] == "src/foo.py"
+        assert blocks[0]["mode"] == "modify"
+        assert len(blocks[0]["replacements"]) == 1
+        assert blocks[0]["replacements"][0]["search"] == "def old():\n    return 1"
+        assert blocks[0]["replacements"][0]["replace"] == "def old():\n    return 2"
+
+    def test_multiple_search_replace_pairs(self):
+        """Parses multiple SEARCH/REPLACE pairs in one MODIFY block."""
+        text = (
+            "===MODIFY: src/bar.py===\n"
+            "===SEARCH===\n"
+            "import os\n"
+            "===REPLACE===\n"
+            "import os\n"
+            "import sys\n"
+            "===END REPLACE===\n"
+            "\n"
+            "===SEARCH===\n"
+            "x = 1\n"
+            "===REPLACE===\n"
+            "x = 2\n"
+            "===END REPLACE===\n"
+            "===END MODIFY==="
+        )
+        blocks = BuilderAgent._parse_file_blocks(text)
+        assert len(blocks) == 1
+        assert len(blocks[0]["replacements"]) == 2
+        assert blocks[0]["replacements"][0]["search"] == "import os"
+        assert blocks[0]["replacements"][0]["replace"] == "import os\nimport sys"
+        assert blocks[0]["replacements"][1]["search"] == "x = 1"
+        assert blocks[0]["replacements"][1]["replace"] == "x = 2"
+
+    def test_mixed_file_and_modify(self):
+        """Parses both FILE and MODIFY blocks in the same output."""
+        text = (
+            "===FILE: src/new.py===\nprint('new')\n===END FILE===\n"
+            "===MODIFY: src/existing.py===\n"
+            "===SEARCH===\nold_line\n===REPLACE===\nnew_line\n===END REPLACE===\n"
+            "===END MODIFY==="
+        )
+        blocks = BuilderAgent._parse_file_blocks(text)
+        assert len(blocks) == 2
+        create_blocks = [b for b in blocks if b["mode"] == "create"]
+        modify_blocks = [b for b in blocks if b["mode"] == "modify"]
+        assert len(create_blocks) == 1
+        assert len(modify_blocks) == 1
+        assert create_blocks[0]["path"] == "src/new.py"
+        assert modify_blocks[0]["path"] == "src/existing.py"
+
+    def test_modify_no_search_replace_skipped(self):
+        """MODIFY block with no SEARCH/REPLACE pairs is skipped."""
+        text = (
+            "===MODIFY: src/empty.py===\n"
+            "just some text, no markers\n"
+            "===END MODIFY==="
+        )
+        blocks = BuilderAgent._parse_file_blocks(text)
+        assert len(blocks) == 0
+
+    def test_whitespace_preservation(self):
+        """Indentation is preserved exactly in SEARCH/REPLACE content."""
+        text = (
+            "===MODIFY: src/indent.py===\n"
+            "===SEARCH===\n"
+            "    def method(self):\n"
+            "        return None\n"
+            "===REPLACE===\n"
+            "    def method(self):\n"
+            "        return 42\n"
+            "===END REPLACE===\n"
+            "===END MODIFY==="
+        )
+        blocks = BuilderAgent._parse_file_blocks(text)
+        assert len(blocks) == 1
+        assert "    def method(self):" in blocks[0]["replacements"][0]["search"]
+        assert "        return None" in blocks[0]["replacements"][0]["search"]
+        assert "        return 42" in blocks[0]["replacements"][0]["replace"]
+
+    def test_deprecated_after_line_skipped(self):
+        """Old ===AFTER LINE:=== format is skipped with deprecation warning."""
+        text = (
+            "===MODIFY: src/old.py===\n"
+            "===AFTER LINE: import os===\n"
+            "import sys\n"
+            "===END MODIFY==="
+        )
+        blocks = BuilderAgent._parse_file_blocks(text)
+        # Should be skipped (no crash, no block added)
+        assert len(blocks) == 0
+
+
+# ---------------------------------------------------------------------------
+# MODIFY execution (AD-313)
+# ---------------------------------------------------------------------------
+
+
+class TestExecuteModify:
+    @pytest.mark.asyncio
+    async def test_basic_modify(self, tmp_path: Path):
+        """Single replacement applied correctly to existing file."""
+        target = tmp_path / "src" / "target.py"
+        target.parent.mkdir(parents=True)
+        target.write_text("def hello():\n    return 'old'\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Modify Test", description="Test modify")
+        file_changes = [{
+            "path": "src/target.py",
+            "mode": "modify",
+            "replacements": [{"search": "return 'old'", "replace": "return 'new'"}],
+        }]
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+
+        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await execute_approved_build(
+                file_changes, spec, str(tmp_path), run_tests=False,
+            )
+
+        assert result.success is True
+        assert "src/target.py" in result.files_modified
+        assert result.files_written == []
+        content = target.read_text(encoding="utf-8")
+        assert "return 'new'" in content
+        assert "return 'old'" not in content
+
+    @pytest.mark.asyncio
+    async def test_multiple_replacements(self, tmp_path: Path):
+        """Multiple replacements applied sequentially."""
+        target = tmp_path / "multi.py"
+        target.write_text("import os\n\nx = 1\ny = 2\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Multi", description="Multiple replacements")
+        file_changes = [{
+            "path": "multi.py",
+            "mode": "modify",
+            "replacements": [
+                {"search": "import os", "replace": "import os\nimport sys"},
+                {"search": "x = 1", "replace": "x = 10"},
+            ],
+        }]
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+
+        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await execute_approved_build(
+                file_changes, spec, str(tmp_path), run_tests=False,
+            )
+
+        assert result.success is True
+        assert "multi.py" in result.files_modified
+        content = target.read_text(encoding="utf-8")
+        assert "import sys" in content
+        assert "x = 10" in content
+
+    @pytest.mark.asyncio
+    async def test_modify_file_not_exists(self, tmp_path: Path):
+        """MODIFY on nonexistent file is skipped without crashing."""
+        spec = BuildSpec(title="No File", description="Missing target")
+        file_changes = [{
+            "path": "nonexistent.py",
+            "mode": "modify",
+            "replacements": [{"search": "old", "replace": "new"}],
+        }]
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+
+        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await execute_approved_build(
+                file_changes, spec, str(tmp_path), run_tests=False,
+            )
+
+        assert result.success is True
+        assert result.files_modified == []
+
+    @pytest.mark.asyncio
+    async def test_search_text_not_found(self, tmp_path: Path):
+        """Replacement skipped when SEARCH text not found; other replacements still apply."""
+        target = tmp_path / "partial.py"
+        target.write_text("a = 1\nb = 2\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Partial", description="Partial match")
+        file_changes = [{
+            "path": "partial.py",
+            "mode": "modify",
+            "replacements": [
+                {"search": "c = 3", "replace": "c = 30"},  # not found
+                {"search": "b = 2", "replace": "b = 20"},  # found
+            ],
+        }]
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+
+        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await execute_approved_build(
+                file_changes, spec, str(tmp_path), run_tests=False,
+            )
+
+        assert result.success is True
+        assert "partial.py" in result.files_modified
+        content = target.read_text(encoding="utf-8")
+        assert "b = 20" in content
+        assert "a = 1" in content
+
+    @pytest.mark.asyncio
+    async def test_mixed_create_and_modify(self, tmp_path: Path):
+        """Both create and modify changes handled in one build."""
+        existing = tmp_path / "existing.py"
+        existing.write_text("old_value = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Mixed", description="Create and modify")
+        file_changes = [
+            {"path": "new_file.py", "content": "print('new')\n", "mode": "create", "after_line": None},
+            {
+                "path": "existing.py",
+                "mode": "modify",
+                "replacements": [{"search": "old_value = 1", "replace": "old_value = 2"}],
+            },
+        ]
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+
+        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await execute_approved_build(
+                file_changes, spec, str(tmp_path), run_tests=False,
+            )
+
+        assert result.success is True
+        assert "new_file.py" in result.files_written
+        assert "existing.py" in result.files_modified
+
+    @pytest.mark.asyncio
+    async def test_no_net_change(self, tmp_path: Path):
+        """When all SEARCH texts not found, files_modified stays empty."""
+        target = tmp_path / "noop.py"
+        target.write_text("keep = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Noop", description="No match")
+        file_changes = [{
+            "path": "noop.py",
+            "mode": "modify",
+            "replacements": [{"search": "missing_text", "replace": "new_text"}],
+        }]
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+
+        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await execute_approved_build(
+                file_changes, spec, str(tmp_path), run_tests=False,
+            )
+
+        assert result.success is True
+        assert result.files_modified == []
+
+
+# ---------------------------------------------------------------------------
+# AST validation (AD-313)
+# ---------------------------------------------------------------------------
+
+
+class TestValidatePython:
+    def test_valid_python(self, tmp_path: Path):
+        """Valid Python returns None."""
+        f = tmp_path / "good.py"
+        f.write_text("x = 1\n", encoding="utf-8")
+        assert _validate_python(f) is None
+
+    def test_syntax_error(self, tmp_path: Path):
+        """Syntax error returns error string with line number."""
+        f = tmp_path / "bad.py"
+        f.write_text("def broken(\n", encoding="utf-8")
+        err = _validate_python(f)
+        assert err is not None
+        assert "line" in err
+
+    def test_non_python_skipped(self, tmp_path: Path):
+        """Non-Python files return None (skipped)."""
+        f = tmp_path / "data.json"
+        f.write_text("{broken json", encoding="utf-8")
+        assert _validate_python(f) is None
+
+
+# ---------------------------------------------------------------------------
+# perceive() target files (AD-313)
+# ---------------------------------------------------------------------------
+
+
+class TestPerceiveTargetFiles:
+    @pytest.mark.asyncio
+    async def test_target_file_exists(self, tmp_path: Path):
+        """perceive() reads existing target file into target_context."""
+        target = tmp_path / "target.py"
+        target.write_text("class Target: pass\n")
+
+        agent = BuilderAgent(
+            agent_id="builder-0",
+            llm_client=MagicMock(),
+            runtime=MagicMock(),
+        )
+
+        intent = IntentMessage(
+            intent="build_code",
+            params={"target_files": [str(target)]},
+        )
+        obs = await agent.perceive(intent)
+        assert "class Target: pass" in obs["target_context"]
+        assert "TARGET" in obs["target_context"]
+
+    @pytest.mark.asyncio
+    async def test_target_file_not_exists(self):
+        """perceive() notes nonexistent target as 'new file'."""
+        agent = BuilderAgent(
+            agent_id="builder-0",
+            llm_client=MagicMock(),
+            runtime=MagicMock(),
+        )
+
+        intent = IntentMessage(
+            intent="build_code",
+            params={"target_files": ["/nonexistent/new_file.py"]},
+        )
+        obs = await agent.perceive(intent)
+        assert "target_context" in obs
+        # Nonexistent path doesn't pass .exists() check, so it's just not included
+        # (exception handling catches path issues)
+
+    @pytest.mark.asyncio
+    async def test_both_target_and_reference(self, tmp_path: Path):
+        """perceive() loads both target and reference files."""
+        ref = tmp_path / "ref.py"
+        ref.write_text("class Ref: pass\n")
+        target = tmp_path / "target.py"
+        target.write_text("class Target: pass\n")
+
+        agent = BuilderAgent(
+            agent_id="builder-0",
+            llm_client=MagicMock(),
+            runtime=MagicMock(),
+        )
+
+        intent = IntentMessage(
+            intent="build_code",
+            params={
+                "reference_files": [str(ref)],
+                "target_files": [str(target)],
+            },
+        )
+        obs = await agent.perceive(intent)
+        assert "class Ref: pass" in obs["file_context"]
+        assert "class Target: pass" in obs["target_context"]

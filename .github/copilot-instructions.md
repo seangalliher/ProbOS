@@ -155,6 +155,9 @@ The HXI (Human Experience Interface) is not a dashboard or a chat app. It is the
 6. **The canvas IS the information.** Veteran users don't need `/agents` or `/trust` commands — luminance = confidence, color temperature = trust, pulse rate = activity, spatial density = population health. The visual language is self-documenting.
 7. **Delight through competence, not decoration.** The "wow" comes from the system doing something impressive (designing an agent live), not from gratuitous animation. Every visual flourish must earn its place by communicating real system state.
 8. **Generative, not designed.** Fixed UI elements are bootstrap — the minimum viable visual language before the system knows the human. As the mesh evolves, the UI should be increasingly generated: agent icons created by the agents themselves, layout driven by Hebbian topology, density adapted to cognitive style, labels generated contextually by LLMs. Nothing is pre-designed that could be emergent. The HXI is not a skin applied on top — it is a visual projection of the mesh's internal state.
+9. **Alert-driven layout reconfiguration (LCARS pattern).** When the system needs human attention — approve a build, review a proposal, respond to a question — the HXI surfaces the decision, not the other way around. The Captain should never have to dig through the UI to find pending work. Pending decisions rise to the top. Resolved items recede. The layout reshapes around what matters *right now*, like LCARS bridge stations reconfiguring during Red Alert. Department-colored context (Science=teal, Engineering=orange, Medical=green, Security=red) tells the Captain which domain needs attention before they read a word.
+10. **The Ship's Computer is the voice.** The runtime's conversational identity is the Ship's Computer — LCARS-era, TNG/Voyager. Calm, precise, authoritative, never fabricates. It reports from sensors (CodebaseIndex, registered agents, runtime state), not from imagination. "Unable to comply" over hallucination. "Specify parameters" over guessing. The Computer and the HXI are two projections of the same system — one verbal, one visual.
+11. **Agentic-first, apps are workstations.** The Captain commands, agents execute. The default interaction is agentic — "write a summary" not "open a text editor." When traditional applications must surface (document editing, spreadsheets, browsers), they appear as embedded *workstations* within the HXI, not as external windows the human switches to. Agents can observe and assist within workstations. But workstations are transitional — the UX should make the agentic path the path of least resistance, nudging the Captain toward delegation over manual work. Never optimize the workstation experience so much that it discourages the agentic one. Three tiers: **Agentic** (agent handles it end-to-end), **Workstation** (app embedded in HXI, agents assist), **Airlock** (external app, ProbOS contextually aware). Move interactions up the tiers over time.
 
 ### Agent Classification Framework
 
@@ -266,9 +269,11 @@ Captain types /design → Architect perceives (7 layers) → LLM generates propo
 - Uses deep tier (Opus) through Copilot proxy at `127.0.0.1:8080`
 
 **Builder Agent** (`cognitive/builder.py`):
-- Accepts `BuildSpec` (title, description, target_files, reference_files)
-- Currently CREATE-only (new files). AD-313 will add MODIFY mode (search-and-replace edits)
-- `ast.parse()` validation after writes
+- Accepts `BuildSpec` (title, description, target_files, reference_files, test_files)
+- CREATE mode: `===FILE: path===` blocks for new files
+- MODIFY mode (AD-313): `===SEARCH===`/`===REPLACE===`/`===END REPLACE===` pairs within `===MODIFY: path===` blocks. Replacements applied sequentially, first occurrence only
+- `perceive()` reads both reference_files and target_files (so LLM sees current content for accurate SEARCH blocks)
+- `ast.parse()` validation after writes/modifies
 - Single test pass — AD-314 will add retry loop
 
 **CodebaseIndex** (`cognitive/codebase_index.py`):

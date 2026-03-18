@@ -282,15 +282,17 @@ Automated performance optimization, maintenance, and construction. The team that
 
 *"The ship builds itself — with the Captain's approval."*
 
-The Architect and Builder agents form an automated design-and-build pipeline. The Architect reads full source via CodebaseIndex (import graphs, caller analysis, API surface verification), produces structured proposals with embedded BuildSpecs, and the Builder executes them. Current gaps: Builder cannot edit existing files (only create), and has no test-fix retry loop.
+The Architect and Builder agents form an automated design-and-build pipeline. The Architect reads full source via CodebaseIndex (import graphs, caller analysis, API surface verification), produces structured proposals with embedded BuildSpecs, and the Builder executes them. The Builder now supports both file creation and search-and-replace editing of existing files (AD-313). Remaining gaps: Builder has no test-fix retry loop, Architect proposals need stronger validation, and ProbOS has no system-level grounding to prevent confabulation about its own capabilities (AD-317).
 
 Inspired by: SWE-agent (Princeton NLP) for tool design, Aider for repo maps, Agentless (UIUC) for localize-then-repair pipelines, AutoCodeRover for call graph analysis.
 
 - **AD-311: Architect Deep Localize** *(done)* — 3-step localize pipeline: fast-tier LLM selects 8 most relevant files from 20 candidates, reads full source (up to 4000 lines), auto-discovers test files, callers, and verified API surface.
 - **AD-312: CodebaseIndex Structured Tools** *(done)* — `find_callers()`, `find_tests_for()`, `get_full_api_surface()` methods. Expanded `_KEY_CLASSES` with CodebaseIndex, PoolGroupRegistry, Shell.
 - **AD-315: CodebaseIndex Import Graph** *(done)* — AST-based `_import_graph` and `_reverse_import_graph` built at startup. `get_imports()` and `find_importers()` query methods. Architect Layer 2a+ traces imports of selected files, expanding context up to 12 files.
-- **AD-313: Builder File Edit Support** — Implement search-and-replace MODIFY mode in `execute_approved_build()`. Builder reads target files before generating changes. `ast.parse()` validation after writes.
+- **AD-313: Builder File Edit Support** *(done)* — Search-and-replace `===SEARCH===`/`===REPLACE===` MODIFY mode in `execute_approved_build()`. Builder `perceive()` reads target files for accurate SEARCH blocks. `ast.parse()` validation after writes. Old `===AFTER LINE:===` format deprecated.
+- **AD-317: Ship's Computer Identity** — The Decomposer is ProbOS's voice — the Ship's Computer from Star Trek. This AD gives it a soul. Modeled after the LCARS Computer (TNG/Voyager era): calm, precise, authoritative, never panics, never fabricates. Injected as a preamble section in the Decomposer's system prompt. Components: (1) **Identity & Voice** — "You are the Ship's Computer aboard this ProbOS instance. You are calm, precise, and direct. You report from sensors, not imagination. You never speculate without flagging it as speculation. You say 'unable to comply' or 'insufficient data' rather than fabricating an answer."; (2) **Capability grounding** — dynamically inject registered agents, intents, and slash commands so the Computer knows what systems are actually installed. "Computer, what can you do?" returns real capabilities, not training-data imagination; (3) **Self-diagnostic / LCARS bridge** — query CodebaseIndex at response time to ground answers about the system in actual code structure. The Computer knows what modules exist, what agents are registered, what the architecture looks like — because it reads its own sensors; (4) **Status awareness** — inject current runtime state (active agents, pool health, recent errors). "Computer, status report" returns real telemetry, not a generic description of what monitoring systems should look like; (5) **Honest uncertainty protocol** — "Unable to comply: that system is not part of the current configuration." / "Insufficient data to provide an accurate answer." / "That capability is planned but not yet installed (see AD-NNN)." Distinguish built vs. planned vs. hypothetical; (6) **Disambiguation** — when requests are ambiguous, respond "Specify parameters" rather than guessing; (7) **Proactive alerts** — warn when systems approach critical thresholds (pool exhaustion, trust degradation, memory pressure) without being asked. The Computer doesn't wait to be asked about red alerts; (8) **Confirmation protocol** — "Acknowledged" / "Working..." / "Complete" status responses that give the Captain clear feedback on command processing.
 - **AD-314: Builder Test-Fix Loop** — After writing code, run tests. If failures, feed errors back to the LLM for a fix attempt (2-3 iterations max). Currently the Builder does a single test pass with no retry.
+- **AD-316a: Architect Proposal Validation + Pattern Recipes** — Post-generation validation in `act()`: enforce non-empty TEST_FILES, verify TARGET_FILES exist in file tree, warn on missing method signatures. Embed pattern recipe templates directly in Architect `instructions` string for common change types (new agent, new slash command, new API endpoint) — each recipe lists required files, typical test file, and structural checklist. Zero LLM calls, zero storage overhead.
 - **Infrastructure Agent** — disk space monitoring, dependency health, environment validation
 - Existing: PoolScaler handles some Ops/Engineering overlap
 
@@ -414,7 +416,7 @@ The foundational primitive that everything else renders from:
 - WebSocket event type `agent_task_update` streams TaskTracker state to the HXI
 - Replaces the current cosmetic progress events (fired before work starts) with real events fired during work
 
-**AD-317: Activity Drawer (React)**
+**AD-321: Activity Drawer (React)**
 
 A slide-out panel from the right edge of the chat:
 
@@ -424,7 +426,7 @@ A slide-out panel from the right edge of the chat:
 - Badge count on the drawer toggle button for "Needs Attention" items
 - Subscribes to `agent_task_update` WebSocket events for live updates
 
-**AD-318: Kanban Board View**
+**AD-322: Kanban Board View**
 
 Full mission control as a dedicated view (route or tab):
 
@@ -435,7 +437,7 @@ Full mission control as a dedicated view (route or tab):
 - Filter by team (Science, Engineering, Medical, etc.) or agent type
 - "Done" column auto-archives after configurable time
 
-**AD-319: Agent Notification Queue**
+**AD-323: Agent Notification Queue**
 
 Persistent notifications that agents can emit and that persist until the Captain acknowledges:
 
@@ -446,7 +448,7 @@ Persistent notifications that agents can emit and that persist until the Captain
 - `action_required` notifications stay pinned until explicitly acknowledged or the underlying task is resolved
 - Agent API: `self._runtime.notify(agent_id, title, detail, action_required=True)` — simple method any agent can call
 
-**AD-320: Orb Hover Enhancement**
+**AD-324: Orb Hover Enhancement**
 
 Upgrade the existing system health orb with per-agent hover preview:
 

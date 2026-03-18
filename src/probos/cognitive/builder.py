@@ -9,6 +9,7 @@ orchestrates: git branch → write files → pytest → commit → return to mai
 from __future__ import annotations
 
 import asyncio
+import ast
 import logging
 import re
 from dataclasses import dataclass, field
@@ -173,12 +174,24 @@ For each file, output a block like:
 <complete file contents or changes>
 ===END FILE===
 
-If modifying an existing file, output ONLY the new/changed functions or sections, with
-markers showing where they go:
+If modifying an existing file, use SEARCH/REPLACE blocks to specify exact changes.
+Each SEARCH block must match existing code EXACTLY (including whitespace and indentation).
+Multiple changes to the same file go in a single MODIFY block:
+
 ===MODIFY: path/to/file.py===
-===AFTER LINE: <line content to insert after>===
-<new code>
+===SEARCH===
+<exact existing code to find>
+===REPLACE===
+<replacement code>
+===END REPLACE===
 ===END MODIFY===
+
+Rules for MODIFY blocks:
+- The SEARCH text must match EXACTLY — copy it character-for-character from the reference code
+- Keep SEARCH blocks as small as possible — just enough context to be unique
+- Order SEARCH/REPLACE pairs from top to bottom in the file
+- For new imports, SEARCH for the last existing import line and REPLACE with it plus the new one
+- For adding a new method to a class, SEARCH for the preceding method's last line and REPLACE with that line plus the new method
 """
 
     # -- tier override --------------------------------------------------------
@@ -207,6 +220,25 @@ markers showing where they go:
                 file_contexts.append(f"=== {ref_path} === (could not read)\n")
 
         obs["file_context"] = "\n".join(file_contexts)
+
+        # Read target files so the LLM can produce accurate SEARCH blocks
+        target_files = params.get("target_files", [])
+        target_contexts: list[str] = []
+        for tgt_path in target_files:
+            try:
+                full_path = Path(tgt_path)
+                if full_path.exists() and full_path.is_file():
+                    content = full_path.read_text(encoding="utf-8")
+                    target_contexts.append(
+                        f"=== {tgt_path} (TARGET — will be modified) ===\n{content}\n"
+                    )
+            except Exception:
+                # File doesn't exist — Builder will create it (use FILE block, not MODIFY)
+                target_contexts.append(
+                    f"=== {tgt_path} (TARGET — new file, does not exist yet) ===\n"
+                )
+        obs["target_context"] = "\n".join(target_contexts)
+
         return obs
 
     def _build_user_message(self, observation: dict) -> str:
@@ -219,6 +251,7 @@ markers showing where they go:
         constraints = params.get("constraints", [])
         ad_number = params.get("ad_number", 0)
         file_context = observation.get("file_context", "")
+        target_context = observation.get("target_context", "")
 
         parts = [
             f"# Build Spec: {title}",
@@ -232,6 +265,10 @@ markers showing where they go:
             parts.append("\n## Test Files\n" + "\n".join(f"- {f}" for f in test_files))
         if constraints:
             parts.append("\n## Constraints\n" + "\n".join(f"- {c}" for c in constraints))
+        if target_context:
+            parts.append(
+                f"\n## Target Files (current content — use MODIFY blocks for changes)\n{target_context}"
+            )
         if file_context:
             parts.append(f"\n## Reference Code\n{file_context}")
 
@@ -288,23 +325,60 @@ markers showing where they go:
             re.DOTALL,
         ):
             body = m.group(2)
-            after_line = None
-            content = body
 
-            # Check for ===AFTER LINE: ...===
-            al_match = re.match(r"===AFTER LINE:\s*(.+?)===\s*\n(.*)", body, re.DOTALL)
-            if al_match:
-                after_line = al_match.group(1).strip()
-                content = al_match.group(2)
+            # Check for deprecated ===AFTER LINE:=== format
+            if "===AFTER LINE:" in body:
+                logger.warning(
+                    "BuilderAgent: deprecated ===AFTER LINE:=== format in "
+                    "MODIFY block for %s, skipping",
+                    m.group(1).strip(),
+                )
+                continue
+
+            # Parse ===SEARCH=== / ===REPLACE=== / ===END REPLACE=== pairs
+            replacements: list[dict[str, str]] = []
+            for sr in re.finditer(
+                r"===SEARCH===\s*\n(.*?)===REPLACE===\s*\n(.*?)===END REPLACE===",
+                body,
+                re.DOTALL,
+            ):
+                search_text = sr.group(1).strip("\n")
+                replace_text = sr.group(2).strip("\n")
+                replacements.append({
+                    "search": search_text,
+                    "replace": replace_text,
+                })
+
+            if not replacements:
+                logger.warning(
+                    "BuilderAgent: MODIFY block for %s has no valid "
+                    "SEARCH/REPLACE pairs, skipping",
+                    m.group(1).strip(),
+                )
+                continue
 
             blocks.append({
                 "path": m.group(1).strip(),
-                "content": content.strip() + "\n",
                 "mode": "modify",
-                "after_line": after_line,
+                "replacements": replacements,
             })
 
         return blocks
+
+
+# ---------------------------------------------------------------------------
+# Validation helpers (AD-313)
+# ---------------------------------------------------------------------------
+
+def _validate_python(path: Path) -> str | None:
+    """Validate a Python file with ast.parse(). Returns error string or None."""
+    if path.suffix != ".py":
+        return None
+    try:
+        ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        return None
+    except SyntaxError as exc:
+        return f"{path}: line {exc.lineno}: {exc.msg}"
 
 
 # ---------------------------------------------------------------------------
@@ -341,15 +415,55 @@ async def execute_approved_build(
     result.branch_name = _sanitize_branch_name(branch)
 
     written: list[str] = []
+    modified_files: list[str] = []
+    validation_errors: list[str] = []
     try:
-        # 4. Write files
+        # 4. Write/modify files
         for change in file_changes:
             path = Path(work_dir) / change["path"]
             if change["mode"] == "modify":
-                logger.warning(
-                    "BuilderAgent: MODIFY mode not yet implemented, skipping %s",
-                    change["path"],
-                )
+                if not path.exists():
+                    logger.warning(
+                        "BuilderAgent: MODIFY target %s does not exist, skipping",
+                        change["path"],
+                    )
+                    continue
+
+                original = path.read_text(encoding="utf-8")
+                modified = original
+
+                for i, repl in enumerate(change.get("replacements", [])):
+                    search_text = repl["search"]
+                    replace_text = repl["replace"]
+
+                    if search_text not in modified:
+                        logger.warning(
+                            "BuilderAgent: SEARCH block %d not found in %s, "
+                            "skipping this replacement",
+                            i, change["path"],
+                        )
+                        continue
+
+                    # Replace first occurrence only
+                    modified = modified.replace(search_text, replace_text, 1)
+
+                if modified != original:
+                    path.write_text(modified, encoding="utf-8")
+                    modified_files.append(change["path"])
+                    logger.info(
+                        "BuilderAgent: modified %s (%d replacements)",
+                        change["path"], len(change.get("replacements", [])),
+                    )
+                else:
+                    logger.warning(
+                        "BuilderAgent: no changes applied to %s", change["path"],
+                    )
+
+                # Validate Python files after modify
+                err = _validate_python(path)
+                if err:
+                    validation_errors.append(err)
+
                 continue
 
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -357,10 +471,16 @@ async def execute_approved_build(
             written.append(change["path"])
             logger.info("BuilderAgent: wrote %s", change["path"])
 
+            # Validate Python files after create
+            err = _validate_python(path)
+            if err:
+                validation_errors.append(err)
+
         result.files_written = written
+        result.files_modified = modified_files
 
         # 5. Run tests
-        if run_tests and written:
+        if run_tests and (written or modified_files):
             try:
                 proc = await asyncio.create_subprocess_exec(
                     "pytest", "--tb=short", "-q",
@@ -380,7 +500,7 @@ async def execute_approved_build(
                 result.tests_passed = False
 
         # 6. Commit
-        if written:
+        if written or modified_files:
             desc_short = spec.description[:200] if spec.description else ""
             commit_msg = (
                 f"{spec.title}"
@@ -388,13 +508,19 @@ async def execute_approved_build(
                 + (f"\n\n{desc_short}" if desc_short else "")
                 + "\n\nCo-Authored-By: ProbOS Builder <probos@probos.dev>"
             )
-            ok, sha = await _git_add_and_commit(written, commit_msg, work_dir)
+            ok, sha = await _git_add_and_commit(
+                written + modified_files, commit_msg, work_dir,
+            )
             if ok:
                 result.commit_hash = sha
             else:
                 result.error = f"Commit failed: {sha}"
 
-        result.success = True
+        if validation_errors:
+            result.error = "Syntax errors:\n" + "\n".join(validation_errors)
+            result.success = False
+        else:
+            result.success = True
 
     except Exception as exc:
         result.error = str(exc)

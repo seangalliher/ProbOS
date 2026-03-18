@@ -161,6 +161,10 @@ DESCRIPTION:
 - Exact class/function signatures with type hints
 - Import patterns matching existing code
 - Integration points (which existing code calls this, or vice versa)
+- For files that already exist and need modification, describe the specific
+  changes needed (what to add, what to replace) so the Builder can produce
+  accurate SEARCH/REPLACE blocks.
+- For new files, describe the complete structure.
 - Test categories with counts
 - What the "Do NOT Build" boundary is
 This becomes the Builder Agent's primary input.>
