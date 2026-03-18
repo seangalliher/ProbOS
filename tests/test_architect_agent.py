@@ -319,6 +319,7 @@ class TestPerceiveWithRuntime:
             "matching_files": [
                 {"path": "src/probos/mesh/routing.py", "relevance": 5, "docstring": "Routing"},
             ],
+            "matching_methods": [],
         }
         mock_index.get_agent_map.return_value = [
             {"type": "builder", "tier": "domain", "module": "cognitive.builder", "bases": ["CognitiveAgent"]},
@@ -326,13 +327,25 @@ class TestPerceiveWithRuntime:
         mock_index.read_doc_sections.return_value = "## Phase 31\nSecurity stuff"
         mock_index.read_source.return_value = "| AD-305 | Last decision |\n"
         mock_index.get_layer_map.return_value = {"cognitive": ["cognitive/builder.py", "cognitive/architect.py"]}
+        mock_index.find_tests_for.return_value = []
+        mock_index.find_callers.return_value = []
+        mock_index.get_api_surface.return_value = []
+        mock_index.get_full_api_surface.return_value = {}
+        mock_index.get_imports.return_value = []
+        mock_index.find_importers.return_value = []
+        mock_index._file_tree = {
+            "src/probos/mesh/routing.py": {"classes": [], "docstring": "Routing"},
+        }
 
         mock_runtime = MagicMock()
         mock_runtime.codebase_index = mock_index
 
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = MagicMock(content="src/probos/mesh/routing.py")
+
         agent = ArchitectAgent(
             agent_id="test-arch-4",
-            llm_client=MagicMock(),
+            llm_client=mock_llm,
             runtime=mock_runtime,
         )
 
@@ -431,11 +444,18 @@ class TestActNoProposalBlock:
 def _make_mock_index(**overrides):
     """Helper to build a MagicMock codebase_index with sensible defaults."""
     mock = MagicMock()
-    mock.query.return_value = overrides.get("query", {"matching_files": []})
+    mock.query.return_value = overrides.get("query", {"matching_files": [], "matching_methods": []})
     mock.get_agent_map.return_value = overrides.get("agent_map", [])
     mock.get_layer_map.return_value = overrides.get("layer_map", {})
     mock.read_doc_sections.return_value = overrides.get("doc_sections", "")
     mock.read_source.return_value = overrides.get("read_source", "")
+    mock.find_tests_for.return_value = overrides.get("find_tests_for", [])
+    mock.find_callers.return_value = overrides.get("find_callers", [])
+    mock.get_api_surface.return_value = overrides.get("api_surface", [])
+    mock.get_full_api_surface.return_value = overrides.get("full_api_surface", {})
+    mock.get_imports.return_value = overrides.get("get_imports", [])
+    mock.find_importers.return_value = overrides.get("find_importers", [])
+    mock._file_tree = overrides.get("file_tree", {})
     return mock
 
 
@@ -444,9 +464,11 @@ def _make_agent(mock_index, mock_runtime=None):
     if mock_runtime is None:
         mock_runtime = MagicMock()
     mock_runtime.codebase_index = mock_index
+    mock_llm = AsyncMock()
+    mock_llm.complete.return_value = MagicMock(content="")
     return ArchitectAgent(
         agent_id="test-arch-q",
-        llm_client=MagicMock(),
+        llm_client=mock_llm,
         runtime=mock_runtime,
     )
 
@@ -492,28 +514,30 @@ class TestPerceiveSourceSnippets:
         mock_index = _make_mock_index(
             query={"matching_files": [
                 {"path": "cognitive/builder.py", "relevance": 8, "docstring": "Builder stuff"},
-            ]},
+            ], "matching_methods": []},
+            file_tree={"cognitive/builder.py": {"classes": [], "docstring": "Builder stuff"}},
         )
         mock_index.read_source.return_value = "class BuilderAgent:\n    pass\n"
         agent = _make_agent(mock_index)
         obs = await agent.perceive(_make_intent())
         ctx = obs["codebase_context"]
-        assert "## Relevant Files (with source)" in ctx
+        assert "Relevant Files" in ctx
         assert "```python" in ctx
         assert "class BuilderAgent" in ctx
 
     @pytest.mark.asyncio
     async def test_relevance_shown(self):
-        """Layer 2: Relevance score is shown for each file."""
+        """Layer 2: Files selected by LLM appear in context (fallback path)."""
         mock_index = _make_mock_index(
             query={"matching_files": [
                 {"path": "foo.py", "relevance": 12, "docstring": ""},
-            ]},
+            ], "matching_methods": []},
+            file_tree={"foo.py": {"classes": [], "docstring": ""}},
         )
         mock_index.read_source.return_value = "# foo"
         agent = _make_agent(mock_index)
         obs = await agent.perceive(_make_intent())
-        assert "relevance: 12" in obs["codebase_context"]
+        assert "foo.py" in obs["codebase_context"]
 
 
 class TestPerceiveSlashCommands:
@@ -651,8 +675,25 @@ class TestPerceiveGracefulDegradation:
         mock_index.get_agent_map.side_effect = RuntimeError("boom")
         mock_index.read_source.side_effect = RuntimeError("boom")
         mock_index.read_doc_sections.side_effect = RuntimeError("boom")
+        mock_index.find_tests_for.side_effect = RuntimeError("boom")
+        mock_index.find_callers.side_effect = RuntimeError("boom")
+        mock_index.get_api_surface.side_effect = RuntimeError("boom")
+        mock_index.get_full_api_surface.side_effect = RuntimeError("boom")
+        mock_index.get_imports.side_effect = RuntimeError("boom")
+        mock_index.find_importers.side_effect = RuntimeError("boom")
+        mock_index._file_tree = {}
 
-        agent = _make_agent(mock_index)
+        mock_llm = AsyncMock()
+        mock_llm.complete.side_effect = RuntimeError("boom")
+
+        mock_runtime = MagicMock()
+        mock_runtime.codebase_index = mock_index
+
+        agent = ArchitectAgent(
+            agent_id="test-arch-degrade",
+            llm_client=mock_llm,
+            runtime=mock_runtime,
+        )
         obs = await agent.perceive(_make_intent())
 
         # Should still return valid obs with codebase_context
@@ -665,17 +706,353 @@ class TestPerceiveGracefulDegradation:
         """If one layer fails, other layers still contribute to context."""
         mock_index = MagicMock()
         mock_index.get_layer_map.side_effect = RuntimeError("layer boom")
-        mock_index.query.return_value = {"matching_files": []}
+        mock_index.query.return_value = {"matching_files": [], "matching_methods": []}
         mock_index.get_agent_map.return_value = [
             {"type": "builder", "tier": "domain", "module": "m", "bases": []},
         ]
         mock_index.read_source.return_value = ""
         mock_index.read_doc_sections.return_value = ""
+        mock_index.find_tests_for.return_value = []
+        mock_index.find_callers.return_value = []
+        mock_index.get_api_surface.return_value = []
+        mock_index.get_full_api_surface.return_value = {}
+        mock_index.get_imports.return_value = []
+        mock_index.find_importers.return_value = []
+        mock_index._file_tree = {}
 
-        agent = _make_agent(mock_index)
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = MagicMock(content="")
+
+        mock_runtime = MagicMock()
+        mock_runtime.codebase_index = mock_index
+
+        agent = ArchitectAgent(
+            agent_id="test-arch-partial",
+            llm_client=mock_llm,
+            runtime=mock_runtime,
+        )
         obs = await agent.perceive(_make_intent())
         ctx = obs["codebase_context"]
         # File tree failed but agents should still be present
         assert "File Tree" not in ctx
         assert "Registered Agents" in ctx
         assert "builder" in ctx
+
+
+# ---------------------------------------------------------------------------
+# Deep localize pipeline tests (AD-311)
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_index_with_source(**overrides):
+    """Helper to build a MagicMock codebase_index with deep-localize methods."""
+    mock = MagicMock()
+    mock.query.return_value = overrides.get("query", {"matching_files": [], "matching_methods": []})
+    mock.get_agent_map.return_value = overrides.get("agent_map", [])
+    mock.get_layer_map.return_value = overrides.get("layer_map", {})
+    mock.read_doc_sections.return_value = overrides.get("doc_sections", "")
+    mock.read_source.return_value = overrides.get("read_source", "")
+    mock.find_tests_for.return_value = overrides.get("find_tests_for", [])
+    mock.find_callers.return_value = overrides.get("find_callers", [])
+    mock.get_api_surface.return_value = overrides.get("api_surface", [])
+    mock.get_full_api_surface.return_value = overrides.get("full_api_surface", {})
+    mock.get_imports.return_value = overrides.get("get_imports", [])
+    mock.find_importers.return_value = overrides.get("find_importers", [])
+    mock._file_tree = overrides.get("file_tree", {})
+    return mock
+
+
+class TestDeepLocalize:
+    """Tests for AD-311 three-step localize pipeline."""
+
+    @pytest.mark.asyncio
+    async def test_perceive_reads_full_source(self):
+        """Layer 2b reads full file source, not first 80 lines."""
+        long_source = "\n".join(f"line {i}" for i in range(200))
+        mock_index = _make_mock_index_with_source(
+            query={
+                "matching_files": [
+                    {"path": "cognitive/builder.py", "relevance": 8, "docstring": "Builder"},
+                ],
+                "matching_methods": [],
+            },
+            file_tree={"cognitive/builder.py": {"classes": [], "docstring": "Builder"}},
+        )
+        mock_index.read_source.return_value = long_source
+
+        # Mock the LLM client to return a file selection
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = MagicMock(content="cognitive/builder.py")
+
+        mock_runtime = MagicMock()
+        mock_runtime.codebase_index = mock_index
+
+        agent = ArchitectAgent(
+            agent_id="test-deep-1",
+            llm_client=mock_llm,
+            runtime=mock_runtime,
+        )
+
+        intent = IntentMessage(
+            intent="design_feature",
+            params={"feature": "test feature", "phase": ""},
+        )
+        obs = await agent.perceive(intent)
+        ctx = obs["codebase_context"]
+
+        # Should contain content from beyond line 80
+        assert "line 150" in ctx
+
+    @pytest.mark.asyncio
+    async def test_perceive_includes_api_surface(self):
+        """Context includes API Surface section with method signatures."""
+        mock_index = _make_mock_index_with_source(
+            query={"matching_files": [], "matching_methods": []},
+            full_api_surface={
+                "AgentRegistry": [
+                    {"method": "all", "signature": "def all() -> list[BaseAgent]"},
+                    {"method": "get", "signature": "def get(agent_id: AgentID) -> BaseAgent | None"},
+                ],
+            },
+        )
+
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = MagicMock(content="")
+
+        mock_runtime = MagicMock()
+        mock_runtime.codebase_index = mock_index
+
+        agent = ArchitectAgent(
+            agent_id="test-deep-2",
+            llm_client=mock_llm,
+            runtime=mock_runtime,
+        )
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        assert "API Surface (verified method signatures)" in ctx
+        assert "AgentRegistry" in ctx
+        assert "all" in ctx
+
+    @pytest.mark.asyncio
+    async def test_perceive_includes_test_files(self):
+        """Context includes discovered test file paths."""
+        mock_index = _make_mock_index_with_source(
+            query={
+                "matching_files": [
+                    {"path": "experience/panels.py", "relevance": 5, "docstring": "Panels"},
+                ],
+                "matching_methods": [],
+            },
+            file_tree={"experience/panels.py": {"classes": [], "docstring": "Panels"}},
+            find_tests_for=["experience/test_panels.py"],
+        )
+        mock_index.read_source.return_value = "# test file header"
+
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = MagicMock(content="experience/panels.py")
+
+        mock_runtime = MagicMock()
+        mock_runtime.codebase_index = mock_index
+
+        agent = ArchitectAgent(
+            agent_id="test-deep-3",
+            llm_client=mock_llm,
+            runtime=mock_runtime,
+        )
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        assert "Associated Test Files" in ctx
+        assert "test_panels" in ctx
+
+    @pytest.mark.asyncio
+    async def test_perceive_includes_callers(self):
+        """Context includes caller analysis for relevant methods."""
+        mock_index = _make_mock_index_with_source(
+            query={
+                "matching_files": [
+                    {"path": "substrate/registry.py", "relevance": 5, "docstring": "Registry"},
+                ],
+                "matching_methods": [],
+            },
+            file_tree={"substrate/registry.py": {"classes": ["AgentRegistry"], "docstring": "Registry"}},
+            api_surface=[{"method": "all", "signature": "def all()"}],
+            find_callers=[{"path": "runtime.py", "lines": [100, 200]}],
+        )
+        mock_index.read_source.return_value = "class AgentRegistry:\n    pass"
+
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = MagicMock(content="substrate/registry.py")
+
+        mock_runtime = MagicMock()
+        mock_runtime.codebase_index = mock_index
+
+        agent = ArchitectAgent(
+            agent_id="test-deep-4",
+            llm_client=mock_llm,
+            runtime=mock_runtime,
+        )
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        assert "Caller Analysis" in ctx
+        assert "AgentRegistry.all()" in ctx
+        assert "runtime.py" in ctx
+
+    @pytest.mark.asyncio
+    async def test_perceive_falls_back_on_llm_failure(self):
+        """If fast-tier selection fails, falls back to keyword top-5."""
+        mock_index = _make_mock_index_with_source(
+            query={
+                "matching_files": [
+                    {"path": "cognitive/builder.py", "relevance": 8, "docstring": "Builder"},
+                    {"path": "cognitive/architect.py", "relevance": 6, "docstring": "Architect"},
+                ],
+                "matching_methods": [],
+            },
+            file_tree={
+                "cognitive/builder.py": {"classes": [], "docstring": "Builder"},
+                "cognitive/architect.py": {"classes": [], "docstring": "Architect"},
+            },
+        )
+        mock_index.read_source.return_value = "# source"
+
+        # Mock LLM to raise an exception on fast-tier call
+        mock_llm = AsyncMock()
+        mock_llm.complete.side_effect = RuntimeError("LLM unavailable")
+
+        mock_runtime = MagicMock()
+        mock_runtime.codebase_index = mock_index
+
+        agent = ArchitectAgent(
+            agent_id="test-deep-5",
+            llm_client=mock_llm,
+            runtime=mock_runtime,
+        )
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        # Should still have relevant files from fallback
+        assert "Relevant Files" in ctx
+        assert "builder.py" in ctx
+
+    @pytest.mark.asyncio
+    async def test_perceive_caps_source_at_budget(self):
+        """Total source lines capped at 4000 across all files."""
+        huge_source = "\n".join(f"line {i}" for i in range(3000))
+        mock_index = _make_mock_index_with_source(
+            query={
+                "matching_files": [
+                    {"path": f"file{i}.py", "relevance": 5, "docstring": f"File {i}"}
+                    for i in range(5)
+                ],
+                "matching_methods": [],
+            },
+            file_tree={f"file{i}.py": {"classes": [], "docstring": f"File {i}"} for i in range(5)},
+        )
+        mock_index.read_source.return_value = huge_source
+
+        mock_llm = AsyncMock()
+        mock_llm.complete.side_effect = RuntimeError("skip")
+
+        mock_runtime = MagicMock()
+        mock_runtime.codebase_index = mock_index
+
+        agent = ArchitectAgent(
+            agent_id="test-deep-6",
+            llm_client=mock_llm,
+            runtime=mock_runtime,
+        )
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        # With 5 files of 3000 lines each and budget of 4000, we should not
+        # include all 15000 lines. Check that not all 5 files are fully present.
+        # line 2999 is the last line of each huge file — if budget works,
+        # it shouldn't appear for most files.
+        assert ctx.count("line 2999") < 5  # not all 5 files fully included
+
+    def test_instructions_have_rule_6(self):
+        """System prompt includes API verification rule."""
+        assert "UNVERIFIED" in ArchitectAgent.instructions
+
+    def test_instructions_describe_full_source(self):
+        """System prompt mentions full source code, not first 80 lines."""
+        assert "FULL source" in ArchitectAgent.instructions or "full source" in ArchitectAgent.instructions
+
+
+# ---------------------------------------------------------------------------
+# Import tracing tests (AD-315)
+# ---------------------------------------------------------------------------
+
+
+class TestImportTracing:
+    """Tests for AD-315 import graph integration in Architect perceive."""
+
+    @pytest.mark.asyncio
+    async def test_perceive_expands_selected_files_via_imports(self):
+        """Layer 2a+ expands selected files by tracing their imports."""
+        mock_index = _make_mock_index_with_source(
+            query={
+                "matching_files": [
+                    {"path": "experience/shell.py", "relevance": 8, "docstring": "Shell"},
+                ],
+                "matching_methods": [],
+            },
+            file_tree={
+                "experience/shell.py": {"classes": ["Shell"], "docstring": "Shell"},
+                "experience/panels.py": {"classes": [], "docstring": "Panel renderers"},
+            },
+        )
+        mock_index.read_source.return_value = "class Shell:\n    pass"
+        mock_index.get_imports.return_value = ["experience/panels.py"]
+        mock_index.find_importers.return_value = []
+
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = MagicMock(content="experience/shell.py")
+
+        mock_runtime = MagicMock()
+        mock_runtime.codebase_index = mock_index
+
+        agent = ArchitectAgent(
+            agent_id="test-import-1",
+            llm_client=mock_llm,
+            runtime=mock_runtime,
+        )
+        obs = await agent.perceive(_make_intent("add /agents command"))
+        ctx = obs["codebase_context"]
+        # panels.py should be included via import tracing
+        assert "panels.py" in ctx
+
+    @pytest.mark.asyncio
+    async def test_perceive_includes_import_graph_section(self):
+        """Context includes Import Graph section."""
+        mock_index = _make_mock_index_with_source(
+            query={
+                "matching_files": [
+                    {"path": "experience/shell.py", "relevance": 8, "docstring": "Shell"},
+                ],
+                "matching_methods": [],
+            },
+            file_tree={
+                "experience/shell.py": {"classes": [], "docstring": "Shell"},
+            },
+        )
+        mock_index.read_source.return_value = "# source"
+        mock_index.get_imports.return_value = ["experience/panels.py"]
+        mock_index.find_importers.return_value = ["api.py"]
+
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = MagicMock(content="experience/shell.py")
+
+        mock_runtime = MagicMock()
+        mock_runtime.codebase_index = mock_index
+
+        agent = ArchitectAgent(
+            agent_id="test-import-2",
+            llm_client=mock_llm,
+            runtime=mock_runtime,
+        )
+        obs = await agent.perceive(_make_intent())
+        ctx = obs["codebase_context"]
+        assert "Import Graph" in ctx
+
+    def test_instructions_mention_imports(self):
+        """System prompt mentions import graph in context description."""
+        assert "Import graph" in ArchitectAgent.instructions

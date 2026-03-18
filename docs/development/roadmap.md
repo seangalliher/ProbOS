@@ -22,9 +22,9 @@ ProbOS is organized as a starship crew — specialized teams of agents working t
 
 | Team | Starfleet Analog | ProbOS Function | Status |
 |------|-----------------|-----------------|--------|
-| **Medical** | Sickbay (Crusher) | Health monitoring, diagnosis, remediation, post-mortems | Designed (AD-290) |
-| **Engineering** | Main Engineering (Scotty) | Performance optimization, maintenance, builds, infrastructure | Planned |
-| **Science** | Science Lab (Spock) | Research, discovery, architectural analysis, codebase knowledge | Partial |
+| **Medical** | Sickbay (Crusher) | Health monitoring, diagnosis, remediation, post-mortems | Built (AD-290) |
+| **Engineering** | Main Engineering (Scotty) | Performance optimization, maintenance, builds, infrastructure | Partial (Builder, Architect built) |
+| **Science** | Science Lab (Spock) | Research, discovery, architectural analysis, codebase knowledge | Built (Architect, CodebaseIndex) |
 | **Security** | Tactical (Worf) | Threat detection, defense, trust integrity, input validation | Partial |
 | **Operations** | Ops (Data/O'Brien) | Resource management, scheduling, load balancing, coordination | Partial |
 | **Communications** | Comms (Uhura) | Channel adapters, federation, external interfaces | Partial |
@@ -276,6 +276,21 @@ Automated performance optimization, maintenance, and construction. The team that
 - **Performance Monitor** — tracks latency, throughput, memory pressure, identifies bottlenecks (what AD-289 did manually, but automated)
 - **Maintenance Agent** — database compaction, log rotation, cache eviction, connection pool management
 - **Builder Agent** — executes build prompts, constructs new capabilities (bridges to external coding agents initially)
+- **Architect Agent** — reads codebase, produces build-prompt-grade proposals that the Builder can execute autonomously
+
+**Automated Build Pipeline — Northstar (AD-311+)**
+
+*"The ship builds itself — with the Captain's approval."*
+
+The Architect and Builder agents form an automated design-and-build pipeline. The Architect reads full source via CodebaseIndex (import graphs, caller analysis, API surface verification), produces structured proposals with embedded BuildSpecs, and the Builder executes them. Current gaps: Builder cannot edit existing files (only create), and has no test-fix retry loop.
+
+Inspired by: SWE-agent (Princeton NLP) for tool design, Aider for repo maps, Agentless (UIUC) for localize-then-repair pipelines, AutoCodeRover for call graph analysis.
+
+- **AD-311: Architect Deep Localize** *(done)* — 3-step localize pipeline: fast-tier LLM selects 8 most relevant files from 20 candidates, reads full source (up to 4000 lines), auto-discovers test files, callers, and verified API surface.
+- **AD-312: CodebaseIndex Structured Tools** *(done)* — `find_callers()`, `find_tests_for()`, `get_full_api_surface()` methods. Expanded `_KEY_CLASSES` with CodebaseIndex, PoolGroupRegistry, Shell.
+- **AD-315: CodebaseIndex Import Graph** *(done)* — AST-based `_import_graph` and `_reverse_import_graph` built at startup. `get_imports()` and `find_importers()` query methods. Architect Layer 2a+ traces imports of selected files, expanding context up to 12 files.
+- **AD-313: Builder File Edit Support** — Implement search-and-replace MODIFY mode in `execute_approved_build()`. Builder reads target files before generating changes. `ast.parse()` validation after writes.
+- **AD-314: Builder Test-Fix Loop** — After writing code, run tests. If failures, feed errors back to the LLM for a fix attempt (2-3 iterations max). Currently the Builder does a single test pass with no retry.
 - **Infrastructure Agent** — disk space monitoring, dependency health, environment validation
 - Existing: PoolScaler handles some Ops/Engineering overlap
 
@@ -376,6 +391,68 @@ Formalize resource management and system coordination as an agent pool.
 - **Response-Time Scaling** (deferred from Phase 8) — latency-aware pool scaling. Instrument `broadcast()` with per-intent latency tracking, scale up pools where response times exceed SLA thresholds
 - **LLM Cost Tracker** — per-agent, per-intent, and per-DAG token usage accounting. Budget caps (daily/monthly), cost attribution via Shapley (which agents are expensive vs. valuable), per-workflow cost breakdowns for end-to-end visibility, alerts when spend exceeds thresholds. Provides the data foundation for commercial ROI analytics. Note: accurate cost attribution will require a proper tokenizer library (e.g., `tiktoken` for OpenAI models, model-specific tokenizers for others) — current `len(content) // 4` estimation is insufficient for billing-grade accuracy
 - Existing: PoolScaler (built), TaskScheduler (Phase 24c roadmap), IntentBus demand tracking (built)
+
+---
+
+### Mission Control — Agent Activity Dashboard (Phase 34)
+
+*"Captain on the bridge — all stations reporting."*
+
+The UX layer that gives the Captain full visibility into what every agent is doing, in real time. Today, cognitive agents (Architect, Builder) work in a black box — the user triggers `/design` or `/build` and waits for a result or failure with no insight into progress. Mission Control replaces that with a live operational dashboard where the Captain can see every active task, track step-by-step progress, respond to agent requests, and manage the crew's workload at a glance.
+
+Inspired by: GitHub Copilot's task list, Kanban boards (Trello/Linear), mission control dashboards (NASA MCC).
+
+**AD-316: AgentTask Data Model + Progress Events**
+
+The foundational primitive that everything else renders from:
+
+- `AgentTask` dataclass: agent_id, agent_type, team, task_type (design/build/query/skill), prompt (original request text), started_at, steps (list of `TaskStep` with label/status/duration), requires_action flag, action_type (approve/review/respond/null)
+- `TaskStep` dataclass: label, status (pending/in_progress/done/failed), started_at, duration_ms
+- `TaskTracker` service on the runtime — agents register tasks, emit step updates, mark completion
+- Architect `perceive()` emits real progress events at each layer: "Selecting relevant files...", "Reading 8 files (2,400 lines)...", "Analyzing callers and tests...", "Generating proposal via Opus..."
+- Builder emits: "Reading reference files...", "Generating code...", "Writing files...", "Running tests..."
+- WebSocket event type `agent_task_update` streams TaskTracker state to the HXI
+- Replaces the current cosmetic progress events (fired before work starts) with real events fired during work
+
+**AD-317: Activity Drawer (React)**
+
+A slide-out panel from the right edge of the chat:
+
+- Three sections: **Active** (agents currently working, with live step progress), **Needs Attention** (agents waiting for human input — approve/reject/respond), **Recent** (completed tasks with outcomes)
+- Each item is a compact card: agent type icon, task title (truncated prompt), team color badge, elapsed time
+- Click card to expand: full prompt, step-by-step checklist with timings, action buttons if applicable
+- Badge count on the drawer toggle button for "Needs Attention" items
+- Subscribes to `agent_task_update` WebSocket events for live updates
+
+**AD-318: Kanban Board View**
+
+Full mission control as a dedicated view (route or tab):
+
+- Columns: `Queued` → `Working` → `Needs Review` → `Done`
+- Cards show: agent type icon, task title, team color, elapsed time, step progress bar
+- Click card to expand into full detail panel: original prompt, step-by-step progress, file diffs (build tasks), proposal text (design tasks), action buttons (Approve / Reject / Respond)
+- Cards auto-move between columns as task state changes
+- Filter by team (Science, Engineering, Medical, etc.) or agent type
+- "Done" column auto-archives after configurable time
+
+**AD-319: Agent Notification Queue**
+
+Persistent notifications that agents can emit and that persist until the Captain acknowledges:
+
+- `AgentNotification` dataclass: agent_id, agent_type, notification_type (info/action_required/error), title, detail, action_url (link to the relevant card), created_at, acknowledged
+- Notification types: "Proposal ready for review", "Build failed — 3 test failures", "Question: should this modify panels.py or create a new file?"
+- Bell icon in the HXI header with unread count badge
+- Notification dropdown: list of unread notifications, click to navigate to the relevant card/drawer item
+- `action_required` notifications stay pinned until explicitly acknowledged or the underlying task is resolved
+- Agent API: `self._runtime.notify(agent_id, title, detail, action_required=True)` — simple method any agent can call
+
+**AD-320: Orb Hover Enhancement**
+
+Upgrade the existing system health orb with per-agent hover preview:
+
+- When hovering over an agent representation in the orb, show a tooltip with: current task prompt (truncated), current step label, elapsed time, progress fraction (step 3 of 5)
+- Visual indicator on the orb when any agent requires Captain attention (pulsing amber)
+- Click-through from orb tooltip to the Activity Drawer card for that agent
 
 ---
 

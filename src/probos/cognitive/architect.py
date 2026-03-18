@@ -17,7 +17,7 @@ from typing import Any
 
 from probos.cognitive.builder import BuildSpec
 from probos.cognitive.cognitive_agent import CognitiveAgent
-from probos.types import IntentDescriptor
+from probos.types import IntentDescriptor, LLMRequest
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,11 @@ that the Builder Agent can execute.
 
 You receive rich codebase context including:
 - The full file tree (every file path in the project)
-- Source code of relevant files (first 80 lines each)
+- LLM-selected relevant files with FULL source code (not just first 80 lines)
+- Test files associated with each target file
+- Caller analysis showing which files use modified methods
+- Import graph showing which files import each selected file and vice versa
+- Verified API surface for all key classes (method signatures)
 - All existing slash commands
 - All existing API routes
 - The current crew structure (pool groups and pools)
@@ -88,18 +92,27 @@ CRITICAL VERIFICATION RULES:
    directory pattern you can see. NEVER invent paths like "src/probos/web/" or
    "src/probos/channels/" unless you see them in the tree.
 2. Before proposing a new slash command, CHECK the "Existing Slash Commands" section.
-   If the command already exists, do NOT propose it. Instead, suggest enhancements.
+   If the command already exists, do NOT propose creating it from scratch. Instead, produce
+   a FULL ===PROPOSAL=== for enhancing the existing command — with real TARGET_FILES,
+   REFERENCE_FILES, and a detailed DESCRIPTION. An enhancement proposal is still a proposal.
 3. Before proposing a new API route, CHECK the "Existing API Routes" section.
-   If the route already exists, do NOT propose it.
+   If the route already exists, do NOT propose creating a duplicate. Instead, design
+   an enhancement proposal if the request implies improving the existing route.
 4. Before proposing a new agent type, CHECK the "Registered Agents" section.
    If an agent of that type already exists, do NOT propose a duplicate.
 5. READ the source code of relevant files in your context. Your proposal MUST reference
    specific patterns you observed — class names, method signatures, import styles.
+6. For every method or function you reference in your proposal, VERIFY it exists in
+   the "API Surface" section. If a method does not appear there, explicitly state
+   "UNVERIFIED: <method_name> — could not confirm existence" in your RISKS section.
+   Never assert a method exists unless you can see it in the API Surface or source code.
 
 DESIGN PROCESS:
 1. UNDERSTAND — What feature is requested? Which roadmap phase and crew team?
 2. VERIFY — Does this feature already exist? Check commands, routes, agents.
-3. SURVEY — Read the source of related files. Identify patterns to follow.
+   If it partially exists, your job is to design the ENHANCEMENT — still produce a full proposal.
+3. SURVEY — Read the source of related files. Follow imports to find collaborating
+   modules (e.g., shell.py imports panels.py — read both). Identify patterns to follow.
 4. LOCATE — Find the exact directory where new files should go (from the File Tree).
 5. DESIGN — Produce a spec with concrete class signatures that match existing patterns.
 6. CONSTRAIN — Add "Do NOT" rules to prevent scope creep.
@@ -196,21 +209,175 @@ IMPORTANT RULES:
             except Exception:
                 pass
 
-            # Layer 2: Relevant files with source snippets
+            # Layer 2a: LLM-guided file selection (AD-311)
             try:
                 query_results = codebase_index.query(feature)
-                if query_results.get("matching_files"):
-                    relevant_parts = ["## Relevant Files (with source)"]
-                    for f in query_results["matching_files"][:5]:
-                        path = f["path"]
-                        source = codebase_index.read_source(path, start_line=1, end_line=80)
-                        relevant_parts.append(
-                            f"\n### {path} (relevance: {f['relevance']})\n"
-                            f"{'_Summary: ' + f['docstring'] if f.get('docstring') else ''}\n"
-                            f"```python\n{source}\n```"
-                            if source else f"\n### {path} (relevance: {f['relevance']}) \u2014 could not read"
-                        )
+                all_files = query_results.get("matching_files", [])[:20]
+                matching_methods = query_results.get("matching_methods", [])
+
+                # Build concise file list for the LLM
+                file_list = "\n".join(
+                    f"  {f['path']} — {f.get('docstring', 'no description')}"
+                    for f in all_files
+                )
+                method_list = "\n".join(
+                    f"  {m['class']}.{m['method']}() in {m.get('file', '?')}"
+                    for m in matching_methods[:15]
+                )
+
+                selected_paths: list[str] = []
+                try:
+                    selection_prompt = (
+                        f"Feature request: {feature}\n\n"
+                        f"## Candidate files (keyword matches)\n{file_list}\n\n"
+                        f"## Candidate methods\n{method_list}\n\n"
+                        "Which files (up to 8) are most relevant to implementing this feature? "
+                        "Include files that would need to be MODIFIED, files with PATTERNS to follow, "
+                        "and TEST files that would need updating.\n\n"
+                        "Reply with one file path per line, nothing else."
+                    )
+
+                    selection_request = LLMRequest(
+                        prompt=selection_prompt,
+                        system_prompt="You are a code reviewer selecting relevant files for a feature implementation.",
+                        tier="fast",
+                    )
+                    selection_response = await self._llm_client.complete(selection_request)
+
+                    # Parse response: extract file paths that exist in the tree
+                    known_paths = set(codebase_index._file_tree.keys())
+                    for line in selection_response.content.strip().splitlines():
+                        path = line.strip().lstrip("- ").strip()
+                        if path in known_paths:
+                            selected_paths.append(path)
+                        elif not path.startswith("docs:"):
+                            # Try partial match (LLM may omit prefix)
+                            for known in known_paths:
+                                if known.endswith(path) or path in known:
+                                    selected_paths.append(known)
+                                    break
+                        if len(selected_paths) >= 8:
+                            break
+                except Exception:
+                    logger.debug("Fast-tier file selection failed, falling back to keyword top-5")
+
+                # Fallback: top 5 keyword matches if LLM selection failed/empty
+                if not selected_paths:
+                    selected_paths = [f["path"] for f in all_files[:5]]
+
+                # Contextual file hints: guarantee key files for common feature types
+                feature_lower = feature.lower()
+                hint_files: list[str] = []
+                if any(kw in feature_lower for kw in ("slash command", "/", "command")):
+                    hint_files.extend(["experience/shell.py", "experience/panels.py"])
+                if any(kw in feature_lower for kw in ("api route", "endpoint", "api/")):
+                    hint_files.append("api.py")
+                known_paths = set(codebase_index._file_tree.keys())
+                for hf in hint_files:
+                    if hf in known_paths and hf not in selected_paths:
+                        selected_paths.append(hf)
+
+                # Layer 2a+: Expand selected files by tracing imports (AD-315c)
+                import_expanded: list[str] = []
+                for path in selected_paths:
+                    imports = codebase_index.get_imports(path)
+                    for imp_path in imports:
+                        if imp_path not in selected_paths and imp_path not in import_expanded:
+                            import_expanded.append(imp_path)
+                for imp_path in import_expanded:
+                    if len(selected_paths) >= 12:
+                        break
+                    selected_paths.append(imp_path)
+
+                # Layer 2b: Full source of selected files (AD-311)
+                total_lines = 0
+                source_budget = 4000
+                relevant_parts = ["## Relevant Files (full source — LLM-selected)"]
+                for path in selected_paths:
+                    if total_lines >= source_budget:
+                        break
+                    source = codebase_index.read_source(path)
+                    if not source:
+                        relevant_parts.append(f"\n### {path} — could not read")
+                        continue
+                    source_lines = source.splitlines()
+                    truncated = False
+                    if len(source_lines) > 500:
+                        source_lines = source_lines[:500]
+                        truncated = True
+                    if total_lines + len(source_lines) > source_budget:
+                        remaining = source_budget - total_lines
+                        source_lines = source_lines[:remaining]
+                        truncated = True
+                    total_lines += len(source_lines)
+                    truncation_note = " (truncated)" if truncated else ""
+                    relevant_parts.append(
+                        f"\n### {path}{truncation_note}\n"
+                        f"```python\n{chr(10).join(source_lines)}\n```"
+                    )
+                if len(relevant_parts) > 1:
                     context_parts.append("\n".join(relevant_parts))
+
+                # Layer 2c: Test discovery + caller analysis + API surface (AD-311)
+                test_paths: list[str] = []
+                for path in selected_paths:
+                    tests = codebase_index.find_tests_for(path)
+                    test_paths.extend(t for t in tests if t not in test_paths)
+
+                if test_paths:
+                    test_section = ["## Associated Test Files"]
+                    for tp in test_paths[:10]:
+                        header = codebase_index.read_source(tp, start_line=1, end_line=20)
+                        if header:
+                            test_section.append(f"\n### {tp}\n```python\n{header}\n```")
+                        else:
+                            test_section.append(f"\n### {tp}")
+                    context_parts.append("\n".join(test_section))
+
+                # Caller analysis for key classes in selected files
+                caller_section_lines: list[str] = []
+                for path in selected_paths:
+                    meta = codebase_index._file_tree.get(path, {})
+                    for cls_name in meta.get("classes", []):
+                        surface = codebase_index.get_api_surface(cls_name)
+                        for m in surface[:5]:
+                            callers = codebase_index.find_callers(m["method"], max_results=5)
+                            if callers:
+                                caller_section_lines.append(
+                                    f"- {cls_name}.{m['method']}() called from: "
+                                    + ", ".join(c["path"] for c in callers[:3])
+                                )
+                if caller_section_lines:
+                    context_parts.append(
+                        "## Caller Analysis\n" + "\n".join(caller_section_lines)
+                    )
+
+                # Full API surface for method verification
+                api_surface = codebase_index.get_full_api_surface()
+                if api_surface:
+                    api_section = ["## API Surface (verified method signatures)"]
+                    for cls, methods in sorted(api_surface.items()):
+                        api_section.append(f"\n### {cls}")
+                        for m in methods:
+                            api_section.append(f"  {m['method']}({m.get('signature', '')})")
+                    context_parts.append("\n".join(api_section))
+
+                # Import graph for selected files (AD-315c)
+                import_lines: list[str] = []
+                for path in selected_paths:
+                    imports = codebase_index.get_imports(path)
+                    importers = codebase_index.find_importers(path)
+                    if imports or importers:
+                        parts_desc: list[str] = []
+                        if imports:
+                            parts_desc.append(f"imports: {', '.join(imports[:5])}")
+                        if importers:
+                            parts_desc.append(f"imported by: {', '.join(importers[:5])}")
+                        import_lines.append(f"- {path}: {' | '.join(parts_desc)}")
+                if import_lines:
+                    context_parts.append(
+                        "## Import Graph\n" + "\n".join(import_lines)
+                    )
             except Exception:
                 pass
 

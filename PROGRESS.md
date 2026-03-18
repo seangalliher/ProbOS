@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 27 complete — Phase 24 in progress (1838/1838 tests + 21 Vitest + 11 skipped)
+## Current Status: Phase 27 complete — Phase 24 in progress (1871/1871 tests + 21 Vitest + 11 skipped)
 
 ---
 

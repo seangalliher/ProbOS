@@ -215,10 +215,13 @@ class ProbOSShell:
         self.console.print(panels.render_status_panel(status))
 
     async def _cmd_agents(self, arg: str) -> None:
-        agents = self.runtime.registry.all()
         trust_scores = self.runtime.trust_network.all_scores()
-        shapley = getattr(self.runtime, '_last_shapley_values', None)
-        self.console.print(panels.render_agent_table(agents, trust_scores, shapley))
+        self.console.print(panels.render_agent_roster(
+            self.runtime.pools,
+            self.runtime.pool_groups,
+            self.runtime.registry,
+            trust_scores,
+        ))
 
     async def _cmd_weights(self, arg: str) -> None:
         weights = self.runtime.hebbian_router.all_weights_typed()

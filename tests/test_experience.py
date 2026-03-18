@@ -1118,3 +1118,86 @@ class TestRendererSelfModIntegration:
         assert entered_self_mod, (
             f"Think-tagged response did not reach self-mod.  Full output:\n{output}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Agent Roster panel tests
+# ---------------------------------------------------------------------------
+
+class TestAgentRoster:
+    """Tests for render_agent_roster (pool-level org chart)."""
+
+    def test_basic_output(self, runtime, console):
+        """Roster produces panel with pool-level rows."""
+        scores = runtime.trust_network.all_scores()
+        panel = panels.render_agent_roster(
+            runtime.pools, runtime.pool_groups, runtime.registry, scores,
+        )
+        console.print(panel)
+        output = get_output(console)
+        assert "Agent Roster" in output
+        assert "file_reader" in output
+
+    def test_columns_present(self, runtime, console):
+        """All expected columns appear in the table."""
+        scores = runtime.trust_network.all_scores()
+        panel = panels.render_agent_roster(
+            runtime.pools, runtime.pool_groups, runtime.registry, scores,
+        )
+        console.print(panel)
+        output = get_output(console)
+        for col in ("Type", "Tier", "Team", "Pool", "Size"):
+            assert col in output, f"Missing column: {col}"
+
+    def test_empty_pools(self, console):
+        """Empty pools dict produces panel with '0 pools' in title."""
+        from unittest.mock import MagicMock
+
+        mock_registry = MagicMock()
+        mock_registry.get_by_pool.return_value = []
+        panel = panels.render_agent_roster({}, None, mock_registry, {})
+        console.print(panel)
+        output = get_output(console)
+        assert "0 pools" in output
+
+    def test_tier_grouping(self, runtime, console):
+        """Core-tier agents appear in output."""
+        scores = runtime.trust_network.all_scores()
+        panel = panels.render_agent_roster(
+            runtime.pools, runtime.pool_groups, runtime.registry, scores,
+        )
+        console.print(panel)
+        output = get_output(console)
+        assert "core" in output.lower()
+
+    def test_size_format(self, runtime, console):
+        """Size column shows current/target format."""
+        scores = runtime.trust_network.all_scores()
+        panel = panels.render_agent_roster(
+            runtime.pools, runtime.pool_groups, runtime.registry, scores,
+        )
+        console.print(panel)
+        output = get_output(console)
+        # At least one pool should show e.g. "2/2" or "1/2"
+        import re
+        assert re.search(r"\d+/\d+", output), "No current/target size found"
+
+    def test_no_pool_groups(self, runtime, console):
+        """Handles pool_groups=None gracefully (team shows dash)."""
+        scores = runtime.trust_network.all_scores()
+        panel = panels.render_agent_roster(
+            runtime.pools, None, runtime.registry, scores,
+        )
+        console.print(panel)
+        output = get_output(console)
+        assert "Agent Roster" in output
+
+    def test_trust_confidence_format(self, runtime, console):
+        """Trust and confidence show avg +/- stdev format."""
+        scores = runtime.trust_network.all_scores()
+        panel = panels.render_agent_roster(
+            runtime.pools, runtime.pool_groups, runtime.registry, scores,
+        )
+        console.print(panel)
+        output = get_output(console)
+        assert "\u00b1" in output, "No +/- symbol found in trust/confidence"

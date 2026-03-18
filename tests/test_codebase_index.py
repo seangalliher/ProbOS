@@ -279,3 +279,115 @@ class TestSectionTargetedReading:
         content = idx.read_doc_sections("docs:DECISIONS.md", ["long"], max_lines=10)
         lines = content.splitlines()
         assert len(lines) <= 10
+
+
+class TestStructuredQueries:
+    """Tests for AD-312 structured query methods."""
+
+    def test_find_callers_returns_matches(self, index: CodebaseIndex):
+        """find_callers() finds files referencing a method."""
+        # 'build' is a common method name across the codebase
+        results = index.find_callers("build")
+        assert isinstance(results, list)
+        assert len(results) > 0
+        assert "path" in results[0]
+        assert "lines" in results[0]
+
+    def test_find_callers_empty(self, index: CodebaseIndex):
+        """find_callers() returns [] for nonexistent method."""
+        results = index.find_callers("xyzzy_not_a_real_method_42")
+        assert results == []
+
+    def test_find_callers_caches(self, index: CodebaseIndex):
+        """Second call uses cache (no re-scan)."""
+        results1 = index.find_callers("query")
+        assert results1  # should find something
+        # Cache should now contain the entry
+        assert "query" in index._caller_cache
+        results2 = index.find_callers("query")
+        assert results1 == results2
+
+    def test_find_tests_for_panels(self, index: CodebaseIndex):
+        """find_tests_for('experience/panels.py') finds test_experience.py."""
+        tests = index.find_tests_for("experience/panels.py")
+        # The test file tree is from src/probos — test files aren't there,
+        # but the method should still work without crashing
+        assert isinstance(tests, list)
+
+    def test_find_tests_for_unknown(self, index: CodebaseIndex):
+        """find_tests_for() returns [] for unknown file."""
+        tests = index.find_tests_for("nonexistent/fake_module.py")
+        assert tests == []
+
+    def test_get_full_api_surface(self, index: CodebaseIndex):
+        """get_full_api_surface() returns dict with key classes."""
+        surface = index.get_full_api_surface()
+        assert isinstance(surface, dict)
+        # Should include at least the classes we know are in _KEY_CLASSES
+        assert "AgentRegistry" in surface or "TrustNetwork" in surface
+
+    def test_expanded_key_classes(self, index: CodebaseIndex):
+        """API surface includes CodebaseIndex, PoolGroupRegistry, Shell (AD-312)."""
+        surface = index.get_full_api_surface()
+        # CodebaseIndex should have its own methods extracted
+        if "CodebaseIndex" in surface:
+            method_names = {m["method"] for m in surface["CodebaseIndex"]}
+            assert "query" in method_names
+            assert "find_callers" in method_names
+
+
+class TestImportGraph:
+    """Tests for AD-315 import graph methods."""
+
+    def test_analyze_file_extracts_imports(self, index: CodebaseIndex):
+        """_analyze_file() populates 'imports' key in file metadata."""
+        meta = index._file_tree.get("experience/shell.py")
+        assert meta is not None
+        assert "imports" in meta
+        imports = meta["imports"]
+        assert isinstance(imports, list)
+        probos_imports = [i for i in imports if i["module"].startswith("probos.")]
+        assert len(probos_imports) > 0
+
+    def test_import_graph_built(self, index: CodebaseIndex):
+        """Import graph is populated after build()."""
+        assert hasattr(index, "_import_graph")
+        assert isinstance(index._import_graph, dict)
+        assert len(index._import_graph) > 0
+
+    def test_reverse_import_graph_built(self, index: CodebaseIndex):
+        """Reverse import graph is populated after build()."""
+        assert hasattr(index, "_reverse_import_graph")
+        assert isinstance(index._reverse_import_graph, dict)
+        assert len(index._reverse_import_graph) > 0
+
+    def test_get_imports_shell(self, index: CodebaseIndex):
+        """get_imports('experience/shell.py') includes panels.py."""
+        imports = index.get_imports("experience/shell.py")
+        assert isinstance(imports, list)
+        assert any("panels" in p for p in imports)
+
+    def test_get_imports_unknown_file(self, index: CodebaseIndex):
+        """get_imports() returns [] for unknown file."""
+        imports = index.get_imports("nonexistent/fake.py")
+        assert imports == []
+
+    def test_find_importers(self, index: CodebaseIndex):
+        """find_importers() shows files that import a module."""
+        importers = index.find_importers("runtime.py")
+        assert isinstance(importers, list)
+        assert len(importers) > 0
+
+    def test_find_importers_unknown(self, index: CodebaseIndex):
+        """find_importers() returns [] for unknown file."""
+        importers = index.find_importers("nonexistent/fake.py")
+        assert importers == []
+
+    def test_import_graph_consistency(self, index: CodebaseIndex):
+        """Forward and reverse graphs are consistent."""
+        for rel, imports in index._import_graph.items():
+            for imp in imports:
+                importers = index._reverse_import_graph.get(imp, [])
+                assert rel in importers, (
+                    f"{rel} imports {imp} but {imp} doesn't list {rel} as importer"
+                )

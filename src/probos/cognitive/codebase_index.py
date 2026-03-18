@@ -53,6 +53,9 @@ _KEY_CLASSES = {
     "AgentRegistry",
     "EscalationManager",
     "AttentionManager",
+    "CodebaseIndex",
+    "PoolGroupRegistry",
+    "Shell",
 }
 
 # Project documents to index alongside source code (AD-299)
@@ -79,6 +82,9 @@ class CodebaseIndex:
         self._layer_map: dict[str, list[str]] = {}
         self._config_schema: dict[str, Any] = {}
         self._api_surface: dict[str, list[dict[str, str]]] = {}  # class_name → methods
+        self._caller_cache: dict[str, list[dict[str, Any]]] = {}  # AD-312
+        self._import_graph: dict[str, list[str]] = {}  # AD-315: file → files it imports
+        self._reverse_import_graph: dict[str, list[str]] = {}  # AD-315: file → files that import it
         self._built = False
 
     # ------------------------------------------------------------------
@@ -107,6 +113,32 @@ class CodebaseIndex:
                 meta = self._analyze_doc(doc_path, doc_rel)
                 # Prefix with "docs:" to distinguish from source files
                 self._file_tree[f"docs:{doc_rel}"] = meta
+
+        # Build import graph (AD-315a)
+        for rel, meta in self._file_tree.items():
+            if rel.startswith("docs:"):
+                continue
+            imported_paths: list[str] = []
+            for imp in meta.get("imports", []):
+                module = imp["module"]
+                if not module.startswith("probos."):
+                    continue
+                rel_parts = module.split(".")[1:]  # strip "probos" prefix
+                candidate = "/".join(rel_parts) + ".py"
+                if candidate in self._file_tree:
+                    imported_paths.append(candidate)
+                else:
+                    candidate_init = "/".join(rel_parts) + "/__init__.py"
+                    if candidate_init in self._file_tree:
+                        imported_paths.append(candidate_init)
+            self._import_graph[rel] = imported_paths
+
+        # Build reverse import graph
+        for rel, imports in self._import_graph.items():
+            for imp in imports:
+                if imp not in self._reverse_import_graph:
+                    self._reverse_import_graph[imp] = []
+                self._reverse_import_graph[imp].append(rel)
 
         self._build_layer_map()
         self._extract_config_schema()
@@ -304,6 +336,82 @@ class CodebaseIndex:
 
         return "".join(result_lines)
 
+    def find_callers(self, method_name: str, max_results: int = 10) -> list[dict[str, Any]]:
+        """Find files that reference a method name (text search across indexed sources).
+
+        AD-312: Searches all indexed source files for references to a method
+        name.  Returns up to *max_results* matches sorted by reference count.
+        Results are cached in ``_caller_cache`` to avoid re-scanning.
+        """
+        if method_name in self._caller_cache:
+            return self._caller_cache[method_name][:max_results]
+
+        results: list[dict[str, Any]] = []
+        for rel in self._file_tree:
+            if rel.startswith("docs:"):
+                continue
+            source = self.read_source(rel)
+            if not source:
+                continue
+            line_numbers = [
+                i + 1
+                for i, line in enumerate(source.splitlines())
+                if method_name in line
+            ]
+            if line_numbers:
+                results.append({"path": rel, "lines": line_numbers})
+
+        results.sort(key=lambda r: -len(r["lines"]))
+        self._caller_cache[method_name] = results
+        return results[:max_results]
+
+    def find_tests_for(self, file_path: str) -> list[str]:
+        """Find test files for a given source file using naming conventions.
+
+        AD-312: Extracts the module name from *file_path* and searches the
+        file tree for test files matching ``test_{module}`` patterns.
+        """
+        # Extract module name: "experience/panels.py" → "panels"
+        parts = file_path.replace("\\", "/").split("/")
+        filename = parts[-1] if parts else file_path
+        module = filename.replace(".py", "")
+
+        matches: list[str] = []
+        for rel in self._file_tree:
+            if rel.startswith("docs:"):
+                continue
+            rel_lower = rel.lower()
+            if f"test_{module}" in rel_lower or (
+                "test" in rel_lower and module in rel_lower
+            ):
+                matches.append(rel)
+        return sorted(matches)
+
+    def get_full_api_surface(self) -> dict[str, list[dict[str, str]]]:
+        """Return public API surface for all key classes.
+
+        AD-312: Exposes the complete ``_api_surface`` dict built at startup.
+        """
+        return dict(self._api_surface)
+
+    def get_imports(self, file_path: str) -> list[str]:
+        """Return list of internal (probos.*) files that this file imports.
+
+        AD-315b: Looks up *file_path* in the forward import graph built at
+        startup.  Only includes resolved probos-internal imports.
+        """
+        file_path = file_path.replace("\\", "/")
+        return list(self._import_graph.get(file_path, []))
+
+    def find_importers(self, file_path: str) -> list[str]:
+        """Return list of files that import this file (reverse import graph).
+
+        AD-315b: Looks up *file_path* in the reverse import graph built at
+        startup.
+        """
+        file_path = file_path.replace("\\", "/")
+        return list(self._reverse_import_graph.get(file_path, []))
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -346,6 +454,18 @@ class CodebaseIndex:
             # Extract API surface for key classes
             if node.name in _KEY_CLASSES:
                 self._api_surface[node.name] = self._extract_methods(node)
+
+        # Extract top-level import statements (AD-315a)
+        imports: list[dict[str, str]] = []
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imports.append({"module": alias.name, "name": alias.asname or alias.name})
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    for alias in node.names:
+                        imports.append({"module": node.module, "name": alias.name})
+        meta["imports"] = imports
 
         return meta
 

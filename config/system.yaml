@@ -55,6 +55,7 @@ cognitive:
 
   # Deep tier — Opus via Copilot proxy
   llm_model_deep: "claude-opus-4-20250514"
+  llm_timeout_deep: 300
 
   working_memory_token_budget: 4000
   decomposition_timeout_seconds: 30

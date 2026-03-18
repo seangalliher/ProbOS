@@ -8,6 +8,8 @@ runtime APIs to gather data, then passes it here for display.
 from __future__ import annotations
 
 import json
+import statistics
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
@@ -265,6 +267,113 @@ def render_agent_table(
         table.add_row(*row)
 
     return table
+
+
+# ---------------------------------------------------------------------------
+# Pool-level org chart (Agent Roster)
+# ---------------------------------------------------------------------------
+
+_TIER_ORDER = {"core": 0, "utility": 1, "domain": 2}
+_TIER_COLORS = {"core": "blue", "utility": "yellow", "domain": "green"}
+
+
+def _format_score(values: list[float]) -> Text:
+    """Format a list of scores as mean +/- stdev with trust-based coloring."""
+    if not values:
+        return Text("\u2014", style="dim")
+    avg = statistics.mean(values)
+    sd = statistics.pstdev(values) if len(values) > 1 else 0.0
+    return Text(f"{avg:.2f} \u00b1{sd:.2f}", style=_score_color(avg))
+
+
+def render_agent_roster(
+    pools: dict[str, Any],
+    pool_groups: Any,
+    registry: Any,
+    trust_scores: dict[str, float],
+) -> Panel:
+    """Pool-level org chart of all agents.
+
+    Columns: Type | Tier | Team | Pool | Size | States | Trust | Confidence
+    """
+    table = Table(show_lines=False)
+    table.add_column("Type")
+    table.add_column("Tier")
+    table.add_column("Team")
+    table.add_column("Pool")
+    table.add_column("Size", justify="right")
+    table.add_column("States")
+    table.add_column("Trust", justify="right")
+    table.add_column("Confidence", justify="right")
+
+    total_agents = 0
+
+    def _sort_key(item: tuple[str, Any]) -> tuple[int, str]:
+        pool_name, pool = item
+        agents = registry.get_by_pool(pool_name)
+        tier = getattr(agents[0], "tier", "domain") if agents else "domain"
+        return (_TIER_ORDER.get(tier, 2), pool_name)
+
+    for pool_name, pool in sorted(pools.items(), key=_sort_key):
+        agents = registry.get_by_pool(pool_name)
+        total_agents += len(agents)
+
+        # Tier
+        tier = getattr(agents[0], "tier", "domain") if agents else "domain"
+        tier_color = _TIER_COLORS.get(tier, "white")
+        tier_text = Text(tier, style=tier_color)
+
+        # Team (pool group)
+        group_name = pool_groups.group_for_pool(pool_name) if pool_groups else None
+        if group_name:
+            group = pool_groups.get_group(group_name)
+            team = group.display_name if group else group_name
+        else:
+            team = "\u2014"
+
+        # Size with health coloring
+        current = pool.current_size
+        target = pool.target_size
+        size_str = f"{current}/{target}"
+        if current < target:
+            size_text = Text(size_str, style="dim")
+        elif current > target:
+            size_text = Text(size_str, style="bright_red")
+        else:
+            size_text = Text(size_str)
+
+        # State distribution
+        state_counts: Counter[str] = Counter()
+        for agent in agents:
+            state_counts[agent.state.value] += 1
+        state_parts = []
+        for state_val, count in sorted(state_counts.items()):
+            state_enum = AgentState(state_val)
+            colour = STATE_COLORS.get(state_enum, "white")
+            state_parts.append(f"[{colour}]{state_val}: {count}[/{colour}]")
+        states_str = ", ".join(state_parts) if state_parts else "\u2014"
+
+        # Trust avg +/- stdev
+        pool_trust = [trust_scores.get(a.id, 0.5) for a in agents]
+        trust_text = _format_score(pool_trust)
+
+        # Confidence avg +/- stdev
+        pool_conf = [a.confidence for a in agents]
+        conf_text = _format_score(pool_conf)
+
+        table.add_row(
+            pool.agent_type,
+            tier_text,
+            team,
+            pool_name,
+            size_text,
+            states_str,
+            trust_text,
+            conf_text,
+        )
+
+    title = f"Agent Roster ({total_agents} agents in {len(pools)} pools)"
+    return Panel(table, title=title, border_style="cyan")
 
 
 def render_weight_table(weights: dict[tuple, float]) -> Table:

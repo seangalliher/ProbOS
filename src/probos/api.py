@@ -701,6 +701,7 @@ def create_app(runtime: Any) -> FastAPI:
                     "ad_number": req.ad_number,
                     "constraints": req.constraints,
                 },
+                ttl_seconds=600.0,  # Builder works asynchronously — no rush
             )
 
             results = await rt.intent_bus.broadcast(intent)
@@ -904,6 +905,7 @@ def create_app(runtime: Any) -> FastAPI:
                     "feature": req.feature,
                     "phase": req.phase,
                 },
+                ttl_seconds=600.0,  # Architect works asynchronously — no rush
             )
 
             results = await rt.intent_bus.broadcast(intent)
