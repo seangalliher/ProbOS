@@ -291,7 +291,7 @@ IMPORTANT RULES:
 
                 # Layer 2b: Full source of selected files (AD-311)
                 total_lines = 0
-                source_budget = 4000
+                source_budget = 2000
                 relevant_parts = ["## Relevant Files (full source — LLM-selected)"]
                 for path in selected_paths:
                     if total_lines >= source_budget:
@@ -302,8 +302,8 @@ IMPORTANT RULES:
                         continue
                     source_lines = source.splitlines()
                     truncated = False
-                    if len(source_lines) > 500:
-                        source_lines = source_lines[:500]
+                    if len(source_lines) > 300:
+                        source_lines = source_lines[:300]
                         truncated = True
                     if total_lines + len(source_lines) > source_budget:
                         remaining = source_budget - total_lines
@@ -327,7 +327,7 @@ IMPORTANT RULES:
                 if test_paths:
                     test_section = ["## Associated Test Files"]
                     for tp in test_paths[:10]:
-                        header = codebase_index.read_source(tp, start_line=1, end_line=20)
+                        header = codebase_index.read_source(tp, start_line=1, end_line=5)
                         if header:
                             test_section.append(f"\n### {tp}\n```python\n{header}\n```")
                         else:
@@ -352,15 +352,22 @@ IMPORTANT RULES:
                         "## Caller Analysis\n" + "\n".join(caller_section_lines)
                     )
 
-                # Full API surface for method verification
+                # Selective API surface — only classes found in selected files
+                relevant_classes: set[str] = set()
+                for path in selected_paths:
+                    meta = codebase_index._file_tree.get(path, {})
+                    relevant_classes.update(meta.get("classes", []))
                 api_surface = codebase_index.get_full_api_surface()
                 if api_surface:
                     api_section = ["## API Surface (verified method signatures)"]
                     for cls, methods in sorted(api_surface.items()):
+                        if cls not in relevant_classes:
+                            continue
                         api_section.append(f"\n### {cls}")
                         for m in methods:
                             api_section.append(f"  {m['method']}({m.get('signature', '')})")
-                    context_parts.append("\n".join(api_section))
+                    if len(api_section) > 1:
+                        context_parts.append("\n".join(api_section))
 
                 # Import graph for selected files (AD-315c)
                 import_lines: list[str] = []
@@ -419,7 +426,7 @@ IMPORTANT RULES:
                 agent_map = codebase_index.get_agent_map()
                 if agent_map:
                     context_parts.append("## Registered Agents\n" + "\n".join(
-                        f"- {a['type']} ({a.get('tier', '?')}) [{a.get('module', '')}]: bases={a.get('bases', [])}"
+                        f"- {a['type']} ({a.get('tier', '?')})"
                         for a in agent_map
                     ))
             except Exception:
@@ -446,7 +453,7 @@ IMPORTANT RULES:
                 if phase:
                     keywords.append(f"phase {phase}")
                 sections = codebase_index.read_doc_sections(
-                    roadmap_path, keywords, max_lines=200
+                    roadmap_path, keywords, max_lines=100
                 )
                 if sections:
                     context_parts.append(f"## Roadmap Context\n{sections}")
@@ -459,7 +466,7 @@ IMPORTANT RULES:
                 if phase:
                     keywords.append(f"phase {phase}")
                 progress_sections = codebase_index.read_doc_sections(
-                    progress_path, keywords, max_lines=100
+                    progress_path, keywords, max_lines=50
                 )
                 if progress_sections:
                     context_parts.append(f"## Progress Context\n{progress_sections}")
@@ -472,23 +479,8 @@ IMPORTANT RULES:
                 )
                 if decisions_content:
                     lines = decisions_content.strip().split("\n")
-                    tail = "\n".join(lines[-80:])
-                    context_parts.append(f"## Recent Decisions (last 80 lines)\n{tail}")
-            except Exception:
-                pass
-
-            # Layer 7: Sample build prompt for format calibration
-            try:
-                sample_prompt = codebase_index.read_source(
-                    "docs:prompts/add-architect-api-hxi.md", start_line=1, end_line=60
-                )
-                if sample_prompt:
-                    context_parts.append(
-                        "## Sample Build Prompt (for format reference)\n"
-                        "The BuildSpec description you generate should aim for this level of "
-                        "detail and specificity:\n"
-                        f"```markdown\n{sample_prompt}\n```"
-                    )
+                    tail = "\n".join(lines[-40:])
+                    context_parts.append(f"## Recent Decisions (last 40 lines)\n{tail}")
             except Exception:
                 pass
 

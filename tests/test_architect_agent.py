@@ -623,8 +623,8 @@ class TestPerceivePoolGroups:
 
 class TestPerceiveDecisionsTail:
     @pytest.mark.asyncio
-    async def test_decisions_tail_80_lines(self):
-        """Layer 6: DECISIONS.md tail is 80 lines (not 30)."""
+    async def test_decisions_tail_40_lines(self):
+        """Layer 6: DECISIONS.md tail is 40 lines."""
         mock_index = _make_mock_index()
 
         # Build a DECISIONS file with 100 lines
@@ -640,29 +640,10 @@ class TestPerceiveDecisionsTail:
         agent = _make_agent(mock_index)
         obs = await agent.perceive(_make_intent())
         ctx = obs["codebase_context"]
-        assert "last 80 lines" in ctx
-        # Should contain AD-99 (last line) but not AD-19 (line 20, excluded)
+        assert "last 40 lines" in ctx
+        # Should contain AD-99 (last line) but not AD-59 (line 60, excluded)
         assert "AD-99" in ctx
-        assert "AD-19" not in ctx
-
-
-class TestPerceiveSamplePrompt:
-    @pytest.mark.asyncio
-    async def test_sample_prompt_in_context(self):
-        """Layer 7: Sample build prompt appears with format reference framing."""
-        mock_index = _make_mock_index()
-
-        def _read_source(path, **kwargs):
-            if "add-architect-api-hxi" in str(path):
-                return "# AD-308/309: Architect API + HXI\n\nSample content..."
-            return ""
-        mock_index.read_source.side_effect = _read_source
-
-        agent = _make_agent(mock_index)
-        obs = await agent.perceive(_make_intent())
-        ctx = obs["codebase_context"]
-        assert "Sample Build Prompt (for format reference)" in ctx
-        assert "AD-308/309" in ctx
+        assert "AD-59" not in ctx
 
 
 class TestPerceiveGracefulDegradation:
@@ -805,9 +786,14 @@ class TestDeepLocalize:
 
     @pytest.mark.asyncio
     async def test_perceive_includes_api_surface(self):
-        """Context includes API Surface section with method signatures."""
+        """Context includes API Surface section with method signatures for classes in selected files."""
         mock_index = _make_mock_index_with_source(
-            query={"matching_files": [], "matching_methods": []},
+            query={"matching_files": [
+                {"path": "mesh/registry.py", "relevance": 8, "docstring": "Agent registry"},
+            ], "matching_methods": []},
+            file_tree={
+                "mesh/registry.py": {"classes": ["AgentRegistry"], "functions": []},
+            },
             full_api_surface={
                 "AgentRegistry": [
                     {"method": "all", "signature": "def all() -> list[BaseAgent]"},
@@ -817,7 +803,7 @@ class TestDeepLocalize:
         )
 
         mock_llm = AsyncMock()
-        mock_llm.complete.return_value = MagicMock(content="")
+        mock_llm.complete.return_value = MagicMock(content="mesh/registry.py")
 
         mock_runtime = MagicMock()
         mock_runtime.codebase_index = mock_index
