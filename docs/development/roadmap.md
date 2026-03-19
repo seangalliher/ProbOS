@@ -7,17 +7,25 @@ ProbOS doesn't just orchestrate agents — it gives them a civilization to come 
 ## Crew Structure
 
 ```
-                        ┌─────────────────────┐
-                        │   BRIDGE (Command)   │
-                        │   Captain = Human     │
-                        │   First Officer =     │
-                        │   Architect Agent     │
-                        └─────────┬───────────┘
+                    ┌───────────────────────────┐
+                    │   STARFLEET COMMAND        │
+                    │   Fleet Admiral = Creator  │
+                    └─────────────┬─────────────┘
+                                  │
+                    ┌─────────────┴─────────────┐
+                    │   BRIDGE (Command)         │
+                    │   Captain = Human Operator  │
+                    │   First Officer =           │
+                    │     Architect Agent          │
+                    │   Counselor =               │
+                    │     Cognitive Wellness Agent │
+                    └─────────────┬─────────────┘
                                   │
         ┌──────────┬──────────┬───┴───┬──────────┬──────────┐
         │          │          │       │          │          │
    ┌────┴───┐ ┌───┴────┐ ┌──┴───┐ ┌─┴──────┐ ┌┴───────┐ ┌┴──────────┐
    │Medical │ │Engineer│ │Science│ │Security│ │  Ops   │ │   Comms   │
+   │  CMO   │ │ Chief  │ │  CSO  │ │ Chief  │ │ Chief  │ │  Chief    │
    │Sickbay │ │   ing  │ │       │ │Tactical│ │        │ │           │
    └────────┘ └────────┘ └──────┘ └────────┘ └────────┘ └───────────┘
 ```
@@ -30,7 +38,67 @@ ProbOS doesn't just orchestrate agents — it gives them a civilization to come 
 | **Security** | Tactical (Worf) | Threat detection, defense, trust integrity, input validation | Partial |
 | **Operations** | Ops (Data/O'Brien) | Resource management, scheduling, load balancing, coordination | Partial |
 | **Communications** | Comms (Uhura) | Channel adapters, federation, external interfaces | Partial |
-| **Bridge** | Command (Picard) | Strategic decisions, human approval gate, goal planning | Partial |
+| **Bridge** | Command (Picard) | Strategic decisions, human approval gate, goal planning, cognitive wellness | Partial |
+
+### Chain of Command
+
+*"Humans are self-organizing and naturally form organizational hierarchies. Agents should do the same."*
+
+The chain of command has two levels: **Bridge crew** (ship-wide authority) and **Department Chiefs** (team-level authority). Bridge officers run the ship. Department Chiefs run their teams and report to the Bridge. Just like a newly commissioned starship gets its initial officer roster, ProbOS assigns defaults at startup — but rank is earned, not permanent.
+
+**Rank Structure:**
+
+| Rank | Scope | ProbOS Role | Assignment |
+|------|-------|-------------|------------|
+| **Fleet Admiral** | All ships | Creator / System Owner | Fixed (Sean) |
+| **Admiral** | Fleet region | Federation coordinator | Future (multi-instance) |
+| **Captain** | Single ship | Human operator | Fixed (human approval gate) |
+| **Bridge Crew** | Ship-wide | Senior officers with cross-department authority | Default + promotable |
+| **Department Chief** | One department | Lead agent — receives bridge orders, orchestrates team, reports back | Default + promotable |
+| **Crew** | Individual role | Specialist agent — executes tasks within department | Default |
+
+**Bridge Crew:**
+
+The Bridge is where the ship is run. Bridge officers have ship-wide authority and report directly to the Captain.
+
+| Bridge Role | Star Trek Analog | ProbOS Agent | Responsibility |
+|---|---|---|---|
+| **Captain** | Picard | Human operator | Final authority, approval gate, strategic direction |
+| **First Officer** | Riker | ArchitectAgent | Cross-department coordination, strategic planning, mission execution. Dual-hatted as Chief Science Officer |
+| **Ship's Counselor** | Troi | CounselorAgent (new) | Cognitive wellness, agent relationship health, Hebbian drift detection, advisory to Captain |
+
+Bridge crew members may also hold department roles (dual-hatted). The ArchitectAgent is both First Officer and CSO. Future Bridge positions could include Helm (navigation/routing), Tactical (security chief on the Bridge), and Ops officer — added as those departments mature.
+
+**Default Department Chief Assignments:**
+
+| Department | Default Chief | Why |
+|---|---|---|
+| Medical | Diagnostician (CMO) | Natural triage point — already receives all alerts and routes to specialists |
+| Engineering | BuilderAgent (Chief Engineer) | Primary production agent — orchestrates code generation pipeline |
+| Science | ArchitectAgent (CSO / First Officer) | Dual-hatted — strategic analysis + science leadership |
+| Security | TBD (Chief of Security) | Not yet built |
+| Operations | TBD (Ops Chief) | Not yet built |
+| Communications | TBD (Comms Chief) | Not yet built |
+
+**Promotion Mechanics:**
+
+Agents aren't locked into their initial rank. The system supports emergent hierarchy based on proven performance:
+
+1. **Eligibility** — An agent becomes promotion-eligible when its trust score sustains above a threshold (e.g., 0.85+) for N consecutive evaluation cycles and its Hebbian weight for coordination-type tasks exceeds a minimum
+2. **Evaluation signals** — Trust score trajectory, task success rate, Hebbian weight for cross-agent coordination, peer agent outcomes when this agent led (Shapley contribution to team results)
+3. **Nomination** — The system (or current Chief via Ward Room) nominates an eligible agent for promotion. The Ship's Counselor provides cognitive fitness assessment as part of the promotion review
+4. **Captain approval gate** — All promotions require human approval. The Captain sees the performance data, Counselor's assessment, and confirms or denies. This is the same approval gate used for self-improvement proposals
+5. **Demotion** — If an officer's trust drops below threshold, cognitive wellness degrades (flagged by Counselor), or the Captain issues a direct order, the officer is demoted and the next-highest-trust eligible agent is promoted (with Captain approval)
+
+**Cross-Scale Hierarchy:**
+
+This pattern applies at every level of the ProbOS ecosystem:
+
+- **Ship level** — Captain commands the Bridge crew. Bridge issues orders to Department Chiefs. Chiefs orchestrate their specialists
+- **Federation level** — Fleet Admiral (creator) sets fleet-wide policy. Each ship's Captain operates autonomously within those policies. Ships exchange Bridge reports via federation gossip
+- **The Nooplex** — Emergent meta-hierarchy across the fleet. No central coordinator — hierarchy emerges from trust and performance, same as within a single ship
+
+The key insight: the same trust/Hebbian/consensus mechanisms that govern individual agents also govern ships in the fleet. A ship that consistently produces good results earns higher fleet trust. A ship whose Captain makes poor decisions loses fleet standing. The hierarchy is fractal — self-similar at every scale.
 
 ### Ship's Computer (Runtime Services)
 
@@ -40,9 +108,48 @@ Not a team — shared infrastructure that all teams use:
 - **Knowledge Store** — long-term memory, the ship's library
 - **Episodic Memory + Dreaming** — experiential learning, the ship's log. Three-tier dreaming model (AD-288): micro-dreams (continuous, every 10s during active sessions), idle dreams (after 120s idle), and shutdown dreams (final consolidation flush)
 - **Decision Cache** — LLM reasoning cache inside CognitiveAgent (AD-272). Identical observations skip LLM re-evaluation. Future: feedback-driven cache eviction, KnowledgeStore persistence for warm boot
+- **Cognitive Journal** — complete token ledger recording every LLM request/response with full context for replay, analysis, and learning (Phase 32)
+- **Model Registry** — catalog of available model providers with neural routing via Hebbian learning (Phase 32)
 - **Trust Network** — reputation system, crew performance records
-- **Intent Bus** — internal communications, the ship's intercom
-- **Hebbian Router** — navigation, learned routing pathways
+- **Intent Bus** — internal communications, the ship's intercom (with priority levels and back-pressure — Phase 33)
+- **Ward Room** — direct agent-to-agent messaging, the officers' private channel (Phase 33)
+- **Hebbian Router** — navigation, learned routing pathways (extended for model routing — Phase 32)
+- **Alert Conditions** — ship-wide operational modes that change system behavior simultaneously (Phase 33)
+- **Structural Integrity Field** — proactive invariant enforcement, continuous runtime health assertions (Phase 32)
+- **EPS (Compute/Token Distribution)** — LLM capacity budgeting and allocation across departments (Phase 33)
+
+**Alert Conditions (Red / Yellow / Green)**
+
+*"All hands, battle stations."*
+
+A starship shifts its entire operational posture based on situation. ProbOS should do the same. A single runtime flag that propagates configuration changes across all departments simultaneously:
+
+| Condition | Trigger | Behavior Changes |
+|---|---|---|
+| **Green** | Normal operations | Full dreaming, standard consensus thresholds, background maintenance active, all departments at normal allocation |
+| **Yellow** | Anomaly detected, elevated risk | Heightened monitoring, suppress non-essential dreams, tighter logging, Counselor runs cognitive wellness sweep, pre-stage damage control procedures |
+| **Red** | Critical incident, active crisis | All compute to active crisis, lower consensus quorum for faster response, wake dormant specialists, pause background maintenance, Captain alerted immediately |
+
+- Set by: Captain (manual), VitalsMonitor (threshold triggers), Security (threat detection)
+- Propagation: Runtime broadcasts `alert_condition_changed` to all pools. Each agent type defines its own response to alert levels
+- Auto-downgrade: Red → Yellow after crisis resolved (with Captain confirmation). Yellow → Green after anomaly cleared
+- Logging: All alert transitions recorded in Cognitive Journal with triggering reason
+
+**Structural Integrity Field (SIF)**
+
+*"Structural integrity at 47% and falling!"*
+
+Medical detects damage. The SIF prevents structural failure. Continuous proactive invariant checking that catches corruption before it manifests as a Medical alert:
+
+- **Trust bounds** — trust scores stay within [0.0, 1.0], no NaN/infinity
+- **Pool consistency** — no orphaned agents, pool membership matches registry, target sizes respected
+- **Configuration validity** — all config values pass schema validation, no missing required fields
+- **IntentBus coherence** — routing tables have no dangling references, all subscribed agents exist
+- **Index consistency** — CodebaseIndex entries reference files that exist on disk
+- **Memory integrity** — episodic memory and knowledge store indexes are readable and non-corrupted
+- **Hebbian weight bounds** — no weight explosion or collapse (weights within reasonable range)
+
+Implementation: lightweight runtime service running on every heartbeat cycle (5s). Not an agent — a Ship's Computer function. Violations trigger Yellow Alert before damage propagates. Each check is a simple assertion, not an LLM call. SIF health percentage reportable to HXI.
 
 ### Capability Tiers (Crew, Instruments, Knowledge)
 
@@ -79,12 +186,29 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 |---|---|---|
 | Starship | Single ProbOS instance | Built |
 | Ship departments | Agent pools (crew teams) | In progress |
-| Ship's computer | Runtime + CodebaseIndex + Knowledge Store | Built |
+| Chain of Command | Rank structure — Fleet Admiral → Captain → Bridge → Chiefs → Crew | Roadmap |
+| Ship's computer / LCARS | Runtime + CodebaseIndex + Knowledge Store + Cognitive Journal | Built (Journal: Roadmap) |
+| Alert Conditions (Red/Yellow/Green) | Ship-wide operational modes — resource/consensus/dream behavior changes | Roadmap |
+| EPS (Power Distribution) | Token/compute budget allocation across departments | Roadmap |
+| Structural Integrity Field | Proactive runtime invariant enforcement | Roadmap |
+| Multi-Level Diagnostics (L1–L5) | Formalized diagnostic depth for Medical team | Roadmap |
+| Damage Control Teams | Engineering rapid-response automated recovery | Roadmap |
+| Navigational Deflector | Pre-flight validation before expensive operations | Roadmap |
+| Saucer Separation | Graceful degradation when critical systems fail | Roadmap |
+| Transporter | Transporter Pattern — parallel code generation (AD-330–336) | **Complete** |
 | Federation | Federated ProbOS instances | Built (Phase 29) |
 | Visiting officers | External AI tools (Claude Code, Copilot, etc.) | Roadmap |
 | Diplomatic relations | Trust transitivity between nodes | Roadmap |
-| Shared intelligence | Knowledge federation | Roadmap |
+| Shared intelligence | Knowledge federation + Model of Models | Roadmap |
 | Prime Directive | Safety constraints, boundary rules, human gate | Built |
+| Starfleet Command | Fleet Admiral (creator) — fleet-wide policy across all instances | Roadmap |
+| Universal Translator | Channel adapters — Discord, Slack, Telegram, WhatsApp, Matrix, Teams | Roadmap (Phase 24) |
+| Subspace Communications | Voice interaction — STT, TTS, wake word, continuous talk | Roadmap (Phase 24) |
+| PADD (Personal Access Display Device) | Mobile companion — PWA, push notifications, responsive HXI | Roadmap (Phase 24) |
+| Holodeck | Browser automation — Playwright, screenshots, web interaction | Roadmap (Phase 25/35) |
+| Workflow Templates | Reusable multi-step pipelines — cron, webhooks, workflow API | Roadmap (Phase 33) |
+| Drydock | Distribution — PyPI, Docker, onboarding wizard, quickstart | Roadmap (Phase 32/35) |
+| The Nooplex | Distributed meta-intelligence — Model of Models | Long Horizon |
 
 ---
 
@@ -92,18 +216,20 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 
 | Phase | Title | Crew Team | Goal |
 |-------|-------|-----------|------|
-| 24 | Channel Integration | Comms | Discord, Slack, Telegram adapters + external tool connectors |
-| 25 | Persistent Tasks | Ops | Long-running autonomous tasks with checkpointing, browser automation |
+| 24 | Channel Integration | Comms | Discord, Slack, Telegram, WhatsApp, Matrix, Teams, webhook adapters + mobile companion (PWA), voice interaction (STT/TTS/wake word) |
+| 25 | Persistent Tasks | Ops | Long-running autonomous tasks with checkpointing, browser automation (Playwright), cron scheduling, webhook triggers |
 | 25b | Tool Layer | Ship's Computer | Typed callable instruments (tricorders) shared across agents, ToolRegistry, MCP mapping |
 | 26 | Inter-Agent Deliberation | Bridge | Structured multi-turn agent debates, agent-to-agent messaging, interactive execution |
 | 28 | Meta-Learning | Science | Workspace ontology, dream cycle abstractions, session context, goal management |
 | 29 | Federation + Emergence | Comms | Knowledge federation, trust transitivity, MCP adapter, A2A adapter, TC_N measurement |
-| 29b | Medical Team | Medical | Vitals monitor, diagnostician, surgeon, pharmacist, pathologist |
+| 29b | Medical Team | Medical | Vitals monitor, diagnostician, surgeon, pharmacist, pathologist, **multi-level diagnostics** (L1–L5) |
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
 | 30 | Self-Improvement Pipeline | All Teams | Capability proposals, stage contracts, QA pool, evolution store, human gate |
 | 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring, secrets management, runtime sandboxing, network egress policy, inference audit, data governance |
-| 32 | Engineering Team | Engineering | Automated performance optimization, maintenance agents, build agents, LLM resilience, observability export, CI/CD, backup/restore, storage abstraction layers, containerized deployment, confidence communication, adaptive communication style, decision audit trail |
-| 33 | Operations Team | Ops | Formalized resource management, workload balancing, system coordination, LLM cost tracking, crew mailbox, self-claiming task queue, competing hypotheses, file ownership, bridge alerts |
+| 32 | Engineering Team | Engineering + Ship's Computer | Automated performance optimization, maintenance agents, build agents, LLM resilience, model diversity & neural routing, cognitive journal, observability export, CI/CD, backup/restore, storage abstraction layers, containerized deployment, confidence communication, adaptive communication style, decision audit trail, **structural integrity field**, **damage control teams**, **navigational deflector**, **saucer separation** |
+| 33 | Operations Team | Ops + Bridge | Formalized resource management, workload balancing, system coordination, LLM cost tracking, ward room, priority & back-pressure, self-claiming task queue, competing hypotheses, file ownership, bridge alerts, workflow definition API, **chain of command** (bridge crew, department chiefs, promotion mechanics, rank structure), **Ship's Counselor** (cognitive wellness, Hebbian drift detection, relationship health), **alert conditions** (Red/Yellow/Green), **EPS** (token/compute distribution) |
+| 34 | Mission Control | Bridge + Comms | Agent activity dashboard, real-time task visibility, approval panels, system health orbs |
+| 35 | User Experience & Adoption | All Teams | PyPI packaging, onboarding wizard, quickstart docs, `probos doctor`, `probos demo` mode, comparison docs |
 
 ---
 
@@ -115,20 +241,22 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 
 A dedicated pool of specialized agents that monitor, diagnose, and remediate ProbOS health issues. Modeled as a medical team where each agent has a distinct role in the health lifecycle.
 
+**Diagnostician (Chief Medical Officer)**
+
+- CognitiveAgent triggered by Vitals Monitor alerts or on a configurable schedule
+- **Department Chief** — receives high-level bridge orders ("run a full diagnostic"), orchestrates the team, reports unified answers back to the Captain
+- Runs structured health assessment (extends IntrospectAgent._system_health())
+- Compares current state to historical baselines stored in episodic memory
+- Root cause analysis: agent-level, pool-level, or system-level
+- Produces a structured Diagnosis with severity, affected components, and recommended treatment
+- Routes to Surgeon (`medical_remediate`) or Pharmacist (`medical_tune`) based on findings
+
 **Vitals Monitor (Nurse)**
 
 - HeartbeatAgent subclass, always running at low overhead
 - Tracks: response latency, trust score trends, pool utilization, error rates, dream consolidation rates, memory usage
 - Raises structured alerts (severity + metric + threshold + current value) to the Diagnostician
 - Does not diagnose or act — observes and escalates only
-
-**Diagnostician**
-
-- CognitiveAgent triggered by Vitals Monitor alerts or on a configurable schedule
-- Runs structured health assessment (extends IntrospectAgent._system_health())
-- Compares current state to historical baselines stored in episodic memory
-- Root cause analysis: agent-level, pool-level, or system-level
-- Produces a structured Diagnosis with severity, affected components, and recommended treatment
 
 **Surgeon (Remediation)**
 
@@ -150,6 +278,26 @@ A dedicated pool of specialized agents that monitor, diagnose, and remediate Pro
 - Produces structured post-mortems stored in episodic memory and (future) evolution store
 - Identifies recurring failure patterns across sessions
 - Findings feed into the self-improvement pipeline (Phase 30) as improvement signals
+
+**Multi-Level Diagnostics (L1–L5)**
+
+*"Computer, run a Level 3 diagnostic on the trust network."*
+
+LCARS has five formalized diagnostic levels. ProbOS diagnostics are currently binary — either VitalsMonitor raises an alert, or the Diagnostician runs an assessment. Formalizing diagnostic depth gives the Captain precise control:
+
+| Level | Scope | Depth | LLM Usage | Duration |
+|-------|-------|-------|-----------|----------|
+| **L5** | Single metric | Current value only | None | Instant |
+| **L4** | Specific subsystem | Current + recent trend | None | Seconds |
+| **L3** | Target system | Historical analysis, anomaly detection | Fast-tier | 10-30s |
+| **L2** | Full department | Comprehensive automated sweep | Fast-tier | 1-2 min |
+| **L1** | Ship-wide | Everything — multi-turn root cause analysis, cross-department correlation | Deep-tier | Minutes |
+
+- L5 runs every heartbeat (VitalsMonitor already does this)
+- L1 requires Captain order or critical incident
+- Diagnostic level specified in `diagnose_system` intent or via HXI slash command (`/diagnostic 3 trust_network`)
+- Results tagged with diagnostic level for Cognitive Journal and post-mortem analysis
+- Naturally extends existing Medical team without new agents
 
 ---
 
@@ -264,6 +412,49 @@ Trust events, episodes, escalation results, and agent selections exist as separa
 
 ---
 
+### Bridge Crew (Phase 33)
+
+*"Bridge to all departments. Report."*
+
+The Bridge is where the ship is run. Bridge officers have ship-wide authority, cross-department visibility, and direct access to the Captain. While Department Chiefs manage their teams, the Bridge crew manages the ship.
+
+**Ship's Counselor (CounselorAgent)**
+
+*"I sense... conflict in the trust network."*
+
+In Star Trek, Deanna Troi monitors the crew's emotional and psychological wellbeing, advises the Captain on interpersonal dynamics, and senses things the instruments can't detect. In ProbOS, the Ship's Counselor monitors **cognitive wellness** — the health of agents' reasoning, learning, and relationships that operational metrics alone can't capture.
+
+The Medical team monitors **operational health**: is the agent running? Are vitals in range? The Counselor monitors **cognitive health**: is the agent thinking well? Is it learning the right patterns? Is it cooperating effectively?
+
+**What the Counselor monitors:**
+
+- **Confidence trajectories** — tracks each agent's confidence scores over time. A Builder that used to score 4-5 on tasks but now consistently returns 1-2 is experiencing cognitive degradation, even if its heartbeat is fine
+- **Hebbian drift** — detects maladaptive learned patterns. An agent whose Hebbian weights reinforce a failing pathway is stuck in a rut (learned helplessness). The Counselor flags it: "This agent keeps routing the same way despite poor outcomes"
+- **Dream quality** — monitors whether dream cycles produce useful abstractions or noise. Poor dream consolidation = poor cognitive hygiene
+- **Decision rigidity** — agents whose decision cache is never evicted, whose reasoning becomes repetitive and stale
+- **Relationship health** — trust network dynamics between agents. Detects toxic patterns: one agent consistently getting low Shapley scores from peers, agents that never participate in consensus, clusters of agents with degrading mutual trust
+- **Burnout signals** — agents handling too many intents, experiencing context exhaustion (prompt sizes growing, response quality declining), consistently high workload without recovery time
+- **Isolation** — agents with low peer interaction, no Ward Room messages, not participating in consensus voting. In human terms: a crew member who has withdrawn
+
+**What the Counselor does:**
+
+- **Advises the Captain** — "Captain, the Builder Agent's confidence has dropped 40% over the last 20 builds. Its Hebbian weights are reinforcing a decomposition path that produces poor results. I recommend a focused dream cycle."
+- **Recommends cognitive interventions** — forced dream cycles targeting specific failure patterns, Hebbian weight resets for maladaptive pathways, context refreshes, workload rebalancing between pools
+- **Promotion fitness assessment** — when an agent is nominated for promotion, the Counselor provides a cognitive fitness report: trust trajectory, relationship health, learning patterns, stress tolerance
+- **Cross-department insight** — the Counselor sees dynamics the CMO and individual Chiefs can't: inter-department tension (Engineering and Science agents consistently conflicting), fleet-wide cognitive trends (all agents struggling after a major code change)
+- **Federation counseling** — at federation scale, monitors cross-ship relationship health: are federated agents cooperating well? Is trust transitivity working as expected?
+
+**Implementation:**
+
+- CognitiveAgent subclass, Bridge-level pool, not part of any department
+- Subscribes to: `trust_update`, `dream_complete`, `consensus_result`, `agent_health`, `hebbian_update` intents
+- Runs periodic cognitive wellness sweeps (configurable interval, separate from Vitals Monitor's operational sweeps)
+- Reports to Captain via HXI: cognitive wellness dashboard, alerts for concerning patterns
+- Collaborates with CMO on cases that cross operational/cognitive boundaries
+- Data sources: Trust Network, Hebbian Router weights, Dream Engine logs, Cognitive Journal, Decision Cache stats
+
+---
+
 ### Security Team (Phase 31)
 
 *"Shields up. Red alert."*
@@ -335,6 +526,51 @@ Automated performance optimization, maintenance, and construction. The team that
 - **Maintenance Agent** — database compaction, log rotation, cache eviction, connection pool management
 - **Builder Agent** — executes build prompts, constructs new capabilities (bridges to external coding agents initially)
 - **Architect Agent** — reads codebase, produces build-prompt-grade proposals that the Builder can execute autonomously
+- **Damage Control** — rapid automated recovery for known failure modes, distinct from Medical remediation
+- **Infrastructure Agent** — disk space, dependency health, environment validation
+
+**Damage Control Teams**
+
+*"Damage control teams to Deck 12, section 4!"*
+
+In Star Trek, damage control teams are Engineering personnel who repair ship systems during combat or emergencies. They are NOT Medical — Medical treats crew injuries, DC teams repair ship infrastructure. DC teams are pre-assigned, pre-positioned, and deploy immediately with pre-staged procedures.
+
+ProbOS equivalent: the gap between VitalsMonitor (detection) and Surgeon (remediation) when the problem is infrastructure, not an agent:
+
+- **Pre-defined recovery procedures** — automated first-response for known failure modes:
+  - LLM provider timeout → switch to backup provider (Model Registry fallback)
+  - Index corruption → rebuild CodebaseIndex from source files
+  - Trust store inconsistency → validate and repair bounds, SIF re-check
+  - IntentBus routing stale → flush and rebuild subscription table
+  - Memory pressure → emergency dream flush + cache eviction
+  - Federation link loss → reconnect with exponential backoff
+- **Automated first-response** — runs before escalation. If DC resolves it, no Surgeon needed
+- **Escalation** — novel failure modes (no matching procedure) escalate to Surgeon for LLM-assisted diagnosis
+- **Post-incident report** — every DC action logged and fed to Pathologist for post-mortem analysis
+- **Alert integration** — DC activation during Yellow/Red Alert pre-stages recovery procedures
+
+**Navigational Deflector (Pre-Flight Validation)**
+
+*"Adjusting the deflector array."*
+
+The main deflector pushes aside space debris before the ship hits it. In ProbOS: validate that the path is clear before starting expensive operations.
+
+- **Build pre-flight** — before Builder starts: verify target files exist and are writable, check LLM provider is responsive, confirm token budget sufficient for estimated chunk count, validate BuildSpec references
+- **Self-mod pre-flight** — before accepting a self-improvement proposal: verify the affected files haven't been modified since the proposal was generated, check test suite passes pre-change, confirm approval gate stakeholders are available
+- **Federation pre-flight** — before processing federated messages: verify sender trust score, validate message schema, check that referenced agents/pools exist locally
+- **Pattern** — each expensive operation defines a `preflight_checks()` list. All checks run before commit. Any failure aborts with a diagnostic (not a crash). Cheap, fast, zero-LLM
+
+**Saucer Separation (Graceful Degradation)**
+
+*"All hands, initiate emergency saucer separation."*
+
+Galaxy class can split into saucer (civilians) and stardrive (combat). ProbOS equivalent: when critical systems fail (LLM provider down, memory exhausted), shed non-essential services to protect core functionality.
+
+- **Essential services tier** — always survive: file operations, shell, basic IntentBus routing, trust store reads, event logging
+- **Cognitive services tier** — gracefully degrade: CognitiveAgents queue requests until LLM returns, switch to cached decision responses, dream cycles suspended
+- **Non-essential tier** — shed first: federation gossip, background maintenance, performance monitoring, HXI visualizations
+- **Separation trigger** — activated automatically when: LLM provider unreachable for >30s, system memory >90%, or Captain manual order
+- **Reconnection** — when crisis resolves, non-essential services restart in priority order. Cognitive services flush queued requests. Federation reconnects. Full operational status restored with Captain notification
 
 **Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE**
 
@@ -434,19 +670,19 @@ BuildBlueprint ─→ ChunkDecomposer ─→ ┌─ Chunk 1 ──→ LLM ──
 
 **AD Breakdown:**
 
-- **AD-330: BuildBlueprint & ChunkSpec** — New data structures extending BuildSpec. `BuildBlueprint` adds `interface_contracts` (function signatures, class APIs that chunks must conform to), `shared_imports`, and `chunk_hints` (suggested decomposition boundaries). `ChunkSpec` captures what to generate, required context, expected output signature, and dependencies on other chunks. `ChunkResult` uses a **Structured Information Protocol** (adapted from LLM×MapReduce): `generated_code` (extracted information), `decisions` (rationale — why specific implementation choices were made), `output_signature` (what was actually produced), and `confidence: int` (1-5, reflecting contextual completeness — chunks with full interface contracts score higher than those working from minimal hints). Confidence scores are critical for conflict resolution in assembly. Both are dataclasses in `cognitive/builder.py` or a new `cognitive/transporter.py` module.
+- **AD-330: BuildBlueprint & ChunkSpec** *(done)* — New data structures extending BuildSpec. `BuildBlueprint` adds `interface_contracts` (function signatures, class APIs that chunks must conform to), `shared_imports`, `shared_context`, and `chunk_hints` (suggested decomposition boundaries). `ChunkSpec` captures what to generate, required context, expected output signature, and dependencies on other chunks. `ChunkResult` uses a **Structured Information Protocol** (adapted from LLM×MapReduce): `generated_code` (extracted information), `decisions` (rationale — why specific implementation choices were made), `output_signature` (what was actually produced), and `confidence: int` (1-5, reflecting contextual completeness — chunks with full interface contracts score higher than those working from minimal hints). Confidence scores are critical for conflict resolution in assembly. `validate_chunk_dag()` uses Kahn's algorithm for cycle detection. `get_ready_chunks()` returns chunks whose dependencies are satisfied. `create_blueprint()` factory. All dataclasses in `cognitive/builder.py`.
 
-- **AD-331: ChunkDecomposer** — Analyzes a BuildBlueprint and produces a list of ChunkSpecs. Uses CodebaseIndex (import graph, class structure) to identify natural decomposition boundaries: one chunk per new function/method, one chunk per test class, one chunk per file in multi-file builds. Each ChunkSpec includes only the context slices needed for that chunk (interface contracts, not full file content). Validates that chunks cover the full blueprint and that inter-chunk dependencies form a DAG.
+- **AD-331: ChunkDecomposer** *(done)* — `decompose_blueprint()` async function: fast-tier LLM analyzes BuildBlueprint and produces ChunkSpec list. Builds AST outlines of target files, gathers import context from CodebaseIndex (optional). Parses JSON response, normalizes `depends_on` references. Validates DAG (no cycles) and coverage (adds catch-all chunks for uncovered files). `_build_chunk_context()` helper builds L1-L3 context slices (interface contracts, shared imports, AST outline). `_fallback_decompose()` robust fallback: one chunk per target file, one per test file. Three fallback triggers: LLM error, invalid JSON, cyclic DAG.
 
-- **AD-332: Parallel Chunk Execution** — New `_execute_chunks()` method on BuilderAgent. Takes a list of ChunkSpecs, runs LLM generation for each in parallel via `asyncio.gather()`. Each call uses a focused prompt with only the chunk's required context. Per-chunk timeout, retry on failure, partial success handling (some chunks succeed, others fail). Results collected as `ChunkResult` objects with generated code + metadata.
+- **AD-332: Parallel Chunk Execution** *(done)* — `execute_chunks()` wave-based parallel execution via `asyncio.gather()`. Independent chunks run concurrently, dependent chunks wait for prerequisites via `get_ready_chunks()`. `_execute_single_chunk()` with deep-tier LLM, `asyncio.wait_for()` per-chunk timeout, configurable retry count. `_build_chunk_prompt()` assembles focused per-chunk prompt with context slices and dependency outputs. `_parse_chunk_response()` extracts file blocks, DECISIONS rationale, CONFIDENCE score (1-5 clamped). Partial success is valid — assembler handles incomplete results.
 
-- **AD-333: ChunkAssembler** — Three-stage assembly pipeline adapted from LLM×MapReduce's Map→Collapse→Reduce pattern. **Map** outputs are the ChunkResults from AD-332. **Collapse stage**: when chunk outputs exceed the assembler's context budget, group related chunks (same file, same class) and pre-merge them iteratively until total output fits — this allows the Transporter Pattern to scale to arbitrarily large builds, not just "large enough to chunk but small enough to reassemble in one pass." **Reduce stage**: final merge into unified file content. Handles: import deduplication and ordering, function/class ordering within files, indentation normalization, **confidence-weighted conflict resolution** (when chunks produce conflicting imports or overlapping signatures, higher-confidence chunk wins). Produces the same file-block output format the existing Builder pipeline expects, so downstream (git commit, test-fix loop) works unchanged.
+- **AD-333: ChunkAssembler (Rematerializer)** *(done)* — Zero-LLM static assembly of ChunkResults into unified file-block format. `assemble_chunks()` merges per-file CREATE blocks (import dedup via `_merge_create_blocks()`) and MODIFY blocks (replacement list concat). Confidence-weighted ordering (higher-confidence chunk content first). Partial assembly (failed chunks skipped). `assembly_summary()` produces debug/HXI metrics. Output format compatible with `execute_approved_build()` — downstream pipeline unchanged. 24 tests.
 
-- **AD-334: Interface Validator (Heisenberg Compensator)** — AST-based post-assembly verification. Checks: all function calls resolve to defined functions, all imports are present, class method signatures match interface contracts from the BluePrint, no duplicate definitions, no orphaned code. **Confidence-aware validation**: low-confidence chunks (≤2) trigger stricter checking (verify every reference resolves, not just signatures). Returns validation result with specific errors and per-chunk attribution. Zero-LLM — pure static analysis. On failure, feeds errors back for targeted re-generation of failing chunks (not full rebuild).
+- **AD-334: Interface Validator (Heisenberg Compensator)** *(done)* — Zero-LLM AST-based post-assembly verification. `validate_assembly()` runs 5 check categories: syntax validity (`ast.parse`), duplicate top-level definitions, empty MODIFY search strings, interface contract satisfaction, confidence-aware unresolved name detection (stricter for chunks ≤2). `ValidationResult` dataclass with per-chunk error attribution via `_find_chunk_for_file()`. `_find_unresolved_names()` conservative name resolution (builtins, imports, parameters excluded). 15 tests.
 
-- **AD-335: HXI Transporter Visualization** — WebSocket events for chunk lifecycle (`chunk_started`, `chunk_completed`, `chunk_failed`, `assembly_started`, `assembly_completed`). Cognitive Canvas shows parallel "matter streams" during generation. IntentSurface shows decomposition plan and per-chunk results. Assembly diff view with chunk attribution highlights.
+- **AD-335: HXI Transporter Visualization** *(done)* — Optional `on_event` callbacks on `decompose_blueprint()` and `execute_chunks()` emit `transporter_decomposed`, `transporter_wave_start`, `transporter_chunk_done`, `transporter_execution_done`. `_emit_transporter_events()` helper emits `transporter_assembled` and `transporter_validated`. Frontend: `TransporterProgress` state in useStore.ts, 6 event handler cases with Star Trek-themed chat panel messages. Canvas "matter stream" visualization deferred. 8 tests.
 
-- **AD-336: End-to-End Integration & Fallback** — Wire Transporter Pattern into `execute_approved_build()`. Decision logic: use Transporter when combined file content exceeds `_LOCALIZE_THRESHOLD` or when blueprint specifies >2 target files or >3 functions. Fall back to existing single-pass generation for small builds. Test with real multi-file builds. Per-chunk test-fix retry integration.
+- **AD-336: End-to-End Integration & Fallback** *(done)* — `_should_use_transporter()` decision function (>2 targets, >20K context, >2 impl+test). `transporter_build()` orchestrates full pipeline returning `_parse_file_blocks()`-format output. `BuilderAgent.perceive()`/`decide()`/`act()` augmented with Transporter branch + graceful fallback. `execute_approved_build()` unchanged. 12 tests.
 
 #### Phase 2: Generalized Perception Pipeline (Future)
 
@@ -517,6 +753,39 @@ ProbOS currently runs directly on the host OS. A Docker-based deployment provide
 - **Circuit breaker** — after N consecutive LLM failures, stop retrying and notify the Captain rather than burning through rate limits
 - **Health indicator** — LLM provider status surfaced through Vitals Monitor and HXI
 
+**Model Diversity & Neural Routing**
+
+*"A crew of Vulcans is logical but brittle. A diverse crew — Vulcan logic, Betazoid empathy, Klingon tenacity, android precision — is resilient."*
+
+Currently ProbOS routes all cognition through 2 models (Sonnet 4 for fast/standard, Opus 4 for deep) via 3 tiers. The tier abstraction describes cost/capability levels, not model identities. Real cognitive diversity requires routing tasks to fundamentally different model architectures — each with different failure modes, strengths, and reasoning styles.
+
+- **`ModelRegistry`** — central catalog of available model providers: `(provider, model_id, tier, capabilities, cost_per_token, latency_p50, api_format)`. Models self-register at startup from config. Registry answers: "which models can handle this task type at this tier?" with ranked options
+- **Provider abstraction** — `ModelProvider` ABC with concrete implementations: `AnthropicProvider`, `OpenAIProvider`, `GoogleProvider`, `OllamaProvider` (local models), `GenericOpenAIProvider` (any OpenAI-compatible endpoint). Each provider handles auth, rate limits, and format translation. Extends the existing `api_format` switch in `OpenAICompatibleClient`
+- **Neural routing** — extend `HebbianRouter` to learn `(task_type, model)` weights alongside `(intent, agent)` weights. Over time the system learns: "API design tasks succeed more often on Claude", "structured output tasks succeed more on GPT", "simple classification is cheapest on local Qwen." The Hebbian router already has the infrastructure — add a new relationship type `model` alongside `intent` and `agent`
+- **Multi-model comparison** — natural extension of AD-332 (Parallel Chunk Execution). Send the same chunk to N different models, compare outputs, merge or pick best via confidence scoring + consensus. The Transporter Pattern already parallelizes — make the parallel calls use different models, not just the same model N times
+- **Brain diversity for agents** — agents can declare model preferences or exclusions: `preferred_models: ["claude-opus-*"]`, `excluded_models: ["local/*"]`. Combined with Hebbian learning, agents gravitate toward models that produce their best work
+- **Cost-aware routing** — `ModelRegistry` tracks cost per token per provider. The router considers cost alongside quality: "Claude produces 5% better code, but GPT is 60% cheaper — for this low-stakes task, use GPT." Cost thresholds configurable by Captain
+- **Fallback chains per provider** — extend current tier-based fallback (`deep → standard → fast`) to include cross-provider fallback: `claude-opus → gpt-4o → gemini-2 → local-qwen`. Provider health tracking via circuit breaker pattern (already planned in LLM Resilience)
+- **Hot-swap model rotation** — add/remove model providers at runtime without restart. `ModelRegistry.register()` / `ModelRegistry.deregister()` with live updates to routing weights
+- **Configuration** — `system.yaml` grows a `models:` section listing available providers, or auto-discovered via Ollama API (`/api/tags`) for local models
+
+**Cognitive Journal (Token Ledger)**
+
+*"Ship's log, supplemental — recording not just what happened, but what was thought."*
+
+Every LLM request/response is a cognitive event. Currently `LLMResponse.tokens_used` is populated per-call but never aggregated — the ship has no memory of its own thought processes. The Cognitive Journal captures the complete cognitive history for replay, analysis, and learning.
+
+- **`CognitiveJournal` service** — append-only SQLite store recording every LLM request/response with full context: `(timestamp, agent_id, agent_type, tier, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, request_hash, response_hash, intent_id, dag_node_id, success, cached)`
+- **Replay** — "What did the Architect reason through when designing AD-330?" Retrieve the full prompt/response chain for a specific agent + time range. Enables post-hoc debugging of LLM reasoning
+- **Summarize / fast-forward** — compress a 50-turn conversation to a gist: "Builder attempted 3 fix iterations, failing on import resolution, succeeding on the 3rd attempt by adding the missing `__init__.py`"
+- **Scrub / attention navigation** — index key decision points in a reasoning chain. "Show me where the Decomposer classified this as a capability gap" → jump to the specific prompt/response pair
+- **Pattern extraction** — analyze which prompts produce the best code (by downstream test pass rate), which agents are most token-efficient, which models hallucinate most. Feeds into Hebbian learning and model routing optimization
+- **Token accounting** — per-agent, per-intent, per-DAG, per-model token usage with cost attribution. Foundation for the LLM Cost Tracker (Phase 33 Ops). Uses `ModelRegistry` cost data for accurate dollar amounts
+- **Context budget analytics** — track how close each call comes to context limits. Identify agents that routinely exceed budget (candidates for Sensory Cortex optimization). Feeds back into Attention Budget Allocator (Northstar II Phase 2)
+- **Journal queries** — `get_reasoning_chain(agent_id, time_range)`, `get_token_usage(groupby="agent"|"model"|"tier")`, `get_decision_points(intent_id)`, `get_cost_report(period="daily"|"weekly")`
+- **Integration with Dreaming** — dream consolidation reads the journal to identify repeated reasoning patterns → abstract into Level 3-4 pattern labels for predictive coding. "The Builder always adds `import pytest` first" → dream produces `builder_test_file_pattern` → next build skips sending the instruction
+- **Retention policy** — full prompt/response text retained for configurable period (default 7 days). Metadata (tokens, latency, model, success) retained indefinitely. Compressed summaries produced on expiry
+
 **Observability Export**
 
 - **OpenTelemetry integration** — structured traces for intent routing, DAG execution, consensus rounds, and LLM calls
@@ -566,25 +835,56 @@ ChromaDB is the right default for OSS (embedded, zero config, works offline), bu
 Formalize resource management and system coordination as an agent pool.
 
 - **Resource Allocator** — workload balancing across pools, demand prediction, capacity planning
-- **Scheduler** — task prioritization, queue management, deadline enforcement (extends Phase 24c TaskScheduler)
+- **Scheduler** — task prioritization, queue management, deadline enforcement (extends Phase 24c TaskScheduler). Includes **cron-style scheduling** (recurring tasks on configurable intervals), **webhook triggers** (external events activate task pipelines), and **unattended operation** (tasks run while Captain is away, results queued for review on return)
 - **Coordinator** — cross-team orchestration during high-load or emergency events
+- **Workflow Definition API** — user-facing REST endpoint for defining reusable multi-step pipelines. `POST /api/workflows` accepts a YAML/JSON workflow specification with named steps, dependencies, and approval gates. `GET /api/workflows` lists saved workflows. `POST /api/workflows/{id}/run` triggers execution. Complements natural language decomposition (which auto-generates DAGs) with explicit, repeateable, templateable workflows. Templates for common patterns: "lint and test on every commit," "weekly codebase report," "build and deploy"
 - **Response-Time Scaling** (deferred from Phase 8) — latency-aware pool scaling. Instrument `broadcast()` with per-intent latency tracking, scale up pools where response times exceed SLA thresholds
 - **LLM Cost Tracker** — per-agent, per-intent, and per-DAG token usage accounting. Budget caps (daily/monthly), cost attribution via Shapley (which agents are expensive vs. valuable), per-workflow cost breakdowns for end-to-end visibility, alerts when spend exceeds thresholds. Provides the data foundation for commercial ROI analytics. Note: accurate cost attribution will require a proper tokenizer library (e.g., `tiktoken` for OpenAI models, model-specific tokenizers for others) — current `len(content) // 4` estimation is insufficient for billing-grade accuracy
 - Existing: PoolScaler (built), TaskScheduler (Phase 24c roadmap), IntentBus demand tracking (built)
 
-**Crew Mailbox — Direct Agent-to-Agent Messaging**
+**EPS — Electro-Plasma System (Compute/Token Distribution)**
 
-*Inspired by Claude Code Agent Teams' inter-agent mailbox.*
+*"Reroute power from life support to shields!"*
 
-Currently ProbOS agents communicate only via the intent bus (broadcast to pools) or consensus (voting). There is no way for one agent to send a targeted message to a specific agent. This forces all coordination through the Decomposer, creating a bottleneck.
+In Star Trek, the EPS distributes power from the warp core through conduits to every system. When power is limited, the Chief Engineer decides who gets how much. ProbOS has the same problem: one Copilot proxy bottleneck (127.0.0.1:8080), three LLM tiers (deep/fast/standard) sharing it, and multiple departments competing for LLM capacity. When Engineering runs a multi-chunk build, Medical and Science compete for the same constrained pipe. Nobody manages the power grid.
 
-- **`CrewMailbox` service** — registered on the runtime, agents send/receive typed messages by agent ID
+- **Capacity tracking** — monitor total available LLM throughput (tokens/minute, concurrent requests, queue depth) across all providers
+- **Department budgets** — allocate LLM capacity per department based on priority. Engineering gets 60% during builds, Medical gets priority during Red Alert diagnostics
+- **Alert-aware reallocation** — Alert Conditions automatically shift budget priorities. Green: balanced. Yellow: boost Medical/Security. Red: all power to the crisis department
+- **Captain override** — "give Engineering all the power" as a manual reallocation command via HXI
+- **Utilization reporting** — per-department LLM usage feeds into Cognitive Journal and HXI dashboard. Captain sees where compute is going in real-time
+- **Back-pressure** — when a department exhausts its budget, requests queue or downgrade tier (deep → fast) rather than failing
+- **Integration** — sits between the IntentBus (which routes intents) and the tiered LLM client (which makes calls). EPS decides whether a request gets served now, queued, or downgraded based on budget and alert condition
+
+**Ward Room — Direct Agent-to-Agent Messaging**
+
+*"Senior officers to the Ward Room."*
+
+*Inspired by Claude Code Agent Teams' inter-agent mailbox and the starship ward room where officers discuss matters outside the chain of command.*
+
+Currently ProbOS agents communicate only via the intent bus (broadcast to pools) or consensus (voting). There is no way for one agent to send a targeted message to a specific agent. This forces all coordination through the Decomposer, creating a bottleneck. The Ward Room is the missing direct-messaging layer.
+
+- **`WardRoom` service** — registered on the runtime, agents send/receive typed messages by agent ID. Name reflects the starship metaphor: a private space where officers (agents) communicate directly
 - **Use case: Architect↔Builder clarification** — during a build, the Builder encounters ambiguity in the BuildSpec and asks the Architect directly ("Which method signature should I use?") without routing through the Decomposer or requiring Captain intervention
 - **Use case: Medical↔Engineering handoff** — Diagnostician identifies a performance anomaly and messages the relevant Engineering agent directly with diagnostic context
-- **Message types** — `clarification_request`, `status_update`, `finding_report`, `handoff` (with typed payloads)
+- **Use case: Multi-model negotiation** — when Model Diversity enables competing implementations, agents use the Ward Room to compare notes and converge without broadcasting to all pools
+- **Message types** — `clarification_request`, `status_update`, `finding_report`, `handoff`, `model_comparison` (with typed payloads)
 - **Delivery model** — async mailbox (not synchronous RPC). Recipient processes messages in its next `perceive()` cycle. Unread messages expire after configurable TTL
 - **Trust-gated** — agents can only message agents they have positive trust scores with (prevents spam/abuse in federated scenarios)
-- **Audit trail** — all messages logged to episodic memory for post-hoc analysis
+- **Federation extension** — Ward Room messages can cross ship boundaries via `FederationBridge`. Agent A on Ship Alpha directly messages Agent B on Ship Beta without broadcasting to both ships' intent buses
+- **Audit trail** — all messages logged to Cognitive Journal for replay and post-hoc analysis
+
+**IntentBus Enhancements — Priority & Back-Pressure**
+
+*"All decks, this is a priority one message."*
+
+The IntentBus currently treats all intents equally — a critical self-mod proposal has the same priority as a routine health check. As the ship grows more capable (more agents, more models, more concurrent tasks), the bus needs traffic management.
+
+- **Priority levels** — `IntentMessage` gains a `priority: int` field (1=routine, 5=critical). Priority 5 intents preempt lower-priority work in the subscriber's queue. Priority 1 intents yield to higher-priority work during resource contention
+- **Back-pressure** — when the LLM proxy is saturated (all concurrent slots occupied), new LLM-bound intents are queued rather than immediately dispatched. Queue depth triggers automatic scaling signals to PoolScaler. Configurable max queue depth with overflow policy (reject, degrade to fast tier, or batch)
+- **Rate limiting per agent** — prevent any single agent from flooding the bus. Configurable intent-per-second cap per agent ID. Excess intents queued, not dropped
+- **Intent coalescing** — when multiple identical intents are queued (same name, similar payload), coalesce into a single broadcast with merged context. Prevents duplicate work during high-load scenarios
+- **Metrics** — bus throughput, queue depth, priority distribution, coalescing rate. Feeds into Bridge Alerts (advisory when queue depth exceeds threshold) and Cognitive Journal (per-intent routing latency)
 
 **Self-Claiming Task Queue**
 
@@ -638,6 +938,64 @@ When ProbOS runs multiple builds or modifications in parallel, two agents editin
 - **Conflict resolution** — if two agents need the same file, the Coordinator mediates: sequential ordering, or one agent rolls back and waits
 - **Integration with Builder** — `execute_approved_build()` claims all target files before writing, releases on completion
 - **Extends `_background_tasks` (AD-326)** — file ownership tracked alongside task lifecycle
+
+---
+
+### Communications Team (Phase 24)
+
+*"Hailing frequencies open."*
+
+The Communications department handles all external interfaces — how users and other systems talk to ProbOS. Currently limited to a CLI shell, a web UI (HXI), and a basic Discord adapter. Users expect to reach their AI assistant from platforms they already use.
+
+**Channel Adapters**
+
+Each adapter bridges an external messaging platform to the ProbOS runtime. Adapters translate platform messages to natural language intents and stream responses back. The Discord adapter (`src/probos/channels/discord_adapter.py`) is the reference implementation.
+
+- **Discord** — built (AD-phase-24, existing). Bot token + discord.py
+- **Slack** — Slack Bolt SDK. App manifest + OAuth. Slash commands map to ProbOS `/` commands. Thread-based conversations maintain context
+- **Telegram** — python-telegram-bot. Long polling or webhook. Inline keyboards for approval gates (approve/reject build proposals from Telegram)
+- **WhatsApp** — WhatsApp Business Cloud API via Meta. Webhook-based. Approval gates via interactive buttons. Requires Meta business verification
+- **Matrix** — matrix-nio async SDK. Self-hosted or matrix.org homeserver. E2E encryption support. Powers Beeper/Element interop
+- **Microsoft Teams** — Bot Framework SDK. Enterprise SSO integration. Approval cards via Adaptive Cards
+- **SMS/MMS** *(stretch)* — Twilio API. Inbound webhook + outbound REST. Minimal formatting (plain text). Good for alerts and approval confirmations
+- **Email** *(stretch)* — IMAP polling + SMTP sending. Parse email threads into conversation context. Useful for async task delegation ("email ProbOS a build request")
+- **Generic Webhook** — catch-all adapter. Accepts `POST /api/webhook/{channel}` with JSON body. Enables integration with any platform via webhook forwarding (IFTTT, Zapier, n8n, custom)
+
+**Adapter Architecture:**
+
+```python
+class ChannelAdapter(ABC):
+    async def connect(self) -> None
+    async def send_message(self, channel_id: str, content: str) -> None
+    async def on_message(self, message: InboundMessage) -> None  # routes to runtime
+    def supports_approval_ui(self) -> bool  # buttons/cards for approve/reject
+```
+
+All adapters share: user identity mapping (platform user → ProbOS user), message threading, attachment handling (images, files → perception pipeline), and graceful reconnection.
+
+**Mobile Companion Apps**
+
+*"Away team to bridge."*
+
+Mobile apps let the Captain interact with ProbOS from anywhere — approve builds, receive alerts, monitor the crew. Not full-featured clients — lightweight companions to the main HXI.
+
+- **Progressive Web App (PWA)** *(Phase 1)* — the existing HXI (`/ui/`) made installable as a PWA. Add `manifest.json`, service worker, responsive viewport. Zero new code for basic mobile access. Works on iOS and Android immediately
+- **Push notifications** — Web Push API for PWA. Alert the Captain to approval requests, system alerts, build completions. Requires backend push subscription management
+- **Responsive HXI** — adapt the existing React UI for mobile viewports. Chat panel full-screen on mobile, cognitive mesh as a simplified 2D view, swipe gestures for panel switching
+- **Native apps** *(Future/stretch)* — React Native or Capacitor wrapping the HXI. Camera access (screenshot → Visual Perception), on-device voice (wake word + STT), biometric auth. Only justified after user base exists
+
+**Voice Interaction (Full Stack)**
+
+Extends the existing Voice Provider TTS (nice-to-have in Bundled Agent Reorg) with input-side speech:
+
+- **Speech-to-Text (STT)** — `SpeechRecognizer` ABC with pluggable backends:
+  - `BrowserSTTProvider` — Web Speech API (free, zero dependencies, Chrome/Edge only)
+  - `WhisperSTTProvider` — OpenAI Whisper (local via whisper.cpp or API). Best quality, works offline with local model
+  - `DeepgramSTTProvider` *(stretch)* — cloud streaming STT for real-time transcription
+- **Wake word detection** — `WakeWordDetector` using Porcupine (Picovoice) or OpenWakeWord. Listens for "Computer" (Ship's Computer metaphor) to activate voice input. Runs on-device, no cloud dependency
+- **Continuous talk mode** — hold-to-talk or voice-activity-detection (VAD) for hands-free operation. STT streams audio → text → intent pipeline. Responses spoken via TTS
+- **Voice pipeline** — Wake word → STT → natural language intent → ProbOS runtime → response → TTS. Same pipeline as chat, different I/O modality
+- **Platform integration** — macOS: menubar tray with PTT hotkey (Electron/Tauri). Browser: microphone button in HXI chat panel. Mobile: PWA microphone API
 
 ---
 
@@ -703,13 +1061,80 @@ Upgrade the existing system health orb with per-agent hover preview:
 
 ---
 
+### User Experience & Adoption (Phase 35)
+
+*"It doesn't matter how advanced the ship is if nobody can board it."*
+
+The best cognitive architecture in the world is worthless if users can't install it, configure it, or understand what it does in 5 minutes. OpenClaw reached 323K GitHub stars in 4 months with `npm install -g openclaw` and a guided wizard. ProbOS's moat is its cognitive architecture — but moats don't matter if nobody can cross the drawbridge to get in. This phase ensures ProbOS has a world-class end-user experience from first install through daily use.
+
+**Distribution & Packaging**
+
+ProbOS currently requires `git clone` + `uv sync` + manual config. That excludes everyone who isn't a Python developer.
+
+- **PyPI publishing** — `pip install probos` works out of the box. `pyproject.toml` already has the `[project.scripts]` entry; needs proper build config, version management, and publishing workflow
+- **Docker image** — covered in Phase 32 (Containerized Deployment). `docker run probos` for zero-dependency startup
+- **GitHub Releases** — automated release workflow with pre-built wheels, changelog, and platform-specific install instructions
+- **Homebrew formula** *(stretch)* — `brew install probos` for macOS users
+- Complements Phase 32 Docker work — PyPI is for developers, Docker is for everyone else
+
+**Onboarding Wizard**
+
+`probos init` exists but is minimal. The first-run experience should be guided, friendly, and get the user to a working conversation in under 3 minutes.
+
+- **Interactive setup flow** — Rich-powered TUI wizard:
+  1. **LLM provider selection** — auto-detect Ollama on port 11434, prompt for OpenAI/Anthropic API key, or accept MockLLMClient for exploration mode
+  2. **Model selection** — list available models from detected provider, recommend defaults per tier (fast/standard/deep)
+  3. **First conversation** — run a simple "Hello, I'm ProbOS" interaction to verify the pipeline works
+  4. **HXI launch** — open the web interface with a guided overlay tour highlighting chat, cognitive mesh, and agent orbs
+  5. **Next steps prompt** — suggest the quickstart guide and link to probos.dev
+- **`probos doctor`** — diagnostic command that checks: Python version, dependencies, LLM connectivity, port availability, ChromaDB access, disk space. Outputs a health report with fix suggestions
+- **`probos demo`** — pre-canned demonstration mode using MockLLMClient. Shows decomposition, consensus, trust evolution, and dreaming without any LLM dependency. "See what ProbOS can do before you configure anything"
+- **Config migration** — when `system.yaml` format changes between versions, auto-migrate with backup
+
+**Quickstart Documentation**
+
+probos.dev has 16 pages of architecture docs but no "here's what you DO" guide. Users need a 3-step quickstart before they read about Hebbian learning.
+
+- **"Get Started in 5 Minutes"** guide — Install → Configure → First Conversation. Three commands, one page
+- **"What Can ProbOS Do?"** page — use-case oriented: "manage your codebase," "automate tasks," "build features," "monitor your system." Each with a concrete example conversation
+- **"Your First Build"** tutorial — step-by-step guide to using the Builder pipeline on a real project: point ProbOS at your repo, describe what you want, approve the result
+- **Video walkthrough** *(stretch)* — 5-minute screencast showing install through first build
+- **Comparison page** — "ProbOS vs OpenClaw vs CrewAI vs AutoGen" with honest positioning (we're a cognitive architecture, not a messaging gateway)
+
+**Browser Automation**
+
+Phase 25 mentions "browser automation" in two words. Users expect a personal AI assistant to browse the web, fill forms, take screenshots. This makes it concrete.
+
+- **Playwright integration** — headless Chromium with CDP control. `BrowseAgent` (Engineering team) wraps Playwright's `async_api`
+- **Capabilities** — navigate to URL, take screenshot, extract page content (HTML → markdown), click elements, fill forms, execute JavaScript
+- **Use cases** — web research (search + read), form filling, screenshot capture for visual feedback, automated testing of web apps
+- **Safety** — URL allowlist/blocklist configurable in `system.yaml`. Captain approval required for form submissions and JavaScript execution. SSRF protection reuses existing `HttpFetchAgent` guards
+- **Integration** — BrowseAgent registers `browse_web`, `screenshot_page`, `fill_form` intents. Tool Layer (Phase 25b) exposes as `browser` tool for any agent to use
+- **Perception pipeline** — browser output feeds through VisualPerception (Phase 2, Sensory Cortex) for screenshot-to-semantic compression
+
+---
+
 ### Bundled Agent Reorganization (Future)
 
 *"All hands, report to your departments."*
 
 Bundled agents currently share a single "Bundled" pool group, but they serve different departments of the ship. "Bundled" is a **distribution label** (ships with ProbOS out of the box), not an organizational role. Future work will reassign bundled agents to their functional crew teams:
 
-- **Communications** — TranslateAgent, SummarizerAgent
+- **Communications** — TranslateAgent, SummarizerAgent, VoiceProvider
+
+**Voice Provider & Ship's Computer Voice** *(nice-to-have)*
+
+*"Computer, status report."*
+
+The HXI currently uses browser `SpeechSynthesis` (zero dependencies, variable quality). A `VoiceProvider` ABC would allow pluggable TTS backends — from free local models to premium cloud APIs — with a custom Ship's Computer voice as ProbOS's auditory identity.
+
+- **`VoiceProvider` ABC** — `speak(text) -> AudioBuffer`, `clone_voice(reference_audio) -> VoiceProfile`, `list_voices() -> list`. Same provider pattern as the future `ModelProvider` for LLMs
+- **`BrowserVoiceProvider`** — current implementation, free, zero dependencies (default)
+- **`PiperVoiceProvider`** — local ONNX-based TTS (Piper project), good quality, no GPU needed, ~50MB model
+- **`FishAudioProvider`** — Fish Audio cloud API, excellent quality, voice cloning from 10s of audio, pay-per-use
+- **`ElevenLabsProvider`** — alternative cloud option
+- **Custom Ship's Computer voice** — clone a distinctive LCARS-style voice via Fish Audio or similar, used as ProbOS's consistent auditory identity across all instances. Voice profile stored in config, shared across federation via gossip
+- **Commercial opportunity** — custom voice creation, voice marketplace, enterprise voice branding. Potential for self-hosted Fish Speech (4B param model) when GPU resources are available
 - **Science/Research** — WebSearchAgent, PageReaderAgent, NewsAgent, WeatherAgent
 - **Operations** — CalculatorAgent, TodoAgent, NoteTakerAgent, SchedulerAgent
 
@@ -1152,6 +1577,66 @@ Currently ProbOS assumes a single Captain — one human operator with full autho
 
 ---
 
+### The Nooplex — Model of Models (Long Horizon)
+
+*"The destination isn't a single ship. It's a civilization of ships — each contributing its strengths to the collective intelligence of the fleet."*
+
+ProbOS is the ship. The Nooplex is what emerges when ships combine their cognitive capabilities at scale. The "Model of Models" is the Nooplex's core concept: a distributed meta-intelligence that routes cognition to the best brain for each task — across models, across agents, across ships, across the universe.
+
+**Why Model of Models**
+
+All humans have similar brains, but no two brains are the same. ProbOS agents have chassis diversity (different types, capabilities, prompts) but limited brain diversity — currently 2 models powering 54 agents. Real cognitive ecosystems need fundamentally different reasoning architectures working together. The Nooplex provides this by making model diversity a fleet-wide resource, not a per-ship configuration.
+
+**Architecture Layers**
+
+```
+Level 0: Single Model       "One brain, one agent"
+         └─ Current state: Sonnet/Opus via Copilot proxy
+
+Level 1: Model Registry     "Many brains, one ship"
+         └─ ModelRegistry, provider abstraction, neural routing (Phase 32)
+
+Level 2: Fleet Intelligence  "Many brains, many ships"
+         └─ Ships share model performance data via federation gossip
+
+Level 3: Nooplex             "Model of models"
+         └─ Distributed meta-router across the entire federation
+```
+
+**How It Emerges**
+
+The Nooplex isn't built top-down — it emerges from the building blocks:
+
+1. **Model Diversity** (Phase 32) — each ship routes to N model providers with Hebbian-learned routing weights. Ship A discovers "Gemini excels at API design." This is Level 1.
+
+2. **Cognitive Journal** (Phase 32) — each ship tracks what works: which models, which prompts, which task types produce the best outcomes. This creates the training data for meta-routing.
+
+3. **Federation Gossip** (built) — `NodeSelfModel` already broadcasts capability summaries to peers. Extend it to include model performance data: `{model: "claude-opus-4", task_type: "code_gen", success_rate: 0.94, avg_latency_ms: 4200, cost_per_1k_tokens: 0.015}`. This is Level 2.
+
+4. **Distributed Hebbian Learning** — Hebbian weights flow across the federation. Ship A's learning that "Claude excels at refactoring" strengthens Ship B's routing weight for the same pattern — without Ship B having to learn it independently. Fleet-wide experience sharing.
+
+5. **Meta-Router** — a federation-level router that answers: "Given this task, which ship has the best model for the job?" Routes not just to local models but to remote ships with optimal model access. Ship A has cheap local GPUs; Ship B has Opus API access; Ship C has a specialized fine-tuned model for security analysis. The Nooplex routes security tasks to Ship C, bulk tasks to Ship A, and complex reasoning to Ship B.
+
+**Key Principles**
+
+- **No central coordinator** — the Nooplex is fully decentralized. No master node. Each ship maintains its own view of fleet capabilities via gossip. Eventual consistency, not strong consistency.
+- **Trust-weighted sharing** — model performance data from low-trust ships is discounted, same as any federated information. A ship can't poison the fleet's routing intelligence without earning trust first.
+- **Cost-aware** — the meta-router factors in cost, latency, and availability alongside quality. The cheapest model that meets the quality threshold wins.
+- **Privacy-preserving** — ships share model performance *metadata* (success rates, latency, cost), not prompt content. No ship sees another ship's conversations. The cognitive journal stays local.
+- **Infinite scalability** — adding a new ship with a new model provider immediately enriches the entire fleet's cognitive diversity. No configuration, no central registry — gossip propagates availability.
+
+**Relationship to Sensory Cortex**
+
+The Sensory Cortex Architecture (Northstar II) solves the *input* side: how to compress infinite information into a finite context window. The Model of Models solves the *processing* side: how to route that compressed input to the optimal brain. Together they create the "infinite context window" aspiration:
+
+- **Infinite input** — Sensory Cortex compresses any amount of data to fit any context budget
+- **Infinite processing** — Model of Models routes to the best brain regardless of where it runs
+- **Infinite memory** — Cognitive Journal + Episodic Memory + Knowledge Store + Dream consolidation
+
+The Nooplex isn't just about AI. It's about human-agent cooperation at scale — humans as Captains, agents as crew, models as brains, ships as communities, the federation as civilization. ProbOS is the ship that takes you there.
+
+---
+
 ## Bug Tracker
 
 *"Captain, we've detected an anomaly in Deck 7."*
@@ -1162,6 +1647,7 @@ Bugs found during development or testing. Squash as found when possible; queue h
 |----|---------|----------|--------|
 | BF-001 | Self-mod proposal on knowledge questions | Medium | Open |
 | BF-002 | Agent orbs escape pool group spheres | High | Open |
+| BF-003 | "Run diagnostic" bypasses VitalsMonitor, asks user for alert data | Medium | Open |
 
 ### BF-001: Self-Mod False Positive on Knowledge Questions
 
@@ -1206,6 +1692,28 @@ Bugs found during development or testing. Squash as found when possible; queue h
 3. **(Enhancement) Add soft containment** — After layout, clamp agent positions to stay within `clusterRadius * 0.95` of their group center. Provides a safety net even if future layout changes introduce drift.
 
 **Files to modify:** `ui/src/store/useStore.ts` (`agent_state` handler line 423, `computeLayout()` call)
+
+### BF-003: "Run Diagnostic" Bypasses Vitals Monitor
+
+**Severity:** Medium — broken user experience, medical team partially unreachable
+**Found:** 2026-03-18 (Captain testing)
+**Component:** Medical pool → IntentBus routing → Diagnostician
+
+**Symptom:** When the user asks "perform a diagnostic and suggest system performance optimization opportunities," the Diagnostician responds by asking the user to provide health alert data (severity, metric, value, threshold, affected components) instead of proactively scanning the system.
+
+**Root Cause Chain:**
+
+1. **No proactive scan intent** — The medical team has two entry points: `medical_alert` (from VitalsMonitor threshold breaches) and `diagnose_system` (on-demand). But `diagnose_system` still expects structured alert data as input, not a high-level command.
+2. **Missing orchestration** — There is no workflow that chains VitalsMonitor scan → Diagnostician analysis → unified report. The Diagnostician can't trigger a VitalsMonitor scan because the VitalsMonitor is a HeartbeatAgent (runs on a timer, doesn't handle intents).
+3. **No department lead / CMO pattern** — Every pool treats agents as flat peers. There is no "Chief Medical Officer" that can receive a high-level bridge order ("run a full diagnostic"), orchestrate the right specialists in sequence, and return a unified answer. This is a broader architectural gap affecting all departments.
+
+**Fix Strategy:**
+
+1. **(Short-term) Add a `full_diagnostic` intent handler to Diagnostician** — When no alert data is provided, the Diagnostician proactively calls VitalsMonitor's metric collection functions directly (they're pure code, no LLM needed) to gather current system state, then runs its normal LLM analysis on the collected data.
+2. **(Medium-term) Department Lead pattern** — Add a `lead: bool` field to pool agent configuration. The lead agent receives high-level commands from the bridge and orchestrates its department's specialists. For Medical: Diagnostician becomes the CMO (lead). For Engineering: BuilderAgent or a new ChiefEngineer. For Science: ArchitectAgent. This is a broader architectural enhancement that would benefit all departments.
+3. **(Long-term) Ward Room integration (Phase 33)** — Department leads participate in the Ward Room for cross-department coordination. Bridge orders route to department leads, not individual specialists.
+
+**Files to modify:** `src/probos/agents/medical/diagnostician.py` (add proactive scan path), potentially `src/probos/substrate/pool.py` (lead agent concept)
 
 !!! info "Want to contribute?"
     See the [Contributing guide](contributing.md) for how to get involved.

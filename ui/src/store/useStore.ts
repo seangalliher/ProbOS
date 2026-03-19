@@ -189,6 +189,14 @@ export interface HXIState {
   selfModProgress: { step: string; current: number; total: number; label: string } | null;
   buildProgress: { step: string; current: number; total: number; label: string } | null;
   designProgress: { step: string; current: number; total: number; label: string } | null;
+  transporterProgress: {
+    phase: string;
+    chunks: Array<{ chunk_id: string; description: string; target_file: string; status: string }>;
+    waves_completed: number;
+    total_chunks: number;
+    successful: number;
+    failed: number;
+  } | null;
   pendingRoutingPulse: { source: string; target: string } | null;
   pendingFeedbackPulse: 'good' | 'bad' | null;
 
@@ -258,6 +266,7 @@ export const useStore = create<HXIState>((set, get) => ({
   selfModProgress: null,
   buildProgress: null,
   designProgress: null,
+  transporterProgress: null,
   pendingRoutingPulse: null,
   pendingFeedbackPulse: null,
   connected: false,
@@ -652,6 +661,102 @@ export const useStore = create<HXIState>((set, get) => ({
         if (msg) {
           get().addChatMessage('system', msg);
         }
+        break;
+      }
+
+      case 'transporter_decomposed': {
+        const chunks = (data.chunks as Array<{ chunk_id: string; description: string; target_file: string }>) || [];
+        const fallback = data.fallback as boolean;
+        set({
+          transporterProgress: {
+            phase: 'decomposed',
+            chunks: chunks.map(c => ({ ...c, status: 'pending' })),
+            waves_completed: 0,
+            total_chunks: chunks.length,
+            successful: 0,
+            failed: 0,
+          },
+        });
+        const suffix = fallback ? ' (fallback)' : '';
+        get().addChatMessage('system', `⬡ Transporter: decomposed into ${chunks.length} chunks${suffix}`);
+        break;
+      }
+
+      case 'transporter_wave_start': {
+        const wave = data.wave as number;
+        const chunkIds = (data.chunk_ids as string[]) || [];
+        const tp = get().transporterProgress;
+        if (tp) {
+          const updated = tp.chunks.map(c =>
+            chunkIds.includes(c.chunk_id) ? { ...c, status: 'executing' } : c
+          );
+          set({ transporterProgress: { ...tp, chunks: updated } });
+        }
+        get().addChatMessage('system', `⬡ Wave ${wave}: ${chunkIds.length} chunks executing...`);
+        break;
+      }
+
+      case 'transporter_chunk_done': {
+        const chunkId = data.chunk_id as string;
+        const success = data.success as boolean;
+        const tp = get().transporterProgress;
+        if (tp) {
+          const updated = tp.chunks.map(c =>
+            c.chunk_id === chunkId ? { ...c, status: success ? 'done' : 'failed' } : c
+          );
+          set({
+            transporterProgress: {
+              ...tp,
+              chunks: updated,
+              successful: success ? tp.successful + 1 : tp.successful,
+              failed: success ? tp.failed : tp.failed + 1,
+            },
+          });
+        }
+        if (!success) {
+          const err = data.error as string;
+          get().addChatMessage('system', `⬡ Chunk ${chunkId} failed: ${err}`);
+        }
+        break;
+      }
+
+      case 'transporter_execution_done': {
+        const total = data.total_chunks as number;
+        const successful = data.successful as number;
+        const waves = data.waves as number;
+        const tp = get().transporterProgress;
+        if (tp) {
+          set({ transporterProgress: { ...tp, phase: 'executed', waves_completed: waves } });
+        }
+        get().addChatMessage('system', `⬡ Matter stream complete: ${successful}/${total} chunks in ${waves} wave(s)`);
+        break;
+      }
+
+      case 'transporter_assembled': {
+        const fileCount = data.file_count as number;
+        const tp = get().transporterProgress;
+        if (tp) {
+          set({ transporterProgress: { ...tp, phase: 'assembled' } });
+        }
+        get().addChatMessage('system', `⬡ Rematerialized: ${fileCount} file(s) assembled`);
+        break;
+      }
+
+      case 'transporter_validated': {
+        const valid = data.valid as boolean;
+        const errCount = (data.errors as Array<unknown>)?.length || 0;
+        const warnCount = (data.warnings as Array<unknown>)?.length || 0;
+        const tp = get().transporterProgress;
+        if (tp) {
+          set({ transporterProgress: { ...tp, phase: valid ? 'valid' : 'invalid' } });
+        }
+        if (valid) {
+          get().addChatMessage('system', `⬡ Heisenberg compensator: all checks passed${warnCount > 0 ? ` (${warnCount} warnings)` : ''}`);
+        } else {
+          get().addChatMessage('system', `⬡ Heisenberg compensator: ${errCount} error(s) detected`);
+        }
+        // Clear transporter progress after validation
+        set({ transporterProgress: null });
         break;
       }
 

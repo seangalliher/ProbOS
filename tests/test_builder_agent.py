@@ -10,15 +10,36 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from probos.cognitive.builder import (
+    BuildBlueprint,
     BuilderAgent,
     BuildResult,
     BuildSpec,
+    ChunkResult,
+    ChunkSpec,
+    ValidationResult,
+    _build_chunk_context,
+    _build_chunk_prompt,
     _build_fix_prompt,
+    _emit_transporter_events,
+    _execute_single_chunk,
+    _fallback_decompose,
+    _find_chunk_for_file,
+    _find_unresolved_names,
     _git_create_branch,
+    _merge_create_blocks,
+    _parse_chunk_response,
     _run_tests,
     _sanitize_branch_name,
+    _should_use_transporter,
     _validate_python,
+    assemble_chunks,
+    assembly_summary,
+    create_blueprint,
+    decompose_blueprint,
+    execute_chunks,
     execute_approved_build,
+    transporter_build,
+    validate_assembly,
 )
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.types import IntentMessage
@@ -72,6 +93,1351 @@ class TestBuildResult:
         assert result.commit_hash == ""
         assert result.error == ""
         assert result.llm_output == ""
+
+
+# ---------------------------------------------------------------------------
+# ChunkSpec / ChunkResult / BuildBlueprint (AD-330)
+# ---------------------------------------------------------------------------
+
+
+class TestChunkSpec:
+    def test_defaults(self):
+        """ChunkSpec has correct default values for optional fields."""
+        cs = ChunkSpec(
+            chunk_id="chunk-0",
+            description="Add method",
+            target_file="src/foo.py",
+            what_to_generate="function",
+        )
+        assert cs.chunk_id == "chunk-0"
+        assert cs.description == "Add method"
+        assert cs.target_file == "src/foo.py"
+        assert cs.what_to_generate == "function"
+        assert cs.required_context == []
+        assert cs.expected_output == ""
+        assert cs.depends_on == []
+        assert cs.constraints == []
+
+    def test_full_population(self):
+        """ChunkSpec populates all fields."""
+        cs = ChunkSpec(
+            chunk_id="chunk-1",
+            description="Add verify method",
+            target_file="src/runtime.py",
+            what_to_generate="method",
+            required_context=["def process(self) -> bool:"],
+            expected_output="def verify(self, data: dict) -> bool:",
+            depends_on=["chunk-0"],
+            constraints=["must be async"],
+        )
+        assert cs.required_context == ["def process(self) -> bool:"]
+        assert cs.expected_output == "def verify(self, data: dict) -> bool:"
+        assert cs.depends_on == ["chunk-0"]
+        assert cs.constraints == ["must be async"]
+
+    def test_depends_on(self):
+        """ChunkSpec stores dependency references."""
+        cs = ChunkSpec(
+            chunk_id="chunk-2",
+            description="Tests",
+            target_file="tests/test_foo.py",
+            what_to_generate="test_class",
+            depends_on=["chunk-0"],
+        )
+        assert cs.depends_on == ["chunk-0"]
+
+
+class TestChunkResult:
+    def test_defaults(self):
+        """ChunkResult has correct default values."""
+        cr = ChunkResult(chunk_id="chunk-0")
+        assert cr.chunk_id == "chunk-0"
+        assert cr.success is False
+        assert cr.generated_code == ""
+        assert cr.decisions == ""
+        assert cr.output_signature == ""
+        assert cr.confidence == 3
+        assert cr.error == ""
+        assert cr.tokens_used == 0
+
+    def test_success(self):
+        """ChunkResult stores a successful result."""
+        cr = ChunkResult(
+            chunk_id="chunk-0",
+            success=True,
+            generated_code="def foo(): pass",
+            decisions="Simple implementation chosen",
+            output_signature="def foo() -> None",
+            confidence=5,
+            tokens_used=150,
+        )
+        assert cr.success is True
+        assert cr.generated_code == "def foo(): pass"
+        assert cr.confidence == 5
+        assert cr.tokens_used == 150
+
+    def test_confidence_range(self):
+        """ChunkResult stores confidence values at both ends."""
+        low = ChunkResult(chunk_id="c-low", confidence=1)
+        high = ChunkResult(chunk_id="c-high", confidence=5)
+        assert low.confidence == 1
+        assert high.confidence == 5
+
+
+class TestBuildBlueprint:
+    def test_from_spec(self):
+        """BuildBlueprint created via factory has defaults."""
+        spec = BuildSpec(title="T", description="D")
+        bp = create_blueprint(spec)
+        assert bp.spec is spec
+        assert bp.chunks == []
+        assert bp.results == []
+        assert bp.interface_contracts == []
+        assert bp.shared_imports == []
+        assert bp.shared_context == ""
+        assert bp.chunk_hints == []
+
+    def test_interface_contracts(self):
+        """BuildBlueprint stores interface contracts."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            interface_contracts=["def foo(x: int) -> str:"],
+        )
+        assert bp.interface_contracts == ["def foo(x: int) -> str:"]
+
+    def test_shared_imports(self):
+        """BuildBlueprint stores shared imports."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            shared_imports=["from probos.types import LLMRequest"],
+        )
+        assert bp.shared_imports == ["from probos.types import LLMRequest"]
+
+    def test_validate_dag_empty(self):
+        """validate_chunk_dag on empty chunks returns valid."""
+        spec = BuildSpec(title="T", description="D")
+        bp = create_blueprint(spec)
+        valid, msg = bp.validate_chunk_dag()
+        assert valid is True
+        assert msg == ""
+
+    def test_validate_dag_valid(self):
+        """validate_chunk_dag accepts a valid DAG."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            chunks=[
+                ChunkSpec(chunk_id="chunk-0", description="Base", target_file="a.py", what_to_generate="func"),
+                ChunkSpec(chunk_id="chunk-1", description="Ext", target_file="b.py", what_to_generate="func", depends_on=["chunk-0"]),
+                ChunkSpec(chunk_id="chunk-2", description="Also", target_file="c.py", what_to_generate="func", depends_on=["chunk-0"]),
+            ],
+        )
+        valid, msg = bp.validate_chunk_dag()
+        assert valid is True
+        assert msg == ""
+
+    def test_validate_dag_cycle(self):
+        """validate_chunk_dag detects cycles."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            chunks=[
+                ChunkSpec(chunk_id="chunk-0", description="A", target_file="a.py", what_to_generate="func", depends_on=["chunk-1"]),
+                ChunkSpec(chunk_id="chunk-1", description="B", target_file="b.py", what_to_generate="func", depends_on=["chunk-0"]),
+            ],
+        )
+        valid, msg = bp.validate_chunk_dag()
+        assert valid is False
+        assert "Cycle detected" in msg
+
+
+class TestGetReadyChunks:
+    def _make_chunks(self):
+        return [
+            ChunkSpec(chunk_id="chunk-0", description="A", target_file="a.py", what_to_generate="func"),
+            ChunkSpec(chunk_id="chunk-1", description="B", target_file="b.py", what_to_generate="func", depends_on=["chunk-0"]),
+            ChunkSpec(chunk_id="chunk-2", description="C", target_file="c.py", what_to_generate="func", depends_on=["chunk-1"]),
+        ]
+
+    def test_all_independent(self):
+        """All independent chunks are returned when none completed."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            chunks=[
+                ChunkSpec(chunk_id="c-0", description="A", target_file="a.py", what_to_generate="func"),
+                ChunkSpec(chunk_id="c-1", description="B", target_file="b.py", what_to_generate="func"),
+                ChunkSpec(chunk_id="c-2", description="C", target_file="c.py", what_to_generate="func"),
+            ],
+        )
+        ready = bp.get_ready_chunks()
+        assert len(ready) == 3
+
+    def test_with_dependencies(self):
+        """Chunks are returned as their dependencies complete."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec, chunks=self._make_chunks())
+
+        ready = bp.get_ready_chunks(completed=set())
+        assert [c.chunk_id for c in ready] == ["chunk-0"]
+
+        ready = bp.get_ready_chunks(completed={"chunk-0"})
+        assert [c.chunk_id for c in ready] == ["chunk-1"]
+
+        ready = bp.get_ready_chunks(completed={"chunk-0", "chunk-1"})
+        assert [c.chunk_id for c in ready] == ["chunk-2"]
+
+    def test_none_completed(self):
+        """completed=None behaves like empty set."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec, chunks=self._make_chunks())
+        ready = bp.get_ready_chunks(completed=None)
+        assert [c.chunk_id for c in ready] == ["chunk-0"]
+
+    def test_unknown_dep_in_validate(self):
+        """validate_chunk_dag rejects unknown dependency references."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            chunks=[
+                ChunkSpec(chunk_id="chunk-0", description="A", target_file="a.py", what_to_generate="func", depends_on=["nonexistent"]),
+            ],
+        )
+        valid, msg = bp.validate_chunk_dag()
+        assert valid is False
+        assert "depends on unknown" in msg
+
+
+class TestCreateBlueprint:
+    def test_factory(self):
+        """create_blueprint wraps a BuildSpec with empty metadata."""
+        spec = BuildSpec(
+            title="Test Build",
+            description="A test build",
+            target_files=["src/foo.py"],
+            test_files=["tests/test_foo.py"],
+        )
+        bp = create_blueprint(spec)
+        assert bp.spec is spec
+        assert bp.chunks == []
+        assert bp.results == []
+        assert bp.interface_contracts == []
+        assert bp.shared_imports == []
+        assert bp.shared_context == ""
+        assert bp.chunk_hints == []
+
+
+# ---------------------------------------------------------------------------
+# ChunkDecomposer (AD-331)
+# ---------------------------------------------------------------------------
+
+
+class _MockLLM:
+    """Minimal mock for decompose_blueprint tests."""
+
+    def __init__(self, response_text: str, error: str = ""):
+        self._text = response_text
+        self._error = error
+
+    async def complete(self, request):
+        from probos.types import LLMResponse
+        if self._error:
+            return LLMResponse(content="", error=self._error)
+        return LLMResponse(content=self._text)
+
+
+class TestFallbackDecompose:
+    def test_single_target(self):
+        """One target file, no tests → 1 chunk."""
+        spec = BuildSpec(title="T", description="D", target_files=["src/a.py"])
+        bp = _fallback_decompose(create_blueprint(spec))
+        assert len(bp.chunks) == 1
+        assert bp.chunks[0].chunk_id == "chunk-0"
+        assert bp.chunks[0].target_file == "src/a.py"
+        assert bp.chunks[0].depends_on == []
+
+    def test_multiple_targets(self):
+        """Three target files, no tests → 3 chunks."""
+        spec = BuildSpec(title="T", description="D",
+                         target_files=["src/a.py", "src/b.py", "src/c.py"])
+        bp = _fallback_decompose(create_blueprint(spec))
+        assert len(bp.chunks) == 3
+        for c in bp.chunks:
+            assert c.depends_on == []
+
+    def test_with_test_files(self):
+        """Two targets + 1 test → 3 chunks, test depends on both impls."""
+        spec = BuildSpec(title="T", description="D",
+                         target_files=["src/a.py", "src/b.py"],
+                         test_files=["tests/test_a.py"])
+        bp = _fallback_decompose(create_blueprint(spec))
+        assert len(bp.chunks) == 3
+        test_chunk = bp.chunks[2]
+        assert test_chunk.target_file == "tests/test_a.py"
+        assert test_chunk.depends_on == ["chunk-0", "chunk-1"]
+
+    def test_empty_spec(self):
+        """No target files, no test files → 0 chunks."""
+        spec = BuildSpec(title="T", description="D")
+        bp = _fallback_decompose(create_blueprint(spec))
+        assert len(bp.chunks) == 0
+
+
+class TestBuildChunkContext:
+    def test_with_contracts(self):
+        """Context includes interface contracts."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec, interface_contracts=["def foo(): ..."])
+        ctx = _build_chunk_context(bp, "src/a.py", {})
+        assert any("## Interface Contracts" in c for c in ctx)
+        assert any("def foo(): ..." in c for c in ctx)
+
+    def test_with_shared_imports(self):
+        """Context includes shared imports."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec, shared_imports=["import os"])
+        ctx = _build_chunk_context(bp, "src/a.py", {})
+        assert any("## Shared Imports" in c for c in ctx)
+        assert any("import os" in c for c in ctx)
+
+    def test_with_target_content(self):
+        """Context includes file outline and imports section."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec)
+        contents = {"src/foo.py": "class Foo:\n    def bar(self): pass"}
+        ctx = _build_chunk_context(bp, "src/foo.py", contents)
+        assert any("## Target File Structure" in c for c in ctx)
+        assert any("## Target File Imports" in c for c in ctx)
+
+    def test_empty_blueprint(self):
+        """No contracts, no imports, file not in contents → empty context."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec)
+        ctx = _build_chunk_context(bp, "src/missing.py", {})
+        assert ctx == []
+
+
+class TestDecomposeBlueprint:
+    @pytest.mark.asyncio
+    async def test_basic_decomposition(self):
+        """LLM returns a single chunk → blueprint gets 1 ChunkSpec."""
+        import json
+        llm_response = json.dumps({"chunks": [
+            {"description": "Add function", "target_file": "src/foo.py",
+             "what_to_generate": "function", "depends_on": [], "constraints": []},
+        ]})
+        spec = BuildSpec(title="T", description="D", target_files=["src/foo.py"])
+        bp = create_blueprint(spec)
+        result = await decompose_blueprint(bp, _MockLLM(llm_response))
+        assert len(result.chunks) == 1
+        assert result.chunks[0].chunk_id == "chunk-0"
+        assert result.chunks[0].target_file == "src/foo.py"
+        assert result.chunks[0].depends_on == []
+
+    @pytest.mark.asyncio
+    async def test_multi_chunk(self):
+        """LLM returns 3 chunks with dependencies → valid DAG."""
+        import json
+        llm_response = json.dumps({"chunks": [
+            {"description": "Impl A", "target_file": "src/a.py",
+             "what_to_generate": "function", "depends_on": [], "constraints": []},
+            {"description": "Impl B", "target_file": "src/b.py",
+             "what_to_generate": "function", "depends_on": [], "constraints": []},
+            {"description": "Tests", "target_file": "tests/test_a.py",
+             "what_to_generate": "test_class", "depends_on": [0, 1], "constraints": []},
+        ]})
+        spec = BuildSpec(title="T", description="D",
+                         target_files=["src/a.py", "src/b.py"],
+                         test_files=["tests/test_a.py"])
+        bp = create_blueprint(spec)
+        result = await decompose_blueprint(bp, _MockLLM(llm_response))
+        assert len(result.chunks) == 3
+        assert result.chunks[2].depends_on == ["chunk-0", "chunk-1"]
+        valid, _ = result.validate_chunk_dag()
+        assert valid
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_llm_error(self):
+        """LLM error → fallback decomposition."""
+        spec = BuildSpec(title="T", description="D",
+                         target_files=["src/a.py", "src/b.py"])
+        bp = create_blueprint(spec)
+        result = await decompose_blueprint(bp, _MockLLM("", error="timeout"))
+        assert len(result.chunks) == 2
+        assert result.chunks[0].target_file == "src/a.py"
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_invalid_json(self):
+        """LLM returns invalid JSON → fallback decomposition."""
+        spec = BuildSpec(title="T", description="D",
+                         target_files=["src/a.py"])
+        bp = create_blueprint(spec)
+        result = await decompose_blueprint(bp, _MockLLM("not json at all"))
+        assert len(result.chunks) == 1
+        assert result.chunks[0].target_file == "src/a.py"
+
+    @pytest.mark.asyncio
+    async def test_coverage_gap_filled(self):
+        """LLM covers src/a.py but not src/b.py → catch-all added."""
+        import json
+        llm_response = json.dumps({"chunks": [
+            {"description": "Impl A", "target_file": "src/a.py",
+             "what_to_generate": "function", "depends_on": [], "constraints": []},
+        ]})
+        spec = BuildSpec(title="T", description="D",
+                         target_files=["src/a.py", "src/b.py"])
+        bp = create_blueprint(spec)
+        result = await decompose_blueprint(bp, _MockLLM(llm_response))
+        covered = {c.target_file for c in result.chunks}
+        assert "src/a.py" in covered
+        assert "src/b.py" in covered
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_cycle(self):
+        """LLM returns cyclic deps → fallback decomposition."""
+        import json
+        llm_response = json.dumps({"chunks": [
+            {"description": "A", "target_file": "src/a.py",
+             "what_to_generate": "func", "depends_on": ["chunk-1"], "constraints": []},
+            {"description": "B", "target_file": "src/b.py",
+             "what_to_generate": "func", "depends_on": ["chunk-0"], "constraints": []},
+        ]})
+        spec = BuildSpec(title="T", description="D",
+                         target_files=["src/a.py", "src/b.py"])
+        bp = create_blueprint(spec)
+        result = await decompose_blueprint(bp, _MockLLM(llm_response))
+        # Should have fallen back — chunks are simple 1-per-file
+        valid, _ = result.validate_chunk_dag()
+        assert valid
+        assert len(result.chunks) == 2
+
+
+# ---------------------------------------------------------------------------
+# Parallel Chunk Execution (AD-332)
+# ---------------------------------------------------------------------------
+
+_VALID_FILE_BLOCK = (
+    "===FILE: src/foo.py===\n"
+    "def foo(): pass\n"
+    "===END FILE===\n"
+    "DECISIONS: simple function\n"
+    "CONFIDENCE: 4"
+)
+
+_VALID_MODIFY_BLOCK = (
+    "===MODIFY: src/bar.py===\n"
+    "===SEARCH===\ndef old(): pass\n===REPLACE===\ndef new(): pass\n===END REPLACE===\n"
+    "===END MODIFY===\n"
+    "DECISIONS: renamed function\n"
+    "CONFIDENCE: 3"
+)
+
+
+class TestBuildChunkPrompt:
+    def test_basic_prompt(self):
+        """Prompt contains chunk description, target file, what_to_generate."""
+        spec = BuildSpec(title="My Build", description="D")
+        bp = BuildBlueprint(spec=spec)
+        chunk = ChunkSpec(chunk_id="c-0", description="Add helper",
+                          target_file="src/foo.py", what_to_generate="function")
+        prompt = _build_chunk_prompt(chunk, bp)
+        assert "# Chunk: Add helper" in prompt
+        assert "src/foo.py" in prompt
+        assert "function" in prompt
+
+    def test_with_context(self):
+        """Prompt includes required_context."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec)
+        chunk = ChunkSpec(chunk_id="c-0", description="X",
+                          target_file="src/a.py", what_to_generate="func",
+                          required_context=["## Interface Contracts\ndef foo(): ..."])
+        prompt = _build_chunk_prompt(chunk, bp)
+        assert "## Context" in prompt
+        assert "def foo(): ..." in prompt
+
+    def test_with_constraints(self):
+        """Prompt includes constraints."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec)
+        chunk = ChunkSpec(chunk_id="c-0", description="X",
+                          target_file="src/a.py", what_to_generate="func",
+                          constraints=["must be async"])
+        prompt = _build_chunk_prompt(chunk, bp)
+        assert "## Constraints" in prompt
+        assert "must be async" in prompt
+
+
+class TestParseChunkResponse:
+    def test_success_with_file_block(self):
+        """Parses a successful response with file block."""
+        from probos.types import LLMResponse
+        chunk = ChunkSpec(chunk_id="c-0", description="X",
+                          target_file="src/foo.py", what_to_generate="func")
+        response = LLMResponse(content=_VALID_FILE_BLOCK, tokens_used=100)
+        cr = _parse_chunk_response(chunk, response)
+        assert cr.success is True
+        assert cr.confidence == 4
+        assert cr.decisions == "simple function"
+        assert "CREATE src/foo.py" in cr.output_signature
+        assert cr.tokens_used == 100
+
+    def test_no_file_blocks(self):
+        """Response without file markers → success=False."""
+        from probos.types import LLMResponse
+        chunk = ChunkSpec(chunk_id="c-0", description="X",
+                          target_file="src/foo.py", what_to_generate="func")
+        response = LLMResponse(content="Just some text, no file blocks")
+        cr = _parse_chunk_response(chunk, response)
+        assert cr.success is False
+        assert "No file blocks" in cr.error
+
+    def test_confidence_clamped(self):
+        """Confidence is clamped to 1-5 range."""
+        from probos.types import LLMResponse
+        chunk = ChunkSpec(chunk_id="c-0", description="X",
+                          target_file="src/foo.py", what_to_generate="func")
+        high = LLMResponse(content="===FILE: x.py===\npass\n===END FILE===\nCONFIDENCE: 9")
+        cr_high = _parse_chunk_response(chunk, high)
+        assert cr_high.confidence == 5
+
+        low = LLMResponse(content="===FILE: x.py===\npass\n===END FILE===\nCONFIDENCE: 0")
+        cr_low = _parse_chunk_response(chunk, low)
+        assert cr_low.confidence == 1
+
+    def test_modify_block(self):
+        """Parses a MODIFY block response."""
+        from probos.types import LLMResponse
+        chunk = ChunkSpec(chunk_id="c-0", description="X",
+                          target_file="src/bar.py", what_to_generate="func")
+        response = LLMResponse(content=_VALID_MODIFY_BLOCK)
+        cr = _parse_chunk_response(chunk, response)
+        assert cr.success is True
+        assert "MODIFY" in cr.output_signature
+
+
+class TestExecuteSingleChunk:
+    @pytest.mark.asyncio
+    async def test_success(self):
+        """Successful chunk execution returns ChunkResult with code."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec)
+        chunk = ChunkSpec(chunk_id="c-0", description="X",
+                          target_file="src/foo.py", what_to_generate="func")
+        llm = _MockLLM(_VALID_FILE_BLOCK)
+        result = await _execute_single_chunk(chunk, bp, llm, timeout=10.0, max_retries=0)
+        assert result.success is True
+        assert "def foo(): pass" in result.generated_code
+
+    @pytest.mark.asyncio
+    async def test_timeout(self):
+        """Chunk times out → success=False."""
+        from probos.types import LLMResponse
+
+        class _SlowLLM:
+            async def complete(self, request):
+                await asyncio.sleep(10)
+                return LLMResponse(content="")
+
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec)
+        chunk = ChunkSpec(chunk_id="c-0", description="X",
+                          target_file="src/foo.py", what_to_generate="func")
+        result = await _execute_single_chunk(chunk, bp, _SlowLLM(), timeout=0.1, max_retries=0)
+        assert result.success is False
+        assert "timeout" in result.error
+
+    @pytest.mark.asyncio
+    async def test_retry_on_error(self):
+        """Chunk retries on error and succeeds on second attempt."""
+        from probos.types import LLMResponse
+
+        class _RetryLLM:
+            def __init__(self):
+                self.calls = 0
+            async def complete(self, request):
+                self.calls += 1
+                if self.calls == 1:
+                    return LLMResponse(content="", error="rate_limit")
+                return LLMResponse(content=_VALID_FILE_BLOCK)
+
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec)
+        chunk = ChunkSpec(chunk_id="c-0", description="X",
+                          target_file="src/foo.py", what_to_generate="func")
+        result = await _execute_single_chunk(chunk, bp, _RetryLLM(), timeout=10.0, max_retries=1)
+        assert result.success is True
+
+
+class TestExecuteChunks:
+    @pytest.mark.asyncio
+    async def test_independent_chunks_parallel(self):
+        """Three independent chunks all succeed."""
+        spec = BuildSpec(title="T", description="D", target_files=["src/a.py"])
+        bp = BuildBlueprint(spec=spec, chunks=[
+            ChunkSpec(chunk_id="c-0", description="A", target_file="src/a.py", what_to_generate="func"),
+            ChunkSpec(chunk_id="c-1", description="B", target_file="src/b.py", what_to_generate="func"),
+            ChunkSpec(chunk_id="c-2", description="C", target_file="src/c.py", what_to_generate="func"),
+        ])
+        result = await execute_chunks(bp, _MockLLM(_VALID_FILE_BLOCK), max_retries=0)
+        assert len(result.results) == 3
+        assert all(r.success for r in result.results)
+
+    @pytest.mark.asyncio
+    async def test_dependent_chunks_ordered(self):
+        """Dependent chunk waits and both succeed."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec, chunks=[
+            ChunkSpec(chunk_id="c-0", description="Impl", target_file="src/a.py", what_to_generate="func"),
+            ChunkSpec(chunk_id="c-1", description="Test", target_file="tests/test_a.py",
+                      what_to_generate="test_class", depends_on=["c-0"]),
+        ])
+        result = await execute_chunks(bp, _MockLLM(_VALID_FILE_BLOCK), max_retries=0)
+        assert len(result.results) == 2
+        assert result.results[0].success is True
+        assert result.results[1].success is True
+
+    @pytest.mark.asyncio
+    async def test_partial_success(self):
+        """One chunk succeeds, one fails → partial results."""
+        from probos.types import LLMResponse
+
+        class _AlternatingLLM:
+            def __init__(self):
+                self.calls = 0
+            async def complete(self, request):
+                self.calls += 1
+                if self.calls == 1:
+                    return LLMResponse(content=_VALID_FILE_BLOCK, tokens_used=100)
+                return LLMResponse(content="", error="fail")
+
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec, chunks=[
+            ChunkSpec(chunk_id="c-0", description="A", target_file="src/a.py", what_to_generate="func"),
+            ChunkSpec(chunk_id="c-1", description="B", target_file="src/b.py", what_to_generate="func"),
+        ])
+        result = await execute_chunks(bp, _AlternatingLLM(), max_retries=0)
+        assert len(result.results) == 2
+        assert result.results[0].success is True
+        assert result.results[1].success is False
+
+    @pytest.mark.asyncio
+    async def test_empty_chunks(self):
+        """Blueprint with no chunks → empty results."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec)
+        result = await execute_chunks(bp, _MockLLM(_VALID_FILE_BLOCK), max_retries=0)
+        assert result.results == []
+
+    @pytest.mark.asyncio
+    async def test_all_failures(self):
+        """All chunks fail → all results have success=False."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec, chunks=[
+            ChunkSpec(chunk_id="c-0", description="A", target_file="src/a.py", what_to_generate="func"),
+            ChunkSpec(chunk_id="c-1", description="B", target_file="src/b.py", what_to_generate="func"),
+        ])
+        result = await execute_chunks(bp, _MockLLM("", error="always fail"), max_retries=0)
+        assert len(result.results) == 2
+        assert all(not r.success for r in result.results)
+
+
+# ---------------------------------------------------------------------------
+# ChunkAssembler (AD-333)
+# ---------------------------------------------------------------------------
+
+
+class TestMergeCreateBlocks:
+    def test_single_content(self):
+        """Single content block returned as-is."""
+        result = _merge_create_blocks(["def foo(): pass\n"])
+        assert result == "def foo(): pass\n"
+
+    def test_deduplicate_imports(self):
+        """Duplicate imports across content blocks are deduplicated."""
+        c1 = "import os\nimport sys\n\ndef foo():\n    pass\n"
+        c2 = "import os\nimport json\n\ndef bar():\n    pass\n"
+        result = _merge_create_blocks([c1, c2])
+        assert result.count("import os") == 1
+        assert "import sys" in result
+        assert "import json" in result
+        assert "def foo():" in result
+        assert "def bar():" in result
+
+    def test_no_imports(self):
+        """Content with no imports → bodies concatenated."""
+        c1 = "def foo():\n    pass\n"
+        c2 = "def bar():\n    pass\n"
+        result = _merge_create_blocks([c1, c2])
+        assert "def foo():" in result
+        assert "def bar():" in result
+
+    def test_empty_contents(self):
+        """Empty content blocks → just trailing newline."""
+        result = _merge_create_blocks(["", ""])
+        assert result == "\n"
+
+
+class TestAssembleChunks:
+    def test_single_chunk_create(self):
+        """Single CREATE chunk → 1 file block."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            chunks=[ChunkSpec(chunk_id="c-0", description="X",
+                              target_file="src/foo.py", what_to_generate="func")],
+            results=[ChunkResult(
+                chunk_id="c-0", success=True, confidence=5,
+                generated_code="===FILE: src/foo.py===\ndef foo(): pass\n===END FILE===",
+            )],
+        )
+        blocks = assemble_chunks(bp)
+        assert len(blocks) == 1
+        assert blocks[0]["mode"] == "create"
+        assert blocks[0]["path"] == "src/foo.py"
+        assert "def foo(): pass" in blocks[0]["content"]
+
+    def test_single_chunk_modify(self):
+        """Single MODIFY chunk → 1 file block with replacements."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            chunks=[ChunkSpec(chunk_id="c-0", description="X",
+                              target_file="src/bar.py", what_to_generate="func")],
+            results=[ChunkResult(
+                chunk_id="c-0", success=True, confidence=4,
+                generated_code=(
+                    "===MODIFY: src/bar.py===\n"
+                    "===SEARCH===\ndef old(): pass\n===REPLACE===\n"
+                    "def new(): pass\n===END REPLACE===\n"
+                    "===END MODIFY==="
+                ),
+            )],
+        )
+        blocks = assemble_chunks(bp)
+        assert len(blocks) == 1
+        assert blocks[0]["mode"] == "modify"
+        assert blocks[0]["path"] == "src/bar.py"
+        assert len(blocks[0]["replacements"]) == 1
+
+    def test_multiple_chunks_different_files(self):
+        """Two chunks for different files → 2 blocks."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            chunks=[
+                ChunkSpec(chunk_id="c-0", description="A",
+                          target_file="src/a.py", what_to_generate="func"),
+                ChunkSpec(chunk_id="c-1", description="B",
+                          target_file="src/b.py", what_to_generate="func"),
+            ],
+            results=[
+                ChunkResult(chunk_id="c-0", success=True, confidence=4,
+                            generated_code="===FILE: src/a.py===\ndef a(): pass\n===END FILE==="),
+                ChunkResult(chunk_id="c-1", success=True, confidence=4,
+                            generated_code="===FILE: src/b.py===\ndef b(): pass\n===END FILE==="),
+            ],
+        )
+        blocks = assemble_chunks(bp)
+        assert len(blocks) == 2
+        paths = {b["path"] for b in blocks}
+        assert paths == {"src/a.py", "src/b.py"}
+
+    def test_multiple_chunks_same_file_create(self):
+        """Two CREATE chunks for same file → merged with deduped imports."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            chunks=[
+                ChunkSpec(chunk_id="c-0", description="A",
+                          target_file="src/foo.py", what_to_generate="func"),
+                ChunkSpec(chunk_id="c-1", description="B",
+                          target_file="src/foo.py", what_to_generate="func"),
+            ],
+            results=[
+                ChunkResult(chunk_id="c-0", success=True, confidence=5,
+                            generated_code="===FILE: src/foo.py===\nimport os\n\ndef foo(): pass\n===END FILE==="),
+                ChunkResult(chunk_id="c-1", success=True, confidence=3,
+                            generated_code="===FILE: src/foo.py===\nimport os\nimport json\n\ndef bar(): pass\n===END FILE==="),
+            ],
+        )
+        blocks = assemble_chunks(bp)
+        assert len(blocks) == 1
+        assert blocks[0]["mode"] == "create"
+        content = blocks[0]["content"]
+        assert content.count("import os") == 1
+        assert "import json" in content
+        assert "def foo(): pass" in content
+        assert "def bar(): pass" in content
+
+    def test_multiple_chunks_same_file_modify(self):
+        """Two MODIFY chunks for same file → replacements merged by confidence."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            chunks=[
+                ChunkSpec(chunk_id="c-0", description="A",
+                          target_file="src/x.py", what_to_generate="func"),
+                ChunkSpec(chunk_id="c-1", description="B",
+                          target_file="src/x.py", what_to_generate="func"),
+            ],
+            results=[
+                ChunkResult(chunk_id="c-0", success=True, confidence=4,
+                            generated_code=(
+                                "===MODIFY: src/x.py===\n"
+                                "===SEARCH===\ndef a(): pass\n===REPLACE===\ndef a(): return 1\n===END REPLACE===\n"
+                                "===SEARCH===\ndef b(): pass\n===REPLACE===\ndef b(): return 2\n===END REPLACE===\n"
+                                "===END MODIFY==="
+                            )),
+                ChunkResult(chunk_id="c-1", success=True, confidence=2,
+                            generated_code=(
+                                "===MODIFY: src/x.py===\n"
+                                "===SEARCH===\ndef c(): pass\n===REPLACE===\ndef c(): return 3\n===END REPLACE===\n"
+                                "===END MODIFY==="
+                            )),
+            ],
+        )
+        blocks = assemble_chunks(bp)
+        assert len(blocks) == 1
+        assert blocks[0]["mode"] == "modify"
+        assert len(blocks[0]["replacements"]) == 3
+        # Higher confidence chunk's replacements come first
+        assert blocks[0]["replacements"][0]["search"] == "def a(): pass"
+
+    def test_failed_chunks_skipped(self):
+        """Failed chunks are skipped in assembly."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            chunks=[
+                ChunkSpec(chunk_id="c-0", description="A",
+                          target_file="src/a.py", what_to_generate="func"),
+                ChunkSpec(chunk_id="c-1", description="B",
+                          target_file="src/b.py", what_to_generate="func"),
+                ChunkSpec(chunk_id="c-2", description="C",
+                          target_file="src/c.py", what_to_generate="func"),
+            ],
+            results=[
+                ChunkResult(chunk_id="c-0", success=True, confidence=4,
+                            generated_code="===FILE: src/a.py===\ndef a(): pass\n===END FILE==="),
+                ChunkResult(chunk_id="c-1", success=False, error="timeout"),
+                ChunkResult(chunk_id="c-2", success=True, confidence=4,
+                            generated_code="===FILE: src/c.py===\ndef c(): pass\n===END FILE==="),
+            ],
+        )
+        blocks = assemble_chunks(bp)
+        assert len(blocks) == 2
+        paths = {b["path"] for b in blocks}
+        assert "src/b.py" not in paths
+
+    def test_no_successful_chunks(self):
+        """All chunks failed → empty list."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            chunks=[
+                ChunkSpec(chunk_id="c-0", description="A",
+                          target_file="src/a.py", what_to_generate="func"),
+            ],
+            results=[
+                ChunkResult(chunk_id="c-0", success=False, error="fail"),
+            ],
+        )
+        blocks = assemble_chunks(bp)
+        assert blocks == []
+
+
+class TestAssemblySummary:
+    def test_basic_summary(self):
+        """Summary reflects chunk statuses correctly."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(
+            spec=spec,
+            chunks=[
+                ChunkSpec(chunk_id="c-0", description="A", target_file="src/a.py", what_to_generate="func"),
+                ChunkSpec(chunk_id="c-1", description="B", target_file="src/b.py", what_to_generate="func"),
+                ChunkSpec(chunk_id="c-2", description="C", target_file="src/c.py", what_to_generate="func"),
+            ],
+            results=[
+                ChunkResult(chunk_id="c-0", success=True, confidence=5, tokens_used=100),
+                ChunkResult(chunk_id="c-1", success=True, confidence=3, tokens_used=80),
+                ChunkResult(chunk_id="c-2", success=False, confidence=1, error="timeout"),
+            ],
+        )
+        summary = assembly_summary(bp)
+        assert summary["total_chunks"] == 3
+        assert summary["successful"] == 2
+        assert summary["failed"] == 1
+        assert summary["total_tokens"] == 180
+        assert len(summary["chunks"]) == 3
+
+    def test_empty_results(self):
+        """Empty blueprint → zero counts."""
+        spec = BuildSpec(title="T", description="D")
+        bp = BuildBlueprint(spec=spec)
+        summary = assembly_summary(bp)
+        assert summary["total_chunks"] == 0
+        assert summary["successful"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Interface Validator (AD-334)
+# ---------------------------------------------------------------------------
+
+
+class TestValidationResult:
+    def test_default_valid(self):
+        """Fresh ValidationResult is valid with no errors."""
+        r = ValidationResult()
+        assert r.valid is True
+        assert r.errors == []
+        assert r.warnings == []
+
+    def test_with_errors_is_invalid(self):
+        """ValidationResult with errors should report as invalid."""
+        r = ValidationResult(
+            valid=False,
+            errors=[{"type": "syntax_error", "message": "bad", "file": "a.py", "chunk_id": "c1"}],
+        )
+        assert r.valid is False
+        assert len(r.errors) == 1
+
+
+class TestFindChunkForFile:
+    def test_finds_matching_chunk(self):
+        """Returns chunk_id when a chunk targets the given file."""
+        bp = BuildBlueprint(spec=BuildSpec(title="t", description="d"))
+        bp.chunks = [ChunkSpec(chunk_id="c1", description="d",
+                               target_file="src/foo.py", what_to_generate="code")]
+        assert _find_chunk_for_file(bp, "src/foo.py") == "c1"
+
+    def test_returns_empty_when_no_match(self):
+        """Returns empty string when no chunk targets the file."""
+        bp = BuildBlueprint(spec=BuildSpec(title="t", description="d"))
+        bp.chunks = [ChunkSpec(chunk_id="c1", description="d",
+                               target_file="src/bar.py", what_to_generate="code")]
+        assert _find_chunk_for_file(bp, "src/other.py") == ""
+
+    def test_suffix_matching(self):
+        """Matches when file_path ends with chunk's target_file."""
+        bp = BuildBlueprint(spec=BuildSpec(title="t", description="d"))
+        bp.chunks = [ChunkSpec(chunk_id="c1", description="d",
+                               target_file="src/foo.py", what_to_generate="code")]
+        assert _find_chunk_for_file(bp, "/home/user/project/src/foo.py") == "c1"
+
+
+class TestFindUnresolvedNames:
+    def test_all_names_resolved(self):
+        """No unresolved names when all references are defined or imported."""
+        src = "import os\n\ndef foo(x):\n    return os.path.join(x)\n"
+        assert _find_unresolved_names(src) == []
+
+    def test_detects_unresolved(self):
+        """Detects names used but not defined or imported."""
+        src = "def foo():\n    return bar()\n"
+        result = _find_unresolved_names(src)
+        assert "bar" in result
+
+    def test_ignores_builtins(self):
+        """Built-in names (print, len, etc.) should not be flagged."""
+        src = "def foo(items):\n    print(len(items))\n"
+        assert _find_unresolved_names(src) == []
+
+
+class TestValidateAssembly:
+    def _make_blueprint_with_result(self, chunk_id="c1", target="src/foo.py", confidence=4):
+        """Helper to create a blueprint with one chunk and one successful result."""
+        bp = BuildBlueprint(spec=BuildSpec(title="t", description="d"))
+        bp.chunks = [ChunkSpec(chunk_id=chunk_id, description="d",
+                               target_file=target, what_to_generate="code")]
+        bp.results = [ChunkResult(chunk_id=chunk_id, success=True, confidence=confidence)]
+        return bp
+
+    def test_valid_assembly(self):
+        """Clean Python code passes validation."""
+        bp = self._make_blueprint_with_result()
+        blocks = [{"path": "src/foo.py", "content": "import os\n\ndef foo():\n    return 1\n",
+                   "mode": "create", "after_line": None}]
+        result = validate_assembly(bp, blocks)
+        assert result.valid is True
+        assert result.errors == []
+
+    def test_syntax_error_detected(self):
+        """Invalid Python syntax produces a syntax_error."""
+        bp = self._make_blueprint_with_result()
+        blocks = [{"path": "src/foo.py", "content": "def foo(\n",
+                   "mode": "create", "after_line": None}]
+        result = validate_assembly(bp, blocks)
+        assert result.valid is False
+        assert any(e["type"] == "syntax_error" for e in result.errors)
+
+    def test_duplicate_definition_detected(self):
+        """Two functions with the same name at top level produce duplicate_definition."""
+        bp = self._make_blueprint_with_result()
+        blocks = [{"path": "src/foo.py",
+                   "content": "def foo():\n    pass\n\ndef foo():\n    pass\n",
+                   "mode": "create", "after_line": None}]
+        result = validate_assembly(bp, blocks)
+        assert result.valid is False
+        assert any(e["type"] == "duplicate_definition" for e in result.errors)
+
+    def test_empty_search_in_modify(self):
+        """Empty search string in a modify replacement produces error."""
+        bp = self._make_blueprint_with_result()
+        blocks = [{"path": "src/foo.py", "mode": "modify",
+                   "replacements": [{"search": "", "replace": "new code"}]}]
+        result = validate_assembly(bp, blocks)
+        assert result.valid is False
+        assert any(e["type"] == "empty_search" for e in result.errors)
+
+    def test_non_python_files_skip_ast_checks(self):
+        """Non-.py files skip AST-based validation but still pass."""
+        bp = self._make_blueprint_with_result(target="src/config.yaml")
+        blocks = [{"path": "src/config.yaml", "content": "key: value\n",
+                   "mode": "create", "after_line": None}]
+        result = validate_assembly(bp, blocks)
+        assert result.valid is True
+
+    def test_unmet_contract_produces_warning(self):
+        """Interface contract not found in code produces warning (not error)."""
+        bp = self._make_blueprint_with_result()
+        bp.interface_contracts = ["def required_function(x: int) -> str"]
+        blocks = [{"path": "src/foo.py", "content": "def other_function():\n    pass\n",
+                   "mode": "create", "after_line": None}]
+        result = validate_assembly(bp, blocks)
+        assert result.valid is True  # Warnings don't make it invalid
+        assert any(w["type"] == "unmet_contract" for w in result.warnings)
+
+    def test_low_confidence_triggers_stricter_check(self):
+        """Chunks with confidence <= 2 get unresolved name warnings."""
+        bp = self._make_blueprint_with_result(confidence=2)
+        blocks = [{"path": "src/foo.py",
+                   "content": "def foo():\n    return unknown_func()\n",
+                   "mode": "create", "after_line": None}]
+        result = validate_assembly(bp, blocks)
+        assert any(w["type"] == "unresolved_name" for w in result.warnings)
+
+
+class TestTransporterEvents:
+    """Tests for Transporter Pattern event emission (AD-335)."""
+
+    def test_decompose_emits_event(self):
+        """decompose_blueprint emits transporter_decomposed when on_event provided."""
+        events = []
+
+        async def capture_event(event_type, data):
+            events.append((event_type, data))
+
+        bp = BuildBlueprint(spec=BuildSpec(
+            title="test", description="test",
+            target_files=["src/foo.py"],
+        ))
+        mock_llm = AsyncMock(side_effect=Exception("no LLM"))
+        asyncio.get_event_loop().run_until_complete(
+            decompose_blueprint(bp, mock_llm, on_event=capture_event)
+        )
+        # Should have emitted transporter_decomposed
+        assert any(e[0] == "transporter_decomposed" for e in events)
+        decomposed = [e for e in events if e[0] == "transporter_decomposed"][0][1]
+        assert decomposed["chunk_count"] > 0
+        assert decomposed.get("fallback") is True
+
+    def test_decompose_no_event_when_none(self):
+        """decompose_blueprint works without on_event (backward compatible)."""
+        bp = BuildBlueprint(spec=BuildSpec(
+            title="test", description="test",
+            target_files=["src/foo.py"],
+        ))
+        mock_llm = AsyncMock(side_effect=Exception("no LLM"))
+        # Should not raise — on_event defaults to None
+        result = asyncio.get_event_loop().run_until_complete(
+            decompose_blueprint(bp, mock_llm)
+        )
+        assert len(result.chunks) > 0
+
+    def test_execute_emits_wave_events(self):
+        """execute_chunks emits wave_start and chunk_done events."""
+        events = []
+
+        async def capture_event(event_type, data):
+            events.append((event_type, data))
+
+        bp = BuildBlueprint(spec=BuildSpec(title="test", description="test"))
+        bp.chunks = [
+            ChunkSpec(chunk_id="c1", description="d1", target_file="f1.py", what_to_generate="code"),
+        ]
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = MagicMock(
+            content="===FILE: f1.py===\n===CREATE===\ndef foo(): pass\n===END==="
+        )
+        asyncio.get_event_loop().run_until_complete(
+            execute_chunks(bp, mock_llm, on_event=capture_event)
+        )
+        event_types = [e[0] for e in events]
+        assert "transporter_wave_start" in event_types
+        assert "transporter_chunk_done" in event_types
+        assert "transporter_execution_done" in event_types
+
+    def test_execute_no_event_when_none(self):
+        """execute_chunks works without on_event (backward compatible)."""
+        bp = BuildBlueprint(spec=BuildSpec(title="test", description="test"))
+        bp.chunks = [
+            ChunkSpec(chunk_id="c1", description="d1", target_file="f1.py", what_to_generate="code"),
+        ]
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = MagicMock(
+            content="===FILE: f1.py===\n===CREATE===\ndef foo(): pass\n===END==="
+        )
+        result = asyncio.get_event_loop().run_until_complete(
+            execute_chunks(bp, mock_llm)
+        )
+        assert len(result.results) == 1
+
+    def test_wave_start_includes_chunk_ids(self):
+        """Wave start event includes correct chunk IDs."""
+        events = []
+
+        async def capture_event(event_type, data):
+            events.append((event_type, data))
+
+        bp = BuildBlueprint(spec=BuildSpec(title="test", description="test"))
+        bp.chunks = [
+            ChunkSpec(chunk_id="c1", description="d1", target_file="f1.py", what_to_generate="code"),
+            ChunkSpec(chunk_id="c2", description="d2", target_file="f2.py", what_to_generate="code"),
+        ]
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = MagicMock(
+            content="===FILE: f1.py===\n===CREATE===\ndef foo(): pass\n===END==="
+        )
+        asyncio.get_event_loop().run_until_complete(
+            execute_chunks(bp, mock_llm, on_event=capture_event)
+        )
+        wave_events = [e for e in events if e[0] == "transporter_wave_start"]
+        assert len(wave_events) >= 1
+        # First wave should have both chunks (no deps)
+        assert "c1" in wave_events[0][1]["chunk_ids"]
+        assert "c2" in wave_events[0][1]["chunk_ids"]
+
+    def test_chunk_done_reports_failure(self):
+        """Chunk done event correctly reports failure."""
+        events = []
+
+        async def capture_event(event_type, data):
+            events.append((event_type, data))
+
+        bp = BuildBlueprint(spec=BuildSpec(title="test", description="test"))
+        bp.chunks = [
+            ChunkSpec(chunk_id="c1", description="d1", target_file="f1.py", what_to_generate="code"),
+        ]
+        mock_llm = AsyncMock()
+        mock_llm.generate.side_effect = Exception("LLM error")
+        asyncio.get_event_loop().run_until_complete(
+            execute_chunks(bp, mock_llm, on_event=capture_event)
+        )
+        chunk_events = [e for e in events if e[0] == "transporter_chunk_done"]
+        assert len(chunk_events) == 1
+        assert chunk_events[0][1]["success"] is False
+
+    def test_execution_done_summary(self):
+        """Execution done event includes correct summary counts."""
+        events = []
+
+        async def capture_event(event_type, data):
+            events.append((event_type, data))
+
+        bp = BuildBlueprint(spec=BuildSpec(title="test", description="test"))
+        bp.chunks = [
+            ChunkSpec(chunk_id="c1", description="d1", target_file="f1.py", what_to_generate="code"),
+        ]
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = MagicMock(
+            content="===FILE: f1.py===\n===CREATE===\ndef foo(): pass\n===END==="
+        )
+        asyncio.get_event_loop().run_until_complete(
+            execute_chunks(bp, mock_llm, on_event=capture_event)
+        )
+        done_events = [e for e in events if e[0] == "transporter_execution_done"]
+        assert len(done_events) == 1
+        assert done_events[0][1]["total_chunks"] == 1
+        assert done_events[0][1]["waves"] >= 1
+
+    def test_emit_transporter_events_helper(self):
+        """_emit_transporter_events emits assembled and validated events."""
+        emitted = []
+
+        class FakeRuntime:
+            def _emit_event(self, event_type, data):
+                emitted.append((event_type, data))
+
+        rt = FakeRuntime()
+        bp = BuildBlueprint(spec=BuildSpec(title="test", description="test"))
+        bp.chunks = [ChunkSpec(chunk_id="c1", description="d", target_file="f.py", what_to_generate="code")]
+        bp.results = [ChunkResult(chunk_id="c1", success=True, confidence=4)]
+        blocks = [{"path": "f.py", "content": "x = 1", "mode": "create", "after_line": None}]
+        vr = ValidationResult(valid=True, checks_passed=5)
+
+        asyncio.get_event_loop().run_until_complete(
+            _emit_transporter_events(rt, "build-1", bp, blocks, vr)
+        )
+        event_types = [e[0] for e in emitted]
+        assert "transporter_assembled" in event_types
+        assert "transporter_validated" in event_types
+
+
+class TestShouldUseTransporter:
+    """Tests for Transporter decision logic (AD-336)."""
+
+    def test_small_build_uses_single_pass(self):
+        """Single file, small context → single pass."""
+        spec = BuildSpec(title="t", description="d", target_files=["src/foo.py"])
+        assert _should_use_transporter(spec, context_size=5000) is False
+
+    def test_many_files_uses_transporter(self):
+        """More than 2 target files → Transporter."""
+        spec = BuildSpec(title="t", description="d",
+                         target_files=["a.py", "b.py", "c.py"])
+        assert _should_use_transporter(spec) is True
+
+    def test_large_context_uses_transporter(self):
+        """Large context size → Transporter."""
+        spec = BuildSpec(title="t", description="d", target_files=["a.py"])
+        assert _should_use_transporter(spec, context_size=25000) is True
+
+    def test_impl_plus_tests_uses_transporter(self):
+        """Multiple impl + test files → Transporter."""
+        spec = BuildSpec(title="t", description="d",
+                         target_files=["a.py", "b.py"],
+                         test_files=["test_a.py"])
+        assert _should_use_transporter(spec) is True
+
+    def test_single_impl_single_test_no_transporter(self):
+        """One impl + one test (2 total) → single pass."""
+        spec = BuildSpec(title="t", description="d",
+                         target_files=["a.py"],
+                         test_files=["test_a.py"])
+        assert _should_use_transporter(spec) is False
+
+
+class TestTransporterBuild:
+    """Tests for transporter_build() end-to-end pipeline (AD-336)."""
+
+    def test_full_pipeline_returns_file_blocks(self):
+        """transporter_build runs all stages and returns file blocks."""
+        spec = BuildSpec(
+            title="test build", description="test",
+            target_files=["src/foo.py"],
+        )
+        mock_llm = AsyncMock()
+        # Decompose call will raise → fallback to 1 chunk
+        # Execute calls complete() → needs error=None and valid content
+        mock_response = MagicMock(
+            error=None,
+            content="===FILE: src/foo.py===\n===CREATE===\ndef foo():\n    return 1\n===END FILE===",
+        )
+        mock_llm.complete.return_value = mock_response
+
+        result = asyncio.get_event_loop().run_until_complete(
+            transporter_build(spec, mock_llm)
+        )
+        assert len(result) >= 1
+        assert result[0]["mode"] == "create"
+        assert "foo" in result[0]["content"]
+
+    def test_returns_empty_on_total_failure(self):
+        """Returns empty list when all chunks fail."""
+        spec = BuildSpec(title="t", description="d", target_files=["a.py"])
+        mock_llm = AsyncMock()
+        mock_llm.complete.side_effect = Exception("LLM down")
+        mock_llm.generate = AsyncMock(side_effect=Exception("LLM down"))
+
+        result = asyncio.get_event_loop().run_until_complete(
+            transporter_build(spec, mock_llm)
+        )
+        assert result == []
+
+    def test_emits_events_when_callback_provided(self):
+        """transporter_build emits events through on_event callback."""
+        events = []
+
+        async def capture(event_type, data):
+            events.append(event_type)
+
+        spec = BuildSpec(title="t", description="d", target_files=["a.py"])
+        mock_llm = AsyncMock()
+        mock_response = MagicMock(
+            error=None,
+            content="===FILE: a.py===\n===CREATE===\nx = 1\n===END FILE==="
+        )
+        mock_llm.complete.return_value = mock_response
+
+        asyncio.get_event_loop().run_until_complete(
+            transporter_build(spec, mock_llm, on_event=capture)
+        )
+        # Should have decompose + wave + chunk + execution events
+        assert "transporter_decomposed" in events
+
+    def test_works_without_on_event(self):
+        """transporter_build works with on_event=None (default)."""
+        spec = BuildSpec(title="t", description="d", target_files=["a.py"])
+        mock_llm = AsyncMock()
+        mock_response = MagicMock(
+            error=None,
+            content="===FILE: a.py===\n===CREATE===\nx = 1\n===END FILE==="
+        )
+        mock_llm.complete.return_value = mock_response
+
+        result = asyncio.get_event_loop().run_until_complete(
+            transporter_build(spec, mock_llm)
+        )
+        # Should succeed without errors
+        assert isinstance(result, list)
+
+    def test_validation_failure_still_returns_blocks(self):
+        """When validation finds errors, blocks are still returned."""
+        spec = BuildSpec(title="t", description="d", target_files=["a.py"])
+        mock_llm = AsyncMock()
+        # Return syntactically invalid Python — validation will flag it
+        mock_response = MagicMock(
+            error=None,
+            content="===FILE: a.py===\n===CREATE===\ndef foo(\n===END FILE==="
+        )
+        mock_llm.complete.return_value = mock_response
+
+        result = asyncio.get_event_loop().run_until_complete(
+            transporter_build(spec, mock_llm)
+        )
+        # Blocks returned even with validation errors (test-fix loop handles it)
+        assert len(result) >= 1
+
+
+class TestBuilderTransporterIntegration:
+    """Tests for BuilderAgent.act() Transporter integration (AD-336)."""
+
+    def test_act_handles_transporter_result(self):
+        """act() correctly processes transporter_complete action."""
+        agent = BuilderAgent.__new__(BuilderAgent)
+        agent.agent_id = "test"
+        decision = {
+            "action": "transporter_complete",
+            "file_changes": [{"path": "a.py", "content": "x=1", "mode": "create", "after_line": None}],
+            "llm_output": "[Transporter]",
+        }
+        result = asyncio.get_event_loop().run_until_complete(agent.act(decision))
+        assert result["success"] is True
+        assert result["result"]["change_count"] == 1
+
+    def test_act_still_handles_single_pass(self):
+        """act() still works for non-transporter (single-pass) builds."""
+        agent = BuilderAgent.__new__(BuilderAgent)
+        agent.agent_id = "test"
+        decision = {
+            "llm_output": "===FILE: a.py===\n===CREATE===\ndef bar(): pass\n===END FILE===",
+        }
+        result = asyncio.get_event_loop().run_until_complete(agent.act(decision))
+        assert result["success"] is True
+        assert result["result"]["change_count"] == 1
 
 
 # ---------------------------------------------------------------------------

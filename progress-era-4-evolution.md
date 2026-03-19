@@ -108,3 +108,45 @@ Progression: AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-3
 **Decision:** AD-320 — `_grounded_context()` on IntrospectionAgent builds detailed verified text from SystemSelfModel. 4 intent handlers enriched with `grounded_context` key. REFLECT_PROMPT treats it as VERIFIED SYSTEM FACTS. `_summarize_node_result()` preserves grounded context outside truncation boundary. Level 4: delegation.
 
 **Status:** Phase 32s complete — 1972 Python + 30 Vitest
+
+## Phase 32t: BuildBlueprint & ChunkSpec — Pattern Buffer (AD-330)
+
+**Decision:** AD-330 — Transporter Pattern data structures: `ChunkSpec` (parallel work unit with DAG dependencies), `ChunkResult` (Structured Information Protocol with confidence 1-5), `BuildBlueprint` (wraps BuildSpec with interface contracts, shared context, chunk hints, DAG validation via Kahn's algorithm, ready-chunk scheduler). `create_blueprint()` factory. Pure data, no I/O.
+
+**Status:** Phase 32t complete — 1989 Python + 30 Vitest
+
+## Phase 32u: ChunkDecomposer — Dematerializer (AD-331)
+
+**Decision:** AD-331 — `decompose_blueprint()` async function: fast-tier LLM decomposes BuildBlueprint into ChunkSpecs. AST outlines + CodebaseIndex imports for structural analysis. JSON parse with int/string dep normalization. DAG validation + coverage gap filling. `_fallback_decompose()` for LLM failure/bad JSON/cycles. `_build_chunk_context()` for per-chunk context (contracts, imports, outline).
+
+**Status:** Phase 32u complete — 2003 Python + 30 Vitest
+
+## Phase 32v: Parallel Chunk Execution — Matter Stream (AD-332)
+
+**Decision:** AD-332 — `execute_chunks()` wave-based parallel execution via `asyncio.gather()`. Independent chunks concurrent, dependent chunks wait. `_execute_single_chunk()` with deep-tier LLM, asyncio.wait_for timeout, configurable retry. `_build_chunk_prompt()` assembles focused per-chunk prompt. `_parse_chunk_response()` extracts file blocks, DECISIONS, CONFIDENCE (1-5 clamped). Partial success valid.
+
+**Status:** Phase 32v complete — 2018 Python + 30 Vitest
+
+## Phase 32w: ChunkAssembler — Rematerializer (AD-333)
+
+**Decision:** AD-333 — `assemble_chunks()` merges ChunkResults into `_parse_file_blocks()` format. Groups by path+mode, confidence-sorted. `_merge_create_blocks()` deduplicates imports, concatenates bodies. MODIFY blocks: concatenated replacement lists. `assembly_summary()` for logging/HXI. Zero-LLM, partial assembly valid.
+
+**Status:** Phase 32w complete — 2031 Python + 30 Vitest
+
+## Phase 32x: Interface Validator — Heisenberg Compensator (AD-334)
+
+**Decision:** AD-334 — `validate_assembly()` with 5 zero-LLM checks: syntax validity, duplicate defs, empty MODIFY search strings, interface contract satisfaction, stricter unresolved-name checking for low-confidence chunks. `ValidationResult` with per-chunk attribution. `_find_unresolved_names()` conservative ast-based name resolution.
+
+**Status:** Phase 32x complete — 2046 Python + 30 Vitest
+
+## Phase 32y: HXI Transporter Visualization (AD-335)
+
+**Decision:** AD-335 — WebSocket event emission for chunk lifecycle and UI display. (a) `decompose_blueprint()` gains optional `on_event` callback, emits `transporter_decomposed` on success and fallback paths. (b) `execute_chunks()` gains `on_event`, emits `transporter_wave_start`, `transporter_chunk_done`, `transporter_execution_done` with wave counter. (c) `_emit_transporter_events()` async helper emits `transporter_assembled` and `transporter_validated` via runtime. (d) Frontend: `TransporterChunkStatus` and `TransporterProgress` types in types.ts, `transporterProgress` state field in useStore.ts, 6 event handler cases with chat panel messages. All backward compatible — on_event defaults to None.
+
+**Status:** Phase 32y complete — 2054 Python + 30 Vitest
+
+## Phase 32z: End-to-End Integration & Fallback (AD-336)
+
+**Decision:** AD-336 — Wire the Transporter Pattern into the BuilderAgent lifecycle. (a) `_should_use_transporter()` — decision function: >2 target files, >20K context, or >2 combined impl+test files triggers Transporter. (b) `transporter_build()` — orchestrates full pipeline (create_blueprint → decompose → execute → assemble → validate), returns file blocks in `_parse_file_blocks()` format. Validation failures are logged but blocks still returned (test-fix loop catches real issues). (c) `BuilderAgent.perceive()` builds a BuildSpec from intent params, checks `_should_use_transporter()`, runs `transporter_build()` if appropriate, stores result on `self._transporter_result`. Graceful fallback to single-pass on failure. (d) `BuilderAgent.decide()` overridden to short-circuit LLM call when `_transporter_result` is present. (e) `BuilderAgent.act()` handles `transporter_complete` action alongside existing single-pass path. `execute_approved_build()` unchanged — receives identical file blocks from either path.
+
+**Status:** Phase 32z complete — 2066 Python + 30 Vitest

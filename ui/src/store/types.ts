@@ -70,6 +70,22 @@ export interface BuildProposal {
   status: 'generating' | 'review' | 'approved' | 'rejected';
 }
 
+export interface TransporterChunkStatus {
+  chunk_id: string;
+  description: string;
+  target_file: string;
+  status: 'pending' | 'executing' | 'done' | 'failed';
+}
+
+export interface TransporterProgress {
+  phase: 'decomposed' | 'executing' | 'executed' | 'assembled' | 'valid' | 'invalid';
+  chunks: TransporterChunkStatus[];
+  waves_completed: number;
+  total_chunks: number;
+  successful: number;
+  failed: number;
+}
+
 export interface ArchitectProposalView {
   design_id: string;
   title: string;
