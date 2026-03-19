@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,7 +13,9 @@ from probos.cognitive.builder import (
     BuilderAgent,
     BuildResult,
     BuildSpec,
+    _build_fix_prompt,
     _git_create_branch,
+    _run_tests,
     _sanitize_branch_name,
     _validate_python,
     execute_approved_build,
@@ -299,22 +302,18 @@ class TestGitCreateBranch:
     @pytest.mark.asyncio
     async def test_success(self):
         """_git_create_branch calls git checkout -b."""
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"", stderr=b"")
 
-        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
             ok, msg = await _git_create_branch("test-branch", "/tmp")
             assert ok is True
 
     @pytest.mark.asyncio
     async def test_failure(self):
         """_git_create_branch returns False on error."""
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 1
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"branch exists"))
+        mock_result = subprocess.CompletedProcess(args=[], returncode=1, stdout=b"", stderr=b"branch exists")
 
-        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
             ok, msg = await _git_create_branch("test-branch", "/tmp")
             assert ok is False
             assert "branch exists" in msg
@@ -339,11 +338,9 @@ class TestExecuteApprovedBuild:
         ]
 
         # Mock all git calls
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
-        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
             result = await execute_approved_build(
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
@@ -368,11 +365,9 @@ class TestExecuteApprovedBuild:
             },
         ]
 
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
-        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
             result = await execute_approved_build(
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
@@ -390,11 +385,9 @@ class TestExecuteApprovedBuild:
             {"path": "test.py", "content": "pass\n", "mode": "create", "after_line": None},
         ]
 
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
-        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
             result = await execute_approved_build(
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
@@ -534,11 +527,9 @@ class TestExecuteModify:
             "replacements": [{"search": "return 'old'", "replace": "return 'new'"}],
         }]
 
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
-        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
             result = await execute_approved_build(
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
@@ -566,11 +557,9 @@ class TestExecuteModify:
             ],
         }]
 
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
-        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
             result = await execute_approved_build(
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
@@ -591,11 +580,9 @@ class TestExecuteModify:
             "replacements": [{"search": "old", "replace": "new"}],
         }]
 
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
-        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
             result = await execute_approved_build(
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
@@ -619,11 +606,9 @@ class TestExecuteModify:
             ],
         }]
 
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
-        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
             result = await execute_approved_build(
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
@@ -650,11 +635,9 @@ class TestExecuteModify:
             },
         ]
 
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
-        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
             result = await execute_approved_build(
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
@@ -676,11 +659,9 @@ class TestExecuteModify:
             "replacements": [{"search": "missing_text", "replace": "new_text"}],
         }]
 
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
-        with patch("probos.cognitive.builder.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
             result = await execute_approved_build(
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
@@ -784,3 +765,189 @@ class TestPerceiveTargetFiles:
         obs = await agent.perceive(intent)
         assert "class Ref: pass" in obs["file_context"]
         assert "class Target: pass" in obs["target_context"]
+
+
+# ---------------------------------------------------------------------------
+# Test-fix loop (AD-314)
+# ---------------------------------------------------------------------------
+
+
+class TestTestFixLoop:
+    @pytest.mark.asyncio
+    async def test_fix_loop_passes_on_first_try(self, tmp_path: Path):
+        """Tests pass on first try — no fix attempts needed."""
+        target = tmp_path / "ok.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="OK Build", description="Tests pass")
+        file_changes = [
+            {"path": "ok.py", "content": "x = 1\n", "mode": "create", "after_line": None},
+        ]
+
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
+            with patch("probos.cognitive.builder._run_tests", return_value=(True, "1 passed")):
+                result = await execute_approved_build(
+                    file_changes, spec, str(tmp_path), run_tests=True,
+                )
+
+        assert result.tests_passed is True
+        assert result.fix_attempts == 0
+
+    @pytest.mark.asyncio
+    async def test_fix_loop_fixes_on_second_try(self, tmp_path: Path):
+        """Tests fail once, LLM fix succeeds on retry."""
+        target = tmp_path / "fixme.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Fix Build", description="Needs fix")
+        file_changes = [
+            {"path": "fixme.py", "content": "x = 1\n", "mode": "create", "after_line": None},
+        ]
+
+        # LLM returns a MODIFY block to fix the issue
+        llm_client = AsyncMock()
+        llm_fix_response = MagicMock()
+        llm_fix_response.content = (
+            "===MODIFY: fixme.py===\n"
+            "===SEARCH===\nx = 1\n===REPLACE===\nx = 2\n===END REPLACE===\n"
+            "===END MODIFY==="
+        )
+        llm_client.complete = AsyncMock(return_value=llm_fix_response)
+
+        # First test fails, second passes
+        test_results = [(False, "1 failed"), (True, "1 passed")]
+        call_count = 0
+
+        async def mock_run_tests(work_dir, timeout=120):
+            nonlocal call_count
+            result = test_results[min(call_count, len(test_results) - 1)]
+            call_count += 1
+            return result
+
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
+            with patch("probos.cognitive.builder._run_tests", side_effect=mock_run_tests):
+                result = await execute_approved_build(
+                    file_changes, spec, str(tmp_path), run_tests=True,
+                    llm_client=llm_client,
+                )
+
+        assert result.tests_passed is True
+        assert result.fix_attempts == 1
+        assert llm_client.complete.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_fix_loop_exhausts_retries(self, tmp_path: Path):
+        """Tests fail on all attempts — retries exhausted."""
+        target = tmp_path / "broken.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Broken Build", description="Always fails")
+        file_changes = [
+            {"path": "broken.py", "content": "x = 1\n", "mode": "create", "after_line": None},
+        ]
+
+        llm_client = AsyncMock()
+        llm_fix_response = MagicMock()
+        llm_fix_response.content = (
+            "===MODIFY: broken.py===\n"
+            "===SEARCH===\nx = 1\n===REPLACE===\nx = 2\n===END REPLACE===\n"
+            "===END MODIFY==="
+        )
+        llm_client.complete = AsyncMock(return_value=llm_fix_response)
+
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
+            with patch("probos.cognitive.builder._run_tests", return_value=(False, "1 failed")):
+                result = await execute_approved_build(
+                    file_changes, spec, str(tmp_path), run_tests=True,
+                    max_fix_attempts=2, llm_client=llm_client,
+                )
+
+        assert result.tests_passed is False
+        assert result.fix_attempts == 2
+
+    @pytest.mark.asyncio
+    async def test_fix_loop_skips_empty_llm_response(self, tmp_path: Path):
+        """Empty LLM response is handled gracefully — skips fix, increments attempt."""
+        target = tmp_path / "empty.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Empty Fix", description="LLM returns nothing")
+        file_changes = [
+            {"path": "empty.py", "content": "x = 1\n", "mode": "create", "after_line": None},
+        ]
+
+        llm_client = AsyncMock()
+        llm_fix_response = MagicMock()
+        llm_fix_response.content = "I'm not sure what to fix."  # no file blocks
+        llm_client.complete = AsyncMock(return_value=llm_fix_response)
+
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
+            with patch("probos.cognitive.builder._run_tests", return_value=(False, "1 failed")):
+                result = await execute_approved_build(
+                    file_changes, spec, str(tmp_path), run_tests=True,
+                    max_fix_attempts=1, llm_client=llm_client,
+                )
+
+        assert result.tests_passed is False
+        assert result.fix_attempts == 1
+
+    def test_fix_prompt_truncates_long_output(self):
+        """_build_fix_prompt truncates test output to last 3000 chars."""
+        long_output = "X" * 5000
+        changes = [{"path": "foo.py", "mode": "create"}]
+        prompt = _build_fix_prompt("Test", long_output, changes, 1)
+        # The prompt should contain only the last 3000 chars of test output
+        assert "X" * 3000 in prompt
+        assert "X" * 5000 not in prompt
+
+    @pytest.mark.asyncio
+    async def test_run_tests_helper(self):
+        """_run_tests returns (True, output) on success and (False, output) on failure."""
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"5 passed\n", stderr=b"")
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
+            passed, output = await _run_tests("/tmp/test")
+            assert passed is True
+            assert "5 passed" in output
+
+        # Failure case
+        mock_fail = subprocess.CompletedProcess(args=[], returncode=1, stdout=b"2 failed\n", stderr=b"")
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_fail):
+            passed, output = await _run_tests("/tmp/test")
+            assert passed is False
+            assert "2 failed" in output
+
+    @pytest.mark.asyncio
+    async def test_fix_loop_disabled_with_zero_retries(self, tmp_path: Path):
+        """max_fix_attempts=0 means no LLM fix calls are made."""
+        target = tmp_path / "noop.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="No Retry", description="Zero retries")
+        file_changes = [
+            {"path": "noop.py", "content": "x = 1\n", "mode": "create", "after_line": None},
+        ]
+
+        llm_client = AsyncMock()
+
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
+            with patch("probos.cognitive.builder._run_tests", return_value=(False, "1 failed")):
+                result = await execute_approved_build(
+                    file_changes, spec, str(tmp_path), run_tests=True,
+                    max_fix_attempts=0, llm_client=llm_client,
+                )
+
+        assert result.tests_passed is False
+        assert result.fix_attempts == 0
+        llm_client.complete.assert_not_called()

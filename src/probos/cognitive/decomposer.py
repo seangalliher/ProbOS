@@ -211,6 +211,9 @@ that were performed.
 6. If results contain structured data (XML, JSON, HTML, CSV), extract and present \
 the relevant content to answer the user's question. Do NOT describe the format or \
 suggest the user access it themselves \u2014 parse the data and give the answer directly.
+7. If results include a "grounded_context" field, treat it as VERIFIED SYSTEM FACTS. \
+Use these facts for any claims about pools, agents, departments, capabilities, or system state. \
+Never contradict grounded_context with information from your training data.
 
 Respond with plain text only. No JSON. No markdown code fences.
 """
@@ -594,7 +597,7 @@ def _summarize_node_result(node_result: Any) -> str:
                     # AD-301: Give doc_snippets their own budget so they
                     # aren't truncated by semantic layer results.
                     base = {k: v for k, v in data.items()
-                            if k != "doc_snippets"}
+                            if k not in ("doc_snippets", "grounded_context")}
                     entry = str(base)[:400]
                     if entry not in seen_outputs:
                         seen_outputs.append(entry)
@@ -605,6 +608,23 @@ def _summarize_node_result(node_result: Any) -> str:
                         )
                         if doc_entry not in seen_outputs:
                             seen_outputs.append(doc_entry)
+                    # AD-320: Preserve grounded context alongside doc_snippets
+                    gc = data.get("grounded_context", "")
+                    if gc:
+                        gc_entry = f"\nGROUNDED SYSTEM FACTS:\n{gc}"
+                        if gc_entry not in seen_outputs:
+                            seen_outputs.append(gc_entry)
+                elif isinstance(data, dict) and "grounded_context" in data:
+                    # AD-320: Preserve grounded context for reflector
+                    gc = data.get("grounded_context")
+                    base = {k: v for k, v in data.items()
+                            if k != "grounded_context"}
+                    entry = str(base)[:500]
+                    if entry not in seen_outputs:
+                        seen_outputs.append(entry)
+                    gc_entry = f"\nGROUNDED SYSTEM FACTS:\n{gc}"
+                    if gc_entry not in seen_outputs:
+                        seen_outputs.append(gc_entry)
                 else:
                     entry = str(data)[:500]
                     if entry not in seen_outputs:

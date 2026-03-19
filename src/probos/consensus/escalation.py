@@ -7,6 +7,7 @@ Tier 3: User consultation (interactive prompt)
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -62,6 +63,7 @@ class EscalationManager:
         user_callback: Callable | None = None,  # Tier 3: async callback to prompt user
         pre_user_hook: Callable | None = None,   # Called before user_callback (e.g. live.stop)
         surge_fn: Callable | None = None,  # async (pool_name, extra) -> bool
+        user_timeout: float = 120.0,  # Tier 3 callback timeout in seconds
     ) -> None:
         self.runtime = runtime
         self.llm_client = llm_client
@@ -69,6 +71,7 @@ class EscalationManager:
         self._user_callback = user_callback
         self._pre_user_hook = pre_user_hook
         self._surge_fn = surge_fn
+        self._user_timeout = user_timeout
         self.user_wait_seconds: float = 0.0  # accumulated user-wait time
 
     def set_user_callback(
@@ -339,8 +342,24 @@ class EscalationManager:
 
         try:
             t_user_start = time.monotonic()
-            user_decision = await self._user_callback(description, ctx)
+            user_decision = await asyncio.wait_for(
+                self._user_callback(description, ctx),
+                timeout=self._user_timeout,
+            )
             self.user_wait_seconds += time.monotonic() - t_user_start
+        except asyncio.TimeoutError:
+            elapsed = time.monotonic() - t_user_start
+            self.user_wait_seconds += elapsed
+            logger.warning(
+                "Tier 3 user callback timed out after %.1fs", elapsed,
+            )
+            return EscalationResult(
+                tier=EscalationTier.USER,
+                resolved=False,
+                original_error=error,
+                user_approved=None,
+                reason=f"User callback timed out after {self._user_timeout:.0f}s",
+            )
         except Exception as e:
             logger.debug("User callback failed: %s", e)
             return EscalationResult(

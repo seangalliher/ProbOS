@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 32i complete — Phase 32 in progress (1899/1899 tests + 21 Vitest + 11 skipped)
+## Current Status: Phase 32s complete — Phase 32 in progress (1972/1972 tests + 30 Vitest + 11 skipped)
 
 ---
 

@@ -175,6 +175,57 @@ IMPORTANT RULES:
 - Do NOT write implementation code — write specifications only
 - Every file path you mention must be verifiable against your context
 - If you cannot find enough context to design confidently, say so in RISKS
+
+PATTERN RECIPES:
+When your feature matches one of these common patterns, use the recipe as a starting
+point. Verify all paths against your File Tree — these are templates, not guarantees.
+
+Recipe: NEW AGENT
+  TARGET_FILES:
+  - src/probos/agents/<team>/<agent_name>.py  (or src/probos/cognitive/<name>.py for cognitive agents)
+  REFERENCE_FILES:
+  - src/probos/substrate/agent.py  (BaseAgent)
+  - src/probos/cognitive/cognitive_agent.py  (if cognitive)
+  - An existing agent in the same team as a pattern reference
+  TEST_FILES:
+  - tests/test_<agent_name>.py
+  CHECKLIST:
+  - Class inherits BaseAgent or CognitiveAgent
+  - agent_type class var set
+  - _handled_intents populated
+  - intent_descriptors list with IntentDescriptor entries
+  - Pool registration in pool config or runtime setup
+  - PoolGroup assignment if applicable
+
+Recipe: NEW SLASH COMMAND
+  TARGET_FILES:
+  - src/probos/experience/shell.py  (add to COMMANDS dict + handler)
+  - src/probos/experience/panels.py  (if command needs TUI output)
+  REFERENCE_FILES:
+  - src/probos/experience/shell.py  (existing command patterns)
+  - src/probos/experience/panels.py  (existing panel renderers)
+  TEST_FILES:
+  - tests/test_shell.py
+  CHECKLIST:
+  - Entry in COMMANDS dict with help text
+  - Handler method on Shell class
+  - Panel renderer in panels.py if needed
+  - Do NOT add to api.py unless the command also needs an API endpoint
+
+Recipe: NEW API ENDPOINT
+  TARGET_FILES:
+  - src/probos/api.py
+  REFERENCE_FILES:
+  - src/probos/api.py  (existing endpoint patterns)
+  - src/probos/experience/shell.py  (if endpoint mirrors a slash command)
+  TEST_FILES:
+  - tests/test_builder_api.py  (or tests/test_architect_api.py — follow the pattern)
+  CHECKLIST:
+  - FastAPI route with type-annotated request/response models
+  - WebSocket event broadcast if real-time UI update needed
+  - _track_task() wrapper if background processing
+  - _safe_send() for any WebSocket sends
+  - Do NOT duplicate logic already in an agent — delegate to intent bus
 """
 
     # -- tier override --------------------------------------------------------
@@ -525,32 +576,93 @@ IMPORTANT RULES:
                 "llm_output": llm_output,
             }
 
+        warnings = self._validate_proposal(proposal)
+
+        result_dict: dict[str, Any] = {
+            "proposal": {
+                "title": proposal.title,
+                "summary": proposal.summary,
+                "rationale": proposal.rationale,
+                "roadmap_ref": proposal.roadmap_ref,
+                "priority": proposal.priority,
+                "dependencies": proposal.dependencies,
+                "risks": proposal.risks,
+                "build_spec": {
+                    "title": proposal.build_spec.title,
+                    "description": proposal.build_spec.description,
+                    "target_files": proposal.build_spec.target_files,
+                    "reference_files": proposal.build_spec.reference_files,
+                    "test_files": proposal.build_spec.test_files,
+                    "ad_number": proposal.build_spec.ad_number,
+                    "constraints": proposal.build_spec.constraints,
+                },
+            },
+            "llm_output": llm_output,
+        }
+        if warnings:
+            result_dict["warnings"] = warnings
+
         return {
             "success": True,
-            "result": {
-                "proposal": {
-                    "title": proposal.title,
-                    "summary": proposal.summary,
-                    "rationale": proposal.rationale,
-                    "roadmap_ref": proposal.roadmap_ref,
-                    "priority": proposal.priority,
-                    "dependencies": proposal.dependencies,
-                    "risks": proposal.risks,
-                    "build_spec": {
-                        "title": proposal.build_spec.title,
-                        "description": proposal.build_spec.description,
-                        "target_files": proposal.build_spec.target_files,
-                        "reference_files": proposal.build_spec.reference_files,
-                        "test_files": proposal.build_spec.test_files,
-                        "ad_number": proposal.build_spec.ad_number,
-                        "constraints": proposal.build_spec.constraints,
-                    },
-                },
-                "llm_output": llm_output,
-            },
+            "result": result_dict,
         }
 
     # -- proposal parser ------------------------------------------------------
+
+    def _validate_proposal(self, proposal: ArchitectProposal) -> list[str]:
+        """Validate an ArchitectProposal and return advisory warnings."""
+        warnings: list[str] = []
+
+        # 1. Non-empty required fields
+        for field_name, value in [
+            ("title", proposal.title),
+            ("summary", proposal.summary),
+            ("build_spec.description", proposal.build_spec.description),
+        ]:
+            if not value or not value.strip():
+                warnings.append(f"Missing required field: {field_name}")
+
+        # 2. Non-empty TEST_FILES
+        if not proposal.build_spec.test_files:
+            warnings.append("No test files specified — every change needs tests")
+
+        # 3 & 4. File tree checks (only if runtime + codebase_index available)
+        runtime = getattr(self, "_runtime", None)
+        codebase_index = getattr(runtime, "codebase_index", None) if runtime else None
+        if codebase_index:
+            file_tree = getattr(codebase_index, "_file_tree", {})
+            known_paths = set(file_tree.keys())
+
+            # 3. TARGET_FILES exist or follow existing directory pattern
+            for path in proposal.build_spec.target_files:
+                if path in known_paths:
+                    continue
+                # Check if directory portion exists as prefix of any known file
+                dir_prefix = "/".join(path.split("/")[:-1]) + "/"
+                if not any(k.startswith(dir_prefix) for k in known_paths):
+                    warnings.append(
+                        f"TARGET_FILE not found and no matching directory: {path}"
+                    )
+
+            # 4. REFERENCE_FILES exist
+            for path in proposal.build_spec.reference_files:
+                if path not in known_paths:
+                    warnings.append(f"REFERENCE_FILE not found: {path}")
+
+        # 5. Valid priority
+        if proposal.priority not in {"high", "medium", "low"}:
+            warnings.append(
+                f"Invalid priority '{proposal.priority}', expected high/medium/low"
+            )
+
+        # 6. Description minimum length
+        desc_len = len(proposal.build_spec.description.strip()) if proposal.build_spec.description else 0
+        if desc_len < 100:
+            warnings.append(
+                f"Description too short ({desc_len} chars) — Builder needs detailed specifications"
+            )
+
+        return warnings
 
     @staticmethod
     def _parse_proposal(text: str) -> ArchitectProposal | None:

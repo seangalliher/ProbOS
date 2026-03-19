@@ -348,3 +348,72 @@ class TestExecuteBuildEvents:
         assert "build_failure" in event_types
 
         await rt.stop()
+
+
+class TestTaskTracking:
+    """Tests for background task lifecycle (AD-326)."""
+
+    @pytest.mark.asyncio
+    async def test_build_submit_tracks_task(self, tmp_path):
+        """submit_build creates a tracked background task visible in /api/tasks."""
+        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=MockLLMClient())
+        app = create_app(rt)
+        transport = ASGITransport(app=app)
+
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/api/build/submit", json={
+                "title": "Track test",
+                "description": "Testing task tracking",
+            })
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "started"
+
+            # /api/tasks endpoint should be functional
+            tasks_resp = await ac.get("/api/tasks")
+            assert tasks_resp.status_code == 200
+            tasks_data = tasks_resp.json()
+            assert "active_count" in tasks_data
+            assert "total_tracked" in tasks_data
+
+    @pytest.mark.asyncio
+    async def test_tasks_endpoint_returns_status(self, tmp_path):
+        """GET /api/tasks returns active task information."""
+        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=MockLLMClient())
+        app = create_app(rt)
+        transport = ASGITransport(app=app)
+
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/api/tasks")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "active_count" in data
+            assert "total_tracked" in data
+            assert "pending_designs" in data
+            assert "tasks" in data
+            assert isinstance(data["tasks"], list)
+
+    @pytest.mark.asyncio
+    async def test_task_done_callback_removes_from_set(self, tmp_path):
+        """Completed tasks are cleaned up — /api/tasks shows 0 after completion."""
+        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=MockLLMClient())
+        app = create_app(rt)
+        transport = ASGITransport(app=app)
+
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            # Initially no tasks
+            resp = await ac.get("/api/tasks")
+            assert resp.json()["total_tracked"] == 0
+
+            # Submit a build (completes quickly with MockLLM)
+            await ac.post("/api/build/submit", json={
+                "title": "Quick build",
+                "description": "Finishes fast",
+            })
+
+            # Let the task complete
+            await asyncio.sleep(0.5)
+
+            # Done callback should have removed it
+            resp2 = await ac.get("/api/tasks")
+            assert resp2.json()["total_tracked"] == 0

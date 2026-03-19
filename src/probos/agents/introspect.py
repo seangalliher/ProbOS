@@ -121,6 +121,81 @@ class IntrospectionAgent(BaseAgent):
     # Intent handlers
     # ------------------------------------------------------------------
 
+    def _grounded_context(self) -> str:
+        """Build grounded self-knowledge context from SystemSelfModel (AD-320).
+
+        Returns a detailed text block of verified runtime facts for use as
+        grounding material in introspection responses. More detailed than
+        SystemSelfModel.to_context() — includes per-pool breakdowns with
+        department associations and full intent listing.
+        """
+        rt = self._runtime
+        if not rt:
+            return ""
+
+        try:
+            model = rt._build_system_self_model()
+        except Exception:
+            return ""
+
+        try:
+            parts: list[str] = []
+
+            # Identity + health
+            parts.append(f"System: ProbOS | Mode: {model.system_mode}")
+            if model.uptime_seconds > 0:
+                mins = int(model.uptime_seconds // 60)
+                parts.append(f"Uptime: {mins} minutes")
+
+            # Topology summary
+            parts.append(f"Total pools: {model.pool_count}")
+            parts.append(f"Total agents: {model.agent_count}")
+            parts.append(f"Registered intents: {model.intent_count}")
+
+            # Departments with their pools
+            if model.departments:
+                parts.append(f"\nDepartments: {', '.join(model.departments)}")
+            if model.pools:
+                # Group pools by department
+                dept_pools: dict[str, list] = {}
+                ungrouped: list = []
+                for p in model.pools:
+                    if p.department:
+                        dept_pools.setdefault(p.department, []).append(p)
+                    else:
+                        ungrouped.append(p)
+                for dept_name, pools in sorted(dept_pools.items()):
+                    pool_items = ", ".join(
+                        f"{p.name} ({p.agent_type}, {p.agent_count} agents)"
+                        for p in pools
+                    )
+                    parts.append(f"  {dept_name}: {pool_items}")
+                if ungrouped:
+                    pool_items = ", ".join(
+                        f"{p.name} ({p.agent_type}, {p.agent_count} agents)"
+                        for p in ungrouped
+                    )
+                    parts.append(f"  Unassigned: {pool_items}")
+
+            # Intent listing
+            try:
+                descriptors = rt.decomposer._intent_descriptors
+                if descriptors:
+                    intent_names = sorted(d.name for d in descriptors)
+                    parts.append(f"\nAvailable intents: {', '.join(intent_names)}")
+            except Exception:
+                pass
+
+            # Health signals
+            if model.recent_errors:
+                parts.append(f"\nRecent errors: {'; '.join(model.recent_errors)}")
+            if model.last_capability_gap:
+                parts.append(f"Last capability gap: {model.last_capability_gap}")
+
+            return "\n".join(parts)
+        except Exception:
+            return ""
+
     async def _explain_last(self, rt: Any) -> dict[str, Any]:
         """Explain the most recent NL request."""
         prev = rt._previous_execution
@@ -222,10 +297,15 @@ class IntrospectionAgent(BaseAgent):
 
         if not agents:
             qualifier = agent_type or agent_id or "all"
-            return {
+            result = {
                 "success": True,
                 "data": {"agents": [], "message": f"No agents found matching: {qualifier}"},
             }
+            # Append grounded topology for reflector (AD-320)
+            grounded = self._grounded_context()
+            if grounded:
+                result["data"]["grounded_context"] = grounded
+            return result
 
         agent_infos = []
         for agent in agents:
@@ -256,7 +336,13 @@ class IntrospectionAgent(BaseAgent):
             }
             agent_infos.append(info)
 
-        return {"success": True, "data": {"agents": agent_infos}}
+        # Append grounded topology for reflector (AD-320)
+        grounded = self._grounded_context()
+        if grounded:
+            data = {"agents": agent_infos, "grounded_context": grounded}
+        else:
+            data = {"agents": agent_infos}
+        return {"success": True, "data": data}
 
     def _team_info(self, rt: Any, params: dict[str, Any]) -> dict[str, Any]:
         """Return details about a crew team (pool group)."""
@@ -266,10 +352,15 @@ class IntrospectionAgent(BaseAgent):
             # No specific team — list all teams
             groups = rt.pool_groups.all_groups()
             if not groups:
-                return {
+                result = {
                     "success": True,
                     "data": {"message": "No crew teams registered."},
                 }
+                # Append grounded topology for reflector (AD-320)
+                grounded = self._grounded_context()
+                if grounded:
+                    result["data"]["grounded_context"] = grounded
+                return result
             team_summaries = []
             for group in groups:
                 health = rt.pool_groups.group_health(group.name, rt.pools)
@@ -281,10 +372,15 @@ class IntrospectionAgent(BaseAgent):
                     "health_ratio": health.get("health_ratio", 1.0),
                     "pool_count": len(group.pool_names),
                 })
-            return {
+            result = {
                 "success": True,
                 "data": {"teams": team_summaries, "count": len(team_summaries)},
             }
+            # Append grounded topology for reflector (AD-320)
+            grounded = self._grounded_context()
+            if grounded:
+                result["data"]["grounded_context"] = grounded
+            return result
 
         # Look up the specific team
         group = rt.pool_groups.get_group(team_name)
@@ -324,7 +420,7 @@ class IntrospectionAgent(BaseAgent):
                 info["pool"] = pool_name
                 agent_details.append(info)
 
-        return {
+        result = {
             "success": True,
             "data": {
                 "team": {
@@ -341,6 +437,11 @@ class IntrospectionAgent(BaseAgent):
                 "agents": agent_details,
             },
         }
+        # Append grounded topology for reflector (AD-320)
+        grounded = self._grounded_context()
+        if grounded:
+            result["data"]["grounded_context"] = grounded
+        return result
 
     def _system_health(self, rt: Any) -> dict[str, Any]:
         """Compute a structured health assessment."""
@@ -401,7 +502,7 @@ class IntrospectionAgent(BaseAgent):
                     "pre_warm_intents": report.pre_warm_intents,
                 }
 
-        return {
+        result = {
             "success": True,
             "data": {
                 "pool_health": pool_health,
@@ -413,6 +514,11 @@ class IntrospectionAgent(BaseAgent):
                 "dreaming": dreaming_info,
             },
         }
+        # Append grounded topology for reflector (AD-320)
+        grounded = self._grounded_context()
+        if grounded:
+            result["data"]["grounded_context"] = grounded
+        return result
 
     async def _why(self, rt: Any, params: dict[str, Any]) -> dict[str, Any]:
         """Answer a 'why' question about ProbOS behavior."""
@@ -543,7 +649,7 @@ class IntrospectionAgent(BaseAgent):
         if rt.dream_scheduler:
             dreaming_info["state"] = "dreaming" if rt.dream_scheduler.is_dreaming else "idle"
 
-        return {
+        result = {
             "success": True,
             "data": {
                 "agents_by_tier": tier_counts,
@@ -555,6 +661,11 @@ class IntrospectionAgent(BaseAgent):
                 "dreaming": dreaming_info,
             },
         }
+        # Append grounded topology for reflector (AD-320)
+        grounded = self._grounded_context()
+        if grounded:
+            result["data"]["grounded_context"] = grounded
+        return result
 
     def _system_anomalies(self, rt: Any) -> dict[str, Any]:
         """Report currently detected anomalies and patterns."""

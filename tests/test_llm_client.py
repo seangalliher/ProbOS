@@ -525,8 +525,13 @@ class TestCheckEndpointRouting:
         )
         client = OpenAICompatibleClient(config=cfg)
         try:
-            result = await client._check_endpoint("fast")
-            assert result is False
+            mock_client = client._clients[client._client_key("fast")]
+            with patch.object(
+                mock_client, "post", new_callable=AsyncMock,
+                side_effect=httpx.ConnectError("Connection refused"),
+            ):
+                result = await client._check_endpoint("fast")
+                assert result is False
         finally:
             await client.close()
 

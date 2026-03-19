@@ -40,6 +40,7 @@ from probos.agents.medical import (
 )
 from probos.cognitive.builder import BuilderAgent
 from probos.cognitive.architect import ArchitectAgent
+from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
@@ -190,6 +191,8 @@ class ProbOSRuntime:
         self.federation_bridge: Any = None  # FederationBridge | None
         self._federation_transport: Any = None
         self._start_time: float = time.monotonic()
+        self._recent_errors: list[str] = []    # last 5 error summaries (AD-318)
+        self._last_capability_gap: str = ""    # last unhandled intent (AD-318)
 
         # --- Self-modification ---
         self.self_mod_pipeline: Any = None  # SelfModificationPipeline | None
@@ -1249,26 +1252,157 @@ class ProbOSRuntime:
         result["committed"] = committed
         return result
 
-    def _build_runtime_summary(self) -> str:
-        """Build grounded system state summary for the Ship's Computer (AD-317)."""
-        lines = []
+    def _build_system_self_model(self) -> SystemSelfModel:
+        """Build structured self-knowledge snapshot (AD-318)."""
+        import time as _time
 
-        # Pool status
-        pool_count = len(self.pools)
-        agent_count = sum(p.current_size for p in self.pools.values())
-        lines.append(f"Active pools: {pool_count}, Total agents: {agent_count}")
+        # Topology
+        pools: list[PoolSnapshot] = []
+        dept_lookup: dict[str, str] = {}
 
-        # Pool group structure (departments)
-        groups = self.pool_groups.all_groups()
-        if groups:
-            group_names = [g.name for g in groups]
-            lines.append(f"Departments: {', '.join(group_names)}")
+        # Build department lookup from pool groups
+        try:
+            for group in self.pool_groups.all_groups():
+                for pool_name in group.pool_names:
+                    dept_lookup[pool_name] = group.display_name
+        except Exception:
+            pass
 
-        # Intent count from descriptors
-        if self.decomposer._intent_descriptors:
-            lines.append(f"Registered intents: {len(self.decomposer._intent_descriptors)}")
+        for name, pool in self.pools.items():
+            pools.append(PoolSnapshot(
+                name=name,
+                agent_type=pool.agent_type,
+                agent_count=pool.current_size,
+                department=dept_lookup.get(name, ""),
+            ))
 
-        return "\n".join(lines)
+        # Departments
+        departments: list[str] = []
+        try:
+            departments = [g.display_name for g in self.pool_groups.all_groups()]
+        except Exception:
+            pass
+
+        # System mode
+        system_mode = "active"
+        try:
+            if self.dream_scheduler and self.dream_scheduler.is_dreaming:
+                system_mode = "dreaming"
+            elif (_time.monotonic() - self._last_request_time) > 30:
+                system_mode = "idle"
+        except Exception:
+            pass
+
+        # Intent count
+        intent_count = 0
+        try:
+            intent_count = len(self.decomposer._intent_descriptors)
+        except Exception:
+            pass
+
+        return SystemSelfModel(
+            pool_count=len(self.pools),
+            agent_count=sum(p.current_size for p in self.pools.values()),
+            pools=pools,
+            departments=departments,
+            intent_count=intent_count,
+            system_mode=system_mode,
+            uptime_seconds=_time.monotonic() - self._start_time,
+            recent_errors=list(self._recent_errors),
+            last_capability_gap=self._last_capability_gap,
+        )
+
+    def _record_error(self, summary: str) -> None:
+        """Record a recent error for SystemSelfModel (AD-318)."""
+        self._recent_errors.append(summary)
+        if len(self._recent_errors) > 5:
+            self._recent_errors = self._recent_errors[-5:]
+
+    def _verify_response(self, response_text: str, self_model: SystemSelfModel) -> str:
+        """Verify response text against SystemSelfModel facts (AD-319).
+
+        Returns the response text with a correction footnote appended
+        if any confabulated facts are detected. Returns original text
+        if no issues found.
+        """
+        if not response_text or not response_text.strip():
+            return response_text
+
+        import re as _re
+
+        violations: list[str] = []
+        response_lower = response_text.lower()
+
+        # Check 1: Pool count claims
+        pool_count_matches = _re.findall(r'(\d+)\s+pools?\b', response_lower)
+        for match in pool_count_matches:
+            claimed = int(match)
+            if claimed != self_model.pool_count and claimed != 0:
+                violations.append(
+                    f"pools: claimed {claimed}, actual {self_model.pool_count}"
+                )
+
+        # Check 2: Agent count claims
+        agent_count_matches = _re.findall(r'(\d+)\s+agents?\b', response_lower)
+        for match in agent_count_matches:
+            claimed = int(match)
+            if claimed != self_model.agent_count and claimed != 0:
+                violations.append(
+                    f"agents: claimed {claimed}, actual {self_model.agent_count}"
+                )
+
+        # Check 3: Fabricated department names
+        known_departments = {d.lower() for d in self_model.departments}
+        DEPARTMENT_PATTERNS = [
+            "navigation", "tactical", "helm", "ops", "logistics",
+            "research", "diplomacy", "intelligence", "weapons",
+        ]
+        for dept in DEPARTMENT_PATTERNS:
+            if dept in response_lower and dept not in known_departments:
+                dept_context = _re.search(
+                    rf'\b{_re.escape(dept)}\b\s+(?:department|team|division|pool)',
+                    response_lower,
+                )
+                if dept_context:
+                    violations.append(f"unknown department: '{dept}'")
+
+        # Check 4: Fabricated pool names
+        known_pools = {p.name.lower() for p in self_model.pools}
+        pool_ref_matches = _re.findall(
+            r'the\s+(\w+)\s+pool\b', response_lower
+        )
+        for pool_name in pool_ref_matches:
+            if pool_name not in known_pools and pool_name not in {
+                "agent", "worker", "thread", "connection",
+            }:
+                violations.append(f"unknown pool: '{pool_name}'")
+
+        # Check 5: System mode contradictions
+        if self_model.system_mode == "active" and "system is idle" in response_lower:
+            violations.append("mode: claimed idle, actual active")
+        elif self_model.system_mode == "idle" and "system is active" in response_lower:
+            violations.append("mode: claimed active, actual idle")
+        elif self_model.system_mode == "dreaming" and (
+            "system is active" in response_lower or "system is idle" in response_lower
+        ):
+            violations.append(f"mode: actual dreaming")
+
+        if not violations:
+            return response_text
+
+        logger.warning(
+            "Response verification found %d violation(s): %s",
+            len(violations),
+            "; ".join(violations),
+        )
+
+        correction = (
+            "\n\n[Note: Some details in this response may be imprecise. "
+            f"Verified system state: {self_model.pool_count} pools, "
+            f"{self_model.agent_count} agents, "
+            f"mode {self_model.system_mode}.]"
+        )
+        return response_text + correction
 
     async def process_natural_language(
         self,
@@ -1385,7 +1519,8 @@ class ProbOSRuntime:
                          f"assume the same context (location, region, domain) as the previous query.")
                     ]
 
-        runtime_summary = self._build_runtime_summary()
+        self_model = self._build_system_self_model()
+        runtime_summary = self_model.to_context()
         dag = await self.decomposer.decompose(
             text, context=context, similar_episodes=similar_episodes or None,
             conversation_history=conversation_history,
@@ -1404,6 +1539,8 @@ class ProbOSRuntime:
             from probos.cognitive.decomposer import is_capability_gap
             self_mod_result = None
             is_gap = dag.capability_gap or (dag.response and is_capability_gap(dag.response))
+            if is_gap:
+                self._last_capability_gap = text[:100]
             if self.self_mod_pipeline and (
                 not dag.response or is_gap
             ):
@@ -1499,6 +1636,11 @@ class ProbOSRuntime:
                 }
                 if self_mod_result:
                     result["self_mod"] = self_mod_result
+                # Verify response against self-model (AD-319)
+                if result.get("response"):
+                    result["response"] = self._verify_response(
+                        result["response"], self_model
+                    )
                 return result
 
         # Record intents in working memory
@@ -1507,7 +1649,7 @@ class ProbOSRuntime:
 
         # 3. Execute DAG through shared path
         execution_result = await self._execute_dag(
-            dag, text, t_start, on_event=on_event,
+            dag, text, t_start, on_event=on_event, self_model=self_model,
         )
 
         return execution_result
@@ -1518,6 +1660,7 @@ class ProbOSRuntime:
         text: str,
         t_start: float,
         on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+        self_model: SystemSelfModel | None = None,
     ) -> dict[str, Any]:
         """Execute a TaskDAG through the full pipeline.
 
@@ -1553,6 +1696,11 @@ class ProbOSRuntime:
                     timeout=reflect_timeout,
                 )
                 execution_result["reflection"] = reflection
+                # Verify reflection against self-model (AD-319)
+                if reflection and self_model:
+                    execution_result["reflection"] = self._verify_response(
+                        reflection, self_model
+                    )
             except asyncio.TimeoutError:
                 logger.warning(
                     "Reflect timed out after %.0fs — results preserved",
@@ -1563,6 +1711,7 @@ class ProbOSRuntime:
                 )
             except Exception as e:
                 logger.warning("Reflect failed: %s: %s", type(e).__name__, e)
+                self._record_error(f"Reflect: {type(e).__name__}: {str(e)[:60]}")
                 execution_result["reflection"] = (
                     "(Reflection unavailable — results shown above)"
                 )
@@ -1582,6 +1731,7 @@ class ProbOSRuntime:
                         pass  # Never block on persistence failure
             except Exception as e:
                 logger.warning("Episode storage failed: %s: %s", type(e).__name__, e)
+                self._record_error(f"Episode: {type(e).__name__}: {str(e)[:60]}")
 
         # Step 7: Store successful workflows in cache
         if self.workflow_cache and dag.nodes:

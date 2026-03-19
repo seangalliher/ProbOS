@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from probos.config import CognitiveConfig
@@ -286,12 +288,23 @@ class TestBootSequence:
 
         config = SystemConfig(
             cognitive=CognitiveConfig(
-                llm_base_url="http://localhost:1",  # unreachable
+                llm_base_url="http://localhost:1",
             )
         )
         console = Console(file=StringIO())
-        client = await _create_llm_client(config, console)
-        assert isinstance(client, MockLLMClient)
+
+        with patch(
+            "probos.__main__.OpenAICompatibleClient"
+        ) as MockClientClass:
+            mock_instance = AsyncMock()
+            mock_instance.check_connectivity = AsyncMock(
+                return_value={"standard": False, "fast": False, "deep": False}
+            )
+            mock_instance.close = AsyncMock()
+            MockClientClass.return_value = mock_instance
+
+            client = await _create_llm_client(config, console)
+            assert isinstance(client, MockLLMClient)
 
     @pytest.mark.asyncio
     async def test_partial_connectivity_returns_tier_status(self):

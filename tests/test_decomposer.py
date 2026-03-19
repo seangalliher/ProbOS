@@ -803,7 +803,8 @@ class TestShipsComputerIdentity:
         assert "Ship's Computer" not in system_prompt
 
     def test_build_runtime_summary(self):
-        """_build_runtime_summary returns pool/agent/department counts."""
+        """_build_self_model returns structured self-knowledge snapshot (AD-318)."""
+        import time
         from unittest.mock import MagicMock
         from probos.runtime import ProbOSRuntime
 
@@ -812,13 +813,16 @@ class TestShipsComputerIdentity:
         # Set up pools
         pool1 = MagicMock()
         pool1.current_size = 3
+        pool1.agent_type = "file_reader"
         pool2 = MagicMock()
         pool2.current_size = 2
+        pool2.agent_type = "shell"
         runtime.pools = {"filesystem": pool1, "shell": pool2}
 
         # Pool groups
         group = MagicMock()
-        group.name = "Engineering"
+        group.display_name = "Engineering"
+        group.pool_names = ["filesystem", "shell"]
         runtime.pool_groups = MagicMock()
         runtime.pool_groups.all_groups.return_value = [group]
 
@@ -826,9 +830,627 @@ class TestShipsComputerIdentity:
         runtime.decomposer = MagicMock()
         runtime.decomposer._intent_descriptors = [MagicMock(), MagicMock(), MagicMock()]
 
+        # Health state (AD-318)
+        runtime._start_time = time.monotonic() - 120
+        runtime._last_request_time = time.monotonic()
+        runtime._recent_errors = []
+        runtime._last_capability_gap = ""
+        runtime.dream_scheduler = MagicMock()
+        runtime.dream_scheduler.is_dreaming = False
+
         # Call the real method on the mock
-        summary = ProbOSRuntime._build_runtime_summary(runtime)
-        assert "Active pools: 2" in summary
-        assert "Total agents: 5" in summary
+        model = ProbOSRuntime._build_system_self_model(runtime)
+        summary = model.to_context()
+        assert "ProbOS" in summary
+        assert "Pools: 2" in summary
+        assert "Agents: 5" in summary
         assert "Engineering" in summary
-        assert "Registered intents: 3" in summary
+        assert "Intents: 3" in summary
+
+
+class TestSystemSelfModel:
+    """Tests for AD-318 SystemSelfModel dataclass and runtime integration."""
+
+    def test_self_model_dataclass_defaults(self):
+        """SystemSelfModel defaults are all zero/empty."""
+        from probos.cognitive.self_model import SystemSelfModel
+        m = SystemSelfModel()
+        assert m.pool_count == 0
+        assert m.agent_count == 0
+        assert m.pools == []
+        assert m.departments == []
+        assert m.intent_count == 0
+        assert m.system_mode == "active"
+        assert m.uptime_seconds == 0.0
+        assert m.recent_errors == []
+        assert m.last_capability_gap == ""
+
+    def test_to_context_minimal(self):
+        """Minimal SystemSelfModel produces compact context string."""
+        from probos.cognitive.self_model import SystemSelfModel
+        m = SystemSelfModel()
+        ctx = m.to_context()
+        assert "ProbOS" in ctx
+        assert "Mode: active" in ctx
+        assert "Pools: 0" in ctx
+        assert "Agents: 0" in ctx
+
+    def test_to_context_full(self):
+        """Fully populated SystemSelfModel includes all sections."""
+        from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
+        m = SystemSelfModel(
+            version="v0.4.0",
+            pool_count=2,
+            agent_count=5,
+            pools=[
+                PoolSnapshot(name="filesystem", agent_type="file_reader", agent_count=3, department="Engineering"),
+                PoolSnapshot(name="shell", agent_type="shell", agent_count=2, department="Engineering"),
+            ],
+            departments=["Engineering", "Science"],
+            intent_count=38,
+            system_mode="idle",
+            uptime_seconds=3600,
+            recent_errors=["timeout"],
+            last_capability_gap="run docker",
+        )
+        ctx = m.to_context()
+        assert "v0.4.0" in ctx
+        assert "Mode: idle" in ctx
+        assert "60m" in ctx
+        assert "\u00d7" in ctx  # × in pool roster
+        assert "Engineering" in ctx
+        assert "Science" in ctx
+        assert "run docker" in ctx
+        assert "timeout" in ctx
+
+    def test_pool_snapshot_fields(self):
+        """PoolSnapshot stores all fields correctly."""
+        from probos.cognitive.self_model import PoolSnapshot
+        p = PoolSnapshot(name="builder", agent_type="builder", agent_count=1, department="Engineering")
+        assert p.name == "builder"
+        assert p.agent_type == "builder"
+        assert p.agent_count == 1
+        assert p.department == "Engineering"
+
+    def test_build_self_model(self):
+        """_build_self_model returns a fully populated SystemSelfModel."""
+        import time
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+
+        runtime = MagicMock(spec=ProbOSRuntime)
+
+        pool1 = MagicMock()
+        pool1.current_size = 3
+        pool1.agent_type = "file_reader"
+        pool2 = MagicMock()
+        pool2.current_size = 2
+        pool2.agent_type = "shell"
+        runtime.pools = {"filesystem": pool1, "shell": pool2}
+
+        group = MagicMock()
+        group.display_name = "Engineering"
+        group.pool_names = ["filesystem", "shell"]
+        runtime.pool_groups = MagicMock()
+        runtime.pool_groups.all_groups.return_value = [group]
+
+        runtime.decomposer = MagicMock()
+        runtime.decomposer._intent_descriptors = [MagicMock(), MagicMock(), MagicMock()]
+
+        runtime._start_time = time.monotonic() - 120
+        runtime._last_request_time = time.monotonic()
+        runtime._recent_errors = ["err1"]
+        runtime._last_capability_gap = "deploy"
+        runtime.dream_scheduler = MagicMock()
+        runtime.dream_scheduler.is_dreaming = False
+
+        model = ProbOSRuntime._build_system_self_model(runtime)
+        assert model.pool_count == 2
+        assert model.agent_count == 5
+        assert model.system_mode == "active"
+        assert len(model.pools) == 2
+        assert any("Engineering" in d for d in model.departments)
+        assert model.recent_errors == ["err1"]
+        assert model.last_capability_gap == "deploy"
+        assert model.uptime_seconds > 0
+
+    def test_build_self_model_dreaming_mode(self):
+        """Dreaming scheduler sets system_mode to 'dreaming'."""
+        import time
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+
+        runtime = MagicMock(spec=ProbOSRuntime)
+        runtime.pools = {}
+        runtime.pool_groups = MagicMock()
+        runtime.pool_groups.all_groups.return_value = []
+        runtime.decomposer = MagicMock()
+        runtime.decomposer._intent_descriptors = []
+        runtime._start_time = time.monotonic() - 60
+        runtime._last_request_time = time.monotonic()
+        runtime._recent_errors = []
+        runtime._last_capability_gap = ""
+        runtime.dream_scheduler = MagicMock()
+        runtime.dream_scheduler.is_dreaming = True
+
+        model = ProbOSRuntime._build_system_self_model(runtime)
+        assert model.system_mode == "dreaming"
+
+    def test_build_self_model_idle_mode(self):
+        """Idle mode when last request was over 30s ago."""
+        import time
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+
+        runtime = MagicMock(spec=ProbOSRuntime)
+        runtime.pools = {}
+        runtime.pool_groups = MagicMock()
+        runtime.pool_groups.all_groups.return_value = []
+        runtime.decomposer = MagicMock()
+        runtime.decomposer._intent_descriptors = []
+        runtime._start_time = time.monotonic() - 120
+        runtime._last_request_time = time.monotonic() - 60  # Over 30s threshold
+        runtime._recent_errors = []
+        runtime._last_capability_gap = ""
+        runtime.dream_scheduler = MagicMock()
+        runtime.dream_scheduler.is_dreaming = False
+
+        model = ProbOSRuntime._build_system_self_model(runtime)
+        assert model.system_mode == "idle"
+
+    def test_record_error_caps_at_five(self):
+        """_record_error keeps only last 5 errors."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+
+        runtime = MagicMock(spec=ProbOSRuntime)
+        runtime._recent_errors = []
+
+        for _ in range(7):
+            ProbOSRuntime._record_error(runtime, "err")
+
+        assert len(runtime._recent_errors) == 5
+        assert all(e == "err" for e in runtime._recent_errors)
+
+    def test_to_context_stays_compact(self):
+        """Even with 20 pools and 5 errors, context stays under 1000 chars."""
+        from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
+        m = SystemSelfModel(
+            version="v0.4.0",
+            pool_count=20,
+            agent_count=100,
+            pools=[
+                PoolSnapshot(name=f"pool_{i}", agent_type=f"type_{i}", agent_count=5)
+                for i in range(20)
+            ],
+            departments=["Eng", "Sci", "Med", "Sec", "Ops"],
+            intent_count=50,
+            system_mode="active",
+            uptime_seconds=7200,
+            recent_errors=["err1", "err2", "err3", "err4", "err5"],
+            last_capability_gap="a very long capability gap description here",
+        )
+        ctx = m.to_context()
+        assert len(ctx) < 1000
+
+
+class TestPreResponseVerification:
+    """Tests for AD-319 _verify_response() method."""
+
+    @staticmethod
+    def _make_model():
+        from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
+        return SystemSelfModel(
+            pool_count=14,
+            agent_count=54,
+            pools=[
+                PoolSnapshot(name="filesystem", agent_type="file_reader", agent_count=3, department="Engineering"),
+                PoolSnapshot(name="shell", agent_type="shell", agent_count=2, department="Engineering"),
+                PoolSnapshot(name="medical", agent_type="vitals_monitor", agent_count=1, department="Medical"),
+            ],
+            departments=["Engineering", "Medical", "Science"],
+            intent_count=38,
+            system_mode="active",
+            uptime_seconds=3600,
+        )
+
+    def test_clean_response_unchanged(self):
+        """Response with no verifiable claims passes through unchanged."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        text = "Hello, Captain. How may I assist you?"
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert result == text
+
+    def test_empty_response_unchanged(self):
+        """Empty and whitespace-only responses pass through unchanged."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        assert ProbOSRuntime._verify_response(runtime, "", model) == ""
+        assert ProbOSRuntime._verify_response(runtime, "   ", model) == "   "
+
+    def test_wrong_pool_count_flagged(self):
+        """Wrong pool count adds correction footnote."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        text = "I currently manage 25 pools across the system."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" in result
+        assert "14 pools" in result
+
+    def test_correct_pool_count_not_flagged(self):
+        """Correct pool count does not add footnote."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        text = "I currently manage 14 pools."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" not in result
+
+    def test_wrong_agent_count_flagged(self):
+        """Wrong agent count adds correction footnote."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        text = "There are 200 agents deployed."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" in result
+        assert "54 agents" in result
+
+    def test_fabricated_department_flagged(self):
+        """Fabricated department name adds footnote."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        text = "The Navigation department handles routing."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" in result
+
+    def test_known_department_not_flagged(self):
+        """Known department name does not add footnote."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        text = "The Engineering department handles file operations."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" not in result
+
+    def test_fabricated_pool_flagged(self):
+        """Fabricated pool name adds footnote."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        text = "Data is routed through the warpcore pool for processing."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" in result
+
+    def test_known_pool_not_flagged(self):
+        """Known pool name does not add footnote."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        text = "The filesystem pool handles file reads."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" not in result
+
+    def test_mode_contradiction_flagged(self):
+        """Mode contradiction adds footnote."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()  # system_mode="active"
+        text = "The system is idle right now."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" in result
+        assert "mode active" in result
+
+    def test_mode_correct_not_flagged(self):
+        """Correct mode mention does not add footnote."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        text = "The system is active."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" not in result
+
+    def test_multiple_violations_all_reported(self):
+        """Multiple violations produce correction with all facts."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        text = "I have 99 pools and 500 agents. The Navigation department is online."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" in result
+        assert "14 pools" in result
+        assert "54 agents" in result
+
+    def test_verification_logs_warning(self, caplog):
+        """Verification logs a warning when violations are found."""
+        import logging
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        with caplog.at_level(logging.WARNING, logger="probos.runtime"):
+            ProbOSRuntime._verify_response(runtime, "I have 99 pools.", model)
+        assert any("violation" in r.message for r in caplog.records)
+
+    def test_generic_pool_word_not_flagged(self):
+        """Generic words like 'agent' in 'the agent pool' are not flagged."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()
+        text = "The agent pool is doing well."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" not in result
+
+
+class TestIntrospectionDelegation:
+    """Tests for AD-320 introspection delegation with grounded context."""
+
+    @staticmethod
+    def _make_mock_runtime(
+        pool_count=2,
+        agent_count=5,
+        departments=None,
+        recent_errors=None,
+        last_capability_gap="",
+        intent_descriptors=None,
+    ):
+        """Build a mock runtime for introspection grounded context tests."""
+        import time
+        from unittest.mock import MagicMock
+        from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
+
+        if departments is None:
+            departments = ["Engineering"]
+
+        pools = []
+        mock_pools = {}
+        if pool_count >= 1:
+            pools.append(PoolSnapshot(name="filesystem", agent_type="file_reader", agent_count=3, department="Engineering"))
+            p1 = MagicMock()
+            p1.current_size = 3
+            p1.agent_type = "file_reader"
+            p1.healthy_agents = []
+            p1.target_size = 3
+            mock_pools["filesystem"] = p1
+        if pool_count >= 2:
+            pools.append(PoolSnapshot(name="shell", agent_type="shell", agent_count=2, department="Engineering"))
+            p2 = MagicMock()
+            p2.current_size = 2
+            p2.agent_type = "shell"
+            p2.healthy_agents = []
+            p2.target_size = 2
+            mock_pools["shell"] = p2
+
+        model = SystemSelfModel(
+            pool_count=pool_count,
+            agent_count=agent_count,
+            pools=pools,
+            departments=departments,
+            intent_count=len(intent_descriptors) if intent_descriptors else 0,
+            system_mode="active",
+            uptime_seconds=120,
+            recent_errors=recent_errors or [],
+            last_capability_gap=last_capability_gap,
+        )
+
+        rt = MagicMock()
+        rt._build_system_self_model.return_value = model
+        rt.pools = mock_pools
+        rt.decomposer = MagicMock()
+        rt.decomposer._intent_descriptors = intent_descriptors or []
+
+        # Registry, trust, etc. for handle_intent tests
+        rt.registry = MagicMock()
+        rt.registry.all.return_value = []
+        rt.registry.count = agent_count
+        rt.trust_network = MagicMock()
+        rt.trust_network.all_scores.return_value = {}
+        rt.hebbian_router = MagicMock()
+        rt.hebbian_router.all_weights_typed.return_value = {}
+        rt.hebbian_router.weight_count = 0
+        rt.pool_groups = MagicMock()
+        rt.pool_groups.all_groups.return_value = []
+        rt.pool_groups.get_group.return_value = None
+        rt.attention = MagicMock()
+        rt.attention.queue_size = 0
+        rt.workflow_cache = None
+        rt.dream_scheduler = None
+        rt._knowledge_store = None
+        rt._emergent_detector = None
+        rt._previous_execution = None
+        rt.episodic_memory = None
+
+        return rt
+
+    def test_grounded_context_includes_topology(self):
+        """Grounded context includes pool and agent counts."""
+        from probos.agents.introspect import IntrospectionAgent
+        rt = self._make_mock_runtime()
+        agent = IntrospectionAgent(agent_id="test-introsp")
+        agent._runtime = rt
+        ctx = agent._grounded_context()
+        assert "Total pools: 2" in ctx
+        assert "Total agents: 5" in ctx
+        assert "Engineering" in ctx
+        assert "filesystem" in ctx
+        assert "shell" in ctx
+
+    def test_grounded_context_includes_departments(self):
+        """Grounded context includes multiple departments."""
+        from probos.agents.introspect import IntrospectionAgent
+        rt = self._make_mock_runtime(departments=["Engineering", "Science"])
+        agent = IntrospectionAgent(agent_id="test-introsp")
+        agent._runtime = rt
+        ctx = agent._grounded_context()
+        assert "Engineering" in ctx
+        assert "Science" in ctx
+
+    def test_grounded_context_includes_intents(self):
+        """Grounded context includes intent listing."""
+        from probos.agents.introspect import IntrospectionAgent
+        from probos.types import IntentDescriptor
+        descs = [
+            IntentDescriptor(name="list_directory", params={}, description="list dir"),
+            IntentDescriptor(name="read_file", params={}, description="read file"),
+            IntentDescriptor(name="web_search", params={}, description="web search"),
+        ]
+        rt = self._make_mock_runtime(intent_descriptors=descs)
+        agent = IntrospectionAgent(agent_id="test-introsp")
+        agent._runtime = rt
+        ctx = agent._grounded_context()
+        assert "Available intents:" in ctx
+        assert "list_directory" in ctx
+        assert "read_file" in ctx
+        assert "web_search" in ctx
+
+    def test_grounded_context_includes_health(self):
+        """Grounded context includes health signals."""
+        from probos.agents.introspect import IntrospectionAgent
+        rt = self._make_mock_runtime(
+            recent_errors=["timeout"],
+            last_capability_gap="deploy app",
+        )
+        agent = IntrospectionAgent(agent_id="test-introsp")
+        agent._runtime = rt
+        ctx = agent._grounded_context()
+        assert "Recent errors" in ctx
+        assert "timeout" in ctx
+        assert "capability gap" in ctx
+        assert "deploy app" in ctx
+
+    def test_grounded_context_no_runtime_returns_empty(self):
+        """No runtime returns empty string."""
+        from probos.agents.introspect import IntrospectionAgent
+        agent = IntrospectionAgent(agent_id="test-introsp")
+        agent._runtime = None
+        assert agent._grounded_context() == ""
+
+    def test_grounded_context_groups_pools_by_department(self):
+        """Pools are grouped by department in grounded context."""
+        from probos.agents.introspect import IntrospectionAgent
+        from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
+
+        model = SystemSelfModel(
+            pool_count=3,
+            agent_count=6,
+            pools=[
+                PoolSnapshot(name="filesystem", agent_type="file_reader", agent_count=3, department="Engineering"),
+                PoolSnapshot(name="shell", agent_type="shell", agent_count=2, department="Engineering"),
+                PoolSnapshot(name="diagnostician", agent_type="diag", agent_count=1, department="Medical"),
+            ],
+            departments=["Engineering", "Medical"],
+            system_mode="active",
+            uptime_seconds=60,
+        )
+        from unittest.mock import MagicMock
+        rt = MagicMock()
+        rt._build_system_self_model.return_value = model
+        rt.decomposer = MagicMock()
+        rt.decomposer._intent_descriptors = []
+
+        agent = IntrospectionAgent(agent_id="test-introsp")
+        agent._runtime = rt
+        ctx = agent._grounded_context()
+        # Engineering line should have filesystem and shell
+        lines = ctx.split("\n")
+        eng_line = [l for l in lines if l.strip().startswith("Engineering:")]
+        med_line = [l for l in lines if l.strip().startswith("Medical:")]
+        assert len(eng_line) == 1
+        assert "filesystem" in eng_line[0]
+        assert "shell" in eng_line[0]
+        assert len(med_line) == 1
+        assert "diagnostician" in med_line[0]
+
+    def test_reflect_prompt_has_grounded_context_rule(self):
+        """REFLECT_PROMPT contains grounded_context grounding rule."""
+        from probos.cognitive.decomposer import REFLECT_PROMPT
+        assert "grounded_context" in REFLECT_PROMPT
+        assert "VERIFIED SYSTEM FACTS" in REFLECT_PROMPT
+
+    def test_summarize_preserves_grounded_context(self):
+        """_summarize_node_result preserves grounded_context outside truncation."""
+        from unittest.mock import MagicMock
+        from probos.cognitive.decomposer import _summarize_node_result
+
+        ir = MagicMock()
+        ir.result = {
+            "agents": [{"id": "a1"}],
+            "grounded_context": "Total pools: 14\nTotal agents: 54",
+        }
+        ir.error = None
+        node_result = {"success": True, "results": [ir]}
+        summary = _summarize_node_result(node_result)
+        assert "GROUNDED SYSTEM FACTS" in summary
+        assert "Total pools: 14" in summary
+
+    def test_summarize_without_grounded_context_unchanged(self):
+        """_summarize_node_result without grounded_context has no GROUNDED section."""
+        from unittest.mock import MagicMock
+        from probos.cognitive.decomposer import _summarize_node_result
+
+        ir = MagicMock()
+        ir.result = {"agents": [{"id": "a1"}]}
+        ir.error = None
+        node_result = {"success": True, "results": [ir]}
+        summary = _summarize_node_result(node_result)
+        assert "GROUNDED SYSTEM FACTS" not in summary
+
+    @pytest.mark.asyncio
+    async def test_agent_info_includes_grounded_context(self):
+        """agent_info handler includes grounded_context in output."""
+        from probos.agents.introspect import IntrospectionAgent
+        from probos.types import IntentMessage
+        rt = self._make_mock_runtime()
+        agent = IntrospectionAgent(agent_id="test-introsp")
+        agent._runtime = rt
+        intent = IntentMessage(id="t1", intent="agent_info", params={})
+        result = await agent.handle_intent(intent)
+        assert result is not None
+        assert result.success
+        assert "grounded_context" in result.result
+
+    @pytest.mark.asyncio
+    async def test_system_health_includes_grounded_context(self):
+        """system_health handler includes grounded_context in output."""
+        from probos.agents.introspect import IntrospectionAgent
+        from probos.types import IntentMessage
+        rt = self._make_mock_runtime()
+        agent = IntrospectionAgent(agent_id="test-introsp")
+        agent._runtime = rt
+        intent = IntentMessage(id="t1", intent="system_health", params={})
+        result = await agent.handle_intent(intent)
+        assert result is not None
+        assert result.success
+        assert "grounded_context" in result.result
+
+    @pytest.mark.asyncio
+    async def test_team_info_includes_grounded_context(self):
+        """team_info handler includes grounded_context in output."""
+        from probos.agents.introspect import IntrospectionAgent
+        from probos.types import IntentMessage
+        rt = self._make_mock_runtime()
+        agent = IntrospectionAgent(agent_id="test-introsp")
+        agent._runtime = rt
+        intent = IntentMessage(id="t1", intent="team_info", params={})
+        result = await agent.handle_intent(intent)
+        assert result is not None
+        assert result.success
+        assert "grounded_context" in result.result

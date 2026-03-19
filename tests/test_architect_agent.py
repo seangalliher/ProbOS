@@ -1042,3 +1042,170 @@ class TestImportTracing:
     def test_instructions_mention_imports(self):
         """System prompt mentions import graph in context description."""
         assert "Import graph" in ArchitectAgent.instructions
+
+
+# ---------------------------------------------------------------------------
+# Proposal validation tests (AD-316a)
+# ---------------------------------------------------------------------------
+
+
+def _make_valid_proposal(**overrides):
+    """Helper to create a valid ArchitectProposal for validation tests."""
+    spec_defaults = {
+        "title": "Test Feature",
+        "description": "A" * 120,  # Over 100 chars minimum
+        "target_files": ["src/probos/security/egress.py"],
+        "reference_files": ["src/probos/consensus/trust.py"],
+        "test_files": ["tests/test_egress_policy.py"],
+        "ad_number": 400,
+        "constraints": ["Do NOT modify trust"],
+    }
+    spec_defaults.update(overrides.pop("build_spec_overrides", {}))
+    spec = BuildSpec(**spec_defaults)
+
+    proposal_defaults = {
+        "title": "Test Feature",
+        "summary": "A test feature",
+        "rationale": "Testing",
+        "build_spec": spec,
+        "priority": "medium",
+    }
+    proposal_defaults.update(overrides)
+    return ArchitectProposal(**proposal_defaults)
+
+
+class TestProposalValidation:
+    """Tests for AD-316a _validate_proposal() method."""
+
+    def test_valid_proposal_no_warnings(self):
+        """A fully valid proposal returns no warnings."""
+        mock_index = _make_mock_index(file_tree={
+            "src/probos/security/sentinel.py": {"classes": [], "docstring": ""},
+            "src/probos/consensus/trust.py": {"classes": [], "docstring": ""},
+        })
+        agent = _make_agent(mock_index)
+        proposal = _make_valid_proposal()
+        warnings = agent._validate_proposal(proposal)
+        assert warnings == []
+
+    def test_missing_title_warns(self):
+        """Empty title triggers warning."""
+        mock_index = _make_mock_index()
+        agent = _make_agent(mock_index)
+        proposal = _make_valid_proposal(title="")
+        warnings = agent._validate_proposal(proposal)
+        assert any("Missing required field" in w for w in warnings)
+
+    def test_empty_test_files_warns(self):
+        """Empty test_files triggers warning."""
+        mock_index = _make_mock_index()
+        agent = _make_agent(mock_index)
+        proposal = _make_valid_proposal(
+            build_spec_overrides={"test_files": []}
+        )
+        warnings = agent._validate_proposal(proposal)
+        assert any("No test files specified" in w for w in warnings)
+
+    def test_target_file_unknown_path_warns(self):
+        """Target file in non-existent directory triggers warning."""
+        mock_index = _make_mock_index(file_tree={
+            "src/probos/mesh/routing.py": {"classes": [], "docstring": ""},
+        })
+        agent = _make_agent(mock_index)
+        proposal = _make_valid_proposal(
+            build_spec_overrides={"target_files": ["src/probos/web/routes.py"]}
+        )
+        warnings = agent._validate_proposal(proposal)
+        assert any("TARGET_FILE not found" in w for w in warnings)
+
+    def test_target_file_new_in_existing_dir_ok(self):
+        """Target file in existing directory does NOT trigger warning."""
+        mock_index = _make_mock_index(file_tree={
+            "src/probos/mesh/routing.py": {"classes": [], "docstring": ""},
+        })
+        agent = _make_agent(mock_index)
+        proposal = _make_valid_proposal(
+            build_spec_overrides={
+                "target_files": ["src/probos/mesh/policy.py"],
+                "reference_files": [],
+            }
+        )
+        warnings = agent._validate_proposal(proposal)
+        assert not any("TARGET_FILE not found" in w for w in warnings)
+
+    def test_short_description_warns(self):
+        """Description under 100 chars triggers warning."""
+        mock_index = _make_mock_index()
+        agent = _make_agent(mock_index)
+        proposal = _make_valid_proposal(
+            build_spec_overrides={"description": "Too short"}
+        )
+        warnings = agent._validate_proposal(proposal)
+        assert any("Description too short" in w for w in warnings)
+
+    def test_invalid_priority_warns(self):
+        """Invalid priority value triggers warning."""
+        mock_index = _make_mock_index()
+        agent = _make_agent(mock_index)
+        proposal = _make_valid_proposal(priority="critical")
+        warnings = agent._validate_proposal(proposal)
+        assert any("Invalid priority" in w for w in warnings)
+
+    @pytest.mark.asyncio
+    async def test_act_includes_warnings_in_result(self):
+        """act() includes warnings key when validation finds issues."""
+        mock_index = _make_mock_index()
+        agent = _make_agent(mock_index)
+        # Use MINIMAL_PROPOSAL — has empty test_files and short description
+        decision = {"action": "execute", "llm_output": MINIMAL_PROPOSAL}
+        result = await agent.act(decision)
+        assert result["success"] is True
+        assert "warnings" in result["result"]
+        assert len(result["result"]["warnings"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_act_no_warnings_key_when_valid(self):
+        """act() omits warnings key when proposal is fully valid."""
+        mock_index = _make_mock_index(file_tree={
+            "src/probos/security/sentinel.py": {"classes": [], "docstring": ""},
+            "src/probos/consensus/trust.py": {"classes": [], "docstring": ""},
+            "src/probos/mesh/routing.py": {"classes": [], "docstring": ""},
+        })
+        agent = _make_agent(mock_index)
+        decision = {"action": "execute", "llm_output": SAMPLE_PROPOSAL}
+        result = await agent.act(decision)
+        assert result["success"] is True
+        # Warnings should be absent (empty list not added)
+        assert "warnings" not in result["result"]
+
+    def test_validation_skipped_without_runtime(self):
+        """Without runtime, file-tree checks are skipped but other checks run."""
+        agent = ArchitectAgent(
+            agent_id="test-no-runtime",
+            llm_client=MagicMock(),
+        )
+        proposal = _make_valid_proposal(priority="critical")
+        warnings = agent._validate_proposal(proposal)
+        # Priority check should still fire
+        assert any("Invalid priority" in w for w in warnings)
+        # File path checks should NOT fire (no runtime)
+        assert not any("TARGET_FILE not found" in w for w in warnings)
+
+
+class TestPatternRecipes:
+    """Tests for AD-316a Pattern Recipes in instructions."""
+
+    def test_instructions_contain_pattern_recipes(self):
+        assert "PATTERN RECIPES" in ArchitectAgent.instructions
+
+    def test_recipe_new_agent(self):
+        assert "Recipe: NEW AGENT" in ArchitectAgent.instructions
+        assert "BaseAgent" in ArchitectAgent.instructions
+
+    def test_recipe_new_slash_command(self):
+        assert "Recipe: NEW SLASH COMMAND" in ArchitectAgent.instructions
+        assert "shell.py" in ArchitectAgent.instructions
+
+    def test_recipe_new_api_endpoint(self):
+        assert "Recipe: NEW API ENDPOINT" in ArchitectAgent.instructions
+        assert "api.py" in ArchitectAgent.instructions

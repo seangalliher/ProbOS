@@ -185,7 +185,7 @@ export interface HXIState {
 
   // Animation events (consumed by canvas)
   pendingConsensusFlash: ConsensusEvent | null;
-  pendingSelfModBloom: string | null;  // agent_id of newly spawned agent
+  pendingSelfModBloom: string | null;  // agent_id (or agent_type fallback) of newly spawned agent
   selfModProgress: { step: string; current: number; total: number; label: string } | null;
   buildProgress: { step: string; current: number; total: number; label: string } | null;
   designProgress: { step: string; current: number; total: number; label: string } | null;
@@ -587,9 +587,10 @@ export const useStore = create<HXIState>((set, get) => ({
       case 'self_mod_success': {
         soundEngine.playSelfModSpawn();
         set({ selfModProgress: null });
-        const agentType = data.agent_type as string | undefined;
-        if (agentType) {
-          set({ pendingSelfModBloom: agentType });
+        // Prefer agent_id for unique bloom targeting; fall back to agent_type
+        const bloomTarget = (data.agent_id || data.agent_type) as string | undefined;
+        if (bloomTarget) {
+          set({ pendingSelfModBloom: bloomTarget });
         }
         const msg = (data.message || '') as string;
         if (msg) {

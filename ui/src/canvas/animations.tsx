@@ -170,7 +170,10 @@ export function SelfModBloom() {
       activeRef.current = true;
       progressRef.current = 0;
       // Position at new agent
-      const target = [...store.agents.values()].find(a => a.agentType === store.pendingSelfModBloom);
+      const bloomId = store.pendingSelfModBloom;
+      const target = [...store.agents.values()].find(
+        a => a.id === bloomId || a.agentType === bloomId
+      );
       if (target) {
         mesh.position.set(target.position[0], target.position[1], target.position[2]);
       }

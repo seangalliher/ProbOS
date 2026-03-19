@@ -1167,3 +1167,103 @@ class TestDAGTimeoutUserWait:
         # After execute, user_wait_seconds should have been reset (not 99)
         # The exact value may be 0 or small, but definitely not 99
         assert esc_mgr.user_wait_seconds < 1.0
+
+
+# ---------------------------------------------------------------------------
+# Tier 3 user callback timeout tests (AD-325)
+# ---------------------------------------------------------------------------
+
+
+class TestTier3Timeout:
+    """Verify Tier 3 user callback timeout behavior."""
+
+    @pytest.mark.asyncio
+    async def test_user_callback_timeout_returns_unresolved(self):
+        """User callback hangs forever — should timeout and return unresolved."""
+        async def hanging_callback(desc, ctx):
+            await asyncio.sleep(999)  # never returns
+
+        runtime = _make_mock_runtime()
+        mgr = EscalationManager(
+            runtime=runtime,
+            llm_client=None,
+            max_retries=0,  # skip tier 1
+            user_callback=hanging_callback,
+            user_timeout=0.5,
+        )
+
+        node = _make_node()
+        result = await mgr.escalate(node, "test error", {})
+
+        assert result.tier == EscalationTier.USER
+        assert result.resolved is False
+        assert result.user_approved is None
+        assert "timed out" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_user_callback_timeout_accumulates_wait_seconds(self):
+        """Timed-out callback still accumulates user_wait_seconds."""
+        async def hanging_callback(desc, ctx):
+            await asyncio.sleep(999)
+
+        runtime = _make_mock_runtime()
+        mgr = EscalationManager(
+            runtime=runtime,
+            llm_client=None,
+            max_retries=0,
+            user_callback=hanging_callback,
+            user_timeout=0.5,
+        )
+
+        node = _make_node()
+        await mgr.escalate(node, "test error", {})
+
+        # Should have accumulated ~0.5s of user-wait time
+        assert mgr.user_wait_seconds >= 0.4
+        assert mgr.user_wait_seconds < 2.0
+
+    @pytest.mark.asyncio
+    async def test_user_callback_responds_before_timeout(self):
+        """User responds before timeout — normal behavior preserved."""
+        async def quick_callback(desc, ctx):
+            await asyncio.sleep(0.05)
+            return True
+
+        runtime = _make_mock_runtime(
+            submit_intent_side_effect=_success_intent_results,
+        )
+        mgr = EscalationManager(
+            runtime=runtime,
+            llm_client=None,
+            max_retries=0,
+            user_callback=quick_callback,
+            user_timeout=2.0,
+        )
+
+        node = _make_node()
+        result = await mgr.escalate(node, "test error", {})
+
+        assert result.tier == EscalationTier.USER
+        assert result.resolved is True
+        assert result.user_approved is True
+
+    def test_default_user_timeout_is_120(self):
+        """Default user_timeout is 120 seconds."""
+        runtime = _make_mock_runtime()
+        mgr = EscalationManager(
+            runtime=runtime,
+            llm_client=None,
+            max_retries=1,
+        )
+        assert mgr._user_timeout == 120.0
+
+    def test_custom_user_timeout(self):
+        """Custom user_timeout is stored correctly."""
+        runtime = _make_mock_runtime()
+        mgr = EscalationManager(
+            runtime=runtime,
+            llm_client=None,
+            max_retries=1,
+            user_timeout=30.0,
+        )
+        assert mgr._user_timeout == 30.0

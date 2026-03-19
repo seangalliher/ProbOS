@@ -18,8 +18,6 @@ import type { Agent } from '../store/types';
 // Raycaster helper — resolve instanceId to agent (Fix 10)
 function AgentRaycastLayer() {
   const agents = useStore((s) => s.agents);
-  const setHoveredAgent = useStore((s) => s.setHoveredAgent);
-  const setPinnedAgent = useStore((s) => s.setPinnedAgent);
   const agentListRef = useRef<Agent[]>([]);
 
   // Keep a reference-stable ordered agent list
@@ -28,23 +26,23 @@ function AgentRaycastLayer() {
   const handlePointerMove = useCallback((e: ThreeEvent<PointerEvent>) => {
     if (e.instanceId !== undefined && e.instanceId < agentListRef.current.length) {
       const agent = agentListRef.current[e.instanceId];
-      setHoveredAgent(agent, { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY });
+      useStore.getState().setHoveredAgent(agent, { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY });
     }
     e.stopPropagation();
-  }, [setHoveredAgent]);
+  }, []);
 
   const handlePointerOut = useCallback(() => {
-    setHoveredAgent(null);
-  }, [setHoveredAgent]);
+    useStore.getState().setHoveredAgent(null);
+  }, []);
 
   const handleClick = useCallback((e: ThreeEvent<MouseEvent>) => {
     if (e.instanceId !== undefined && e.instanceId < agentListRef.current.length) {
-      setPinnedAgent(agentListRef.current[e.instanceId]);
+      useStore.getState().setPinnedAgent(agentListRef.current[e.instanceId]);
     } else {
-      setPinnedAgent(null);
+      useStore.getState().setPinnedAgent(null);
     }
     e.stopPropagation();
-  }, [setPinnedAgent]);
+  }, []);
 
   return (
     <AgentNodes

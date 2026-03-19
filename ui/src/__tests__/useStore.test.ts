@@ -122,7 +122,23 @@ describe('useStore', () => {
       expect(agent!.trust).toBe(0.7);
     });
 
-    it('handles self_mod_success event', () => {
+    it('handles self_mod_success event with agent_id', () => {
+      useStore.getState().handleEvent({
+        type: 'self_mod_success',
+        data: {
+          agent_type: 'test_agent',
+          agent_id: 'test_agent_0',
+          message: 'TestAgent deployed!',
+        },
+        timestamp: Date.now() / 1000,
+      });
+      // Should prefer agent_id over agent_type
+      expect(useStore.getState().pendingSelfModBloom).toBe('test_agent_0');
+      expect(useStore.getState().chatHistory).toHaveLength(1);
+      expect(useStore.getState().selfModProgress).toBeNull();
+    });
+
+    it('handles self_mod_success event with agent_type fallback', () => {
       useStore.getState().handleEvent({
         type: 'self_mod_success',
         data: {
@@ -131,9 +147,8 @@ describe('useStore', () => {
         },
         timestamp: Date.now() / 1000,
       });
+      // Without agent_id, should fall back to agent_type
       expect(useStore.getState().pendingSelfModBloom).toBe('test_agent');
-      expect(useStore.getState().chatHistory).toHaveLength(1);
-      expect(useStore.getState().selfModProgress).toBeNull();
     });
 
     it('handles self_mod_progress event', () => {
@@ -370,5 +385,116 @@ describe('useStore', () => {
       const sec = groupCenters.get('security')!;
       expect(sec.tintHex).toBe('#c85068');
     });
+  });
+});
+
+describe('poolCenter computation (AD-329)', () => {
+  it('computes correct center for agents in same pool', () => {
+    const agents = new Map<string, Agent>();
+    agents.set('a1', {
+      id: 'a1', agentType: 'alpha', pool: 'science',
+      state: 'active', confidence: 0.8, trust: 0.7, tier: 'domain',
+      position: [1, 2, 3],
+    });
+    agents.set('a2', {
+      id: 'a2', agentType: 'beta', pool: 'science',
+      state: 'active', confidence: 0.8, trust: 0.7, tier: 'domain',
+      position: [3, 4, 5],
+    });
+    let cx = 0, cy = 0, cz = 0, count = 0;
+    agents.forEach((a) => {
+      if (a.pool === 'science') {
+        cx += a.position[0]; cy += a.position[1]; cz += a.position[2];
+        count++;
+      }
+    });
+    const center: [number, number, number] = [cx / count, cy / count, cz / count];
+    expect(center).toEqual([2, 3, 4]);
+  });
+
+  it('returns [0,0,0] for empty pool', () => {
+    const agents = new Map<string, Agent>();
+    let cx = 0, cy = 0, cz = 0, count = 0;
+    agents.forEach((a) => {
+      if (a.pool === 'nonexistent') {
+        cx += a.position[0]; cy += a.position[1]; cz += a.position[2];
+        count++;
+      }
+    });
+    const center: [number, number, number] = count === 0 ? [0, 0, 0] : [cx / count, cy / count, cz / count];
+    expect(center).toEqual([0, 0, 0]);
+  });
+});
+
+describe('connection filtering (AD-329)', () => {
+  it('filters connections requiring missing agents', () => {
+    const agents = new Map<string, Agent>();
+    agents.set('a1', {
+      id: 'a1', agentType: 'alpha', pool: 'science',
+      state: 'active', confidence: 0.8, trust: 0.7, tier: 'domain',
+      position: [0, 0, 0],
+    });
+
+    const connections = [
+      { source: 'a1', target: 'a2', weight: 0.5 },  // a2 doesn't exist
+      { source: 'a1', target: 'intent_hub', weight: 0.8 },  // valid
+    ];
+
+    // Simulate the filter logic from connections.tsx
+    const valid = connections.filter((c) => {
+      const sourceIsAgent = agents.has(c.source);
+      const targetIsAgent = agents.has(c.target);
+      const sourceIsPool = !sourceIsAgent && c.source.includes('_');
+      const targetIsPool = !targetIsAgent && c.target.includes('_');
+      return (sourceIsAgent || sourceIsPool) && (targetIsAgent || targetIsPool);
+    });
+
+    // a1->a2 filtered out (a2 not in map and not a pool), a1->intent_hub kept
+    expect(valid.length).toBe(1);
+    expect(valid[0].target).toBe('intent_hub');
+  });
+});
+
+describe('AgentTooltip state (AD-329)', () => {
+  it('hoveredAgent and tooltipPos update together', () => {
+    const agent: Agent = {
+      id: 'test1', agentType: 'test', pool: 'science',
+      state: 'active', confidence: 0.9, trust: 0.8, tier: 'domain',
+      position: [0, 0, 0],
+    };
+
+    useStore.getState().setHoveredAgent(agent, { x: 100, y: 200 });
+    expect(useStore.getState().hoveredAgent).toBe(agent);
+    expect(useStore.getState().tooltipPos).toEqual({ x: 100, y: 200 });
+  });
+
+  it('clearing hoveredAgent sets null', () => {
+    useStore.getState().setHoveredAgent(null);
+    expect(useStore.getState().hoveredAgent).toBeNull();
+  });
+
+  it('pinnedAgent persists after hover clears', () => {
+    const agent: Agent = {
+      id: 'pin1', agentType: 'pinned', pool: 'eng',
+      state: 'active', confidence: 0.9, trust: 0.8, tier: 'domain',
+      position: [0, 0, 0],
+    };
+    useStore.getState().setPinnedAgent(agent);
+    useStore.getState().setHoveredAgent(null);
+    expect(useStore.getState().pinnedAgent).toBe(agent);
+  });
+});
+
+describe('animation event clearing (AD-329)', () => {
+  it('clearAnimationEvent resets pendingSelfModBloom', () => {
+    useStore.setState({ pendingSelfModBloom: 'test_agent' });
+    useStore.getState().clearAnimationEvent('pendingSelfModBloom');
+    expect(useStore.getState().pendingSelfModBloom).toBeNull();
+  });
+
+  it('clearAnimationEvent resets pendingConsensusFlash', () => {
+    useStore.setState({ pendingConsensusFlash: { intent: 'test', outcome: 'approved', approval_ratio: 1, votes: 3, shapley: {} } });
+    useStore.getState().clearAnimationEvent('pendingConsensusFlash');
+    expect(useStore.getState().pendingConsensusFlash).toBeNull();
   });
 });

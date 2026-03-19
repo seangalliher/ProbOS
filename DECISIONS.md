@@ -1868,3 +1868,83 @@ The Ship's Computer Identity (AD-317) established Level 1: prompt-level groundin
 **Progression:** AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-320 (delegation). Each level makes ProbOS's self-knowledge more reliable — not because the LLM gets smarter, but because the scaffolding gets richer.
 
 **Status:** Planned
+
+## Phase 32j: Builder Test-Fix Loop (AD-314)
+
+| AD | Decision |
+|----|----------|
+| AD-314 | Builder Test-Fix Loop — `execute_approved_build()` now runs pytest in a retry loop: initial pass + up to `max_fix_attempts` (default 2) LLM-driven fix iterations. `_run_tests()` async helper extracted. `_build_fix_prompt()` feeds truncated (3000-char) test failure output back to the LLM with a minimal fix-only prompt. Fix responses parsed with existing `_parse_file_blocks()` and applied with existing MODIFY/CREATE logic. `fix_attempts` count added to `BuildResult`. Two flaky network tests fixed: `test_unreachable_returns_false` and `test_all_tiers_unreachable_falls_back_to_mock` now use mocked connections instead of real network calls. |
+
+**Status:** Complete — 7 new Python tests (builder) + 2 fixed (network), 1906 Python + 21 Vitest total
+
+## Phase 32k: Escalation Tier 3 Timeout (AD-325)
+
+| AD | Decision |
+|----|----------|
+| AD-325 | Escalation Tier 3 Timeout — `_tier3_user()` now wraps the `user_callback` in `asyncio.wait_for()` with a configurable `user_timeout` (default 120s). On timeout, returns `EscalationResult(resolved=False, user_approved=None)` with descriptive reason. User-wait seconds still accumulated on timeout for accurate DAG deadline accounting. Prevents hung escalation cascades when user callback never returns. |
+
+**Status:** Complete — 5 new Python tests, 1911 Python + 21 Vitest total
+
+## Phase 32l: API Task Lifecycle & WebSocket Hardening (AD-326)
+
+| AD | Decision |
+|----|----------|
+| AD-326 | API Task Lifecycle & WebSocket Hardening — `_background_tasks` set tracks all `asyncio.create_task()` pipelines with automatic done-callback cleanup. `_track_task()` helper replaces 7 bare `create_task()` calls (build, design, self-mod, execute pipelines). `_broadcast_event()` inner `_safe_send()` coroutine catches per-client `send_json()` failures and prunes dead WebSocket clients. `GET /api/tasks` endpoint for Captain visibility into active pipelines. FastAPI lifespan handler drains/cancels all tasks on shutdown. |
+
+**Status:** Complete — 5 new Python tests, 1916 Python + 21 Vitest total
+
+## Phase 32m: CodeValidator Hardening (AD-327)
+
+| AD | Decision |
+|----|----------|
+| AD-327 | CodeValidator Hardening — (a) `_check_schema()` now rejects code with multiple `BaseAgent` subclasses (was silently picking first). (b) New `_check_class_body_side_effects()` scans class bodies for bare function calls, loops, and conditionals that execute at import time. Both are early-return patterns consistent with existing validator flow. |
+
+**Status:** Complete — 4 new Python tests, 1920 Python + 21 Vitest total
+
+## Phase 32n: Self-Mod Durability & Bloom Fix (AD-328)
+
+| AD | Decision |
+|----|----------|
+| AD-328 | Self-Mod Durability & Bloom Fix — (a) Knowledge store and semantic layer post-deployment failures now logged with `logger.warning(exc_info=True)` instead of bare `except: pass`. Partial failure warnings propagated in `self_mod_success` WebSocket event and displayed to Captain. (b) `self_mod_success` event now includes `agent_id`. `pendingSelfModBloom` stores `agent_id` (falling back to `agent_type`). Bloom animation lookup uses `a.id || a.agentType` for accurate targeting when multiple agents share a type. |
+
+**Status:** Complete — 3 new Python tests, 1 new Vitest, 1923 Python + 22 Vitest total
+
+## Phase 32o: HXI Canvas Resilience & Component Tests (AD-329)
+
+| AD | Decision |
+|----|----------|
+| AD-329 | HXI Canvas Resilience & Component Tests — (a) `connections.tsx` agents subscription replaced with ref + count-based re-render. Pool centers cached in `useMemo` keyed on agent count, eliminating O(agents×connections) per-state-change recomputation. (b) Unnecessary Zustand action subscriptions removed from `CognitiveCanvas.tsx` and `AgentTooltip.tsx` — stable action refs read via `getState()` instead. (c) Component-level Vitest tests for pool center computation, connection filtering, tooltip state, and animation event clearing. |
+
+**Status:** Complete — 8 new Vitest tests, 1923 Python + 30 Vitest total
+
+## Phase 32p: Architect Proposal Validation + Pattern Recipes (AD-316a)
+
+| AD | Decision |
+|----|----------|
+| AD-316a | Architect Proposal Validation + Pattern Recipes — (a) New `_validate_proposal()` method with 6 programmatic checks: required field presence, non-empty test_files, target/reference file path verification against codebase_index file tree (with directory-prefix fallback for new files), priority value validation, and description minimum length (100 chars). Warnings are advisory (non-blocking) — `act()` returns `success: True` with optional `warnings` list. (b) Pattern Recipes section appended to instructions string with 3 reusable templates: NEW AGENT, NEW SLASH COMMAND, NEW API ENDPOINT — each with TARGET_FILES, REFERENCE_FILES, TEST_FILES, and CHECKLIST. |
+
+**Status:** Complete — 14 new Python tests, 1937 Python + 30 Vitest total
+
+## Phase 32q: SystemSelfModel (AD-318)
+
+| AD | Decision |
+|----|----------|
+| AD-318 | SystemSelfModel — Structured runtime self-knowledge. (a) New `SystemSelfModel` dataclass in `src/probos/cognitive/self_model.py` with `PoolSnapshot` — compact snapshot of topology (pools, departments, intents), identity (version, mode), and health (uptime, recent errors, last capability gap). `to_context()` serializes to ~500 char text for LLM injection. (b) `_build_system_self_model()` on runtime replaces `_build_runtime_summary()` — builds model from live pool state, pool groups (departments), dream scheduler (mode), decomposer (intent count). (c) `_record_error()` caps at 5 recent errors, wired into reflect and episode storage failure handlers. Capability gap tracking stores first 100 chars of unhandled requests. |
+
+**Status:** Complete — 9 new Python tests (1 updated), 1946 Python + 30 Vitest total
+
+## Phase 32r: Pre-Response Verification (AD-319)
+
+| AD | Decision |
+|----|----------|
+| AD-319 | Pre-Response Verification — Fact-check responses against SystemSelfModel. (a) New `_verify_response()` method on runtime — zero-LLM, regex-based string matching with 5 checks: pool count claims, agent count claims, fabricated department names (context-aware pattern matching), fabricated pool names (with generic word exclusion set), system mode contradictions. Non-blocking: appends correction footnote on violations, never suppresses responses. (b) Wired into two response paths: no-nodes path (dag.response) and reflection path (_execute_dag). `_execute_dag` signature extended with optional `self_model` parameter. Timeout/error fallback strings not verified (canned text, not LLM output). |
+
+**Status:** Complete — 14 new Python tests, 1960 Python + 30 Vitest total
+
+## Phase 32s: Introspection Delegation (AD-320)
+
+| AD | Decision |
+|----|----------|
+| AD-320 | Introspection Delegation — Grounded self-knowledge answers. Level 4 of self-knowledge progression: rules (AD-317) → data (AD-318) → verification (AD-319) → **delegation** (AD-320). (a) New `_grounded_context()` method on IntrospectionAgent builds detailed text from `SystemSelfModel` — per-pool breakdowns grouped by department, full intent listing, health signals. (b) Enriched 4 intent handlers (`_agent_info()`, `_system_health()`, `_team_info()`, `_introspect_system()`) to include `grounded_context` key in output dicts for reflector consumption. (c) REFLECT_PROMPT rule 7: treat `grounded_context` as VERIFIED SYSTEM FACTS. (d) `_summarize_node_result()` preserves grounded_context outside truncation boundary, labeled as GROUNDED SYSTEM FACTS. |
+
+**Status:** Complete — 12 new Python tests, 1972 Python + 30 Vitest total

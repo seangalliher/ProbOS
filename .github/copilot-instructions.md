@@ -274,7 +274,7 @@ Captain types /design → Architect perceives (7 layers) → LLM generates propo
 - MODIFY mode (AD-313): `===SEARCH===`/`===REPLACE===`/`===END REPLACE===` pairs within `===MODIFY: path===` blocks. Replacements applied sequentially, first occurrence only
 - `perceive()` reads both reference_files and target_files (so LLM sees current content for accurate SEARCH blocks)
 - `ast.parse()` validation after writes/modifies
-- Single test pass — AD-314 will add retry loop
+- Test-fix loop (AD-314): runs pytest after writes, feeds failures back to LLM for up to 2 fix attempts. `_run_tests()` helper, `_build_fix_prompt()` for fix context. `max_fix_attempts` parameter on `execute_approved_build()`
 
 **CodebaseIndex** (`cognitive/codebase_index.py`):
 - AST-based, no LLM calls, built at startup
@@ -283,6 +283,15 @@ Captain types /design → Architect perceives (7 layers) → LLM generates propo
 - `find_callers(method)` / `find_tests_for(path)` / `get_full_api_surface()`: structural queries
 - `query(concept)`: word-level keyword scoring across files and docs
 - `read_doc_sections(doc_path, keywords, max_lines)`: targeted doc reading
+
+**Ship's Computer / Decomposer Grounding** (AD-317):
+- `PROMPT_PREAMBLE` in `prompt_builder.py` carries LCARS-era Ship's Computer identity with 6 grounding rules
+- Dynamic `System Configuration` section counts registered intents by tier (core/utility/domain)
+- `decompose()` accepts `runtime_summary` parameter — injected as `SYSTEM CONTEXT` in the user prompt
+- `runtime.py._build_runtime_summary()` provides pool count, agent count, departments, intent count (synchronous, in-memory only)
+- Example responses grounded — no longer claim unregistered capabilities
+- Legacy prompt path (`_LEGACY_SYSTEM_PROMPT`) unchanged
+- Self-knowledge progression: AD-317 (rules) → AD-318 (SystemSelfModel) → AD-319 (pre-response verification) → AD-320 (introspection delegation)
 
 **LLM Tiers** (configured in `config/system.yaml`):
 - `deep`: Claude Opus via Copilot proxy, 300s timeout. Used by Architect.

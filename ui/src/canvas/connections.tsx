@@ -1,6 +1,6 @@
 /* Hebbian connection curves — glowing tubes with intent-hub positioning (Fix 1) */
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useStore } from '../store/useStore';
 
@@ -52,10 +52,36 @@ function poolCenter(
 
 export function Connections() {
   const connections = useStore((s) => s.connections);
-  const agents = useStore((s) => s.agents);
   const connected = useStore((s) => s.connected);
+  const agentsRef = useRef(useStore.getState().agents);
+
+  const [agentCount, setAgentCount] = useState(agentsRef.current.size);
+
+  useEffect(() => {
+    const unsub = useStore.subscribe((state) => {
+      agentsRef.current = state.agents;
+      // Only re-render when agent count changes (new agent, removed agent)
+      if (state.agents.size !== agentCount) {
+        setAgentCount(state.agents.size);
+      }
+    });
+    return unsub;
+  }, [agentCount]);
+
+  const poolCenters = useMemo(() => {
+    const centers = new Map<string, [number, number, number]>();
+    const agents = agentsRef.current;
+    // Build centers once per agent-count change
+    agents.forEach((a) => {
+      if (!centers.has(a.pool)) {
+        centers.set(a.pool, poolCenter(agents, a.pool));
+      }
+    });
+    return centers;
+  }, [agentCount]);
 
   const validConnections = useMemo(() => {
+    const agents = agentsRef.current;
     return connections
       .filter((c) => c.weight > 0.01)
       .map((c) => {
@@ -69,13 +95,13 @@ export function Connections() {
           startPos = srcAgent.position;
         } else if (tgtAgent) {
           // Source is an intent name (not an agent ID) — position at pool center
-          startPos = poolCenter(agents, tgtAgent.pool);
+          startPos = poolCenters.get(tgtAgent.pool) || [0, 0, 0];
         }
 
         if (tgtAgent) {
           endPos = tgtAgent.position;
         } else if (srcAgent) {
-          endPos = poolCenter(agents, srcAgent.pool);
+          endPos = poolCenters.get(srcAgent.pool) || [0, 0, 0];
         }
 
         if (!startPos || !endPos) return null;
@@ -92,7 +118,7 @@ export function Connections() {
         source: string; target: string; relType: string; weight: number;
         startPos: [number, number, number]; endPos: [number, number, number];
       }>;
-  }, [connections, agents]);
+  }, [connections, poolCenters]);
 
   return (
     <group>

@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -140,7 +142,19 @@ class DesignApproveRequest(BaseModel):
 def create_app(runtime: Any) -> FastAPI:
     """Build the FastAPI application wired to *runtime*."""
 
-    app = FastAPI(title="ProbOS", version="0.1.0")
+    @asynccontextmanager
+    async def _lifespan(app_instance: FastAPI):
+        """Application lifespan — drain background tasks on shutdown."""
+        yield
+        # Shutdown: cancel all tracked background tasks
+        if _background_tasks:
+            logger.info("Shutting down: cancelling %d background task(s)", len(_background_tasks))
+            for task in _background_tasks:
+                task.cancel()
+            await asyncio.gather(*_background_tasks, return_exceptions=True)
+            _background_tasks.clear()
+
+    app = FastAPI(title="ProbOS", version="0.1.0", lifespan=_lifespan)
 
     # CORS for HXI dev server (AD-260)
     app.add_middleware(
@@ -157,6 +171,20 @@ def create_app(runtime: Any) -> FastAPI:
 
     # Pending architect proposals awaiting Captain approval (AD-308)
     _pending_designs: dict[str, dict[str, Any]] = {}
+
+    # Managed background tasks (AD-326) — track all fire-and-forget pipelines
+    _background_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
+
+    def _track_task(coro: Any, *, name: str | None = None) -> asyncio.Task:
+        """Create a background task and track it in _background_tasks.
+
+        The task is automatically removed from the set when it completes,
+        whether by success, failure, or cancellation.
+        """
+        task = asyncio.create_task(coro, name=name)
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+        return task
 
     # ------------------------------------------------------------------
     # Event listener bridge: runtime -> WebSocket clients (AD-254)
@@ -192,6 +220,22 @@ def create_app(runtime: Any) -> FastAPI:
     async def status() -> dict[str, Any]:
         return runtime.status()
 
+    @app.get("/api/tasks")
+    async def list_tasks() -> dict[str, Any]:
+        """List active background tasks (builds, designs, self-mod)."""
+        tasks = []
+        for task in _background_tasks:
+            tasks.append({
+                "name": task.get_name() or "unnamed",
+                "done": task.done(),
+            })
+        return {
+            "active_count": sum(1 for t in _background_tasks if not t.done()),
+            "total_tracked": len(_background_tasks),
+            "pending_designs": len(_pending_designs),
+            "tasks": tasks,
+        }
+
     @app.post("/api/chat")
     async def chat(req: ChatRequest) -> dict[str, Any]:
         text = req.message.strip()
@@ -209,11 +253,11 @@ def create_app(runtime: Any) -> FastAPI:
                     return {"response": "Usage: /build <title>: <description>", "dag": None, "results": None}
                 import uuid
                 build_id = uuid.uuid4().hex[:12]
-                asyncio.create_task(_run_build(
+                _track_task(_run_build(
                     BuildRequest(title=title, description=description),
                     build_id,
                     runtime,
-                ))
+                ), name=f"build-{build_id}")
                 return {
                     "response": f"Build '{title}' submitted (id: {build_id}). Progress will appear below.",
                     "build_id": build_id,
@@ -238,11 +282,11 @@ def create_app(runtime: Any) -> FastAPI:
                     return {"response": "Usage: /design <feature description> or /design phase 31: <feature>", "dag": None, "results": None}
                 import uuid as _uuid_design
                 design_id = _uuid_design.uuid4().hex[:12]
-                asyncio.create_task(_run_design(
+                _track_task(_run_design(
                     DesignRequest(feature=feature, phase=phase),
                     design_id,
                     runtime,
-                ))
+                ), name=f"design-{design_id}")
                 return {
                     "response": f"Design request submitted (id: {design_id}). The Architect is analyzing...",
                     "design_id": design_id,
@@ -391,7 +435,7 @@ def create_app(runtime: Any) -> FastAPI:
         if not getattr(runtime, 'self_mod_pipeline', None):
             return {"response": "Self-modification is not enabled.", "status": "error"}
 
-        asyncio.create_task(_run_selfmod(req, runtime))
+        _track_task(_run_selfmod(req, runtime), name="selfmod")
 
         return {
             "response": "Starting agent design...",
@@ -501,11 +545,17 @@ def create_app(runtime: Any) -> FastAPI:
 
             if record and record.status == "active":
                 # Post-creation work
+                knowledge_stored = False
                 if rt._knowledge_store:
                     try:
                         await rt._knowledge_store.store_agent(record, record.source_code)
+                        knowledge_stored = True
                     except Exception:
-                        pass
+                        logger.warning(
+                            "Failed to store agent '%s' in knowledge store",
+                            record.agent_type, exc_info=True,
+                        )
+                semantic_indexed = False
                 if rt._semantic_layer:
                     try:
                         await rt._semantic_layer.index_agent(
@@ -515,8 +565,12 @@ def create_app(runtime: Any) -> FastAPI:
                             strategy=record.strategy,
                             source_snippet=record.source_code[:200] if record.source_code else "",
                         )
+                        semantic_indexed = True
                     except Exception:
-                        pass
+                        logger.warning(
+                            "Failed to index agent '%s' in semantic layer",
+                            record.agent_type, exc_info=True,
+                        )
 
                 # Generate capability report from designed agent source
                 capability_report = ""
@@ -560,10 +614,23 @@ def create_app(runtime: Any) -> FastAPI:
                 else:
                     deploy_msg += " Handling your request..."
 
+                # Build warnings for partial failures
+                warnings = []
+                if not knowledge_stored:
+                    warnings.append("knowledge store indexing failed")
+                if not semantic_indexed:
+                    warnings.append("semantic layer indexing failed")
+
+                success_msg = deploy_msg
+                if warnings:
+                    success_msg += f" (warnings: {', '.join(warnings)})"
+
                 rt._emit_event("self_mod_success", {
                     "intent": req.intent_name,
                     "agent_type": record.agent_type,
-                    "message": deploy_msg,
+                    "agent_id": record.agent_id if hasattr(record, 'agent_id') else record.agent_type,
+                    "message": success_msg,
+                    "warnings": warnings,
                 })
 
                 # Auto-retry the original request
@@ -627,7 +694,7 @@ def create_app(runtime: Any) -> FastAPI:
         import uuid
         build_id = uuid.uuid4().hex[:12]
 
-        asyncio.create_task(_run_build(req, build_id, runtime))
+        _track_task(_run_build(req, build_id, runtime), name=f"build-{build_id}")
 
         return {
             "status": "started",
@@ -650,7 +717,10 @@ def create_app(runtime: Any) -> FastAPI:
 
         work_dir = str(pathlib.Path(__file__).resolve().parent.parent.parent)
 
-        asyncio.create_task(_execute_build(req.build_id, req.file_changes, spec, work_dir, runtime))
+        _track_task(
+            _execute_build(req.build_id, req.file_changes, spec, work_dir, runtime),
+            name=f"execute-{req.build_id}",
+        )
 
         return {
             "status": "started",
@@ -831,7 +901,7 @@ def create_app(runtime: Any) -> FastAPI:
         """Start async architectural design. Progress via WebSocket events."""
         import uuid
         design_id = uuid.uuid4().hex[:12]
-        asyncio.create_task(_run_design(req, design_id, runtime))
+        _track_task(_run_design(req, design_id, runtime), name=f"design-{design_id}")
         return {
             "status": "started",
             "design_id": design_id,
@@ -858,7 +928,7 @@ def create_app(runtime: Any) -> FastAPI:
             ad_number=build_spec.get("ad_number", 0),
             constraints=build_spec.get("constraints", []),
         )
-        asyncio.create_task(_run_build(build_req, build_id, runtime))
+        _track_task(_run_build(build_req, build_id, runtime), name=f"build-{build_id}")
 
         return {
             "status": "forwarded",
@@ -1029,12 +1099,17 @@ def create_app(runtime: Any) -> FastAPI:
     def _broadcast_event(event: dict[str, Any]) -> None:
         """Send event to all connected WebSocket clients."""
         safe_event = _safe_serialize(event)
-        for ws in list(_ws_clients):
+
+        async def _safe_send(ws: WebSocket, data: dict) -> None:
             try:
-                asyncio.create_task(ws.send_json(safe_event))
+                await ws.send_json(data)
             except Exception:
+                # Client disconnected or errored — prune from list
                 if ws in _ws_clients:
                     _ws_clients.remove(ws)
+
+        for ws in list(_ws_clients):
+            asyncio.create_task(_safe_send(ws, safe_event))
 
     # ------------------------------------------------------------------
     # Static file serving for HXI frontend (AD-260)

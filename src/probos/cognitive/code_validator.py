@@ -130,6 +130,14 @@ class CodeValidator:
             errors.append("No BaseAgent subclass found")
             return errors
 
+        if len(agent_classes) > 1:
+            names = ", ".join(c.name for c in agent_classes)
+            errors.append(
+                f"Multiple agent classes found ({names}); "
+                f"exactly one BaseAgent subclass is allowed"
+            )
+            return errors
+
         cls = agent_classes[0]
 
         # Check required class-level attributes
@@ -187,6 +195,7 @@ class CodeValidator:
         assignments, or string expressions (docstrings).
 
         Bare function calls, loops, or conditionals at module level are errors.
+        Class bodies are also scanned for non-method side effects.
         """
         errors: list[str] = []
         for node in ast.iter_child_nodes(tree):
@@ -195,6 +204,9 @@ class CodeValidator:
                 ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef,
                 ast.Assign, ast.AnnAssign,
             )):
+                # ClassDef is allowed at module level, but scan its body
+                if isinstance(node, ast.ClassDef):
+                    errors.extend(self._check_class_body_side_effects(node))
                 continue
             # Allow string constants (docstrings)
             if isinstance(node, ast.Expr) and isinstance(node.value, (ast.Constant,)):
@@ -203,6 +215,37 @@ class CodeValidator:
             # Everything else is a side effect
             errors.append(
                 f"Module-level side effect at line {node.lineno}: "
+                f"{type(node).__name__}"
+            )
+        return errors
+
+    def _check_class_body_side_effects(self, cls: ast.ClassDef) -> list[str]:
+        """Scan class body for non-method side effects.
+
+        Allowed in class body:
+        - Method definitions (FunctionDef, AsyncFunctionDef)
+        - Assignments / annotated assignments (class attributes)
+        - String expressions (docstrings)
+        - Pass statements
+
+        Bare function calls, loops, conditionals, etc. are side effects
+        that execute at import time.
+        """
+        errors: list[str] = []
+        for node in cls.body:
+            if isinstance(node, (
+                ast.FunctionDef, ast.AsyncFunctionDef,
+                ast.Assign, ast.AnnAssign,
+                ast.Pass,
+            )):
+                continue
+            # Allow string constants (docstrings)
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+                if isinstance(node.value.value, str):
+                    continue
+            # Everything else is a class-body side effect
+            errors.append(
+                f"Class-body side effect in '{cls.name}' at line {node.lineno}: "
                 f"{type(node).__name__}"
             )
         return errors

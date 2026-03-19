@@ -7,7 +7,6 @@ export function AgentTooltip() {
   const hovered = useStore((s) => s.hoveredAgent);
   const pinned = useStore((s) => s.pinnedAgent);
   const pos = useStore((s) => s.tooltipPos);
-  const setPinnedAgent = useStore((s) => s.setPinnedAgent);
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   // Dismiss pinned tooltip on click outside
@@ -16,7 +15,7 @@ export function AgentTooltip() {
 
     function handleClickOutside(e: MouseEvent) {
       if (tooltipRef.current && !tooltipRef.current.contains(e.target as Node)) {
-        setPinnedAgent(null);
+        useStore.getState().setPinnedAgent(null);
       }
     }
 
@@ -29,7 +28,7 @@ export function AgentTooltip() {
       clearTimeout(timer);
       document.removeEventListener('click', handleClickOutside);
     };
-  }, [pinned, setPinnedAgent]);
+  }, [pinned]);
 
   const agent = pinned || hovered;
   if (!agent) return null;
