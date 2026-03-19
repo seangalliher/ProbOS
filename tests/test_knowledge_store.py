@@ -1769,3 +1769,238 @@ class TestChromaDBKnowledgeIntegration:
             assert deploy_results[0].id == "wb1"
         finally:
             await mem.stop()
+
+
+# ===========================================================================
+# Coverage improvement — error handling, git ops, edge cases
+# ===========================================================================
+
+
+def _make_store(tmp_path, auto_commit=False):
+    """Helper to create KnowledgeStore."""
+    cfg = KnowledgeConfig(
+        enabled=True,
+        repo_path=str(tmp_path / "knowledge"),
+        auto_commit=auto_commit,
+    )
+    return __import__("probos.knowledge.store", fromlist=["KnowledgeStore"]).KnowledgeStore(cfg)
+
+
+class TestKnowledgeStoreErrorPaths:
+    """Tests for error handling in load_*() methods."""
+
+    @pytest.mark.asyncio
+    async def test_load_episodes_corrupt_file(self, tmp_path):
+        """Corrupt episode file doesn't crash load_episodes()."""
+        ks = _make_store(tmp_path)
+        ep_dir = ks._repo_path / "episodes"
+        ep_dir.mkdir(parents=True)
+        (ep_dir / "bad.json").write_text("{invalid json", encoding="utf-8")
+        result = await ks.load_episodes()
+        assert isinstance(result, list)
+
+    @pytest.mark.asyncio
+    async def test_load_episodes_empty_dir(self, tmp_path):
+        """Empty episodes dir returns empty list."""
+        ks = _make_store(tmp_path)
+        (ks._repo_path / "episodes").mkdir(parents=True)
+        result = await ks.load_episodes()
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_load_agents_corrupt_file(self, tmp_path):
+        """Corrupt agent file doesn't crash load_agents()."""
+        ks = _make_store(tmp_path)
+        agents_dir = ks._repo_path / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "bad.json").write_text("{bad", encoding="utf-8")
+        (agents_dir / "bad.py").write_text("class Bad: pass", encoding="utf-8")
+        result = await ks.load_agents()
+        assert isinstance(result, list)
+
+    @pytest.mark.asyncio
+    async def test_load_agents_missing_py(self, tmp_path):
+        """Agent with json but no .py file is skipped."""
+        ks = _make_store(tmp_path)
+        agents_dir = ks._repo_path / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "orphan.json").write_text('{"agent_type": "orphan"}', encoding="utf-8")
+        # No orphan.py
+        result = await ks.load_agents()
+        assert isinstance(result, list)
+
+    @pytest.mark.asyncio
+    async def test_load_skills_corrupt_file(self, tmp_path):
+        """Corrupt skill file doesn't crash load_skills()."""
+        ks = _make_store(tmp_path)
+        skills_dir = ks._repo_path / "skills"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "bad.json").write_text("{bad json", encoding="utf-8")
+        (skills_dir / "bad.py").write_text("def handler(): pass", encoding="utf-8")
+        result = await ks.load_skills()
+        assert isinstance(result, list)
+
+    @pytest.mark.asyncio
+    async def test_load_trust_snapshot_missing(self, tmp_path):
+        """Missing trust snapshot returns None."""
+        ks = _make_store(tmp_path)
+        ks._repo_path.mkdir(parents=True, exist_ok=True)
+        result = await ks.load_trust_snapshot()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_load_routing_weights_missing(self, tmp_path):
+        """Missing routing weights returns None."""
+        ks = _make_store(tmp_path)
+        ks._repo_path.mkdir(parents=True, exist_ok=True)
+        result = await ks.load_routing_weights()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_load_workflows_missing(self, tmp_path):
+        """Missing workflows file returns None."""
+        ks = _make_store(tmp_path)
+        ks._repo_path.mkdir(parents=True, exist_ok=True)
+        result = await ks.load_workflows()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_load_qa_reports_empty_dir(self, tmp_path):
+        """Missing QA dir returns empty dict."""
+        ks = _make_store(tmp_path)
+        ks._repo_path.mkdir(parents=True, exist_ok=True)
+        result = await ks.load_qa_reports()
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_load_qa_reports_corrupt(self, tmp_path):
+        """Corrupt QA file doesn't crash."""
+        ks = _make_store(tmp_path)
+        qa_dir = ks._repo_path / "qa"
+        qa_dir.mkdir(parents=True)
+        (qa_dir / "bad.json").write_text("{corrupt", encoding="utf-8")
+        result = await ks.load_qa_reports()
+        assert isinstance(result, dict)
+
+    @pytest.mark.asyncio
+    async def test_load_manifest_missing(self, tmp_path):
+        """Missing manifest returns empty list."""
+        ks = _make_store(tmp_path)
+        ks._repo_path.mkdir(parents=True, exist_ok=True)
+        result = await ks.load_manifest()
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_load_manifest_not_a_list(self, tmp_path):
+        """Manifest that parses as dict returns empty list."""
+        ks = _make_store(tmp_path)
+        ks._repo_path.mkdir(parents=True, exist_ok=True)
+        (ks._repo_path / "manifest.json").write_text('{"key": "value"}', encoding="utf-8")
+        result = await ks.load_manifest()
+        assert result == []
+
+
+class TestKnowledgeStoreGitOps:
+    """Tests for git operations."""
+
+    @pytest.mark.asyncio
+    async def test_ensure_repo_creates_meta(self, tmp_path):
+        """_ensure_repo() creates meta.json."""
+        ks = _make_store(tmp_path)
+        await ks._ensure_repo()
+        meta_path = ks._repo_path / "meta.json"
+        assert meta_path.exists()
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert "schema_version" in data
+
+    @pytest.mark.asyncio
+    async def test_ensure_repo_idempotent(self, tmp_path):
+        """Calling _ensure_repo twice doesn't crash."""
+        ks = _make_store(tmp_path)
+        await ks._ensure_repo()
+        await ks._ensure_repo()
+        assert ks._repo_initialised is True
+
+    @pytest.mark.asyncio
+    async def test_git_commit_no_git(self, tmp_path):
+        """_git_commit when git is not available is a no-op."""
+        ks = _make_store(tmp_path)
+        ks._git_available = False
+        await ks._git_commit("test message")
+        # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_artifact_path_mapping(self, tmp_path):
+        """_artifact_path maps known types correctly."""
+        ks = _make_store(tmp_path)
+        assert ks._artifact_path("episode", "ep1") == ks._repo_path / "episodes" / "ep1.json"
+        assert ks._artifact_path("agent", "a1") == ks._repo_path / "agents" / "a1.json"
+        assert ks._artifact_path("skill", "s1") == ks._repo_path / "skills" / "s1.json"
+        assert ks._artifact_path("qa", "q1") == ks._repo_path / "qa" / "q1.json"
+
+    @pytest.mark.asyncio
+    async def test_artifact_path_unknown_type(self, tmp_path):
+        """_artifact_path returns None for unknown types."""
+        ks = _make_store(tmp_path)
+        assert ks._artifact_path("unknown_type", "id") is None
+
+    @pytest.mark.asyncio
+    async def test_rollback_no_git(self, tmp_path):
+        """rollback_artifact returns False when git is unavailable."""
+        ks = _make_store(tmp_path)
+        ks._git_available = False
+        result = await ks.rollback_artifact("episode", "ep1")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_artifact_history_no_git(self, tmp_path):
+        """artifact_history returns empty list when git is unavailable."""
+        ks = _make_store(tmp_path)
+        ks._git_available = False
+        result = await ks.artifact_history("episode", "ep1")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_recent_commits_no_git(self, tmp_path):
+        """recent_commits returns empty list when git is unavailable."""
+        ks = _make_store(tmp_path)
+        ks._git_available = False
+        result = await ks.recent_commits()
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_meta_info(self, tmp_path):
+        """meta_info reads meta.json."""
+        ks = _make_store(tmp_path)
+        await ks._ensure_repo()
+        info = await ks.meta_info()
+        assert info is not None
+        assert "schema_version" in info
+
+    @pytest.mark.asyncio
+    async def test_meta_info_missing(self, tmp_path):
+        """meta_info returns None when meta.json doesn't exist."""
+        ks = _make_store(tmp_path)
+        ks._repo_path.mkdir(parents=True, exist_ok=True)
+        info = await ks.meta_info()
+        assert info is None
+
+
+class TestKnowledgeStoreScheduling:
+    """Tests for debounce and flush."""
+
+    @pytest.mark.asyncio
+    async def test_flush_pending_empty(self, tmp_path):
+        """_flush_pending is a no-op when no pending messages."""
+        ks = _make_store(tmp_path, auto_commit=True)
+        await ks._flush_pending()
+        # Should not raise, no git commit
+
+    @pytest.mark.asyncio
+    async def test_default_repo_path(self):
+        """When repo_path is empty, defaults to ~/.probos/knowledge/."""
+        cfg = KnowledgeConfig(enabled=True, repo_path="")
+        KS = __import__("probos.knowledge.store", fromlist=["KnowledgeStore"]).KnowledgeStore
+        ks = KS(cfg)
+        assert ".probos" in str(ks._repo_path) or "knowledge" in str(ks._repo_path)
+

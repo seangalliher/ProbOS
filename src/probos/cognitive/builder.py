@@ -18,6 +18,61 @@ from pathlib import Path
 from typing import Any
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
+
+
+# ---------------------------------------------------------------------------
+# Path resolution helpers
+# ---------------------------------------------------------------------------
+
+# The true project root (D:\ProbOS or equivalent).
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
+# The source package root (D:\ProbOS\src\probos).
+_SOURCE_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_path(file_path: str) -> Path:
+    """Resolve a file path that may be relative to different roots.
+
+    The Architect outputs paths in two formats:
+      - CodebaseIndex-relative: ``experience/shell.py`` (relative to src/probos/)
+      - Project-relative: ``src/probos/experience/shell.py`` (relative to project root)
+
+    Try in order: absolute, project-relative, source-relative.
+    Returns the first match, or the project-relative path if nothing exists.
+    """
+    p = Path(file_path)
+    if p.is_absolute():
+        return p
+    # Try project-root-relative first  (src/probos/experience/shell.py)
+    candidate = _PROJECT_ROOT / file_path
+    if candidate.exists():
+        return candidate
+    # Try source-root-relative  (experience/shell.py → src/probos/experience/shell.py)
+    candidate = _SOURCE_ROOT / file_path
+    if candidate.exists():
+        return candidate
+    # Nothing exists — return project-relative as default (new file)
+    return _PROJECT_ROOT / file_path
+
+
+def _normalize_change_paths(file_changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize file paths in change blocks to project-relative paths.
+
+    The LLM may output CodebaseIndex-relative paths (``experience/shell.py``)
+    which need to become ``src/probos/experience/shell.py`` for
+    ``execute_approved_build()`` to find them relative to the project root.
+    """
+    for change in file_changes:
+        raw = change["path"]
+        resolved = _resolve_path(raw)
+        try:
+            change["path"] = str(resolved.relative_to(_PROJECT_ROOT)).replace("\\", "/")
+        except ValueError:
+            pass  # Path not under project root — leave as-is
+    return file_changes
+
+
 from probos.types import IntentDescriptor, LLMRequest
 
 logger = logging.getLogger(__name__)
@@ -300,13 +355,13 @@ async def decompose_blueprint(
     """
     import json
 
-    project_root = Path(work_dir) if work_dir else Path(__file__).resolve().parent.parent.parent
+    project_root = Path(work_dir) if work_dir else _PROJECT_ROOT
     spec = blueprint.spec
 
     # Read target files to understand their structure
     target_contents: dict[str, str] = {}
     for path in spec.target_files:
-        full = Path(path) if Path(path).is_absolute() else project_root / path
+        full = _resolve_path(path) if not work_dir else (Path(work_dir) / path)
         if full.exists() and full.is_file():
             target_contents[path] = full.read_text(encoding="utf-8")
 
@@ -1634,9 +1689,6 @@ Rules for MODIFY blocks:
         """
         obs = await super().perceive(intent)
 
-        # Resolve project root for relative paths (same as execute_approved_build)
-        project_root = Path(__file__).resolve().parent.parent.parent
-
         params = obs.get("params", {})
         reference_files = params.get("reference_files", [])
         target_files = params.get("target_files", [])
@@ -1649,9 +1701,7 @@ Rules for MODIFY blocks:
             if file_path in all_files:
                 continue  # Already read (might be in both lists)
             try:
-                full_path = Path(file_path)
-                if not full_path.is_absolute():
-                    full_path = project_root / file_path
+                full_path = _resolve_path(file_path)
                 if full_path.exists() and full_path.is_file():
                     all_files[file_path] = full_path.read_text(encoding="utf-8")
                     logger.info("Builder perceive: read %s (%d chars)", file_path, len(all_files[file_path]))
@@ -1720,7 +1770,7 @@ Rules for MODIFY blocks:
                 transporter_blocks = await transporter_build(
                     spec=spec,
                     llm_client=self._llm_client,
-                    work_dir=str(project_root),
+                    work_dir=str(_PROJECT_ROOT),
                     codebase_index=getattr(self, "_codebase_index", None),
                 )
                 if transporter_blocks:
@@ -1822,7 +1872,7 @@ Rules for MODIFY blocks:
         return {
             "success": True,
             "result": {
-                "file_changes": file_changes,
+                "file_changes": _normalize_change_paths(file_changes),
                 "llm_output": llm_output,
                 "change_count": len(file_changes),
             },
@@ -1917,10 +1967,12 @@ def _validate_python(path: Path) -> str | None:
 
 async def _run_tests(work_dir: str, timeout: int = 120) -> tuple[bool, str]:
     """Run pytest and return (passed, output)."""
+    import sys
+
     def _sync_run() -> tuple[int, str]:
         try:
             result = subprocess.run(
-                ["pytest", "--tb=short", "-q"],
+                [sys.executable, "-m", "pytest", "--tb=short", "-q"],
                 cwd=work_dir,
                 capture_output=True,
                 timeout=timeout,

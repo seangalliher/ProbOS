@@ -378,3 +378,106 @@ class TestDependencyResult:
         assert r.success is False
         assert "feedparser" in r.failed
         assert r.error == "install failed"
+
+
+# ---------------------------------------------------------------------------
+# Coverage improvement — edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestDetectMissingEdgeCases:
+    """Tests for detect_missing() edge cases."""
+
+    def test_find_spec_raises_module_not_found(self):
+        """ModuleNotFoundError from find_spec is caught."""
+        r = _resolver(allowed=["collections"])
+        with patch("importlib.util.find_spec", side_effect=ModuleNotFoundError):
+            missing = r.detect_missing("import collections\n")
+            assert isinstance(missing, list)
+
+    def test_find_spec_raises_value_error(self):
+        """ValueError from find_spec is caught."""
+        r = _resolver(allowed=["weird_mod"])
+        with patch("importlib.util.find_spec", side_effect=ValueError):
+            missing = r.detect_missing("import weird_mod\n")
+            assert isinstance(missing, list)
+            assert "weird_mod" in missing
+
+    def test_probos_import_skipped(self):
+        """Imports starting with 'probos' are skipped."""
+        r = _resolver(allowed=["probos"])
+        missing = r.detect_missing("from probos.types import IntentMessage\n")
+        assert not any("probos" in m for m in missing)
+
+    def test_syntax_error_returns_empty(self):
+        """Source with syntax errors returns empty list."""
+        r = _resolver()
+        missing = r.detect_missing("def foo(\n")
+        assert missing == []
+
+
+class TestResolveApprovalFlow:
+    """Tests for resolve() user approval."""
+
+    @pytest.mark.asyncio
+    async def test_approval_fn_denies_install(self):
+        """When approval_fn returns False, packages are declined."""
+        async def deny_approval(pkgs):
+            return False
+
+        r = _resolver(allowed=["nonexistent_test_pkg"], approval_fn=deny_approval)
+        with patch("importlib.util.find_spec", return_value=None):
+            result = await r.resolve("import nonexistent_test_pkg\n")
+        assert not result.installed
+        assert len(result.declined) > 0
+
+    @pytest.mark.asyncio
+    async def test_approval_fn_exception_handled(self):
+        """When approval_fn raises, resolve() handles it (defaults to denied)."""
+        async def bad_approval(pkgs):
+            raise RuntimeError("User cancelled")
+
+        r = _resolver(allowed=["nonexistent_test_pkg"], approval_fn=bad_approval)
+        with patch("importlib.util.find_spec", return_value=None):
+            result = await r.resolve("import nonexistent_test_pkg\n")
+        assert isinstance(result, DependencyResult)
+        assert not result.success
+
+
+class TestInstallPackage:
+    """Tests for _install_package() fallback chain."""
+
+    @pytest.mark.asyncio
+    async def test_install_with_custom_fn(self):
+        """Custom install_fn is used when provided."""
+        async def mock_install(pkg):
+            return (True, "installed ok")
+
+        r = _resolver(install_fn=mock_install)
+        success, msg = await r._install_package("test_pkg")
+        assert success is True
+        assert "installed" in msg
+
+    @pytest.mark.asyncio
+    async def test_pip_failure_logged(self):
+        """pip install failure returns False with error message."""
+        r = _resolver()
+        mock_result = MagicMock(returncode=1, stdout="", stderr="pip error")
+        with patch("subprocess.run", return_value=mock_result), \
+             patch("shutil.which", return_value=None):  # no uv
+            success, msg = await r._install_package("fake_pkg")
+        assert success is False
+        assert "failed" in msg.lower() or "All" in msg
+
+
+class TestResolveNoMissing:
+    """Tests for resolve() when nothing is missing."""
+
+    @pytest.mark.asyncio
+    async def test_resolve_all_present(self):
+        """resolve() returns success immediately when nothing is missing."""
+        r = _resolver()
+        result = await r.resolve(_stdlib_source())
+        assert result.success is True
+        assert result.installed == []
+

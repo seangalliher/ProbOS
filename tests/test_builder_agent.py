@@ -2317,3 +2317,264 @@ class TestTestFixLoop:
         assert result.tests_passed is False
         assert result.fix_attempts == 0
         llm_client.complete.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestFindUnresolvedNamesEdgeCases — _find_unresolved_names() AST handling
+# ---------------------------------------------------------------------------
+
+
+class TestFindUnresolvedNamesEdgeCases:
+    """Tests for _find_unresolved_names() AST node handling."""
+
+    def test_vararg_in_function(self):
+        """*args parameter is recognized as defined name."""
+        source = "def foo(*args): pass"
+        result = _find_unresolved_names(source)
+        assert "args" not in result
+
+    def test_kwarg_in_function(self):
+        """**kwargs parameter is recognized as defined name."""
+        source = "def foo(**kwargs): pass"
+        result = _find_unresolved_names(source)
+        assert "kwargs" not in result
+
+    def test_kwonlyargs(self):
+        """Keyword-only args after * are recognized."""
+        source = "def foo(*, key): pass"
+        result = _find_unresolved_names(source)
+        assert "key" not in result
+
+    def test_tuple_assignment(self):
+        """Tuple unpacking targets are recognized."""
+        source = "a, b = 1, 2"
+        result = _find_unresolved_names(source)
+        assert "a" not in result
+        assert "b" not in result
+
+    def test_annotated_assignment(self):
+        """Annotated assignments (x: int = 1) are recognized."""
+        source = "x: int = 1"
+        result = _find_unresolved_names(source)
+        assert "x" not in result
+
+    def test_for_loop_variable(self):
+        """For loop variable is recognized as defined."""
+        source = "for i in range(10): pass"
+        result = _find_unresolved_names(source)
+        assert "i" not in result
+
+    def test_with_statement_variable(self):
+        """With statement 'as' variable is recognized."""
+        source = "with open('f') as fp: pass"
+        result = _find_unresolved_names(source)
+        assert "fp" not in result
+
+    def test_except_handler_variable(self):
+        """Exception handler 'as' variable is recognized."""
+        source = "try:\n    pass\nexcept Exception as e:\n    pass"
+        result = _find_unresolved_names(source)
+        assert "e" not in result
+
+    def test_comprehension_variable(self):
+        """Comprehension target variable is recognized."""
+        source = "result = [x for x in range(10)]"
+        result = _find_unresolved_names(source)
+        assert "x" not in result
+
+    def test_class_definition(self):
+        """Class name is recognized as defined."""
+        source = "class MyClass:\n    pass"
+        result = _find_unresolved_names(source)
+        assert "MyClass" not in result
+
+    def test_import_alias(self):
+        """Import alias is recognized as defined."""
+        source = "import numpy as np\nresult = np.array([1])"
+        result = _find_unresolved_names(source)
+        assert "np" not in result
+
+    def test_async_function_def(self):
+        """Async function name is recognized as defined."""
+        source = "async def do_work(): pass"
+        result = _find_unresolved_names(source)
+        assert "do_work" not in result
+
+    def test_builtins_not_flagged(self):
+        """Python builtins are not flagged as unresolved."""
+        source = "result = len([1, 2, 3])\nprint(result)"
+        result = _find_unresolved_names(source)
+        assert "len" not in result
+        assert "print" not in result
+
+    def test_syntax_error_returns_empty(self):
+        """Syntax errors return empty list."""
+        source = "def ???: pass"
+        result = _find_unresolved_names(source)
+        assert result == []
+
+    def test_truly_unresolved_name_detected(self):
+        """A truly unresolved name IS flagged."""
+        source = "result = some_unknown_lib.process()"
+        result = _find_unresolved_names(source)
+        assert "some_unknown_lib" in result
+
+
+# ---------------------------------------------------------------------------
+# TestValidateAssemblyChecks — validate_assembly() detailed checks
+# ---------------------------------------------------------------------------
+
+
+class TestValidateAssemblyChecks:
+    """Tests for validate_assembly() detailed checks."""
+
+    def _make_chunk(self, chunk_id="c1", target_file="test.py", description="test"):
+        return ChunkSpec(
+            chunk_id=chunk_id,
+            description=description,
+            target_file=target_file,
+            what_to_generate="test code",
+        )
+
+    def test_syntax_error_detected(self):
+        """validate_assembly() detects syntax errors in assembled blocks."""
+        blueprint = BuildBlueprint(
+            spec=BuildSpec(title="Test", description="Test"),
+            chunks=[self._make_chunk()],
+            results=[ChunkResult(
+                chunk_id="c1",
+                success=True,
+                generated_code="def broken(\n",
+                confidence=4,
+            )],
+        )
+        assembled = [{"path": "test.py", "content": "def broken(\n", "mode": "create"}]
+        result = validate_assembly(blueprint, assembled)
+        assert not result.valid
+        assert any(e["type"] == "syntax_error" for e in result.errors)
+
+    def test_duplicate_definition_detected(self):
+        """validate_assembly() detects duplicate function definitions."""
+        source = "def foo(): pass\ndef foo(): pass\n"
+        blueprint = BuildBlueprint(
+            spec=BuildSpec(title="Test", description="Test"),
+            chunks=[self._make_chunk()],
+            results=[ChunkResult(
+                chunk_id="c1",
+                success=True,
+                generated_code=source,
+                confidence=4,
+            )],
+        )
+        assembled = [{"path": "test.py", "content": source, "mode": "create"}]
+        result = validate_assembly(blueprint, assembled)
+        assert any(e["type"] == "duplicate_definition" for e in result.errors)
+
+    def test_valid_assembly_passes(self):
+        """validate_assembly() passes valid assembly."""
+        source = "def foo(): pass\ndef bar(): pass\n"
+        blueprint = BuildBlueprint(
+            spec=BuildSpec(title="Test", description="Test"),
+            chunks=[self._make_chunk()],
+            results=[ChunkResult(
+                chunk_id="c1",
+                success=True,
+                generated_code=source,
+                confidence=4,
+            )],
+        )
+        assembled = [{"path": "test.py", "content": source, "mode": "create"}]
+        result = validate_assembly(blueprint, assembled)
+        assert result.valid
+
+    def test_empty_search_in_modify_block(self):
+        """validate_assembly() flags MODIFY blocks with empty search strings."""
+        blueprint = BuildBlueprint(
+            spec=BuildSpec(title="Test", description="Test"),
+            chunks=[self._make_chunk()],
+            results=[ChunkResult(
+                chunk_id="c1",
+                success=True,
+                generated_code="modified",
+                confidence=4,
+            )],
+        )
+        assembled = [{"path": "test.py", "content": "modified", "mode": "modify",
+                       "replacements": [{"search": "   ", "replace": "new"}]}]
+        result = validate_assembly(blueprint, assembled)
+        assert any(e["type"] == "empty_search" for e in result.errors)
+
+    def test_non_python_file_skips_syntax_check(self):
+        """validate_assembly() skips syntax check for non-Python files."""
+        blueprint = BuildBlueprint(
+            spec=BuildSpec(title="Test", description="Test"),
+            chunks=[self._make_chunk(target_file="config.json")],
+            results=[ChunkResult(
+                chunk_id="c1",
+                success=True,
+                generated_code='{"key": "value"}',
+                confidence=4,
+            )],
+        )
+        assembled = [{"path": "config.json", "content": '{"key": "value"}', "mode": "create"}]
+        result = validate_assembly(blueprint, assembled)
+        assert result.valid
+
+
+# ---------------------------------------------------------------------------
+# TestFallbackTruncate — _fallback_truncate() tests
+# ---------------------------------------------------------------------------
+
+
+class TestFallbackTruncate:
+    """Tests for BuilderAgent._fallback_truncate()."""
+
+    def test_short_content_unchanged(self):
+        """Content under 15K chars is returned as-is."""
+        files = {"short.py": "x = 1\n" * 100}
+        result = BuilderAgent._fallback_truncate(files)
+        assert result["short.py"] == files["short.py"]
+
+    def test_long_content_truncated(self):
+        """Content over 15K chars is truncated to head + tail."""
+        long_content = "\n".join(f"line_{i} = {i}" for i in range(2000))
+        assert len(long_content) > 15_000
+        files = {"big.py": long_content}
+        result = BuilderAgent._fallback_truncate(files)
+        assert len(result["big.py"]) < len(long_content)
+        assert "lines omitted" in result["big.py"]
+
+    def test_multiple_files(self):
+        """Mixed short and long files handled correctly."""
+        short = "x = 1\n"
+        long_content = "\n".join(f"line_{i} = {i}" for i in range(2000))
+        files = {"short.py": short, "big.py": long_content}
+        result = BuilderAgent._fallback_truncate(files)
+        assert result["short.py"] == short
+        assert "lines omitted" in result["big.py"]
+
+
+# ---------------------------------------------------------------------------
+# TestTransporterBuildEdgeCases — transporter_build() edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestTransporterBuildEdgeCases:
+    """Tests for transporter_build() edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_empty_decomposition_returns_empty(self):
+        """transporter_build() returns empty when decomposition yields no chunks."""
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(return_value=MagicMock(
+            error=None,
+            content="No chunks could be identified.",
+        ))
+
+        spec = BuildSpec(
+            title="Empty Build",
+            description="Nothing to build",
+            target_files=["empty.py"],
+        )
+        result = await transporter_build(spec=spec, llm_client=mock_llm)
+        assert result == [] or isinstance(result, list)

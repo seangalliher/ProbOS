@@ -58,8 +58,8 @@ cognitive:
   llm_timeout_deep: 300
 
   working_memory_token_budget: 4000
-  decomposition_timeout_seconds: 30
-  dag_execution_timeout_seconds: 60
+  decomposition_timeout_seconds: 300
+  dag_execution_timeout_seconds: 300
   use_consensus_for_writes: true
   max_concurrent_tasks: 8
   attention_decay_rate: 0.95

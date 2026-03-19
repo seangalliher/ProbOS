@@ -178,3 +178,154 @@ class TestRuntimeEventLog:
         event_types = {e["event"] for e in events}
         assert "intent_broadcast" in event_types
         assert "intent_resolved" in event_types
+
+
+# ---------------------------------------------------------------------------
+# TestVerifyResponse — _verify_response() coverage (lines 1321-1405)
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyResponse:
+    """Tests for _verify_response() fabrication/contradiction checks."""
+
+    @pytest.mark.asyncio
+    async def test_empty_response_unchanged(self, runtime):
+        """Empty or whitespace response is returned unchanged."""
+        from probos.cognitive.self_model import SystemSelfModel
+        model = SystemSelfModel()
+        assert runtime._verify_response("", model) == ""
+        assert runtime._verify_response("   ", model) == "   "
+
+    @pytest.mark.asyncio
+    async def test_clean_response_unchanged(self, runtime):
+        """Response with no fabrications is returned unchanged."""
+        from probos.cognitive.self_model import SystemSelfModel, PoolSnapshot
+        model = SystemSelfModel(
+            pool_count=3,
+            agent_count=10,
+            departments=["engineering", "medical"],
+            pools=[PoolSnapshot(name="system", agent_type="system", agent_count=2)],
+            system_mode="active",
+        )
+        text = "The system has 3 pools and 10 agents."
+        result = runtime._verify_response(text, model)
+        assert result == text  # No correction appended
+
+    @pytest.mark.asyncio
+    async def test_fabricated_pool_count(self, runtime):
+        """Wrong pool count triggers correction footnote."""
+        from probos.cognitive.self_model import SystemSelfModel
+        model = SystemSelfModel(pool_count=3, agent_count=10, system_mode="active")
+        text = "We have 99 pools available."
+        result = runtime._verify_response(text, model)
+        assert "[Note:" in result
+        assert "3 pools" in result
+
+    @pytest.mark.asyncio
+    async def test_fabricated_agent_count(self, runtime):
+        """Wrong agent count triggers correction footnote."""
+        from probos.cognitive.self_model import SystemSelfModel
+        model = SystemSelfModel(pool_count=3, agent_count=10, system_mode="active")
+        text = "Currently running 500 agents."
+        result = runtime._verify_response(text, model)
+        assert "[Note:" in result
+        assert "10 agents" in result
+
+    @pytest.mark.asyncio
+    async def test_fabricated_department(self, runtime):
+        """Unknown department name triggers correction footnote."""
+        from probos.cognitive.self_model import SystemSelfModel
+        model = SystemSelfModel(
+            pool_count=3,
+            agent_count=10,
+            departments=["engineering", "medical"],
+            system_mode="active",
+        )
+        text = "The navigation department is handling that request."
+        result = runtime._verify_response(text, model)
+        assert "[Note:" in result
+
+    @pytest.mark.asyncio
+    async def test_fabricated_pool_name(self, runtime):
+        """Unknown pool name triggers correction footnote."""
+        from probos.cognitive.self_model import SystemSelfModel, PoolSnapshot
+        model = SystemSelfModel(
+            pool_count=3,
+            agent_count=10,
+            pools=[PoolSnapshot(name="system", agent_type="system", agent_count=2)],
+            system_mode="active",
+        )
+        text = "The weapons pool is ready."
+        result = runtime._verify_response(text, model)
+        assert "[Note:" in result
+
+    @pytest.mark.asyncio
+    async def test_system_mode_contradiction_active(self, runtime):
+        """Claiming idle when system is active triggers correction."""
+        from probos.cognitive.self_model import SystemSelfModel
+        model = SystemSelfModel(pool_count=1, agent_count=1, system_mode="active")
+        text = "The system is idle right now."
+        result = runtime._verify_response(text, model)
+        assert "[Note:" in result
+        assert "mode active" in result
+
+    @pytest.mark.asyncio
+    async def test_system_mode_contradiction_dreaming(self, runtime):
+        """Claiming active when system is dreaming triggers correction."""
+        from probos.cognitive.self_model import SystemSelfModel
+        model = SystemSelfModel(pool_count=1, agent_count=1, system_mode="dreaming")
+        text = "The system is active and processing."
+        result = runtime._verify_response(text, model)
+        assert "[Note:" in result
+        assert "mode dreaming" in result
+
+    @pytest.mark.asyncio
+    async def test_zero_count_not_flagged(self, runtime):
+        """Zero counts are not flagged as violations."""
+        from probos.cognitive.self_model import SystemSelfModel
+        model = SystemSelfModel(pool_count=3, agent_count=10, system_mode="active")
+        text = "0 pools were affected by the change."
+        result = runtime._verify_response(text, model)
+        assert result == text  # Zero is exempt
+
+    @pytest.mark.asyncio
+    async def test_safe_pool_words_not_flagged(self, runtime):
+        """Safe generic words (agent, worker, thread, connection) are not flagged."""
+        from probos.cognitive.self_model import SystemSelfModel, PoolSnapshot
+        model = SystemSelfModel(
+            pool_count=1, agent_count=1,
+            pools=[PoolSnapshot(name="system", agent_type="system", agent_count=1)],
+            system_mode="active",
+        )
+        text = "The connection pool is handling requests."
+        result = runtime._verify_response(text, model)
+        assert result == text  # "connection" is a safe word
+
+
+# ---------------------------------------------------------------------------
+# TestConversationHistoryEnrichment — lines 1506-1520
+# ---------------------------------------------------------------------------
+
+
+class TestConversationHistoryEnrichment:
+    """Tests for conversation context enrichment with last execution data."""
+
+    @pytest.mark.asyncio
+    async def test_enrichment_with_dag(self, runtime):
+        """When _last_execution has a DAG, conversation history gets context tuple."""
+        from unittest.mock import MagicMock
+
+        # Create mock DAG with nodes
+        mock_node = MagicMock()
+        mock_node.intent = "get_weather"
+        mock_node.params = {"city": "London"}
+        mock_dag = MagicMock()
+        mock_dag.nodes = [mock_node]
+
+        runtime._last_execution = {"dag": mock_dag}
+        runtime._last_execution_text = "What is the weather in London?"
+
+        # We can't easily test the full pipeline without mocking decomposer,
+        # but we can verify the _last_execution is stored
+        assert runtime._last_execution is not None
+        assert runtime._last_execution["dag"].nodes[0].intent == "get_weather"

@@ -215,13 +215,17 @@ class OpenAICompatibleClient(BaseLLMClient):
             client = self._clients[self._client_key(attempt_tier)]
             model = tc["model"]
             api_format = tc.get("api_format", "openai")
+            tier_timeout = tc["timeout"]
 
             # Skip tiers known to be unreachable at boot
             if self._tier_status.get(attempt_tier) is False and attempt_tier != tier:
                 continue
 
             try:
-                response = await self._call_api(request, model, client, api_format=api_format)
+                response = await self._call_api(
+                    request, model, client, api_format=api_format,
+                    timeout=tier_timeout,
+                )
                 # Cache successful responses (keyed by original tier)
                 cache_key = self._cache_key(tier, request.prompt)
                 self._cache[cache_key] = response
@@ -273,14 +277,17 @@ class OpenAICompatibleClient(BaseLLMClient):
 
     async def _call_api(
         self, request: LLMRequest, model: str, client: httpx.AsyncClient,
-        *, api_format: str = "openai",
+        *, api_format: str = "openai", timeout: float = 30.0,
     ) -> LLMResponse:
         """Make the actual API call, routing by api_format."""
         if api_format == "ollama":
-            return await self._call_ollama_native(request, model, client)
-        return await self._call_openai(request, model, client)
+            return await self._call_ollama_native(request, model, client, timeout=timeout)
+        return await self._call_openai(request, model, client, timeout=timeout)
 
-    async def _call_openai(self, request: LLMRequest, model: str, client: httpx.AsyncClient) -> LLMResponse:
+    async def _call_openai(
+        self, request: LLMRequest, model: str, client: httpx.AsyncClient,
+        *, timeout: float = 30.0,
+    ) -> LLMResponse:
         """OpenAI-compatible chat/completions call."""
         messages = []
         if request.system_prompt:
@@ -296,7 +303,7 @@ class OpenAICompatibleClient(BaseLLMClient):
 
         logger.debug("LLM request payload (openai): %s", json.dumps(payload, indent=2))
 
-        resp = await client.post("chat/completions", json=payload)
+        resp = await client.post("chat/completions", json=payload, timeout=timeout)
         resp.raise_for_status()
         data = resp.json()
 
@@ -323,7 +330,10 @@ class OpenAICompatibleClient(BaseLLMClient):
             request_id=request.id,
         )
 
-    async def _call_ollama_native(self, request: LLMRequest, model: str, client: httpx.AsyncClient) -> LLMResponse:
+    async def _call_ollama_native(
+        self, request: LLMRequest, model: str, client: httpx.AsyncClient,
+        *, timeout: float = 30.0,
+    ) -> LLMResponse:
         """Native Ollama /api/chat call with think disabled."""
         messages = []
         if request.system_prompt:
@@ -344,7 +354,7 @@ class OpenAICompatibleClient(BaseLLMClient):
 
         logger.debug("LLM request payload (ollama): %s", json.dumps(payload, indent=2))
 
-        resp = await client.post("api/chat", json=payload)
+        resp = await client.post("api/chat", json=payload, timeout=timeout)
         resp.raise_for_status()
         data = resp.json()
 

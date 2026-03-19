@@ -59,6 +59,7 @@ class ProbOSShell:
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
         "/prune":     "Permanently remove an agent (/prune <agent_id>)",
         "/imports":   "Manage allowed imports (/imports | /imports add <pkg> | /imports remove <pkg>)",
+        "/ping":      "Show system uptime",
         "/debug":     "Toggle debug mode (/debug on|off)",
         "/help":      "Show this help message",
         "/quit":      "Exit ProbOS",
@@ -183,6 +184,7 @@ class ProbOSShell:
             "/explain":   self._cmd_explain,
             "/model":   self._cmd_model,
             "/tier":    self._cmd_tier,
+            "/ping":    self._cmd_ping,
             "/prune":   self._cmd_prune,
             "/imports": self._cmd_imports,
             "/debug":   self._cmd_debug,
@@ -904,6 +906,40 @@ class ProbOSShell:
             self.console.print(f"[green]Agent {agent_id} pruned.[/green]")
         else:
             self.console.print(f"[red]Failed to prune agent {agent_id}.[/red]")
+
+    async def _cmd_ping(self, arg: str) -> None:
+        """Show system uptime in a friendly format (AD-337)."""
+        status = self.runtime.status()
+        
+        # Extract uptime from system model (via mesh -> self_model)
+        mesh = status.get("mesh", {})
+        self_model = mesh.get("self_model", {})
+        uptime = self_model.get("uptime_seconds")
+        
+        if uptime is not None:
+            uptime_text = self._format_uptime(uptime)
+            self.console.print(f"[green]●[/green] ProbOS uptime: {uptime_text}")
+        else:
+            self.console.print("[yellow]⚠[/yellow] Uptime information unavailable")
+
+    def _format_uptime(self, seconds: float) -> str:
+        """Convert seconds to human-readable uptime format."""
+        total_seconds = int(seconds)
+        
+        if total_seconds < 60:
+            return f"{total_seconds} seconds"
+        
+        days = total_seconds // 86400
+        hours = (total_seconds % 86400) // 3600
+        minutes = (total_seconds % 3600) // 60
+        remaining_seconds = total_seconds % 60
+        
+        if days > 0:
+            return f"{days} days, {hours} hours, {minutes} minutes"
+        elif hours > 0:
+            return f"{hours} hours, {minutes} minutes, {remaining_seconds} seconds"
+        else:
+            return f"{minutes} minutes, {remaining_seconds} seconds"
 
     async def _cmd_help(self, arg: str) -> None:
         table = Table(title="Commands", show_header=False)

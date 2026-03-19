@@ -696,3 +696,123 @@ class TestShellAndPanel:
             assert "Usage" in output or "not available" in output
         finally:
             await rt.stop()
+
+
+# ===========================================================================
+# Semantic layer indexing and error handling (coverage improvement)
+# ===========================================================================
+
+
+class TestSemanticIndexing:
+    """Tests for index_*() methods and error handling."""
+
+    @pytest.fixture
+    def layer(self, tmp_path):
+        """Create a SemanticKnowledgeLayer with mock collections."""
+        sl = SemanticKnowledgeLayer(db_path=tmp_path / "chroma")
+        # Don't call start() — use mock collections
+        return sl
+
+    @pytest.mark.asyncio
+    async def test_index_agent_none_collection(self, layer):
+        """index_agent() returns early when collection is None."""
+        await layer.index_agent("test_type", "test_intent", "desc", "strategy")
+
+    @pytest.mark.asyncio
+    async def test_index_skill_none_collection(self, layer):
+        """index_skill() returns early when collection is None."""
+        await layer.index_skill("test_skill", "description")
+
+    @pytest.mark.asyncio
+    async def test_index_workflow_none_collection(self, layer):
+        """index_workflow() returns early when collection is None."""
+        await layer.index_workflow("pattern", ["intent1"])
+
+    @pytest.mark.asyncio
+    async def test_index_qa_report_none_collection(self, layer):
+        """index_qa_report() returns early when collection is None."""
+        await layer.index_qa_report("agent_type", "pass", 1.0)
+
+    @pytest.mark.asyncio
+    async def test_index_event_none_collection(self, layer):
+        """index_event() returns early when collection is None."""
+        await layer.index_event("category", "event_name", "detail")
+
+    @pytest.mark.asyncio
+    async def test_index_agent_with_mock_collection(self, layer):
+        """index_agent() indexes into the collection when it exists."""
+        mock_col = MagicMock()
+        layer._collections["agents"] = mock_col
+        await layer.index_agent("builder", "build_code", "builds stuff", "cognitive")
+        mock_col.upsert.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_index_skill_with_mock_collection(self, layer):
+        """index_skill() indexes correctly."""
+        mock_col = MagicMock()
+        layer._collections["skills"] = mock_col
+        await layer.index_skill("my_skill", "a skill description")
+        mock_col.upsert.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_index_workflow_with_mock_collection(self, layer):
+        """index_workflow() indexes correctly."""
+        mock_col = MagicMock()
+        layer._collections["workflows"] = mock_col
+        await layer.index_workflow("sequential", ["intent1", "intent2"], hit_count=5)
+        mock_col.upsert.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_index_qa_report_with_mock_collection(self, layer):
+        """index_qa_report() indexes correctly."""
+        mock_col = MagicMock()
+        layer._collections["qa_reports"] = mock_col
+        await layer.index_qa_report("builder", "pass", 0.95)
+        mock_col.upsert.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_index_event_with_mock_collection(self, layer):
+        """index_event() indexes correctly."""
+        mock_col = MagicMock()
+        layer._collections["events"] = mock_col
+        await layer.index_event("trust", "update", "trust changed")
+        mock_col.upsert.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_search_exception_handling(self, layer):
+        """search() catches exceptions from collection queries gracefully."""
+        mock_col = MagicMock()
+        mock_col.count.return_value = 5
+        mock_col.query.side_effect = RuntimeError("chromadb broken")
+        layer._collections["agents"] = mock_col
+        results = await layer.search("test query")
+        # Should not raise, returns empty or partial results
+        assert isinstance(results, list)
+
+    def test_stats_exception_handling(self, layer):
+        """stats() catches exception when getting collection count."""
+        mock_col = MagicMock()
+        mock_col.count.side_effect = RuntimeError("broken")
+        layer._collections["agents"] = mock_col
+        stats = layer.stats()
+        assert isinstance(stats, dict)
+        assert stats.get("agents", 0) == 0
+
+    @pytest.mark.asyncio
+    async def test_reindex_from_store(self, layer):
+        """reindex_from_store() indexes artifacts from knowledge store."""
+        # Set up mock collections
+        for name in ["agents", "skills", "workflows", "qa_reports"]:
+            layer._collections[name] = MagicMock()
+
+        store = MagicMock()
+        store.load_agents = AsyncMock(return_value=[])
+        store.load_skills = AsyncMock(return_value=[])
+        store._read_json = MagicMock(return_value=[])
+        store._repo_path = MagicMock()
+        store._repo_path.__truediv__ = MagicMock(return_value=MagicMock(is_file=MagicMock(return_value=False)))
+        store.load_qa_reports = AsyncMock(return_value={})
+
+        result = await layer.reindex_from_store(store)
+        assert isinstance(result, dict)
+

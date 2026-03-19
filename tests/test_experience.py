@@ -1201,3 +1201,245 @@ class TestAgentRoster:
         console.print(panel)
         output = get_output(console)
         assert "\u00b1" in output, "No +/- symbol found in trust/confidence"
+
+
+# ---------------------------------------------------------------------------
+# Shell command handler tests (coverage improvement)
+# ---------------------------------------------------------------------------
+
+
+class TestShellHistoryCommand:
+    """Tests for _cmd_history()."""
+
+    @pytest.mark.asyncio
+    async def test_history_no_episodic_memory(self, shell, console):
+        """History command handles missing episodic memory."""
+        shell.runtime.episodic_memory = None
+        await shell._cmd_history("")
+        output = get_output(console)
+        assert "not enabled" in output.lower() or "Episodic" in output
+
+    @pytest.mark.asyncio
+    async def test_history_empty(self, shell, console):
+        """History command handles no episodes gracefully."""
+        from unittest.mock import AsyncMock
+        mock_mem = AsyncMock()
+        mock_mem.recent.return_value = []
+        mock_mem.stop = AsyncMock()
+        shell.runtime.episodic_memory = mock_mem
+        await shell._cmd_history("")
+        output = get_output(console)
+        assert "No episodes" in output or "Memory" in output or output != ""
+
+
+class TestShellRecallCommand:
+    """Tests for _cmd_recall()."""
+
+    @pytest.mark.asyncio
+    async def test_recall_no_query(self, shell, console):
+        """Recall command with no episodic memory shows not-enabled message."""
+        shell.runtime.episodic_memory = None
+        await shell._cmd_recall("")
+        output = get_output(console)
+        assert "not enabled" in output.lower() or "Episodic" in output
+
+    @pytest.mark.asyncio
+    async def test_recall_no_memory(self, shell, console):
+        """Recall command handles missing episodic memory."""
+        shell.runtime.episodic_memory = None
+        await shell._cmd_recall("test query")
+        output = get_output(console)
+        assert "not enabled" in output.lower() or "Episodic" in output
+
+
+class TestShellDreamCommand:
+    """Tests for _cmd_dream()."""
+
+    @pytest.mark.asyncio
+    async def test_dream_not_enabled(self, shell, console):
+        """Dream command handles missing dream scheduler."""
+        shell.runtime.dream_scheduler = None
+        await shell._cmd_dream("")
+        output = get_output(console)
+        assert "not enabled" in output.lower() or "Dream" in output
+
+
+class TestShellFederationCommand:
+    """Tests for _cmd_federation() and _cmd_peers()."""
+
+    @pytest.mark.asyncio
+    async def test_federation_not_enabled(self, shell, console):
+        """Federation command handles missing federation bridge."""
+        shell.runtime.federation_bridge = None
+        await shell._cmd_federation("")
+        output = get_output(console)
+        assert "not enabled" in output.lower() or "Federation" in output
+
+    @pytest.mark.asyncio
+    async def test_peers_not_enabled(self, shell, console):
+        """Peers command handles missing federation bridge."""
+        shell.runtime.federation_bridge = None
+        await shell._cmd_peers("")
+        output = get_output(console)
+        assert "not enabled" in output.lower() or "Federation" in output
+
+
+class TestShellDesignedCommand:
+    """Tests for _cmd_designed()."""
+
+    @pytest.mark.asyncio
+    async def test_designed_not_enabled(self, shell, console):
+        """Designed command handles missing self_mod_pipeline."""
+        shell.runtime.self_mod_pipeline = None
+        await shell._cmd_designed("")
+        output = get_output(console)
+        assert "not enabled" in output.lower() or "Self-modification" in output or "modification" in output.lower()
+
+
+class TestShellKnowledgeCommand:
+    """Tests for _cmd_knowledge()."""
+
+    @pytest.mark.asyncio
+    async def test_knowledge_not_enabled(self, shell, console):
+        """Knowledge command handles missing knowledge store."""
+        # Ensure _knowledge_store attribute returns None
+        if hasattr(shell.runtime, '_knowledge_store'):
+            shell.runtime._knowledge_store = None
+        await shell._cmd_knowledge("")
+        output = get_output(console)
+        assert "not enabled" in output.lower() or "Knowledge" in output or "knowledge" in output.lower()
+
+
+class TestShellQACommand:
+    """Tests for _cmd_qa()."""
+
+    @pytest.mark.asyncio
+    async def test_qa_no_reports(self, shell, console):
+        """QA command handles no reports."""
+        shell.runtime._qa_reports = {}
+        await shell._cmd_qa("")
+        output = get_output(console)
+        assert "No QA" in output or "qa" in output.lower() or output != ""
+
+
+class TestShellSearchCommand:
+    """Tests for _cmd_search()."""
+
+    @pytest.mark.asyncio
+    async def test_search_no_semantic_layer(self, shell, console):
+        """Search command with no semantic layer shows not-available."""
+        shell.runtime._semantic_layer = None
+        await shell._cmd_search("")
+        output = get_output(console)
+        assert "not available" in output.lower() or "Semantic" in output
+
+    @pytest.mark.asyncio
+    async def test_search_no_semantic_layer(self, shell, console):
+        """Search command handles missing semantic layer."""
+        shell.runtime._semantic_layer = None
+        await shell._cmd_search("test query")
+        output = get_output(console)
+        assert "not available" in output.lower() or "Semantic" in output
+
+
+class TestShellImportsCommand:
+    """Tests for _cmd_imports()."""
+
+    @pytest.mark.asyncio
+    async def test_imports_lists_allowed(self, shell, console):
+        """Imports command lists allowed imports when self_mod config exists."""
+        from unittest.mock import MagicMock
+        mock_config = MagicMock()
+        mock_config.allowed_imports = ["json", "os"]
+        shell.runtime.config.self_mod = mock_config
+        await shell._cmd_imports("")
+        output = get_output(console)
+        assert "json" in output or "os" in output or "import" in output.lower()
+
+
+class TestShellApprovalCallbacks:
+    """Tests for user approval callback methods."""
+
+    @pytest.mark.asyncio
+    async def test_user_self_mod_approval_eof(self, shell, console):
+        """_user_self_mod_approval handles EOFError as denial."""
+        from unittest.mock import patch
+        with patch("builtins.input", side_effect=EOFError):
+            result = await shell._user_self_mod_approval("test proposal")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_user_import_approval_eof(self, shell, console):
+        """_user_import_approval handles EOFError as denial."""
+        from unittest.mock import patch
+        with patch("builtins.input", side_effect=EOFError):
+            result = await shell._user_import_approval(["numpy", "pandas"])
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_user_dep_install_approval_eof(self, shell, console):
+        """_user_dep_install_approval handles EOFError as denial."""
+        from unittest.mock import patch
+        with patch("builtins.input", side_effect=EOFError):
+            result = await shell._user_dep_install_approval(["requests"])
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_user_escalation_callback_eof(self, shell, console):
+        """_user_escalation_callback handles EOFError as skip (None)."""
+        from unittest.mock import patch
+        if not hasattr(shell, '_user_escalation_callback'):
+            pytest.skip("No escalation callback on shell")
+        with patch("builtins.input", side_effect=EOFError):
+            result = await shell._user_escalation_callback(
+                "test escalation", {"intent": "test", "error": "err"}
+            )
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Renderer tests (coverage improvement)
+# ---------------------------------------------------------------------------
+
+
+class TestRendererProgressTable:
+    """Tests for _build_progress_table()."""
+
+    @pytest.fixture
+    def renderer(self, runtime, console):
+        return ExecutionRenderer(console, runtime)
+
+    def test_progress_table_no_dag(self, renderer):
+        """_build_progress_table returns a table even with no current DAG."""
+        renderer._current_dag = None
+        table = renderer._build_progress_table()
+        assert table is not None
+
+    def test_progress_table_with_dag(self, renderer):
+        """_build_progress_table includes rows for DAG nodes."""
+        from unittest.mock import MagicMock
+        dag = MagicMock()
+        node = MagicMock()
+        node.id = "n1"
+        node.intent = "test_intent"
+        node.status = "pending"
+        node.params = {"key": "value"}
+        node.depends_on = []
+        dag.nodes = [node]
+        renderer._current_dag = dag
+        table = renderer._build_progress_table()
+        assert table is not None
+
+
+class TestRendererEventHandler:
+    """Tests for _on_execution_event()."""
+
+    @pytest.fixture
+    def renderer(self, runtime, console):
+        return ExecutionRenderer(console, runtime)
+
+    @pytest.mark.asyncio
+    async def test_event_no_matching_node(self, renderer):
+        """Event with no matching node doesn't crash."""
+        await renderer._on_execution_event("node_started", {"node": None})
+

@@ -279,7 +279,7 @@ class AgentDesigner:
             platform_context=get_platform_context(),
         )
 
-        request = LLMRequest(prompt=prompt, tier="standard", max_tokens=4096)
+        request = LLMRequest(prompt=prompt, tier="deep", max_tokens=4096)
         response = await self._llm.complete(request)
 
         if not response.content or response.error:
