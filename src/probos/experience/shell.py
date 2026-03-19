@@ -856,7 +856,7 @@ class ProbOSShell:
 
             # Read summary from file
             try:
-                content = _load_file(str(file_path))
+                content = _load_file(file_path)
                 # Find first non-empty line as summary
                 summary = ""
                 for line in content.split('\n'):
