@@ -2203,7 +2203,7 @@ class TestTestFixLoop:
 
         assert result.tests_passed is True
         assert result.fix_attempts == 1
-        assert llm_client.complete.call_count == 1
+        assert llm_client.complete.call_count == 2  # 1 review + 1 fix
 
     @pytest.mark.asyncio
     async def test_fix_loop_exhausts_retries(self, tmp_path: Path):
@@ -2316,7 +2316,8 @@ class TestTestFixLoop:
 
         assert result.tests_passed is False
         assert result.fix_attempts == 0
-        llm_client.complete.assert_not_called()
+        # One call for code review, zero for fix loop
+        assert llm_client.complete.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -2578,3 +2579,223 @@ class TestTransporterBuildEdgeCases:
         )
         result = await transporter_build(spec=spec, llm_client=mock_llm)
         assert result == [] or isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# TestCommitGate — AD-338: Commit gate on test passage
+# ---------------------------------------------------------------------------
+
+
+class TestCommitGate:
+    """Tests for the commit gate that blocks commits when tests fail."""
+
+    @pytest.mark.asyncio
+    async def test_gates_commit_on_test_failure(self, tmp_path: Path):
+        """When tests fail, code is written but NOT committed."""
+        target = tmp_path / "module.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Gate Test", description="Test gate")
+        file_changes = [
+            {"path": "module.py", "content": "x = 2\n", "mode": "create", "after_line": None},
+        ]
+
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
+            with patch("probos.cognitive.builder._run_tests", return_value=(False, "1 failed, 0 passed")):
+                result = await execute_approved_build(
+                    file_changes, spec, str(tmp_path), run_tests=True,
+                )
+
+        assert result.success is False
+        assert "Tests failed" in result.error
+        assert result.commit_hash == ""  # No commit made
+
+    @pytest.mark.asyncio
+    async def test_commits_on_test_pass(self, tmp_path: Path):
+        """When tests pass, commit proceeds normally."""
+        target = tmp_path / "module.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Pass Test", description="Test pass")
+        file_changes = [
+            {"path": "module.py", "content": "x = 2\n", "mode": "create", "after_line": None},
+        ]
+
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
+            with patch("probos.cognitive.builder._run_tests", return_value=(True, "1 passed")):
+                result = await execute_approved_build(
+                    file_changes, spec, str(tmp_path), run_tests=True,
+                )
+
+        assert result.success is True
+        assert result.tests_passed is True
+
+    @pytest.mark.asyncio
+    async def test_commits_when_tests_disabled(self, tmp_path: Path):
+        """When run_tests=False, commit proceeds regardless."""
+        target = tmp_path / "module.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="No Tests", description="Skip tests")
+        file_changes = [
+            {"path": "module.py", "content": "x = 2\n", "mode": "create", "after_line": None},
+        ]
+
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
+            result = await execute_approved_build(
+                file_changes, spec, str(tmp_path), run_tests=False,
+            )
+
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_fix_loop_with_llm_client(self, tmp_path: Path):
+        """With llm_client, fix loop gets an LLM-powered fix attempt on test failure."""
+        target = tmp_path / "module.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Fix Loop", description="Test fix loop")
+        file_changes = [
+            {"path": "module.py", "content": "x = 2\n", "mode": "create", "after_line": None},
+        ]
+
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(return_value=MagicMock(
+            error=None,
+            content="No changes needed.",
+        ))
+
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
+
+        # First test run fails, second passes
+        test_results = [(False, "1 failed"), (True, "1 passed")]
+        test_call_count = 0
+
+        async def mock_run_tests(wd):
+            nonlocal test_call_count
+            r = test_results[min(test_call_count, len(test_results) - 1)]
+            test_call_count += 1
+            return r
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
+            with patch("probos.cognitive.builder._run_tests", side_effect=mock_run_tests):
+                result = await execute_approved_build(
+                    file_changes, spec, str(tmp_path),
+                    run_tests=True,
+                    llm_client=mock_llm,
+                    max_fix_attempts=2,
+                )
+
+        assert result.fix_attempts >= 1
+        mock_llm.complete.assert_called()  # LLM was consulted for the fix
+
+
+# ---------------------------------------------------------------------------
+# TestBuilderInstructions — AD-340: Enhanced Builder Instructions
+# ---------------------------------------------------------------------------
+
+
+class TestBuilderInstructions:
+    """Tests for BuilderAgent.instructions content."""
+
+    def test_instructions_contain_test_rules(self):
+        """BuilderAgent.instructions contains key test-writing guidance."""
+        inst = BuilderAgent.instructions
+        assert "__init__ signature" in inst
+        assert "from probos." in inst
+        assert "_Fake" in inst
+        assert "pytest.mark.asyncio" in inst
+
+
+# ---------------------------------------------------------------------------
+# TestCodeReviewIntegration — AD-341: Code Review in Builder pipeline
+# ---------------------------------------------------------------------------
+
+
+class TestCodeReviewIntegration:
+    """Tests for code review integration in execute_approved_build()."""
+
+    @pytest.mark.asyncio
+    async def test_execute_build_runs_code_review(self, tmp_path: Path):
+        """When llm_client is provided, CodeReviewAgent.review() is called."""
+        target = tmp_path / "module.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Review Test", description="Test review")
+        file_changes = [
+            {"path": "module.py", "content": "x = 2\n", "mode": "create", "after_line": None},
+        ]
+
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(return_value=MagicMock(
+            error=None,
+            content='{"approved": true, "issues": [], "suggestions": [], "summary": "ok"}',
+        ))
+
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
+            with patch("probos.cognitive.builder._run_tests", return_value=(True, "1 passed")):
+                result = await execute_approved_build(
+                    file_changes, spec, str(tmp_path),
+                    run_tests=True,
+                    llm_client=mock_llm,
+                )
+
+        assert result.success is True
+        # LLM was called at least once (for the review)
+        mock_llm.complete.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_execute_build_logs_review_issues(self, tmp_path: Path):
+        """When review returns issues, they appear in result.review_issues."""
+        target = tmp_path / "module.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+
+        spec = BuildSpec(title="Review Issues Test", description="Test")
+        file_changes = [
+            {"path": "module.py", "content": "x = 2\n", "mode": "create", "after_line": None},
+        ]
+
+        # Mock LLM: first call for review (returns issues), subsequent for test-fix loop
+        review_response = MagicMock(
+            error=None,
+            content='{"approved": false, "issues": ["Bad import"], "suggestions": [], "summary": "Rejected"}',
+        )
+        pass_response = MagicMock(
+            error=None,
+            content="No fix needed.",
+        )
+
+        call_count = 0
+        async def mock_complete(req):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return review_response
+            return pass_response
+
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(side_effect=mock_complete)
+
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
+
+        with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
+            with patch("probos.cognitive.builder._run_tests", return_value=(True, "1 passed")):
+                result = await execute_approved_build(
+                    file_changes, spec, str(tmp_path),
+                    run_tests=True,
+                    llm_client=mock_llm,
+                )
+
+        # Review issues should be populated (soft gate - still commits)
+        assert result.review_issues == ["Bad import"]
+        assert result.review_result == "Rejected"
+        # Build still succeeds (soft gate)
+        assert result.success is True

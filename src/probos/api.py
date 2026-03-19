@@ -869,6 +869,7 @@ def create_app(runtime: Any) -> FastAPI:
                 spec=spec,
                 work_dir=work_dir,
                 run_tests=True,
+                llm_client=getattr(rt, "llm_client", None),
             )
 
             if result.success:
@@ -876,13 +877,15 @@ def create_app(runtime: Any) -> FastAPI:
                     "build_id": build_id,
                     "branch": result.branch_name,
                     "commit": result.commit_hash,
-                    "files_written": result.files_written,
+                    "files_written": result.files_written + result.files_modified,
                     "tests_passed": result.tests_passed,
                     "test_result": result.test_result[:500] if result.test_result else "",
+                    "review": result.review_result,
+                    "review_issues": result.review_issues,
                     "message": (
                         f"\u2b22 Build complete! Branch: {result.branch_name}, "
                         f"Commit: {result.commit_hash}, "
-                        f"Files: {len(result.files_written)}, "
+                        f"Files: {len(result.files_written) + len(result.files_modified)}, "
                         f"Tests: {'passed' if result.tests_passed else 'FAILED'}"
                     ),
                 })

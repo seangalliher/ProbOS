@@ -111,6 +111,8 @@ class BuildResult:
     error: str = ""
     llm_output: str = ""
     fix_attempts: int = 0
+    review_result: str = ""
+    review_issues: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1472,6 +1474,15 @@ IMPORTANT RULES:
 - Do NOT modify files that aren't listed in target_files or test_files
 - Include the AD number in code comments where relevant
 
+TEST WRITING RULES:
+- Before writing test fixtures, READ the class __init__ signature in the reference code. Only pass arguments that __init__ accepts. Do not invent keyword arguments.
+- Import paths must use the full module path: `from probos.experience.shell import ProbOSShell`, never `from experience.shell import ...`
+- Use `_Fake*` stub classes (like _FakeRuntime, _FakeAgent) over complex Mock() chains. Check existing test files for patterns.
+- For async methods, use `pytest.mark.asyncio` and `async def test_*`.
+- Every mock must cover ALL attributes accessed in the code path under test. Trace the target method body to find every self.x access.
+- Test assertions must match the ACTUAL output format of the code you just wrote, not a guessed format.
+- Do NOT use emoji in code strings -- they cause encoding crashes on Windows.
+
 OUTPUT FORMAT:
 For each file, output a block like:
 ===FILE: path/to/file.py===
@@ -2111,6 +2122,31 @@ async def execute_approved_build(
         result.files_written = written
         result.files_modified = modified_files
 
+        # 4b. Code review (AD-341)
+        if llm_client and (written or modified_files):
+            from probos.cognitive.code_reviewer import CodeReviewAgent
+            reviewer = CodeReviewAgent(
+                agent_id="code_reviewer",
+                name="CodeReviewAgent",
+            )
+            try:
+                review = await reviewer.review(
+                    file_changes=file_changes,
+                    spec_title=spec.title,
+                    llm_client=llm_client,
+                )
+                result.review_result = review.summary
+                if not review.approved:
+                    logger.warning(
+                        "CodeReviewAgent: review REJECTED -- %s",
+                        "; ".join(review.issues),
+                    )
+                    # Soft gate: log issues but don't block.
+                    # Future: hard gate after reviewer earns trust.
+                    result.review_issues = review.issues
+            except Exception as exc:
+                logger.warning("CodeReviewAgent: review error: %s", exc)
+
         # 5. Run tests with fix loop (AD-314)
         if run_tests and (written or modified_files):
             all_changes = list(file_changes)  # track for fix prompt
@@ -2194,27 +2230,35 @@ async def execute_approved_build(
             result.files_written = written
             result.files_modified = modified_files
 
-        # 6. Commit
+        # 6. Commit — only if tests passed OR tests were not run
         if written or modified_files:
-            desc_short = spec.description[:200] if spec.description else ""
-            commit_msg = (
-                f"{spec.title}"
-                + (f" (AD-{spec.ad_number})" if spec.ad_number else "")
-                + (f"\n\n{desc_short}" if desc_short else "")
-                + "\n\nCo-Authored-By: ProbOS Builder <probos@probos.dev>"
-            )
-            ok, sha = await _git_add_and_commit(
-                written + modified_files, commit_msg, work_dir,
-            )
-            if ok:
-                result.commit_hash = sha
+            if run_tests and not result.tests_passed:
+                result.error = (
+                    "Tests failed after " + str(result.fix_attempts) + " fix attempt(s). "
+                    "Code written to branch but NOT committed.\n"
+                    + (result.test_result or "")[-1000:]
+                )
+                result.success = False
             else:
-                result.error = f"Commit failed: {sha}"
+                desc_short = spec.description[:200] if spec.description else ""
+                commit_msg = (
+                    f"{spec.title}"
+                    + (f" (AD-{spec.ad_number})" if spec.ad_number else "")
+                    + (f"\n\n{desc_short}" if desc_short else "")
+                    + "\n\nCo-Authored-By: ProbOS Builder <probos@probos.dev>"
+                )
+                ok, sha = await _git_add_and_commit(
+                    written + modified_files, commit_msg, work_dir,
+                )
+                if ok:
+                    result.commit_hash = sha
+                else:
+                    result.error = f"Commit failed: {sha}"
 
         if validation_errors:
             result.error = "Syntax errors:\n" + "\n".join(validation_errors)
             result.success = False
-        else:
+        elif not (run_tests and not result.tests_passed):
             result.success = True
 
     except Exception as exc:

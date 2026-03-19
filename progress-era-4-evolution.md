@@ -161,26 +161,36 @@ Progression: AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-3
 
 **Status:** AD-337 complete — 2213 Python + 30 Vitest
 
-### AD-338: Builder Commit Gate & Fix Loop (PLANNED)
+### AD-338: Builder Commit Gate & Fix Loop (DONE)
 
 **Decision:** AD-338 — Gate commits on test passage. Pass llm_client from api.py to enable test-fix loop. Fix "Files: 0" reporting bug.
 
-**Status:** Build prompt ready at `prompts/builder-quality-gates.md`
+**Implementation:** (a) `execute_approved_build()` now checks `result.tests_passed` before committing — if tests fail, code stays on disk for debugging but is NOT committed, `result.success = False`, `result.error` contains last 1000 chars of test output. (b) `_execute_build()` in api.py creates `LLMClient` and passes it to `execute_approved_build()`, enabling the 2-retry LLM-powered fix loop. (c) File count now reports `files_written + files_modified` in both message and event payload.
 
-### AD-339: Standing Orders Architecture (PLANNED)
+**Status:** AD-338 complete — 4 new tests (TestCommitGate)
+
+### AD-339: Standing Orders Architecture (DONE)
 
 **Decision:** AD-339 — ProbOS constitution system. 4-tier hierarchy: Federation Constitution (universal, immutable) → Ship Standing Orders (per-instance) → Department Protocols (per-department) → Agent Standing Orders (per-agent, evolvable via self-mod). `config/standing_orders/` with `federation.md`, `ship.md`, `engineering.md`, `science.md`, `medical.md`, `security.md`, `bridge.md`. `compose_instructions()` assembles complete system prompt at call time. Integrated into `CognitiveAgent.decide()`. Like Claude Code's `CLAUDE.md` and OpenClaw's `soul.md`, but hierarchical, composable, and evolvable. No IDE dependency.
 
-**Status:** Build prompt ready at `prompts/builder-quality-gates.md`
+**Implementation:** (a) `src/probos/cognitive/standing_orders.py` — `compose_instructions()`, `get_department()`, `register_department()`, `clear_cache()`, `_AGENT_DEPARTMENTS` mapping, `_load_file()` with `lru_cache`. (b) `CognitiveAgent.decide()` now calls `compose_instructions()` at call time on every LLM request. (c) 7 standing orders files seeded in `config/standing_orders/`. Key invariant preserved: empty/missing directory = identical behavior to before.
 
-### AD-340: Builder Instructions Enhancement (PLANNED)
+**Status:** AD-339 complete — 13 new tests
+
+### AD-340: Builder Instructions Enhancement (DONE)
 
 **Decision:** AD-340 — Add concrete test-writing rules to Builder's hardcoded instructions: read __init__ signatures, use full import paths, trace mock coverage, match actual output format.
 
-**Status:** Build prompt ready at `prompts/builder-quality-gates.md`
+**Implementation:** 7 test-writing rules added to `BuilderAgent.instructions` after "Every public function/method needs a test": __init__ signatures, full `probos.*` import paths, `_Fake*` stubs, `pytest.mark.asyncio`, mock completeness tracing, assertion accuracy, encoding safety.
 
-### AD-341: Code Review Agent (PLANNED)
+**Status:** AD-340 complete — 1 new test
+
+### AD-341: Code Review Agent (DONE)
 
 **Decision:** AD-341 — CodeReviewAgent reviews Builder output against Standing Orders before commit gate. Engineering department, standard tier. Starts as soft gate (advisory, logs issues). Earns hard gate authority through ProbOS trust model (Beta(1,3) probationary → promoted after demonstrated accuracy).
 
-**Status:** Build prompt ready at `prompts/builder-quality-gates.md`
+**Implementation:** (a) `src/probos/cognitive/code_reviewer.py` — `CodeReviewAgent` with `review()`, `_format_changes()`, `_parse_review()`. Reads standards from Standing Orders via `compose_instructions()`. Fails-open on LLM error (approves with warning). (b) Integrated into `execute_approved_build()` as step 4b between validation and test loop. Soft gate — logs issues but doesn't block commits. (c) `BuildResult` extended with `review_result` and `review_issues` fields. (d) Review info surfaced in build_success event payload.
+
+**Status:** AD-341 complete — 10 new tests + 2 integration tests
+
+**Combined status:** AD-338–341 complete — 2243 Python + 30 Vitest (30 new tests)

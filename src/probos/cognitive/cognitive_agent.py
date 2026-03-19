@@ -103,9 +103,16 @@ class CognitiveAgent(BaseAgent):
         # --- LLM call (cache miss) ---
         user_message = self._build_user_message(observation)
 
+        from probos.cognitive.standing_orders import compose_instructions
+
+        composed = compose_instructions(
+            agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
+            hardcoded_instructions=self.instructions or "",
+        )
+
         request = LLMRequest(
             prompt=user_message,
-            system_prompt=self.instructions,
+            system_prompt=composed,
             tier=self._resolve_tier(),
         )
         response = await self._llm_client.complete(request)
