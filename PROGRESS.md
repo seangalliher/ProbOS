@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-338–341 complete — Builder Quality Gates & Standing Orders (2243/2243 tests + 30 Vitest + 11 skipped)
+## Current Status: AD-347 complete — Builder Failure Escalation & Diagnostic Reporting (AD-343–347 all done)
 
 ---
 

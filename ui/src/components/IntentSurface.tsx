@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useStore } from '../store/useStore';
-import type { SelfModProposal, BuildProposal, ArchitectProposalView } from '../store/types';
+import type { SelfModProposal, BuildProposal, BuildFailureReport, ArchitectProposalView } from '../store/types';
 import { speakResponse } from '../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
 import { soundEngine } from '../audio/soundEngine';
@@ -685,6 +685,164 @@ export function IntentSurface() {
                             Reject
                           </button>
                         </div>
+                      </div>
+                    )}
+
+                    {/* Build failure diagnostic card (AD-346) */}
+                    {msg.buildFailureReport && (
+                      <div style={{ marginTop: 8, maxWidth: '80%' }}>
+                        {/* Failure header */}
+                        <div style={{
+                          padding: '8px 12px',
+                          borderRadius: 8,
+                          background: 'rgba(255, 85, 85, 0.08)',
+                          border: '1px solid rgba(255, 85, 85, 0.2)',
+                          fontSize: 12,
+                          color: '#c8d0e0',
+                          marginBottom: 8,
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                            <span style={{
+                              color: '#ff5555',
+                              fontWeight: 600,
+                              fontSize: 13,
+                            }}>
+                              Build Failed
+                            </span>
+                            <span style={{
+                              padding: '1px 6px',
+                              borderRadius: 4,
+                              background: 'rgba(255, 85, 85, 0.15)',
+                              border: '1px solid rgba(255, 85, 85, 0.3)',
+                              color: '#ff8888',
+                              fontSize: 10,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.5px',
+                            }}>
+                              {msg.buildFailureReport.failure_category.replace('_', ' ')}
+                            </span>
+                          </div>
+                          {msg.buildFailureReport.ad_number > 0 && (
+                            <div style={{ color: '#a0a8b8', marginBottom: 2 }}>
+                              AD-{msg.buildFailureReport.ad_number}: {msg.buildFailureReport.title}
+                            </div>
+                          )}
+                          <div style={{ color: '#8888a0', fontSize: 11 }}>
+                            {msg.buildFailureReport.files_written.length + msg.buildFailureReport.files_modified.length} file(s) changed
+                            {msg.buildFailureReport.branch_name && ` | Branch: ${msg.buildFailureReport.branch_name}`}
+                            {msg.buildFailureReport.fix_attempts > 0 && ` | ${msg.buildFailureReport.fix_attempts} fix attempt(s)`}
+                          </div>
+                        </div>
+
+                        {/* Failed tests list */}
+                        {msg.buildFailureReport.failed_tests.length > 0 && (
+                          <div style={{
+                            padding: '6px 12px',
+                            borderRadius: 6,
+                            background: 'rgba(255, 85, 85, 0.04)',
+                            border: '1px solid rgba(255, 85, 85, 0.1)',
+                            fontSize: 11,
+                            color: '#a0a8b8',
+                            marginBottom: 8,
+                          }}>
+                            <div style={{ color: '#ff8888', marginBottom: 4, fontSize: 11 }}>
+                              Failed tests:
+                            </div>
+                            {msg.buildFailureReport.failed_tests.map((t, i) => (
+                              <div key={i} style={{ marginLeft: 8, fontFamily: 'monospace', fontSize: 10 }}>
+                                {'\u2022'} {t}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Collapsible raw error */}
+                        {msg.buildFailureReport.raw_error && (
+                          <>
+                            <button
+                              onClick={() => setBuildCodeExpanded(prev => ({ ...prev, [`fail-${msg.id}`]: !prev[`fail-${msg.id}`] }))}
+                              style={{
+                                background: 'rgba(128, 128, 160, 0.08)',
+                                border: '1px solid rgba(128, 128, 160, 0.15)',
+                                borderRadius: 6, padding: '4px 12px',
+                                color: '#8888a0', cursor: 'pointer', fontSize: 12,
+                                fontFamily: "'Inter', sans-serif",
+                                marginBottom: 8,
+                              }}
+                            >
+                              {buildCodeExpanded[`fail-${msg.id}`] ? '\u25BC Hide Error Output' : '\u25B6 View Error Output'}
+                            </button>
+                            {buildCodeExpanded[`fail-${msg.id}`] && (
+                              <pre style={{
+                                padding: 12, borderRadius: 8,
+                                background: 'rgba(10, 10, 18, 0.8)',
+                                border: '1px solid rgba(255, 85, 85, 0.15)',
+                                fontSize: 11, lineHeight: 1.4, color: '#a0a8b8',
+                                maxHeight: 300, overflowY: 'auto',
+                                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                marginBottom: 8,
+                              }}>
+                                {msg.buildFailureReport.raw_error}
+                              </pre>
+                            )}
+                          </>
+                        )}
+
+                        {/* Resolution buttons */}
+                        {msg.buildFailureReport.resolution_options.length > 0 && (
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            {msg.buildFailureReport.resolution_options.map((opt) => (
+                              <button
+                                key={opt.id}
+                                title={opt.description}
+                                onClick={async () => {
+                                  try {
+                                    await fetch('/api/build/resolve', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        build_id: msg.buildFailureReport!.build_id,
+                                        resolution: opt.id,
+                                      }),
+                                    });
+                                  } catch (e) {
+                                    console.error('Resolution failed:', e);
+                                  }
+                                }}
+                                style={{
+                                  background: opt.id === 'abort'
+                                    ? 'rgba(128, 128, 160, 0.1)'
+                                    : opt.id === 'commit_override'
+                                    ? 'rgba(255, 200, 50, 0.1)'
+                                    : 'rgba(102, 180, 255, 0.1)',
+                                  border: `1px solid ${
+                                    opt.id === 'abort'
+                                      ? 'rgba(128, 128, 160, 0.2)'
+                                      : opt.id === 'commit_override'
+                                      ? 'rgba(255, 200, 50, 0.3)'
+                                      : 'rgba(102, 180, 255, 0.3)'
+                                  }`,
+                                  borderRadius: 8, padding: '6px 16px',
+                                  color: opt.id === 'abort'
+                                    ? '#8888a0'
+                                    : opt.id === 'commit_override'
+                                    ? '#ffc832'
+                                    : '#66b4ff',
+                                  cursor: 'pointer', fontSize: 13,
+                                  fontFamily: "'Inter', sans-serif",
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.opacity = '0.8';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.opacity = '1';
+                                }}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
 

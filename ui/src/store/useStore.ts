@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { soundEngine } from '../audio/soundEngine';
 import type {
   Agent, Connection, PoolInfo, PoolGroupInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
-  BuildProposal, ArchitectProposalView,
+  BuildProposal, BuildFailureReport, ArchitectProposalView,
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
@@ -225,7 +225,7 @@ export interface HXIState {
 
   // Actions
   handleEvent: (event: WSEvent) => void;
-  addChatMessage: (role: 'user' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal; buildProposal?: BuildProposal; architectProposal?: ArchitectProposalView }) => void;
+  addChatMessage: (role: 'user' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal; buildProposal?: BuildProposal; buildFailureReport?: BuildFailureReport; architectProposal?: ArchitectProposalView }) => void;
   clearAnimationEvent: (key: 'pendingConsensusFlash' | 'pendingSelfModBloom' | 'pendingRoutingPulse' | 'pendingFeedbackPulse') => void;
   setConnected: (v: boolean) => void;
   setHoveredAgent: (agent: Agent | null, pos?: { x: number; y: number }) => void;
@@ -322,6 +322,7 @@ export const useStore = create<HXIState>((set, get) => ({
       timestamp: Date.now() / 1000,
       ...(meta?.selfModProposal ? { selfModProposal: meta.selfModProposal } : {}),
       ...(meta?.buildProposal ? { buildProposal: meta.buildProposal } : {}),
+      ...(meta?.buildFailureReport ? { buildFailureReport: meta.buildFailureReport } : {}),
       ...(meta?.architectProposal ? { architectProposal: meta.architectProposal } : {}),
     };
     set((s) => {
@@ -657,6 +658,19 @@ export const useStore = create<HXIState>((set, get) => ({
 
       case 'build_failure': {
         set({ buildProgress: null });
+        const report = data.report as BuildFailureReport | undefined;
+        if (report) {
+          const summary = report.failure_summary || (data.message as string) || 'Build failed';
+          get().addChatMessage('system', summary, { buildFailureReport: report });
+        } else {
+          // Legacy fallback — no structured report
+          const msg = (data.message || '') as string;
+          if (msg) get().addChatMessage('system', msg);
+        }
+        break;
+      }
+
+      case 'build_resolved': {
         const msg = (data.message || '') as string;
         if (msg) {
           get().addChatMessage('system', msg);

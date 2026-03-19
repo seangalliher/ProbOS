@@ -595,10 +595,23 @@ Galaxy class can split into saucer (civilians) and stardrive (combat). ProbOS eq
 AD-337 proved the Builder pipeline works end-to-end but revealed systemic quality gaps: the builder committed code with failing tests, the test-fix loop was disabled in practice, and test-writing guidance was minimal. These ADs fix the pipeline and introduce ProbOS's own constitution system.
 
 - **AD-337: Implement /ping Command** *(done)* — First successful end-to-end Builder test. Added `/ping` slash command showing system uptime, agent count, health score. Revealed pipeline gaps: commit not gated on test passage, test-fix loop disabled (no llm_client passed), "Files: 0" reporting bug for MODIFY-only builds.
-- **AD-338: Builder Commit Gate & Fix Loop** *(planned)* — Gate commits on test passage (don't commit broken code). Pass llm_client from api.py to enable 2-retry test-fix loop. Fix "Files: 0" reporting bug (count files_modified + files_written).
-- **AD-339: Standing Orders Architecture** *(planned)* — ProbOS's own hierarchical instruction system. Four tiers: Federation Constitution (universal, immutable) → Ship Standing Orders (per-instance) → Department Protocols (per-department) → Agent Standing Orders (per-agent, evolvable). `config/standing_orders/` directory with `federation.md`, `ship.md`, `engineering.md`, `science.md`, `medical.md`, `security.md`, `bridge.md`. `compose_instructions()` assembles complete system prompt at call time. Like Claude Code's `CLAUDE.md` and OpenClaw's `soul.md`, but hierarchical and evolvable. No IDE dependency.
-- **AD-340: Builder Instructions Enhancement** *(planned)* — Add concrete test-writing rules to Builder's hardcoded instructions: read __init__ signatures, use full import paths, trace mock coverage, match actual output format.
-- **AD-341: Code Review Agent** *(planned)* — CodeReviewAgent reviews Builder output against Standing Orders before commit gate. Engineering department, standard tier. Starts as soft gate (advisory, logs issues). Earns hard gate authority through ProbOS trust model. Reads standards from Standing Orders, not IDE config.
+- **AD-338: Builder Commit Gate & Fix Loop** *(done)* — Gate commits on test passage (don't commit broken code). Pass llm_client from api.py to enable 2-retry test-fix loop. Fix "Files: 0" reporting bug (count files_modified + files_written).
+- **AD-339: Standing Orders Architecture** *(done)* — ProbOS's own hierarchical instruction system. Four tiers: Federation Constitution (universal, immutable) → Ship Standing Orders (per-instance) → Department Protocols (per-department) → Agent Standing Orders (per-agent, evolvable). `config/standing_orders/` directory with `federation.md`, `ship.md`, `engineering.md`, `science.md`, `medical.md`, `security.md`, `bridge.md`. `compose_instructions()` assembles complete system prompt at call time. Like Claude Code's `CLAUDE.md` and OpenClaw's `soul.md`, but hierarchical and evolvable. No IDE dependency.
+- **AD-340: Builder Instructions Enhancement** *(done)* — Add concrete test-writing rules to Builder's hardcoded instructions: read __init__ signatures, use full import paths, trace mock coverage, match actual output format.
+- **AD-341: Code Review Agent** *(done)* — CodeReviewAgent reviews Builder output against Standing Orders before commit gate. Engineering department, standard tier. Starts as soft gate (advisory, logs issues). Earns hard gate authority through ProbOS trust model. Reads standards from Standing Orders, not IDE config.
+- **AD-342: Standing Orders Display Command** *(done)* — `/orders` slash command showing all standing orders files with tier classification (Federation/Ship/Department/Agent), summaries, and sizes.
+
+**Builder Failure Escalation & Diagnostic Reporting (AD-343–347)**
+
+*"Damage report, Number One."*
+
+AD-342's `/orders` build revealed the next pipeline gap: when the builder fails, the Captain gets a raw error dump with no classification, no context, and no actionable options. The test runner also runs the full 2254-test suite with a 120s timeout, causing spurious timeouts when only a handful of targeted tests are relevant. These ADs introduce structured failure diagnostics, smart test selection, resolution options in the HXI, and the foundation for chain-of-command escalation.
+
+- **AD-343: BuildFailureReport & Classification** *(done)* — Structured failure report dataclass with failure categorization (timeout, test_failure, syntax_error, import_error, llm_error). Parses pytest output to extract failed test names and file:line error locations. Generates context-appropriate resolution options per category. 12 tests.
+- **AD-344: Smart Test Selection** *(done)* — Two-phase test runner: targeted tests first (by file naming convention), full suite only if targeted pass. Maps `src/probos/foo/bar.py` → `tests/test_bar*.py`. Drops typical test-fix iteration from ~120s to ~5-15s. Fix loop uses targeted tests for faster retries. 6 tests.
+- **AD-345: Enriched Failure Event & Resolution API** *(done)* — Wire `BuildFailureReport` into `build_failure` WebSocket event. New `/api/build/resolve` endpoint handles: retry_extended, retry_targeted, retry_fix, commit_override, abort, investigate. Pending failure cache with 30-min expiry. 1 test.
+- **AD-346: HXI Build Failure Diagnostic Card** *(done)* — Frontend rendering of structured failure report with category badge, failed tests list, collapsible error output, and resolution action buttons. Red/amber accent styling. Mirrors build proposal card pattern.
+- **AD-347: Builder Escalation Hook** *(done)* — Pluggable callback on `execute_approved_build()` that fires before failure reaches the Captain. No-op initially; Phase 33 wires it to Engineering Chief → Architect → Captain cascade. Returns `BuildResult` if resolved, `None` to escalate. 4 tests.
 
 **Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE**
 
@@ -1816,6 +1829,7 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-001 | Self-mod proposal on knowledge questions | Medium | Open |
 | BF-002 | Agent orbs escape pool group spheres | High | Open |
 | BF-003 | "Run diagnostic" bypasses VitalsMonitor, asks user for alert data | Medium | Open |
+| BF-004 | Transporter HXI visualization not rendered | Medium | Open |
 
 ### BF-001: Self-Mod False Positive on Knowledge Questions
 
@@ -1882,6 +1896,20 @@ Bugs found during development or testing. Squash as found when possible; queue h
 3. **(Long-term) Ward Room integration (Phase 33)** — Department leads participate in the Ward Room for cross-department coordination. Bridge orders route to department leads, not individual specialists.
 
 **Files to modify:** `src/probos/agents/medical/diagnostician.py` (add proactive scan path), potentially `src/probos/substrate/pool.py` (lead agent concept)
+
+### BF-004: Transporter HXI Visualization Not Rendered
+
+**Severity:** Medium — data flow works, visual rendering missing
+**Found:** 2026-03-19 (Captain testing)
+**Component:** HXI → IntentSurface.tsx → TransporterProgress state
+
+**Symptom:** When the Transporter Pattern activates during a build, chunk decomposition and execution are tracked in the Zustand store (`transporterProgress`) and announced in chat messages ("Transporter: decomposed into N chunks"), but no visual progress card renders in the IntentSurface component. The user only sees chat text, not a structured visualization with chunk statuses.
+
+**Root Cause:** AD-335 (HXI Transporter Visualization) created the complete data flow — 6 WebSocket event types (`transporter_decomposed`, `transporter_wave_start`, `transporter_chunk_done`, `transporter_execution_done`, `transporter_assembled`, `transporter_validated`), `TransporterProgress` Zustand state with per-chunk status tracking, and chat messages. However, `IntentSurface.tsx` has no rendering block that reads `transporterProgress` from the store. The state updates correctly but nothing draws it.
+
+**Fix:** Add a `TransporterProgress` card to `IntentSurface.tsx` following the build proposal card pattern. Show: chunk list with per-chunk status (pending/executing/done/failed), wave progress, assembly phase indicator. Use the existing `transporterProgress` state from the store.
+
+**Files to modify:** `ui/src/components/IntentSurface.tsx` (add rendering block for `transporterProgress`)
 
 !!! info "Want to contribute?"
     See the [Contributing guide](contributing.md) for how to get involved.

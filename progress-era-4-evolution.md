@@ -194,3 +194,30 @@ Progression: AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-3
 **Status:** AD-341 complete — 10 new tests + 2 integration tests
 
 **Combined status:** AD-338–341 complete — 2243 Python + 30 Vitest (30 new tests)
+
+---
+
+## Standing Orders Display & Builder Failure Escalation (AD-342 through AD-347)
+
+### AD-342: Standing Orders Display Command (DONE)
+
+**Decision:** AD-342 — `/orders` slash command showing all standing orders files with tier classification (Federation Constitution/Ship/Department/Agent), first non-heading line as summary, and file size. Rich Table output with color-coded tiers (red=Federation, blue=Ship, yellow=Department, green=Agent).
+
+**Implementation:** `_cmd_orders()` in `shell.py`. Builder attempted this build but commit gate (AD-338) correctly blocked it — pytest timed out at 120s on 2254 tests, and builder forgot `from pathlib import Path` import. Manual fix applied: added import, wrote 4 tests, committed on main.
+
+**Status:** AD-342 complete — 4 new tests (15 total in test_shell.py)
+
+### AD-343–347: Builder Failure Escalation (DONE)
+
+**Problem:** Builder failures produce raw error dumps with no classification, no context, no actionable options. The 120s test timeout causes spurious failures when only targeted tests are needed. No resolution options in the HXI.
+
+**Implemented ADs:**
+- AD-343: `BuildFailureReport` dataclass & `classify_build_failure()` — 6 categories, failed test extraction, error location extraction, resolution options per category. 12 tests.
+- AD-344: Smart test selection — `_map_source_to_tests()` by naming convention, `_run_targeted_tests()` two-phase (targeted first 60s, full suite 180s only if targeted pass). 6 tests.
+- AD-345: Enriched `build_failure` event & `POST /api/build/resolve` endpoint — `_pending_failures` cache with 30-min TTL, 6 resolution actions. 1 test.
+- AD-346: HXI failure diagnostic card — category badge, metadata, failed tests, collapsible error, color-coded resolution buttons. `BuildFailureReport` TypeScript interface.
+- AD-347: `escalation_hook` parameter on `execute_approved_build()` — fires before Captain sees failure, fails-open. 4 tests.
+
+**Build prompt:** `prompts/builder-failure-escalation.md`
+
+**Status:** AD-343–347 complete — 2281 Python + 30 Vitest (38 new Python tests)

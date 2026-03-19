@@ -25,6 +25,18 @@ logger = logging.getLogger(__name__)
 # Commands that should NOT be available via the API
 _BLOCKED_COMMANDS = {'/quit', '/debug'}
 
+# Cache for failed build contexts — enables resolution endpoint (AD-345)
+_pending_failures: dict[str, dict] = {}
+_FAILURE_CACHE_TTL = 1800  # 30 minutes
+
+
+def _clean_expired_failures() -> None:
+    """Remove expired entries from the pending failures cache."""
+    now = time.time()
+    expired = [k for k, v in _pending_failures.items() if now - v.get("timestamp", 0) > _FAILURE_CACHE_TTL]
+    for k in expired:
+        del _pending_failures[k]
+
 
 def _strip_rich_formatting(text: str) -> str:
     """Strip Rich panel/table box-drawing characters for clean text output."""
@@ -126,6 +138,12 @@ class BuildApproveRequest(BaseModel):
     description: str = ""
     ad_number: int = 0
     branch_name: str = ""
+
+
+class BuildResolveRequest(BaseModel):
+    """Request to resolve a failed build (AD-345)."""
+    build_id: str
+    resolution: str  # "retry_extended", "retry_targeted", "retry_fix", "commit_override", "abort"
 
 
 class DesignRequest(BaseModel):
@@ -737,6 +755,78 @@ def create_app(runtime: Any) -> FastAPI:
             "message": "Executing approved build...",
         }
 
+    @app.post("/api/build/resolve")
+    async def resolve_build(req: BuildResolveRequest) -> dict[str, Any]:
+        """Execute a resolution option for a failed build (AD-345)."""
+        _clean_expired_failures()
+
+        if req.build_id not in _pending_failures:
+            return {"status": "error", "message": "Build not found or expired. Re-run the build."}
+
+        cached = _pending_failures[req.build_id]
+        file_changes = cached["file_changes"]
+        spec = cached["spec"]
+        work_dir = cached["work_dir"]
+
+        if req.resolution == "abort":
+            from probos.cognitive.builder import _git_checkout_main
+            await _git_checkout_main(work_dir)
+            del _pending_failures[req.build_id]
+            runtime._emit_event("build_resolved", {
+                "build_id": req.build_id,
+                "resolution": "abort",
+                "message": "Build aborted. Returned to main branch.",
+            })
+            return {"status": "ok", "resolution": "abort"}
+
+        elif req.resolution == "commit_override":
+            from probos.cognitive.builder import _git_add_and_commit
+            report = cached["report"]
+            all_files = report.files_written + report.files_modified
+            if not all_files:
+                return {"status": "error", "message": "No files to commit."}
+            commit_msg = (
+                f"{spec.title}"
+                + (f" (AD-{spec.ad_number})" if spec.ad_number else "")
+                + "\n\n[Test gate overridden by Captain]"
+                + "\n\nCo-Authored-By: ProbOS Builder <probos@probos.dev>"
+            )
+            ok, sha = await _git_add_and_commit(all_files, commit_msg, work_dir)
+            del _pending_failures[req.build_id]
+            if ok:
+                runtime._emit_event("build_resolved", {
+                    "build_id": req.build_id,
+                    "resolution": "commit_override",
+                    "message": f"Committed with test gate override. Commit: {sha}",
+                    "commit": sha,
+                })
+                return {"status": "ok", "resolution": "commit_override", "commit": sha}
+            else:
+                return {"status": "error", "message": f"Commit failed: {sha}"}
+
+        elif req.resolution in ("retry_extended", "retry_targeted", "retry_fix", "retry_full"):
+            # Re-run build as background task
+            del _pending_failures[req.build_id]
+            new_build_id = req.build_id  # Reuse same build_id for continuity
+
+            runtime._emit_event("build_progress", {
+                "build_id": new_build_id,
+                "step": "retrying",
+                "step_label": "\u25c8 Retrying build...",
+                "current": 1,
+                "total": 3,
+                "message": f"\u25c8 Resolution: {req.resolution}",
+            })
+
+            _track_task(
+                _execute_build(new_build_id, file_changes, spec, work_dir, runtime),
+                name=f"build-resolve-{new_build_id}",
+            )
+            return {"status": "ok", "resolution": req.resolution, "build_id": new_build_id}
+
+        else:
+            return {"status": "error", "message": f"Unknown resolution: {req.resolution}"}
+
     async def _run_build(
         req: BuildRequest,
         build_id: str,
@@ -870,6 +960,7 @@ def create_app(runtime: Any) -> FastAPI:
                 work_dir=work_dir,
                 run_tests=True,
                 llm_client=getattr(rt, "llm_client", None),
+                escalation_hook=None,  # TODO(Phase-33): wire to ChainOfCommand
             )
 
             if result.success:
@@ -890,11 +981,25 @@ def create_app(runtime: Any) -> FastAPI:
                     ),
                 })
             else:
+                # Build failed — produce structured diagnostic (AD-345)
+                from probos.cognitive.builder import classify_build_failure
+                report = classify_build_failure(result, spec)
+                report.build_id = build_id
+
+                # Cache build context for resolution endpoint
+                _clean_expired_failures()
+                _pending_failures[build_id] = {
+                    "file_changes": file_changes,
+                    "spec": spec,
+                    "work_dir": work_dir,
+                    "report": report,
+                    "timestamp": time.time(),
+                }
+
                 rt._emit_event("build_failure", {
                     "build_id": build_id,
-                    "message": f"Build execution failed: {result.error}",
-                    "error": result.error,
-                    "test_result": result.test_result[:500] if result.test_result else "",
+                    "message": f"Build failed: {report.failure_summary}",
+                    "report": report.to_dict(),
                 })
         except Exception as e:
             logger.warning("Build execution failed: %s", e, exc_info=True)

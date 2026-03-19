@@ -182,8 +182,9 @@ class TestCognitiveAgentLifecycle:
         assert "llm_output" in decision
         assert decision["llm_output"]  # non-empty
         # Verify the LLM was called with instructions as system_prompt
+        # compose_instructions() prepends agent.instructions, then appends Standing Orders
         assert llm.last_request is not None
-        assert llm.last_request.system_prompt == agent.instructions
+        assert llm.last_request.system_prompt.startswith(agent.instructions)
 
     @pytest.mark.asyncio
     async def test_act_returns_success_with_output(self):

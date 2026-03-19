@@ -115,8 +115,147 @@ class BuildResult:
     review_issues: list[str] = field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
-# Transporter Pattern data classes (AD-330)
+@dataclass
+class BuildFailureReport:
+    """Structured diagnostic report for a failed build (AD-343)."""
+
+    # What was attempted
+    build_id: str = ""
+    ad_number: int = 0
+    title: str = ""
+    branch_name: str = ""
+    files_written: list[str] = field(default_factory=list)
+    files_modified: list[str] = field(default_factory=list)
+
+    # What failed
+    failure_category: str = ""  # "timeout", "test_failure", "syntax_error", "import_error", "llm_error", "commit_error"
+    failure_summary: str = ""   # One-sentence human-readable summary
+    raw_error: str = ""         # Full error text (for collapsible view)
+    failed_tests: list[str] = field(default_factory=list)  # Extracted test names
+    error_locations: list[str] = field(default_factory=list)  # file:line references
+
+    # What was tried
+    fix_attempts: int = 0
+    fix_descriptions: list[str] = field(default_factory=list)
+
+    # Review
+    review_result: str = ""
+    review_issues: list[str] = field(default_factory=list)
+
+    # Resolution options
+    resolution_options: list[dict[str, str]] = field(default_factory=list)
+    # Each dict has: {"id": "retry_targeted", "label": "...", "description": "..."}
+
+    def to_dict(self) -> dict:
+        """Serialize for WebSocket event payload."""
+        return {
+            "build_id": self.build_id,
+            "ad_number": self.ad_number,
+            "title": self.title,
+            "branch_name": self.branch_name,
+            "files_written": self.files_written,
+            "files_modified": self.files_modified,
+            "failure_category": self.failure_category,
+            "failure_summary": self.failure_summary,
+            "raw_error": self.raw_error,
+            "failed_tests": self.failed_tests,
+            "error_locations": self.error_locations,
+            "fix_attempts": self.fix_attempts,
+            "fix_descriptions": self.fix_descriptions,
+            "review_result": self.review_result,
+            "review_issues": self.review_issues,
+            "resolution_options": self.resolution_options,
+        }
+
+
+def classify_build_failure(result: BuildResult, spec: BuildSpec) -> BuildFailureReport:
+    """Classify a failed BuildResult into a structured report (AD-343).
+
+    Parses pytest output to extract failure category, failed test names,
+    error locations, and generates contextual resolution options.
+    """
+    import re
+
+    report = BuildFailureReport(
+        ad_number=spec.ad_number,
+        title=spec.title,
+        branch_name=result.branch_name,
+        files_written=list(result.files_written),
+        files_modified=list(result.files_modified),
+        fix_attempts=result.fix_attempts,
+        review_result=result.review_result,
+        review_issues=list(result.review_issues),
+        raw_error=result.error or result.test_result or "",
+    )
+
+    test_output = result.test_result or ""
+    error_text = result.error or ""
+    combined = test_output + "\n" + error_text
+
+    # 1. Classify the failure category
+    if "timed out after" in combined:
+        report.failure_category = "timeout"
+        report.failure_summary = "Test suite timed out before completing"
+    elif "SyntaxError" in combined:
+        report.failure_category = "syntax_error"
+        report.failure_summary = "Python syntax errors in generated code"
+    elif "ImportError" in combined or "ModuleNotFoundError" in combined:
+        report.failure_category = "import_error"
+        report.failure_summary = "Import or module resolution errors"
+    elif "timeout_error" in error_text or "Request timeout" in error_text:
+        report.failure_category = "llm_error"
+        report.failure_summary = "LLM request failed or timed out"
+    elif "Commit failed" in error_text:
+        report.failure_category = "commit_error"
+        report.failure_summary = "Git commit operation failed"
+    else:
+        report.failure_category = "test_failure"
+        report.failure_summary = "Test assertions failed after fix attempts"
+
+    # 2. Extract failed test names (FAILED tests/test_foo.py::TestClass::test_method)
+    failed_pattern = re.compile(r"FAILED\s+(tests/\S+)")
+    report.failed_tests = failed_pattern.findall(test_output)
+
+    # 3. Extract error locations (file:line patterns from tracebacks)
+    location_pattern = re.compile(r"([\w/\\]+\.py):(\d+)")
+    seen: set[str] = set()
+    for match in location_pattern.finditer(test_output):
+        loc = f"{match.group(1)}:{match.group(2)}"
+        if loc not in seen:
+            seen.add(loc)
+            report.error_locations.append(loc)
+
+    # 4. Generate resolution options per category
+    if report.failure_category == "timeout":
+        report.resolution_options = [
+            {"id": "retry_extended", "label": "Retry with extended timeout", "description": "Re-run tests with 300s timeout"},
+            {"id": "retry_targeted", "label": "Retry targeted tests only", "description": "Run only tests related to changed files"},
+            {"id": "commit_override", "label": "Commit anyway", "description": "Override test gate and commit to branch"},
+            {"id": "abort", "label": "Abort", "description": "Abandon changes and return to main branch"},
+        ]
+    elif report.failure_category == "test_failure":
+        report.resolution_options = [
+            {"id": "retry_targeted", "label": "Retry targeted tests only", "description": "Run only tests related to changed files"},
+            {"id": "retry_fix", "label": "Retry with more fix attempts", "description": "Give the LLM 4 more attempts to fix failing tests"},
+            {"id": "commit_override", "label": "Commit anyway", "description": "Override test gate and commit to branch"},
+            {"id": "abort", "label": "Abort", "description": "Abandon changes and return to main branch"},
+        ]
+    elif report.failure_category in ("syntax_error", "import_error"):
+        report.resolution_options = [
+            {"id": "retry_fix", "label": "Retry with more fix attempts", "description": "Give the LLM 4 more attempts to fix the errors"},
+            {"id": "abort", "label": "Abort", "description": "Abandon changes and return to main branch"},
+        ]
+    elif report.failure_category == "llm_error":
+        report.resolution_options = [
+            {"id": "retry_full", "label": "Retry entire build", "description": "Re-run the full build pipeline from scratch"},
+            {"id": "abort", "label": "Abort", "description": "Abandon changes and return to main branch"},
+        ]
+    else:
+        report.resolution_options = [
+            {"id": "abort", "label": "Abort", "description": "Abandon changes and return to main branch"},
+        ]
+
+    return report
 # ---------------------------------------------------------------------------
 
 
@@ -2000,6 +2139,79 @@ async def _run_tests(work_dir: str, timeout: int = 120) -> tuple[bool, str]:
     return returncode == 0, output
 
 
+def _map_source_to_tests(changed_files: list[str], work_dir: str) -> list[str]:
+    """Map changed source files to their corresponding test files (AD-344).
+
+    Uses naming convention: src/probos/foo/bar.py -> tests/test_bar.py
+    Also includes any changed files that are themselves test files.
+    """
+    tests_dir = Path(work_dir) / "tests"
+    if not tests_dir.exists():
+        return []
+
+    test_files: list[str] = []
+    seen: set[str] = set()
+
+    for changed in changed_files:
+        changed_path = Path(changed)
+
+        # If the changed file is itself a test file, include it
+        if changed_path.name.startswith("test_"):
+            full = tests_dir / changed_path.name
+            if full.exists() and str(full) not in seen:
+                test_files.append(str(full))
+                seen.add(str(full))
+            continue
+
+        # Extract module name and find matching test files
+        stem = changed_path.stem  # e.g., "shell" from "shell.py"
+        for candidate in tests_dir.glob(f"test_{stem}*.py"):
+            if str(candidate) not in seen:
+                test_files.append(str(candidate))
+                seen.add(str(candidate))
+
+    return test_files
+
+
+async def _run_targeted_tests(
+    work_dir: str,
+    changed_files: list[str],
+    timeout: int = 60,
+) -> tuple[bool, str, list[str]]:
+    """Run only tests related to changed files (AD-344).
+
+    Returns (passed, output, test_files_run).
+    If no matching test files found, falls back to full suite.
+    """
+    test_files = _map_source_to_tests(changed_files, work_dir)
+
+    if not test_files:
+        # No targeted tests found, run full suite
+        passed, output = await _run_tests(work_dir, timeout=timeout)
+        return passed, output, []
+
+    import sys
+
+    def _sync_run() -> tuple[int, str]:
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pytest", "--tb=short", "-q"] + test_files,
+                cwd=work_dir,
+                capture_output=True,
+                timeout=timeout,
+            )
+            test_out = (result.stdout or b"").decode(errors="replace")
+            test_err = (result.stderr or b"").decode(errors="replace")
+            output = test_out + ("\n" + test_err if test_err else "")
+            return result.returncode, output
+        except subprocess.TimeoutExpired:
+            return 1, f"pytest timed out after {timeout}s"
+
+    loop = asyncio.get_running_loop()
+    returncode, output = await loop.run_in_executor(None, _sync_run)
+    return returncode == 0, output, test_files
+
+
 def _build_fix_prompt(
     spec_title: str,
     test_output: str,
@@ -2033,11 +2245,18 @@ async def execute_approved_build(
     run_tests: bool = True,
     max_fix_attempts: int = 2,
     llm_client: Any | None = None,
+    escalation_hook: Any | None = None,
 ) -> BuildResult:
     """Execute an approved build: write files, run tests, create git branch.
 
     Called AFTER the Captain reviews the BuilderAgent's output and approves
     the changes.  The agent generates the plan; this function executes it.
+
+    Args:
+        escalation_hook: Optional async callback invoked when tests fail after
+            all fix attempts are exhausted. Receives a BuildFailureReport and
+            returns either a resolved BuildResult or None to escalate to Captain.
+            Future: wired to chain of command (Phase-33).
     """
     result = BuildResult(success=False, spec=spec)
 
@@ -2147,13 +2366,26 @@ async def execute_approved_build(
             except Exception as exc:
                 logger.warning("CodeReviewAgent: review error: %s", exc)
 
-        # 5. Run tests with fix loop (AD-314)
+        # 5. Run tests with fix loop (AD-314, AD-344)
         if run_tests and (written or modified_files):
             all_changes = list(file_changes)  # track for fix prompt
+            all_changed_files = written + modified_files
+
             for attempt in range(1 + max_fix_attempts):
-                passed, test_output = await _run_tests(work_dir)
+                # Phase 1: Targeted tests only (fast, AD-344)
+                passed, test_output, targeted_files = await _run_targeted_tests(
+                    work_dir, all_changed_files, timeout=60,
+                )
                 result.test_result = test_output
                 result.tests_passed = passed
+
+                if passed and targeted_files:
+                    # Phase 2: Full suite only if targeted passed (AD-344)
+                    passed_full, full_output = await _run_tests(work_dir, timeout=180)
+                    if not passed_full:
+                        result.test_result = full_output
+                        result.tests_passed = False
+                        passed = False
 
                 if passed:
                     break
@@ -2233,12 +2465,24 @@ async def execute_approved_build(
         # 6. Commit — only if tests passed OR tests were not run
         if written or modified_files:
             if run_tests and not result.tests_passed:
-                result.error = (
-                    "Tests failed after " + str(result.fix_attempts) + " fix attempt(s). "
-                    "Code written to branch but NOT committed.\n"
-                    + (result.test_result or "")[-1000:]
-                )
-                result.success = False
+                # Try escalation hook before reporting failure to Captain (AD-347)
+                if escalation_hook is not None:
+                    try:
+                        report = classify_build_failure(result, spec)
+                        resolved = await escalation_hook(report)
+                        if resolved is not None:
+                            result = resolved
+                    except Exception as exc:
+                        logger.warning("Escalation hook failed: %s", exc)
+
+                # If still failing after escalation attempt, report to Captain
+                if run_tests and not result.tests_passed:
+                    result.error = (
+                        "Tests failed after " + str(result.fix_attempts) + " fix attempt(s). "
+                        "Code written to branch but NOT committed.\n"
+                        + (result.test_result or "")[-1000:]
+                    )
+                    result.success = False
             else:
                 desc_short = spec.description[:200] if spec.description else ""
                 commit_msg = (

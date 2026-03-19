@@ -70,6 +70,29 @@ export interface BuildProposal {
   status: 'generating' | 'review' | 'approved' | 'rejected';
 }
 
+export interface BuildFailureReport {
+  build_id: string;
+  ad_number: number;
+  title: string;
+  branch_name: string;
+  files_written: string[];
+  files_modified: string[];
+  failure_category: string;
+  failure_summary: string;
+  raw_error: string;
+  failed_tests: string[];
+  error_locations: string[];
+  fix_attempts: number;
+  fix_descriptions: string[];
+  review_result: string;
+  review_issues: string[];
+  resolution_options: Array<{
+    id: string;
+    label: string;
+    description: string;
+  }>;
+}
+
 export interface TransporterChunkStatus {
   chunk_id: string;
   description: string;
@@ -115,6 +138,7 @@ export interface ChatMessage {
   timestamp: number;
   selfModProposal?: SelfModProposal;
   buildProposal?: BuildProposal;
+  buildFailureReport?: BuildFailureReport;
   architectProposal?: ArchitectProposalView;
 }
 

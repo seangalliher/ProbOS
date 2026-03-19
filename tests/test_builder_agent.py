@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,6 +13,7 @@ import pytest
 from probos.cognitive.builder import (
     BuildBlueprint,
     BuilderAgent,
+    BuildFailureReport,
     BuildResult,
     BuildSpec,
     ChunkResult,
@@ -26,14 +28,17 @@ from probos.cognitive.builder import (
     _find_chunk_for_file,
     _find_unresolved_names,
     _git_create_branch,
+    _map_source_to_tests,
     _merge_create_blocks,
     _parse_chunk_response,
+    _run_targeted_tests,
     _run_tests,
     _sanitize_branch_name,
     _should_use_transporter,
     _validate_python,
     assemble_chunks,
     assembly_summary,
+    classify_build_failure,
     create_blueprint,
     decompose_blueprint,
     execute_chunks,
@@ -2153,7 +2158,7 @@ class TestTestFixLoop:
         mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
         with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
-            with patch("probos.cognitive.builder._run_tests", return_value=(True, "1 passed")):
+            with patch("probos.cognitive.builder._run_targeted_tests", return_value=(True, "1 passed", [])):
                 result = await execute_approved_build(
                     file_changes, spec, str(tmp_path), run_tests=True,
                 )
@@ -2183,10 +2188,10 @@ class TestTestFixLoop:
         llm_client.complete = AsyncMock(return_value=llm_fix_response)
 
         # First test fails, second passes
-        test_results = [(False, "1 failed"), (True, "1 passed")]
+        test_results = [(False, "1 failed", []), (True, "1 passed", [])]
         call_count = 0
 
-        async def mock_run_tests(work_dir, timeout=120):
+        async def mock_run_targeted(work_dir, changed_files, timeout=60):
             nonlocal call_count
             result = test_results[min(call_count, len(test_results) - 1)]
             call_count += 1
@@ -2195,7 +2200,7 @@ class TestTestFixLoop:
         mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
         with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
-            with patch("probos.cognitive.builder._run_tests", side_effect=mock_run_tests):
+            with patch("probos.cognitive.builder._run_targeted_tests", side_effect=mock_run_targeted):
                 result = await execute_approved_build(
                     file_changes, spec, str(tmp_path), run_tests=True,
                     llm_client=llm_client,
@@ -2228,7 +2233,7 @@ class TestTestFixLoop:
         mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
         with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
-            with patch("probos.cognitive.builder._run_tests", return_value=(False, "1 failed")):
+            with patch("probos.cognitive.builder._run_targeted_tests", return_value=(False, "1 failed", [])):
                 result = await execute_approved_build(
                     file_changes, spec, str(tmp_path), run_tests=True,
                     max_fix_attempts=2, llm_client=llm_client,
@@ -2256,7 +2261,7 @@ class TestTestFixLoop:
         mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
         with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
-            with patch("probos.cognitive.builder._run_tests", return_value=(False, "1 failed")):
+            with patch("probos.cognitive.builder._run_targeted_tests", return_value=(False, "1 failed", [])):
                 result = await execute_approved_build(
                     file_changes, spec, str(tmp_path), run_tests=True,
                     max_fix_attempts=1, llm_client=llm_client,
@@ -2308,7 +2313,7 @@ class TestTestFixLoop:
         mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
         with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
-            with patch("probos.cognitive.builder._run_tests", return_value=(False, "1 failed")):
+            with patch("probos.cognitive.builder._run_targeted_tests", return_value=(False, "1 failed", [])):
                 result = await execute_approved_build(
                     file_changes, spec, str(tmp_path), run_tests=True,
                     max_fix_attempts=0, llm_client=llm_client,
@@ -2603,7 +2608,7 @@ class TestCommitGate:
         mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
         with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
-            with patch("probos.cognitive.builder._run_tests", return_value=(False, "1 failed, 0 passed")):
+            with patch("probos.cognitive.builder._run_targeted_tests", return_value=(False, "1 failed, 0 passed", [])):
                 result = await execute_approved_build(
                     file_changes, spec, str(tmp_path), run_tests=True,
                 )
@@ -2626,7 +2631,7 @@ class TestCommitGate:
         mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
         with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
-            with patch("probos.cognitive.builder._run_tests", return_value=(True, "1 passed")):
+            with patch("probos.cognitive.builder._run_targeted_tests", return_value=(True, "1 passed", [])):
                 result = await execute_approved_build(
                     file_changes, spec, str(tmp_path), run_tests=True,
                 )
@@ -2674,17 +2679,17 @@ class TestCommitGate:
         mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
         # First test run fails, second passes
-        test_results = [(False, "1 failed"), (True, "1 passed")]
+        test_results = [(False, "1 failed", []), (True, "1 passed", [])]
         test_call_count = 0
 
-        async def mock_run_tests(wd):
+        async def mock_run_targeted(wd, changed_files, timeout=60):
             nonlocal test_call_count
             r = test_results[min(test_call_count, len(test_results) - 1)]
             test_call_count += 1
             return r
 
         with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
-            with patch("probos.cognitive.builder._run_tests", side_effect=mock_run_tests):
+            with patch("probos.cognitive.builder._run_targeted_tests", side_effect=mock_run_targeted):
                 result = await execute_approved_build(
                     file_changes, spec, str(tmp_path),
                     run_tests=True,
@@ -2741,7 +2746,7 @@ class TestCodeReviewIntegration:
         mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
         with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
-            with patch("probos.cognitive.builder._run_tests", return_value=(True, "1 passed")):
+            with patch("probos.cognitive.builder._run_targeted_tests", return_value=(True, "1 passed", [])):
                 result = await execute_approved_build(
                     file_changes, spec, str(tmp_path),
                     run_tests=True,
@@ -2787,7 +2792,7 @@ class TestCodeReviewIntegration:
         mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 
         with patch("probos.cognitive.builder.subprocess.run", return_value=mock_result):
-            with patch("probos.cognitive.builder._run_tests", return_value=(True, "1 passed")):
+            with patch("probos.cognitive.builder._run_targeted_tests", return_value=(True, "1 passed", [])):
                 result = await execute_approved_build(
                     file_changes, spec, str(tmp_path),
                     run_tests=True,
@@ -2799,3 +2804,317 @@ class TestCodeReviewIntegration:
         assert result.review_result == "Rejected"
         # Build still succeeds (soft gate)
         assert result.success is True
+
+
+# ---------------------------------------------------------------------------
+# BuildFailureReport (AD-343)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildFailureReport:
+    """Tests for BuildFailureReport dataclass (AD-343)."""
+
+    def test_to_dict_returns_all_fields(self):
+        report = BuildFailureReport(
+            build_id="test-123",
+            ad_number=999,
+            title="Test Build",
+            failure_category="test_failure",
+            failure_summary="Tests failed",
+        )
+        d = report.to_dict()
+        assert d["build_id"] == "test-123"
+        assert d["ad_number"] == 999
+        assert d["failure_category"] == "test_failure"
+        assert isinstance(d["resolution_options"], list)
+        assert isinstance(d["failed_tests"], list)
+
+    def test_to_dict_defaults(self):
+        report = BuildFailureReport()
+        d = report.to_dict()
+        assert d["build_id"] == ""
+        assert d["ad_number"] == 0
+        assert d["failed_tests"] == []
+        assert d["resolution_options"] == []
+
+
+class TestClassifyBuildFailure:
+    """Tests for classify_build_failure function (AD-343)."""
+
+    def _make_result(self, *, test_result="", error="", **kwargs):
+        spec = BuildSpec(title="Test", description="desc")
+        result = BuildResult(success=False, spec=spec, **kwargs)
+        result.test_result = test_result
+        result.error = error
+        return result, spec
+
+    def test_classify_timeout(self):
+        result, spec = self._make_result(
+            test_result="pytest timed out after 120s"
+        )
+        report = classify_build_failure(result, spec)
+        assert report.failure_category == "timeout"
+        assert "timed out" in report.failure_summary
+
+    def test_classify_syntax_error(self):
+        result, spec = self._make_result(
+            test_result="SyntaxError: invalid syntax\n  File test.py, line 5"
+        )
+        report = classify_build_failure(result, spec)
+        assert report.failure_category == "syntax_error"
+
+    def test_classify_import_error(self):
+        result, spec = self._make_result(
+            test_result="ImportError: No module named 'nonexistent'"
+        )
+        report = classify_build_failure(result, spec)
+        assert report.failure_category == "import_error"
+
+    def test_classify_llm_error(self):
+        result, spec = self._make_result(
+            error="Request timeout"
+        )
+        report = classify_build_failure(result, spec)
+        assert report.failure_category == "llm_error"
+
+    def test_classify_test_failure_default(self):
+        result, spec = self._make_result(
+            test_result="FAILED tests/test_foo.py::test_bar - assert 1 == 2\n1 failed"
+        )
+        report = classify_build_failure(result, spec)
+        assert report.failure_category == "test_failure"
+
+    def test_extracts_failed_test_names(self):
+        result, spec = self._make_result(
+            test_result=(
+                "FAILED tests/test_shell.py::TestShell::test_ping\n"
+                "FAILED tests/test_api.py::test_health\n"
+                "2 failed"
+            )
+        )
+        report = classify_build_failure(result, spec)
+        assert len(report.failed_tests) == 2
+        assert "tests/test_shell.py::TestShell::test_ping" in report.failed_tests
+        assert "tests/test_api.py::test_health" in report.failed_tests
+
+    def test_extracts_error_locations(self):
+        result, spec = self._make_result(
+            test_result="src/probos/shell.py:42: AssertionError"
+        )
+        report = classify_build_failure(result, spec)
+        assert any("shell.py:42" in loc for loc in report.error_locations)
+
+    def test_timeout_resolution_options(self):
+        result, spec = self._make_result(
+            test_result="pytest timed out after 120s"
+        )
+        report = classify_build_failure(result, spec)
+        option_ids = [o["id"] for o in report.resolution_options]
+        assert "retry_extended" in option_ids
+        assert "retry_targeted" in option_ids
+        assert "abort" in option_ids
+
+    def test_test_failure_resolution_options(self):
+        result, spec = self._make_result(
+            test_result="FAILED tests/test_foo.py::test_bar\n1 failed"
+        )
+        report = classify_build_failure(result, spec)
+        option_ids = [o["id"] for o in report.resolution_options]
+        assert "retry_targeted" in option_ids
+        assert "retry_fix" in option_ids
+        assert "commit_override" in option_ids
+        assert "abort" in option_ids
+
+    def test_copies_spec_metadata(self):
+        spec = BuildSpec(title="My Build", description="desc", ad_number=999)
+        result = BuildResult(success=False, spec=spec, branch_name="builder/ad-999")
+        result.test_result = "FAILED tests/test.py::test_x\n1 failed"
+        result.fix_attempts = 2
+        result.review_result = "issues found"
+        result.review_issues = ["issue1"]
+        report = classify_build_failure(result, spec)
+        assert report.title == "My Build"
+        assert report.ad_number == 999
+        assert report.branch_name == "builder/ad-999"
+        assert report.fix_attempts == 2
+        assert report.review_result == "issues found"
+        assert report.review_issues == ["issue1"]
+
+
+# ---------------------------------------------------------------------------
+# Smart Test Selection (AD-344)
+# ---------------------------------------------------------------------------
+
+
+class TestMapSourceToTests:
+    """Tests for _map_source_to_tests (AD-344)."""
+
+    def test_maps_source_to_test_file(self, tmp_path):
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_shell.py").write_text("# test", encoding="utf-8")
+        result = _map_source_to_tests(["src/probos/experience/shell.py"], str(tmp_path))
+        assert len(result) == 1
+        assert "test_shell.py" in result[0]
+
+    def test_includes_changed_test_files(self, tmp_path):
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_foo.py").write_text("# test", encoding="utf-8")
+        result = _map_source_to_tests(["test_foo.py"], str(tmp_path))
+        assert len(result) == 1
+
+    def test_no_match_returns_empty(self, tmp_path):
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        result = _map_source_to_tests(["src/probos/unique_module.py"], str(tmp_path))
+        assert result == []
+
+    def test_no_tests_dir_returns_empty(self, tmp_path):
+        result = _map_source_to_tests(["src/probos/shell.py"], str(tmp_path))
+        assert result == []
+
+    def test_deduplicates(self, tmp_path):
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_shell.py").write_text("# test", encoding="utf-8")
+        result = _map_source_to_tests(
+            ["src/probos/experience/shell.py", "src/probos/shell.py"],
+            str(tmp_path),
+        )
+        assert len(result) == 1
+
+    def test_glob_matches_prefixed(self, tmp_path):
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_builder_agent.py").write_text("# test", encoding="utf-8")
+        result = _map_source_to_tests(["src/probos/cognitive/builder.py"], str(tmp_path))
+        assert len(result) == 1
+        assert "test_builder" in result[0]
+
+
+# ---------------------------------------------------------------------------
+# Pending Failures Cache (AD-345)
+# ---------------------------------------------------------------------------
+
+
+class TestPendingFailuresCache:
+    """Tests for the pending failures cache (AD-345)."""
+
+    def test_clean_expired_removes_old(self):
+        from probos.api import _pending_failures, _clean_expired_failures, _FAILURE_CACHE_TTL
+        _pending_failures["old"] = {"timestamp": time.time() - _FAILURE_CACHE_TTL - 1}
+        _pending_failures["recent"] = {"timestamp": time.time()}
+        _clean_expired_failures()
+        assert "old" not in _pending_failures
+        assert "recent" in _pending_failures
+        # Cleanup
+        _pending_failures.clear()
+
+
+# ---------------------------------------------------------------------------
+# Escalation Hook (AD-347)
+# ---------------------------------------------------------------------------
+
+
+class TestEscalationHook:
+    """Tests for the escalation hook on execute_approved_build (AD-347)."""
+
+    @pytest.mark.asyncio
+    async def test_hook_called_on_failure(self, tmp_path):
+        """Escalation hook is called when tests fail."""
+        hook_called = []
+
+        async def mock_hook(report):
+            hook_called.append(report)
+            return None  # Don't resolve
+
+        spec = BuildSpec(title="Test", description="test")
+        changes = [{"path": "test_file.py", "mode": "create", "content": "x = 1"}]
+
+        with patch("probos.cognitive.builder._run_targeted_tests", return_value=(False, "FAILED tests/test_x.py::test_y", [])):
+            with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
+                with patch("probos.cognitive.builder._git_checkout_main"):
+                    result = await execute_approved_build(
+                        changes, spec, str(tmp_path),
+                        run_tests=True,
+                        max_fix_attempts=0,
+                        escalation_hook=mock_hook,
+                    )
+
+        assert len(hook_called) == 1
+        assert hook_called[0].failure_category == "test_failure"
+        assert not result.success
+
+    @pytest.mark.asyncio
+    async def test_hook_resolves_failure(self, tmp_path):
+        """When hook returns a BuildResult, it replaces the failure."""
+        resolved_result = BuildResult(
+            success=True,
+            spec=BuildSpec(title="Test", description="test"),
+            tests_passed=True,
+        )
+
+        async def resolving_hook(report):
+            return resolved_result
+
+        spec = BuildSpec(title="Test", description="test")
+        changes = [{"path": "test_file.py", "mode": "create", "content": "x = 1"}]
+
+        with patch("probos.cognitive.builder._run_targeted_tests", return_value=(False, "FAILED", [])):
+            with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
+                with patch("probos.cognitive.builder._git_checkout_main"):
+                    with patch("probos.cognitive.builder._git_add_and_commit", return_value=(True, "abc123")):
+                        result = await execute_approved_build(
+                            changes, spec, str(tmp_path),
+                            run_tests=True,
+                            max_fix_attempts=0,
+                            escalation_hook=resolving_hook,
+                        )
+
+        assert result.success
+        assert result.tests_passed
+
+    @pytest.mark.asyncio
+    async def test_hook_not_called_on_success(self, tmp_path):
+        """Escalation hook is NOT called when tests pass."""
+        hook_called = []
+
+        async def mock_hook(report):
+            hook_called.append(report)
+            return None
+
+        spec = BuildSpec(title="Test", description="test")
+        changes = [{"path": "test_file.py", "mode": "create", "content": "x = 1"}]
+
+        with patch("probos.cognitive.builder._run_targeted_tests", return_value=(True, "1 passed", ["test.py"])):
+            with patch("probos.cognitive.builder._run_tests", return_value=(True, "2254 passed")):
+                with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
+                    with patch("probos.cognitive.builder._git_checkout_main"):
+                        with patch("probos.cognitive.builder._git_add_and_commit", return_value=(True, "abc123")):
+                            result = await execute_approved_build(
+                                changes, spec, str(tmp_path),
+                                run_tests=True,
+                                max_fix_attempts=0,
+                                escalation_hook=mock_hook,
+                            )
+
+        assert len(hook_called) == 0
+        assert result.success
+
+    @pytest.mark.asyncio
+    async def test_no_hook_provided(self, tmp_path):
+        """Works correctly when no hook is provided (default behavior)."""
+        spec = BuildSpec(title="Test", description="test")
+        changes = [{"path": "test_file.py", "mode": "create", "content": "x = 1"}]
+
+        with patch("probos.cognitive.builder._run_targeted_tests", return_value=(False, "FAILED", [])):
+            with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
+                with patch("probos.cognitive.builder._git_checkout_main"):
+                    result = await execute_approved_build(
+                        changes, spec, str(tmp_path),
+                        run_tests=True,
+                        max_fix_attempts=0,
+                    )
+
+        assert not result.success
