@@ -908,7 +908,7 @@ class ProbOSShell:
             self.console.print(f"[red]Failed to prune agent {agent_id}.[/red]")
 
     async def _cmd_ping(self, arg: str) -> None:
-        """Show system uptime in a friendly format (AD-337)."""
+        """Show system uptime and basic health metrics (AD-337)."""
         status = self.runtime.status()
         
         # Extract uptime from system model (via mesh -> self_model)
@@ -916,11 +916,34 @@ class ProbOSShell:
         self_model = mesh.get("self_model", {})
         uptime = self_model.get("uptime_seconds")
         
+        # Get agent counts and health
+        total_agents = status.get("total_agents", 0)
+        agents = self.runtime.registry.all()
+        active_agents = [a for a in agents if a.state == AgentState.ACTIVE]
+        active_count = len(active_agents)
+        health_score = self._compute_health()
+        
+        # Build status display
         if uptime is not None:
             uptime_text = self._format_uptime(uptime)
-            self.console.print(f"[green]●[/green] ProbOS uptime: {uptime_text}")
+            status_line = f"[green]●[/green] System Status: ACTIVE"
         else:
-            self.console.print("[yellow]⚠[/yellow] Uptime information unavailable")
+            uptime_text = "unavailable"
+            status_line = f"[yellow]●[/yellow] System Status: UNKNOWN"
+        
+        # Display system information
+        self.console.print(status_line)
+        self.console.print(f"Uptime: {uptime_text}")
+        self.console.print(f"Agents: {active_count} active / {total_agents} total (health: {health_score:.2f})")
+        
+        # Show connectivity status if available
+        cognitive = status.get("cognitive", {})
+        if cognitive:
+            llm_status = cognitive.get("llm_client_ready", False)
+            if llm_status:
+                self.console.print("[green]LLM Client: Connected[/green]")
+            else:
+                self.console.print("[yellow]LLM Client: Disconnected[/yellow]")
 
     def _format_uptime(self, seconds: float) -> str:
         """Convert seconds to human-readable uptime format."""
