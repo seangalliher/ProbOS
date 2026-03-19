@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, PropertyMock
 
 import pytest
 from rich.console import Console
 
 from probos.experience.shell import ProbOSShell
+from probos.types import AgentState
 
 
 class TestProbOSShell:
@@ -28,6 +29,21 @@ class TestProbOSShell:
                 }
             }
         })
+
+        # Mock registry with active agents
+        agent1 = Mock()
+        agent1.state = AgentState.ACTIVE
+        agent1.confidence = 0.9
+        agent2 = Mock()
+        agent2.state = AgentState.ACTIVE
+        agent2.confidence = 0.8
+        runtime.registry.all.return_value = [agent1, agent2]
+        type(runtime.registry).count = PropertyMock(return_value=2)
+
+        # No escalation_manager or self_mod_pipeline
+        runtime.escalation_manager = None
+        runtime.self_mod_pipeline = None
+
         return runtime
 
     @pytest.fixture
@@ -41,7 +57,6 @@ class TestProbOSShell:
         return ProbOSShell(
             runtime=mock_runtime,
             console=mock_console,
-            renderer=Mock()
         )
 
     def test_format_uptime_seconds_only(self, shell):
@@ -78,11 +93,13 @@ class TestProbOSShell:
     async def test_cmd_ping_success(self, shell, mock_runtime, mock_console):
         """Test successful ping command execution."""
         await shell._cmd_ping("")
-        
+
         mock_runtime.status.assert_called_once()
-        mock_console.print.assert_called_once_with(
-            "[green]●[/green] ProbOS uptime: 2 hours, 2 minutes, 3 seconds"
-        )
+        # Builder changed /ping to print multiple lines: status, uptime, agents
+        calls = [str(c) for c in mock_console.print.call_args_list]
+        assert any("System Status: ACTIVE" in c for c in calls)
+        assert any("Uptime: 2 hours, 2 minutes, 3 seconds" in c for c in calls)
+        assert any("Agents:" in c for c in calls)
 
     @pytest.mark.asyncio
     async def test_cmd_ping_no_uptime_data(self, shell, mock_runtime, mock_console):
@@ -90,15 +107,16 @@ class TestProbOSShell:
         mock_runtime.status.return_value = {
             "system": {"name": "ProbOS", "version": "1.0.0"},
             "started": True,
+            "total_agents": 0,
             "mesh": {}  # No self_model data
         }
-        
+
         await shell._cmd_ping("")
-        
+
         mock_runtime.status.assert_called_once()
-        mock_console.print.assert_called_once_with(
-            "[yellow]⚠[/yellow] Uptime information unavailable"
-        )
+        calls = [str(c) for c in mock_console.print.call_args_list]
+        assert any("UNKNOWN" in c for c in calls)
+        assert any("unavailable" in c for c in calls)
 
     @pytest.mark.asyncio
     async def test_cmd_ping_no_mesh_data(self, shell, mock_runtime, mock_console):
@@ -106,24 +124,22 @@ class TestProbOSShell:
         mock_runtime.status.return_value = {
             "system": {"name": "ProbOS", "version": "1.0.0"},
             "started": True,
+            "total_agents": 0,
             # No mesh key at all
         }
-        
+
         await shell._cmd_ping("")
-        
+
         mock_runtime.status.assert_called_once()
-        mock_console.print.assert_called_once_with(
-            "[yellow]⚠[/yellow] Uptime information unavailable"
-        )
+        calls = [str(c) for c in mock_console.print.call_args_list]
+        assert any("UNKNOWN" in c for c in calls)
+        assert any("unavailable" in c for c in calls)
 
     @pytest.mark.asyncio
     async def test_ping_command_in_dispatch(self, shell):
         """Test that ping command is properly registered in command dispatch."""
-        # Check that ping is in COMMANDS dictionary
         assert "/ping" in shell.COMMANDS
         assert shell.COMMANDS["/ping"] == "Show system uptime"
-        
-        # Verify the command handler exists
         assert hasattr(shell, "_cmd_ping")
         assert callable(getattr(shell, "_cmd_ping"))
 

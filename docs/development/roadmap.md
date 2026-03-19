@@ -588,6 +588,18 @@ Galaxy class can split into saucer (civilians) and stardrive (combat). ProbOS eq
 - **Separation trigger** — activated automatically when: LLM provider unreachable for >30s, system memory >90%, or Captain manual order
 - **Reconnection** — when crisis resolves, non-essential services restart in priority order. Cognitive services flush queued requests. Federation reconnects. Full operational status restored with Captain notification
 
+**Builder Quality Gates & Standing Orders (AD-337–341)**
+
+*"All hands, new standing orders from the bridge."*
+
+AD-337 proved the Builder pipeline works end-to-end but revealed systemic quality gaps: the builder committed code with failing tests, the test-fix loop was disabled in practice, and test-writing guidance was minimal. These ADs fix the pipeline and introduce ProbOS's own constitution system.
+
+- **AD-337: Implement /ping Command** *(done)* — First successful end-to-end Builder test. Added `/ping` slash command showing system uptime, agent count, health score. Revealed pipeline gaps: commit not gated on test passage, test-fix loop disabled (no llm_client passed), "Files: 0" reporting bug for MODIFY-only builds.
+- **AD-338: Builder Commit Gate & Fix Loop** *(planned)* — Gate commits on test passage (don't commit broken code). Pass llm_client from api.py to enable 2-retry test-fix loop. Fix "Files: 0" reporting bug (count files_modified + files_written).
+- **AD-339: Standing Orders Architecture** *(planned)* — ProbOS's own hierarchical instruction system. Four tiers: Federation Constitution (universal, immutable) → Ship Standing Orders (per-instance) → Department Protocols (per-department) → Agent Standing Orders (per-agent, evolvable). `config/standing_orders/` directory with `federation.md`, `ship.md`, `engineering.md`, `science.md`, `medical.md`, `security.md`, `bridge.md`. `compose_instructions()` assembles complete system prompt at call time. Like Claude Code's `CLAUDE.md` and OpenClaw's `soul.md`, but hierarchical and evolvable. No IDE dependency.
+- **AD-340: Builder Instructions Enhancement** *(planned)* — Add concrete test-writing rules to Builder's hardcoded instructions: read __init__ signatures, use full import paths, trace mock coverage, match actual output format.
+- **AD-341: Code Review Agent** *(planned)* — CodeReviewAgent reviews Builder output against Standing Orders before commit gate. Engineering department, standard tier. Starts as soft gate (advisory, logs issues). Earns hard gate authority through ProbOS trust model. Reads standards from Standing Orders, not IDE config.
+
 **Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE**
 
 *"The ship builds itself — with the Captain's approval."*

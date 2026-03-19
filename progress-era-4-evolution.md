@@ -150,3 +150,37 @@ Progression: AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-3
 **Decision:** AD-336 — Wire the Transporter Pattern into the BuilderAgent lifecycle. (a) `_should_use_transporter()` — decision function: >2 target files, >20K context, or >2 combined impl+test files triggers Transporter. (b) `transporter_build()` — orchestrates full pipeline (create_blueprint → decompose → execute → assemble → validate), returns file blocks in `_parse_file_blocks()` format. Validation failures are logged but blocks still returned (test-fix loop catches real issues). (c) `BuilderAgent.perceive()` builds a BuildSpec from intent params, checks `_should_use_transporter()`, runs `transporter_build()` if appropriate, stores result on `self._transporter_result`. Graceful fallback to single-pass on failure. (d) `BuilderAgent.decide()` overridden to short-circuit LLM call when `_transporter_result` is present. (e) `BuilderAgent.act()` handles `transporter_complete` action alongside existing single-pass path. `execute_approved_build()` unchanged — receives identical file blocks from either path.
 
 **Status:** Phase 32z complete — 2066 Python + 30 Vitest
+
+## Builder Quality Gates & Standing Orders (AD-337 through AD-341)
+
+### AD-337: Implement /ping Command (DONE)
+
+**Decision:** AD-337 — First end-to-end Builder test. Builder generated `/ping` slash command with system uptime, agent count, and health score. Revealed 4 pipeline defects: (a) `execute_approved_build()` commits regardless of test passage (`result.success` based on syntax validation only). (b) `api.py._execute_build()` does not pass `llm_client` to `execute_approved_build()`, making the 2-retry test-fix loop a no-op. (c) UI reports "Files: 0" for MODIFY-only builds (`files_written` vs `files_modified`). (d) Builder's `instructions` string has minimal test-writing guidance, leading to wrong constructor args, wrong imports, and wrong assertions in generated tests.
+
+**Fixes applied manually:** test_shell.py rewritten (removed `renderer=Mock()`, added AgentState/confidence mocks, updated assertions for multi-line output). builder.py path resolution (`_resolve_path`, `_normalize_change_paths`), per-tier LLM timeout, pytest subprocess fix. api.py self-mod approval bypass, work_dir fix.
+
+**Status:** AD-337 complete — 2213 Python + 30 Vitest
+
+### AD-338: Builder Commit Gate & Fix Loop (PLANNED)
+
+**Decision:** AD-338 — Gate commits on test passage. Pass llm_client from api.py to enable test-fix loop. Fix "Files: 0" reporting bug.
+
+**Status:** Build prompt ready at `prompts/builder-quality-gates.md`
+
+### AD-339: Standing Orders Architecture (PLANNED)
+
+**Decision:** AD-339 — ProbOS constitution system. 4-tier hierarchy: Federation Constitution (universal, immutable) → Ship Standing Orders (per-instance) → Department Protocols (per-department) → Agent Standing Orders (per-agent, evolvable via self-mod). `config/standing_orders/` with `federation.md`, `ship.md`, `engineering.md`, `science.md`, `medical.md`, `security.md`, `bridge.md`. `compose_instructions()` assembles complete system prompt at call time. Integrated into `CognitiveAgent.decide()`. Like Claude Code's `CLAUDE.md` and OpenClaw's `soul.md`, but hierarchical, composable, and evolvable. No IDE dependency.
+
+**Status:** Build prompt ready at `prompts/builder-quality-gates.md`
+
+### AD-340: Builder Instructions Enhancement (PLANNED)
+
+**Decision:** AD-340 — Add concrete test-writing rules to Builder's hardcoded instructions: read __init__ signatures, use full import paths, trace mock coverage, match actual output format.
+
+**Status:** Build prompt ready at `prompts/builder-quality-gates.md`
+
+### AD-341: Code Review Agent (PLANNED)
+
+**Decision:** AD-341 — CodeReviewAgent reviews Builder output against Standing Orders before commit gate. Engineering department, standard tier. Starts as soft gate (advisory, logs issues). Earns hard gate authority through ProbOS trust model (Beta(1,3) probationary → promoted after demonstrated accuracy).
+
+**Status:** Build prompt ready at `prompts/builder-quality-gates.md`
