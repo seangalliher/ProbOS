@@ -753,10 +753,10 @@ def create_app(runtime: Any) -> FastAPI:
             rt._emit_event("build_progress", {
                 "build_id": build_id,
                 "step": "preparing",
-                "step_label": "\u2692 Preparing build context...",
+                "step_label": "\u25c8 Preparing build context...",
                 "current": 1,
                 "total": 3,
-                "message": "\u2692 Reading reference files...",
+                "message": "\u25c8 Reading reference files...",
             })
 
             rt._emit_event("build_progress", {
@@ -858,10 +858,10 @@ def create_app(runtime: Any) -> FastAPI:
             rt._emit_event("build_progress", {
                 "build_id": build_id,
                 "step": "writing",
-                "step_label": "\u270d Writing files...",
+                "step_label": "\u25c8 Writing files...",
                 "current": 1,
                 "total": 3,
-                "message": "\u270d Writing files to disk...",
+                "message": "\u25c8 Writing files to disk...",
             })
 
             result = await execute_approved_build(
