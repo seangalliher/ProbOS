@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -11,6 +12,7 @@ from rich.table import Table
 from rich.text import Text
 
 from probos.cognitive.llm_client import OpenAICompatibleClient
+from probos.cognitive.standing_orders import _DEFAULT_ORDERS_DIR, _load_file
 from probos.experience import panels
 from probos.experience.panels import format_health
 from probos.experience.renderer import ExecutionRenderer
@@ -56,6 +58,7 @@ class ProbOSShell:
         "/search":    "Search across all knowledge (/search [--type agents,skills] <query>)",
         "/explain":   "Explain what happened in the last NL request",
         "/model":     "Show LLM client type, endpoint, and tier config",
+        "/orders":    "Show Standing Orders hierarchy and summaries",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
         "/prune":     "Permanently remove an agent (/prune <agent_id>)",
         "/imports":   "Manage allowed imports (/imports | /imports add <pkg> | /imports remove <pkg>)",
@@ -800,6 +803,82 @@ class ProbOSShell:
 
         from rich.panel import Panel
         self.console.print(Panel("\n".join(lines), title="LLM Configuration", border_style="cyan"))
+
+    async def _cmd_orders(self, arg: str) -> None:
+        """Show Standing Orders hierarchy and file summaries."""
+        orders_dir = Path(_DEFAULT_ORDERS_DIR)
+
+        # Check if directory exists
+        if not orders_dir.exists():
+            self.console.print("[yellow]No standing orders directory found.[/yellow]")
+            return
+
+        # Find all .md files
+        md_files = list(orders_dir.glob("*.md"))
+        if not md_files:
+            self.console.print("[dim]No standing orders configured.[/dim]")
+            return
+
+        # Create table
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Tier", style="", no_wrap=True)
+        table.add_column("File", style="cyan", no_wrap=True)
+        table.add_column("Summary", style="")
+        table.add_column("Size", justify="right", style="dim")
+
+        # Process each file
+        for file_path in sorted(md_files):
+            filename = file_path.name
+            basename = file_path.stem
+
+            # Determine tier and styling
+            if filename == "federation.md":
+                tier = "Federation Constitution"
+                tier_style = "red"
+            elif filename == "ship.md":
+                tier = "Ship Standing Orders"
+                tier_style = "blue"
+            elif basename in ["engineering", "medical", "science", "security"]:
+                tier = f"Department: {basename}"
+                tier_style = "yellow"
+            else:
+                tier = f"Agent: {basename}"
+                tier_style = "green"
+
+            # Get file size
+            try:
+                file_size = len(file_path.read_text(encoding='utf-8'))
+                size_str = str(file_size)
+            except Exception:
+                file_size = 0
+                size_str = "0"
+
+            # Read summary from file
+            try:
+                content = _load_file(str(file_path))
+                # Find first non-empty line as summary
+                summary = ""
+                for line in content.split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        summary = line
+                        break
+
+                # Truncate if too long
+                if len(summary) > 60:
+                    summary = summary[:57] + "..."
+
+                if not summary:
+                    summary = "[dim](no summary)[/dim]"
+
+            except Exception:
+                summary = f"[red]Error: {filename}[/red]"
+
+            # Add row to table
+            tier_text = Text(tier, style=tier_style)
+            table.add_row(tier_text, basename, summary, size_str)
+
+        self.console.print(table)
 
     async def _cmd_tier(self, arg: str) -> None:
         client = self.runtime.llm_client
