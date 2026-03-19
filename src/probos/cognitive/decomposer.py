@@ -350,7 +350,7 @@ class IntentDecomposer:
         request = LLMRequest(
             prompt="\n".join(prompt_parts),
             system_prompt=system_prompt,
-            tier=None,
+            tier="standard",  # Decomposer needs reliable JSON — don't inherit user's /tier
             temperature=0.0,
         )
 
@@ -416,7 +416,7 @@ class IntentDecomposer:
         request = LLMRequest(
             prompt=prompt_text,
             system_prompt=REFLECT_PROMPT,
-            tier=None,
+            tier="standard",  # Reflect needs reliable text — don't inherit user's /tier
             temperature=0.2,
         )
 
