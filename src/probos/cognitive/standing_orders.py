@@ -19,7 +19,7 @@ from functools import lru_cache
 logger = logging.getLogger(__name__)
 
 # Default location for standing orders
-_DEFAULT_ORDERS_DIR = Path(__file__).resolve().parent.parent.parent / "config" / "standing_orders"
+_DEFAULT_ORDERS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "config" / "standing_orders"
 
 # Department mapping: agent_type -> department name
 _AGENT_DEPARTMENTS: dict[str, str] = {
