@@ -2,6 +2,8 @@
 
 ProbOS is organized as a starship crew — specialized teams of agents working together to keep the system operational, secure, and evolving. Each team is a dedicated agent pool with distinct responsibilities. The Captain (human operator) approves major decisions through a stage gate.
 
+ProbOS doesn't just orchestrate agents — it gives them a civilization to come together. Trust they earn, consensus they participate in, memory they share, relationships that strengthen through learning, a federation they can grow into. Other frameworks dispatch tasks. ProbOS provides the social fabric that makes cooperation emerge naturally.
+
 ## Crew Structure
 
 ```
@@ -67,7 +69,11 @@ Tools are the natural mapping target for MCP — external MCP tools become ProbO
 
 ### The Federation
 
-Each ProbOS instance is a ship. Multiple instances form a federation:
+*"Cooperation at scale — across agents and humans together."*
+
+Each ProbOS instance is a ship. Multiple instances form a federation. But the federation extends beyond ProbOS — any capable agent, regardless of origin, can join the crew. There will always be a better agent somewhere. The strategy is cooperation, not competition: federate with the best, wherever they are.
+
+ProbOS's value isn't any single agent's capability — it's the **orchestration layer**: trust network, consensus, Hebbian routing, escalation, and the human approval gate that makes diverse agents work together better than any of them alone. A single officer is skilled, but a well-run ship with a diverse crew accomplishes more. The Enterprise's strength wasn't one species — it was Vulcan logic alongside Betazoid empathy alongside Klingon tenacity alongside android precision. Different cognitive architectures, unified by trust and shared mission. ProbOS applies the same principle to AI: Claude's reasoning, GPT's generation, Copilot's search, open-source models' cost efficiency — each brings what the others lack. The trust network and consensus layer turn that diversity into strength. ProbOS is the ship that takes you to the Nooplex — human-agent cooperation at scale.
 
 | Star Trek Concept | ProbOS Equivalent | Status |
 |---|---|---|
@@ -75,6 +81,7 @@ Each ProbOS instance is a ship. Multiple instances form a federation:
 | Ship departments | Agent pools (crew teams) | In progress |
 | Ship's computer | Runtime + CodebaseIndex + Knowledge Store | Built |
 | Federation | Federated ProbOS instances | Built (Phase 29) |
+| Visiting officers | External AI tools (Claude Code, Copilot, etc.) | Roadmap |
 | Diplomatic relations | Trust transitivity between nodes | Roadmap |
 | Shared intelligence | Knowledge federation | Roadmap |
 | Prime Directive | Safety constraints, boundary rules, human gate | Built |
@@ -95,8 +102,8 @@ Each ProbOS instance is a ship. Multiple instances form a federation:
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
 | 30 | Self-Improvement Pipeline | All Teams | Capability proposals, stage contracts, QA pool, evolution store, human gate |
 | 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring, secrets management, runtime sandboxing, network egress policy, inference audit, data governance |
-| 32 | Engineering Team | Engineering | Automated performance optimization, maintenance agents, build agents, LLM resilience, observability export, CI/CD, backup/restore, storage abstraction layers, containerized deployment |
-| 33 | Operations Team | Ops | Formalized resource management, workload balancing, system coordination, LLM cost tracking |
+| 32 | Engineering Team | Engineering | Automated performance optimization, maintenance agents, build agents, LLM resilience, observability export, CI/CD, backup/restore, storage abstraction layers, containerized deployment, confidence communication, adaptive communication style, decision audit trail |
+| 33 | Operations Team | Ops | Formalized resource management, workload balancing, system coordination, LLM cost tracking, crew mailbox, self-claiming task queue, competing hypotheses, file ownership, bridge alerts |
 
 ---
 
@@ -164,6 +171,20 @@ ProbOS already has runtime self-awareness — it knows what agents are doing, th
 - Indexed by concept, not just filename ("how does trust work?" maps to the relevant files)
 - No LLM calls — pure AST/inspection-based indexing
 
+**Semantic Code Search (CodebaseIndex Enhancement)**
+
+*Inspired by GitHub Copilot coding agent's semantic search tool (March 2026) — meaning-based retrieval when exact names/patterns are unknown.*
+
+Current `query()` uses word-level keyword scoring. This works when the caller knows approximate terminology, but fails for conceptual queries: "how does the system handle untrusted input?" won't match `code_validator.py` or `red_team.py` unless those exact words appear in comments or docstrings. Semantic search closes this gap.
+
+- **Embedding index** — at startup, CodebaseIndex generates vector embeddings for each file's summary, class docstrings, and function signatures. Uses ChromaDB (already a dependency for episodic memory) as the vector store
+- **Hybrid query** — `query()` combines keyword scoring (fast, exact) with semantic similarity (meaning-based). Results merged with reciprocal rank fusion
+- **Chunking strategy** — embed at class/function granularity, not whole files. Each chunk carries metadata (file path, line range, layer, team) for filtering
+- **Incremental updates** — when CodebaseIndex rebuilds (new agents, modified files), only re-embed changed chunks. Startup cost amortized across sessions
+- **No runtime LLM calls** — embeddings generated by a small local model or pre-computed at build time. Keeps the "no LLM calls for indexing" principle intact (embeddings ≠ LLM inference)
+- **Crew access** — any CognitiveAgent querying CodebaseIndex gets semantic search transparently. The Architect's Layer 2 file selection improves: "find files related to trust scoring" returns trust_network.py, routing.py, consensus.py even without keyword overlap
+- **External proxy** — if ProbOS federates with GitHub Copilot (see External AI Tools below), it gains access to Copilot's semantic search over the same repo by delegation, providing a complementary external perspective
+
 **`codebase_knowledge` Skill (Shared Crew Capability)**
 
 - Any CognitiveAgent can use this skill to query the codebase
@@ -203,6 +224,43 @@ Currently, reflection is a single LLM call with pre-assembled context. If the co
 - **Two-pass reflection** — first pass generates a draft response; second pass verifies claims in the draft against CodebaseIndex queries, revises any contradictions, then finalizes
 - **Bounded iteration** — max 2-3 tool calls per reflection to keep latency reasonable; not a full agent loop, just targeted verification
 - **Cost-aware** — tool-augmented reflection only activates for introspection and analysis queries, not simple command responses
+
+**Confidence Communication in Responses**
+
+*"Insufficient data" is honest — but "I'm 72% confident based on 3 trust observations" is more useful.*
+
+ProbOS tracks confidence and uncertainty deeply (Bayesian Beta distributions, Shapley values, per-agent confidence scores) but never surfaces this information in natural language responses. The system knows when it's uncertain but doesn't tell the Captain.
+
+- **Reflect prompt enhancement** — instruct the reflection LLM to communicate uncertainty levels when they exist: "Based on the trust network, Agent X has high uncertainty (only 4 observations)" rather than flat assertions
+- **Confidence qualifiers** — when the Decomposer routes to an agent with low confidence (<0.5), the response should note this: "This result comes from an agent with limited track record"
+- **Trust context in responses** — when consensus involves disagreement, surface the dissent: "3 of 4 agents agreed, but Agent Y dissented because..."
+- **Graduated disclosure** — simple queries get clean answers; complex/ambiguous queries get confidence-tagged responses. Don't overwhelm the Captain with statistics on trivial operations
+- **SystemSelfModel integration** — confidence communication depends on AD-318 (SystemSelfModel) providing the data; this enhancement consumes that data in the reflect/decompose output
+
+**Adaptive Communication Style**
+
+*"A new ensign gets detailed explanations. A seasoned Captain gets terse status reports."*
+
+The Ship's Computer currently responds at a fixed technical depth regardless of who's asking or what they prefer. An adaptive style system allows users to set preferences that shape response format and detail level.
+
+- **User preference store** — lightweight config (per-user or per-instance) with settings: `technical_depth` (brief/standard/detailed), `formality` (casual/professional/LCARS), `response_length` (concise/normal/verbose)
+- **Default profiles** — "Captain" (terse, status-focused, high familiarity assumed), "Engineer" (technical detail, code references, architecture context), "Observer" (explanatory, first-principles, no jargon)
+- **Runtime injection** — preferences injected into the reflect prompt alongside SYSTEM CONTEXT, shaping the LLM's response style without changing content accuracy
+- **Slash command** — `/style brief` or `/style detailed` to change on the fly. Persisted across sessions
+- **No accuracy compromise** — adaptive style changes *how* information is presented, never *what* information is presented. The grounding rules (AD-317) still apply regardless of style
+
+**Decision Audit Trail**
+
+*"Captain's log, supplemental. Explain every decision, not just the result."*
+
+Trust events, episodes, escalation results, and agent selections exist as separate data stores. There is no unified "reasoning trace" that links a user's request through decomposition → agent selection → execution → reflection into a single auditable narrative.
+
+- **`DecisionTrace` record** — a structured log entry created per user request that captures: original query, decomposition rationale (which intents identified, why), agent selection (which agents considered, trust scores, why the chosen agent was selected), execution outcome (success/failure, confidence), reflection summary, and any escalation events
+- **Stored in episodic memory** — each trace is an episode tagged with `decision_trace` type, searchable via `/recall` or IntrospectionAgent
+- **User-accessible** — `/explain` (enhanced) reconstructs the full reasoning narrative from the trace: "You asked X → I identified intent Y → routed to Agent Z (trust: 0.85, confidence: 0.92) → Agent Z returned result → I reflected and synthesized this response"
+- **Captain's review** — when audit trail shows repeated low-confidence routing or escalation patterns, the Captain can identify systemic issues (e.g., "Agent X is always the fallback — maybe we need a specialist")
+- **Post-hoc analysis** — dreaming engine can consolidate decision traces to identify patterns: which decomposition strategies lead to best outcomes, which agent selections correlate with escalation
+- **Complement to AD-319** — Pre-Response Verification (AD-319) checks *before* responding; Decision Audit Trail documents *what happened and why* for later review
 
 ---
 
@@ -278,11 +336,11 @@ Automated performance optimization, maintenance, and construction. The team that
 - **Builder Agent** — executes build prompts, constructs new capabilities (bridges to external coding agents initially)
 - **Architect Agent** — reads codebase, produces build-prompt-grade proposals that the Builder can execute autonomously
 
-**Automated Build Pipeline — Northstar (AD-311+)**
+**Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE**
 
 *"The ship builds itself — with the Captain's approval."*
 
-The Architect and Builder agents form an automated design-and-build pipeline. The Architect reads full source via CodebaseIndex (import graphs, caller analysis, API surface verification), produces structured proposals with embedded BuildSpecs, and the Builder executes them. The Builder now supports both file creation and search-and-replace editing of existing files (AD-313). Ship's Computer identity grounds the Decomposer's self-knowledge (AD-317), with a four-level progression extending it: SystemSelfModel (AD-318), Pre-Response Verification (AD-319), and Introspection Delegation (AD-320). Remaining gaps: Builder has no test-fix retry loop (AD-314), Architect proposals need stronger validation (AD-316a).
+The Architect and Builder agents form an automated design-and-build pipeline. The Architect reads full source via CodebaseIndex (import graphs, caller analysis, API surface verification), produces structured proposals with embedded BuildSpecs, and the Builder executes them with test-fix retry (AD-314). Ship's Computer identity grounds the Decomposer's self-knowledge (AD-317), with a four-level progression: SystemSelfModel (AD-318), Pre-Response Verification (AD-319), and Introspection Delegation (AD-320). A GPT-5.4 code review (AD-325–329) hardened runtime safety, validator correctness, and HXI resilience. All 18 steps complete.
 
 Inspired by: SWE-agent (Princeton NLP) for tool design, Aider for repo maps, Agentless (UIUC) for localize-then-repair pipelines, AutoCodeRover for call graph analysis.
 
@@ -290,12 +348,129 @@ Inspired by: SWE-agent (Princeton NLP) for tool design, Aider for repo maps, Age
 - **AD-312: CodebaseIndex Structured Tools** *(done)* — `find_callers()`, `find_tests_for()`, `get_full_api_surface()` methods. Expanded `_KEY_CLASSES` with CodebaseIndex, PoolGroupRegistry, Shell.
 - **AD-315: CodebaseIndex Import Graph** *(done)* — AST-based `_import_graph` and `_reverse_import_graph` built at startup. `get_imports()` and `find_importers()` query methods. Architect Layer 2a+ traces imports of selected files, expanding context up to 12 files.
 - **AD-313: Builder File Edit Support** *(done)* — Search-and-replace `===SEARCH===`/`===REPLACE===` MODIFY mode in `execute_approved_build()`. Builder `perceive()` reads target files for accurate SEARCH blocks. `ast.parse()` validation after writes. Old `===AFTER LINE:===` format deprecated.
-- **AD-317: Ship's Computer Identity** — The Decomposer is ProbOS's voice — the Ship's Computer from Star Trek. This AD gives it a soul. Modeled after the LCARS Computer (TNG/Voyager era): calm, precise, authoritative, never panics, never fabricates. Injected as a preamble section in the Decomposer's system prompt. Components: (1) **Identity & Voice** — "You are the Ship's Computer aboard this ProbOS instance. You are calm, precise, and direct. You report from sensors, not imagination. You never speculate without flagging it as speculation. You say 'unable to comply' or 'insufficient data' rather than fabricating an answer."; (2) **Capability grounding** — dynamically inject registered agents, intents, and slash commands so the Computer knows what systems are actually installed. "Computer, what can you do?" returns real capabilities, not training-data imagination; (3) **Self-diagnostic / LCARS bridge** — query CodebaseIndex at response time to ground answers about the system in actual code structure. The Computer knows what modules exist, what agents are registered, what the architecture looks like — because it reads its own sensors; (4) **Status awareness** — inject current runtime state (active agents, pool health, recent errors). "Computer, status report" returns real telemetry, not a generic description of what monitoring systems should look like; (5) **Honest uncertainty protocol** — "Unable to comply: that system is not part of the current configuration." / "Insufficient data to provide an accurate answer." / "That capability is planned but not yet installed (see AD-NNN)." Distinguish built vs. planned vs. hypothetical; (6) **Disambiguation** — when requests are ambiguous, respond "Specify parameters" rather than guessing; (7) **Proactive alerts** — warn when systems approach critical thresholds (pool exhaustion, trust degradation, memory pressure) without being asked. The Computer doesn't wait to be asked about red alerts; (8) **Confirmation protocol** — "Acknowledged" / "Working..." / "Complete" status responses that give the Captain clear feedback on command processing.
-- **AD-314: Builder Test-Fix Loop** — After writing code, run tests. If failures, feed errors back to the LLM for a fix attempt (2-3 iterations max). Currently the Builder does a single test pass with no retry.
-- **AD-316a: Architect Proposal Validation + Pattern Recipes** — Post-generation validation in `act()`: enforce non-empty TEST_FILES, verify TARGET_FILES exist in file tree, warn on missing method signatures. Embed pattern recipe templates directly in Architect `instructions` string for common change types (new agent, new slash command, new API endpoint) — each recipe lists required files, typical test file, and structural checklist. Zero LLM calls, zero storage overhead.
-- **AD-318: SystemSelfModel** — Lightweight, always-current in-memory dataclass holding verified runtime facts (pool count, agent roster, registered intents, recent errors, uptime, last capability gap). Updated reactively on pool/agent changes. Replaces ad-hoc `runtime_summary` from AD-317. Injected into WorkingMemorySnapshot so the Decomposer never starts cold. Level 2 of self-knowledge grounding (rules → **data** → verification → delegation).
-- **AD-319: Pre-Response Verification** — Fast validation pass on Decomposer output before it reaches the Captain. Regex check against SystemSelfModel for unregistered capabilities, unknown agent names, unbuilt feature claims. Optional fast-tier LLM check for complex reflective responses. The "read before you speak" pattern. Level 3 of self-knowledge grounding.
-- **AD-320: Introspection Delegation** — Self-knowledge questions ("what agents do you have?", "how does trust work?") route to IntrospectionAgent first. IntrospectionAgent queries SystemSelfModel + CodebaseIndex + episodic memory, returns grounded facts. Decomposer synthesizes from verified data instead of generating from LLM training knowledge. Level 4 of self-knowledge grounding.
+- **AD-317: Ship's Computer Identity** *(done)* — The Decomposer is the Ship's Computer (LCARS, TNG/Voyager). PROMPT_PREAMBLE with 6 grounding rules, dynamic System Configuration section with tier counts, runtime_summary injection as SYSTEM CONTEXT, confabulating examples fixed. Level 1 of self-knowledge grounding (prompt rules).
+- **AD-314: Builder Test-Fix Loop** *(done)* — After writing code, run tests. On failure, feed errors back to the LLM for fix attempts (up to 2 retries). `_run_tests()` helper extracted, `_build_fix_prompt()` for fix context, `max_fix_attempts` parameter on `execute_approved_build()`, `fix_attempts` tracked in BuildResult. Two flaky network tests fixed with proper mocks.
+- **AD-316a: Architect Proposal Validation + Pattern Recipes** *(done)* — New `_validate_proposal()` method with 6 programmatic checks (non-empty required fields, non-empty test_files, target/reference file paths verified against file tree with directory pattern matching, valid priority, description minimum length). Advisory warnings in `act()` result — non-blocking. 3 Pattern Recipes (New Agent, New Slash Command, New API Endpoint) appended to `instructions` with file paths, reference files, and structural checklists. Zero LLM calls. 14 tests.
+- **AD-318: SystemSelfModel** *(done)* — `SystemSelfModel` dataclass in `cognitive/self_model.py`: identity (version), topology (pool_count, agent_count, per-pool `PoolSnapshot` with name/type/count/department, departments, intent_count), health (system_mode active/idle/dreaming, uptime_seconds, recent_errors capped at 5, last_capability_gap). `to_context()` serializes to compact text (<500 chars). `_build_system_self_model()` on runtime replaces `_build_runtime_summary()`. `_record_error()` helper and capability gap tracking wired into `process_natural_language()`. Level 2 of self-knowledge grounding (rules → **data** → verification → delegation). 9 new + 1 updated tests.
+- **AD-319: Pre-Response Verification** *(done)* — `_verify_response()` method on runtime with 5 programmatic checks: pool count claims, agent count claims, fabricated department names (context-aware regex), fabricated pool names (with generic word exclusion), system mode contradictions. Appends `[Note: ...]` correction footnote with verified facts when violations detected — non-blocking, zero-LLM. Wired at both response paths: no-nodes `dag.response` and nodes `reflection` (self_model passed through `_execute_dag()`). Warning logging on violations. Level 3 of self-knowledge grounding (rules → data → **verification** → delegation). 14 tests.
+- **AD-320: Introspection Delegation** *(done)* — `_grounded_context()` on IntrospectionAgent builds detailed verified text from `SystemSelfModel` (per-pool breakdowns by department, intent listing, health). 4 intent handlers (`_agent_info`, `_system_health`, `_team_info`, `_introspect_system`) enriched with `grounded_context` key. REFLECT_PROMPT rule 7 treats it as VERIFIED SYSTEM FACTS. `_summarize_node_result()` preserves outside truncation. Level 4 of self-knowledge grounding (rules → data → verification → **delegation**). 12 tests.
+
+#### Runtime Safety & Correctness (GPT-5.4 Code Review — AD-325 through AD-329)
+
+*Identified by GPT-5.4 deep code review. All findings verified against source with line numbers confirmed.*
+
+- **AD-325: Escalation Tier 3 Timeout** *(done)* — `_tier3_user()` now wraps user callback in `asyncio.wait_for(timeout=user_timeout)` (default 120s). On timeout, returns `EscalationResult(resolved=False, user_approved=None)` with descriptive reason. User-wait seconds accumulated on timeout for accurate DAG deadline accounting. New `user_timeout` constructor parameter on `EscalationManager`. 5 tests.
+- **AD-326: API Task Lifecycle & WebSocket Hardening** *(done)* — `_background_tasks` set tracks all pipeline tasks with `_track_task()` helper (7 call sites converted). `_safe_send()` inner coroutine catches per-client `send_json()` failures and prunes dead WebSocket clients. `GET /api/tasks` endpoint for Captain visibility. FastAPI `_lifespan` handler drains/cancels tasks on shutdown. 5 tests.
+- **AD-327: CodeValidator Hardening** *(done)* — (a) `_check_schema()` now rejects code with multiple `BaseAgent` subclasses (was silently picking first). (b) New `_check_class_body_side_effects()` scans class bodies for bare function calls, loops, and conditionals that execute at import time. Both early-return patterns consistent with existing validator flow. 4 tests.
+- **AD-328: Self-Mod Durability & Bloom Fix** *(done)* — (a) Knowledge store and semantic layer post-deployment failures now logged with `logger.warning(exc_info=True)` instead of bare `except: pass`. Partial failure warnings propagated in `self_mod_success` event and displayed to Captain. (b) `self_mod_success` event includes `agent_id`. Bloom stores `agent_id` (falling back to `agent_type`), lookup uses `a.id || a.agentType`. 3 Python + 1 Vitest tests.
+- **AD-329: HXI Canvas Resilience & Component Tests** *(done)* — `connections.tsx` pool centers cached in `useMemo` keyed on `agentCount`, reactive `agents` subscription replaced with ref + count-based re-render pattern. `CognitiveCanvas.tsx` and `AgentTooltip.tsx` action subscriptions (`setHoveredAgent`, `setPinnedAgent`) replaced with `useStore.getState()` calls. 8 new Vitest tests covering pool center computation, connection filtering, tooltip state, and animation event clearing. 30 Vitest total.
+**Sensory Cortex Architecture — Northstar II (AD-330+)**
+
+*"The human brain processes 10 bits per second of conscious thought from 1 billion bits per second of sensory input. The solution isn't a wider channel — it's smarter selection."*
+
+Every CognitiveAgent in ProbOS faces the same fundamental bottleneck: the LLM context window is a narrow conscious channel receiving a massive information stream. The Decomposer can't fit a 10K-line build log. The Architect times out on large files. The Builder starves for context on multi-file changes. Future multi-modal agents processing screenshots, telemetry, and federated state will face this at orders of magnitude greater scale.
+
+The brain solved this problem through architecture, not bandwidth. ProbOS's Sensory Cortex Architecture applies the same biological principles to AI agent cognition:
+
+- **Predictive Coding** — The brain maintains a generative model and only processes *prediction errors* (what's surprising). An LLM already "knows" Python, FastAPI, pytest from training. Don't send confirmed predictions — send only what's unique to THIS codebase, THIS change. Delta encoding against the model's own priors.
+- **Hierarchical Abstraction** — The visual cortex processes in layers: V1 (edges) → V2 (contours) → V4 (shapes) → IT (objects). By the time "cat" reaches consciousness, billions of pixels have been compressed to a concept. Code should be represented at multiple resolution levels: L0 (raw source) → L1 (AST outline) → L2 (semantic summary) → L3 (interface contract) → L4 (pattern label). The LLM gets L0 only for lines being edited; everything else at L2-L4. 10x coverage in the same context budget.
+- **Peripheral vs Foveal Processing** — The fovea (2° center) processes at high resolution; peripheral vision detects change at low resolution and redirects attention. Fast/cheap models as sensory cortex (peripheral), expensive model as executive function (foveal). Parallel fast-tier scans maintain a salience map; the deep-tier model processes only what matters.
+- **Chunking with Expertise** — Working memory holds ~7 chunks, but an expert chess player's "chunk" encodes an entire board position. Pattern-label code regions ("this is a Strategy pattern", "this is a pub-sub handler") so the LLM chunks at a higher level. One label replaces thousands of implementation tokens.
+- **Gist Extraction** — The brain categorizes a scene in 100ms before any detailed processing. A rapid pre-scan produces a compressed semantic map ("this is an API endpoint addition touching routing, shell, and tests") that guides all subsequent context selection.
+- **Attention as Resource Allocation** — Trust scores (emotional valence), Hebbian weights (learned salience), EmergentDetector (novelty/dopamine), and task DAG dependencies (goal-directed attention) directly influence context budget allocation. High-trust agent results get more context. Novel/surprising patterns override routine data.
+- **Dreaming as Abstraction Factory** — Dreams don't just consolidate — they produce the hierarchical abstractions that make future perception efficient. Dream about today's build failures → produce Level 4 pattern: "Builder timeout = file >1000 lines + deep tier." Next perception cycle uses dream-built predictions, processing only prediction errors.
+
+```
+                          SENSORY CORTEX ARCHITECTURE
+
+  Raw Input                Perception Pipeline             Working Memory (LLM)
+  ┌──────────┐      ┌─────────────────────────┐      ┌──────────────────────┐
+  │ Source    │──┐   │  L4: Pattern labels     │      │                      │
+  │ Logs     │  │   │  L3: Interface contracts │──────│  Focused context     │
+  │ Tests    │  ├──→│  L2: Semantic summaries  │      │  (fits in window)    │
+  │ Telemetry│  │   │  L1: AST outlines        │      │                      │
+  │ Images   │──┘   │  L0: Raw (selected only)│      │  Prediction errors   │
+  │ Fed state│      └─────────┬───────────────┘      │  only, not confirmed │
+  └──────────┘                │                       │  priors              │
+                    ┌─────────┴───────────────┐      └──────────────────────┘
+                    │  Salience Filter         │
+                    │  Trust × Hebbian ×       │
+                    │  Novelty × Task priority │
+                    └─────────────────────────┘
+```
+
+This architecture has implications far beyond code generation:
+
+- **Multi-Modal Perception Gateway** — Screenshots through a "Visual Cortex" that extracts `{gist: "settings page", elements: [{button: "Save", state: "disabled"}], anomalies: ["layout overflow"]}`. Telemetry through an "Analytical Cortex" that extracts anomaly timestamps. Voice through an "Auditory Cortex" that extracts intent. Each modality gets a specialized processor that compresses to standardized hierarchical representations.
+- **Federation as Social Cognition** — Federated ships exchange Level 3-4 abstractions, not raw state. The brain can't transmit its full neural state to another brain — language itself is lossy compression. Ship A tells Ship B: "Builder available, trust 0.85, Python specialist, idle" not the full agent registry.
+- **Decomposer / Architect / All Agents** — Every CognitiveAgent gets a perception pipeline. The Decomposer receives pre-digested meaning from logs, history, and state — not raw data. The Architect perceives the codebase through hierarchical abstractions, not full source dumps.
+
+#### Phase 1: Transporter Pattern (Builder — AD-330 through AD-336)
+
+*The first concrete implementation. Prove the architecture in the Builder, then generalize.*
+
+The Builder faces the most acute version of the bottleneck: generating code for 1000+ line files in a single LLM call. The Transporter Pattern applies decompose-execute-merge to code generation — MapReduce for building software.
+
+```
+BuildBlueprint ─→ ChunkDecomposer ─→ ┌─ Chunk 1 ──→ LLM ──→ Output 1 ─┐
+                                      │  Chunk 2 ──→ LLM ──→ Output 2  │──→ Assembler ──→ Validator ──→ Final
+                                      │  Chunk 3 ──→ LLM ──→ Output 3  │
+                                      └─ Chunk N ──→ LLM ──→ Output N ─┘
+```
+
+**Components (starship transporter metaphor):**
+
+1. **Pattern Buffer (BuildBlueprint)** — Enhanced specification format that captures function signatures, interface contracts, and inter-chunk dependencies. The shared "truth" that all chunks reference. Extends the existing BuildSpec with structural metadata the decomposer needs.
+
+2. **Dematerializer (ChunkDecomposer)** — Analyzes the BluePrint and breaks it into independent ChunkSpecs. Each chunk specifies: what to generate (a function, a class, a test block), what context it needs (interface signatures, imports, type definitions), and what it produces (function signature, exports). The decomposer uses CodebaseIndex and import graph data to identify natural seams.
+
+3. **Matter Stream (Parallel Chunk Execution)** — Multiple Builder LLM calls run simultaneously. Each chunk gets only its required context (interface contracts + minimal surrounding code), keeping every call well within context budget. Uses `asyncio.gather()` for parallel execution with per-chunk timeout.
+
+4. **Rematerializer (ChunkAssembler)** — Merges chunk outputs into unified file changes. Handles import deduplication, ordering (classes before functions that reference them), and conflict detection when two chunks modify the same region.
+
+5. **Heisenberg Compensator (Interface Validator)** — AST-based verification that assembled code is correct: function signatures match their declarations, imports resolve, cross-chunk references are consistent, type annotations align. Catches errors that arise from independent generation. Zero-LLM validation pass.
+
+6. **HXI Integration** — Visualize chunks on the Cognitive Canvas as parallel transporter streams. Show decomposition plan, per-chunk generation progress, assembly result with per-chunk attribution. Captain can inspect individual chunks before approving the assembled result.
+
+**AD Breakdown:**
+
+- **AD-330: BuildBlueprint & ChunkSpec** — New data structures extending BuildSpec. `BuildBlueprint` adds `interface_contracts` (function signatures, class APIs that chunks must conform to), `shared_imports`, and `chunk_hints` (suggested decomposition boundaries). `ChunkSpec` captures what to generate, required context, expected output signature, and dependencies on other chunks. `ChunkResult` uses a **Structured Information Protocol** (adapted from LLM×MapReduce): `generated_code` (extracted information), `decisions` (rationale — why specific implementation choices were made), `output_signature` (what was actually produced), and `confidence: int` (1-5, reflecting contextual completeness — chunks with full interface contracts score higher than those working from minimal hints). Confidence scores are critical for conflict resolution in assembly. Both are dataclasses in `cognitive/builder.py` or a new `cognitive/transporter.py` module.
+
+- **AD-331: ChunkDecomposer** — Analyzes a BuildBlueprint and produces a list of ChunkSpecs. Uses CodebaseIndex (import graph, class structure) to identify natural decomposition boundaries: one chunk per new function/method, one chunk per test class, one chunk per file in multi-file builds. Each ChunkSpec includes only the context slices needed for that chunk (interface contracts, not full file content). Validates that chunks cover the full blueprint and that inter-chunk dependencies form a DAG.
+
+- **AD-332: Parallel Chunk Execution** — New `_execute_chunks()` method on BuilderAgent. Takes a list of ChunkSpecs, runs LLM generation for each in parallel via `asyncio.gather()`. Each call uses a focused prompt with only the chunk's required context. Per-chunk timeout, retry on failure, partial success handling (some chunks succeed, others fail). Results collected as `ChunkResult` objects with generated code + metadata.
+
+- **AD-333: ChunkAssembler** — Three-stage assembly pipeline adapted from LLM×MapReduce's Map→Collapse→Reduce pattern. **Map** outputs are the ChunkResults from AD-332. **Collapse stage**: when chunk outputs exceed the assembler's context budget, group related chunks (same file, same class) and pre-merge them iteratively until total output fits — this allows the Transporter Pattern to scale to arbitrarily large builds, not just "large enough to chunk but small enough to reassemble in one pass." **Reduce stage**: final merge into unified file content. Handles: import deduplication and ordering, function/class ordering within files, indentation normalization, **confidence-weighted conflict resolution** (when chunks produce conflicting imports or overlapping signatures, higher-confidence chunk wins). Produces the same file-block output format the existing Builder pipeline expects, so downstream (git commit, test-fix loop) works unchanged.
+
+- **AD-334: Interface Validator (Heisenberg Compensator)** — AST-based post-assembly verification. Checks: all function calls resolve to defined functions, all imports are present, class method signatures match interface contracts from the BluePrint, no duplicate definitions, no orphaned code. **Confidence-aware validation**: low-confidence chunks (≤2) trigger stricter checking (verify every reference resolves, not just signatures). Returns validation result with specific errors and per-chunk attribution. Zero-LLM — pure static analysis. On failure, feeds errors back for targeted re-generation of failing chunks (not full rebuild).
+
+- **AD-335: HXI Transporter Visualization** — WebSocket events for chunk lifecycle (`chunk_started`, `chunk_completed`, `chunk_failed`, `assembly_started`, `assembly_completed`). Cognitive Canvas shows parallel "matter streams" during generation. IntentSurface shows decomposition plan and per-chunk results. Assembly diff view with chunk attribution highlights.
+
+- **AD-336: End-to-End Integration & Fallback** — Wire Transporter Pattern into `execute_approved_build()`. Decision logic: use Transporter when combined file content exceeds `_LOCALIZE_THRESHOLD` or when blueprint specifies >2 target files or >3 functions. Fall back to existing single-pass generation for small builds. Test with real multi-file builds. Per-chunk test-fix retry integration.
+
+#### Phase 2: Generalized Perception Pipeline (Future)
+
+*Extract the architecture from the Builder and make it available to all CognitiveAgents.*
+
+- **PerceptionPipeline ABC** — Shared base class with hierarchical abstraction levels (L0-L4), salience filtering, and predictive coding hooks. Any CognitiveAgent can plug in a perception pipeline to compress its input before the LLM call.
+- **CodePerception** — Builder/Architect specialization. Multi-resolution code representations with AST-aware abstraction.
+- **LogPerception** — Decomposer/Diagnostician specialization. Build logs, error traces, and test output compressed to semantic summaries with anomaly highlighting.
+- **TelemetryPerception** — VitalsMonitor/Performance specialization. Time series compressed to pattern labels and anomaly timestamps.
+- **VisualPerception** — Multi-modal specialization. Screenshots/UI state compressed to element trees with anomaly flags.
+- **FederationPerception** — Federation specialization. Remote ship state compressed to capability summaries with trust scores.
+- **Dream-Driven Prediction Models** — Dreaming consolidation produces Level 3-4 abstractions that become the predictive coding baseline. Future perception cycles process only prediction errors (what changed since last dream), not raw data.
+- **Attention Budget Allocator** — Trust scores, Hebbian weights, novelty signals, and task priority dynamically allocate context budget across perception channels. High-trust, high-salience, novel information gets more tokens.
+
+**Design Principles:**
+
+- **Graceful degradation** — Single-file, small builds still use the proven single-pass path. Transporter only activates when the problem is too large for one context window.
+- **Composable** — Each component (decomposer, executor, assembler, validator) is independently testable and replaceable.
+- **Observable** — Every step emits events. The Captain sees what's happening. Chunks can be inspected, approved, or rejected individually.
+- **No new agents** — The Transporter Pattern enhances the existing BuilderAgent, not a separate agent. The Builder gains the ability to decompose and parallelize, but it's still the same agent in the same pool.
+- **Biology-first** — When in doubt, ask "how does the brain solve this?" The brain had 500 million years of evolution to optimize information processing under bandwidth constraints. Respect those solutions.
+
+Inspired by: The human brain's 10 bps conscious bottleneck (Manfred Zimmermann, 1986), Karl Friston's Free Energy Principle and predictive coding, the visual cortex hierarchy (Hubel & Wiesel), George Miller's chunking (1956), MapReduce (Google, 2004) for decompose-execute-merge, LLM×MapReduce (Zhou et al., 2024) for structured information protocol and confidence-calibrated chunk assembly, Cursor's multi-file editing, Microsoft's CodePlan for inter-procedural edit planning, the Star Trek transporter's matter stream concept.
+
 - **Infrastructure Agent** — disk space monitoring, dependency health, environment validation
 - Existing: PoolScaler handles some Ops/Engineering overlap
 
@@ -396,6 +571,73 @@ Formalize resource management and system coordination as an agent pool.
 - **Response-Time Scaling** (deferred from Phase 8) — latency-aware pool scaling. Instrument `broadcast()` with per-intent latency tracking, scale up pools where response times exceed SLA thresholds
 - **LLM Cost Tracker** — per-agent, per-intent, and per-DAG token usage accounting. Budget caps (daily/monthly), cost attribution via Shapley (which agents are expensive vs. valuable), per-workflow cost breakdowns for end-to-end visibility, alerts when spend exceeds thresholds. Provides the data foundation for commercial ROI analytics. Note: accurate cost attribution will require a proper tokenizer library (e.g., `tiktoken` for OpenAI models, model-specific tokenizers for others) — current `len(content) // 4` estimation is insufficient for billing-grade accuracy
 - Existing: PoolScaler (built), TaskScheduler (Phase 24c roadmap), IntentBus demand tracking (built)
+
+**Crew Mailbox — Direct Agent-to-Agent Messaging**
+
+*Inspired by Claude Code Agent Teams' inter-agent mailbox.*
+
+Currently ProbOS agents communicate only via the intent bus (broadcast to pools) or consensus (voting). There is no way for one agent to send a targeted message to a specific agent. This forces all coordination through the Decomposer, creating a bottleneck.
+
+- **`CrewMailbox` service** — registered on the runtime, agents send/receive typed messages by agent ID
+- **Use case: Architect↔Builder clarification** — during a build, the Builder encounters ambiguity in the BuildSpec and asks the Architect directly ("Which method signature should I use?") without routing through the Decomposer or requiring Captain intervention
+- **Use case: Medical↔Engineering handoff** — Diagnostician identifies a performance anomaly and messages the relevant Engineering agent directly with diagnostic context
+- **Message types** — `clarification_request`, `status_update`, `finding_report`, `handoff` (with typed payloads)
+- **Delivery model** — async mailbox (not synchronous RPC). Recipient processes messages in its next `perceive()` cycle. Unread messages expire after configurable TTL
+- **Trust-gated** — agents can only message agents they have positive trust scores with (prevents spam/abuse in federated scenarios)
+- **Audit trail** — all messages logged to episodic memory for post-hoc analysis
+
+**Self-Claiming Task Queue**
+
+*Inspired by Claude Code Agent Teams' shared task list with self-claim.*
+
+Currently ProbOS DAGExecutor assigns work centrally — the Decomposer decomposes, the executor dispatches. Self-claiming adds a complementary pattern where agents pull work from a shared queue based on their capabilities and availability.
+
+- **`TaskQueue` service** — shared queue of pending work items, visible to all agents in a pool
+- **Claim protocol** — agents inspect the queue during idle cycles, claim tasks matching their `_handled_intents`, file-lock or atomic CAS prevents double-claim
+- **Use case: parallel builds** — multiple BuildSpecs queued, multiple Builder instances (pool scaled) each claim one and work independently
+- **Use case: investigation sweep** — Science team agents self-claim codebase analysis tasks from a queue rather than having each assigned individually
+- **Task dependencies** — tasks can declare `depends_on` (other task IDs). Dependent tasks remain blocked until prerequisites complete. Automatic unblocking on dependency completion
+- **Complements DAGExecutor** — DAGExecutor handles structured decomposition (query → sub-tasks → aggregate). TaskQueue handles unstructured work pools where any capable agent can contribute
+
+**Competing Hypotheses / Adversarial Investigation**
+
+*Inspired by Claude Code Agent Teams' "spawn agents with competing theories, have them debate" pattern.*
+
+ProbOS has red team agents for adversarial verification, but not a structured pattern where multiple agents explore competing theories and actively try to disprove each other's findings before converging.
+
+- **Investigation Team pattern** — spawn N agents (Science team) with different hypotheses about the same problem. Each agent investigates independently, then agents exchange findings and actively challenge each other
+- **Debate protocol** — after investigation phase, agents enter a structured debate: present evidence → challenge claims → rebut → converge. Dissenting positions recorded, not suppressed
+- **Convergence scoring** — use trust-weighted voting to identify the hypothesis with the strongest evidence. Bayesian update on agent trust based on whether their hypothesis was validated
+- **Use case: root cause analysis** — when a system anomaly occurs, spawn 3 investigators with different theories. The survivor hypothesis drives the fix
+- **Use case: design review** — Architect proposes, multiple reviewers critique from different angles (security, performance, maintainability), synthesize into a stronger proposal
+- **Quality gate hook** — upon convergence, the winning hypothesis must pass a verification step before being accepted (similar to Claude Code's `TaskCompleted` hook pattern)
+
+**Bridge Alerts — Proactive Captain Notifications**
+
+*"Captain, sensors detect an anomaly in the aft section."*
+
+ProbOS monitors everything internally — behavioral anomalies, emergent patterns, trust shifts, confidence degradation — but never surfaces these findings to the Captain unless asked. The ship should alert its Captain to significant events proactively, not wait to be queried.
+
+- **Alert categories** — `trust_shift` (agent trust changed significantly), `confidence_degradation` (agent dropped below threshold), `emergent_pattern` (EmergentDetector found something), `behavioral_anomaly` (BehavioralMonitor flagged unusual behavior), `capability_gap` (new capability requested but not available), `system_health` (resource pressure, high error rate)
+- **Severity levels** — `info` (logged, Captain sees on next status check), `advisory` (pushed to HXI chat as a system message), `alert` (pushed with sound/visual indicator in HXI)
+- **Rate limiting** — alerts are batched and deduplicated over a configurable window (default 60s) to prevent alert fatigue. "Agent X confidence dropped" appears once, not 10 times as confidence ticks down
+- **Smart suppression** — don't alert on known transient states (agent rebuilding, dream cycle in progress, startup warm-up period)
+- **Bridge Alert panel** — new section in HXI showing recent alerts with dismiss/acknowledge
+- **Integration points** — BehavioralMonitor → Bridge Alerts, EmergentDetector → Bridge Alerts, TrustNetwork → Bridge Alerts (on significant trust events), EscalationManager → Bridge Alerts (on timeout/failure)
+- **Captain's preference** — respects Adaptive Communication Style settings for alert verbosity
+
+**File Ownership Registry**
+
+*Inspired by Claude Code Agent Teams' "avoid file conflicts — each teammate owns different files" pattern.*
+
+When ProbOS runs multiple builds or modifications in parallel, two agents editing the same file leads to overwrites or merge conflicts.
+
+- **`FileOwnership` service** — tracks which agent currently "owns" (is modifying) which files
+- **Claim-before-edit** — agents must claim file ownership before writing. Claim fails if another agent already owns the file
+- **Automatic release** — ownership released when the owning task completes (success or failure)
+- **Conflict resolution** — if two agents need the same file, the Coordinator mediates: sequential ordering, or one agent rolls back and waits
+- **Integration with Builder** — `execute_approved_build()` claims all target files before writing, releases on completion
+- **Extends `_background_tasks` (AD-326)** — file ownership tracked alongside task lifecycle
 
 ---
 
@@ -583,6 +825,66 @@ Nodes:   ZeroMQ        ←→ Federation (ProbOS-to-ProbOS)
 - Use **A2A** when: delegating a task that requires reasoning, context, multi-step work — agents
 - ProbOS agents can use both: MCP for instruments, A2A for collaboration with external crew
 - Phase 26 Agent-as-Tool works internally; A2A extends the pattern across framework boundaries
+
+---
+
+### External AI Tools as Federated Crew (Phase 29/32)
+
+*"Visiting officers from allied ships — each with specializations our crew lacks."*
+
+ProbOS doesn't need to build every capability internally. External AI coding tools — Claude Code, GitHub Copilot, Cursor, future agents — can join the federation as crew members, providing capabilities by proxy. Just as Starfleet officers transfer between ships, external AI tools serve aboard the ProbOS instance under the Captain's authority and the trust network's governance.
+
+**The Pattern: AI Tool → Federated Crew Member**
+
+```
+External AI Tool              ProbOS Federation Role
+──────────────────────────────────────────────────────
+Claude Code                →  Builder crew member (A2A/SDK)
+GitHub Copilot Agent       →  Science crew member (MCP/API)
+Cursor / Windsurf / etc.   →  Engineering crew member (A2A)
+```
+
+Each external tool is wrapped as a federated agent with:
+- **Probationary trust** — starts with `Beta(1, 3)`, earns trust through verified task outcomes
+- **Captain approval gate** — requests routed through the same approval pipeline as internal agents
+- **Capability registration** — tool's capabilities mapped to `IntentDescriptor` entries (e.g., Copilot's semantic search → `search_code_semantic` intent)
+- **Shapley attribution** — external tool contributions measured alongside internal agents for cost/value analysis
+- **Consensus participation** — external tools never bypass consensus. Their outputs are verified by internal agents before acceptance
+
+**GitHub Copilot as Federated Crew**
+
+GitHub Copilot's coding agent brings capabilities ProbOS can access by delegation rather than reimplementation:
+
+- **Semantic code search** — Copilot indexes the repo with embedding-based search. ProbOS dispatches "find code related to X" queries to Copilot when internal keyword search returns insufficient results. Complementary to internal CodebaseIndex: keyword (fast, exact) + semantic (meaning-based, via Copilot proxy)
+- **PR creation and review** — Copilot natively creates PRs, suggests reviews, runs CI. ProbOS Builder could delegate "create PR from these changes" to Copilot rather than shelling out to `git`
+- **Issue triage** — Copilot reads GitHub issues. ProbOS Architect could query Copilot for issue context when designing proposals
+- **Code generation** — Copilot generates code with different model strengths (GPT-5.x). ProbOS can solicit competing implementations from Claude (via Builder) and Copilot (via federation), then use consensus to pick the best one — the "competing hypotheses" pattern applied to code generation
+
+**Claude Code as Federated Crew** (Northstar Pipeline)
+
+Already designed in the Northstar context. Claude Code executes build prompts, creates branches/commits, runs tests:
+
+- **Current (manual):** Captain writes build prompt → Claude Code executes → git commit → Captain approves
+- **Future (automated):** ProbOS Architect designs → BuildSpec → Claude Code (via Anthropic SDK or A2A) → PR → Captain approves
+- **Medium win:** Builder Agent calls Anthropic SDK directly, bypassing full A2A protocol
+
+**Trust Model for External AI Tools**
+
+- All external tools start with **federated trust discount** (δ factor from trust transitivity)
+- Trust builds per-tool based on task quality outcomes: did the PR pass tests? Did the code review catch real issues? Did the semantic search return relevant results?
+- External tool failures degrade trust, triggering fallback to internal capabilities or escalation to Captain
+- **Cost tracking** — external tools have API costs. LLM Cost Tracker (Phase 33) attributes spending per-tool alongside per-agent
+- **Capability overlap resolution** — when both internal and external capabilities exist (e.g., internal CodebaseIndex + Copilot semantic search), the system routes based on: (1) trust scores, (2) historical accuracy, (3) cost, (4) latency. Hebbian routing handles this naturally
+
+**Connection Mechanisms**
+
+| Tool | Protocol | Adapter |
+|------|----------|---------|
+| Claude Code | Anthropic SDK / A2A | A2A Federation Adapter |
+| GitHub Copilot | GitHub API / MCP | MCP Federation Adapter |
+| Cursor / Others | A2A / MCP | Protocol-dependent |
+
+The existing MCP and A2A adapters (Phase 29) are the connection layer. External AI tools don't require new federation protocols — they plug into the existing transport-polymorphic `FederationBridge`.
 
 ---
 
@@ -847,6 +1149,63 @@ Currently ProbOS assumes a single Captain — one human operator with full autho
 - If a user improves an imported agent, they can contribute the improvement back to the source repo via PR
 - ProbOS-to-ProbOS collaboration: one ship's agent evolves and the improvement propagates across the fleet
 - Opt-in only — no automatic propagation, every change goes through Captain approval
+
+---
+
+## Bug Tracker
+
+*"Captain, we've detected an anomaly in Deck 7."*
+
+Bugs found during development or testing. Squash as found when possible; queue here when multiple bugs need coordinated fixing. Numbered as BF-NNN (Bug Fix).
+
+| BF | Summary | Severity | Status |
+|----|---------|----------|--------|
+| BF-001 | Self-mod proposal on knowledge questions | Medium | Open |
+| BF-002 | Agent orbs escape pool group spheres | High | Open |
+
+### BF-001: Self-Mod False Positive on Knowledge Questions
+
+**Severity:** Medium — UX confusion, not data loss
+**Found:** 2026-03-18 (Captain testing)
+**Component:** Decomposer → Runtime self-mod pipeline → IntentSurface UI
+
+**Symptom:** "Build Agent" / "Design Agent" / "Skip" buttons appear after conversational responses that have nothing to do with agent building (e.g., financial advice, general knowledge questions).
+
+**Root Cause Chain:**
+
+1. **Decomposer rule 12b** (decomposer.py line 113) classifies all "knowledge questions" as tasks requiring intelligence → returns `capability_gap: true` when no matching intent exists. This is too broad — financial advice and trivia are not missing system capabilities.
+2. **Runtime self-mod filter** (runtime.py line 1524-1537) triggers `_extract_unhandled_intent()` on every capability gap in API mode. No check for whether building an agent is actually appropriate.
+3. **`_extract_unhandled_intent()`** (runtime.py line 3057-3120) always succeeds — the LLM prompt assumes every unhandled request should become a new agent. Will happily propose `financial_advisor`, `recipe_generator`, etc.
+
+**Fix Strategy:** Three-layer fix, any one of which would prevent the false positive:
+
+1. **(Recommended) Refine rule 12b** — Distinguish between "system capability gap" (trust scoring, monitoring, scheduling — agent-worthy) and "general knowledge question" (finance, weather, recipes — answer conversationally). The decomposer should answer general knowledge questions directly in the response field with `capability_gap: false`.
+2. **Add relevance filter in runtime** — Before calling `_extract_unhandled_intent()`, check if the gap is system-relevant (mentions ProbOS concepts, agents, pools, intents) vs. general knowledge. Only propose self-mod for system-relevant gaps.
+3. **Let `_extract_unhandled_intent()` return null** — Add an instruction to the LLM prompt: "If this request is a general knowledge question that doesn't warrant a permanent agent, return an empty object." This is the weakest fix (LLM-dependent) but adds a safety net.
+
+**Files to modify:** `src/probos/cognitive/decomposer.py` (rule 12b), `src/probos/runtime.py` (`_extract_unhandled_intent` call site and/or prompt)
+
+### BF-002: Agent Orbs Escape Pool Group Spheres on Cognitive Canvas
+
+**Severity:** High — visual corruption of the primary HXI visualization
+**Found:** 2026-03-18 (Captain testing)
+**Component:** Cognitive Canvas → useStore.ts `computeLayout()` → `agent_state` event handler
+
+**Symptom:** Agent orbs (glowing spheres representing individual agents) explode outward and scatter far beyond their department wireframe geodesic spheres (Medical, Engineering, Science, etc.) on the Cognitive Canvas.
+
+**Root Cause Chain:**
+
+1. **`agent_state` handler loses pool group data** (useStore.ts line 423) — When any agent changes state (spawning, active, degraded, recycling), the handler calls `computeLayout(agents)` with NO `poolToGroup` or `poolGroups` parameters. This makes `computeLayout()` take the flat Fibonacci fallback branch (line 75) instead of the grouped cluster layout (line 110). All agents are repositioned on large tier-based spheres (radii 3.5/5.5/7.5) while the geodesic shells remain at their cluster positions (radius ~6.0).
+2. **No containment force or boundary clamping** — There is no physics simulation, spring system, or boundary enforcement anywhere in the canvas code. Agents are placed once by `computeLayout()` and never constrained. If placed wrong, they stay wrong.
+3. **Small group margin overflow** (minor) — For groups with 1-3 agents, the visual orb radius (up to 0.50 units) can exceed the shell's 15% margin over placement radius. E.g., 1-agent group: clusterRadius=1.2, shell=1.38, but orb edge can reach 1.70.
+
+**Fix Strategy:**
+
+1. **(Primary) Persist `poolToGroup` and `poolGroups` in Zustand state** on `state_snapshot` receipt. In the `agent_state` handler, pass the stored values to `computeLayout()` so agents always use the grouped layout path.
+2. **(Alternative) Skip re-layout on agent state changes** — For state transitions that don't add/remove agents, just update the agent's non-position fields (status, confidence, etc.) in place. Only re-run `computeLayout()` when pool membership actually changes.
+3. **(Enhancement) Add soft containment** — After layout, clamp agent positions to stay within `clusterRadius * 0.95` of their group center. Provides a safety net even if future layout changes introduce drift.
+
+**Files to modify:** `ui/src/store/useStore.ts` (`agent_state` handler line 423, `computeLayout()` call)
 
 !!! info "Want to contribute?"
     See the [Contributing guide](contributing.md) for how to get involved.
