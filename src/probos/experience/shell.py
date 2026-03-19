@@ -186,6 +186,7 @@ class ProbOSShell:
             "/search":    self._cmd_search,
             "/explain":   self._cmd_explain,
             "/model":   self._cmd_model,
+            "/orders":  self._cmd_orders,
             "/tier":    self._cmd_tier,
             "/ping":    self._cmd_ping,
             "/prune":   self._cmd_prune,
