@@ -208,6 +208,9 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 | Holodeck | Browser automation — Playwright, screenshots, web interaction | Roadmap (Phase 25/35) |
 | Workflow Templates | Reusable multi-step pipelines — cron, webhooks, workflow API | Roadmap (Phase 33) |
 | Drydock | Distribution — PyPI, Docker, onboarding wizard, quickstart | Roadmap (Phase 32/35) |
+| Modular Construction | Extension-first architecture — sealed core, plugin extensions, graduated autonomy | Roadmap (Phase 30) |
+| Ready Room | Captain's strategic planning — idea capture, multi-agent sessions, architecture hierarchy | Roadmap (Phase 34) |
+| Utopia Planitia | Specialized builders — backend, frontend, test, infra, data | Roadmap (Phase 34) |
 | The Nooplex | Distributed meta-intelligence — Model of Models | Long Horizon |
 
 ---
@@ -224,11 +227,11 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 | 29 | Federation + Emergence | Comms | Knowledge federation, trust transitivity, MCP adapter, A2A adapter, TC_N measurement |
 | 29b | Medical Team | Medical | Vitals monitor, diagnostician, surgeon, pharmacist, pathologist, **multi-level diagnostics** (L1–L5) |
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
-| 30 | Self-Improvement Pipeline | All Teams | Capability proposals, stage contracts, QA pool, evolution store, human gate |
+| 30 | Self-Improvement Pipeline | All Teams | **Extension-first architecture** (sealed core, open extensions, graduated autonomy), capability proposals, stage contracts, QA pool, evolution store, human gate, evergreen updates |
 | 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring, secrets management, runtime sandboxing, network egress policy, inference audit, data governance |
 | 32 | Engineering Team | Engineering + Ship's Computer | Automated performance optimization, maintenance agents, build agents, LLM resilience, model diversity & neural routing, cognitive journal, observability export, CI/CD, backup/restore, storage abstraction layers, containerized deployment, confidence communication, adaptive communication style, decision audit trail, **structural integrity field**, **damage control teams**, **navigational deflector**, **saucer separation** |
 | 33 | Operations Team | Ops + Bridge | Formalized resource management, workload balancing, system coordination, LLM cost tracking, ward room, priority & back-pressure, self-claiming task queue, competing hypotheses, file ownership, bridge alerts, workflow definition API, **chain of command** (bridge crew, department chiefs, promotion mechanics, rank structure), **Ship's Counselor** (cognitive wellness, Hebbian drift detection, relationship health), **alert conditions** (Red/Yellow/Green), **EPS** (token/compute distribution) |
-| 34 | Mission Control | Bridge + Comms | Agent activity dashboard, real-time task visibility, approval panels, system health orbs |
+| 34 | Mission Control | Bridge + Comms | Agent activity dashboard, real-time task visibility, approval panels, system health orbs, **Captain's Ready Room** (idea capture, multi-agent strategy sessions, architecture hierarchy, idea→spec pipeline), **specialized builders** (backend/frontend/test/infra/data) |
 | 35 | User Experience & Adoption | All Teams | PyPI packaging, onboarding wizard, quickstart docs, `probos doctor`, `probos demo` mode, comparison docs |
 
 ---
@@ -358,6 +361,18 @@ Claude Code maintains a `MEMORY.md` with facts about the project it's working on
 
 - **Auto-generated at startup** — CodebaseIndex produces a compact capability summary alongside its structural index: "ProbOS has: episodic memory (ChromaDB, persistent), dreaming (three-tier: micro/idle/shutdown), trust network (Bayesian Beta distribution), federation (ZeroMQ), 52 agents across 25 pools..."
 - **Injected into every reflection prompt** — prepended as system context so the LLM never starts cold. Prevents recommending building things that already exist
+
+**Project Convention Files (`AGENTS.md`)** *(absorbed from LangChain Open SWE)*
+
+*"Every starship carries its own technical manual."*
+
+Open SWE uses `AGENTS.md` — a repo-level file encoding project conventions, testing requirements, and architectural decisions — injected into every agent's system prompt. ProbOS should support this pattern for any project the Builder works on:
+
+- **`AGENTS.md` discovery** — when Builder targets a project directory, look for `AGENTS.md` (or `.github/copilot-instructions.md`, `.cursor/rules`, `CLAUDE.md`) in the project root. Auto-discover and parse
+- **Convention injection** — extracted conventions injected into the Builder's system prompt before code generation. "This project uses pytest with fixtures, snake_case naming, type hints required, imports sorted with isort"
+- **Layered context** — two levels: ProbOS-level conventions (from CodebaseIndex/Capability Inventory) + project-level conventions (from AGENTS.md). ProbOS knows itself AND knows the target project
+- **Convention learning** — over time, Cognitive Journal (Phase 32) tracks which conventions produce successful builds. Hebbian router learns: "this project's builds succeed more when isort is enforced"
+- **Auto-generation** — if no convention file exists, Builder can generate a draft `AGENTS.md` from code analysis (detect patterns: test framework, import style, naming conventions, docstring format) and propose it for Captain review
 - **Updated on rebuild** — when CodebaseIndex rebuilds (new agents, new capabilities), the inventory regenerates automatically
 - **Structured format** — organized by crew team and architecture layer, not just a flat list. "Medical team: Vitals Monitor, Diagnostician, Surgeon, Pharmacist, Pathologist (Phase 29b, designed). Security: red team agents (built), SSRF protection (AD-285, built)..."
 
@@ -559,6 +574,7 @@ The main deflector pushes aside space debris before the ship hits it. In ProbOS:
 - **Self-mod pre-flight** — before accepting a self-improvement proposal: verify the affected files haven't been modified since the proposal was generated, check test suite passes pre-change, confirm approval gate stakeholders are available
 - **Federation pre-flight** — before processing federated messages: verify sender trust score, validate message schema, check that referenced agents/pools exist locally
 - **Pattern** — each expensive operation defines a `preflight_checks()` list. All checks run before commit. Any failure aborts with a diagnostic (not a crash). Cheap, fast, zero-LLM
+- **Middleware-based determinism** *(absorbed from LangChain Open SWE)* — critical operations must not depend on the LLM remembering to do them. Tests, linting, PR creation, file validation happen via deterministic middleware, not prompt instructions. The LLM decides *what* to build; middleware ensures *how* it's delivered is correct. Pattern: `MiddlewareStack` on the Builder — each middleware runs after the LLM call and enforces a guarantee (tests pass, files lint, commit message exists, PR opened). If the LLM forgets a step, middleware catches it. Backstop, not replacement
 
 **Saucer Separation (Graceful Degradation)**
 
@@ -578,7 +594,7 @@ Galaxy class can split into saucer (civilians) and stardrive (combat). ProbOS eq
 
 The Architect and Builder agents form an automated design-and-build pipeline. The Architect reads full source via CodebaseIndex (import graphs, caller analysis, API surface verification), produces structured proposals with embedded BuildSpecs, and the Builder executes them with test-fix retry (AD-314). Ship's Computer identity grounds the Decomposer's self-knowledge (AD-317), with a four-level progression: SystemSelfModel (AD-318), Pre-Response Verification (AD-319), and Introspection Delegation (AD-320). A GPT-5.4 code review (AD-325–329) hardened runtime safety, validator correctness, and HXI resilience. All 18 steps complete.
 
-Inspired by: SWE-agent (Princeton NLP) for tool design, Aider for repo maps, Agentless (UIUC) for localize-then-repair pipelines, AutoCodeRover for call graph analysis.
+Inspired by: SWE-agent (Princeton NLP) for tool design, Aider for repo maps, Agentless (UIUC) for localize-then-repair pipelines, AutoCodeRover for call graph analysis, LangChain Open SWE/Deep Agents for middleware-based determinism and mid-run input injection patterns.
 
 - **AD-311: Architect Deep Localize** *(done)* — 3-step localize pipeline: fast-tier LLM selects 8 most relevant files from 20 candidates, reads full source (up to 4000 lines), auto-discovers test files, callers, and verified API surface.
 - **AD-312: CodebaseIndex Structured Tools** *(done)* — `find_callers()`, `find_tests_for()`, `get_full_api_surface()` methods. Expanded `_KEY_CLASSES` with CodebaseIndex, PoolGroupRegistry, Shell.
@@ -703,6 +719,7 @@ BuildBlueprint ─→ ChunkDecomposer ─→ ┌─ Chunk 1 ──→ LLM ──
 - **Composable** — Each component (decomposer, executor, assembler, validator) is independently testable and replaceable.
 - **Observable** — Every step emits events. The Captain sees what's happening. Chunks can be inspected, approved, or rejected individually.
 - **No new agents** — The Transporter Pattern enhances the existing BuilderAgent, not a separate agent. The Builder gains the ability to decompose and parallelize, but it's still the same agent in the same pool.
+- **File-based context offloading** *(absorbed from LangChain Open SWE)* — large intermediate data (chunk results, assembled code, validation reports) written to temp files rather than accumulated in the prompt chain. Prevents context overflow during multi-chunk builds. Each chunk reads its inputs from files, writes its output to files. The assembler reads files, not conversation history. Keeps the LLM context lean — only the current chunk's focused context enters the prompt
 - **Biology-first** — When in doubt, ask "how does the brain solve this?" The brain had 500 million years of evolution to optimize information processing under bandwidth constraints. Respect those solutions.
 
 Inspired by: The human brain's 10 bps conscious bottleneck (Manfred Zimmermann, 1986), Karl Friston's Free Energy Principle and predictive coding, the visual cortex hierarchy (Hubel & Wiesel), George Miller's chunking (1956), MapReduce (Google, 2004) for decompose-execute-merge, LLM×MapReduce (Zhou et al., 2024) for structured information protocol and confidence-calibrated chunk assembly, Cursor's multi-file editing, Microsoft's CodePlan for inter-procedural edit planning, the Star Trek transporter's matter stream concept.
@@ -722,6 +739,7 @@ ProbOS currently runs directly on the host OS. A Docker-based deployment provide
 - **Security boundary** — containerized ProbOS can't access host filesystem, network, or processes beyond explicitly mapped volumes and ports. Essential for the public Twitch demo and any scenario with untrusted agents
 - **Safe mode profile** — container startup flag (`--safe-mode`) that enables restricted config: disabled shell commands, disabled file writes outside `/sandbox`, rate limiting, SSRF protection enforced
 - **Volume mounts** — `data/` (episodic memory, knowledge store, event log), `config/` (system.yaml), optional `agents/` (designed agents). Everything else is ephemeral
+- **Persistent sandboxes per task** *(absorbed from LangChain Open SWE)* — each long-running task (Phase 25) gets its own isolated sandbox environment that persists across follow-up interactions. Follow-up messages on the same task route to the same sandbox with full state preserved. Sandboxes auto-recreate if they become unreachable. Multiple tasks run simultaneously, each isolated. In Docker mode: each task gets a dedicated container; in host mode: each task gets its own working directory with clean environment variables
 - **Ollama sidecar** — Ollama runs as a separate container on the same Docker network. ProbOS connects to it via `http://ollama:11434/v1`. No GPU passthrough required for CPU-only models; GPU passthrough available for CUDA-enabled hosts
 - Existing: Twitch demo plan already specifies Docker-based deployment (commercial roadmap)
 
@@ -758,6 +776,16 @@ ProbOS currently runs directly on the host OS. A Docker-based deployment provide
 *"A crew of Vulcans is logical but brittle. A diverse crew — Vulcan logic, Betazoid empathy, Klingon tenacity, android precision — is resilient."*
 
 Currently ProbOS routes all cognition through 2 models (Sonnet 4 for fast/standard, Opus 4 for deep) via 3 tiers. The tier abstraction describes cost/capability levels, not model identities. Real cognitive diversity requires routing tasks to fundamentally different model architectures — each with different failure modes, strengths, and reasoning styles.
+
+**Cognitive Division of Labor** — the founding principle of Model Diversity. Different cognitive functions should use models optimized for those functions, not the most expensive model for everything. The brain doesn't use the same neural architecture for planning (prefrontal cortex) as it does for motor execution (motor cortex). ProbOS should mirror this:
+
+- **Architect tier** → hosted frontier model (Opus/Sonnet) for reasoning, planning, design, review. Short, focused calls that fit within proxy timeout windows. Produces high-quality specs — detailed enough that a less capable model can execute them reliably
+- **Builder tier** → local coding model (Qwen 2.5 Coder, CodeLlama, DeepSeek-Coder) via Ollama for code generation. No timeout constraints — can deep-think for 10+ minutes per chunk. The Transporter Pattern's ChunkSpecs become self-contained work orders optimized for local model execution
+- **Fast tier** → small local model via Ollama for classification, gist extraction, chunking. Sub-second responses for peripheral processing
+
+This principle is complementary to — not competing with — the Sensory Cortex context compression (Northstar II). Compression reduces *how much* you send; Division of Labor ensures you send it to the *right model* for the job. Together they solve the context window problem from both sides: less data in (compression) and better data routing (specialization).
+
+The first concrete implementation: Opus designs the BuildBlueprint + ChunkSpecs (architecture), Qwen generates the code per chunk (execution). Like writing a detailed spec for a junior developer — the quality of the spec determines the quality of the output, and a well-specified chunk is within any capable coding model's reach.
 
 - **`ModelRegistry`** — central catalog of available model providers: `(provider, model_id, tier, capabilities, cost_per_token, latency_p50, api_format)`. Models self-register at startup from config. Registry answers: "which models can handle this task type at this tier?" with ranked options
 - **Provider abstraction** — `ModelProvider` ABC with concrete implementations: `AnthropicProvider`, `OpenAIProvider`, `GoogleProvider`, `OllamaProvider` (local models), `GenericOpenAIProvider` (any OpenAI-compatible endpoint). Each provider handles auth, rate limits, and format translation. Extends the existing `api_format` switch in `OpenAICompatibleClient`
@@ -866,6 +894,7 @@ Currently ProbOS agents communicate only via the intent bus (broadcast to pools)
 
 - **`WardRoom` service** — registered on the runtime, agents send/receive typed messages by agent ID. Name reflects the starship metaphor: a private space where officers (agents) communicate directly
 - **Use case: Architect↔Builder clarification** — during a build, the Builder encounters ambiguity in the BuildSpec and asks the Architect directly ("Which method signature should I use?") without routing through the Decomposer or requiring Captain intervention
+- **Use case: Mid-run Captain input** *(absorbed from LangChain Open SWE)* — Captain sends a clarification or additional context to the Builder while it's mid-build. Ward Room message injected into the Builder's next `perceive()` cycle. Enables interactive collaboration during long-running tasks without restarting the entire pipeline. Pattern: `check_message_queue` in perceive() before each LLM call
 - **Use case: Medical↔Engineering handoff** — Diagnostician identifies a performance anomaly and messages the relevant Engineering agent directly with diagnostic context
 - **Use case: Multi-model negotiation** — when Model Diversity enables competing implementations, agents use the Ward Room to compare notes and converge without broadcasting to all pools
 - **Message types** — `clarification_request`, `status_update`, `finding_report`, `handoff`, `model_comparison` (with typed payloads)
@@ -1058,6 +1087,63 @@ Upgrade the existing system health orb with per-agent hover preview:
 - When hovering over an agent representation in the orb, show a tooltip with: current task prompt (truncated), current step label, elapsed time, progress fraction (step 3 of 5)
 - Visual indicator on the orb when any agent requires Captain attention (pulsing amber)
 - Click-through from orb tooltip to the Activity Drawer card for that agent
+
+**Captain's Ready Room (Strategic Planning Interface)**
+
+*"In my ready room, Number One."*
+
+The Ready Room is where strategy becomes orders. Today, the Captain's planning workflow lives outside ProbOS — in Claude Code sessions, text files, conversations. The Ready Room brings that workflow inside ProbOS as a first-class experience: capture ideas, collaborate with the crew, refine into architecture, and deliver as build specs.
+
+*Idea Capture:*
+
+- **Idea pad** — lightweight capture surface in the HXI. Text, voice (via STT), or paste. As easy as sending a message. "Captain's log: what if we used extensions instead of direct code changes?"
+- **Idea queue** — captured ideas persist in a backlog, visible in Mission Control. Not yet tasks — just seeds. Each idea carries: timestamp, raw text, Captain's priority tag (optional), linked references (URLs, files, prior ideas)
+- **Captain's Log** — append-only journal of ideas, decisions, and reasoning. Searchable, tagged, feeds into Cognitive Journal. "Why did I decide on extensions?" → find the ready room session where it was discussed
+
+*Ready Room Sessions:*
+
+- **Multi-agent briefing** — Captain opens a Ready Room session and invites crew members. The ArchitectAgent (First Officer) is always present. Other participants: Ship's Counselor (cognitive impact assessment), relevant Department Chiefs, visiting federation agents (Claude Code, Copilot, external specialists)
+- **Collaborative strategy** — participants analyze the idea against existing architecture, roadmap, codebase. Each brings their perspective: Architect assesses structural fit, Counselor assesses cognitive load, Security Chief assesses risk, external agents bring outside knowledge
+- **Structured discussion** — not a free-for-all. Session follows phases: (1) Captain presents idea, (2) Architect researches and reports (roadmap overlap, competitive analysis, architectural implications), (3) participants discuss and challenge, (4) Captain refines, (5) group converges on a proposal
+- **External input** — visiting federation agents participate via Ward Room messages. A Claude Code agent consulted on implementation feasibility, a Cursor agent on UX patterns, a domain expert on business requirements
+- **Session recording** — full transcript saved to Cognitive Journal. Decisions, reasoning, dissenting opinions preserved. Replay any session: "What did we discuss when we decided on the extension model?"
+
+*Architecture Hierarchy (TOGAF-inspired):*
+
+The ArchitectAgent today is a single generalist. As ProbOS matures, architectural thinking needs specialization — the same Cognitive Division of Labor applied to design, not just execution:
+
+- **Enterprise Architect** — highest abstraction. Cross-system strategy, capability roadmaps, portfolio alignment. "How does this feature fit ProbOS's long-term vision? Does it align with the Nooplex trajectory?" Thinks in terms of business capabilities, not code. TOGAF ADM lifecycle awareness
+- **Solution Architect** — mid-level. System integration, component design, technology selection. "This feature needs a new extension point, a database migration, and a UI panel. Here's how the components interact." Thinks in terms of solutions and interfaces
+- **Technical Architect** — implementation-level. Detailed design, API contracts, data models, algorithm selection. "The extension registry should use a plugin loader pattern with `importlib`, here's the class hierarchy." Produces build-ready specs
+
+These can be three distinct agents in the Science team, or three tiers of the same ArchitectAgent depending on the complexity of the idea. Simple ideas skip straight to Technical; strategic changes start at Enterprise and cascade down.
+
+*Idea → Spec Pipeline:*
+
+```
+Idea (raw text)
+  → Ready Room Session (collaborative refinement)
+    → Architecture Decision (Enterprise/Solution/Technical review)
+      → Build Spec (detailed implementation plan with ChunkSpecs)
+        → Builder Pipeline (specialized builders execute)
+          → Captain Review (approve/reject/iterate)
+```
+
+Each transition is a Captain approval gate. The Captain can intervene at any level — rewrite the spec, redirect the architecture, or add constraints. The system proposes; the Captain disposes.
+
+*Specialized Builders (Cognitive Division of Labor for SWE):*
+
+The BuilderAgent today is a generalist that writes any code. As builds grow more complex (Transporter Pattern enables multi-file parallel generation), different chunks benefit from different builder specializations:
+
+- **Backend Builder** — Python, FastAPI, database, API design. Optimized prompts for server-side patterns
+- **Frontend Builder** — React, TypeScript, CSS, UI components. Optimized prompts for component architecture and state management
+- **Test Builder** — pytest, test design, fixture creation, edge case generation. "Write tests for this interface" as a standalone specialty
+- **Infrastructure Builder** — Docker, CI/CD, config files, deployment scripts. Ops-focused
+- **Data Builder** — schemas, migrations, data pipelines, query optimization
+
+Each specialization is an extension (Extension-First Architecture) — the base Builder handles simple tasks, specialized builders activate for their domain. The Transporter Pattern's ChunkSpec already declares what type of code to generate — route each chunk to the builder best suited for it. A Cognitive Division of Labor at the build level.
+
+Model routing per builder: Backend Builder might use Opus for complex API design, while Test Builder uses Qwen for high-volume test generation. The ModelRegistry + Hebbian router learn which model produces the best results for each builder type.
 
 ---
 
@@ -1444,6 +1530,76 @@ Allows one agent to explicitly invoke another agent's capability as a typed func
 *The mechanism that allows the ship to upgrade itself — with the Captain's approval.*
 
 The infrastructure for a closed-loop improvement cycle: discover capabilities, evaluate fit, propose changes, validate results, and learn from outcomes.
+
+**Extension-First Architecture (Sealed Core, Open Extensions)**
+
+*"Don't rip open the bulkhead to rewire the ship — plug a new module into the standardized EPS conduit."*
+
+Inspired by the Microsoft Dynamics 365 F&O evolution from overlayering to extensions. In the legacy model, developers modified any code in the system with changes overlaying on top of lower layers (SYS → ISV → VAR → CUS). This caused merge conflicts, blocked upgrades, and introduced cascading instability. The solution: seal the foundation and provide extension points. Developers can create new or extend existing — never modify core.
+
+ProbOS faces the same problem. Today, the Builder agent modifies core source files directly. Every self-improvement touches the foundation — `trust.py`, `hebbian.py`, `builder.py`. Every change requires Captain approval because the blast radius is unconstrained. As the codebase grows, this becomes untenable.
+
+**The principle: Builder creates extensions by default, not overlays.**
+
+- **Sealed Core** — runtime infrastructure (IntentBus, TrustNetwork, HebbianRouter, ConsensusManager, PoolManager, DAGExecutor) is read-only to the Builder. These systems define contracts (ABCs, Protocols, event hooks, registered intents) but their implementation is frozen
+- **Extension points** — the core exposes well-defined hooks:
+  - `AgentRegistry.register()` — add new agents (already exists)
+  - `ToolRegistry.register()` — add new tools (Phase 25b)
+  - `SkillRegistry.register()` — add new skills (`skill.yaml`, Phase 30)
+  - `ChannelAdapter.register()` — add new communication channels (Phase 24)
+  - `ModelProvider.register()` — add new LLM providers (Phase 32)
+  - `PerceptionPipeline.register()` — add new perception processors (Sensory Cortex Phase 2)
+  - `IntentBus.subscribe()` — listen for events (already exists)
+  - `EventHook.register()` — lifecycle hooks (on_startup, on_shutdown, on_intent, on_trust_change)
+- **Extension directory** — Builder-created extensions live in `src/probos/extensions/` (agents, tools, skills) separate from core. Version-controlled, user-owned, upgrade-safe
+- **Contract stability** — core extension points follow semver. Breaking changes require major version bump + migration guide. Extensions written for v1 contracts work on v1.x forever
+
+**Graduated Autonomy (the trust unlock):**
+
+The extension model enables different approval tiers based on risk:
+
+| Change Type | Risk | Approval Required |
+|---|---|---|
+| New agent/skill/tool using public APIs | Low | Auto-approve (sandboxed) |
+| New extension needing a new hook | Medium | Captain review |
+| Core modification (rare) | High | Full approval pipeline |
+
+This is the path to letting ProbOS improve itself while the Captain sleeps. Extensions can't break the ship — they can only add to it. The Builder becomes productive within safe boundaries without waking the Captain for every bolt it tightens.
+
+**Evergreen Updates:**
+
+When the core ProbOS codebase updates (new release, bug fix, feature addition), user extensions survive the upgrade. As long as the core doesn't break its contracts with the extension points, all Builder-created agents, skills, and tools continue working. This is critical for adoption — users invest in customization knowing their work is protected across versions.
+
+**Overlayering (legacy path):**
+
+Direct core modification remains possible but is the exception, not the rule. Reserved for:
+- Genuine core defects (bug fixes)
+- New extension point creation (expanding the API surface)
+- Architectural evolution (major version changes)
+
+All overlay modifications require full Captain approval + red team verification. The Builder should propose "can we add an extension point for this?" before "can I modify the core?"
+
+**Extension Toggle (Feature Flags for Extensions)**
+
+Extensions are hot-loadable and individually togglable — enable, disable, or remove any extension at runtime without restarting ProbOS or modifying code.
+
+- **`probos extensions list`** — show all installed extensions with status (enabled/disabled), trust score, origin (self-designed, shared, marketplace)
+- **`probos extensions enable/disable <name>`** — toggle an extension on or off. Disabled extensions are unsubscribed from the IntentBus, unregistered from the ToolRegistry, and excluded from routing — but their code is preserved for re-enabling
+- **`probos extensions remove <name>`** — uninstall completely (with confirmation)
+- **HXI toggle panel** — visual switch for each extension in the dashboard. Captain can see what's active and flip switches without touching the shell
+- **Safe defaults for new users** — ProbOS ships with a curated set of core extensions enabled. Advanced extensions (self-improvement, shell access, file writing) start disabled. Novice users get a safe, bounded experience out of the box. Power users enable what they need
+- **Extension profiles** — saved presets: "minimal" (chat only), "developer" (build pipeline + code tools), "full" (everything). `probos init` lets users pick a profile during onboarding
+
+**User Safety (the OpenClaw lesson)**
+
+AI assistants that modify files directly are powerful but dangerous — especially for non-technical users. A misinterpreted instruction can delete files, overwrite work, or corrupt a project. This is the overlayering problem applied to end users' personal data.
+
+ProbOS's extension model provides safety by construction:
+- Extensions operate within their sandbox — they can create new files in designated directories, but cannot modify arbitrary user files unless explicitly granted permission
+- Destructive operations (file delete, git reset, shell commands) are gated by the existing Captain approval pipeline regardless of extension autonomy level
+- The Builder agent proposes changes as diffs for review, not silent file overwrites
+- Rollback is trivial: disable or remove the extension, and everything it created is isolated
+- This makes ProbOS safe enough for novice users while remaining powerful for experts — the extension model is the safety rail
 
 **Stage Contracts (Typed Agent Handoffs)**
 
