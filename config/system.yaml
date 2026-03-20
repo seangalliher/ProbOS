@@ -57,6 +57,17 @@ cognitive:
   llm_model_deep: "claude-opus-4-20250514"
   llm_timeout_deep: 300
 
+  # Per-tier sampling parameters (uncomment to override request defaults)
+  # Deep tier: higher temperature for reasoning diversity
+  # llm_temperature_deep: 0.7
+  # llm_top_p_deep: 0.95
+  #
+  # Standard tier: moderate temperature
+  # llm_temperature_standard: 0.3
+  #
+  # Fast tier: low temperature for deterministic classification
+  # llm_temperature_fast: 0.0
+
   working_memory_token_budget: 4000
   decomposition_timeout_seconds: 300
   dag_execution_timeout_seconds: 300

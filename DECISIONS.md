@@ -2130,3 +2130,50 @@ Trust tier progression (inspired by Starfleet rank structure):
 - Phase 3 (extends Phase 33): Earned Agency tiers + self-originated goals + decreasing oversight
 
 **Status:** AD-357 — Architecture decision captured. Implementation spans Phases 28, 30, 33.
+
+### AD-358: Per-Tier Temperature & Top-P Tuning
+
+Different cognitive modes benefit from different generation temperatures. Research from Kimi K2.5 (Moonshot AI) shows deep reasoning benefits from higher temperature (diversity of thought), while fast classification benefits from lower temperature (deterministic, consistent).
+
+Added per-tier `temperature` and `top_p` configuration to CognitiveConfig. Six new optional fields (`llm_temperature_{fast,standard,deep}`, `llm_top_p_{fast,standard,deep}`) serve as tier-level defaults. When not set, returns `None` (no fallback). Request-level values always override tier defaults (caller wins). The `top_p` field was also added to `LLMRequest`.
+
+Wiring: `complete()` resolves effective temperature/top_p from tier config when the caller hasn't set a non-default value, then passes through `_call_api()` → `_call_openai()`/`_call_ollama_native()`. `tier_info()` reports sampling params for `/models` and `/registry` display.
+
+**Status:** AD-358 — Implemented. 5 new tests, 0 regressions (22+36 pass). Built by visiting officer (Copilot SDK), cleanup by architect.
+
+### AD-359: Captain's Yeoman — Personal AI Assistant (Phase 36)
+
+*"The Captain's Yeoman handles everything the Captain shouldn't have to think about."*
+
+The single biggest adoption barrier for ProbOS is that it requires understanding agents, pools, and trust to get started. OpenClaw reached 323K stars because it gave every user immediate personal value — a personal AI they could talk to. ProbOS has an entire crew behind a front door that's too narrow. The Yeoman changes that.
+
+**The Captain's Yeoman** is ProbOS's default conversational interface — the first agent every user meets. It handles personal tasks (calendar, email, research, reminders, shopping), learns preferences over time, and delegates to the crew when needed. It's the "front door" that makes ProbOS useful to anyone, not just developers.
+
+**Why this belongs in OSS:**
+- It's the adoption funnel — if the Yeoman is behind a paywall, users never experience ProbOS
+- The infrastructure is already OSS (agents, pools, trust, memory, channels)
+- The Yeoman is a crew member using existing systems, not a separate product
+- Follows the boundary rule: "how it works" → OSS; "how it makes money" → commercial
+- Commercial value comes from managed hosting, premium integrations (Teams, Salesforce), Escort Ship Class bundling, and Nooplex fleet coordination — not the agent itself
+
+**Architecture:**
+- `YeomanAgent` — Bridge-level agent (like First Officer and Counselor). Not assigned to any department — serves the Captain directly
+- Conversational by default — natural language interaction, no commands required
+- Routes to crew when needed: "Yeoman, have Engineering build me a script" → Builder pipeline. "What's the system health?" → Medical. "Design a new feature" → Science/Architect
+- Uses episodic memory for personalization — remembers preferences, past conversations, frequently used workflows
+- Extension-compatible — personal skills (home automation, finance tracking, fitness) installable as extensions
+- Channel-native — works across all Phase 24 channels (CLI, web, Discord, Slack, mobile PWA, voice)
+- Trust-integrated — Yeoman starts at Ensign level, earns agency through demonstrated reliability (AD-357 Earned Agency)
+
+**The adoption funnel this enables:**
+1. User installs ProbOS, meets the Yeoman — immediate personal value
+2. Yeoman handles daily tasks, learns preferences — user stays engaged
+3. User discovers the crew — "Wait, I can build custom agents?"
+4. User explores extensions, Ship Classes, the Builder — becomes a Captain
+5. Power users federate, build for others, join the Nooplex
+
+**OSS vs Commercial boundary:**
+- **OSS (Phase 36):** YeomanAgent, basic conversational interface, memory/personalization, crew routing, CLI/web/Discord channels, extension API for personal skills
+- **Commercial:** Managed cloud hosting ("ProbOS Cloud"), premium channel adapters (Teams, Slack Enterprise), Escort Ship Class (curated Yeoman bundle), Nooplex fleet-wide assistant coordination, enterprise SSO/compliance/audit
+
+**Status:** AD-359 — Architecture decision captured. Implementation: Phase 36.

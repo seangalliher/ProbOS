@@ -221,10 +221,21 @@ class OpenAICompatibleClient(BaseLLMClient):
             if self._tier_status.get(attempt_tier) is False and attempt_tier != tier:
                 continue
 
+            # Apply tier-level sampling defaults (caller override wins)
+            effective_temp = request.temperature
+            if effective_temp == 0.0 and tc.get("temperature") is not None:
+                effective_temp = tc["temperature"]
+
+            effective_top_p = request.top_p
+            if effective_top_p is None and tc.get("top_p") is not None:
+                effective_top_p = tc["top_p"]
+
             try:
                 response = await self._call_api(
                     request, model, client, api_format=api_format,
                     timeout=tier_timeout,
+                    effective_temp=effective_temp,
+                    effective_top_p=effective_top_p,
                 )
                 # Cache successful responses (keyed by original tier)
                 cache_key = self._cache_key(tier, request.prompt)
@@ -278,17 +289,27 @@ class OpenAICompatibleClient(BaseLLMClient):
     async def _call_api(
         self, request: LLMRequest, model: str, client: httpx.AsyncClient,
         *, api_format: str = "openai", timeout: float = 30.0,
+        effective_temp: float | None = None, effective_top_p: float | None = None,
     ) -> LLMResponse:
         """Make the actual API call, routing by api_format."""
         if api_format == "ollama":
-            return await self._call_ollama_native(request, model, client, timeout=timeout)
-        return await self._call_openai(request, model, client, timeout=timeout)
+            return await self._call_ollama_native(
+                request, model, client, timeout=timeout,
+                effective_temp=effective_temp, effective_top_p=effective_top_p,
+            )
+        return await self._call_openai(
+            request, model, client, timeout=timeout,
+            effective_temp=effective_temp, effective_top_p=effective_top_p,
+        )
 
     async def _call_openai(
         self, request: LLMRequest, model: str, client: httpx.AsyncClient,
         *, timeout: float = 30.0,
+        effective_temp: float | None = None, effective_top_p: float | None = None,
     ) -> LLMResponse:
         """OpenAI-compatible chat/completions call."""
+        if effective_temp is None:
+            effective_temp = request.temperature
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
@@ -297,9 +318,11 @@ class OpenAICompatibleClient(BaseLLMClient):
         payload = {
             "model": model,
             "messages": messages,
-            "temperature": request.temperature,
+            "temperature": effective_temp,
             "max_tokens": request.max_tokens,
         }
+        if effective_top_p is not None:
+            payload["top_p"] = effective_top_p
 
         logger.debug("LLM request payload (openai): %s", json.dumps(payload, indent=2))
 
@@ -333,8 +356,11 @@ class OpenAICompatibleClient(BaseLLMClient):
     async def _call_ollama_native(
         self, request: LLMRequest, model: str, client: httpx.AsyncClient,
         *, timeout: float = 30.0,
+        effective_temp: float | None = None, effective_top_p: float | None = None,
     ) -> LLMResponse:
         """Native Ollama /api/chat call with think disabled."""
+        if effective_temp is None:
+            effective_temp = request.temperature
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
@@ -349,8 +375,10 @@ class OpenAICompatibleClient(BaseLLMClient):
         }
         if request.max_tokens:
             payload.setdefault("options", {})["num_predict"] = request.max_tokens
-        if request.temperature is not None:
-            payload.setdefault("options", {})["temperature"] = request.temperature
+        if effective_temp is not None:
+            payload.setdefault("options", {})["temperature"] = effective_temp
+        if effective_top_p is not None:
+            payload.setdefault("options", {})["top_p"] = effective_top_p
 
         logger.debug("LLM request payload (ollama): %s", json.dumps(payload, indent=2))
 
@@ -390,6 +418,8 @@ class OpenAICompatibleClient(BaseLLMClient):
                 "timeout": tc["timeout"],
                 "api_format": tc.get("api_format", "openai"),
                 "reachable": self._tier_status.get(tier),
+                "temperature": tc.get("temperature"),
+                "top_p": tc.get("top_p"),
             }
         return info
 

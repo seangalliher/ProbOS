@@ -213,6 +213,7 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 | Modular Construction | Extension-first architecture — sealed core, plugin extensions, graduated autonomy | Roadmap (Phase 30) |
 | Ready Room | Captain's strategic planning — idea capture, multi-agent sessions, architecture hierarchy | Roadmap (Phase 34) |
 | Utopia Planitia | Specialized builders — backend, frontend, test, infra, data | Roadmap (Phase 34) |
+| Captain's Yeoman | Personal AI assistant — conversational front door, crew delegation, personalization | Roadmap (Phase 36) |
 | The Nooplex | Distributed meta-intelligence — Model of Models | Long Horizon |
 
 ---
@@ -601,6 +602,12 @@ AD-337 proved the Builder pipeline works end-to-end but revealed systemic qualit
 - **AD-339: Standing Orders Architecture** *(done)* — ProbOS's own hierarchical instruction system. Four tiers: Federation Constitution (universal, immutable) → Ship Standing Orders (per-instance) → Department Protocols (per-department) → Agent Standing Orders (per-agent, evolvable). `config/standing_orders/` directory with `federation.md`, `ship.md`, `engineering.md`, `science.md`, `medical.md`, `security.md`, `bridge.md`. `compose_instructions()` assembles complete system prompt at call time. Like Claude Code's `CLAUDE.md` and OpenClaw's `soul.md`, but hierarchical and evolvable. No IDE dependency.
 - **AD-340: Builder Instructions Enhancement** *(done)* — Add concrete test-writing rules to Builder's hardcoded instructions: read __init__ signatures, use full import paths, trace mock coverage, match actual output format.
 - **AD-341: Code Review Agent** *(done)* — CodeReviewAgent reviews Builder output against Standing Orders before commit gate. Engineering department, standard tier. Starts as soft gate (advisory, logs issues). Earns hard gate authority through ProbOS trust model. Reads standards from Standing Orders, not IDE config.
+  - **Future: Hard Gate Upgrade** (absorbed from Claude Code code-review plugin, 2026-03-20) — When the reviewer earns hard-gate authority, enhance with patterns from Anthropic's code-review plugin:
+    - **Parallel specialist reviewers** — Launch 3-4 independent review agents in parallel (Standing Orders compliance, bug detection, pattern adherence, historical context via git blame). Redundancy catches more issues than a single reviewer
+    - **Confidence scoring** — Each finding scored 0-100. Only issues ≥80 surface to Captain. Reduces false positives that erode trust in the reviewer. Scoring considers: explicit Standing Orders match, evidence strength, whether issue is pre-existing vs introduced
+    - **Validation pass** — After initial findings, a separate agent validates each issue before surfacing. "Review the review" — expensive but high-signal. Optional, activated only in hard-gate mode
+    - **False positive exclusion list** — Standing Orders for the reviewer itself: don't flag pre-existing issues, linter-catchable items, pedantic nitpicks, code with lint-ignore comments
+    - **Model tiering for review tasks** — Fast tier for triage (is this build worth deep review?), standard for compliance, deep for subtle bugs. Cognitive Division of Labor applied to review
 - **AD-342: Standing Orders Display Command** *(done)* — `/orders` slash command showing all standing orders files with tier classification (Federation/Ship/Department/Agent), summaries, and sizes.
 
 **Builder Failure Escalation & Diagnostic Reporting (AD-343–347)**
@@ -747,9 +754,10 @@ BuildBlueprint ─→ ChunkDecomposer ─→ ┌─ Chunk 1 ──→ LLM ──
 - **Observable** — Every step emits events. The Captain sees what's happening. Chunks can be inspected, approved, or rejected individually.
 - **No new agents** — The Transporter Pattern enhances the existing BuilderAgent, not a separate agent. The Builder gains the ability to decompose and parallelize, but it's still the same agent in the same pool.
 - **File-based context offloading** *(absorbed from LangChain Open SWE)* — large intermediate data (chunk results, assembled code, validation reports) written to temp files rather than accumulated in the prompt chain. Prevents context overflow during multi-chunk builds. Each chunk reads its inputs from files, writes its output to files. The assembler reads files, not conversation history. Keeps the LLM context lean — only the current chunk's focused context enters the prompt
+- **Step budget asymmetry** *(absorbed from Kimi K2.5 Agent Swarm, 2026-03-20)* — the coordinator/decomposer should be fast and decisive (tight step budget, e.g. 15 steps), while workers/chunk executors get generous budgets (100+ steps) for deep, thorough generation. Kimi K2.5's Agent Swarm uses main agent max 15 steps, sub-agents max 100 steps. Apply to Transporter: ChunkDecomposer gets a constrained budget (quick decomposition, no over-analysis), while per-chunk Builder calls get generous timeouts and token budgets for thorough code generation
 - **Biology-first** — When in doubt, ask "how does the brain solve this?" The brain had 500 million years of evolution to optimize information processing under bandwidth constraints. Respect those solutions.
 
-Inspired by: The human brain's 10 bps conscious bottleneck (Manfred Zimmermann, 1986), Karl Friston's Free Energy Principle and predictive coding, the visual cortex hierarchy (Hubel & Wiesel), George Miller's chunking (1956), MapReduce (Google, 2004) for decompose-execute-merge, LLM×MapReduce (Zhou et al., 2024) for structured information protocol and confidence-calibrated chunk assembly, Cursor's multi-file editing, Microsoft's CodePlan for inter-procedural edit planning, the Star Trek transporter's matter stream concept.
+Inspired by: The human brain's 10 bps conscious bottleneck (Manfred Zimmermann, 1986), Karl Friston's Free Energy Principle and predictive coding, the visual cortex hierarchy (Hubel & Wiesel), George Miller's chunking (1956), MapReduce (Google, 2004) for decompose-execute-merge, LLM×MapReduce (Zhou et al., 2024) for structured information protocol and confidence-calibrated chunk assembly, Kimi K2.5 Agent Swarm (Moonshot AI, 2025) for step budget asymmetry and per-tier temperature tuning, Cursor's multi-file editing, Microsoft's CodePlan for inter-procedural edit planning, the Star Trek transporter's matter stream concept.
 
 - **Infrastructure Agent** — disk space monitoring, dependency health, environment validation
 - Existing: PoolScaler handles some Ops/Engineering overlap
@@ -822,6 +830,7 @@ The first concrete implementation: Opus designs the BuildBlueprint + ChunkSpecs 
 - **Cost-aware routing** — `ModelRegistry` tracks cost per token per provider. The router considers cost alongside quality: "Claude produces 5% better code, but GPT is 60% cheaper — for this low-stakes task, use GPT." Cost thresholds configurable by Captain
 - **Fallback chains per provider** — extend current tier-based fallback (`deep → standard → fast`) to include cross-provider fallback: `claude-opus → gpt-4o → gemini-2 → local-qwen`. Provider health tracking via circuit breaker pattern (already planned in LLM Resilience)
 - **Hot-swap model rotation** — add/remove model providers at runtime without restart. `ModelRegistry.register()` / `ModelRegistry.deregister()` with live updates to routing weights
+- **Per-tier temperature tuning** *(absorbed from Kimi K2.5, 2026-03-20)* — **AD-358 DONE.** Per-tier `temperature` and `top_p` fields in CognitiveConfig, wired through LLM client. Configurable in `system.yaml`. Future: Hebbian-learned adjustments over time
 - **Configuration** — `system.yaml` grows a `models:` section listing available providers, or auto-discovered via Ollama API (`/api/tags`) for local models
 
 **Cognitive Journal (Token Ledger)**
@@ -1057,6 +1066,7 @@ Mobile apps let the Captain interact with ProbOS from anywhere — approve build
 - **Push notifications** — Web Push API for PWA. Alert the Captain to approval requests, system alerts, build completions. Requires backend push subscription management
 - **Responsive HXI** — adapt the existing React UI for mobile viewports. Chat panel full-screen on mobile, cognitive mesh as a simplified 2D view, swipe gestures for panel switching
 - **Native apps** *(Future/stretch)* — React Native or Capacitor wrapping the HXI. Camera access (screenshot → Visual Perception), on-device voice (wake word + STT), biometric auth. Only justified after user base exists
+- **mDNS auto-discovery** *(absorbed from OpenCode, 2026-03-20)* — Publish ProbOS server via mDNS/Bonjour at startup. PADD (mobile PWA) on the same LAN auto-discovers the ProbOS instance without manual URL entry. Use `zeroconf` (Python) or similar. Small addition to FastAPI startup: `publish(port, "probos.local")`. Enables seamless mobile-to-ship connection
 
 **Voice Interaction (Full Stack)**
 
@@ -1288,6 +1298,95 @@ Phase 25 mentions "browser automation" in two words. Users expect a personal AI 
 - **Safety** — URL allowlist/blocklist configurable in `system.yaml`. Captain approval required for form submissions and JavaScript execution. SSRF protection reuses existing `HttpFetchAgent` guards
 - **Integration** — BrowseAgent registers `browse_web`, `screenshot_page`, `fill_form` intents. Tool Layer (Phase 25b) exposes as `browser` tool for any agent to use
 - **Perception pipeline** — browser output feeds through VisualPerception (Phase 2, Sensory Cortex) for screenshot-to-semantic compression
+
+---
+
+### Captain's Yeoman — Personal AI Assistant (Phase 36)
+
+*"The Captain's Yeoman handles everything the Captain shouldn't have to think about."*
+
+ProbOS's adoption funnel starts here. OpenClaw went viral because it gave every user immediate personal value. ProbOS has an entire crew behind a front door that requires understanding agents, pools, and trust to get started. The Yeoman is the front door that makes ProbOS useful to *anyone*, not just developers. Every ProbOS instance starts as a personal AI assistant. The engineering, science, and medical capabilities are there from the start — they activate when needed.
+
+In Star Trek, the Captain's Yeoman handles personal affairs, scheduling, communications, and briefings. ProbOS's Yeoman does the same — it's the default conversational interface, the first agent every user meets.
+
+**YeomanAgent — Bridge Crew Member**
+
+- **Position:** Bridge-level agent, serving the Captain directly (not assigned to any department)
+- **Default interface:** The first agent users interact with — no commands needed, just conversation
+- **Personality:** Helpful, proactive, learns the Captain's preferences over time
+- **Trust level:** Starts as Ensign (limited autonomy), earns agency through demonstrated reliability (AD-357)
+
+**Core Capabilities:**
+
+- **Conversational interaction** — natural language by default. "What's on my schedule?" "Remind me to review the PR tomorrow." "What did I work on last week?" No slash commands required (but still supported)
+- **Personal task management** — calendar, reminders, notes, to-do lists, daily briefings. Uses episodic memory to remember past conversations and preferences
+- **Research & information** — web research (via BrowseAgent, Phase 35), knowledge queries, summarization. "What's the latest on the Rust rewrite debate?" → delegated to crew with results presented conversationally
+- **Crew delegation** — seamless routing to specialists when needed:
+  - "Build me a script that..." → Engineering (Builder pipeline)
+  - "What's the system health?" → Medical (Diagnostician)
+  - "Design a new feature for..." → Science (Architect)
+  - "Review the latest build" → Engineering (Code Review Agent)
+  - The user doesn't need to know which department handles what — the Yeoman routes intelligently
+- **Personalization** — learns preferences via episodic memory and Hebbian learning:
+  - Communication style (verbose vs. concise, technical vs. plain)
+  - Frequently used workflows (auto-suggest "morning briefing" at 9am)
+  - Tool preferences (which editor, which browser, which calendar)
+  - Project context (remembers which repos, which branches, active work items)
+- **Extension skills** — personal capabilities installable as extensions (Phase 30):
+  - Home automation (smart lights, thermostat, locks)
+  - Finance tracking (expense logging, budget alerts)
+  - Fitness/health (workout logging, meal tracking)
+  - Social (draft emails, manage contacts, schedule meetings)
+  - Each skill is an extension — install what you need, ignore what you don't
+
+**Multi-Channel Presence (leverages Phase 24):**
+
+- **CLI** — the existing ProbOS shell becomes conversational-first
+- **Web UI (HXI)** — chat interface with the Yeoman, agent visualization in the background
+- **Discord** — personal assistant in DMs, team assistant in channels
+- **Mobile PWA** — "Hey Yeoman, what's my schedule?" from your phone
+- **Voice** — STT/TTS/wake word for hands-free interaction
+- **Slack / Teams** — enterprise channels (commercial tier)
+
+**Architecture:**
+
+```
+User ──→ Yeoman (Bridge) ──→ ┌─ Conversational response (direct)
+                              ├─ Engineering (Builder, Code Review)
+                              ├─ Medical (Diagnostician, Vitals)
+                              ├─ Science (Architect, CodebaseIndex)
+                              ├─ Security (threat analysis)
+                              ├─ Extension Skills (personal tasks)
+                              └─ External (BrowseAgent, Federation)
+```
+
+- `YeomanAgent` extends `CognitiveAgent` — full trust, Hebbian, memory integration
+- Intent classification: Yeoman classifies user requests and routes to the appropriate department or handles directly
+- Context management: maintains conversation context across channels (same Yeoman, whether you talk via CLI, Discord, or mobile)
+- Proactive suggestions: "You usually review PRs around this time — there are 3 pending" (earned at Commander+ trust level, AD-357)
+
+**The Adoption Funnel:**
+
+1. **Install** → `pip install probos` → meet the Yeoman → immediate personal value
+2. **Daily use** → Yeoman handles tasks, learns preferences → user stays engaged
+3. **Discovery** → "Wait, I can build custom agents?" → user explores the crew
+4. **Power use** → extensions, Ship Classes, Builder pipeline → user becomes Captain
+5. **Scale** → federate, build for others, join the Nooplex → ecosystem growth
+
+**OSS vs Commercial Boundary:**
+
+| Layer | OSS (Phase 36) | Commercial |
+|-------|-----------------|------------|
+| Agent | YeomanAgent, routing logic, personalization | — |
+| Memory | Episodic memory, preference learning | Cross-device sync, cloud backup |
+| Channels | CLI, web, Discord | Teams, Slack Enterprise, SMS |
+| Skills | Extension API, community skills | Premium skill marketplace |
+| Hosting | Self-hosted | ProbOS Cloud (managed hosting) |
+| Bundle | — | Escort Ship Class (curated Yeoman package) |
+| Fleet | — | Nooplex fleet-wide assistant coordination |
+| Enterprise | — | SSO, compliance, audit logs, multi-user admin |
+
+**Dependencies:** Phase 24 (channels), Phase 30 (extensions), Phase 35 (browser, onboarding). Can start with CLI + web before other channels are complete.
 
 ---
 
@@ -1973,6 +2072,10 @@ Items identified during development that aren't urgent but would improve code qu
 | Item | Description | Identified By | Notes |
 |------|-------------|---------------|-------|
 | Modularize shell commands | Extract `ProbOSShell` command methods into a `shell/commands/` package. Each command as its own module, independently testable. `shell.py` is 900+ lines at 64% coverage — modular structure would improve maintainability and test coverage. | Visiting Officer (AD-356) | Convert `shell.py` file → `shell/__init__.py` package. Needs migration plan for existing tests. Good candidate for Phase 35 (UX & Adoption) or standalone cleanup AD. |
+| Build snapshot system | Shadow git repo tracking every file change during builder execution. Granular undo per file change, not just per-commit. Revert partial builds when test gate catches issues in specific files. Independent of project's own git history. | OpenCode (2026-03-20) | Phase 30 or 32. OpenCode uses `--git-dir` + `--work-tree` for isolation. Complements test gate — snapshot before build, rollback on failure. |
+| LSP-enhanced CodebaseIndex | Spawn LSP servers (pyright, typescript-language-server) for type-aware code intelligence. Precise find-references, workspace symbols, real-time diagnostics before test runs, rename refactoring with full type safety. Upgrades AST-only CodebaseIndex to compiler-grade understanding. | OpenCode (2026-03-20) | Phase 29c extension. Requires language detection + server lifecycle management. Start with pyright (Python only). Significant upgrade to Science team capabilities. |
+| Conversation compaction with tool output pruning | For long-running sessions, walk backwards through history keeping recent tool outputs but erasing old ones (keep tool name + inputs as markers). Protected tools (like skill) never pruned. Configurable token threshold. | OpenCode (2026-03-20) | Sensory Cortex extension. Relevant for Captain's Ready Room (Phase 34) multi-agent briefings and long builder sessions. Complement to existing REFLECT_PAYLOAD_BUDGET. |
+| Session export and sharing | Export build sessions, diagnostic sessions, Ready Room briefings as portable, replayable artifacts. Captain's Log as searchable, shareable decision history. | OpenCode (2026-03-20) | Phase 34 (Captain's Log). Cognitive Journal (Phase 32) captures data; sharing is the presentation layer. Federation-relevant: share sessions between ships. |
 
 ---
 
@@ -1984,9 +2087,9 @@ Bugs found during development or testing. Squash as found when possible; queue h
 
 | BF | Summary | Severity | Status |
 |----|---------|----------|--------|
-| BF-001 | Self-mod proposal on knowledge questions | Medium | Open |
-| BF-002 | Agent orbs escape pool group spheres | High | Open |
-| BF-003 | "Run diagnostic" bypasses VitalsMonitor, asks user for alert data | Medium | Open |
+| BF-001 | Self-mod proposal on knowledge questions | Medium | **Closed** (AD-348) |
+| BF-002 | Agent orbs escape pool group spheres | High | **Closed** (AD-349) |
+| BF-003 | "Run diagnostic" bypasses VitalsMonitor, asks user for alert data | Medium | **Closed** (AD-350) |
 | BF-004 | Transporter HXI visualization not rendered | Medium | Open |
 
 ### BF-001: Self-Mod False Positive on Knowledge Questions

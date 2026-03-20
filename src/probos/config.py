@@ -71,6 +71,15 @@ class CognitiveConfig(BaseModel):
     llm_timeout_deep: float | None = None
     llm_api_format_deep: str | None = None
 
+    # Per-tier sampling overrides (None = use request-level value)
+    llm_temperature_fast: float | None = None
+    llm_temperature_standard: float | None = None
+    llm_temperature_deep: float | None = None
+
+    llm_top_p_fast: float | None = None
+    llm_top_p_standard: float | None = None
+    llm_top_p_deep: float | None = None
+
     # Default tier for LLM requests ("fast", "standard", or "deep")
     default_llm_tier: str = "fast"
 
@@ -119,12 +128,24 @@ class CognitiveConfig(BaseModel):
             "standard": self.llm_api_format_standard,
             "deep": self.llm_api_format_deep,
         }
+        temp_map = {
+            "fast": self.llm_temperature_fast,
+            "standard": self.llm_temperature_standard,
+            "deep": self.llm_temperature_deep,
+        }
+        top_p_map = {
+            "fast": self.llm_top_p_fast,
+            "standard": self.llm_top_p_standard,
+            "deep": self.llm_top_p_deep,
+        }
         return {
             "base_url": url_map.get(tier) or self.llm_base_url,
             "api_key": key_map.get(tier) if key_map.get(tier) is not None else self.llm_api_key,
             "model": model_map.get(tier, self.llm_model_standard),
             "timeout": timeout_map.get(tier) if timeout_map.get(tier) is not None else self.llm_timeout_seconds,
             "api_format": format_map.get(tier) or "openai",
+            "temperature": temp_map.get(tier),   # None = use request default
+            "top_p": top_p_map.get(tier),        # None = don't send
         }
 
 

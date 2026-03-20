@@ -91,6 +91,52 @@ class TestCognitiveConfigTiers:
 
 
 # ---------------------------------------------------------------------------
+# TestCognitiveConfigSampling (AD-358: per-tier temperature & top_p)
+# ---------------------------------------------------------------------------
+
+
+class TestCognitiveConfigSampling:
+    """Tests for per-tier temperature and top_p in CognitiveConfig."""
+
+    def test_tier_config_returns_temperature_when_set(self):
+        """Set llm_temperature_deep=0.7, verify deep returns 0.7, fast returns None."""
+        config = CognitiveConfig(llm_temperature_deep=0.7)
+        assert config.tier_config("deep")["temperature"] == 0.7
+        assert config.tier_config("fast")["temperature"] is None
+
+    def test_tier_config_returns_top_p_when_set(self):
+        """Set llm_top_p_deep=0.95, verify deep returns 0.95, fast returns None."""
+        config = CognitiveConfig(llm_top_p_deep=0.95)
+        assert config.tier_config("deep")["top_p"] == 0.95
+        assert config.tier_config("fast")["top_p"] is None
+
+    def test_tier_defaults_not_set_returns_none(self):
+        """Default CognitiveConfig() returns None for temperature and top_p in all tiers."""
+        config = CognitiveConfig()
+        for tier in ("fast", "standard", "deep"):
+            tc = config.tier_config(tier)
+            assert tc["temperature"] is None
+            assert tc["top_p"] is None
+
+    def test_tier_info_includes_sampling_params(self):
+        """OpenAICompatibleClient with llm_temperature_fast=0.1 shows it in tier_info()."""
+        config = CognitiveConfig(llm_temperature_fast=0.1)
+        client = OpenAICompatibleClient(config=config)
+        info = client.tier_info()
+        assert info["fast"]["temperature"] == 0.1
+        assert info["fast"]["top_p"] is None
+        assert info["standard"]["temperature"] is None
+
+    def test_llm_request_top_p_field(self):
+        """LLMRequest accepts top_p parameter and defaults to None."""
+        req_default = LLMRequest(prompt="test")
+        assert req_default.top_p is None
+
+        req_set = LLMRequest(prompt="test", top_p=0.9)
+        assert req_set.top_p == 0.9
+
+
+# ---------------------------------------------------------------------------
 # TestOpenAICompatibleClientMultiEndpoint (tests 6-10)
 # ---------------------------------------------------------------------------
 

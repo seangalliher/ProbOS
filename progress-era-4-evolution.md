@@ -292,3 +292,20 @@ Progression: AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-3
 **Build prompt:** `prompts/visiting-officer-live-fixes.md`
 
 **Status:** AD-355 complete — 2327 Python + 34 Vitest
+
+## Per-Tier Temperature & Top-P Tuning (AD-358)
+
+### AD-358: Per-Tier Temperature & Top-P Tuning (DONE)
+
+**Decision:** AD-358 — Per-tier sampling parameter configuration, inspired by Kimi K2.5 research showing different cognitive modes benefit from different generation temperatures.
+
+**Changes:**
+- `CognitiveConfig` — 6 new optional fields: `llm_temperature_{fast,standard,deep}`, `llm_top_p_{fast,standard,deep}`. `tier_config()` returns `temperature` and `top_p` (None when not set)
+- `LLMRequest` — Added `top_p: float | None = None` field
+- `OpenAICompatibleClient` — `complete()` resolves effective temperature/top_p from tier config when caller uses defaults. Passed through `_call_api()` → `_call_openai()`/`_call_ollama_native()`. `tier_info()` reports sampling params
+- `system.yaml` — Commented-out per-tier sampling config lines
+
+**Build prompt:** `prompts/per-tier-temperature-tuning.md`
+**Builder:** Visiting officer (Copilot SDK) — code correct, but also created stray files in wrong paths. Cleanup by architect.
+
+**Status:** AD-358 complete — 5 new tests, 0 regressions (22+36 pass)
