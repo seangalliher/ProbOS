@@ -509,6 +509,10 @@ class CopilotBuilderAdapter:
             file_blocks: list[dict[str, Any]] = []
             cwd = Path(self._cwd)
             changed_paths: list[str] = []
+            rejected_count = 0
+
+            # Expected project structure prefixes for file validation
+            _EXPECTED_PREFIXES = ("src/", "tests/", "config/", "docs/", "prompts/")
 
             for f in cwd.rglob("*"):
                 try:
@@ -517,11 +521,28 @@ class CopilotBuilderAdapter:
                     rel = str(f.relative_to(cwd)).replace("\\", "/")
                     if any(skip in rel for skip in ("__pycache__", ".git/", "node_modules/")):
                         continue
+                    # Skip files outside expected project structure
+                    if not any(rel.startswith(p) for p in _EXPECTED_PREFIXES):
+                        if "/" not in rel:
+                            pass  # Root-level file — allow
+                        else:
+                            logger.warning(
+                                "Visiting officer created file outside expected structure: %s — skipping",
+                                rel,
+                            )
+                            rejected_count += 1
+                            continue
                     content = f.read_text(encoding="utf-8", errors="replace")
                     if rel not in file_contents or content != file_contents.get(rel, ""):
                         changed_paths.append(rel)
                 except (OSError, ValueError):
                     continue
+
+            if rejected_count > 0:
+                logger.warning(
+                    "Visiting officer: %d file(s) rejected (outside project structure)",
+                    rejected_count,
+                )
 
             if changed_paths:
                 logger.debug("Visiting builder: found %d changed files on disk: %s", len(changed_paths), changed_paths)

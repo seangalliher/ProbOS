@@ -76,6 +76,55 @@ def _normalize_change_paths(file_changes: list[dict[str, Any]]) -> list[dict[str
     return file_changes
 
 
+# Allowed top-level directories for builder file operations
+_ALLOWED_PATH_PREFIXES = (
+    "src/",
+    "tests/",
+    "config/",
+    "docs/",
+    "prompts/",
+)
+
+# Paths that must never be written by the builder
+_FORBIDDEN_PATHS = (
+    ".git/",
+    ".env",
+    "pyproject.toml",
+    ".github/",
+)
+
+
+def _validate_file_path(path_str: str) -> str | None:
+    """Validate a file path is safe for the builder to write.
+
+    Returns None if valid, or an error message if invalid.
+    """
+    # Normalize separators
+    normalized = path_str.replace("\\", "/")
+
+    # Block path traversal
+    if ".." in normalized:
+        return f"Path traversal blocked: {path_str}"
+
+    # Block forbidden paths
+    for forbidden in _FORBIDDEN_PATHS:
+        if normalized.startswith(forbidden) or normalized == forbidden.rstrip("/"):
+            return f"Forbidden path: {path_str}"
+
+    # Block absolute paths
+    if normalized.startswith("/") or (len(normalized) > 1 and normalized[1] == ":"):
+        return f"Absolute path blocked: {path_str}"
+
+    # Must be under an allowed prefix
+    if not any(normalized.startswith(prefix) for prefix in _ALLOWED_PATH_PREFIXES):
+        # Allow top-level known files (conftest.py, test scripts, etc.)
+        if "/" not in normalized:
+            return None  # Root-level file — allow
+        return f"Path outside allowed directories: {path_str} (allowed: {', '.join(_ALLOWED_PATH_PREFIXES)})"
+
+    return None
+
+
 from probos.types import IntentDescriptor, LLMRequest
 
 logger = logging.getLogger(__name__)
@@ -1584,6 +1633,11 @@ async def _git_current_branch(work_dir: str) -> str:
 async def _git_create_branch(branch_name: str, work_dir: str) -> tuple[bool, str]:
     """Create and checkout a new git branch.  Returns (success, message)."""
     safe = _sanitize_branch_name(branch_name)
+    # Safety net: delete stale branch from prior failed build (crash/power loss)
+    _, list_out, _ = await _run_git(["branch", "--list", safe], work_dir)
+    if list_out.strip():
+        logger.info("Deleting stale branch '%s' from prior build", safe)
+        await _run_git(["branch", "-D", safe], work_dir)
     rc, out, err = await _run_git(["checkout", "-b", safe], work_dir)
     if rc != 0:
         return False, err or out
@@ -2366,6 +2420,39 @@ def _build_fix_prompt(
 # Post-approval execution pipeline (AD-303)
 # ---------------------------------------------------------------------------
 
+
+async def _is_dirty_working_tree(work_dir: str) -> bool:
+    """Check if the git working tree has uncommitted changes.
+
+    Returns False if not inside a git repo or if the tree is clean.
+    Uses create_subprocess_exec directly to avoid interference with
+    subprocess.run mocks in existing tests.
+    """
+    try:
+        # First verify we're inside a git repo
+        proc = await asyncio.create_subprocess_exec(
+            "git", "rev-parse", "--git-dir",
+            cwd=work_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+        if proc.returncode != 0:
+            return False  # Not a git repo — skip check
+
+        # Check for uncommitted changes
+        proc = await asyncio.create_subprocess_exec(
+            "git", "status", "--porcelain",
+            cwd=work_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        return proc.returncode == 0 and bool(stdout.decode().strip())
+    except (OSError, FileNotFoundError):
+        return False  # git not available
+
+
 async def execute_approved_build(
     file_changes: list[dict[str, Any]],
     spec: BuildSpec,
@@ -2393,6 +2480,14 @@ async def execute_approved_build(
     # 1. Save current branch
     original_branch = await _git_current_branch(work_dir)
 
+    # 1a. Verify clean working tree (prevent contaminating build branch)
+    if await _is_dirty_working_tree(work_dir):
+        result.error = (
+            "Working tree has uncommitted changes. "
+            "Commit or stash changes before running a build."
+        )
+        return result
+
     # 2. Generate branch name
     branch = spec.branch_name
     if not branch:
@@ -2412,6 +2507,13 @@ async def execute_approved_build(
     try:
         # 4. Write/modify files
         for change in file_changes:
+            # Validate file path before any disk operations
+            path_error = _validate_file_path(change["path"])
+            if path_error:
+                logger.warning("BuilderAgent: %s — skipping", path_error)
+                validation_errors.append(path_error)
+                continue
+
             path = Path(work_dir) / change["path"]
             if change["mode"] == "modify":
                 if not path.exists():
@@ -2471,7 +2573,18 @@ async def execute_approved_build(
         result.files_written = written
         result.files_modified = modified_files
 
-        # 4b. Code review (AD-341)
+        # 4b. Warn about files not in build spec target list
+        if spec.target_files:
+            expected = set(spec.target_files)
+            actual = set(written + modified_files)
+            unexpected = actual - expected
+            if unexpected:
+                logger.warning(
+                    "BuilderAgent: %d file(s) not in build spec target list: %s",
+                    len(unexpected), ", ".join(sorted(unexpected)),
+                )
+
+        # 4c. Code review (AD-341)
         if llm_client and (written or modified_files):
             from probos.cognitive.code_reviewer import CodeReviewAgent
             reviewer = CodeReviewAgent(
@@ -2640,6 +2753,24 @@ async def execute_approved_build(
     finally:
         # 7. Return to original branch
         await _git_checkout_main(work_dir)
+        # Clean up build branch if no commit was made (failed build)
+        if not result.commit_hash and result.branch_name:
+            logger.info("Cleaning up failed build branch '%s'", result.branch_name)
+            await _run_git(["branch", "-D", result.branch_name], work_dir)
+            # Delete files created during the failed build (untracked on main)
+            for created_path in written:
+                full = Path(work_dir) / created_path
+                if full.exists():
+                    full.unlink()
+                    logger.info("Cleaned up untracked file from failed build: %s", created_path)
+                    # Remove empty parent dirs up to work_dir
+                    parent = full.parent
+                    try:
+                        while parent != Path(work_dir) and not any(parent.iterdir()):
+                            parent.rmdir()
+                            parent = parent.parent
+                    except OSError:
+                        pass  # Directory not empty or permission issue
 
     # Tag builder source and record Hebbian outcome (AD-353)
     result.builder_source = builder_source
