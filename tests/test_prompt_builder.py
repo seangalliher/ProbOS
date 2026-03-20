@@ -230,27 +230,20 @@ class TestCapabilityGapExamples:
         assert "I don't have an intent for translation yet" not in prompt
         assert "I don't have an intent for creative writing yet" not in prompt
 
-    def test_lookup_gap_present_without_matching_intent(self):
-        """Knowledge-lookup gap example appears when no lookup intent exists."""
+    def test_knowledge_not_classified_as_gap(self):
+        """BF-001: Knowledge questions should not be in gap examples."""
         builder = PromptBuilder()
         prompt = builder.build_system_prompt(_all_current_descriptors())
-        assert "who is Alan Turing?" in prompt
-        assert "I don't have an intent for knowledge lookup yet" in prompt
-
-    def test_lookup_gap_suppressed_when_lookup_intent_exists(self):
-        """Adding a lookup_info intent suppresses the knowledge-lookup gap example."""
-        builder = PromptBuilder()
-        descs = _all_current_descriptors() + [
-            IntentDescriptor(
-                name="lookup_info",
-                params={"query": "..."},
-                description="Look up information about a topic",
-            ),
-        ]
-        prompt = builder.build_system_prompt(descs)
+        assert "who is Alan Turing?" not in prompt
         assert "I don't have an intent for knowledge lookup yet" not in prompt
-        # Other gap examples should still be present
-        assert "translate 'hello world' to French" in prompt
+
+    def test_knowledge_questions_are_conversational(self):
+        """BF-001: Knowledge questions should be classified as conversational."""
+        builder = PromptBuilder()
+        prompt = builder.build_system_prompt(_all_current_descriptors())
+        assert "general knowledge question" in prompt.lower() or "knowledge question" in prompt.lower()
+        # Should NOT tell the LLM to never answer factual questions
+        assert "NEVER answer factual questions" not in prompt
 
     def test_all_gaps_suppressed_when_all_intents_exist(self):
         """All gap examples suppressed when all matching intents exist."""
@@ -258,12 +251,10 @@ class TestCapabilityGapExamples:
         descs = _all_current_descriptors() + [
             IntentDescriptor(name="translate_text", params={}, description="x"),
             IntentDescriptor(name="creative_writing", params={}, description="x"),
-            IntentDescriptor(name="lookup_info", params={}, description="x"),
         ]
         prompt = builder.build_system_prompt(descs)
         assert "I don't have an intent for translation yet" not in prompt
         assert "I don't have an intent for creative writing yet" not in prompt
-        assert "I don't have an intent for knowledge lookup yet" not in prompt
 
     def test_core_examples_always_present(self):
         """Core examples (read_file, write_file, etc.) always present regardless."""

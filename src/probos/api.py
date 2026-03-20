@@ -128,6 +128,9 @@ class BuildRequest(BaseModel):
     test_files: list[str] = []
     ad_number: int = 0
     constraints: list[str] = []
+    force_native: bool = False
+    force_visiting: bool = False
+    model: str = ""
 
 
 class BuildApproveRequest(BaseModel):
@@ -869,6 +872,9 @@ def create_app(runtime: Any) -> FastAPI:
                     "test_files": req.test_files,
                     "ad_number": req.ad_number,
                     "constraints": req.constraints,
+                    "force_native": req.force_native,
+                    "force_visiting": req.force_visiting,
+                    "model": req.model,
                 },
                 ttl_seconds=600.0,  # Builder works asynchronously — no rush
             )
@@ -914,6 +920,7 @@ def create_app(runtime: Any) -> FastAPI:
             file_changes = result_data.get("file_changes", [])
             change_count = result_data.get("change_count", len(file_changes))
             llm_output = result_data.get("llm_output", "")
+            builder_source = result_data.get("builder_source", "native")
 
             rt._emit_event("build_generated", {
                 "build_id": build_id,
@@ -923,6 +930,7 @@ def create_app(runtime: Any) -> FastAPI:
                 "file_changes": file_changes,
                 "change_count": change_count,
                 "llm_output": llm_output,
+                "builder_source": builder_source,
                 "message": f"Generated {change_count} file(s) for '{req.title}' \u2014 review and approve to apply.",
             })
 

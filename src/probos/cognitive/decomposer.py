@@ -110,12 +110,12 @@ cannot be mapped to any available intent, respond with \
 computes the answer (e.g. date/time, math, system info, pip install). \
 NEVER use run_command to output hardcoded text you already know \
 (echo, Write-Host, Write-Output, printf, print, etc.).
-12b. For tasks requiring intelligence — translation, creative writing, \
-summarization, knowledge questions — if a matching intent exists in the \
-table above, use it. If NO matching intent exists, return \
+12b. For tasks requiring external tools or computation — translation, creative \
+writing, summarization, code generation, web search — if a matching intent exists \
+in the table above, use it. If NO matching intent exists, return \
 {"intents": [], "response": "I don't have an intent for <task type> yet."}. \
-NEVER perform these tasks yourself in the response field. \
-Conversational replies (greetings, help, small talk) are fine as direct responses.
+General knowledge questions (who/what/explain) are conversational — answer directly. \
+Conversational replies (greetings, help, small talk, factual questions) are fine as direct responses.
 13. Set "reflect" to true when the user asks for analysis, interpretation, \
 comparison, summary, or opinion about results. Also set "reflect" to true for \
 any intent that transforms, translates, generates, or produces content the user \

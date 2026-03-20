@@ -12,7 +12,9 @@ import asyncio
 import ast
 import logging
 import re
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -113,6 +115,7 @@ class BuildResult:
     fix_attempts: int = 0
     review_result: str = ""
     review_issues: list[str] = field(default_factory=list)
+    builder_source: str = "native"  # "native" or "visiting" (AD-353)
 
 
 @dataclass
@@ -1187,6 +1190,50 @@ def _should_use_transporter(spec: BuildSpec, context_size: int = 0) -> bool:
     return False
 
 
+def _should_use_visiting_builder(
+    spec: BuildSpec,
+    hebbian_router: Any | None = None,
+    force_native: bool = False,
+    force_visiting: bool = False,
+) -> bool:
+    """Decide whether to route to the visiting Copilot Builder (AD-353).
+
+    Decision factors (in priority order):
+    1. force_native / force_visiting overrides
+    2. Copilot SDK availability
+    3. Hebbian weight comparison (if enough history)
+    4. Default: prefer visiting (bootstrap phase)
+    """
+    if force_native:
+        return False
+    if force_visiting:
+        return True
+
+    from probos.cognitive.copilot_adapter import CopilotBuilderAdapter
+
+    if not CopilotBuilderAdapter.is_available():
+        return False
+
+    if hebbian_router is not None:
+        from probos.mesh.routing import REL_BUILDER_VARIANT
+
+        try:
+            visiting_weight = hebbian_router.get_weight(
+                "build_code", "visiting", rel_type=REL_BUILDER_VARIANT,
+            )
+            native_weight = hebbian_router.get_weight(
+                "build_code", "native", rel_type=REL_BUILDER_VARIANT,
+            )
+            # Only compare if both have enough history
+            if visiting_weight > 0.1 and native_weight > 0.1:
+                return visiting_weight > native_weight
+        except (TypeError, AttributeError):
+            pass  # Mock or incompatible router — skip Hebbian comparison
+
+    # Bootstrap default: prefer visiting (more capable with MCP tools)
+    return True
+
+
 async def transporter_build(
     spec: BuildSpec,
     llm_client: Any,
@@ -1900,7 +1947,7 @@ Rules for MODIFY blocks:
         total_context = len(obs["file_context"]) + len(obs["target_context"])
         logger.info("Builder perceive: final context = %d chars", total_context)
 
-        # Step 4: Check if Transporter Pattern should be used
+        # Step 4: Check if visiting builder should be used (AD-353)
         spec = BuildSpec(
             title=params.get("title", ""),
             description=params.get("description", ""),
@@ -1910,6 +1957,73 @@ Rules for MODIFY blocks:
             ad_number=params.get("ad_number", 0),
             constraints=params.get("constraints", []),
         )
+
+        if _should_use_visiting_builder(
+            spec,
+            hebbian_router=getattr(self._runtime, "hebbian_router", None) if self._runtime else None,
+            force_native=params.get("force_native", False),
+            force_visiting=params.get("force_visiting", False),
+        ):
+            tmp_dir = None
+            try:
+                from probos.cognitive.copilot_adapter import CopilotBuilderAdapter
+
+                # Create isolated temp dir so SDK doesn't write into project root
+                tmp_dir = tempfile.mkdtemp(prefix="probos_build_")
+                tmp_path = Path(tmp_dir)
+
+                # Copy existing target files into temp dir (preserving structure)
+                for file_path, content in all_files.items():
+                    if content:  # Only copy files that exist
+                        dest = tmp_path / file_path
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        dest.write_text(content, encoding="utf-8")
+
+                model = params.get("model", "")
+                adapter = CopilotBuilderAdapter(
+                    codebase_index=getattr(self._runtime, "codebase_index", None) if self._runtime else None,
+                    runtime=self._runtime,
+                    cwd=tmp_dir,
+                    **({"model": model} if model else {}),
+                )
+                await adapter.start()
+                try:
+                    copilot_result = await adapter.execute(spec, all_files)
+                finally:
+                    await adapter.stop()
+
+                if copilot_result.success and copilot_result.file_blocks:
+                    self._transporter_result = {
+                        "action": "transporter_complete",
+                        "file_changes": copilot_result.file_blocks,
+                        "llm_output": copilot_result.raw_output,
+                        "builder_source": "visiting",
+                    }
+                    # Record success for Hebbian learning
+                    if self._runtime and hasattr(self._runtime, "hebbian_router"):
+                        from probos.mesh.routing import REL_BUILDER_VARIANT
+
+                        self._runtime.hebbian_router.record_interaction(
+                            "build_code", "visiting", success=True, rel_type=REL_BUILDER_VARIANT,
+                        )
+                    logger.info("Visiting builder produced %d file blocks", len(copilot_result.file_blocks))
+                    return obs  # Skip native pipeline
+                else:
+                    logger.warning("Visiting builder failed: %s — falling back to native", copilot_result.error)
+                    # Record failure for Hebbian learning
+                    if self._runtime and hasattr(self._runtime, "hebbian_router"):
+                        from probos.mesh.routing import REL_BUILDER_VARIANT
+
+                        self._runtime.hebbian_router.record_interaction(
+                            "build_code", "visiting", success=False, rel_type=REL_BUILDER_VARIANT,
+                        )
+            except Exception as e:
+                logger.warning("Visiting builder error: %s — falling back to native", e)
+            finally:
+                if tmp_dir:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        # Step 5: Check if Transporter Pattern should be used
         target_size = sum(len(all_files.get(f, "")) for f in target_files)
         if _should_use_transporter(spec, target_size):
             logger.info(
@@ -1993,9 +2107,9 @@ Rules for MODIFY blocks:
                     "file_changes": file_changes,
                     "llm_output": decision.get("llm_output", ""),
                     "change_count": len(file_changes),
+                    "builder_source": decision.get("builder_source", "native"),
                 },
             }
-            return {"success": False, "error": decision.get("reason")}
 
         llm_output = decision.get("llm_output", "")
         logger.info("Builder act: LLM output length = %d chars", len(llm_output))
@@ -2246,6 +2360,8 @@ async def execute_approved_build(
     max_fix_attempts: int = 2,
     llm_client: Any | None = None,
     escalation_hook: Any | None = None,
+    builder_source: str = "native",
+    runtime: Any | None = None,
 ) -> BuildResult:
     """Execute an approved build: write files, run tests, create git branch.
 
@@ -2510,5 +2626,15 @@ async def execute_approved_build(
     finally:
         # 7. Return to original branch
         await _git_checkout_main(work_dir)
+
+    # Tag builder source and record Hebbian outcome (AD-353)
+    result.builder_source = builder_source
+    if runtime and hasattr(runtime, "hebbian_router") and builder_source in ("native", "visiting"):
+        from probos.mesh.routing import REL_BUILDER_VARIANT
+
+        runtime.hebbian_router.record_interaction(
+            "build_code", builder_source, success=result.tests_passed,
+            rel_type=REL_BUILDER_VARIANT,
+        )
 
     return result

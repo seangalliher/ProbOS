@@ -68,6 +68,7 @@ export interface BuildProposal {
   change_count: number;
   llm_output: string;
   status: 'generating' | 'review' | 'approved' | 'rejected';
+  builder_source?: 'native' | 'visiting';
 }
 
 export interface BuildFailureReport {

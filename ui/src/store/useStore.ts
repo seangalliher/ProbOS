@@ -177,6 +177,8 @@ export interface HXIState {
   connections: Connection[];
   pools: PoolInfo[];
   groupCenters: Map<string, GroupCenter>;
+  poolToGroup: Record<string, string>;
+  poolGroups: Record<string, PoolGroupInfo>;
   systemMode: SystemMode;
   activeDag: DagNode[] | null;
   chatHistory: ChatMessage[];
@@ -250,6 +252,8 @@ export const useStore = create<HXIState>((set, get) => ({
   connections: [],
   pools: [],
   groupCenters: new Map(),
+  poolToGroup: {},
+  poolGroups: {},
   systemMode: 'active',
   activeDag: null,
   chatHistory: (() => {
@@ -394,6 +398,8 @@ export const useStore = create<HXIState>((set, get) => ({
           groupCenters: layoutResult.groupCenters,
           connections,
           pools,
+          poolToGroup,
+          poolGroups: snap.pool_groups || {},
           systemMode: snap.system_mode as SystemMode,
           tcN: snap.tc_n,
           routingEntropy: snap.routing_entropy,
@@ -430,7 +436,8 @@ export const useStore = create<HXIState>((set, get) => ({
             };
             agents.set(d.agent_id, newAgent);
           }
-          return { agents: computeLayout(agents).agents };
+          const result = computeLayout(agents, s.poolToGroup, s.poolGroups);
+          return { agents: result.agents, groupCenters: result.groupCenters };
         });
         break;
       }
@@ -632,6 +639,7 @@ export const useStore = create<HXIState>((set, get) => ({
       case 'build_generated': {
         set({ buildProgress: null });
         const msg = (data.message || '') as string;
+        const builderSource = (data.builder_source || 'native') as 'native' | 'visiting';
         const proposal: BuildProposal = {
           build_id: data.build_id as string,
           title: data.title as string,
@@ -641,6 +649,7 @@ export const useStore = create<HXIState>((set, get) => ({
           change_count: data.change_count as number,
           llm_output: data.llm_output as string,
           status: 'review',
+          builder_source: builderSource,
         };
         get().addChatMessage('system', msg, { buildProposal: proposal });
         break;

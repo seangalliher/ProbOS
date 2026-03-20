@@ -41,6 +41,9 @@ dev = [
 discord = [
     "discord.py>=2.0",
 ]
+copilot = [
+    "github-copilot-sdk>=0.1.30",
+]
 
 [dependency-groups]
 dev = [

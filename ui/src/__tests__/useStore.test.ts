@@ -20,6 +20,8 @@ beforeEach(() => {
     selfModProgress: null,
     pendingRequests: 0,
     groupCenters: new Map(),
+    poolToGroup: {},
+    poolGroups: {},
   });
   // Clear localStorage
   localStorage.clear();
@@ -120,6 +122,67 @@ describe('useStore', () => {
       const agent = useStore.getState().agents.get('test-1');
       expect(agent!.confidence).toBe(0.95);
       expect(agent!.trust).toBe(0.7);
+    });
+
+    it('preserves pool group clustering on agent_state update (AD-349)', () => {
+      const { handleEvent } = useStore.getState();
+
+      // First, send a state_snapshot that establishes pool groups
+      handleEvent({
+        type: 'state_snapshot',
+        data: {
+          agents: [
+            { id: 'a1', agent_type: 'file_reader', pool: 'filesystem', state: 'active', confidence: 0.9, trust: 0.5, tier: 'core' },
+            { id: 'a2', agent_type: 'diagnostician', pool: 'medical_diagnostician', state: 'active', confidence: 0.9, trust: 0.5, tier: 'domain' },
+          ],
+          connections: [],
+          pools: [],
+          pool_groups: {
+            core: { pools: { filesystem: { healthy: 1, target: 1 } } },
+            medical: { pools: { medical_diagnostician: { healthy: 1, target: 1 } } },
+          },
+          pool_to_group: { filesystem: 'core', medical_diagnostician: 'medical' },
+          system_mode: 'active',
+          tc_n: 1,
+          routing_entropy: 0.5,
+        },
+        timestamp: Date.now() / 1000,
+      });
+
+      const afterSnapshot = useStore.getState();
+      expect(afterSnapshot.poolToGroup).toEqual({ filesystem: 'core', medical_diagnostician: 'medical' });
+
+      // Now send an agent_state update
+      handleEvent({
+        type: 'agent_state',
+        data: { agent_id: 'a1', pool: 'filesystem', state: 'active', confidence: 0.95, trust: 0.6 },
+        timestamp: Date.now() / 1000,
+      });
+
+      // groupCenters should still be populated (not empty)
+      const afterUpdate = useStore.getState();
+      expect(afterUpdate.groupCenters.size).toBeGreaterThan(0);
+    });
+
+    it('stores poolToGroup and poolGroups from state_snapshot (AD-349)', () => {
+      const { handleEvent } = useStore.getState();
+      handleEvent({
+        type: 'state_snapshot',
+        data: {
+          agents: [],
+          connections: [],
+          pools: [],
+          pool_groups: { core: { pools: { filesystem: { healthy: 1, target: 1 } } } },
+          pool_to_group: { filesystem: 'core' },
+          system_mode: 'active',
+          tc_n: 0,
+          routing_entropy: 0,
+        },
+        timestamp: Date.now() / 1000,
+      });
+      const state = useStore.getState();
+      expect(state.poolToGroup).toEqual({ filesystem: 'core' });
+      expect(state.poolGroups).toEqual({ core: { pools: { filesystem: { healthy: 1, target: 1 } } } });
     });
 
     it('handles self_mod_success event with agent_id', () => {
@@ -496,5 +559,48 @@ describe('animation event clearing (AD-329)', () => {
     useStore.setState({ pendingConsensusFlash: { intent: 'test', outcome: 'approved', approval_ratio: 1, votes: 3, shapley: {} } });
     useStore.getState().clearAnimationEvent('pendingConsensusFlash');
     expect(useStore.getState().pendingConsensusFlash).toBeNull();
+  });
+});
+
+describe('build_generated builder_source (AD-354)', () => {
+  it('sets builder_source on build proposal from event data', () => {
+    useStore.getState().handleEvent({
+      type: 'build_generated',
+      data: {
+        build_id: 'b1',
+        title: 'Test build',
+        description: 'desc',
+        ad_number: 354,
+        file_changes: [],
+        change_count: 0,
+        llm_output: '',
+        builder_source: 'visiting',
+        message: 'Generated 0 file(s)',
+      },
+      timestamp: Date.now() / 1000,
+    });
+    const history = useStore.getState().chatHistory;
+    expect(history).toHaveLength(1);
+    expect(history[0].buildProposal?.builder_source).toBe('visiting');
+  });
+
+  it('defaults builder_source to native when not provided', () => {
+    useStore.getState().handleEvent({
+      type: 'build_generated',
+      data: {
+        build_id: 'b2',
+        title: 'Test build',
+        description: 'desc',
+        ad_number: 0,
+        file_changes: [],
+        change_count: 0,
+        llm_output: '',
+        message: 'Generated 0 file(s)',
+      },
+      timestamp: Date.now() / 1000,
+    });
+    const history = useStore.getState().chatHistory;
+    expect(history).toHaveLength(1);
+    expect(history[0].buildProposal?.builder_source).toBe('native');
   });
 });

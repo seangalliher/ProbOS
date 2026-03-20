@@ -446,6 +446,20 @@ class TestCapabilityGapDetection:
 
         assert is_capability_gap(text) is True, f"Expected gap for: {text!r}"
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Alan Turing was a British mathematician and computer scientist.",
+            "The speed of light is approximately 299,792,458 meters per second.",
+            "Python is a high-level programming language.",
+        ],
+    )
+    def test_knowledge_answers_are_not_capability_gaps(self, text: str) -> None:
+        """BF-001: Direct knowledge answers should not be flagged as gaps."""
+        from probos.cognitive.decomposer import is_capability_gap
+
+        assert is_capability_gap(text) is False, f"False positive for: {text!r}"
+
 
 class TestCapabilityGapFlag:
     """Tests for the structured capability_gap boolean in TaskDAG."""

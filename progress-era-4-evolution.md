@@ -221,3 +221,59 @@ Progression: AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-3
 **Build prompt:** `prompts/builder-failure-escalation.md`
 
 **Status:** AD-343–347 complete — 2281 Python + 30 Vitest (38 new Python tests)
+
+## Bug Fixes (AD-348 through AD-350)
+
+### AD-348: Fix Self-Mod False Positive on Knowledge Questions / BF-001 (DONE)
+
+**Decision:** AD-348 — Knowledge questions ("who is Alan Turing?") no longer trigger capability_gap classification. Removed knowledge domain examples from KNOWN_CAPABILITIES in prompt_builder.py and softened decomposer rule 12b. Tests verify factual queries stay conversational.
+
+### AD-349: Fix Agent Orbs Escaping Pool Group Spheres / BF-002 (DONE)
+
+**Decision:** AD-349 — `poolToGroup` and `poolGroups` persisted in Zustand state from `state_snapshot` events. `agent_state` handler passes pool group data to `computeLayout()` so agent orbs stay inside their group spheres. 2 vitest tests.
+
+### AD-350: Fix Diagnostician Bypassing VitalsMonitor / BF-003 (DONE)
+
+**Decision:** AD-350 — VitalsMonitorAgent gains `scan_now()` for on-demand metric collection. Diagnostician overrides `perceive()` to find VitalsMonitor via runtime registry and enrich context with live metrics. No more asking the user for alert data.
+
+**Build prompt:** `prompts/fix-open-bugs-bf001-bf003.md`
+
+**Status:** AD-348–350 complete — BF-001/002/003 all closed — 2283 Python + 32 Vitest
+
+## Copilot SDK Visiting Officer Integration (AD-351 through AD-353)
+
+### AD-351: CopilotBuilderAdapter (DONE)
+
+**Decision:** AD-351 — `CopilotBuilderAdapter` wraps the GitHub Copilot SDK Python package to execute build tasks as a visiting officer. NOT a CognitiveAgent — it's an external system wrapper. Creates CopilotClient, injects Standing Orders via `compose_instructions()`, translates BuildSpec to session prompt, captures output using native `_parse_file_blocks()`. SDK import guarded (optional dependency). Fails-open on any error. 11 tests.
+
+### AD-352: ProbOS MCP Tool Server (DONE)
+
+**Decision:** AD-352 — Seven MCP tools registered per Copilot session: `codebase_query`, `codebase_find_callers`, `codebase_get_imports`, `codebase_find_tests`, `codebase_read_source` (from CodebaseIndex), `system_self_model` (from runtime), `standing_orders_lookup` (from config files). Visiting Builder has same codebase knowledge as native crew. 8 tests.
+
+### AD-353: Routing & Apprenticeship Wiring (DONE)
+
+**Decision:** AD-353 — `_should_use_visiting_builder()` routing decision: force flags → SDK availability → Hebbian weight comparison → default visiting (bootstrap). `builder_source` field on BuildResult ("native"/"visiting"). `REL_BUILDER_VARIANT` relationship type in HebbianRouter tracks `(build_code, native|visiting)` success/failure after session and after tests. Over time, Hebbian weights steer toward whichever builder produces more passing code. 10 tests.
+
+**Build prompt:** `prompts/copilot-sdk-visiting-officer.md`
+
+**Status:** AD-351–353 complete — 2313 Python + 32 Vitest (30 new Python tests)
+
+## Visiting Officer HXI Integration (AD-354)
+
+### AD-354: Visiting Officer HXI Integration (DONE)
+
+**Decision:** AD-354 — Three bug fixes and three enhancements for end-to-end visiting officer integration with the HXI build pipeline:
+
+**Bug fixes:**
+- Path normalization in `CopilotBuilderAdapter.execute()` — SDK workspace file change events return paths that don't resolve correctly (absolute vs relative, backslash vs forward slash), causing empty `content` on modify blocks
+- Temp directory isolation — Builder now copies target files into a temp dir for the SDK session, preventing the visiting officer from writing directly into the ProbOS source tree (bypassing Captain approval)
+- Force flags passthrough — `force_native`/`force_visiting` params wired from `BuildRequest` through intent params to `_should_use_visiting_builder()`
+
+**Enhancements:**
+- `builder_source` in WebSocket `build_generated` event — HXI knows which builder produced the code
+- `model` field on `BuildRequest` — API can specify which model the visiting officer uses
+- HXI type updates — `BuildFailureReport` and build event types updated for builder source display
+
+**Build prompt:** `prompts/visiting-officer-hxi-integration.md`
+
+**Status:** AD-354 complete — 2325 Python + 34 Vitest

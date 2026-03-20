@@ -109,6 +109,7 @@ Not a team — shared infrastructure that all teams use:
 - **Episodic Memory + Dreaming** — experiential learning, the ship's log. Three-tier dreaming model (AD-288): micro-dreams (continuous, every 10s during active sessions), idle dreams (after 120s idle), and shutdown dreams (final consolidation flush)
 - **Decision Cache** — LLM reasoning cache inside CognitiveAgent (AD-272). Identical observations skip LLM re-evaluation. Future: feedback-driven cache eviction, KnowledgeStore persistence for warm boot
 - **Cognitive Journal** — complete token ledger recording every LLM request/response with full context for replay, analysis, and learning (Phase 32)
+- **Ship's Telemetry** — internal performance instrumentation: LLM call timing, pipeline duration, token metering, build path comparison. The sensor grid that Cognitive Journal, EPS, and Observability Export all read from (Phase 32)
 - **Model Registry** — catalog of available model providers with neural routing via Hebbian learning (Phase 32)
 - **Trust Network** — reputation system, crew performance records
 - **Intent Bus** — internal communications, the ship's intercom (with priority levels and back-pressure — Phase 33)
@@ -188,6 +189,7 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 | Ship departments | Agent pools (crew teams) | In progress |
 | Chain of Command | Rank structure — Fleet Admiral → Captain → Bridge → Chiefs → Crew | Roadmap |
 | Ship's computer / LCARS | Runtime + CodebaseIndex + Knowledge Store + Cognitive Journal | Built (Journal: Roadmap) |
+| Internal sensors | Ship's Telemetry — LLM timing, token metering, pipeline comparison | Roadmap |
 | Alert Conditions (Red/Yellow/Green) | Ship-wide operational modes — resource/consensus/dream behavior changes | Roadmap |
 | EPS (Power Distribution) | Token/compute budget allocation across departments | Roadmap |
 | Structural Integrity Field | Proactive runtime invariant enforcement | Roadmap |
@@ -229,7 +231,7 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
 | 30 | Self-Improvement Pipeline | All Teams | **Extension-first architecture** (sealed core, open extensions, graduated autonomy), capability proposals, stage contracts, QA pool, evolution store, human gate, evergreen updates |
 | 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring, secrets management, runtime sandboxing, network egress policy, inference audit, data governance |
-| 32 | Engineering Team | Engineering + Ship's Computer | Automated performance optimization, maintenance agents, build agents, LLM resilience, model diversity & neural routing, cognitive journal, observability export, CI/CD, backup/restore, storage abstraction layers, containerized deployment, confidence communication, adaptive communication style, decision audit trail, **structural integrity field**, **damage control teams**, **navigational deflector**, **saucer separation** |
+| 32 | Engineering Team | Engineering + Ship's Computer | Automated performance optimization, maintenance agents, build agents, LLM resilience, model diversity & neural routing, cognitive journal, **ship's telemetry** (internal performance instrumentation), observability export, CI/CD, backup/restore, storage abstraction layers, containerized deployment, confidence communication, adaptive communication style, decision audit trail, **structural integrity field**, **damage control teams**, **navigational deflector**, **saucer separation** |
 | 33 | Operations Team | Ops + Bridge | Formalized resource management, workload balancing, system coordination, LLM cost tracking, ward room, priority & back-pressure, self-claiming task queue, competing hypotheses, file ownership, bridge alerts, workflow definition API, **chain of command** (bridge crew, department chiefs, promotion mechanics, rank structure), **Ship's Counselor** (cognitive wellness, Hebbian drift detection, relationship health), **alert conditions** (Red/Yellow/Green), **EPS** (token/compute distribution) |
 | 34 | Mission Control | Bridge + Comms | Agent activity dashboard, real-time task visibility, approval panels, system health orbs, **Captain's Ready Room** (idea capture, multi-agent strategy sessions, architecture hierarchy, idea→spec pipeline), **specialized builders** (backend/frontend/test/infra/data) |
 | 35 | User Experience & Adoption | All Teams | PyPI packaging, onboarding wizard, quickstart docs, `probos doctor`, `probos demo` mode, comparison docs |
@@ -839,13 +841,31 @@ Every LLM request/response is a cognitive event. Currently `LLMResponse.tokens_u
 - **Integration with Dreaming** — dream consolidation reads the journal to identify repeated reasoning patterns → abstract into Level 3-4 pattern labels for predictive coding. "The Builder always adds `import pytest` first" → dream produces `builder_test_file_pattern` → next build skips sending the instruction
 - **Retention policy** — full prompt/response text retained for configurable period (default 7 days). Metadata (tokens, latency, model, success) retained indefinitely. Compressed summaries produced on expiry
 
+**Ship's Telemetry — Internal Performance Instrumentation**
+
+*"All systems reporting nominal, Captain."*
+
+The ship has sensors (VitalsMonitor) and a planned log (Cognitive Journal) — but no wiring between them. Currently there is zero wall-clock timing on LLM calls, no prompt/completion token split, no per-pipeline duration tracking, and no way to compare Transporter vs single-pass builds. The Cognitive Journal, EPS, LLM Cost Tracker, and Observability Export all depend on structured telemetry data that doesn't exist yet. Ship's Telemetry is the foundational instrumentation layer that captures it.
+
+This is the ship's internal sensor grid — the data foundation that every other monitoring/analysis system reads from.
+
+- **`TelemetryEvent` dataclass** — standardized measurement record: `(timestamp, event_type, agent_id, agent_type, tier, model, duration_ms, prompt_tokens, completion_tokens, total_tokens, context_chars, success, metadata: dict)`. Lightweight, zero-LLM, append-only
+- **LLM call timing** — `LLMClient.complete()` wraps each call with `time.monotonic()` start/end. Emits `TelemetryEvent(event_type="llm_call")` with `duration_ms`, `prompt_tokens`, `completion_tokens` (parsed from API response, not estimated). Every LLM call in the system instrumented at the source
+- **Pipeline timing** — `transporter_build()`, `decompose_blueprint()`, `execute_chunks()`, `assemble_chunks()`, `validate_assembly()` each emit `TelemetryEvent(event_type="pipeline_stage")` with stage name and duration. Single-pass `decide()`+`act()` path emits comparable events
+- **Build comparison flag** — `BuildResult` gains `transporter_used: bool`, `total_duration_ms: int`, `total_tokens: int`, `chunk_count: int` fields. Enables direct A/B comparison: "Transporter builds average 45s / 12K tokens vs single-pass at 30s / 18K tokens for comparable specs"
+- **`TelemetryCollector` service** — registered on runtime, receives events via `record()`. In-memory ring buffer (configurable size, default 1000 events). Query methods: `get_events(agent_id?, event_type?, since?)`, `get_summary(groupby="agent"|"tier"|"model"|"pipeline")`, `get_llm_stats()` (mean/p50/p95 latency, token rates)
+- **HXI telemetry surface** — `/api/telemetry/summary` endpoint exposes key metrics. Future: Engineering section of dashboard shows LLM latency trends, token consumption by department, Transporter vs single-pass comparison chart
+- **Integration points** — Cognitive Journal reads from TelemetryCollector (don't duplicate collection). EPS uses real-time token rates for capacity budgeting. LLM Cost Tracker aggregates token counts with model pricing. Observability Export maps TelemetryEvents to OTel spans
+- **Zero runtime cost when unused** — telemetry is fire-and-forget (`record()` is sync, appends to deque). No blocking, no I/O on the hot path. Consumers pull when they need data
+- Existing: `LLMResponse.tokens_used` (total only), `ChunkResult.tokens_used`, `assembly_summary()` token aggregation, VitalsMonitor operational health metrics
+
 **Observability Export**
 
-- **OpenTelemetry integration** — structured traces for intent routing, DAG execution, consensus rounds, and LLM calls
+- **OpenTelemetry integration** — structured traces for intent routing, DAG execution, consensus rounds, and LLM calls. Maps `TelemetryEvent` records to OTel spans with proper parent/child relationships
 - **Prometheus metrics** — agent trust scores, pool utilization, Hebbian weights, dream consolidation rates, LLM latency/cost exposed as scrapeable metrics
 - **Grafana dashboards** — pre-built dashboards for system health, agent performance, and cost tracking
 - **Log aggregation** — structured JSON logging with correlation IDs for tracing a user request through decomposition → routing → execution → reflection
-- Existing: Python logging throughout, HXI real-time visualization (built)
+- Existing: Python logging throughout, HXI real-time visualization (built), Ship's Telemetry internal instrumentation (prerequisite)
 
 **Storage Abstraction Layer**
 
@@ -1387,40 +1407,120 @@ Each external tool is wrapped as a federated agent with:
 - **Shapley attribution** — external tool contributions measured alongside internal agents for cost/value analysis
 - **Consensus participation** — external tools never bypass consensus. Their outputs are verified by internal agents before acceptance
 
-**GitHub Copilot as Federated Crew**
+**GitHub Copilot SDK — The Visiting Officer Transport (Primary Integration Path)**
 
-GitHub Copilot's coding agent brings capabilities ProbOS can access by delegation rather than reimplementation:
+*"Visiting specialist from Starfleet Corps of Engineers — superior tools, governed by the ship's chain of command."*
 
-- **Semantic code search** — Copilot indexes the repo with embedding-based search. ProbOS dispatches "find code related to X" queries to Copilot when internal keyword search returns insufficient results. Complementary to internal CodebaseIndex: keyword (fast, exact) + semantic (meaning-based, via Copilot proxy)
-- **PR creation and review** — Copilot natively creates PRs, suggests reviews, runs CI. ProbOS Builder could delegate "create PR from these changes" to Copilot rather than shelling out to `git`
-- **Issue triage** — Copilot reads GitHub issues. ProbOS Architect could query Copilot for issue context when designing proposals
-- **Code generation** — Copilot generates code with different model strengths (GPT-5.x). ProbOS can solicit competing implementations from Claude (via Builder) and Copilot (via federation), then use consensus to pick the best one — the "competing hypotheses" pattern applied to code generation
+The GitHub Copilot SDK (`pip install github-copilot-sdk`) provides a first-class Python package with a full agentic runtime — not just LLM completions, but file I/O, git operations, web requests, MCP support, and iterative tool use. It wraps the same runtime powering GitHub Copilot CLI, exposed as a programmable interface. This is the concrete integration path for visiting officers.
 
-**Claude Code as Federated Crew** (Northstar Pipeline)
+- **Python package:** `github-copilot-sdk` — first-class SDK, also available for Node.js, Go, .NET, Java
+- **Architecture:** SDK client communicates via JSON-RPC with Copilot CLI running in server mode. ProbOS creates the client, Copilot handles planning, tool invocation, file edits
+- **Models:** All Copilot-available models (Claude, GPT, Gemini) — multi-model by default, selectable per task
+- **Auth:** Uses existing GitHub Copilot login (OAuth credentials, env vars, or BYOK with direct API keys)
+- **Billing:** Each SDK prompt counts toward existing Copilot premium request quota — no separate subscription needed
+- **Governance:** Automatically inherits GitHub organization's Copilot governance policies (branch protections, required checks)
+- **Status:** Technical Preview (functional, actively developed — 7.9K stars, 31 releases, MIT licensed). Not yet production-ready but suitable for prototyping
+- **Key commands:** `/delegate` (branch, implement, open PR), `/fleet` (parallelized subagents), `/plan` (implementation planning)
 
-Already designed in the Northstar context. Claude Code executes build prompts, creates branches/commits, runs tests:
+**Visiting Officer Architecture — Who Gets Outsourced, Who Stays Native**
 
-- **Current (manual):** Captain writes build prompt → Claude Code executes → git commit → Captain approves
-- **Future (automated):** ProbOS Architect designs → BuildSpec → Claude Code (via Anthropic SDK or A2A) → PR → Captain approves
-- **Medium win:** Builder Agent calls Anthropic SDK directly, bypassing full A2A protocol
+The question for each role: does its value come from coding capability (outsource to visiting officer) or from ProbOS-specific knowledge (keep native)?
+
+| Role | Visiting Officer? | Rationale |
+|---|---|---|
+| **Builder** | **Yes — Copilot SDK** | Code generation is the bottleneck. Copilot's agentic loop (read/write/iterate/test) is superior to native single-pass + 2-retry. Clear win. |
+| **Architect** | **No — stay native** | Value comes from CodebaseIndex integration — import graphs, API surface verification, `find_callers()`, pattern recipes. A generic agent produces generic designs. The native Architect knows the ship. |
+| **Code Reviewer** | **No — stay native** | Reviews against Standing Orders — ProbOS's own constitution. Governance, not coding. Copilot has no knowledge of federation/ship/department tier rules. |
+| **Test Writer** | **Future — Copilot SDK** | Test generation benefits from full filesystem access, reading existing test patterns, running tests iteratively. Good candidate for Phase 34 Specialized Builders. |
+| **Infrastructure** | **Future — Copilot SDK** | Docker, CI/CD, config — generic coding tasks where Copilot excels. |
+
+**The Pipeline:**
+
+```
+Native Architect (knows ProbOS — CodebaseIndex, import graphs, pattern recipes)
+  → designs BuildSpec with interface contracts and Standing Orders context
+  ↓
+Visiting Builder (Copilot SDK — custom agent with ProbOS Standing Orders)
+  → compose_instructions() provides same rules as native Builder
+  → ProbOS tools exposed via MCP (CodebaseIndex, SystemSelfModel, trust)
+  → receives BuildSpec as mission orders via CopilotBuilderAdapter
+  → reads files, writes code, iterates, runs tests autonomously
+  → produces file changes
+  ↓
+Native Code Reviewer (knows Standing Orders — ProbOS constitution)
+  → reviews output against federation/ship/department/agent tier rules
+  → soft/hard gate based on earned trust
+  ↓
+Native Test Gate (commit gate, smart test selection)
+  → targeted tests first, full suite if targeted pass
+  → fix loop delegates fixes back to visiting Builder if needed
+  ↓
+Captain approves
+```
+
+**Standing Orders + MCP Tools — The Visiting Officer Knows the Ship**
+
+The Copilot SDK supports custom agents with custom instructions and MCP tool access. This means the visiting Builder isn't a generic external agent — it's a ProbOS-trained visiting officer who knows the ship's rules and can use the ship's systems.
+
+1. **Same Standing Orders** — `compose_instructions()` assembles the full chain (Federation Constitution → Ship → Engineering Department → Agent) and passes it as the custom Copilot agent's system instructions. The visiting Builder follows the exact same rules as the native Builder. Same quality gates, same coding conventions, same test-writing standards.
+
+2. **ProbOS Tools via MCP** — ProbOS exposes internal capabilities as MCP tools the visiting Builder can call during its agentic loop:
+
+| ProbOS MCP Tool | Capability |
+|---|---|
+| `codebase_index.query()` | Structural search — classes, methods, API surface |
+| `codebase_index.find_callers()` | Cross-file reference search |
+| `codebase_index.get_imports()` | Import graph traversal |
+| `codebase_index.find_tests_for()` | Test file discovery by naming convention |
+| `system_self_model.to_context()` | Current system topology, health, departments |
+| `standing_orders.get_department()` | Department-specific protocol lookup |
+
+3. **Same governance** — Code Review checks the visiting Builder's output against the same Standing Orders it was given. The trust model tracks outcomes. The Captain approves. The visiting officer's output is indistinguishable from native output in the governance pipeline.
+
+The difference between native and visiting is the execution engine (ProbOS perceive/decide/act vs Copilot SDK agentic loop), not the rules or the knowledge. Same brain rules, better hands.
+
+**The Apprenticeship — How Native Crew Learns from Visiting Officers**
+
+The visiting officer pattern isn't just delegation — it's a training program. ProbOS's existing learning mechanisms allow the native Builder to improve by observing the visiting Builder's work:
+
+1. **Hebbian learning** — the trust/routing system already learns which agents succeed at which task types. If the visiting Builder consistently produces higher-quality code (fewer test failures, fewer review issues), the Hebbian router learns to prefer it for certain task types. The native Builder's Hebbian weights track which tasks it handles well vs. which should go to the visitor.
+
+2. **Cognitive Journal** (Phase 32) — records every LLM request/response. Both native and visiting Builders working on similar tasks creates a comparative dataset: what prompts work better, what approaches produce fewer fix retries, what patterns succeed on first attempt.
+
+3. **Dream consolidation** — dream cycles replay successful patterns. The native Builder's dreams would incorporate patterns observed from the visiting Builder's successful outputs. Repeated successful patterns (e.g., "always read imports before editing") become L3-L4 abstractions (Sensory Cortex) that inform future native builds.
+
+4. **Standing Orders evolution** — agent-tier Standing Orders are evolvable through the self-mod pipeline. If the visiting Builder consistently follows patterns that succeed (e.g., specific test-writing conventions, import validation), those patterns can be proposed as Standing Orders updates — codifying learned best practices into the native crew's constitution.
+
+5. **Capability overlap routing** — when both native and visiting Builders exist for the same task type, the system routes based on trust scores, historical accuracy, cost, and latency. Hebbian routing handles this naturally. Over time, the native Builder earns back task types it's gotten good at, while the visitor handles the ones that still exceed native capability.
+
+The end state: the native Builder eventually handles routine builds independently, having learned from watching the visiting officer work. The visiting officer gets called in for complex, multi-file, architectural builds that require superior tooling. The ship trains its own crew.
+
+**GitHub Copilot Capabilities as Federated Services**
+
+Beyond the Builder role, Copilot's other capabilities can serve as federated services:
+
+- **Semantic code search** — Copilot indexes the repo with embedding-based search. ProbOS dispatches "find code related to X" queries to Copilot when internal keyword search returns insufficient results. Complementary to internal CodebaseIndex: keyword (fast, exact) + semantic (meaning-based, via Copilot)
+- **PR creation and review** — Copilot natively creates PRs, suggests reviews, runs CI. ProbOS delegates "create PR from these changes" via `/delegate` command
+- **Issue triage** — Copilot reads GitHub issues via native MCP server. ProbOS Architect queries for issue context when designing proposals
+- **Parallel fleet** — Copilot's `/fleet` command runs parallelized subagents, complementing ProbOS's Transporter Pattern
 
 **Trust Model for External AI Tools**
 
-- All external tools start with **federated trust discount** (δ factor from trust transitivity)
-- Trust builds per-tool based on task quality outcomes: did the PR pass tests? Did the code review catch real issues? Did the semantic search return relevant results?
+- All external tools start with **probationary trust** — `Beta(1, 3)`, same as newly designed agents
+- Trust builds per-tool based on task quality outcomes: did the code pass tests? Did review catch issues? Were fix retries needed?
 - External tool failures degrade trust, triggering fallback to internal capabilities or escalation to Captain
-- **Cost tracking** — external tools have API costs. LLM Cost Tracker (Phase 33) attributes spending per-tool alongside per-agent
-- **Capability overlap resolution** — when both internal and external capabilities exist (e.g., internal CodebaseIndex + Copilot semantic search), the system routes based on: (1) trust scores, (2) historical accuracy, (3) cost, (4) latency. Hebbian routing handles this naturally
+- **Cost tracking** — external tools consume premium request quota. LLM Cost Tracker (Phase 33) attributes spending per-tool alongside per-agent
+- **Capability overlap resolution** — when both internal and external capabilities exist, the system routes based on: (1) trust scores, (2) historical accuracy, (3) cost, (4) latency. Hebbian routing handles this naturally
 
 **Connection Mechanisms**
 
-| Tool | Protocol | Adapter |
-|------|----------|---------|
-| Claude Code | Anthropic SDK / A2A | A2A Federation Adapter |
-| GitHub Copilot | GitHub API / MCP | MCP Federation Adapter |
-| Cursor / Others | A2A / MCP | Protocol-dependent |
+| Tool | Protocol | Adapter | Status |
+|------|----------|---------|--------|
+| GitHub Copilot | **Copilot SDK (Python)** | `CopilotBuilderAdapter` | **Implemented (AD-351–353)** — SDK in Technical Preview |
+| Claude Code | Anthropic SDK / A2A | A2A Federation Adapter | Alternative — requires separate API key |
+| Cursor / Others | A2A / MCP | Protocol-dependent | Future |
 
-The existing MCP and A2A adapters (Phase 29) are the connection layer. External AI tools don't require new federation protocols — they plug into the existing transport-polymorphic `FederationBridge`.
+The Copilot SDK is the primary integration path — it uses the existing Copilot subscription, supports multiple models (including Claude), and provides a Python-native interface. The existing MCP and A2A adapters (Phase 29) remain available for tools that use those protocols.
 
 ---
 

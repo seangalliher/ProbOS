@@ -50,6 +50,14 @@ from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.types import IntentMessage
 
 
+# Disable visiting builder routing for all builder-agent tests (AD-354).
+# The SDK may be installed, but these tests test the native builder pipeline.
+@pytest.fixture(autouse=True)
+def _disable_visiting_builder():
+    with patch("probos.cognitive.builder._should_use_visiting_builder", return_value=False):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # BuildSpec / BuildResult
 # ---------------------------------------------------------------------------

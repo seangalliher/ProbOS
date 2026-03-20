@@ -123,6 +123,76 @@ class VitalsMonitorAgent(HeartbeatAgent):
 
         return metrics
 
+    async def scan_now(self) -> dict[str, Any]:
+        """On-demand metric snapshot for the Diagnostician (AD-350).
+
+        Unlike the periodic heartbeat, this does NOT check thresholds or
+        emit alerts — it simply collects and returns the current metrics.
+        """
+        metrics: dict[str, Any] = {
+            "pulse": self._pulse_count,
+            "agent_id": self.id,
+            "timestamp": time.time(),
+        }
+
+        rt = self._runtime
+        if rt is None:
+            return metrics
+
+        # Pool health ratios
+        pool_health: dict[str, float] = {}
+        for pool_name, pool in rt.pools.items():
+            target = pool.target_size
+            active = len([
+                a for a in pool.healthy_agents
+                if (getattr(a, "state", None) == AgentState.ACTIVE
+                    if hasattr(a, "state") else True)
+            ])
+            pool_health[pool_name] = active / target if target > 0 else 1.0
+        metrics["pool_health"] = pool_health
+
+        # Trust statistics
+        scores = rt.trust_network.all_scores()
+        if scores:
+            score_vals = list(scores.values())
+            metrics["trust_mean"] = sum(score_vals) / len(score_vals)
+            metrics["trust_min"] = min(score_vals)
+            metrics["trust_outliers"] = [
+                aid for aid, s in scores.items() if s < self._trust_floor
+            ]
+        else:
+            metrics["trust_mean"] = 1.0
+            metrics["trust_min"] = 1.0
+            metrics["trust_outliers"] = []
+
+        # Dream state
+        if rt.dream_scheduler:
+            metrics["is_dreaming"] = rt.dream_scheduler._is_dreaming if hasattr(rt.dream_scheduler, "_is_dreaming") else False
+        else:
+            metrics["is_dreaming"] = False
+
+        # Attention queue depth
+        if hasattr(rt, "attention") and rt.attention:
+            metrics["attention_queue"] = rt.attention.queue_size
+        else:
+            metrics["attention_queue"] = 0
+
+        # Overall system health
+        all_agents = rt.registry.all()
+        active_confs = [
+            a.confidence for a in all_agents
+            if getattr(a, "state", None) == AgentState.ACTIVE
+        ]
+        metrics["system_health"] = (
+            sum(active_confs) / len(active_confs) if active_confs else 1.0
+        )
+
+        # Include recent window history if available
+        if self._window:
+            metrics["recent_history"] = list(self._window)
+
+        return metrics
+
     async def _check_thresholds(self, metrics: dict[str, Any], rt: Any) -> None:
         """Check metrics against thresholds and broadcast alerts if breached."""
         alerts: list[dict[str, Any]] = []
