@@ -438,30 +438,43 @@ class CopilotBuilderAdapter:
                 # send_and_wait blocks until session is idle or timeout
                 await session.send_and_wait({"prompt": prompt}, timeout=timeout)
 
-                # Collect assistant messages and file change events
+                # Collect assistant messages
                 messages = await session.get_messages()
                 collected_output: list[str] = []
-                changed_paths: list[str] = []
+                logger.info("Visiting builder: %d messages from session", len(messages))
                 for msg in messages:
-                    if msg.type == SessionEventType.ASSISTANT_MESSAGE and msg.data.content:
+                    msg_type = getattr(msg, "type", None)
+                    if msg_type == SessionEventType.ASSISTANT_MESSAGE and msg.data.content:
                         collected_output.append(msg.data.content)
-                    elif msg.type == SessionEventType.SESSION_WORKSPACE_FILE_CHANGED:
-                        path = getattr(msg.data, "path", None)
-                        if path and path not in changed_paths:
-                            changed_paths.append(path)
             finally:
                 await session.disconnect()
 
             full_output = "".join(collected_output)
 
-            # Strategy: SDK writes files directly to disk.
-            # Read changed files to build file_blocks in native format.
+            # SDK does NOT emit SESSION_WORKSPACE_FILE_CHANGED events.
+            # Primary strategy: scan temp dir for new/changed files.
             file_blocks: list[dict[str, Any]] = []
             cwd = Path(self._cwd)
+            changed_paths: list[str] = []
+
+            for f in cwd.rglob("*"):
+                try:
+                    if not f.is_file() or f.name.startswith("."):
+                        continue
+                    rel = str(f.relative_to(cwd)).replace("\\", "/")
+                    if any(skip in rel for skip in ("__pycache__", ".git/", "node_modules/")):
+                        continue
+                    content = f.read_text(encoding="utf-8", errors="replace")
+                    if rel not in file_contents or content != file_contents.get(rel, ""):
+                        changed_paths.append(rel)
+                except (OSError, ValueError):
+                    continue
 
             if changed_paths:
-                for raw_path in changed_paths:
-                    rel_path = _normalize_sdk_path(raw_path, cwd)
+                logger.info("Visiting builder: found %d changed files on disk: %s", len(changed_paths), changed_paths)
+
+            if changed_paths:
+                for rel_path in changed_paths:
                     abs_path = cwd / rel_path
                     if abs_path.is_file():
                         content = abs_path.read_text(encoding="utf-8", errors="replace")
@@ -473,11 +486,6 @@ class CopilotBuilderAdapter:
                             "content": content,
                         })
                         logger.info("Captured changed file: %s (%s)", rel_path, mode)
-                    else:
-                        logger.warning(
-                            "Changed file not found after normalization: raw=%r resolved=%s",
-                            raw_path, abs_path,
-                        )
 
             # Fallback: if no workspace events, try parsing ===FILE:=== blocks
             if not file_blocks:

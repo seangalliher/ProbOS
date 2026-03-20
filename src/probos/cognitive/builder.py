@@ -1990,7 +1990,10 @@ Rules for MODIFY blocks:
                 try:
                     copilot_result = await adapter.execute(spec, all_files)
                 finally:
-                    await adapter.stop()
+                    try:
+                        await adapter.stop()
+                    except Exception:
+                        logger.debug("Visiting builder: adapter.stop() error (ignored)")
 
                 if copilot_result.success and copilot_result.file_blocks:
                     self._transporter_result = {
