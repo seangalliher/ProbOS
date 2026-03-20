@@ -1516,7 +1516,7 @@ Beyond the Builder role, Copilot's other capabilities can serve as federated ser
 
 | Tool | Protocol | Adapter | Status |
 |------|----------|---------|--------|
-| GitHub Copilot | **Copilot SDK (Python)** | `CopilotBuilderAdapter` | **Implemented (AD-351–353)** — SDK in Technical Preview |
+| GitHub Copilot | **Copilot SDK (Python)** | `CopilotBuilderAdapter` | **Implemented (AD-351–355)** — SDK in Technical Preview |
 | Claude Code | Anthropic SDK / A2A | A2A Federation Adapter | Alternative — requires separate API key |
 | Cursor / Others | A2A / MCP | Protocol-dependent | Future |
 

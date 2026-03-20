@@ -51,6 +51,19 @@ _VISITING_BUILDER_INSTRUCTIONS = (
     "replacement text\n"
     "===END REPLACE===\n"
     "===END MODIFY===\n\n"
+    "WORKING ENVIRONMENT:\n"
+    "- You are operating in an ISOLATED temp directory, not the project root\n"
+    "- Do NOT explore the filesystem (no ls, find, tree, cat of project files)\n"
+    "- All project context is available through your MCP tools (codebase_query, codebase_read_source, etc.)\n"
+    "- Write all output files directly to the current directory using the paths from the build spec\n"
+    "- For existing files that need modification, their current content is provided in the prompt below\n"
+    "- Source files go under src/probos/ — test files go under tests/\n\n"
+    "PROJECT STRUCTURE:\n"
+    "- Source code: src/probos/ (packages: cognitive/, mesh/, medical/, api.py, shell.py, etc.)\n"
+    "- Tests: tests/ (flat layout: tests/test_builder_agent.py, tests/test_trust.py, etc.)\n"
+    "- Config: config/ (standing_orders/, extension_profiles/)\n"
+    "- All imports use absolute paths: from probos.cognitive.builder import BuilderAgent\n"
+    "- Test files are named: test_{module_name}.py\n\n"
     "RULES:\n"
     "- Follow existing codebase patterns — use the codebase_query tool to find them\n"
     "- Every public function needs a test\n"
@@ -441,7 +454,6 @@ class CopilotBuilderAdapter:
                 # Collect assistant messages
                 messages = await session.get_messages()
                 collected_output: list[str] = []
-                logger.info("Visiting builder: %d messages from session", len(messages))
                 for msg in messages:
                     msg_type = getattr(msg, "type", None)
                     if msg_type == SessionEventType.ASSISTANT_MESSAGE and msg.data.content:
@@ -471,7 +483,7 @@ class CopilotBuilderAdapter:
                     continue
 
             if changed_paths:
-                logger.info("Visiting builder: found %d changed files on disk: %s", len(changed_paths), changed_paths)
+                logger.debug("Visiting builder: found %d changed files on disk: %s", len(changed_paths), changed_paths)
 
             if changed_paths:
                 for rel_path in changed_paths:
@@ -485,7 +497,9 @@ class CopilotBuilderAdapter:
                             "mode": mode,
                             "content": content,
                         })
-                        logger.info("Captured changed file: %s (%s)", rel_path, mode)
+                        logger.debug("Captured changed file: %s (%s)", rel_path, mode)
+
+            logger.info("Visiting builder: %d messages, %d files captured", len(messages), len(file_blocks))
 
             # Fallback: if no workspace events, try parsing ===FILE:=== blocks
             if not file_blocks:

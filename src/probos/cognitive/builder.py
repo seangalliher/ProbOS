@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import ast
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -2238,11 +2239,16 @@ async def _run_tests(work_dir: str, timeout: int = 120) -> tuple[bool, str]:
 
     def _sync_run() -> tuple[int, str]:
         try:
+            env = os.environ.copy()
+            src_dir = str(Path(work_dir) / "src")
+            existing = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = f"{work_dir}{os.pathsep}{src_dir}" + (f"{os.pathsep}{existing}" if existing else "")
             result = subprocess.run(
                 [sys.executable, "-m", "pytest", "--tb=short", "-q"],
                 cwd=work_dir,
                 capture_output=True,
                 timeout=timeout,
+                env=env,
             )
             test_out = (result.stdout or b"").decode(errors="replace")
             test_err = (result.stderr or b"").decode(errors="replace")
@@ -2311,11 +2317,16 @@ async def _run_targeted_tests(
 
     def _sync_run() -> tuple[int, str]:
         try:
+            env = os.environ.copy()
+            src_dir = str(Path(work_dir) / "src")
+            existing = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = f"{work_dir}{os.pathsep}{src_dir}" + (f"{os.pathsep}{existing}" if existing else "")
             result = subprocess.run(
                 [sys.executable, "-m", "pytest", "--tb=short", "-q"] + test_files,
                 cwd=work_dir,
                 capture_output=True,
                 timeout=timeout,
+                env=env,
             )
             test_out = (result.stdout or b"").decode(errors="replace")
             test_err = (result.stderr or b"").decode(errors="replace")

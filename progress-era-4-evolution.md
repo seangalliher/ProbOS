@@ -277,3 +277,18 @@ Progression: AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-3
 **Build prompt:** `prompts/visiting-officer-hxi-integration.md`
 
 **Status:** AD-354 complete — 2325 Python + 34 Vitest
+
+## Visiting Officer Live Testing Fixes (AD-355)
+
+### AD-355: Visiting Officer Live Testing Fixes (DONE)
+
+**Decision:** AD-355 — Three fixes from live HXI testing of the visiting officer:
+
+**Fixes:**
+- System prompt improvement — Added `WORKING ENVIRONMENT` and `PROJECT STRUCTURE` sections to `_VISITING_BUILDER_INSTRUCTIONS`. SDK agent now knows it's in an isolated temp dir, should not explore the filesystem, and has the full project layout (src/probos/, tests/, config/)
+- Diagnostic logging cleanup — Removed verbose event-type dumps, changed per-file capture logs to `logger.debug`, added single consolidated `logger.info` with message count + file count
+- PYTHONPATH for test gate — Both `_run_tests()` and `_run_targeted_tests()` now set `PYTHONPATH` to `{work_dir}:{work_dir}/src` in subprocess env, so visiting officer files at any location can be imported by tests
+
+**Build prompt:** `prompts/visiting-officer-live-fixes.md`
+
+**Status:** AD-355 complete — 2327 Python + 34 Vitest

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-354 complete — Visiting Officer HXI Integration (AD-354), Copilot SDK (AD-351–353), Bug Fixes (AD-348–350)
+## Current Status: AD-355 complete — Visiting Officer Live Fixes (AD-355), HXI Integration (AD-354), Copilot SDK (AD-351–353), Bug Fixes (AD-348–350)
 
 ---
 

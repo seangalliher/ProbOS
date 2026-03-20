@@ -470,3 +470,18 @@ class TestBuilderSourcePropagation:
         assert result.builder_source == "native"
         result.builder_source = "visiting"
         assert result.builder_source == "visiting"
+
+
+# ── AD-355: System prompt content tests ─────────────────────────────────────
+
+
+class TestVisitingBuilderInstructionsContent:
+    """Verify system prompt contains working environment and project structure (AD-355)."""
+
+    def test_system_prompt_contains_working_environment(self):
+        assert "ISOLATED temp directory" in _VISITING_BUILDER_INSTRUCTIONS
+        assert "Do NOT explore the filesystem" in _VISITING_BUILDER_INSTRUCTIONS
+
+    def test_system_prompt_contains_project_structure(self):
+        assert "src/probos/" in _VISITING_BUILDER_INSTRUCTIONS
+        assert "tests/" in _VISITING_BUILDER_INSTRUCTIONS
