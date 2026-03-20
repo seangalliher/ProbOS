@@ -225,14 +225,14 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 | 25 | Persistent Tasks | Ops | Long-running autonomous tasks with checkpointing, browser automation (Playwright), cron scheduling, webhook triggers |
 | 25b | Tool Layer | Ship's Computer | Typed callable instruments (tricorders) shared across agents, ToolRegistry, MCP mapping |
 | 26 | Inter-Agent Deliberation | Bridge | Structured multi-turn agent debates, agent-to-agent messaging, interactive execution |
-| 28 | Meta-Learning | Science | Workspace ontology, dream cycle abstractions, session context, goal management |
+| 28 | Meta-Learning & Cognitive Evolution | Science | Workspace ontology, dream cycle abstractions, session context, goal management, **multi-dimensional reward signals** (quality/efficiency/novelty), **hindsight experience replay** (dream-driven failure analysis → Standing Orders amendments), **emergent capability profiles** (dynamic skills from demonstrated success), **semantic Hebbian generalization** (embedding-based routing, not string matching) |
 | 29 | Federation + Emergence | Comms | Knowledge federation, trust transitivity, MCP adapter, A2A adapter, TC_N measurement |
 | 29b | Medical Team | Medical | Vitals monitor, diagnostician, surgeon, pharmacist, pathologist, **multi-level diagnostics** (L1–L5) |
 | 29c | Codebase Knowledge | Ship's Computer | Structural self-awareness — indexed source map + introspection skill |
 | 30 | Self-Improvement Pipeline | All Teams | **Extension-first architecture** (sealed core, open extensions, graduated autonomy), capability proposals, stage contracts, QA pool, evolution store, human gate, evergreen updates |
 | 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring, secrets management, runtime sandboxing, network egress policy, inference audit, data governance |
 | 32 | Engineering Team | Engineering + Ship's Computer | Automated performance optimization, maintenance agents, build agents, LLM resilience, model diversity & neural routing, cognitive journal, **ship's telemetry** (internal performance instrumentation), observability export, CI/CD, backup/restore, storage abstraction layers, containerized deployment, confidence communication, adaptive communication style, decision audit trail, **structural integrity field**, **damage control teams**, **navigational deflector**, **saucer separation** |
-| 33 | Operations Team | Ops + Bridge | Formalized resource management, workload balancing, system coordination, LLM cost tracking, ward room, priority & back-pressure, self-claiming task queue, competing hypotheses, file ownership, bridge alerts, workflow definition API, **chain of command** (bridge crew, department chiefs, promotion mechanics, rank structure), **Ship's Counselor** (cognitive wellness, Hebbian drift detection, relationship health), **alert conditions** (Red/Yellow/Green), **EPS** (token/compute distribution) |
+| 33 | Operations Team | Ops + Bridge | Formalized resource management, workload balancing, system coordination, LLM cost tracking, ward room, priority & back-pressure, self-claiming task queue, competing hypotheses, file ownership, bridge alerts, workflow definition API, **chain of command** (bridge crew, department chiefs, promotion mechanics, rank structure), **Ship's Counselor** (cognitive wellness, Hebbian drift detection, relationship health), **alert conditions** (Red/Yellow/Green), **EPS** (token/compute distribution), **earned agency** (trust-tiered self-direction: Ensign→Lieutenant→Commander→Senior Officer, self-originated goals, curiosity-driven exploration, decreasing oversight with increasing trust), **tournament evaluation** (competitive agent selection, loser-studies-winner), **memetic evolution** (cross-agent knowledge transfer, successful strategies propagate through crew) |
 | 34 | Mission Control | Bridge + Comms | Agent activity dashboard, real-time task visibility, approval panels, system health orbs, **Captain's Ready Room** (idea capture, multi-agent strategy sessions, architecture hierarchy, idea→spec pipeline), **specialized builders** (backend/frontend/test/infra/data) |
 | 35 | User Experience & Adoption | All Teams | PyPI packaging, onboarding wizard, quickstart docs, `probos doctor`, `probos demo` mode, comparison docs |
 
@@ -1192,6 +1192,52 @@ Model routing per builder: Backend Builder might use Opus for complex API design
 
 ---
 
+### Cognitive Evolution & Earned Agency (Phase 28 + 33, AD-357)
+
+*"We don't lock doors on the Enterprise."*
+
+In "The Neutral Zone," 20th-century humans are baffled that the Enterprise has no locks. Security comes from trust and social fabric, not restrictions. ProbOS agents exist within a civilization — trust, consensus, standing orders, chain of command. When an agent proves itself trustworthy, it earns increasing freedom. Agency is the reward for reliability within the social contract.
+
+**Reinforcement Learning Gaps (Phase 28 enhancements):**
+
+Seven identified gaps in the current Trust/Hebbian/Dream learning system:
+
+1. **Multi-dimensional reward signals** — Replace binary success/failure with a reward vector: completion, quality (code review score), efficiency (tokens/time), novelty, collaboration quality. Hebbian router weights on all dimensions, not just pass/fail. Stored in Cognitive Journal for replay and analysis.
+
+2. **Hindsight experience replay** — During dream cycles, replay failed tasks. Agent (or peer) critiques the failure: "what could I have done differently?" Reflections become Standing Orders amendments via self-mod pipeline. Agents literally rewrite their own instructions from what they learned from mistakes.
+
+3. **Tournament evaluation** — Occasionally run two agents (or two models) on the same task. Reviewer picks the better output. Winner's Hebbian weight increases; loser studies winner's approach and incorporates it. Evolutionary pressure for improvement. Generalizes the visiting officer apprenticeship pattern.
+
+4. **Emergent capability profiles** — Dynamic capability descriptors that grow from demonstrated success. Agent succeeds at an unfamiliar task type → gains weak capability score. Repeated success strengthens it, failure weakens it. Over time, agents naturally specialize or generalize based on actual performance, not predetermined labels.
+
+5. **Memetic evolution** — Successful strategies codified into shared crew knowledge base (beyond individual episodic memory). Any agent can query "has anyone on this ship solved something like this before?" Results weighted by originator's trust score. Cultural evolution — ideas that work spread through the crew. Federation-scale = The Nooplex's collective intelligence.
+
+6. **Curiosity-driven exploration** — Counselor analyzes capability gaps across the crew, recommends "training exercises." Agents generate their own practice tasks, run them in a sandbox, learn from the results. Intrinsic motivation rather than purely reactive task handling.
+
+7. **Semantic Hebbian generalization** — Replace exact task_type string matching with semantic similarity for Hebbian lookup. Agent good at "build_code" gets routing boost for "build_test." Embedding-based similarity using existing keyword scoring infrastructure.
+
+**Earned Agency (Phase 33 extension):**
+
+Trust-tiered self-direction — the privilege of autonomy earned through demonstrated trustworthiness:
+
+| Trust Level | Rank Analog | Agency | Oversight |
+|-------------|-------------|--------|-----------|
+| < 0.5 | Ensign | Reactive only — executes assigned tasks | Full supervision, all actions gated |
+| 0.5–0.7 | Lieutenant | Proactive — can propose tasks to Captain | Light supervision, routine actions auto-approve |
+| 0.7–0.85 | Commander | Self-directed — sets own goals within department scope | Peer review, Counselor monitoring |
+| 0.85+ | Senior Officer | Full agency — cross-department work, mentoring, architectural proposals | Captain notified, not gated |
+
+Self-originated goals emerge from: dream consolidation ("I keep seeing pattern X fail"), curiosity gaps ("I've never handled task Y"), Hebbian drift ("my success rate is declining"), peer observation ("Agent A solved what I couldn't"), codebase monitoring ("a new module appeared").
+
+**Safety invariants** (never relax regardless of trust): destructive actions always Captain-gated, core mods always through full pipeline, trust regression immediately reduces agency, Counselor can flag cognitive drift, Standing Orders violations trigger review, Captain can override anything at any time.
+
+**Implementation phasing:**
+- Phase 1 (Phase 28): Multi-dimensional rewards, hindsight replay, emergent capabilities, semantic Hebbian
+- Phase 2 (Phase 30/33): Tournament evaluation, memetic knowledge sharing, Counselor-driven curiosity
+- Phase 3 (Phase 33): Earned Agency tiers, self-originated goals, decreasing oversight
+
+---
+
 ### User Experience & Adoption (Phase 35)
 
 *"It doesn't matter how advanced the ship is if nobody can board it."*
@@ -1915,6 +1961,18 @@ The Sensory Cortex Architecture (Northstar II) solves the *input* side: how to c
 - **Infinite memory** — Cognitive Journal + Episodic Memory + Knowledge Store + Dream consolidation
 
 The Nooplex isn't just about AI. It's about human-agent cooperation at scale — humans as Captains, agents as crew, models as brains, ships as communities, the federation as civilization. ProbOS is the ship that takes you there.
+
+---
+
+## Backlog
+
+*"Ensign, add that to the maintenance schedule."*
+
+Items identified during development that aren't urgent but would improve code quality, maintainability, or developer experience. Pulled into phases when relevant.
+
+| Item | Description | Identified By | Notes |
+|------|-------------|---------------|-------|
+| Modularize shell commands | Extract `ProbOSShell` command methods into a `shell/commands/` package. Each command as its own module, independently testable. `shell.py` is 900+ lines at 64% coverage — modular structure would improve maintainability and test coverage. | Visiting Officer (AD-356) | Convert `shell.py` file → `shell/__init__.py` package. Needs migration plan for existing tests. Good candidate for Phase 35 (UX & Adoption) or standalone cleanup AD. |
 
 ---
 

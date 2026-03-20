@@ -2073,3 +2073,60 @@ Three bug fixes and three enhancements for end-to-end Copilot SDK visiting offic
 Three fixes from live HXI testing of the visiting officer. Issue 1: Added `WORKING ENVIRONMENT` and `PROJECT STRUCTURE` sections to `_VISITING_BUILDER_INSTRUCTIONS` — SDK agent no longer wastes time exploring the temp directory filesystem; told it's isolated, all context comes through MCP tools, and given the project layout (src/probos/, tests/, config/). Issue 2: Reduced diagnostic logging — removed early message-count log, changed disk-scan file list and per-file capture to `logger.debug`, added consolidated `logger.info` with message count + file count after scan completes. Issue 3: Added `PYTHONPATH` with project root + `src/` to the subprocess env in both `_run_tests()` and `_run_targeted_tests()` — visiting officer files at project root can now be imported by tests.
 
 **Status:** AD-355 complete — 2327 Python + 34 Vitest.
+
+### AD-357: Cognitive Evolution & Earned Agency Framework
+
+*"In the 24th century, we don't lock doors — because nobody needs to be locked out."*
+
+A comprehensive framework for agent learning, evolution, and self-originated goals. Seven reinforcement gaps identified in the current Trust/Hebbian/Dream system, plus a new concept: **Earned Agency** — the privilege of self-directed goal-setting, unlocked through demonstrated trustworthiness.
+
+**Philosophical foundation:** ProbOS agents exist within a social fabric (trust, consensus, standing orders, chain of command). When an agent has proven itself trustworthy — sustained high trust, positive Hebbian weight, Counselor fitness, no standing order violations — it earns increasing freedom. Agency is not a right; it's the natural reward for demonstrated reliability within the civilization. No locks needed when no one has ill intent.
+
+**Seven Reinforcement Gaps:**
+
+1. **Multi-dimensional reward signals** — Replace binary success/failure with a reward vector: completion, quality (review score), efficiency (tokens/time), novelty, collaboration quality. Stored in Cognitive Journal. Hebbian router weights on all dimensions.
+
+2. **Hindsight experience replay** — During dream cycles, replay failed tasks. Agent (or peer) critiques the failure, generates "what I should have done" reflections. Reflections become Standing Orders amendments via self-mod pipeline. Agents literally learn from their mistakes.
+
+3. **Tournament evaluation / competitive selection** — Occasionally run two agents (or two models) on the same task. Reviewer picks best output. Winner's Hebbian weight increases; loser studies winner's approach. Evolutionary pressure for improvement. Generalizes the visiting officer apprenticeship pattern.
+
+4. **Emergent capability profiles** — Dynamic capability descriptors that grow from demonstrated success. Agent succeeds at unfamiliar task type → gains weak capability score. Repeated success strengthens it. Over time, agents naturally specialize or generalize based on performance, not predetermined labels.
+
+5. **Memetic evolution / cross-agent knowledge transfer** — Successful strategies codified into shared crew knowledge base. Any agent can query "has anyone solved something like this?" Results weighted by originator's trust score. Cultural evolution — ideas that work spread through the crew. Federation-scale = The Nooplex's collective intelligence.
+
+6. **Curiosity-driven exploration** — Counselor analyzes capability gaps across the crew, recommends training. Agents generate their own practice tasks, run in sandbox, learn from results. Intrinsic motivation rather than purely reactive task handling.
+
+7. **Semantic Hebbian generalization** — Replace exact task_type string matching with semantic similarity for Hebbian lookup. Agent good at "build_code" gets routing boost for "build_test." Embedding-based similarity using existing keyword scoring infrastructure.
+
+**Earned Agency — The Privilege of Self-Direction:**
+
+Trust tier progression (inspired by Starfleet rank structure):
+
+| Trust Level | Rank Analog | Agency Level | Oversight |
+|-------------|-------------|--------------|-----------|
+| < 0.5 | Ensign | Reactive only — executes assigned tasks | Full supervision, all actions gated |
+| 0.5–0.7 | Lieutenant | Proactive suggestions — can propose tasks to Captain | Light supervision, routine actions auto-approved |
+| 0.7–0.85 | Commander | Self-originated goals — can set own objectives within department scope | Peer review, Counselor monitoring |
+| 0.85+ | Senior Officer | Full agency — can initiate cross-department work, mentor others, propose architectural changes | Captain notified, not gated (unless flagged by Counselor) |
+
+**Safety invariants** (these never relax regardless of trust):
+- Destructive actions always require Captain approval
+- Core system modifications always go through full pipeline
+- Trust score regression immediately reduces agency level
+- Counselor can flag cognitive drift and recommend demotion
+- Standing Orders violations trigger immediate agency review
+- Captain can override any autonomous action at any time
+
+**Self-originated goals emerge from:**
+- Dream consolidation — "I keep seeing pattern X fail; I should address that"
+- Curiosity gap detection — "I've never handled task type Y; I should prepare"
+- Hebbian drift — "My success rate on Z is declining; something changed"
+- Peer observation — "Agent A solved a problem I couldn't; I should learn that technique"
+- Codebase monitoring — "A new module was added; I should index and understand it"
+
+**Implementation sequencing:**
+- Phase 1 (extends Phase 28): Multi-dimensional rewards + hindsight replay + emergent capabilities
+- Phase 2 (extends Phase 30/33): Tournament evaluation + memetic knowledge sharing + Counselor-driven curiosity
+- Phase 3 (extends Phase 33): Earned Agency tiers + self-originated goals + decreasing oversight
+
+**Status:** AD-357 — Architecture decision captured. Implementation spans Phases 28, 30, 33.

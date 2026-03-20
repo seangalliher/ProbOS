@@ -90,6 +90,23 @@ class CopilotBuildResult:
     model_used: str = ""
 
 
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _classify_provider(model_id: str) -> str:
+    """Classify a model ID to its provider name."""
+    model_lower = model_id.lower()
+    if "claude" in model_lower:
+        return "Anthropic"
+    if "gpt" in model_lower:
+        return "OpenAI"
+    if "gemini" in model_lower:
+        return "Google"
+    if "qwen" in model_lower or "deepseek" in model_lower:
+        return "Local/OSS"
+    return "Unknown"
+
+
 # ── Adapter ────────────────────────────────────────────────────────────────
 
 
@@ -173,6 +190,30 @@ class CopilotBuilderAdapter:
         if self._client and self._started:
             await self._client.stop()
         self._started = False
+
+    async def list_available_models(self) -> list[dict[str, str]]:
+        """List all models available through the Copilot SDK.
+
+        Returns a list of dicts with keys: id, provider, source, hosting.
+        Requires the adapter to be started.
+        """
+        if not self._started or not self._client:
+            return []
+        try:
+            raw_models = await self._client.list_models()
+            results = []
+            for m in raw_models:
+                model_id = getattr(m, "id", "") or str(m)
+                results.append({
+                    "id": model_id,
+                    "provider": _classify_provider(model_id),
+                    "source": "GitHub Copilot",
+                    "hosting": "external",
+                })
+            return results
+        except Exception:
+            logger.debug("Failed to list Copilot SDK models")
+            return []
 
     # ── System message ─────────────────────────────────────────────────
 

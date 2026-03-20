@@ -209,14 +209,22 @@ class TestShellCommands:
         output = get_output(console)
         assert "/status" in output
         assert "/quit" in output
-        assert "/model" in output
+        assert "/models" in output
+        assert "/registry" in output
         assert "/tier" in output
 
     @pytest.mark.asyncio
-    async def test_model_with_mock(self, shell, console):
-        await shell.execute_command("/model")
+    async def test_models_with_mock(self, shell, console):
+        await shell.execute_command("/models")
         output = get_output(console)
         assert "MockLLMClient" in output
+
+    @pytest.mark.asyncio
+    async def test_cmd_registry_mock_client(self, shell, console):
+        await shell.execute_command("/registry")
+        output = get_output(console)
+        assert "MockLLMClient" in output
+        assert "Active Models" in output
 
     @pytest.mark.asyncio
     async def test_tier_with_mock(self, shell, console):
@@ -267,11 +275,11 @@ class TestShellDebugMode:
 
 
 # ---------------------------------------------------------------------------
-# Shell /model and /tier with OpenAICompatibleClient
+# Shell /models and /tier with OpenAICompatibleClient
 # ---------------------------------------------------------------------------
 
 class TestShellModelAndTier:
-    """Test /model and /tier when runtime uses OpenAICompatibleClient."""
+    """Test /models and /tier when runtime uses OpenAICompatibleClient."""
 
     @pytest.fixture
     async def oai_runtime(self, tmp_path):
@@ -292,8 +300,8 @@ class TestShellModelAndTier:
         return ProbOSShell(oai_runtime, console=console)
 
     @pytest.mark.asyncio
-    async def test_model_shows_endpoint(self, oai_shell, console):
-        await oai_shell.execute_command("/model")
+    async def test_models_shows_endpoint(self, oai_shell, console):
+        await oai_shell.execute_command("/models")
         output = get_output(console)
         assert "OpenAICompatibleClient" in output
         assert "127.0.0.1" in output
@@ -1442,4 +1450,43 @@ class TestRendererEventHandler:
     async def test_event_no_matching_node(self, renderer):
         """Event with no matching node doesn't crash."""
         await renderer._on_execution_event("node_started", {"node": None})
+
+
+# ---------------------------------------------------------------------------
+# /models and /registry command tests (AD-356)
+# ---------------------------------------------------------------------------
+
+class TestModelsAndRegistry:
+    """Verify /model was renamed to /models and /registry exists."""
+
+    def test_help_includes_models_and_registry(self):
+        """COMMANDS dict has /models and /registry, not /model."""
+        assert "/models" in ProbOSShell.COMMANDS
+        assert "/registry" in ProbOSShell.COMMANDS
+        assert "/model" not in ProbOSShell.COMMANDS
+
+    def test_classify_provider(self):
+        from probos.cognitive.copilot_adapter import _classify_provider
+        assert _classify_provider("claude-sonnet-4-6") == "Anthropic"
+        assert _classify_provider("gpt-4o-mini") == "OpenAI"
+        assert _classify_provider("gemini-1.5-pro") == "Google"
+        assert _classify_provider("deepseek-coder") == "Local/OSS"
+        assert _classify_provider("qwen-72b") == "Local/OSS"
+        assert _classify_provider("some-random-model") == "Unknown"
+
+    @pytest.mark.asyncio
+    async def test_cmd_models_shows_tier_info(self, shell, console):
+        """_cmd_models prints a Panel with LLM Configuration."""
+        await shell.execute_command("/models")
+        output = get_output(console)
+        assert "LLM Configuration" in output
+        assert "MockLLMClient" in output
+
+    @pytest.mark.asyncio
+    async def test_cmd_registry_mock_client(self, shell, console):
+        """_cmd_registry with MockLLMClient shows the tier table fallback row."""
+        await shell.execute_command("/registry")
+        output = get_output(console)
+        assert "Active Models" in output
+        assert "MockLLMClient" in output
 
