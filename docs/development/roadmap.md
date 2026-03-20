@@ -622,6 +622,14 @@ AD-342's `/orders` build revealed the next pipeline gap: when the builder fails,
 - **AD-346: HXI Build Failure Diagnostic Card** *(done)* — Frontend rendering of structured failure report with category badge, failed tests list, collapsible error output, and resolution action buttons. Red/amber accent styling. Mirrors build proposal card pattern.
 - **AD-347: Builder Escalation Hook** *(done)* — Pluggable callback on `execute_approved_build()` that fires before failure reaches the Captain. No-op initially; Phase 33 wires it to Engineering Chief → Architect → Captain cascade. Returns `BuildResult` if resolved, `None` to escalate. 4 tests.
 
+**Builder Pipeline Guardrails (AD-360)**
+
+*"The ship's safety systems catch what the crew might miss."*
+
+Visiting officer builds failed 2 of 3 times by creating files in wrong directories and generating files not in the spec. AD-360 adds six structural guardrails to catch these problems automatically. Inspired by Aider (pre-edit dirty commit), Cline (shadow git checkpoints, workspace access tiers), SWE-Agent (container isolation), OpenHands (overlay mounts).
+
+- **AD-360: Builder Pipeline Guardrails** *(done)* — Six guardrails: (1) branch lifecycle management — cleanup on failure + stale branch deletion, (2) `_validate_file_path()` — blocks traversal, absolute, forbidden, and out-of-scope paths (hard gate), (3) visiting officer disk scan filtering in `CopilotBuilderAdapter` (first line of defense), (4) build spec file allowlist warning (soft gate), (5) dirty working tree protection via `_is_dirty_working_tree()` (hard gate), (6) untracked file cleanup in `finally` block — deletes created files + empty parent dirs on failure. 10 tests.
+
 **Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE**
 
 *"The ship builds itself — with the Captain's approval."*

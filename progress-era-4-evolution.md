@@ -309,3 +309,27 @@ Progression: AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-3
 **Builder:** Visiting officer (Copilot SDK) — code correct, but also created stray files in wrong paths. Cleanup by architect.
 
 **Status:** AD-358 complete — 5 new tests, 0 regressions (22+36 pass)
+
+## Builder Pipeline Guardrails (AD-360)
+
+### AD-360: Builder Pipeline Guardrails (DONE)
+
+**Decision:** AD-360 — Six structural guardrails for `execute_approved_build()` and visiting officer adapter, addressing the pattern of visiting officer builds creating files in wrong directories and outside the build spec.
+
+**Changes:**
+- `builder.py` — `_validate_file_path()` with `_ALLOWED_PATH_PREFIXES` and `_FORBIDDEN_PATHS` constants. `_is_dirty_working_tree()` using `asyncio.create_subprocess_exec` directly. `_git_create_branch()` stale branch deletion. `execute_approved_build()` gains dirty tree check, path validation in file loop, spec allowlist warning, branch cleanup + untracked file cleanup in `finally` block
+- `copilot_adapter.py` — `_EXPECTED_PREFIXES` disk scan filtering rejects files outside expected project structure with `rejected_count` summary log
+- `tests/test_builder_guardrails.py` — 10 new tests across 4 test classes
+
+**Guardrails:**
+1. Branch lifecycle management (cleanup on failure + stale branch deletion)
+2. File path validation (hard gate — blocks traversal, absolute, forbidden, out-of-scope)
+3. Visiting officer disk scan filtering (first line of defense)
+4. Build spec file allowlist (soft gate — advisory warning only)
+5. Dirty working tree protection (hard gate — aborts build)
+6. Untracked file cleanup (deletes created files + empty parent dirs on failure)
+
+**Build prompt:** `prompts/builder-pipeline-guardrails.md`
+**Inspired by:** Aider, Cline, SWE-Agent, OpenHands safety patterns
+
+**Status:** AD-360 complete — 10 new tests, 0 regressions. 2358 Python + 34 Vitest total
