@@ -8,6 +8,7 @@ import { speakResponse } from '../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
 import { soundEngine } from '../audio/soundEngine';
 import { MissionControl } from './MissionControl';
+import { ActivityDrawer } from './ActivityDrawer';
 
 /* ── spring easing ── */
 const spring = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -51,6 +52,9 @@ export function IntentSurface() {
   const transporterProgress = useStore((s) => s.transporterProgress);
   const buildQueue = useStore((s) => s.buildQueue);
   const missionControlView = useStore((s) => s.missionControlView);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const agentTasks = useStore((s) => s.agentTasks);
+  const needsAttentionCount = agentTasks?.filter(t => t.requires_action).length ?? 0;
 
   /* ── consume pending char from global keydown ── */
   useEffect(() => {
@@ -309,6 +313,29 @@ export function IntentSurface() {
 
   return (
     <>
+      {/* ── Activity Drawer toggle (AD-321) ── */}
+      <button
+        onClick={() => setDrawerOpen(prev => !prev)}
+        style={{
+          position: 'fixed',
+          top: 12,
+          right: 110,
+          zIndex: 25,
+          padding: '3px 8px',
+          borderRadius: 4,
+          border: '1px solid rgba(255, 255, 255, 0.15)',
+          background: drawerOpen ? 'rgba(240, 176, 96, 0.2)' : 'transparent',
+          color: drawerOpen ? '#f0b060' : '#888',
+          fontSize: 9,
+          fontWeight: 600,
+          cursor: 'pointer',
+          letterSpacing: 1,
+          pointerEvents: 'auto',
+        }}
+      >
+        {'ACTIVITY' + (needsAttentionCount > 0 ? ` (${needsAttentionCount})` : '')}
+      </button>
+
       {/* ── Mission Control toggle (AD-322) ── */}
       <button
         onClick={() => useStore.setState((s) => ({ missionControlView: !s.missionControlView }))}
@@ -334,6 +361,9 @@ export function IntentSurface() {
 
       {/* ── Mission Control overlay (AD-322) ── */}
       {missionControlView && <MissionControl />}
+
+      {/* ── Activity Drawer (AD-321) ── */}
+      <ActivityDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
       {/* ── Canvas dim overlay when active ── */}
       {active && (
