@@ -678,3 +678,43 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/activity-drawer.md`
 **Status:** AD-321 complete — 0 new tests (UI only), 2621 pytest + 34 vitest = 2655 total
+
+### BF-007: Verification False Positive on Per-Pool Agent Counts (DONE)
+
+**Decision:** BF-007 — `_verify_response()` regex `(\d+)\s+agents?\b` falsely flagged per-pool/per-department agent counts against system-wide total (53). Fix: `_is_subset_claim()` helper examines 80 chars before each match for known pool names, department names, or subset indicator words ("pool", "department", "team", "each", "per"). Known pool size whitelist skips numbers matching any individual `pool.agent_count`. Only system-wide total claims are flagged.
+
+**Changes:**
+- Modified `src/probos/runtime.py`: `_verify_response()` refactored with `_is_subset_claim()`, `known_pool_sizes` whitelist, `re.finditer()` for positional matching
+- Modified `tests/test_decomposer.py`: 4 new tests (per-pool not flagged, per-department breakdown not flagged, wrong system total still caught, ambiguous count matching known pool size not flagged)
+
+**Build prompt:** `prompts/bf-004-verification-false-positive.md`
+**Status:** BF-007 closed — 4 new tests, 2644 pytest + 34 vitest = 2678 total
+
+### BF-008: Dream Cycle Double-Replay After Dolphin Dreaming (DONE)
+
+**Decision:** BF-008 — Micro-dream (Tier 1, every 10s) already replayed episodes incrementally; full dream (Tier 2, every 10min) re-replayed same 50 episodes, double-strengthening Hebbian weights. Fix: `dream_cycle()` now starts with `micro_dream()` flush as Step 0 (composable), then does maintenance only (pruning, trust consolidation, pre-warming, strategy extraction, gap prediction). No separate `_replay_episodes()` call. `DreamReport` reflects micro-dream flush counts. Log shows `flushed=N` instead of `replayed=50`. Micro-dream cursor reset removed from full dream. No caller changes needed — `dream_cycle()` is self-contained.
+
+**Changes:**
+- Modified `src/probos/cognitive/dreaming.py`: `dream_cycle()` starts with `micro_dream()`, removed `_replay_episodes()` call, removed cursor reset, updated log format
+- Modified `tests/test_dreaming.py`: 6 new tests (calls micro_dream first, no direct replay, maintenance still runs, report reflects flush, cursor not reset, existing scheduler test updated)
+
+**Build prompt:** `prompts/bf-008-dream-double-replay.md`
+**Status:** BF-008 closed — 6 new tests, 2650 pytest + 34 vitest = 2684 total
+
+### AD-323: Agent Notification Queue (DONE)
+
+**Decision:** AD-323 — Persistent notification system for agent→Captain communication. `AgentNotification` dataclass + `NotificationQueue` service (notify, acknowledge, acknowledge_all, snapshot, prune). `Runtime.notify()` convenience method with auto-lookup of agent_type/department. Two API endpoints: `POST /api/notifications/{id}/ack` and `POST /api/notifications/ack-all`. `NotificationDropdown` React component with glass panel, type-colored left borders (info=blue, action_required=amber, error=red), relative time, click-to-ack, mark-all-read. Bell button (NOTIF) at `right: 210` with unread count badge. Zustand notifications state with 3 event handlers + snapshot hydration.
+
+**Changes:**
+- Modified `src/probos/task_tracker.py`: `AgentNotification` dataclass, `NotificationQueue` service
+- Modified `src/probos/runtime.py`: `notification_queue` init, `notify()`, `_find_agent()`, `_get_agent_department()`, `build_state_snapshot()` updated
+- Modified `src/probos/api.py`: 2 ack endpoints
+- New `ui/src/components/NotificationDropdown.tsx`: dropdown panel, NotificationCard
+- Modified `ui/src/components/IntentSurface.tsx`: bell button, dropdown integration
+- Modified `ui/src/store/types.ts`: `NotificationView` interface
+- Modified `ui/src/store/useStore.ts`: notifications state, 3 event handlers, snapshot hydration
+- New `tests/test_notifications.py`: 12 tests
+- Modified `ui/src/__tests__/useStore.test.ts`: 4 new vitest tests
+
+**Build prompt:** `prompts/ad-323-notification-queue.md`
+**Status:** AD-323 complete — 12 pytest + 4 vitest new, 2663 pytest + 38 vitest = 2701 total

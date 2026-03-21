@@ -1234,16 +1234,9 @@ Previously planned features for future iteration:
 - Filter by team (Science, Engineering, Medical, etc.) or agent type
 - "Done" column auto-archives after configurable time
 
-**AD-323: Agent Notification Queue**
+**AD-323: Agent Notification Queue** *(done)*
 
-Persistent notifications that agents can emit and that persist until the Captain acknowledges:
-
-- `AgentNotification` dataclass: agent_id, agent_type, notification_type (info/action_required/error), title, detail, action_url (link to the relevant card), created_at, acknowledged
-- Notification types: "Proposal ready for review", "Build failed — 3 test failures", "Question: should this modify panels.py or create a new file?"
-- Bell icon in the HXI header with unread count badge
-- Notification dropdown: list of unread notifications, click to navigate to the relevant card/drawer item
-- `action_required` notifications stay pinned until explicitly acknowledged or the underlying task is resolved
-- Agent API: `self._runtime.notify(agent_id, title, detail, action_required=True)` — simple method any agent can call
+Implemented: `AgentNotification` dataclass + `NotificationQueue` service in `task_tracker.py`. `Runtime.notify()` convenience method with auto-lookup of agent_type/department. `build_state_snapshot()` includes `notifications` + `unread_count`. Two API endpoints: `POST /api/notifications/{id}/ack` and `POST /api/notifications/ack-all`. `NotificationDropdown` React component with glass panel styling, type-colored left borders (info=blue, action_required=amber, error=red), relative time, click-to-ack, mark-all-read. Bell button (`NOTIF`) at `right: 210` with unread count badge. Zustand: `notifications: NotificationView[]` state with `notification`/`notification_ack`/`notification_snapshot` event handlers + snapshot hydration. 12 pytest + 4 vitest tests.
 
 **AD-324: Orb Hover Enhancement**
 

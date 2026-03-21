@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-321 complete — Activity Drawer (real-time agent task panel)
+## Current Status: AD-323 complete — Agent Notification Queue (bell icon, dropdown, notify API)
 
 ---
 
