@@ -16,6 +16,7 @@ from probos.cognitive.builder import BuildSpec, BuildResult, _should_use_visitin
 from probos.cognitive.copilot_adapter import (
     CopilotBuilderAdapter,
     CopilotBuildResult,
+    _SDK_AVAILABLE,
     _VISITING_BUILDER_INSTRUCTIONS,
 )
 
@@ -98,6 +99,7 @@ class TestCopilotBuilderAdapterPrompt:
         assert "MODIFY blocks" in prompt
 
 
+@pytest.mark.skipif(not _SDK_AVAILABLE, reason="github-copilot-sdk not installed")
 class TestCopilotBuilderAdapterExecution:
     """Session execution."""
 
