@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-386 complete — Runtime Directive Overlays (evolvable chain-of-command instructions)
+## Current Status: AD-321 complete — Activity Drawer (real-time agent task panel)
 
 ---
 

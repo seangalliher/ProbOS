@@ -1199,15 +1199,9 @@ Inspired by: GitHub Copilot's task list, Kanban boards (Trello/Linear), mission 
 
 Unified task lifecycle tracking. `TaskTracker` service (SIF/BuildQueue pattern), `AgentTask` dataclass with full lifecycle (queued→working→review→done/failed), `TaskStep` with timing, step_progress (current/total), WebSocket events (`task_created`/`task_updated`), frontend `AgentTaskView` types and store wiring. 30 tests.
 
-**AD-321: Activity Drawer (React)**
+**AD-321: Activity Drawer (React)** *(done)*
 
-A slide-out panel from the right edge of the chat:
-
-- Three sections: **Active** (agents currently working, with live step progress), **Needs Attention** (agents waiting for human input — approve/reject/respond), **Recent** (completed tasks with outcomes)
-- Each item is a compact card: agent type icon, task title (truncated prompt), team color badge, elapsed time
-- Click card to expand: full prompt, step-by-step checklist with timings, action buttons if applicable
-- Badge count on the drawer toggle button for "Needs Attention" items
-- Subscribes to `agent_task_update` WebSocket events for live updates
+Slide-out panel from right edge of HXI. Three collapsible sections: Needs Attention (amber, action buttons, always expanded), Active (working tasks with step progress bars and `neural-pulse` animation, always expanded), Recent (done/failed, most recent first, capped at 10, collapsed by default). Task cards with department color left border stripe, status dot, type badge, truncated title, agent type, department, elapsed time, AD number. Click to expand: full title, step checklist with status icons, progress bar, Approve/Reject buttons, error text, metadata display. Glass panel styling, ACTIVITY toggle button with attention count badge. `ActivityDrawer.tsx` (new, 351 lines), `IntentSurface.tsx` modified for toggle + rendering. Consumes `agentTasks` from TaskTracker (AD-316) — no backend changes.
 
 **AD-322: Kanban Board View** *(done)*
 

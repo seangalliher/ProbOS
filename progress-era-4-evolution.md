@@ -667,3 +667,14 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/runtime-directives.md`
 **Status:** AD-386 complete — 30 new tests, 2621 pytest + 34 vitest = 2655 total
+
+### AD-321: Activity Drawer — Real-Time Agent Task Panel (DONE)
+
+**Decision:** AD-321 — Slide-out panel from the right edge of the HXI for real-time agent task visibility. Consumes existing `agentTasks` state from TaskTracker (AD-316) — no backend changes. Three collapsible sections: Needs Attention (amber, `requires_action` filter, Approve/Reject buttons, always expanded), Active (`status === 'working'`, step progress bars with `neural-pulse` animation, always expanded), Recent (done/failed, sorted by `completed_at` descending, capped at 10, collapsed by default). Task cards show department color left border stripe (DEPT_COLORS), status dot (STATUS_COLORS), type badge (BUILD/DESIGN/DIAGNOSTIC/ASSESSMENT/QUERY), truncated title (50 chars), agent type, department, elapsed time, AD number. Click to expand: full title, step-by-step checklist (○ pending, ◐ in_progress, ● done, ✕ failed), overall progress bar, error text (200 chars, muted red), metadata key-value display. Glass panel styling: `rgba(10, 10, 18, 0.92)`, backdrop blur, 320px width, z-index 20, transform slide animation. ACTIVITY toggle button in header with attention count badge.
+
+**Changes:**
+- New `ui/src/components/ActivityDrawer.tsx` (351 lines): SectionHeader, StepList, ProgressBar, TaskCard, ActivityDrawer components with DEPT_COLORS, STATUS_COLORS, STEP_ICONS constants
+- Modified `ui/src/components/IntentSurface.tsx`: Import, `drawerOpen` state, `agentTasks` selector, `needsAttentionCount`, ACTIVITY toggle button, ActivityDrawer rendering
+
+**Build prompt:** `prompts/activity-drawer.md`
+**Status:** AD-321 complete — 0 new tests (UI only), 2621 pytest + 34 vitest = 2655 total
