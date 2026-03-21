@@ -2314,3 +2314,10 @@ Core dispatch loop for the Automated Builder Dispatch system. `BuildDispatcher` 
 
 **Build prompt:** `prompts/build-dispatcher.md`
 **Status:** AD-372 complete — 2402 Python + 34 Vitest.
+
+### AD-373: HXI Build Dashboard
+
+Real-time build queue visualization in the HXI. `BuildQueueItem` interface in `types.ts` with full status lifecycle. Two WebSocket event handlers: `build_queue_update` (full snapshot) and `build_queue_item` (single upsert with chat logging for status transitions). Build Queue card in `IntentSurface.tsx` with: "Build Queue" header badge showing active count, item list with color-coded status dots (gray/blue/amber-pulsing/amber/green/red), title + AD number, status badge, Approve/Reject buttons for reviewing items (POST to `/api/build/approve` and `/api/build/reject`), file footprint display for reviewing items. Engineering amber theme (`#b0a050`, `rgba(176, 160, 80, ...)`). UI ready for backend API wiring.
+
+**Build prompt:** `prompts/hxi-build-dashboard.md`
+**Status:** AD-373 complete — 2402 Python + 34 Vitest.

@@ -42,6 +42,9 @@ from probos.cognitive.builder import BuilderAgent
 from probos.cognitive.architect import ArchitectAgent
 from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
 from probos.sif import StructuralIntegrityField
+from probos.build_queue import BuildQueue
+from probos.worktree_manager import WorktreeManager
+from probos.build_dispatcher import BuildDispatcher
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
@@ -230,6 +233,10 @@ class ProbOSRuntime:
         # --- Structural Integrity Field (AD-370) ---
         self.sif: StructuralIntegrityField | None = None
 
+        # --- Automated Builder Dispatch (AD-375) ---
+        self.build_queue: BuildQueue | None = None
+        self.build_dispatcher: BuildDispatcher | None = None
+
         # --- Semantic knowledge layer (AD-243) ---
         self._semantic_layer: SemanticKnowledgeLayer | None = None
 
@@ -309,6 +316,26 @@ class ProbOSRuntime:
                 fn(event)
             except Exception:
                 pass
+
+    async def _on_build_complete(self, build: Any) -> None:
+        """Callback fired when a dispatched build finishes (AD-375)."""
+        from probos.build_queue import QueuedBuild
+        if not isinstance(build, QueuedBuild):
+            return
+        self._emit_event("build_queue_item", {
+            "item": {
+                "id": build.id,
+                "title": build.spec.title,
+                "ad_number": build.spec.ad_number,
+                "status": build.status,
+                "priority": build.priority,
+                "worktree_path": build.worktree_path,
+                "builder_id": build.builder_id,
+                "error": build.error,
+                "file_footprint": build.file_footprint,
+                "commit_hash": build.result.commit_hash if build.result else "",
+            }
+        })
 
     def build_state_snapshot(self) -> dict[str, Any]:
         """Build a full state snapshot for HXI clients (AD-254)."""
@@ -881,6 +908,19 @@ class ProbOSRuntime:
         )
         await self.sif.start()
 
+        # Start Automated Builder Dispatch (AD-375)
+        import pathlib
+        _repo_root = str(pathlib.Path(__file__).resolve().parent.parent.parent)
+        self.build_queue = BuildQueue()
+        _worktree_mgr = WorktreeManager(repo_root=_repo_root)
+        self.build_dispatcher = BuildDispatcher(
+            queue=self.build_queue,
+            worktree_mgr=_worktree_mgr,
+            on_build_complete=self._on_build_complete,
+        )
+        await self.build_dispatcher.start()
+        logger.info("build-dispatcher started")
+
         self._started = True
 
         await self.event_log.log(category="system", event="started")
@@ -910,6 +950,12 @@ class ProbOSRuntime:
         if self.sif:
             await self.sif.stop()
             self.sif = None
+
+        # Stop build dispatcher (AD-375)
+        if self.build_dispatcher:
+            await self.build_dispatcher.stop()
+            self.build_dispatcher = None
+            self.build_queue = None
 
         # Stop red team agents
         for agent in self._red_team_agents:

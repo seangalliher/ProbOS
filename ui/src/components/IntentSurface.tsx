@@ -1275,7 +1275,7 @@ export function IntentSurface() {
                             }}
                             onClick={async () => {
                               try {
-                                await fetch('/api/build/approve', {
+                                await fetch('/api/build/queue/approve', {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },
                                   body: JSON.stringify({ build_id: item.id }),
@@ -1298,7 +1298,7 @@ export function IntentSurface() {
                             }}
                             onClick={async () => {
                               try {
-                                await fetch('/api/build/reject', {
+                                await fetch('/api/build/queue/reject', {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },
                                   body: JSON.stringify({ build_id: item.id }),

@@ -149,6 +149,28 @@ class BuildResolveRequest(BaseModel):
     resolution: str  # "retry_extended", "retry_targeted", "retry_fix", "commit_override", "abort"
 
 
+class BuildQueueApproveRequest(BaseModel):
+    """Request to approve a queued build — merge to main (AD-375)."""
+    build_id: str
+
+
+class BuildQueueRejectRequest(BaseModel):
+    """Request to reject a queued build (AD-375)."""
+    build_id: str
+
+
+class BuildEnqueueRequest(BaseModel):
+    """Request to add a build spec to the dispatch queue (AD-375)."""
+    title: str
+    description: str = ""
+    target_files: list[str] = []
+    reference_files: list[str] = []
+    test_files: list[str] = []
+    ad_number: int = 0
+    constraints: list[str] = []
+    priority: int = 5
+
+
 class DesignRequest(BaseModel):
     """Request to trigger the ArchitectAgent."""
     feature: str
@@ -834,6 +856,104 @@ def create_app(runtime: Any) -> FastAPI:
 
         else:
             return {"status": "error", "message": f"Unknown resolution: {req.resolution}"}
+
+    # ------------------------------------------------------------------
+    # Build Queue / Dispatch API (AD-375)
+    # ------------------------------------------------------------------
+
+    def _emit_queue_snapshot(rt: Any) -> None:
+        """Broadcast full queue state to all HXI clients (AD-375)."""
+        if not rt.build_queue:
+            return
+        items = rt.build_queue.get_all()
+        rt._emit_event("build_queue_update", {
+            "items": [
+                {
+                    "id": b.id,
+                    "title": b.spec.title,
+                    "ad_number": b.spec.ad_number,
+                    "status": b.status,
+                    "priority": b.priority,
+                    "worktree_path": b.worktree_path,
+                    "builder_id": b.builder_id,
+                    "error": b.error,
+                    "file_footprint": b.file_footprint,
+                    "commit_hash": b.result.commit_hash if b.result else "",
+                }
+                for b in items
+            ],
+        })
+
+    @app.post("/api/build/queue/approve")
+    async def approve_queued_build(req: BuildQueueApproveRequest) -> dict[str, Any]:
+        """Captain approves a queued build — merge worktree to main."""
+        if not runtime.build_dispatcher:
+            return {"status": "error", "message": "Build dispatcher not running"}
+        ok, result = await runtime.build_dispatcher.approve_and_merge(req.build_id)
+        if ok:
+            _emit_queue_snapshot(runtime)
+            return {"status": "ok", "commit": result, "message": f"Build merged: {result[:7]}"}
+        return {"status": "error", "message": result}
+
+    @app.post("/api/build/queue/reject")
+    async def reject_queued_build(req: BuildQueueRejectRequest) -> dict[str, Any]:
+        """Captain rejects a queued build — discard worktree."""
+        if not runtime.build_dispatcher:
+            return {"status": "error", "message": "Build dispatcher not running"}
+        ok = await runtime.build_dispatcher.reject_build(req.build_id)
+        if ok:
+            _emit_queue_snapshot(runtime)
+            return {"status": "ok", "message": "Build rejected"}
+        return {"status": "error", "message": f"Build {req.build_id} not in reviewing status"}
+
+    @app.post("/api/build/enqueue")
+    async def enqueue_build(req: BuildEnqueueRequest) -> dict[str, Any]:
+        """Add a build spec to the dispatch queue."""
+        if not runtime.build_queue:
+            return {"status": "error", "message": "Build queue not running"}
+        from probos.cognitive.builder import BuildSpec
+        spec = BuildSpec(
+            title=req.title,
+            description=req.description,
+            target_files=req.target_files,
+            reference_files=req.reference_files,
+            test_files=req.test_files,
+            ad_number=req.ad_number,
+            constraints=req.constraints,
+        )
+        build = runtime.build_queue.enqueue(spec, priority=req.priority)
+        _emit_queue_snapshot(runtime)
+        return {
+            "status": "ok",
+            "build_id": build.id,
+            "message": f"Build '{req.title}' queued at priority {req.priority}",
+        }
+
+    @app.get("/api/build/queue")
+    async def get_build_queue() -> dict[str, Any]:
+        """Get the current build queue state."""
+        if not runtime.build_queue:
+            return {"status": "ok", "items": []}
+        items = runtime.build_queue.get_all()
+        return {
+            "status": "ok",
+            "items": [
+                {
+                    "id": b.id,
+                    "title": b.spec.title,
+                    "ad_number": b.spec.ad_number,
+                    "status": b.status,
+                    "priority": b.priority,
+                    "worktree_path": b.worktree_path,
+                    "builder_id": b.builder_id,
+                    "error": b.error,
+                    "file_footprint": b.file_footprint,
+                    "commit_hash": b.result.commit_hash if b.result else "",
+                }
+                for b in items
+            ],
+            "active_count": runtime.build_queue.active_count,
+        }
 
     async def _run_build(
         req: BuildRequest,
