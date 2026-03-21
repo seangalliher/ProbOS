@@ -1110,7 +1110,10 @@ class ProbOSShell:
                     )
             self.console.print()  # trailing blank line
         else:
-            self.console.print(f"[red]Authorization failed: {reason}[/red]")
+            if "Duplicate" in reason:
+                self.console.print(f"[yellow]{reason}[/yellow]")
+            else:
+                self.console.print(f"[red]Authorization failed: {reason}[/red]")
 
     async def _cmd_directives(self, arg: str) -> None:
         """Show active directives, optionally filtered by agent type."""

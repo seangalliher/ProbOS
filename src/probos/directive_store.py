@@ -265,6 +265,17 @@ class DirectiveStore:
         if not authorized:
             return None, reason
 
+        # Check for duplicate — same content, target, and type already active
+        existing = self._conn.execute(
+            "SELECT data FROM directives WHERE status IN ('active', 'pending_approval')"
+        ).fetchall()
+        for (data_json,) in existing:
+            d = RuntimeDirective.from_dict(json.loads(data_json))
+            if (d.content == content
+                    and d.target_agent_type == target_agent_type
+                    and d.directive_type == directive_type):
+                return None, f"Duplicate — this order is already in effect (ID: {d.id[:8]})"
+
         # Determine initial status
         status = DirectiveStatus.ACTIVE
         if directive_type == DirectiveType.PEER_SUGGESTION:

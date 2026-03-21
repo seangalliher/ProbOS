@@ -301,3 +301,51 @@ class TestDirectiveStore(unittest.TestCase):
         assert "b1" in ids
         assert "b2" in ids
         assert "b3" in ids
+
+    def test_create_directive_duplicate_rejected(self) -> None:
+        directive1, reason1 = self.store.create_directive(
+            issuer_type="captain",
+            issuer_department=None,
+            issuer_rank=Rank.SENIOR,
+            target_agent_type="builder",
+            target_department="engineering",
+            directive_type=DirectiveType.CAPTAIN_ORDER,
+            content="Always run tests",
+        )
+        assert directive1 is not None
+        # Same order again
+        directive2, reason2 = self.store.create_directive(
+            issuer_type="captain",
+            issuer_department=None,
+            issuer_rank=Rank.SENIOR,
+            target_agent_type="builder",
+            target_department="engineering",
+            directive_type=DirectiveType.CAPTAIN_ORDER,
+            content="Always run tests",
+        )
+        assert directive2 is None
+        assert "Duplicate" in reason2
+
+    def test_create_directive_duplicate_after_revoke_allowed(self) -> None:
+        directive1, _ = self.store.create_directive(
+            issuer_type="captain",
+            issuer_department=None,
+            issuer_rank=Rank.SENIOR,
+            target_agent_type="builder",
+            target_department="engineering",
+            directive_type=DirectiveType.CAPTAIN_ORDER,
+            content="Always run tests",
+        )
+        assert directive1 is not None
+        self.store.revoke(directive1.id, "captain")
+        # Same order after revocation — should be allowed
+        directive2, _ = self.store.create_directive(
+            issuer_type="captain",
+            issuer_department=None,
+            issuer_rank=Rank.SENIOR,
+            target_agent_type="builder",
+            target_department="engineering",
+            directive_type=DirectiveType.CAPTAIN_ORDER,
+            content="Always run tests",
+        )
+        assert directive2 is not None
