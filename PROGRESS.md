@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-371 complete — BuildQueue + WorktreeManager (AD-371), SIF (AD-370), BF-004 closed
+## Current Status: AD-372 complete — BuildDispatcher (AD-372), BuildQueue + WorktreeManager (AD-371), SIF (AD-370)
 
 ---
 

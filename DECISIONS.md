@@ -2307,3 +2307,10 @@ Foundation for the Automated Builder Dispatch system (AD-371–374). Two standal
 
 **Build prompt:** `prompts/build-queue-worktree-manager.md`
 **Status:** AD-371 complete — 2391 Python + 34 Vitest.
+
+### AD-372: BuildDispatcher + SDK Integration
+
+Core dispatch loop for the Automated Builder Dispatch system. `BuildDispatcher` watches `BuildQueue`, allocates worktrees via `WorktreeManager`, invokes `CopilotBuilderAdapter` to generate code, and applies changes through `execute_approved_build()` with all existing guardrails (syntax validation, test-before-commit, code review). Pipeline: `dequeue → footprint conflict check → create worktree → read source files → adapter.execute() → execute_approved_build() → status update → callback`. Absorbs AD-374 (footprint conflict detection) via `_find_dispatchable()` which skips conflicting builds. Captain actions: `approve_and_merge()` (merge + cleanup) and `reject_build()` (cleanup only). Conditional SDK import (`_SDK_AVAILABLE`). Configurable: `max_concurrent` (default 2), `poll_interval` (5s), `builder_model`, `builder_timeout`, `run_tests`, `on_build_complete` callback. 11 tests.
+
+**Build prompt:** `prompts/build-dispatcher.md`
+**Status:** AD-372 complete — 2402 Python + 34 Vitest.

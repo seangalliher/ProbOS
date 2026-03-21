@@ -660,9 +660,9 @@ Visiting officer builds failed 2 of 3 times by creating files in wrong directori
 Full automation of the Architect→Builder pipeline. Captain approves ADs, builders automatically pick up work, execute in isolated worktrees, and submit for review. No copy-paste, no manual dispatch.
 
 - **AD-371: BuildQueue + WorktreeManager** *(done)* — Priority-ordered queue of `QueuedBuild` items with status lifecycle validation, file footprint conflict detection, cancel support. `WorktreeManager` handles async git worktree lifecycle: create, remove, collect diff, merge to main, cleanup. 20 tests.
-- **AD-372: BuildDispatcher + SDK Integration** *(planned)* — Watches BuildQueue, spawns `CopilotBuilderAdapter` sessions against allocated worktrees. Configurable parallelism (max concurrent builders). Routes to available builder slots. Collects results and transitions queue status.
+- **AD-372: BuildDispatcher + SDK Integration** *(done)* — Core dispatch loop: watches BuildQueue, allocates worktrees, invokes CopilotBuilderAdapter, applies changes via `execute_approved_build()` with full guardrails. Configurable concurrency, Captain approve/reject actions, `on_build_complete` callback. Absorbs AD-374. 11 tests.
 - **AD-373: HXI Build Dashboard** *(planned)* — Real-time queue visibility: active builds with progress, completed builds awaiting review, merge approval buttons. WebSocket events for live status updates.
-- **AD-374: File Footprint Conflict Detection** *(planned)* — Each BuildSpec declares its file footprint (files it will touch). Dispatcher checks footprints before parallel dispatch — overlapping specs are serialized, non-overlapping specs run concurrently. Prevents merge conflicts by construction.
+- **AD-374: File Footprint Conflict Detection** *(absorbed into AD-372)* — `_find_dispatchable()` checks `has_footprint_conflict()` before dispatch. Overlapping specs serialized, non-overlapping run concurrently.
 
 **Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE**
 

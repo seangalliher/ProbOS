@@ -508,3 +508,14 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/build-queue-worktree-manager.md`
 **Status:** AD-371 complete — 20 new tests, 2391 pytest + 34 vitest = 2425 total
+
+### AD-372: BuildDispatcher + SDK Integration (DONE)
+
+**Decision:** AD-372 — Core dispatch loop for the automated builder system. Absorbs AD-374 (footprint conflict detection).
+
+**Changes:**
+- `build_dispatcher.py` (NEW) — `BuildDispatcher` class. Watches BuildQueue, allocates worktrees, invokes CopilotBuilderAdapter, applies changes via `execute_approved_build()`. Pipeline: dequeue → conflict check → worktree → adapter → guardrails → status. Captain actions: `approve_and_merge()`, `reject_build()`. Configurable concurrency, polling, model, timeout. `on_build_complete` callback.
+- `test_build_dispatcher.py` (NEW) — 11 tests: priority dispatch, conflict skipping, success/failure flows, merge/reject, callback, max concurrency, file reading.
+
+**Build prompt:** `prompts/build-dispatcher.md`
+**Status:** AD-372 complete — 11 new tests, 2402 pytest + 34 vitest = 2436 total
