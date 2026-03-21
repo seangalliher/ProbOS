@@ -43,6 +43,7 @@ from probos.cognitive.builder import BuilderAgent
 from probos.cognitive.architect import ArchitectAgent
 from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
 from probos.sif import StructuralIntegrityField
+from probos.initiative import InitiativeEngine
 from probos.build_queue import BuildQueue
 from probos.worktree_manager import WorktreeManager
 from probos.build_dispatcher import BuildDispatcher
@@ -234,6 +235,9 @@ class ProbOSRuntime:
 
         # --- Structural Integrity Field (AD-370) ---
         self.sif: StructuralIntegrityField | None = None
+
+        # --- InitiativeEngine (AD-381) ---
+        self.initiative: InitiativeEngine | None = None
 
         # --- Automated Builder Dispatch (AD-375) ---
         self.build_queue: BuildQueue | None = None
@@ -917,6 +921,17 @@ class ProbOSRuntime:
         )
         await self.sif.start()
 
+        # Start InitiativeEngine (AD-381)
+        self.initiative = InitiativeEngine(
+            on_event=lambda evt: self._emit_event(evt.get("type", ""), evt.get("data", {})),
+            on_proposal=lambda p: logger.info("Initiative: %s", p.action_detail),
+        )
+        if self.sif:
+            self.initiative.set_sif(self.sif)
+        if self._emergent_detector:
+            self.initiative.set_detector(self._emergent_detector)
+        await self.initiative.start()
+
         # Start Automated Builder Dispatch (AD-375)
         import pathlib
         _repo_root = str(pathlib.Path(__file__).resolve().parent.parent.parent)
@@ -968,6 +983,11 @@ class ProbOSRuntime:
         if self.sif:
             await self.sif.stop()
             self.sif = None
+
+        # Stop InitiativeEngine (AD-381)
+        if self.initiative:
+            await self.initiative.stop()
+            self.initiative = None
 
         # Stop build dispatcher (AD-375)
         if self.build_dispatcher:
