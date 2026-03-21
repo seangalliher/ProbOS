@@ -2705,8 +2705,12 @@ async def execute_approved_build(
             result.files_written = written
             result.files_modified = modified_files
 
+        # 5.5. Block commit if validation errors (syntax errors) exist
+        if validation_errors:
+            result.error = "Syntax errors:\n" + "\n".join(validation_errors)
+            result.success = False
         # 6. Commit — only if tests passed OR tests were not run
-        if written or modified_files:
+        elif written or modified_files:
             if run_tests and not result.tests_passed:
                 # Try escalation hook before reporting failure to Captain (AD-347)
                 if escalation_hook is not None:
@@ -2742,10 +2746,9 @@ async def execute_approved_build(
                 else:
                     result.error = f"Commit failed: {sha}"
 
-        if validation_errors:
-            result.error = "Syntax errors:\n" + "\n".join(validation_errors)
-            result.success = False
-        elif not (run_tests and not result.tests_passed):
+                if not result.error:
+                    result.success = True
+        else:
             result.success = True
 
     except Exception as exc:

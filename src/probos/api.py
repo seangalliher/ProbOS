@@ -517,6 +517,7 @@ def create_app(runtime: Any) -> FastAPI:
     ) -> None:
         """Background self-mod pipeline with WebSocket progress events."""
         original_approval_fn = None
+        original_import_approval_fn = None
         try:
             rt._emit_event("self_mod_started", {
                 "intent": req.intent_name,
@@ -534,6 +535,7 @@ def create_app(runtime: Any) -> FastAPI:
                 return True
 
             if rt.self_mod_pipeline:
+                original_import_approval_fn = rt.self_mod_pipeline._import_approval_fn
                 rt.self_mod_pipeline._import_approval_fn = _auto_approve_imports
                 # Clicking "Build Agent" in the HXI IS the user's approval —
                 # skip the console input() prompt that the Shell wires up.
@@ -710,9 +712,12 @@ def create_app(runtime: Any) -> FastAPI:
                 "message": f"Agent design failed: {e}",
             })
         finally:
-            # Restore the console approval callback for interactive shell use
-            if rt.self_mod_pipeline and original_approval_fn is not None:
-                rt.self_mod_pipeline._user_approval_fn = original_approval_fn
+            # Restore callbacks for interactive shell use
+            if rt.self_mod_pipeline:
+                if original_approval_fn is not None:
+                    rt.self_mod_pipeline._user_approval_fn = original_approval_fn
+                if original_import_approval_fn is not None:
+                    rt.self_mod_pipeline._import_approval_fn = original_import_approval_fn
 
     # ------------------------------------------------------------------
     # Builder Agent API (AD-304)

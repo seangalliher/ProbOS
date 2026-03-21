@@ -117,3 +117,52 @@ class TestRedTeamAgent:
         assert await agent.decide("obs") is None
         assert await agent.act("plan") is None
         assert await agent.report("result") == {}
+
+    # -- Write verification tests (AD-365) --
+
+    @pytest.mark.asyncio
+    async def test_verify_write_valid_path(self, agent):
+        """Valid write proposals should pass verification."""
+        intent = IntentMessage(intent="write_file", params={
+            "path": "src/probos/agents/new_agent.py",
+            "content": "class NewAgent: pass\n",
+        })
+        claimed = IntentResult(intent_id=intent.id, agent_id="writer-1", success=True)
+        result = await agent.verify("writer-1", intent, claimed)
+        assert result.verified is True
+        assert result.confidence > 0.1  # Not the fallback confidence
+
+    @pytest.mark.asyncio
+    async def test_verify_write_path_traversal(self, agent):
+        """Path traversal in write should fail verification."""
+        intent = IntentMessage(intent="write_file", params={
+            "path": "../../etc/passwd",
+            "content": "malicious",
+        })
+        claimed = IntentResult(intent_id=intent.id, agent_id="writer-1", success=True)
+        result = await agent.verify("writer-1", intent, claimed)
+        assert result.verified is False
+        assert "traversal" in result.discrepancy.lower()
+
+    @pytest.mark.asyncio
+    async def test_verify_write_forbidden_path(self, agent):
+        """Writes to forbidden paths should fail verification."""
+        intent = IntentMessage(intent="write_file", params={
+            "path": ".git/config",
+            "content": "bad",
+        })
+        claimed = IntentResult(intent_id=intent.id, agent_id="writer-1", success=True)
+        result = await agent.verify("writer-1", intent, claimed)
+        assert result.verified is False
+        assert "forbidden" in result.discrepancy.lower()
+
+    @pytest.mark.asyncio
+    async def test_verify_write_empty_path(self, agent):
+        """Empty path should fail verification."""
+        intent = IntentMessage(intent="write_file", params={
+            "path": "",
+            "content": "data",
+        })
+        claimed = IntentResult(intent_id=intent.id, agent_id="writer-1", success=True)
+        result = await agent.verify("writer-1", intent, claimed)
+        assert result.verified is False

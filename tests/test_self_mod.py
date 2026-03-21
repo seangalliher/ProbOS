@@ -668,6 +668,7 @@ class TestSelfModPipeline:
             monitor=monitor,
             config=config,
             register_fn=overrides.get("register_fn", register_fn),
+            unregister_fn=overrides.get("unregister_fn"),
             create_pool_fn=overrides.get("create_pool_fn", create_pool_fn),
             set_trust_fn=overrides.get("set_trust_fn", set_trust_fn),
             user_approval_fn=overrides.get("user_approval_fn"),
@@ -1401,6 +1402,7 @@ class TestSelfModErrorPaths:
             monitor=BehavioralMonitor(),
             config=config,
             register_fn=overrides.get("register_fn", noop),
+            unregister_fn=overrides.get("unregister_fn", noop),
             create_pool_fn=overrides.get("create_pool_fn", noop),
             set_trust_fn=overrides.get("set_trust_fn", noop),
             user_approval_fn=overrides.get("user_approval_fn"),
@@ -1514,6 +1516,30 @@ class TestSelfModErrorPaths:
         assert record is not None
         assert record.status == "failed_pool"
         assert "Pool limit" in record.error
+
+    @pytest.mark.asyncio
+    async def test_failed_pool_rolls_back_registration(self):
+        """If pool creation fails, the agent type registration should be rolled back (AD-368)."""
+        from unittest.mock import AsyncMock
+
+        unregister_fn = AsyncMock()
+
+        async def bad_pool(agent_type, pool_name, size=1):
+            raise RuntimeError("Pool limit exceeded")
+
+        pipeline = self._make_pipeline(
+            config=SelfModConfig(enabled=True, require_user_approval=False),
+            unregister_fn=unregister_fn,
+            create_pool_fn=bad_pool,
+        )
+        record = await pipeline.handle_unhandled_intent(
+            intent_name="count_words",
+            intent_description="Count words",
+            parameters={"text": "input"},
+        )
+        assert record is not None
+        assert record.status == "failed_pool"
+        unregister_fn.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_progress_callback_exception_ignored(self):

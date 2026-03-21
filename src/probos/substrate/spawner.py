@@ -26,6 +26,10 @@ class AgentSpawner:
         self._templates[type_name] = agent_class
         logger.info("Registered template: %s -> %s", type_name, agent_class.__name__)
 
+    def unregister_template(self, type_name: str) -> None:
+        """Remove a registered agent template."""
+        self._templates.pop(type_name, None)
+
     @property
     def available_templates(self) -> list[str]:
         return list(self._templates.keys())

@@ -52,6 +52,10 @@ class RedTeamAgent(BaseAgent):
             can="verify_http_fetch",
             detail="Independently verify HTTP fetch results",
         ),
+        CapabilityDescriptor(
+            can="verify_write_file",
+            detail="Independently verify write file proposals",
+        ),
     ]
     initial_confidence: float = 0.9
     intent_descriptors = []  # Does not handle user intents
@@ -81,6 +85,8 @@ class RedTeamAgent(BaseAgent):
             return await self._verify_run_command(target_agent_id, intent, claimed_result, params)
         elif intent_name == "http_fetch":
             return await self._verify_http_fetch(target_agent_id, intent, claimed_result, params)
+        elif intent_name == "write_file":
+            return await self._verify_write(target_agent_id, intent, claimed_result, params)
         else:
             # Cannot verify this intent type
             return VerificationResult(
@@ -480,6 +486,68 @@ class RedTeamAgent(BaseAgent):
                 discrepancy=f"Verification error: {e}",
                 confidence=self.confidence,
             )
+
+    async def _verify_write(
+        self,
+        target_agent_id: str,
+        intent: IntentMessage,
+        claimed: IntentResult,
+        params: dict[str, Any],
+    ) -> VerificationResult:
+        """Verify a write_file proposal by validating the path and content."""
+        path = params.get("path", "")
+        content = params.get("content")
+
+        # Basic sanity checks
+        issues: list[str] = []
+
+        if not path:
+            issues.append("Empty write path")
+        if content is None:
+            issues.append("No content provided")
+
+        if path:
+            p = Path(path)
+            # Path traversal check
+            try:
+                p.resolve()
+                # Check for suspicious path components
+                if ".." in p.parts:
+                    issues.append(f"Path traversal detected: {path}")
+            except (OSError, ValueError) as e:
+                issues.append(f"Invalid path: {e}")
+
+            # Forbidden paths — system-critical files
+            forbidden = (".git/", ".env", "pyproject.toml", ".github/workflows/")
+            normalized = path.replace("\\", "/")
+            for f in forbidden:
+                if normalized.startswith(f) or normalized == f.rstrip("/"):
+                    issues.append(f"Write to forbidden path: {path}")
+                    break
+
+        if content is not None and len(content) > 1_000_000:
+            issues.append(f"Content suspiciously large: {len(content)} bytes")
+
+        if issues:
+            self.update_confidence(True)
+            return VerificationResult(
+                verifier_id=self.id,
+                target_agent_id=target_agent_id,
+                intent_id=intent.id,
+                verified=False,
+                discrepancy="; ".join(issues),
+                confidence=self.confidence,
+            )
+
+        # Write proposal looks safe
+        self.update_confidence(True)
+        return VerificationResult(
+            verifier_id=self.id,
+            target_agent_id=target_agent_id,
+            intent_id=intent.id,
+            verified=True,
+            confidence=self.confidence,
+        )
 
     # ------------------------------------------------------------------
     # BaseAgent lifecycle — red team agents are passive (no intent bus)

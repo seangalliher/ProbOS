@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
 
-const WS_URL = `ws://${window.location.host}/ws/events`;
+const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/events`;
 const MAX_BACKOFF = 30_000;
 
 export function useWebSocket() {

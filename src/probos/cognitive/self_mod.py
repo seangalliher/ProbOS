@@ -65,6 +65,7 @@ class SelfModificationPipeline:
         register_fn: Callable,  # runtime.register_agent_type
         create_pool_fn: Callable,  # runtime creates a pool for the new type
         set_trust_fn: Callable,  # trust_network.create_with_prior
+        unregister_fn: Callable | None = None,  # runtime.unregister_agent_type (AD-368)
         user_approval_fn: Callable[[str], Awaitable[bool]] | None = None,
         skill_designer: SkillDesigner | None = None,
         skill_validator: SkillValidator | None = None,
@@ -79,6 +80,7 @@ class SelfModificationPipeline:
         self._monitor = monitor
         self._config = config
         self._register_fn = register_fn
+        self._unregister_fn = unregister_fn
         self._create_pool_fn = create_pool_fn
         self._set_trust_fn = set_trust_fn
         self._user_approval_fn = user_approval_fn
@@ -334,6 +336,13 @@ class SelfModificationPipeline:
             await self._create_pool_fn(agent_type, pool_name, 1)
         except Exception as e:
             logger.warning("Pool creation failed for %s: %s", intent_name, e)
+            # Rollback registration to avoid phantom agent type (AD-368)
+            if self._unregister_fn:
+                try:
+                    await self._unregister_fn(agent_type)
+                except Exception as rollback_err:
+                    logger.warning("Registration rollback failed for %s: %s",
+                                   agent_type, rollback_err)
             record = DesignedAgentRecord(
                 intent_name=intent_name,
                 agent_type=agent_type,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -293,3 +294,33 @@ class TestUntrackedFileCleanup:
         # Empty parent dirs should also be removed
         assert not (tmp_path / "src" / "probos" / "deep" / "nested").exists()
         assert not (tmp_path / "src" / "probos" / "deep").exists()
+
+
+# ── AD-367: Validation before commit ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_validation_errors_block_commit(tmp_path):
+    """Files with syntax errors should not be committed even with run_tests=False."""
+    work_dir = str(tmp_path)
+    subprocess.run(["git", "init", "-b", "main", work_dir], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", work_dir, "config", "user.email", "test@test.com"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", work_dir, "config", "user.name", "Test"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", work_dir, "commit", "--allow-empty", "-m", "init"],
+                   check=True, capture_output=True)
+
+    spec = BuildSpec(title="Bad syntax", description="Test syntax gate")
+    file_changes = [
+        {"path": "src/bad.py", "mode": "create", "content": "def broken(\n"},
+    ]
+
+    result = await execute_approved_build(
+        file_changes, spec, work_dir, run_tests=False,
+    )
+
+    assert result.success is False
+    assert "Syntax errors" in (result.error or "")
+    assert not result.commit_hash, "Should NOT have committed invalid code"

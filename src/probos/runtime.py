@@ -278,6 +278,12 @@ class ProbOSRuntime:
         if self.decomposer:
             self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
 
+    def unregister_agent_type(self, type_name: str) -> None:
+        """Unregister an agent class and refresh the decomposer's intent descriptors."""
+        self.spawner.unregister_template(type_name)
+        if self.decomposer:
+            self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
+
     # --- HXI event emission (AD-254) ---
 
     def add_event_listener(self, fn: Callable) -> None:
@@ -717,6 +723,7 @@ class ProbOSRuntime:
                 monitor=self.behavioral_monitor,
                 config=self.config.self_mod,
                 register_fn=self._register_designed_agent,
+                unregister_fn=self._unregister_designed_agent,
                 create_pool_fn=self._create_designed_pool,
                 set_trust_fn=self._set_probationary_trust,
                 user_approval_fn=None,  # Shell sets this after creation
@@ -2582,6 +2589,10 @@ class ProbOSRuntime:
         """Register a self-designed agent class. Wraps register_agent_type()."""
         agent_type = getattr(agent_class, "agent_type", "unknown")
         self.register_agent_type(agent_type, agent_class)
+
+    async def _unregister_designed_agent(self, agent_type: str) -> None:
+        """Rollback registration of a self-designed agent type (AD-368)."""
+        self.unregister_agent_type(agent_type)
 
     async def _create_designed_pool(self, agent_type: str, pool_name: str, size: int = 1) -> None:
         """Create a pool for a self-designed agent type."""

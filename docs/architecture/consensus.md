@@ -4,7 +4,7 @@ The Consensus layer ensures safety — destructive operations require multi-agen
 
 ## Pipeline
 
-Destructive operations (file writes, shell commands, HTTP fetches) follow this pipeline:
+Destructive operations (file writes, shell commands) follow this pipeline:
 
 ```
 broadcast → quorum evaluation → red team verification
@@ -21,7 +21,7 @@ Collects confidence-weighted votes from agents. Each vote carries:
 
 - The agent's decision (approve/reject)
 - A confidence score (0.0 to 1.0)
-- The agent's current trust reputation
+- An optional reason string
 
 The quorum passes when the weighted approval exceeds the configured threshold.
 
