@@ -544,3 +544,25 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/dispatch-runtime-wiring.md`
 **Status:** AD-375 complete — 9 new tests, 2411 pytest + 34 vitest = 2445 total
+
+### AD-376: CrewProfile + Personality System (DONE)
+
+**Decision:** AD-376 — Foundational crew identity layer. Every agent gets a formal personnel file with identity, rank, Big Five personality traits, and performance history.
+
+**Changes:**
+- `crew_profile.py` (NEW) — `Rank` enum (Ensign→Lieutenant→Commander→Senior, with `from_trust()` convenience). `PersonalityTraits` (Big Five: openness, conscientiousness, extraversion, agreeableness, neuroticism; 0.0–1.0 validated; `distance_from()` for drift detection). `PerformanceReview` (timestamped, append-only). `CrewProfile` (identity + rank + personality + baseline + reviews, `personality_drift()`, `promotion_velocity()`). `ProfileStore` (SQLite-backed, `get_or_create()`, `by_department()`, `by_rank()`). `load_seed_profile()` loads YAML seeds with `_default.yaml` fallback.
+- `config/standing_orders/crew_profiles/` (NEW) — 12 YAML seed files (builder/Scotty, architect/Number One, diagnostician/Bones, vitals_monitor/Chapel, surgeon/Pulaski, pharmacist/Ogawa, pathologist/Selar, red_team/Worf, system_qa/O'Brien, emergent_detector/Dax, introspect/Data) + `_default.yaml`.
+- `test_crew_profile.py` (NEW) — 25 tests: rank boundaries, personality validation/drift/roundtrip, profile operations, store CRUD, seed loading.
+
+**Build prompt:** `prompts/crew-profile-personality.md`
+**Status:** AD-376 complete — 25 new tests, 2436 pytest + 34 vitest = 2470 total
+
+### AD-379: Per-Agent Standing Orders (DONE)
+
+**Decision:** AD-379 — Tier 5 personal standing orders for all 12 crew members. Each file defines standards, boundaries, and personality expression specific to that agent. Auto-loaded by existing `compose_instructions()` in `standing_orders.py`.
+
+**Changes:**
+- 12 new files in `config/standing_orders/`: `builder.md` (Scotty), `architect.md` (Number One), `diagnostician.md` (Bones), `vitals_monitor.md` (Chapel), `surgeon.md` (Pulaski), `pharmacist.md` (Ogawa), `pathologist.md` (Selar), `red_team.md` (Worf), `system_qa.md` (O'Brien), `emergent_detector.md` (Dax), `introspect.md` (Data), `counselor.md`. All under 20 lines, no code changes needed.
+
+**Build prompt:** `prompts/per-agent-standing-orders.md`
+**Status:** AD-379 complete — 0 new tests (config only), 2436 pytest + 34 vitest = 2470 total

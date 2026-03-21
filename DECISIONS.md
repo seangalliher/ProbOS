@@ -2294,6 +2294,12 @@ The Transporter Pattern (AD-330–336) emits 6 event types during parallel chunk
 
 **Status:** BF-004 complete — 2359 Python + 34 Vitest.
 
+### AD-376: CrewProfile + Personality System
+
+Foundational identity layer for every ProbOS agent. CrewProfile is the "personnel file" — identity (display name, callsign, department, role), rank (Ensign→Lieutenant→Commander→Senior Officer earned via trust), Big Five personality traits (seeded from YAML, evolvable, drift-trackable), and append-only performance review history. ProfileStore persists to SQLite following TrustNetwork patterns. `load_seed_profile()` reads agent-specific YAML from `config/standing_orders/crew_profiles/` (11 agent types + `_default.yaml` fallback). Personality traits are validated 0.0–1.0, with `distance_from()` for Counselor drift detection. No existing files modified — standalone module ready for runtime wiring in a follow-up AD.
+
+**Status:** AD-376 complete — 2436 Python + 34 Vitest.
+
 ### AD-370: Structural Integrity Field (SIF)
 
 "Medical detects damage. The SIF prevents structural failure." Lightweight runtime service that runs 7 pure-assertion invariant checks on every heartbeat cycle (5s). No LLM calls — every check reads in-memory data structures. `StructuralIntegrityField` is a Ship's Computer function, not an agent. Checks: trust bounds ([0,1] + finite), Hebbian weight bounds ([-10,10] + finite), pool consistency (agent types registered in spawner), IntentBus coherence (subscriber IDs exist in registry). Three checks (config validity, index consistency, memory integrity) are graceful no-ops pending future wiring. Each check is exception-isolated — one failure doesn't block others. `SIFReport` with `health_pct`, `all_passed`, `violations` properties. Background `asyncio.Task` with configurable interval. Wired into runtime `start()`/`stop()`. 12 tests.
@@ -2321,3 +2327,17 @@ Real-time build queue visualization in the HXI. `BuildQueueItem` interface in `t
 
 **Build prompt:** `prompts/hxi-build-dashboard.md`
 **Status:** AD-373 complete — 2402 Python + 34 Vitest.
+
+### AD-376: CrewProfile + Personality System
+
+Foundational crew identity layer. `CrewProfile` dataclass with identity (display_name, callsign, department, role), `Rank` enum (Ensign→Senior via `from_trust()`), `PersonalityTraits` (Big Five, 0.0–1.0 validated, `distance_from()` drift detection), `PerformanceReview` (append-only history), `ProfileStore` (SQLite persistence). `load_seed_profile()` reads YAML seeds from `config/standing_orders/crew_profiles/` with `_default.yaml` fallback. 12 crew profile YAMLs with seeded personalities and callsigns.
+
+**Build prompt:** `prompts/crew-profile-personality.md`
+**Status:** AD-376 complete — 2436 Python + 34 Vitest.
+
+### AD-379: Per-Agent Standing Orders
+
+Tier 5 personal standing orders for all 12 crew members. Auto-loaded by existing `compose_instructions()` in `standing_orders.py`. Each file under 20 lines defining standards, boundaries, and personality expression. Callsigns: Builder/Scotty, Architect/Number One, Diagnostician/Bones, Vitals Monitor/Chapel, Surgeon/Pulaski, Pharmacist/Ogawa, Pathologist/Selar, Red Team/Worf, System QA/O'Brien, Emergent Detector/Dax, Introspection/Data, Counselor.
+
+**Build prompt:** `prompts/per-agent-standing-orders.md`
+**Status:** AD-379 complete — config only, no test changes.

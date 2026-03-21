@@ -671,10 +671,10 @@ Full automation of the Architect→Builder pipeline. Captain approves ADs, build
 
 The foundational identity layer for ProbOS agents. Every crew member gets a formal profile, seeded personality, cognitive assessment record, individual standing orders, and scheduled duty shifts.
 
-- **AD-376: CrewProfile + Personality System** *(planned)* — `CrewProfile` dataclass with identity (display_name, callsign, department, role), rank (Ensign→Senior, earned via trust), `PersonalityTraits` (Big Five dimensions seeded from YAML, evolvable), `PerformanceReview` history, `ProfileStore` (SQLite persistence). Crew profile YAML seeds for 12 agent types in `config/standing_orders/crew_profiles/`.
+- **AD-376: CrewProfile + Personality System** *(done)* — `CrewProfile` dataclass with identity (display_name, callsign, department, role), rank (Ensign→Senior, earned via trust), `PersonalityTraits` (Big Five dimensions seeded from YAML, evolvable), `PerformanceReview` history, `ProfileStore` (SQLite persistence). Crew profile YAML seeds for 12 agent types in `config/standing_orders/crew_profiles/`. 25 tests.
 - **AD-377: Watch Rotation + Duty Shifts** *(planned)* — Naval-style watch system (Alpha/Beta/Gamma). `WatchManager` with duty roster, `StandingTask` (recurring department tasks with interval scheduling), `CaptainOrder` (persistent directives, one-shot or recurring). Dispatch loop executes due tasks for on-duty agents.
 - **AD-378: CounselorAgent + Cognitive Profiles** *(planned)* — Ship's Counselor (Bridge-level CognitiveAgent). `CognitiveProfile` per agent with `CognitiveBaseline` snapshot and `CounselorAssessment` history. Deterministic assessment: trust drift, confidence drift, Hebbian drift, personality drift → wellness score + concerns + recommendations. Alert levels (green/yellow/red). Promotion fitness assessments.
-- **AD-379: Per-Agent Standing Orders** *(planned)* — Tier 5 standing orders for all 12 agent types. Individual responsibilities, boundaries, personality expression. Callsigns matching crew profiles. Under 30 lines each to avoid prompt bloat. Evolvable via self-improvement pipeline.
+- **AD-379: Per-Agent Standing Orders** *(done)* — Tier 5 standing orders for all 12 agent types. Individual responsibilities, boundaries, personality expression. Callsigns matching crew profiles. Under 20 lines each. Evolvable via self-improvement pipeline.
 
 **Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE**
 
