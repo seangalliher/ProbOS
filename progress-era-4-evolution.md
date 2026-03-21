@@ -602,3 +602,17 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/mission-control-kanban.md`
 **Status:** AD-322 complete — 0 new tests (UI only), 2472 pytest + 34 vitest = 2506 total
+
+### AD-316: TaskTracker Service + AgentTask Data Model (DONE)
+
+**Decision:** AD-316 — Unified task lifecycle tracking for all agent activity. Foundational service for Mission Control, Activity Drawer, and Notification Queue. Follows SIF/BuildQueue/BuildDispatcher startup pattern.
+
+**Changes:**
+- New `src/probos/task_tracker.py` (274 lines): `TaskType` enum (build/design/diagnostic/assessment/query), `StepStatus` enum (pending/in_progress/done/failed), `TaskStatus` enum (queued/working/review/done/failed), `TaskStep` dataclass (start/complete/fail/to_dict), `AgentTask` dataclass (lifecycle methods, step management, step_progress, to_dict with step_current/step_total), `TaskTracker` class (create/start/advance/complete/fail lifecycle, queries, snapshot, event emission, done-task pruning)
+- Modified `src/probos/runtime.py`: Import, field init (`None`), construction in `start()` with `on_event=self._emit_event`, cleanup in `stop()`, snapshot in `build_state_snapshot()`
+- Modified `ui/src/store/types.ts`: `TaskStepView` and `AgentTaskView` interfaces
+- Modified `ui/src/store/useStore.ts`: `agentTasks` state field, `task_created`/`task_updated` event handlers with `MissionControlTask` derivation, `state_snapshot` hydration
+- New `tests/test_task_tracker.py`: 30 tests across 3 classes (TestTaskStep, TestAgentTask, TestTaskTracker)
+
+**Build prompt:** `prompts/task-tracker.md`
+**Status:** AD-316 complete — 30 new tests, 2502 pytest + 34 vitest = 2536 total

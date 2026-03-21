@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-322 complete — Mission Control Kanban (AD-322), CounselorAgent (AD-378), Watch Rotation (AD-377), CrewProfile + Personality (AD-376)
+## Current Status: AD-316 complete — TaskTracker (AD-316), Mission Control Kanban (AD-322), CounselorAgent (AD-378), Watch Rotation (AD-377)
 
 ---
 

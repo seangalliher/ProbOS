@@ -1148,17 +1148,9 @@ The UX layer that gives the Captain full visibility into what every agent is doi
 
 Inspired by: GitHub Copilot's task list, Kanban boards (Trello/Linear), mission control dashboards (NASA MCC).
 
-**AD-316: AgentTask Data Model + Progress Events**
+**AD-316: AgentTask Data Model + TaskTracker Service** *(done)*
 
-The foundational primitive that everything else renders from:
-
-- `AgentTask` dataclass: agent_id, agent_type, team, task_type (design/build/query/skill), prompt (original request text), started_at, steps (list of `TaskStep` with label/status/duration), requires_action flag, action_type (approve/review/respond/null)
-- `TaskStep` dataclass: label, status (pending/in_progress/done/failed), started_at, duration_ms
-- `TaskTracker` service on the runtime — agents register tasks, emit step updates, mark completion
-- Architect `perceive()` emits real progress events at each layer: "Selecting relevant files...", "Reading 8 files (2,400 lines)...", "Analyzing callers and tests...", "Generating proposal via Opus..."
-- Builder emits: "Reading reference files...", "Generating code...", "Writing files...", "Running tests..."
-- WebSocket event type `agent_task_update` streams TaskTracker state to the HXI
-- Replaces the current cosmetic progress events (fired before work starts) with real events fired during work
+Unified task lifecycle tracking. `TaskTracker` service (SIF/BuildQueue pattern), `AgentTask` dataclass with full lifecycle (queued→working→review→done/failed), `TaskStep` with timing, step_progress (current/total), WebSocket events (`task_created`/`task_updated`), frontend `AgentTaskView` types and store wiring. 30 tests.
 
 **AD-321: Activity Drawer (React)**
 
