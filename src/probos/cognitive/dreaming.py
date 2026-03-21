@@ -13,6 +13,7 @@ import time
 from collections import Counter
 from typing import Any
 
+from probos.cognitive.gap_predictor import predict_gaps
 from probos.cognitive.strategy_extraction import extract_strategies
 from probos.config import DreamingConfig
 from probos.consensus.trust import TrustNetwork
@@ -33,6 +34,7 @@ class DreamingEngine:
         config: DreamingConfig,
         idle_scale_down_fn: Any = None,
         strategy_store_fn: Any = None,
+        gap_prediction_fn: Any = None,
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -41,6 +43,7 @@ class DreamingEngine:
         self.pre_warm_intents: list[str] = []
         self._idle_scale_down_fn = idle_scale_down_fn
         self._strategy_store_fn = strategy_store_fn
+        self._gap_prediction_fn = gap_prediction_fn
         self._last_consolidated_count: int = 0  # Cursor for micro-dream dedup
 
     async def micro_dream(self) -> dict[str, Any]:
@@ -121,6 +124,15 @@ class DreamingEngine:
             except Exception as e:
                 logger.debug("Strategy store failed: %s", e)
 
+        # Step 7: Capability gap prediction (AD-385)
+        gap_predictions = predict_gaps(episodes)
+        gaps_predicted = len(gap_predictions)
+        if gap_predictions and self._gap_prediction_fn:
+            try:
+                self._gap_prediction_fn(gap_predictions)
+            except Exception as e:
+                logger.debug("Gap prediction callback failed: %s", e)
+
         duration_ms = (time.monotonic() - t_start) * 1000
 
         report = DreamReport(
@@ -131,6 +143,7 @@ class DreamingEngine:
             pre_warm_intents=pre_warm,
             duration_ms=duration_ms,
             strategies_extracted=strategies_extracted,
+            gaps_predicted=gaps_predicted,
         )
 
         logger.info(

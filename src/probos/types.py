@@ -359,6 +359,7 @@ class DreamReport:
     pre_warm_intents: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
     strategies_extracted: int = 0
+    gaps_predicted: int = 0
 
 
 # ------------------------------------------------------------------

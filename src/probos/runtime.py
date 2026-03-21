@@ -239,6 +239,9 @@ class ProbOSRuntime:
         # --- InitiativeEngine (AD-381) ---
         self.initiative: InitiativeEngine | None = None
 
+        # --- Strategy Advisor (AD-384) ---
+        self._strategy_advisor: Any = None
+
         # --- Automated Builder Dispatch (AD-375) ---
         self.build_queue: BuildQueue | None = None
         self.build_dispatcher: BuildDispatcher | None = None
@@ -606,6 +609,15 @@ class ProbOSRuntime:
         # Refresh decomposer with intent descriptors from all registered templates
         self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
 
+        # Wire StrategyAdvisor on all CognitiveAgent instances (AD-384)
+        if self._strategy_advisor:
+            from probos.cognitive.cognitive_agent import CognitiveAgent as _CA
+
+            for pool in self.pools.values():
+                for agent in pool.healthy_agents:
+                    if isinstance(agent, _CA) and hasattr(agent, "set_strategy_advisor"):
+                        agent.set_strategy_advisor(self._strategy_advisor)
+
         # Spawn red team agents
         await self._spawn_red_team(self.config.consensus.red_team_pool_size)
 
@@ -845,6 +857,17 @@ class ProbOSRuntime:
                 logger.warning("Knowledge store initialization failed: %s — continuing without persistence", e)
                 self._knowledge_store = None
 
+        # Wire StrategyAdvisor (AD-384) if knowledge store is available
+        if self._knowledge_store:
+            from probos.cognitive.strategy_advisor import StrategyAdvisor
+
+            strategies_dir = self._knowledge_store.repo_path / "strategies"
+            strategies_dir.mkdir(exist_ok=True)
+            self._strategy_advisor = StrategyAdvisor(
+                strategies_dir=strategies_dir,
+                hebbian_router=self.hebbian_router,
+            )
+
         # Start dreaming scheduler if episodic memory is available
         if self.episodic_memory:
             dream_cfg = self.config.dreaming
@@ -861,6 +884,7 @@ class ProbOSRuntime:
                 strategy_store_fn=(
                     self._store_strategies if self._knowledge_store else None
                 ),
+                gap_prediction_fn=self._on_gap_predictions,
             )
             self.dream_scheduler = DreamScheduler(
                 engine=engine,
@@ -2466,6 +2490,12 @@ class ProbOSRuntime:
                 json.dumps(s.to_dict(), indent=2, default=str),
                 encoding="utf-8",
             )
+
+    def _on_gap_predictions(self, predictions: list) -> None:
+        """Broadcast gap predictions to HXI (AD-385)."""
+        for p in predictions:
+            self._emit_event("capability_gap_predicted", p.to_dict())
+        logger.info("Dream cycle predicted %d capability gaps", len(predictions))
 
     def _on_post_micro_dream(self, micro_report: dict) -> None:
         """Post-micro-dream callback: update emergent detector (AD-288)."""
