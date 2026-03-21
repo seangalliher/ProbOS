@@ -495,3 +495,16 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/sif-structural-integrity.md`
 **Status:** AD-370 complete — 12 new tests, 2371 pytest + 34 vitest = 2405 total
+
+## Automated Builder Dispatch (AD-371–374)
+
+### AD-371: BuildQueue + WorktreeManager (DONE)
+
+**Decision:** AD-371 — Foundation for automated builder dispatch. Two standalone utilities (no runtime wiring).
+
+**Changes:**
+- `build_queue.py` (NEW) — `BuildQueue` class with `QueuedBuild` dataclass. Priority-ordered queue, status lifecycle validation (`queued→dispatched→building→reviewing→merged/failed`), file footprint conflict detection, cancel support. 14 tests.
+- `worktree_manager.py` (NEW) — `WorktreeManager` class with `WorktreeInfo` dataclass. Async git worktree lifecycle: create, remove, collect diff, merge to main, cleanup. All git ops via `asyncio.create_subprocess_exec`. 6 tests with real git repos.
+
+**Build prompt:** `prompts/build-queue-worktree-manager.md`
+**Status:** AD-371 complete — 20 new tests, 2391 pytest + 34 vitest = 2425 total

@@ -2300,3 +2300,10 @@ The Transporter Pattern (AD-330–336) emits 6 event types during parallel chunk
 
 **Build prompt:** `prompts/sif-structural-integrity.md`
 **Status:** AD-370 complete — 2371 Python + 34 Vitest.
+
+### AD-371: BuildQueue + WorktreeManager
+
+Foundation for the Automated Builder Dispatch system (AD-371–374). Two standalone utilities with no runtime wiring (AD-372 does the wiring). **BuildQueue**: in-memory priority-ordered queue of `QueuedBuild` items tracking `BuildSpec`s through a lifecycle (`queued→dispatched→building→reviewing→merged/failed`). Status transition validation, file footprint conflict detection (`has_footprint_conflict()` via set intersection), cancel support, `active_count` property. IDs via `uuid4().hex[:12]`. 14 tests. **WorktreeManager**: async git worktree lifecycle management. `create()` makes worktree + branch, `remove()` force-removes + deletes branch, `collect_diff()` returns three-dot diff vs main, `merge_to_main()` merges and returns commit hash, `cleanup_all()` for shutdown. All git ops via `asyncio.create_subprocess_exec`. 6 tests with real git repos in `tmp_path`.
+
+**Build prompt:** `prompts/build-queue-worktree-manager.md`
+**Status:** AD-371 complete — 2391 Python + 34 Vitest.

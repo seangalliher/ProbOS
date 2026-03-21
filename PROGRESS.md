@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-370 complete — SIF (AD-370), Transporter Viz (BF-004), Automated Builder Dispatch planned (AD-371–374)
+## Current Status: AD-371 complete — BuildQueue + WorktreeManager (AD-371), SIF (AD-370), BF-004 closed
 
 ---
 
