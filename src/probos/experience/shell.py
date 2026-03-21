@@ -64,6 +64,8 @@ class ProbOSShell:
         "/prune":     "Permanently remove an agent (/prune <agent_id>)",
         "/imports":   "Manage allowed imports (/imports | /imports add <pkg> | /imports remove <pkg>)",
         "/order":      "Issue a directive (/order <agent_type> <text>)",
+        "/amend":      "Amend an existing directive (/amend <id> <new text>)",
+        "/revoke":     "Revoke a directive (/revoke <id>)",
         "/directives": "Show active directives (/directives [agent_type])",
         "/ping":      "Show system uptime",
         "/debug":     "Toggle debug mode (/debug on|off)",
@@ -196,6 +198,8 @@ class ProbOSShell:
             "/prune":   self._cmd_prune,
             "/imports": self._cmd_imports,
             "/order":   self._cmd_order,
+            "/amend":   self._cmd_amend,
+            "/revoke":  self._cmd_revoke,
             "/directives": self._cmd_directives,
             "/debug":   self._cmd_debug,
             "/help":    self._cmd_help,
@@ -1109,6 +1113,14 @@ class ProbOSShell:
                         f'[italic]"Aye Captain. Orders passed down, {agent_count} crew confirmed."[/italic]'
                     )
             self.console.print()  # trailing blank line
+            # Warn if other active directives exist for this target
+            existing = store.get_active_for_agent(target, dept)
+            other = [d for d in existing if d.id != directive.id]
+            if other:
+                self.console.print(
+                    f"  [yellow]Note: {target} has {len(other)} other active directive(s). "
+                    f"Use /directives {target} to review.[/yellow]\n"
+                )
         else:
             if "Duplicate" in reason:
                 self.console.print(f"[yellow]{reason}[/yellow]")
@@ -1143,6 +1155,75 @@ class ProbOSShell:
                 f"[{status_color}][{dtype}][/{status_color}] -> {target}: {d.content}"
             )
             self.console.print(f"  [dim]by {d.issued_by} | priority {d.priority} | {d.id[:8]}[/dim]")
+
+    async def _cmd_revoke(self, arg: str) -> None:
+        """Revoke (countermand) a directive by ID."""
+        if not arg:
+            self.console.print("[yellow]Usage: /revoke <directive_id>[/yellow]")
+            return
+        store = self.runtime.directive_store
+        if not store:
+            self.console.print("[red]DirectiveStore not available[/red]")
+            return
+        directive_id = arg.strip()
+        # Show what we're revoking
+        directive = store.get(directive_id)
+        if not directive:
+            self.console.print(f"[red]Directive not found: {directive_id}[/red]")
+            return
+        if directive.status.value not in ("active", "pending_approval"):
+            self.console.print(f"[yellow]Directive {directive_id[:8]} is already {directive.status.value}[/yellow]")
+            return
+        result = store.revoke(directive.id, "captain")
+        if result:
+            from probos.cognitive.standing_orders import clear_cache
+            clear_cache()
+            callsign = self._get_callsign(directive.target_agent_type)
+            self.console.print(f"\n[bold yellow]Order Revoked[/bold yellow]")
+            self.console.print(f"  [yellow]Target:[/yellow]    {directive.target_agent_type}")
+            self.console.print(f"  [yellow]Was:[/yellow]       {directive.content}")
+            self.console.print(f"  [dim]ID: {directive.id[:8]} | belayed by Captain[/dim]")
+            self.console.print(
+                f'\n  [bold cyan]{callsign}:[/bold cyan] '
+                f'[italic]"Aye Captain. Previous orders belayed."[/italic]\n'
+            )
+
+    async def _cmd_amend(self, arg: str) -> None:
+        """Amend (FRAGO) an existing directive — replace its content."""
+        if not arg:
+            self.console.print("[yellow]Usage: /amend <directive_id> <new instruction text>[/yellow]")
+            return
+        parts = arg.split(maxsplit=1)
+        if len(parts) < 2:
+            self.console.print("[yellow]Usage: /amend <directive_id> <new instruction text>[/yellow]")
+            return
+        directive_id = parts[0]
+        new_content = parts[1]
+        store = self.runtime.directive_store
+        if not store:
+            self.console.print("[red]DirectiveStore not available[/red]")
+            return
+        # Show what we're amending
+        old = store.get(directive_id)
+        if not old:
+            self.console.print(f"[red]Directive not found: {directive_id}[/red]")
+            return
+        amended = store.amend(directive_id, new_content, "captain")
+        if amended:
+            from probos.cognitive.standing_orders import clear_cache
+            clear_cache()
+            callsign = self._get_callsign(amended.target_agent_type)
+            self.console.print(f"\n[bold green]Order Amended (FRAGO)[/bold green]")
+            self.console.print(f"  [green]Target:[/green]    {amended.target_agent_type}")
+            self.console.print(f"  [dim]Was:[/dim]       {old.content}")
+            self.console.print(f"  [green]Now:[/green]       {new_content}")
+            self.console.print(f"  [dim]ID: {amended.id[:8]} | amended by Captain[/dim]")
+            self.console.print(
+                f'\n  [bold cyan]{callsign}:[/bold cyan] '
+                f'[italic]"Aye Captain. Amended orders acknowledged."[/italic]\n'
+            )
+        else:
+            self.console.print(f"[red]Cannot amend — directive {directive_id[:8]} is not active[/red]")
 
     def _get_callsign(self, agent_type: str) -> str:
         """Look up an agent type's callsign from seed crew profile."""

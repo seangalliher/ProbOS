@@ -349,3 +349,58 @@ class TestDirectiveStore(unittest.TestCase):
             content="Always run tests",
         )
         assert directive2 is not None
+
+    def test_get_by_full_id(self) -> None:
+        d = self._make_directive(id="full-id-test")
+        self.store.add(d)
+        result = self.store.get("full-id-test")
+        assert result is not None
+        assert result.id == "full-id-test"
+
+    def test_get_by_prefix(self) -> None:
+        d = self._make_directive(id="abcdef-1234-5678")
+        self.store.add(d)
+        result = self.store.get("abcdef")
+        assert result is not None
+        assert result.id == "abcdef-1234-5678"
+
+    def test_get_not_found(self) -> None:
+        result = self.store.get("nonexistent")
+        assert result is None
+
+    def test_revoke_by_prefix(self) -> None:
+        d = self._make_directive(id="revoke-prefix-test")
+        self.store.add(d)
+        result = self.store.revoke("revoke-p", "captain")
+        assert result is True
+        active = self.store.get_active_for_agent("builder", "engineering")
+        assert len(active) == 0
+
+    def test_amend_updates_content(self) -> None:
+        d = self._make_directive(id="amend-test")
+        self.store.add(d)
+        amended = self.store.amend("amend-test", "Updated content", "captain")
+        assert amended is not None
+        assert amended.content == "Updated content"
+        assert amended.id == "amend-test"
+        # Verify persisted
+        fetched = self.store.get("amend-test")
+        assert fetched is not None
+        assert fetched.content == "Updated content"
+
+    def test_amend_by_prefix(self) -> None:
+        d = self._make_directive(id="amend-prefix-xyz")
+        self.store.add(d)
+        amended = self.store.amend("amend-p", "New content", "captain")
+        assert amended is not None
+        assert amended.content == "New content"
+
+    def test_amend_revoked_returns_none(self) -> None:
+        d = self._make_directive(id="amend-revoked", status=DirectiveStatus.REVOKED)
+        self.store.add(d)
+        amended = self.store.amend("amend-revoked", "Should fail", "captain")
+        assert amended is None
+
+    def test_amend_not_found(self) -> None:
+        amended = self.store.amend("nonexistent", "Nope", "captain")
+        assert amended is None

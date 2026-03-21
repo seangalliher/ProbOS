@@ -175,6 +175,11 @@ class DirectiveStore:
         """Revoke a directive. Returns True if found and revoked."""
         row = self._conn.execute("SELECT data FROM directives WHERE id = ?", (directive_id,)).fetchone()
         if not row:
+            # Try prefix match (short ID)
+            row = self._conn.execute(
+                "SELECT data FROM directives WHERE id LIKE ?", (directive_id + "%",)
+            ).fetchone()
+        if not row:
             return False
         directive = RuntimeDirective.from_dict(json.loads(row[0]))
         directive.status = DirectiveStatus.REVOKED
@@ -182,6 +187,37 @@ class DirectiveStore:
         directive.revoked_at = time.time()
         self.add(directive)  # re-persist with updated status
         return True
+
+    def amend(self, directive_id: str, new_content: str, amended_by: str) -> RuntimeDirective | None:
+        """Amend (FRAGO) — replace the content of an existing directive in place.
+
+        Returns the amended directive, or None if not found or not active.
+        """
+        row = self._conn.execute("SELECT data FROM directives WHERE id = ?", (directive_id,)).fetchone()
+        if not row:
+            # Try prefix match (short ID)
+            row = self._conn.execute(
+                "SELECT data FROM directives WHERE id LIKE ?", (directive_id + "%",)
+            ).fetchone()
+        if not row:
+            return None
+        directive = RuntimeDirective.from_dict(json.loads(row[0]))
+        if directive.status not in (DirectiveStatus.ACTIVE, DirectiveStatus.PENDING_APPROVAL):
+            return None
+        directive.content = new_content
+        self.add(directive)
+        return directive
+
+    def get(self, directive_id: str) -> RuntimeDirective | None:
+        """Look up a directive by full or prefix ID."""
+        row = self._conn.execute("SELECT data FROM directives WHERE id = ?", (directive_id,)).fetchone()
+        if not row:
+            row = self._conn.execute(
+                "SELECT data FROM directives WHERE id LIKE ?", (directive_id + "%",)
+            ).fetchone()
+        if not row:
+            return None
+        return RuntimeDirective.from_dict(json.loads(row[0]))
 
     def approve(self, directive_id: str) -> bool:
         """Approve a pending directive. Returns True if found and approved."""
