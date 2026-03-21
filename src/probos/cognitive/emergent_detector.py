@@ -14,10 +14,12 @@ observational — a reader, not a writer.
 
 from __future__ import annotations
 
+import collections
 import logging
 import math
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from probos.consensus.trust import TrustNetwork
@@ -53,6 +55,37 @@ class SystemDynamicsSnapshot:
     dream_consolidation_rate: float = 0.0                    # Weights changed per dream cycle
 
 
+class TrendDirection(str, Enum):
+    RISING = "rising"
+    STABLE = "stable"
+    FALLING = "falling"
+
+
+@dataclass
+class MetricTrend:
+    """Trend analysis for a single metric over N snapshots."""
+    metric_name: str
+    direction: TrendDirection
+    slope: float  # rate of change per snapshot
+    r_squared: float  # goodness of fit (0-1), indicates confidence
+    current_value: float
+    window_size: int  # how many snapshots were used
+    significant: bool  # slope magnitude > threshold AND r_squared > 0.5
+
+
+@dataclass
+class TrendReport:
+    """Multi-metric trend analysis over the snapshot ring buffer."""
+    tc_n: MetricTrend
+    routing_entropy: MetricTrend
+    cluster_count: MetricTrend  # number of cooperation clusters
+    trust_spread: MetricTrend  # std dev of trust distribution
+    capability_count: MetricTrend
+    significant_trends: list[MetricTrend]  # only trends where significant=True
+    window_size: int
+    timestamp: float
+
+
 class EmergentDetector:
     """Monitors system dynamics for emergent behavior patterns.
 
@@ -71,14 +104,16 @@ class EmergentDetector:
         trust_network: TrustNetwork,
         episodic_memory: Any = None,
         max_history: int = 100,
+        trend_threshold: float = 0.005,
     ) -> None:
         self._router = hebbian_router
         self._trust = trust_network
         self._episodic_memory = episodic_memory
         self._max_history = max_history
+        self._trend_threshold = trend_threshold
 
         # Ring buffer of snapshots for trend analysis
-        self._history: list[SystemDynamicsSnapshot] = []
+        self._history: collections.deque[SystemDynamicsSnapshot] = collections.deque(maxlen=max_history)
 
         # All detected patterns (historical)
         self._all_patterns: list[EmergentPattern] = []
@@ -105,8 +140,6 @@ class EmergentDetector:
 
         # Store in history ring buffer
         self._history.append(snapshot)
-        if len(self._history) > self._max_history:
-            self._history = self._history[-self._max_history:]
 
         # Run detectors
         patterns: list[EmergentPattern] = []
@@ -125,6 +158,30 @@ class EmergentDetector:
         patterns.extend(self.detect_trust_anomalies())
         patterns.extend(self.detect_routing_shifts())
         patterns.extend(self.detect_consolidation_anomalies(dream_report))
+
+        # Trend regression over snapshot buffer (AD-380)
+        trend_report = self.compute_trends()
+        if trend_report and trend_report.significant_trends:
+            patterns.append(EmergentPattern(
+                pattern_type="emergence_trends",
+                description=f"{len(trend_report.significant_trends)} significant trend(s) over {trend_report.window_size} snapshots",
+                confidence=max(t.r_squared for t in trend_report.significant_trends),
+                evidence={
+                    "trends": [
+                        {
+                            "metric": t.metric_name,
+                            "direction": t.direction.value,
+                            "slope": round(t.slope, 6),
+                            "r_squared": round(t.r_squared, 3),
+                            "current": round(t.current_value, 4),
+                        }
+                        for t in trend_report.significant_trends
+                    ],
+                    "window_size": trend_report.window_size,
+                },
+                timestamp=time.monotonic(),
+                severity="notable",
+            ))
 
         # Store all detected patterns
         self._all_patterns.extend(patterns)
@@ -618,6 +675,104 @@ class EmergentDetector:
                 for p in latest_patterns
             ],
         }
+
+    # ------------------------------------------------------------------
+    # Trend regression (AD-380)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _linear_regression(xs: list[float], ys: list[float]) -> tuple[float, float, float]:
+        """Simple linear regression. Returns (slope, intercept, r_squared).
+
+        Pure Python — no numpy dependency.
+        """
+        n = len(xs)
+        if n < 2:
+            return 0.0, 0.0, 0.0
+
+        sum_x = sum(xs)
+        sum_y = sum(ys)
+        sum_xy = sum(x * y for x, y in zip(xs, ys))
+        sum_x2 = sum(x * x for x in xs)
+
+        denom = n * sum_x2 - sum_x * sum_x
+        if abs(denom) < 1e-15:
+            return 0.0, sum_y / n if n else 0.0, 0.0
+
+        slope = (n * sum_xy - sum_x * sum_y) / denom
+        intercept = (sum_y - slope * sum_x) / n
+
+        # R-squared
+        y_mean = sum_y / n
+        ss_tot = sum((y - y_mean) ** 2 for y in ys)
+        ss_res = sum((y - (slope * x + intercept)) ** 2 for x, y in zip(xs, ys))
+
+        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 1e-15 else 0.0
+        # Clamp to [0, 1] for numerical stability
+        r_squared = max(0.0, min(1.0, r_squared))
+
+        return slope, intercept, r_squared
+
+    def compute_trends(self, min_window: int = 20) -> TrendReport | None:
+        """Compute trend regression over the snapshot ring buffer.
+
+        Returns None if fewer than min_window snapshots are available.
+        Uses simple linear regression (no numpy dependency).
+        """
+        history = list(self._history)
+        if len(history) < min_window:
+            return None
+
+        window = history[-min_window:]
+        xs = [float(i) for i in range(len(window))]
+
+        def _extract_series(extract_fn: Any) -> list[float]:
+            return [extract_fn(s) for s in window]
+
+        def _make_trend(name: str, values: list[float]) -> MetricTrend:
+            slope, _intercept, r_sq = self._linear_regression(xs, values)
+            if slope > self._trend_threshold:
+                direction = TrendDirection.RISING
+            elif slope < -self._trend_threshold:
+                direction = TrendDirection.FALLING
+            else:
+                direction = TrendDirection.STABLE
+            significant = (
+                abs(slope) > self._trend_threshold
+                and r_sq > 0.5
+                and len(values) >= min_window
+            )
+            return MetricTrend(
+                metric_name=name,
+                direction=direction,
+                slope=slope,
+                r_squared=r_sq,
+                current_value=values[-1],
+                window_size=len(values),
+                significant=significant,
+            )
+
+        tc_n_trend = _make_trend("tc_n", _extract_series(lambda s: s.tc_n))
+        entropy_trend = _make_trend("routing_entropy", _extract_series(lambda s: s.routing_entropy))
+        cluster_trend = _make_trend("cluster_count", _extract_series(lambda s: float(len(s.cooperation_clusters))))
+        trust_spread_trend = _make_trend("trust_spread", _extract_series(
+            lambda s: s.trust_distribution.get("std", 0.0) if s.trust_distribution else 0.0
+        ))
+        capability_trend = _make_trend("capability_count", _extract_series(lambda s: float(s.capability_count)))
+
+        all_trends = [tc_n_trend, entropy_trend, cluster_trend, trust_spread_trend, capability_trend]
+        significant = [t for t in all_trends if t.significant]
+
+        return TrendReport(
+            tc_n=tc_n_trend,
+            routing_entropy=entropy_trend,
+            cluster_count=cluster_trend,
+            trust_spread=trust_spread_trend,
+            capability_count=capability_trend,
+            significant_trends=significant,
+            window_size=len(window),
+            timestamp=time.monotonic(),
+        )
 
     # ------------------------------------------------------------------
     # Helpers
