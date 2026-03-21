@@ -236,7 +236,7 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 | 30 | Self-Improvement Pipeline | All Teams | **Extension-first architecture** (sealed core, open extensions, graduated autonomy), capability proposals, stage contracts, QA pool, evolution store, human gate, evergreen updates |
 | 31 | Security Team | Security | Formalized threat detection, prompt injection scanner, trust integrity monitoring, secrets management, runtime sandboxing, network egress policy, inference audit, data governance |
 | 32 | Engineering Team | Engineering + Ship's Computer | Automated performance optimization, maintenance agents, build agents, LLM resilience, model diversity & neural routing, cognitive journal, **ship's telemetry** (internal performance instrumentation), observability export, CI/CD, backup/restore, storage abstraction layers, containerized deployment, confidence communication, adaptive communication style, decision audit trail, **structural integrity field**, **damage control teams**, **navigational deflector**, **saucer separation** |
-| 33 | Operations Team | Ops + Bridge | Formalized resource management, workload balancing, system coordination, LLM cost tracking, ward room, priority & back-pressure, self-claiming task queue, competing hypotheses, file ownership, bridge alerts, workflow definition API, **chain of command** (bridge crew, department chiefs, promotion mechanics, rank structure), **Ship's Counselor** (cognitive wellness, Hebbian drift detection, relationship health), **alert conditions** (Red/Yellow/Green), **EPS** (token/compute distribution), **earned agency** (trust-tiered self-direction: Ensign→Lieutenant→Commander→Senior Officer, self-originated goals, curiosity-driven exploration, decreasing oversight with increasing trust), **tournament evaluation** (competitive agent selection, loser-studies-winner), **memetic evolution** (cross-agent knowledge transfer, successful strategies propagate through crew) |
+| 33 | Operations Team | Ops + Bridge | Formalized resource management, workload balancing, system coordination, LLM cost tracking, ward room, priority & back-pressure, self-claiming task queue, competing hypotheses, file ownership, bridge alerts, workflow definition API, **chain of command** (bridge crew, department chiefs, promotion mechanics, rank structure), **Ship's Counselor** (cognitive wellness, Hebbian drift detection, relationship health), **alert conditions** (Red/Yellow/Green), **EPS** (token/compute distribution), **earned agency** (trust-tiered self-direction: Ensign→Lieutenant→Commander→Senior Officer, self-originated goals, curiosity-driven exploration, decreasing oversight with increasing trust), **tournament evaluation** (competitive agent selection, loser-studies-winner), **memetic evolution** (cross-agent knowledge transfer, successful strategies propagate through crew), **the conn** (temporary authority delegation, OOD protocol, scoped autonomous operation), **night orders** (captain-offline guidance, time-bounded directives, escalation triggers), **watch bill** (duty rotation, cognitive fatigue prevention, continuity handoff) |
 | 34 | Mission Control | Bridge + Comms | Agent activity dashboard, real-time task visibility, approval panels, system health orbs, **Captain's Ready Room** (idea capture, multi-agent strategy sessions, architecture hierarchy, idea→spec pipeline), **specialized builders** (backend/frontend/test/infra/data) |
 | 35 | User Experience & Adoption | All Teams | PyPI packaging, onboarding wizard, quickstart docs, `probos doctor`, `probos demo` mode, comparison docs |
 
@@ -974,7 +974,7 @@ ChromaDB is the right default for OSS (embedded, zero config, works offline), bu
 Formalize resource management and system coordination as an agent pool.
 
 - **Resource Allocator** — workload balancing across pools, demand prediction, capacity planning
-- **Scheduler** — task prioritization, queue management, deadline enforcement (extends Phase 24c TaskScheduler). Includes **cron-style scheduling** (recurring tasks on configurable intervals), **webhook triggers** (external events activate task pipelines), and **unattended operation** (tasks run while Captain is away, results queued for review on return)
+- **Scheduler** — task prioritization, queue management, deadline enforcement (extends Phase 24c TaskScheduler). Includes **cron-style scheduling** (recurring tasks on configurable intervals), **webhook triggers** (external events activate task pipelines), and **unattended operation** (tasks run while Captain is away, results queued for review on return). Modeled after the US Navy **watch system** — crew operate in rotating watches with clear handoff protocols, enabling 24/7 operations even when the Captain is off-watch (see: The Conn, Night Orders below)
 - **Coordinator** — cross-team orchestration during high-load or emergency events
 - **Workflow Definition API** — user-facing REST endpoint for defining reusable multi-step pipelines. `POST /api/workflows` accepts a YAML/JSON workflow specification with named steps, dependencies, and approval gates. `GET /api/workflows` lists saved workflows. `POST /api/workflows/{id}/run` triggers execution. Complements natural language decomposition (which auto-generates DAGs) with explicit, repeateable, templateable workflows. Templates for common patterns: "lint and test on every commit," "weekly codebase report," "build and deploy"
 - **Response-Time Scaling** (deferred from Phase 8) — latency-aware pool scaling. Instrument `broadcast()` with per-intent latency tracking, scale up pools where response times exceed SLA thresholds
@@ -1079,6 +1079,52 @@ When ProbOS runs multiple builds or modifications in parallel, two agents editin
 - **Conflict resolution** — if two agents need the same file, the Coordinator mediates: sequential ordering, or one agent rolls back and waits
 - **Integration with Builder** — `execute_approved_build()` claims all target files before writing, releases on completion
 - **Extends `_background_tasks` (AD-326)** — file ownership tracked alongside task lifecycle
+
+**The Conn — Temporary Authority Delegation**
+
+*"Mr. Data, you have the conn."*
+
+*Aligned with US Navy Officer of the Deck (OOD) protocol. When the CO goes off-watch, they formally delegate command authority to a qualified officer who operates within the CO's standing parameters and calls the CO only for situations exceeding those parameters.*
+
+ProbOS currently has no structured delegation when the Captain (human) goes offline. The ship either waits for human input or operates without oversight. The Conn formalizes temporary authority transfer, enabling autonomous operations within defined bounds.
+
+- **`/conn <agent>` command** — Captain formally delegates temporary command authority to a bridge officer (First Officer, Counselor, or a promoted Department Chief). Only one officer holds the conn at a time
+- **Scope limitations** — The conn-holder can approve routine operations (builds within approved scope, standard diagnostics, scheduled maintenance) but cannot: modify Standing Orders, approve self-mod proposals, change alert conditions to Red, or take destructive actions. These escalate to Captain regardless
+- **Escalation boundary** — configurable set of conditions that automatically wake the Captain: trust score drops below threshold, confidence degradation exceeds limit, Red Alert triggered, build failure after retry exhaustion, any action requiring Captain-rank authorization. The conn-holder cannot suppress escalations
+- **Qualification requirements** — Only agents with COMMANDER+ trust rank can hold the conn. Captain can further restrict to named agents. Counselor fitness assessment required (no delegating to a cognitively degraded officer)
+- **Handoff protocol** — formal conn transfer: "I have the conn" acknowledgment, active task state transfer, situation report summary. Logged in Cognitive Journal
+- **Auto-return** — when Captain comes back online, conn automatically returns: "Captain on the bridge" notification, conn-holder provides a summary of actions taken while in command
+- **Audit trail** — all decisions made under delegated authority are logged with `authorized_by: conn` (not `captain`), enabling after-action review. Captain can `/review conn-log` to see what happened in their absence
+- **Integration** — extends DirectiveStore authorization (conn-holder gets temporary `captain_order` authority within scope), Ward Room (conn-holder receives escalations), Alert Conditions (Red Alert returns conn to Captain)
+
+**Night Orders — Captain-Offline Guidance**
+
+*"Commander, the Captain left Night Orders."*
+
+*Aligned with US Navy Night Orders — the CO's written instructions for the OOD covering: expected conditions, decision boundaries, when to call the CO. These are temporary directives that expire when the CO returns to the bridge.*
+
+Night Orders solve the gap between "Captain is present" (full oversight) and "Captain is absent" (no guidance). They capture the Captain's intent for the off-watch period, giving the conn-holder a decision framework rather than leaving them to guess.
+
+- **`/night-orders` command** — Captain writes guidance before going offline. Structured as a set of conditional instructions: "If X happens, do Y. If Z happens, wake me."
+- **Time-bounded directives** — Night Orders are `captain_order` directives with an automatic expiry (configurable TTL, default 8 hours). They expire when: the TTL lapses, the Captain comes back online, or the Captain explicitly rescinds them
+- **Decision boundaries** — explicit bounds for the conn-holder: approved build types, acceptable trust score ranges, allowed alert level changes (Green↔Yellow but not Red), budget limits for LLM spend during absence
+- **Escalation triggers** — Captain-defined conditions that override Night Orders and wake the Captain: "Call me if any build fails twice," "Call me if trust drops below 0.7 for any agent," "Call me for any security alerts"
+- **Briefing on return** — when Captain returns, Night Orders auto-expire and the system generates a summary: actions taken, decisions made, escalations triggered (or suppressed), Night Orders that were invoked vs. never triggered
+- **Preset templates** — common Night Orders patterns: "Maintenance watch" (routine ops only, no builds), "Build watch" (approve builds from approved queue, reject unknowns), "Quiet watch" (logging only, no autonomous actions)
+- **Integration** — extends DirectiveStore (new `night_order` directive type with TTL), The Conn (Night Orders provide the conn-holder's operating parameters), Bridge Alerts (Night Orders can specify alert suppression rules), Cognitive Journal (all Night Order invocations logged for post-hoc review)
+
+**Watch Bill — Structured Duty Rotation**
+
+*"All hands, first watch section report to duty stations."*
+
+*Aligned with US Navy watch rotation — crew organized into watch sections that rotate through duty periods, ensuring continuous operations with fresh personnel.*
+
+In the Navy, crew don't work 24/7 — they rotate through watch sections (typically 3 sections, 4-hour watches). This prevents fatigue and ensures continuity. ProbOS agents don't fatigue physically, but they do experience cognitive degradation: Hebbian weight drift, confidence erosion over sustained operation, context staleness. The Watch Bill formalizes rotation as a cognitive health mechanism.
+
+- **Watch sections** — agents within a pool organized into sections (A/B/C). Only one section is on-watch at a time. Off-watch agents undergo maintenance: dream cycles, Hebbian weight normalization, episodic memory consolidation
+- **Rotation triggers** — time-based (configurable interval), performance-based (Counselor detects cognitive fatigue), or event-based (alert condition change triggers fresh watch)
+- **Continuity handoff** — on-watch agents pass situation state to incoming watch section: active tasks, pending decisions, recent context. Prevents "cold start" on rotation
+- **Integration** — Counselor monitors on-watch agent health, recommends early rotation if cognitive metrics degrade. PoolScaler respects watch assignments. Cognitive Journal tracks per-watch performance for learning
 
 ---
 
