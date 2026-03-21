@@ -13,6 +13,7 @@ import time
 from collections import Counter
 from typing import Any
 
+from probos.cognitive.strategy_extraction import extract_strategies
 from probos.config import DreamingConfig
 from probos.consensus.trust import TrustNetwork
 from probos.mesh.routing import HebbianRouter, REL_INTENT
@@ -31,6 +32,7 @@ class DreamingEngine:
         episodic_memory: Any,
         config: DreamingConfig,
         idle_scale_down_fn: Any = None,
+        strategy_store_fn: Any = None,
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -38,6 +40,7 @@ class DreamingEngine:
         self.config = config
         self.pre_warm_intents: list[str] = []
         self._idle_scale_down_fn = idle_scale_down_fn
+        self._strategy_store_fn = strategy_store_fn
         self._last_consolidated_count: int = 0  # Cursor for micro-dream dedup
 
     async def micro_dream(self) -> dict[str, Any]:
@@ -109,6 +112,15 @@ class DreamingEngine:
             except Exception as e:
                 logger.debug("Idle scale-down failed: %s", e)
 
+        # Step 6: Strategy extraction (AD-383)
+        strategies = extract_strategies(episodes, min_occurrences=3)
+        strategies_extracted = len(strategies)
+        if strategies and self._strategy_store_fn:
+            try:
+                self._strategy_store_fn(strategies)
+            except Exception as e:
+                logger.debug("Strategy store failed: %s", e)
+
         duration_ms = (time.monotonic() - t_start) * 1000
 
         report = DreamReport(
@@ -118,6 +130,7 @@ class DreamingEngine:
             trust_adjustments=trust_adjustments,
             pre_warm_intents=pre_warm,
             duration_ms=duration_ms,
+            strategies_extracted=strategies_extracted,
         )
 
         logger.info(

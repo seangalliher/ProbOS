@@ -358,6 +358,7 @@ class DreamReport:
     trust_adjustments: int = 0
     pre_warm_intents: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
+    strategies_extracted: int = 0
 
 
 # ------------------------------------------------------------------

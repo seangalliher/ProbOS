@@ -858,6 +858,9 @@ class ProbOSRuntime:
                     if self.pool_scaler
                     else None
                 ),
+                strategy_store_fn=(
+                    self._store_strategies if self._knowledge_store else None
+                ),
             )
             self.dream_scheduler = DreamScheduler(
                 engine=engine,
@@ -2449,6 +2452,20 @@ class ProbOSRuntime:
                     pass  # No running loop — skip logging
         except Exception as e:
             logger.debug("Post-dream emergent analysis failed: %s", e)
+
+    def _store_strategies(self, strategies: list) -> None:
+        """Persist dream-extracted strategies to knowledge store (AD-383)."""
+        if not self._knowledge_store:
+            return
+        import json
+        strategies_dir = self._knowledge_store.repo_path / "strategies"
+        strategies_dir.mkdir(exist_ok=True)
+        for s in strategies:
+            path = strategies_dir / f"{s.id}.json"
+            path.write_text(
+                json.dumps(s.to_dict(), indent=2, default=str),
+                encoding="utf-8",
+            )
 
     def _on_post_micro_dream(self, micro_report: dict) -> None:
         """Post-micro-dream callback: update emergent detector (AD-288)."""
