@@ -660,3 +660,10 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/strategy-application.md`
 **Status:** AD-384 complete — 12 new tests, 2591 pytest + 34 vitest = 2625 total
+
+### AD-386: Runtime Directive Overlays — Evolvable Chain-of-Command Instructions (DONE)
+
+**Decision:** AD-386 — Persistent tier 6 instruction layer for chain-of-command directives. `DirectiveStore` (SQLite-backed, CrewProfile/ServiceProfile pattern). 5 `DirectiveType` values: captain_order, chief_directive, counselor_guidance, learned_lesson, peer_suggestion. `authorize_directive()` enforces chain-of-command: Captain→any, Bridge officers (counselor/architect)→advisory, Department chiefs (COMMANDER+)→subordinates in same department, Self→self (Ensign→pending approval, Lieutenant+→auto-approved), Peers (LIEUTENANT+)→suggestion (target accepts). `RuntimeDirective` dataclass with full serialization, priority ordering, expiry, revocation. `DirectiveStore` with `create_directive()` (authorize + persist), `get_active_for_agent()` (target/department filtering, auto-expire), `revoke()`, `approve()`, `all_directives()`. Wired into `compose_instructions()` as tier 6 via module-level `_directive_store` + `set_directive_store()`. `CognitiveAgent.decide()` picks up directives automatically — zero changes to cognitive_agent.py. Shell: `/order <agent> <text>` (Captain issues with priority 5, calls `clear_cache()`), `/directives [agent]` (view active/pending). Runtime: SQLite init in `start()`, cleanup in `stop()`, `_directive_summary()` in state snapshot.
+
+**Build prompt:** `prompts/runtime-directives.md`
+**Status:** AD-386 complete — 30 new tests, 2621 pytest + 34 vitest = 2655 total

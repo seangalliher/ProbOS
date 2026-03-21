@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 28b complete — All 6 Cognitive Evolution ADs done (AD-380–385)
+## Current Status: AD-386 complete — Runtime Directive Overlays (evolvable chain-of-command instructions)
 
 ---
 
