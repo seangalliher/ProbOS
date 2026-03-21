@@ -632,3 +632,10 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/service-profile.md`
 **Status:** AD-382 complete — 17 new tests, 2531 pytest + 34 vitest = 2565 total
+
+### AD-381: InitiativeEngine — SIF → Remediation Proposals (DONE)
+
+**Decision:** AD-381 — Ship's Computer service bridging read-only monitoring (SIF, EmergentDetector, Counselor) and the self-mod pipeline. `TriggerSource` enum (SIF/emergent/counselor), `ActionType` enum (diagnose/scale/recycle/patch/alert_captain), `ActionGate` enum (auto/commander/captain). `TriggerState` tracks persistent triggers across consecutive check cycles. `RemediationProposal` with trust-gated execution classification. `InitiativeEngine` runs async check loop: monitors SIF violations, EmergentDetector falling trends (tc_n, capability_count), Counselor red/yellow alerts. Triggers cleared when resolved. Proposals generated at persistence_threshold (default 3). Approve/reject API. Capped at 50 proposals. Fails-open on all signal checks. Runtime wired with SIF and EmergentDetector references.
+
+**Build prompt:** `prompts/initiative-engine.md`
+**Status:** AD-381 complete — 19 new tests, 2550 pytest + 34 vitest = 2584 total

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-382 complete — Phase 28b Wave 1 done (EmergentDetector Trends AD-380, ServiceProfile AD-382)
+## Current Status: AD-381 complete — Phase 28b Waves 1-2 done (AD-380, AD-382, AD-381)
 
 ---
 
