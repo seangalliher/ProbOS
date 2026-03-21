@@ -639,6 +639,31 @@ Visiting officer builds failed 2 of 3 times by creating files in wrong directori
 - **AD-363: Fix Mock Reminder Routing** *(done)* — "remind me to..." routed to `manage_todo` instead of `manage_schedule` in MockLLMClient due to first-match-wins regex ordering. Fixed: moved `remind` phrase to scheduler regex. 1 test.
 - **AD-364: Fix get_event_loop in Async Code** *(done)* — 7 call sites in shell.py and renderer.py using deprecated `get_event_loop()` inside `async def` methods, violating Standing Orders. Fixed: mechanical replacement with `get_running_loop()`.
 
+**GPT-5.4 Code Review Findings — Round 2 (AD-365–369)**
+
+*Second batch of GPT-5.4 findings across Runtime/Consensus, HXI/UI, Builder/Self-Mod. 9 findings triaged → 2 already addressed (AD-362, BF-004), 7 new.*
+
+- **AD-365: Red-Team Write Verification** *(done)* — RedTeamAgent had no real handler for `write_file` intents — fell through to `verified=True` with `confidence=0.1`. Added `_verify_write()` with path traversal, forbidden path, empty path, and content size checks. 4 tests.
+- **AD-366: Fix API Import Approval Callback Leak** *(done)* — API self-mod path set `_import_approval_fn` to auto-approve but never restored it in `finally` block. All future import approvals silently auto-approved. Fixed: save/restore pattern matching `_user_approval_fn`. 1 test.
+- **AD-367: Move Validation Check Before Commit** *(done)* — `validation_errors` checked after commit step; with `run_tests=False`, syntax-invalid files got committed. Fixed: moved check before commit using if/elif chain. 1 test.
+- **AD-368: Self-Mod Registration Rollback** *(done)* — Agent type registered in spawner/decomposer before pool creation; if pool fails, phantom type remained. Added `unregister_fn` plumbing and rollback on failure. 1 test.
+- **AD-369: Fix WebSocket Protocol Detection** *(done)* — Hardcoded `ws://` in `useWebSocket.ts` breaks behind HTTPS. Dynamic protocol detection via `window.location.protocol`.
+
+**SIF Implementation (AD-370)**
+
+- **AD-370: Structural Integrity Field** *(in progress)* — Runtime service with 7 invariant checks (trust bounds, Hebbian bounds, pool consistency, IntentBus coherence, config validity, index consistency, memory integrity). Background asyncio task at 5s interval. `SIFReport` with `health_pct` property. No LLM calls.
+
+**Automated Builder Dispatch (AD-371–374)**
+
+*"The ship builds itself — and dispatches its own builders."*
+
+Full automation of the Architect→Builder pipeline. Captain approves ADs, builders automatically pick up work, execute in isolated worktrees, and submit for review. No copy-paste, no manual dispatch.
+
+- **AD-371: BuildQueue + WorktreeManager** *(planned)* — Persistent queue of approved `BuildSpec`s with status tracking (queued → dispatched → building → reviewing → merged/failed). `WorktreeManager` handles worktree lifecycle: create, track, collect diffs, merge back, cleanup. SQLite-backed.
+- **AD-372: BuildDispatcher + SDK Integration** *(planned)* — Watches BuildQueue, spawns `CopilotBuilderAdapter` sessions against allocated worktrees. Configurable parallelism (max concurrent builders). Routes to available builder slots. Collects results and transitions queue status.
+- **AD-373: HXI Build Dashboard** *(planned)* — Real-time queue visibility: active builds with progress, completed builds awaiting review, merge approval buttons. WebSocket events for live status updates.
+- **AD-374: File Footprint Conflict Detection** *(planned)* — Each BuildSpec declares its file footprint (files it will touch). Dispatcher checks footprints before parallel dispatch — overlapping specs are serialized, non-overlapping specs run concurrently. Prevents merge conflicts by construction.
+
 **Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE**
 
 *"The ship builds itself — with the Captain's approval."*
