@@ -205,6 +205,7 @@ export interface HXIState {
   missionControlView: boolean;
   agentTasks: AgentTaskView[] | null;
   notifications: NotificationView[] | null;
+  activityDrawerOpen: boolean;
   pendingRoutingPulse: { source: string; target: string } | null;
   pendingFeedbackPulse: 'good' | 'bad' | null;
 
@@ -309,6 +310,7 @@ export const useStore = create<HXIState>((set, get) => ({
   missionControlView: false,
   agentTasks: null,
   notifications: null,
+  activityDrawerOpen: false,
   pendingRoutingPulse: null,
   pendingFeedbackPulse: null,
   connected: false,

@@ -50,7 +50,7 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
     mesh.computeBoundingSphere();
   }, [agentList, count]);
 
-  // Animation: breathing + position + color updates
+  // Animation: breathing + position + color updates + attention pulse (AD-324)
   useFrame((state) => {
     const mesh = meshRef.current;
     if (!mesh || count === 0) return;
@@ -58,11 +58,19 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
     const t = state.clock.elapsedTime;
     const connected = useStore.getState().connected;
 
+    // Build attention set once per frame (AD-324)
+    const tasks = useStore.getState().agentTasks;
+    const attentionSet = new Set(
+      tasks?.filter(t => t.requires_action).map(t => t.agent_id) ?? []
+    );
+
     agentList.forEach((agent, i) => {
       // New agents (< 5 min) pulse faster and brighter
       const isNew = agent.createdAt != null && (Date.now() - agent.createdAt < 300000);
+      const needsAttention = attentionSet.has(agent.id);
+      const breathAmplitude = needsAttention ? 0.08 : (isNew ? 0.15 : 0.03);
       const breathPhase = t * (isNew ? 4.0 : 1.5) + i * 0.7;
-      const breathScale = connected ? (1 + Math.sin(breathPhase) * (isNew ? 0.15 : 0.03)) : 1.0;
+      const breathScale = connected ? (1 + Math.sin(breathPhase) * breathAmplitude) : 1.0;
 
       // Tier-based sizing (Fix 5)
       const baseSize = agentNodeSize(agent.tier, agent.confidence);
@@ -79,6 +87,15 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
         ? confidenceToIntensity(agent.confidence) * (isNew ? 1.5 : 1.0)
         : 0.05;
       _tempColor.multiplyScalar(intensity);
+
+      // Amber attention pulse (AD-324): blend toward amber at ~2Hz
+      if (needsAttention && connected) {
+        const amberMix = 0.5 + 0.5 * Math.sin(t * 4 * Math.PI); // ~2Hz
+        const amberR = 0.94, amberG = 0.69, amberB = 0.38;
+        _tempColor.r = _tempColor.r * (1 - amberMix) + amberR * amberMix;
+        _tempColor.g = _tempColor.g * (1 - amberMix) + amberG * amberMix;
+        _tempColor.b = _tempColor.b * (1 - amberMix) + amberB * amberMix;
+      }
 
       // Activity flash: boost brightness for 500ms after activation (AD-287)
       const timeSinceActive = Date.now() - (agent.activatedAt ?? 0);

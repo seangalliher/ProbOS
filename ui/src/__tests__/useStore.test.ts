@@ -673,3 +673,74 @@ describe('notification events (AD-323)', () => {
     expect(notifs![0].title).toBe('Hydrated');
   });
 });
+
+describe('orb hover enhancements (AD-324)', () => {
+  it('activityDrawerOpen defaults to false and can be toggled', () => {
+    expect(useStore.getState().activityDrawerOpen).toBe(false);
+    useStore.setState({ activityDrawerOpen: true });
+    expect(useStore.getState().activityDrawerOpen).toBe(true);
+    useStore.setState({ activityDrawerOpen: false });
+    expect(useStore.getState().activityDrawerOpen).toBe(false);
+  });
+
+  it('tooltip can find current task for agent', () => {
+    useStore.setState({
+      agentTasks: [
+        {
+          id: 't1', agent_id: 'builder-001', agent_type: 'builder',
+          department: 'engineering', type: 'build', title: 'Building AD-324',
+          status: 'working', steps: [], requires_action: false,
+          action_type: '', started_at: Date.now() / 1000 - 60,
+          completed_at: 0, error: '', priority: 3, ad_number: 324,
+          metadata: {}, step_current: 2, step_total: 5,
+        },
+      ],
+    });
+    const tasks = useStore.getState().agentTasks;
+    const currentTask = tasks?.find(
+      t => t.agent_id === 'builder-001' && (t.status === 'working' || t.status === 'review')
+    );
+    expect(currentTask).toBeDefined();
+    expect(currentTask!.title).toBe('Building AD-324');
+    expect(currentTask!.step_current).toBe(2);
+    expect(currentTask!.step_total).toBe(5);
+  });
+
+  it('no task found for agent without active task', () => {
+    useStore.setState({
+      agentTasks: [
+        {
+          id: 't1', agent_id: 'other-agent', agent_type: 'builder',
+          department: 'engineering', type: 'build', title: 'Other task',
+          status: 'working', steps: [], requires_action: false,
+          action_type: '', started_at: 0, completed_at: 0, error: '',
+          priority: 3, ad_number: 0, metadata: {}, step_current: 0, step_total: 0,
+        },
+      ],
+    });
+    const tasks = useStore.getState().agentTasks;
+    const currentTask = tasks?.find(
+      t => t.agent_id === 'builder-001' && (t.status === 'working' || t.status === 'review')
+    );
+    expect(currentTask).toBeUndefined();
+  });
+
+  it('attention badge shows for requires_action task', () => {
+    useStore.setState({
+      agentTasks: [
+        {
+          id: 't1', agent_id: 'builder-001', agent_type: 'builder',
+          department: 'engineering', type: 'build', title: 'Build needs review',
+          status: 'review', steps: [], requires_action: true,
+          action_type: 'approve_build', started_at: 0, completed_at: 0,
+          error: '', priority: 3, ad_number: 324, metadata: {},
+          step_current: 0, step_total: 0,
+        },
+      ],
+    });
+    const tasks = useStore.getState().agentTasks;
+    const attentionTasks = tasks?.filter(t => t.requires_action);
+    expect(attentionTasks).toHaveLength(1);
+    expect(attentionTasks![0].agent_id).toBe('builder-001');
+  });
+});

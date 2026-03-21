@@ -53,7 +53,7 @@ export function IntentSurface() {
   const transporterProgress = useStore((s) => s.transporterProgress);
   const buildQueue = useStore((s) => s.buildQueue);
   const missionControlView = useStore((s) => s.missionControlView);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerOpen = useStore((s) => s.activityDrawerOpen);
   const [notifOpen, setNotifOpen] = useState(false);
   const agentTasks = useStore((s) => s.agentTasks);
   const notifications = useStore((s) => s.notifications);
@@ -345,7 +345,7 @@ export function IntentSurface() {
 
       {/* ── Activity Drawer toggle (AD-321) ── */}
       <button
-        onClick={() => setDrawerOpen(prev => !prev)}
+        onClick={() => useStore.setState((s) => ({ activityDrawerOpen: !s.activityDrawerOpen }))}
         style={{
           position: 'fixed',
           top: 12,
@@ -393,7 +393,7 @@ export function IntentSurface() {
       {missionControlView && <MissionControl />}
 
       {/* ── Activity Drawer (AD-321) ── */}
-      <ActivityDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <ActivityDrawer open={drawerOpen} onClose={() => useStore.setState({ activityDrawerOpen: false })} />
 
       {/* ── Canvas dim overlay when active ── */}
       {active && (

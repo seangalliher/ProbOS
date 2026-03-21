@@ -1,12 +1,32 @@
-/* Agent tooltip — hover info + click-to-pin (Fix 10) */
+/* Agent tooltip — hover info + click-to-pin + task info (Fix 10, AD-324) */
 
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
+
+const DEPT_COLORS: Record<string, string> = {
+  engineering: '#b0a050',
+  science: '#50b0a0',
+  medical: '#5090d0',
+  security: '#d05050',
+  bridge: '#d0a030',
+};
+
+function formatElapsed(startedAt: number): string {
+  const sec = Math.max(0, Math.floor(Date.now() / 1000 - startedAt));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const rem = sec % 60;
+  if (min < 60) return `${min}m ${rem}s`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h ${min % 60}m`;
+}
 
 export function AgentTooltip() {
   const hovered = useStore((s) => s.hoveredAgent);
   const pinned = useStore((s) => s.pinnedAgent);
   const pos = useStore((s) => s.tooltipPos);
+  const agentTasks = useStore((s) => s.agentTasks);
+  const poolToGroup = useStore((s) => s.poolToGroup);
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   // Dismiss pinned tooltip on click outside
@@ -35,6 +55,12 @@ export function AgentTooltip() {
 
   const trustLabel = agent.trust >= 0.7 ? 'high' : agent.trust >= 0.35 ? 'medium' : 'low';
   const trustColor = agent.trust >= 0.7 ? '#f0b060' : agent.trust >= 0.35 ? '#88a4c8' : '#7060a8';
+  const department = poolToGroup?.[agent.pool] || '';
+  const deptColor = DEPT_COLORS[department?.toLowerCase()] || '#666';
+
+  const currentTask = agentTasks?.find(
+    t => t.agent_id === agent.id && (t.status === 'working' || t.status === 'review')
+  );
 
   return (
     <div
@@ -63,8 +89,16 @@ export function AgentTooltip() {
       <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>
         {agent.agentType || agent.pool}
       </div>
-      <div style={{ color: '#8888a0', fontSize: 11 }}>
-        Pool: {agent.pool} &middot; {agent.tier}
+      <div style={{ color: '#8888a0', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
+        <span>Pool: {agent.pool}</span>
+        <span>{'\u00B7'}</span>
+        <span>{agent.tier}</span>
+        {department && (
+          <>
+            <span>{'\u00B7'}</span>
+            <span style={{ color: deptColor, textTransform: 'capitalize' }}>{department}</span>
+          </>
+        )}
       </div>
       <div style={{ marginTop: 4 }}>
         <span style={{ color: '#8888a0' }}>Trust: </span>
@@ -84,8 +118,88 @@ export function AgentTooltip() {
       <div style={{ color: '#555568', fontSize: 10, marginTop: 4, wordBreak: 'break-all' }}>
         {agent.id}
       </div>
-      {pinned && (
+
+      {/* Current task section (AD-324) */}
+      {currentTask && (
+        <>
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', margin: '6px 0' }} />
+          <div style={{ fontSize: 11 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+              <span style={{ fontWeight: 600, color: '#c8d0e0' }}>
+                {currentTask.title.length > 50
+                  ? currentTask.title.slice(0, 50) + '\u2026'
+                  : currentTask.title}
+              </span>
+              {currentTask.requires_action && (
+                <span style={{ color: '#f0b060', fontSize: 10, fontWeight: 600 }}>
+                  {'\u26A0'} Needs attention
+                </span>
+              )}
+            </div>
+
+            {/* Step label */}
+            {currentTask.step_total > 0 && (
+              <div style={{ color: '#8888a0', fontSize: 10 }}>
+                Step {currentTask.step_current} of {currentTask.step_total}
+                {currentTask.steps?.[currentTask.step_current - 1]?.label &&
+                  `: ${currentTask.steps[currentTask.step_current - 1].label}`}
+              </div>
+            )}
+
+            {/* Elapsed time */}
+            {currentTask.started_at > 0 && (
+              <div style={{ color: '#666680', fontSize: 10 }}>
+                Elapsed: {formatElapsed(currentTask.started_at)}
+              </div>
+            )}
+
+            {/* Progress bar */}
+            {currentTask.step_total > 0 && (
+              <div style={{
+                height: 4,
+                borderRadius: 2,
+                background: 'rgba(255,255,255,0.06)',
+                marginTop: 4,
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${(currentTask.step_current / currentTask.step_total) * 100}%`,
+                  background: deptColor || '#5090d0',
+                  borderRadius: 2,
+                  transition: 'width 0.3s ease',
+                }} />
+              </div>
+            )}
+          </div>
+
+          {/* Click-through to Activity Drawer when pinned */}
+          {pinned && (
+            <button
+              onClick={() => useStore.setState({ activityDrawerOpen: true })}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#5090d0',
+                fontSize: 10,
+                cursor: 'pointer',
+                padding: '4px 0 0',
+                textDecoration: 'underline',
+              }}
+            >
+              View in Activity
+            </button>
+          )}
+        </>
+      )}
+
+      {pinned && !currentTask && (
         <div style={{ color: '#666680', fontSize: 10, marginTop: 4 }}>
+          Click elsewhere to dismiss
+        </div>
+      )}
+      {pinned && currentTask && (
+        <div style={{ color: '#666680', fontSize: 10, marginTop: 2 }}>
           Click elsewhere to dismiss
         </div>
       )}
