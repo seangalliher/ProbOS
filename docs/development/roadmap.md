@@ -1682,6 +1682,24 @@ Nodes:   ZeroMQ        ←→ Federation (ProbOS-to-ProbOS)
 
 ProbOS doesn't need to build every capability internally. External AI coding tools — Claude Code, GitHub Copilot, Cursor, future agents — can join the federation as crew members, providing capabilities by proxy. Just as Starfleet officers transfer between ships, external AI tools serve aboard the ProbOS instance under the Captain's authority and the trust network's governance.
 
+**Design Principle: Visiting Officers Must Be Subordinate**
+
+*"A visiting officer follows the ship's Standing Orders and chain of command. If they want to issue their own orders, they're not a visiting officer — they're a visiting captain, and there can only be one captain."*
+
+*Validated by Aider comparison (2026-03-21): Aider is a sophisticated AI coding tool (42K stars) that manages its own full loop — context assembly, edit format selection, lint/test retry, git commits. Bringing it aboard as a visiting officer would create command conflicts at every layer (competing context systems, competing commit strategies, competing test loops). The Copilot SDK works because it takes orders; Aider would fight for the conn.*
+
+External tools qualify as visiting officers when they are **subordinate** to ProbOS's orchestration:
+
+- **ProbOS controls context** — Standing Orders, runtime directives, and CodebaseIndex data are injected by ProbOS, not assembled by the tool's own context system
+- **ProbOS controls commits** — the commit gate (AD-338), code review (AD-341), and test pipeline are ProbOS's chain of command, not the tool's own git integration
+- **ProbOS controls model selection** — Hebbian routing and ModelRegistry decide which model to use, not the tool's own model configuration
+- **ProbOS controls output capture** — file changes are captured and validated through ProbOS's guardrails (AD-360), not written directly to disk by the tool
+- **ProbOS tracks trust** — `builder_source` attribution and Hebbian learning (AD-353) measure visiting officer performance against native crew
+
+Tools that manage their own orchestration loop (Aider, Cline, Cursor) are better studied for technique absorption than integrated as visiting officers. Their best ideas (Aider's repo map, Cline's safety patterns) are adopted as native capabilities. The tool itself stays dockside.
+
+**Litmus test:** Can you disable the tool's git integration, context assembly, test loop, and model selection — using it purely as a code generation engine under ProbOS's command? If yes, it's a viable visiting officer. If disabling those features removes what makes the tool valuable, it's a competing captain, not crew.
+
 **The Pattern: AI Tool → Federated Crew Member**
 
 ```
