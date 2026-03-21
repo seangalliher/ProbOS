@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-379 complete — Per-Agent Standing Orders (AD-379), CrewProfile + Personality (AD-376), Dispatch Runtime Wiring (AD-375)
+## Current Status: AD-378 complete — CounselorAgent + Cognitive Profiles (AD-378), Watch Rotation (AD-377), CrewProfile + Personality (AD-376), Per-Agent Standing Orders (AD-379)
 
 ---
 

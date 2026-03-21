@@ -566,3 +566,26 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/per-agent-standing-orders.md`
 **Status:** AD-379 complete — 0 new tests (config only), 2436 pytest + 34 vitest = 2470 total
+
+### AD-377: Watch Rotation + Duty Shifts (DONE)
+
+**Decision:** AD-377 — Naval-style watch rotation system for scheduled agent duty. Three watches: Alpha (full ops), Beta (reduced), Gamma (maintenance). `WatchManager` maintains a duty roster, dispatches `StandingTask` items (recurring department tasks with interval-based scheduling) and `CaptainOrder` directives (persistent orders, optionally one-shot) to on-duty agents via a configurable `dispatch_fn` callback.
+
+**Changes:**
+- New `src/probos/watch_rotation.py` (254 lines): `WatchType` enum, `StandingTask`, `CaptainOrder`, `DutyShift`, `WatchManager` with async dispatch loop
+- New `tests/test_watch_rotation.py`: 18 tests covering roster management, standing tasks, captain's orders, dispatch loop
+
+**Build prompt:** `prompts/watch-rotation.md`
+**Status:** AD-377 complete — 18 new tests, 2454 pytest + 34 vitest = 2488 total
+
+### AD-378: CounselorAgent + Cognitive Profiles (DONE)
+
+**Decision:** AD-378 — Ship's Counselor (Bridge-level CognitiveAgent). Monitors cognitive wellness of every crew member. Maintains `CognitiveProfile` per agent with `CognitiveBaseline` snapshot and `CounselorAssessment` history. Deterministic `assess_agent()` computes drift from baseline (trust, confidence, Hebbian, personality) → wellness score + concerns + recommendations + fit-for-duty/promotion flags. Alert levels (green/yellow/red).
+
+**Changes:**
+- New `src/probos/cognitive/counselor.py` (388 lines): `CognitiveBaseline`, `CounselorAssessment`, `CognitiveProfile`, `CounselorAgent` (pool="bridge", 3 intent descriptors, perceive/act/report lifecycle)
+- New `tests/test_counselor.py`: 18 tests covering baselines, assessments, alert transitions, drift trending, healthy/degraded/promotion paths, lifecycle overrides
+- Modified `config/standing_orders/bridge.md`: Added Counselor Protocol section
+
+**Build prompt:** `prompts/counselor-cognitive-profiles.md`
+**Status:** AD-378 complete — 18 new tests, 2472 pytest + 34 vitest = 2506 total
