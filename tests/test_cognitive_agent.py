@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
@@ -360,7 +362,7 @@ class TestDecisionCache:
         cache = ca._DECISION_CACHES[agent.agent_type]
         key = list(cache.keys())[0]
         decision, _, ttl = cache[key]
-        cache[key] = (decision, 0.0, ttl)  # created_at=0 → expired
+        cache[key] = (decision, time.monotonic() - ttl - 1, ttl)  # force expired
 
         await agent.decide(obs)
         assert llm.call_count == 2
