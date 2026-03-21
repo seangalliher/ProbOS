@@ -328,6 +328,20 @@ ProbOS already has runtime self-awareness — it knows what agents are doing, th
 - Indexed by concept, not just filename ("how does trust work?" maps to the relevant files)
 - No LLM calls — pure AST/inspection-based indexing
 
+**Graph-Ranked Repo Map (CodebaseIndex Enhancement)**
+
+*Absorbed from Aider (42K stars, Apache 2.0, 2026-03-21) — tree-sitter + PageRank-style structural ranking.*
+
+Current CodebaseIndex extracts classes/functions/signatures via AST and tracks import graphs, but lacks cross-file symbol reference tracking and importance-ranked structural rendering. Aider's repo map builds a dependency graph from definition→reference edges across all files, then PageRank-ranks identifiers by how frequently they're referenced. The top-ranked symbols render into a token-budgeted structural summary (~1024 tokens) that gives the LLM awareness of the entire repo without full source.
+
+- **`build_reference_graph()`** — tree-sitter (or AST) extracts definition sites and reference sites for all public symbols. Cross-file edges: "function X defined in A is called from B, C, D." Builds on existing `_import_graph` and `_reverse_import_graph` (AD-315) but at symbol granularity, not file granularity
+- **`rank_symbols()`** — PageRank-style scoring over the reference graph. Symbols referenced from many files rank higher. Identifies the structural "spine" of the codebase
+- **`render_repo_map(token_budget)`** — renders the top-ranked symbols (signatures, class headers, key methods) into a compact text format within a configurable token budget. File paths as headers, key lines indented, `...` for omitted sections
+- **Dynamic budget** — map expands when no files are explicitly selected (broader context for discovery), contracts when specific files are in focus (more room for full source)
+- **Transporter integration** — ChunkDecomposer (AD-331) could use a repo map instead of full AST outlines, dramatically reducing context for the decomposition LLM call
+- **Architect integration** — ArchitectAgent Layer 2a file selection improves: graph ranking identifies the most structurally important files, not just keyword-matched ones
+- **No LLM calls** — pure graph computation, consistent with CodebaseIndex's indexing principle
+
 **Semantic Code Search (CodebaseIndex Enhancement)**
 
 *Inspired by GitHub Copilot coding agent's semantic search tool (March 2026) — meaning-based retrieval when exact names/patterns are unknown.*
@@ -888,6 +902,7 @@ The first concrete implementation: Opus designs the BuildBlueprint + ChunkSpecs 
 - **Fallback chains per provider** — extend current tier-based fallback (`deep → standard → fast`) to include cross-provider fallback: `claude-opus → gpt-4o → gemini-2 → local-qwen`. Provider health tracking via circuit breaker pattern (already planned in LLM Resilience)
 - **Hot-swap model rotation** — add/remove model providers at runtime without restart. `ModelRegistry.register()` / `ModelRegistry.deregister()` with live updates to routing weights
 - **Per-tier temperature tuning** *(absorbed from Kimi K2.5, 2026-03-20)* — **AD-358 DONE.** Per-tier `temperature` and `top_p` fields in CognitiveConfig, wired through LLM client. Configurable in `system.yaml`. Future: Hebbian-learned adjustments over time
+- **Per-model edit format selection** *(absorbed from Aider, 2026-03-21)* — different models need different output formats for code edits. Aider discovered empirically that the same model can show dramatically different success rates with different formats (Qwen 32B: 16.4% with `whole` format vs 8.0% with `diff`). When ModelRegistry enables multi-model routing, each model should have an `edit_format` preference. The Hebbian router can learn which format works best per model — this is the existing `(task_type, model)` relationship type. Builder/ChunkSpec output format becomes model-adaptive, not hardcoded
 - **Configuration** — `system.yaml` grows a `models:` section listing available providers, or auto-discovered via Ollama API (`/api/tags`) for local models
 
 **Cognitive Journal (Token Ledger)**
@@ -995,6 +1010,7 @@ In Star Trek, the EPS distributes power from the warp core through conduits to e
 - **Back-pressure** — when a department exhausts its budget, requests queue or downgrade tier (deep → fast) rather than failing
 - **Atomic budget enforcement** — budget checks must be transactional with task assignment (not after-the-fact). When an agent checks out a task, the budget deduction is atomic — prevents cost overruns at the checkout level. Pattern validated by Paperclip AI's budget engine (30K stars, MIT)
 - **Integration** — sits between the IntentBus (which routes intents) and the tiered LLM client (which makes calls). EPS decides whether a request gets served now, queued, or downgraded based on budget and alert condition
+- **Prompt caching hierarchy** *(absorbed from Aider, 2026-03-21)* — order `messages` array by change frequency (most stable first) to maximize prefix cache hits on Anthropic/DeepSeek: Standing Orders (rarely change) → runtime directives (change occasionally) → repo map/grounded context → task-specific context (changes every call). Structure `CognitiveAgent.decide()` message assembly accordingly. Anthropic has 5-min cache TTL; consider keepalive pings for long-running sessions. Low implementation effort, significant per-token cost savings
 
 **Ward Room — Direct Agent-to-Agent Messaging**
 
