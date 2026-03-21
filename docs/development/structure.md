@@ -14,7 +14,7 @@ src/probos/
 │   ├── directory_list.py    #   list_directory
 │   ├── file_search.py       #   search_files
 │   ├── shell_command.py     #   run_command (consensus-gated)
-│   ├── http_fetch.py        #   http_fetch (rate-limited, consensus-gated)
+│   ├── http_fetch.py        #   http_fetch (rate-limited)
 │   ├── introspect.py        #   explain_last, agent_info, system_health, why
 │   ├── system_qa.py         #   Smoke tests for designed agents
 │   ├── red_team.py          #   Independent verification

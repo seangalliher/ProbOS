@@ -222,7 +222,7 @@ class ExecutionRenderer:
                         prompt_text = f"  Choose strategy [1-{len(proposal.options)}] or [n] to cancel: "
 
                     try:
-                        resp = await asyncio.get_event_loop().run_in_executor(
+                        resp = await asyncio.get_running_loop().run_in_executor(
                             None, lambda: input(prompt_text).strip().lower()
                         )
                     except (EOFError, KeyboardInterrupt, OSError):

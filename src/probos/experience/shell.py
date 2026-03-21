@@ -129,7 +129,7 @@ class ProbOSShell:
         while self._running:
             try:
                 prompt = self._build_prompt()
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 line = await loop.run_in_executor(None, lambda: input(prompt))
                 await self.execute_command(line)
             except (EOFError, KeyboardInterrupt):
@@ -1046,7 +1046,7 @@ class ProbOSShell:
             f"[bold yellow]Remove agent {agent_id} permanently? "
             f"This cannot be undone. [y/n][/bold yellow]"
         )
-        response = await asyncio.get_event_loop().run_in_executor(
+        response = await asyncio.get_running_loop().run_in_executor(
             None, lambda: input("  Confirm: ").strip().lower()
         )
         if response not in ("y", "yes"):
@@ -1177,7 +1177,7 @@ class ProbOSShell:
         )
 
         try:
-            response = await asyncio.get_event_loop().run_in_executor(
+            response = await asyncio.get_running_loop().run_in_executor(
                 None, lambda: input("  Decision [y/n/skip]: ").strip().lower()
             )
             if response in ("y", "yes"):
@@ -1204,7 +1204,7 @@ class ProbOSShell:
         )
 
         try:
-            response = await asyncio.get_event_loop().run_in_executor(
+            response = await asyncio.get_running_loop().run_in_executor(
                 None, lambda: input("  Approve? [y/n]: ").strip().lower()
             )
             return response in ("y", "yes")
@@ -1231,7 +1231,7 @@ class ProbOSShell:
         )
 
         try:
-            response = await asyncio.get_event_loop().run_in_executor(
+            response = await asyncio.get_running_loop().run_in_executor(
                 None, lambda: input("  Allow? [y/n]: ").strip().lower()
             )
             return response in ("y", "yes")
@@ -1256,7 +1256,7 @@ class ProbOSShell:
         self.console.print()
 
         try:
-            response = await asyncio.get_event_loop().run_in_executor(
+            response = await asyncio.get_running_loop().run_in_executor(
                 None, lambda: input("Install with uv add? [y/n]: ").strip().lower()
             )
             return response in ("y", "yes")

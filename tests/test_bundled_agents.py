@@ -15,7 +15,9 @@ Plus agent-specific behavioral tests.
 
 from __future__ import annotations
 
+import json
 import urllib.parse
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -617,3 +619,96 @@ class TestBundledExports:
             assert len(cls.intent_descriptors) >= 1, f"{cls.__name__}.intent_descriptors is empty"
             assert hasattr(cls, "default_capabilities"), f"{cls.__name__} missing default_capabilities"
             assert len(cls.default_capabilities) >= 1, f"{cls.__name__}.default_capabilities is empty"
+
+
+# ===================================================================
+# Persistence tests (AD-362)
+# ===================================================================
+
+class TestBundledPersistence:
+    """Verify bundled agents actually write to disk (AD-362)."""
+
+    @pytest.mark.asyncio
+    async def test_todo_agent_persists_to_disk(self, tmp_path):
+        """TodoAgent.act() should write todos to a real file."""
+        todo_path = tmp_path / "todos.json"
+        agent = _make_agent(TodoAgent, runtime=MagicMock())
+        agent._TODO_PATH = str(todo_path)
+
+        decision = {
+            "llm_output": json.dumps({
+                "action": "add",
+                "todos": [{"text": "Buy milk", "priority": "high", "due": None, "done": False}],
+                "message": "Added: Buy milk",
+            })
+        }
+        result = await agent.act(decision)
+        assert result["success"] is True
+        assert todo_path.exists(), "Todo file should exist on disk"
+        data = json.loads(todo_path.read_text())
+        assert len(data) == 1
+        assert data[0]["text"] == "Buy milk"
+
+    @pytest.mark.asyncio
+    async def test_note_taker_persists_to_disk(self, tmp_path):
+        """NoteTakerAgent.act() should write notes to a real file."""
+        notes_dir = tmp_path / "notes"
+        agent = _make_agent(NoteTakerAgent, runtime=MagicMock())
+        agent._NOTES_DIR = str(notes_dir)
+
+        decision = {
+            "llm_output": json.dumps({
+                "action": "save",
+                "filename": "test-note.md",
+                "content": "# Test Note\nHello world",
+                "message": "Note saved",
+            })
+        }
+        result = await agent.act(decision)
+        assert result["success"] is True
+        note_file = notes_dir / "test-note.md"
+        assert note_file.exists(), "Note file should exist on disk"
+        assert "Hello world" in note_file.read_text()
+
+    @pytest.mark.asyncio
+    async def test_scheduler_persists_reminders_to_disk(self, tmp_path):
+        """SchedulerAgent.act() should write reminders to a real file."""
+        reminders_path = tmp_path / "reminders.json"
+        agent = _make_agent(SchedulerAgent, runtime=MagicMock())
+        agent._REMINDERS_PATH = str(reminders_path)
+
+        decision = {
+            "llm_output": json.dumps({
+                "action": "set",
+                "reminders": [{"text": "Call dentist", "time": "3pm"}],
+                "message": "Reminder set",
+            })
+        }
+        result = await agent.act(decision)
+        assert result["success"] is True
+        assert reminders_path.exists(), "Reminders file should exist on disk"
+        data = json.loads(reminders_path.read_text())
+        assert len(data) == 1
+        assert data[0]["text"] == "Call dentist"
+
+    @pytest.mark.asyncio
+    async def test_write_failure_propagates(self):
+        """If FileWriterAgent.commit_write fails, act() should report failure."""
+        agent = _make_agent(TodoAgent, runtime=MagicMock())
+        agent._TODO_PATH = "/nonexistent/deep/path/that/requires/root/todos.json"
+
+        decision = {
+            "llm_output": json.dumps({
+                "action": "add",
+                "todos": [{"text": "Test", "priority": "low", "due": None, "done": False}],
+                "message": "Added",
+            })
+        }
+        # Patch commit_write to simulate failure
+        with patch(
+            "probos.agents.file_writer.FileWriterAgent.commit_write",
+            return_value={"success": False, "error": "Permission denied"},
+        ):
+            result = await agent.act(decision)
+        assert result["success"] is False
+        assert "error" in result

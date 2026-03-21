@@ -110,6 +110,17 @@ class TestMockLLMClient:
         response = await client.complete(request)
         assert response.tier == "fast"
 
+    @pytest.mark.asyncio
+    async def test_remind_me_routes_to_scheduler(self, client):
+        """'Remind me to...' should route to manage_schedule, not manage_todo."""
+        response = await client.complete(LLMRequest(
+            prompt="remind me to call the dentist at 3pm",
+        ))
+        data = json.loads(response.content)
+        assert data["intents"][0]["intent"] == "manage_schedule", (
+            f"Expected manage_schedule but got {data['intents'][0]['intent']}"
+        )
+
 
 class TestOpenAICompatibleClientFallback:
     @pytest.mark.asyncio

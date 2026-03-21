@@ -53,14 +53,16 @@ async def _mesh_read_file(runtime: Any, path: str) -> str | None:
 
 
 async def _mesh_write_file(runtime: Any, path: str, content: str) -> bool:
-    if not runtime or not hasattr(runtime, "intent_bus"):
-        return False
-    msg = IntentMessage(
-        intent="write_file",
-        params={"path": path, "content": content},
-    )
-    results = await runtime.intent_bus.broadcast(msg)
-    return any(r.success for r in results)
+    """Write a file via FileWriterAgent.commit_write (personal data path).
+
+    Bundled agents write user-owned personal data (~/.probos/) which does
+    not require multi-agent consensus. This calls commit_write() directly
+    to ensure data actually reaches disk.
+    """
+    from probos.agents.file_writer import FileWriterAgent
+
+    result = await FileWriterAgent.commit_write(path, content)
+    return result.get("success", False)
 
 
 async def _mesh_list_dir(runtime: Any, path: str) -> str | None:
@@ -169,7 +171,9 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
                     filename = data.get("filename", "untitled.md")
                     content = data.get("content", "")
                     path = f"{notes_dir}/{filename}"
-                    await _mesh_write_file(self._runtime, path, content)
+                    written = await _mesh_write_file(self._runtime, path, content)
+                    if not written:
+                        return {"success": False, "error": f"Failed to save note: {filename}"}
                     return {
                         "success": True,
                         "result": data.get("message", f"Note saved: {filename}"),
@@ -293,10 +297,12 @@ class SchedulerAgent(_BundledMixin, CognitiveAgent):
                     # Persist reminders to file
                     if "reminders" in data:
                         path = os.path.expanduser(self._REMINDERS_PATH)
-                        await _mesh_write_file(
+                        written = await _mesh_write_file(
                             self._runtime, path,
                             json.dumps(data["reminders"], indent=2),
                         )
+                        if not written:
+                            return {"success": False, "error": "Failed to save reminders"}
             except (json.JSONDecodeError, TypeError):
                 pass
 

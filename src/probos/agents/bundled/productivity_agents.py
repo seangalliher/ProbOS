@@ -114,15 +114,16 @@ async def _mesh_read_file(runtime: Any, path: str) -> str | None:
 
 
 async def _mesh_write_file(runtime: Any, path: str, content: str) -> bool:
-    """Write a file via mesh dispatch (consensus-gated)."""
-    if not runtime or not hasattr(runtime, "intent_bus"):
-        return False
-    msg = IntentMessage(
-        intent="write_file",
-        params={"path": path, "content": content},
-    )
-    results = await runtime.intent_bus.broadcast(msg)
-    return any(r.success for r in results)
+    """Write a file via FileWriterAgent.commit_write (personal data path).
+
+    Bundled agents write user-owned personal data (~/.probos/) which does
+    not require multi-agent consensus. This calls commit_write() directly
+    to ensure data actually reaches disk.
+    """
+    from probos.agents.file_writer import FileWriterAgent
+
+    result = await FileWriterAgent.commit_write(path, content)
+    return result.get("success", False)
 
 
 class TodoAgent(_BundledMixin, CognitiveAgent):
@@ -185,9 +186,11 @@ class TodoAgent(_BundledMixin, CognitiveAgent):
                 if isinstance(data, dict) and "todos" in data:
                     import os
                     path = os.path.expanduser(self._TODO_PATH)
-                    await _mesh_write_file(
+                    written = await _mesh_write_file(
                         self._runtime, path, json.dumps(data["todos"], indent=2),
                     )
+                    if not written:
+                        return {"success": False, "error": "Failed to save todos"}
             except (json.JSONDecodeError, TypeError):
                 pass  # LLM returned prose — that's fine
 

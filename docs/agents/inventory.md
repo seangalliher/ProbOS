@@ -12,12 +12,12 @@ ProbOS boots with 47 agents across 20+ pools (+ 2 red team verifiers).
 | `directory` | 3 | `list_directory` | No |
 | `search` | 3 | `search_files` (recursive glob) | No |
 | `shell` | 3 | `run_command` (30s timeout) | Yes |
-| `http` | 3 | `http_fetch` (1MB cap, per-domain rate limiting) | Yes |
+| `http` | 3 | `http_fetch` (1MB cap, per-domain rate limiting) | No |
 | `introspect` | 2 | `explain_last`, `agent_info`, `system_health`, `why` | No |
 | `red_team` | 2 | Independent result verification | N/A |
 
 !!! note "Consensus-gated operations"
-    Operations marked "Yes" in the Consensus column require multi-agent agreement before execution. This includes file writes, shell commands, and HTTP fetches — any operation that modifies state or reaches outside the system.
+    Operations marked "Yes" in the Consensus column require multi-agent agreement before execution. This includes file writes and shell commands — operations that modify state or execute arbitrary code.
 
 ## Bundled Cognitive Agents (10 pools)
 

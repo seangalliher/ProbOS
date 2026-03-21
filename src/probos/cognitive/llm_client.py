@@ -554,7 +554,7 @@ class MockLLMClient(BaseLLMClient):
 
         # manage_todo
         self.add_pattern(
-            r"todo|to-do|task list|add.* to (?:my )?list|remind me to",
+            r"todo|to-do|task list|add.* to (?:my )?list",
             self._make_manage_todo_response,
         )
 
@@ -566,7 +566,7 @@ class MockLLMClient(BaseLLMClient):
 
         # manage_schedule
         self.add_pattern(
-            r"(?:set|create) (?:a )?reminder|schedule|(?:my )?calendar|upcoming|what.s (?:coming )?up",
+            r"remind(?:er| me)|(?:set|create) (?:a )?reminder|schedule|(?:my )?calendar|upcoming|what.s (?:coming )?up",
             self._make_manage_schedule_response,
         )
 
