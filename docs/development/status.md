@@ -1,6 +1,6 @@
 # Development Status
 
-**Phase 27 complete — 1605 tests passing.**
+**Phase 34 in progress — 2536 tests passing (2502 pytest + 34 vitest).**
 
 | Phase | Description | Status |
 |-------|-------------|--------|
@@ -28,4 +28,18 @@
 | 21 | Semantic Knowledge Layer (ChromaDB, 5 collections) | Done |
 | 22 | Bundled agent suite + distribution (`pip install`, `probos serve`) | Done |
 | 23 | HXI MVP (WebSocket events, React/Three.js cognitive canvas) | Done |
+| 24 | Communications: Discord adapter | Done |
+| 25 | Holistic UI/UX improvements | Done |
+| 26 | Developer shell enhancements | Done |
 | 27 | Codebase knowledge graph + impact analysis | Done |
+| 28 | Medical team (Diagnostician CMO, Vitals Monitor, Surgeon, Pharmacist, Pathologist) | Done |
+| 29a | Science: ArchitectAgent (First Officer / CSO) | Done |
+| 29b | Medical: VitalsMonitor scan_now, Diagnostician perceive override | Done |
+| 29c | Codebase Knowledge: import graphs, callers, test mapping | Done |
+| 30 | Extension-first architecture, Standing Orders, Code Review Agent | Done |
+| 31 | Northstar I: Automated Builder Federation (18/18 steps) | Done |
+| 32 | Northstar II: Transporter Pattern — Sensory Cortex (7/7 ADs) | Done |
+| 33 | Operations: Watch Rotation, CounselorAgent, CrewProfile, Builder Pipeline | Done |
+| 34 | Mission Control: TaskTracker, Kanban, Activity Drawer, Notifications | In Progress |
+
+See the [Roadmap](roadmap.md) for future plans and crew structure.

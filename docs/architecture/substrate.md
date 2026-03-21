@@ -29,6 +29,10 @@ Pools maintain a target number of agents for each capability. Key behaviors:
 - **Health checks**: Periodic liveness verification
 - **Demand scaling**: Pools grow under load, shrink when idle
 
+### Pool Groups
+
+Pools are organized into 7 department-level PoolGroups (Medical, Engineering, Science, Security, Operations, Communications, Bridge). Each group maintains health metrics and provides department-wide views via the `PoolGroupRegistry`.
+
 ### Registry
 
 An async-safe index of all running agents. Supports lookup by ID, pool, capability, and state.
@@ -53,6 +57,7 @@ Persistent agent identity that survives restarts. Agents maintain a stable ID ti
 | `substrate/registry.py` | Async-safe agent index |
 | `substrate/spawner.py` | Template-based factory |
 | `substrate/pool.py` | Resource pools + health checks |
+| `substrate/pool_group.py` | PoolGroup + PoolGroupRegistry (7 departments) |
 | `substrate/scaler.py` | Demand-based pool scaling |
 | `substrate/heartbeat.py` | Periodic pulse loop |
 | `substrate/event_log.py` | Append-only SQLite audit log |

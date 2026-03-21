@@ -2,7 +2,7 @@
 
 > **Alpha** — ProbOS is under active development. APIs will change, features may break, and documentation may lag behind the code. Contributions and feedback welcome.
 
-**Probabilistic agent-native OS runtime** — an operating system kernel where every component is an autonomous agent, coordination happens through consensus, and the system learns from its own behavior.
+**Probabilistic agent-native OS runtime** — an operating system kernel where every component is an autonomous agent, coordination happens through consensus, and the system learns from its own behavior. Agents are organized as the crew of a starship — departments, ranks, chain of command, and a human Captain.
 
 > *"What if an OS didn't execute instructions — it negotiated them?"*
 
@@ -13,7 +13,7 @@
 ProbOS reimagines the OS as a mesh of probabilistic agents rather than deterministic processes. Instead of syscalls, you speak natural language. Instead of a scheduler, agents self-organize through Hebbian learning and trust networks. Instead of permissions, destructive operations require multi-agent consensus.
 
 ```
-[47 agents | health: 0.95] probos> read pyproject.toml and tell me about this project
+[55 agents | health: 0.95] probos> read pyproject.toml and tell me about this project
 
   ✓ t1: read_file
 
@@ -68,7 +68,7 @@ When you type natural language:
 
 -   :material-robot: **[Agents](agents/inventory.md)**
 
-    47 agents across 20+ pools — core, cognitive, and self-designed.
+    55 agents across 27+ pools in 7 departments — core, cognitive, medical, engineering, science, security, and bridge.
 
 -   :fontawesome-brands-discord: **[Discord](https://discord.gg/cbprTVfsjt)**
 

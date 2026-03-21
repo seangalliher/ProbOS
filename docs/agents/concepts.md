@@ -54,11 +54,29 @@ During idle periods, the system replays recent episodes to strengthen successful
 
 Each agent class declares structured `IntentDescriptor` metadata. The decomposer's system prompt is assembled at runtime from whatever agents are registered. Adding a new agent type makes its intents available to the LLM without editing any prompt, configuration, or routing table.
 
+## Standing Orders
+
+ProbOS has its own constitution system — a 4-tier instruction hierarchy: Federation Constitution (universal, immutable) → Ship Standing Orders (per-instance) → Department Protocols (per-department) → Agent Standing Orders (per-agent, evolvable). Instructions are composed at call time via `compose_instructions()` and injected into every LLM request. Standing orders are stored in `config/standing_orders/` as markdown files.
+
 ## Crew Structure
 
-Agents aren't a flat pool — they're organized into specialized teams, like departments on a starship. Each team is a dedicated agent pool with distinct responsibilities: Medical monitors and heals the system, Engineering optimizes performance, Security detects threats, Operations manages resources, Communications handles external channels, Science drives research, and the Bridge coordinates strategy with human approval.
+Agents aren't a flat pool — they're organized into specialized departments (PoolGroups), like departments on a starship:
 
-Each ProbOS instance is a ship. Multiple instances form a federation (see below). The [Roadmap](../development/roadmap.md) describes the full crew structure and team build phases.
+| Department | Function |
+|-----------|----------|
+| **Medical** | System health monitoring, diagnosis, remediation |
+| **Engineering** | Code generation, build pipeline, performance |
+| **Science** | Architecture, research, codebase analysis |
+| **Security** | Threat detection, trust integrity, red team |
+| **Operations** | Resource management, scheduling, watch rotation |
+| **Communications** | Channel adapters, federation, external interfaces |
+| **Bridge** | Strategic decisions, human approval, counselor |
+
+Each department has a Chief (promoted by trust score + Counselor fitness assessment + Captain approval). The Bridge crew includes the Captain (Human), First Officer (ArchitectAgent), and Ship's Counselor (CounselorAgent).
+
+Each agent has a `CrewProfile` with rank (Ensign → Lieutenant → Commander → Senior), Big Five personality traits, and a performance review history.
+
+See the [Roadmap](../development/roadmap.md) for the full crew structure and team build phases.
 
 ## Federation
 
@@ -66,4 +84,8 @@ Multiple ProbOS nodes form a **Nooplex** — a cognitive mesh of meshes. Each no
 
 ## HXI (Human Experience Interface)
 
-A WebGL visualization of the cognitive mesh rendered in Three.js. Agent nodes glow with trust-mapped colors, pulse with activity, and connect with Hebbian-weighted edges. Real-time WebSocket streaming from the runtime.
+A WebGL visualization of the cognitive mesh rendered in React + Three.js. Agent nodes glow with trust-mapped colors, pulse with activity, and connect with Hebbian-weighted edges. Real-time WebSocket streaming from the runtime. Includes Mission Control Kanban dashboard for task lifecycle tracking.
+
+## Transporter Pattern
+
+ProbOS's approach to large-scale code generation — inspired by biological sensory processing. Complex builds are decomposed into parallel chunks (ChunkSpecs), executed concurrently via wave-based scheduling, assembled back together (rematerialized), and validated by the Heisenberg Compensator (interface validator). This enables builds larger than any single LLM context window.

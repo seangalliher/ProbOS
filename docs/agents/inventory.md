@@ -1,6 +1,6 @@
 # Agent Inventory
 
-ProbOS boots with 47 agents across 20+ pools (+ 2 red team verifiers).
+ProbOS boots with 55 agents across 27+ pools organized in 7 departments (PoolGroups).
 
 ## Core Agents (always active)
 
@@ -14,7 +14,7 @@ ProbOS boots with 47 agents across 20+ pools (+ 2 red team verifiers).
 | `shell` | 3 | `run_command` (30s timeout) | Yes |
 | `http` | 3 | `http_fetch` (1MB cap, per-domain rate limiting) | No |
 | `introspect` | 2 | `explain_last`, `agent_info`, `system_health`, `why` | No |
-| `red_team` | 2 | Independent result verification | N/A |
+| `red_team` | 2 | Independent result verification, write verification | N/A |
 
 !!! note "Consensus-gated operations"
     Operations marked "Yes" in the Consensus column require multi-agent agreement before execution. This includes file writes and shell commands — operations that modify state or execute arbitrary code.
@@ -37,6 +37,47 @@ ProbOS boots with 47 agents across 20+ pools (+ 2 red team verifiers).
 | `scheduler` | Scheduling and reminders |
 
 All bundled agents are `CognitiveAgent` subclasses — they use LLM-backed instructions rather than deterministic code. Each declares `IntentDescriptor` metadata so the decomposer discovers them automatically.
+
+## Medical Team (5 agents)
+
+The ship's sickbay — system health monitoring, diagnosis, and remediation.
+
+| Agent | Role | Pool |
+|-------|------|------|
+| **DiagnosticianAgent** | Chief Medical Officer — runs system diagnostics | `medical` |
+| **VitalsMonitorAgent** | Continuous health metrics collection (scan_now) | `medical` |
+| **SurgeonAgent** | Applies targeted fixes to degraded components | `medical` |
+| **PharmacistAgent** | Configuration remediation prescriptions | `medical` |
+| **PathologistAgent** | Deep analysis of recurring failures | `medical` |
+
+## Engineering Team
+
+Builder pipeline and code generation.
+
+| Agent | Role | Pool |
+|-------|------|------|
+| **BuilderAgent** | Chief Engineer — code generation via Transporter Pattern | `engineering` |
+| **CodeReviewAgent** | Reviews Builder output against Standing Orders | `engineering` |
+| **CopilotAdapter** | Visiting officer integration (GitHub Copilot SDK) | `engineering` |
+
+## Science Team
+
+Architecture and research.
+
+| Agent | Role | Pool |
+|-------|------|------|
+| **ArchitectAgent** | First Officer / CSO — designs build specs from intent | `science` |
+| **EmergentDetector** | 5 algorithms for emergent behavior detection | `science` |
+| **CodebaseIndex** | Codebase knowledge graph (import graph, AST, callers) | Ship's Computer service |
+
+## Bridge Crew
+
+Command and coordination.
+
+| Agent | Role | Pool |
+|-------|------|------|
+| **Captain** | Human operator — final authority | — |
+| **CounselorAgent** | Ship's Counselor — cognitive wellness monitoring | `bridge` |
 
 ## System Agents (conditional)
 

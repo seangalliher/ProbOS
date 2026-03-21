@@ -5,11 +5,11 @@ ProbOS is built as seven layers, each built on the one below, plus two cross-cut
 ```mermaid
 block-beta
     columns 1
-    Experience["Experience\nCLI shell · HXI (WebGL) · FastAPI + WebSocket · Rich panels"]
-    Cognitive["Cognitive\nLLM decomposer · working memory · episodic memory · attention\ndreaming · self-modification · agent design · workflow cache"]
+    Experience["Experience\nCLI shell · HXI (WebGL) · FastAPI + WebSocket · Rich panels · Mission Control"]
+    Cognitive["Cognitive\nLLM decomposer · working memory · episodic memory · attention\ndreaming · self-modification · agent design · workflow cache\nbuilder · architect · counselor · standing orders"]
     Consensus["Consensus\nQuorum voting · trust network · Shapley attribution · escalation"]
     Mesh["Mesh\nIntent bus · Hebbian routing · gossip protocol · capability registry"]
-    Substrate["Substrate\nAgent lifecycle · pools · spawner · registry · heartbeat · event log"]
+    Substrate["Substrate\nAgent lifecycle · pools · pool groups · spawner · registry · heartbeat · event log"]
     space
     Federation["Federation (cross-cutting)\nZeroMQ transport · node bridge · intent router · gossip exchange"]
     Knowledge["Knowledge (cross-cutting)\nGit-backed store · ChromaDB semantic · warm boot · per-artifact rollback"]
@@ -103,19 +103,19 @@ flowchart LR
 
 ## Crew Organization
 
-Agents are organized into specialized teams, analogous to departments on a starship. Each team is an agent pool with a distinct responsibility:
+Agents are organized into 7 departments (PoolGroups), analogous to departments on a starship:
 
-| Team | Function | Key Agents |
-|------|----------|------------|
-| **Medical** | Health monitoring, diagnosis, remediation | Vitals Monitor, Diagnostician, Surgeon, Pharmacist, Pathologist |
-| **Engineering** | Performance optimization, maintenance, builds | Performance Monitor, Maintenance Agent, Builder Agent |
-| **Science** | Research, discovery, architectural analysis | Research Agent, Architect Agent |
-| **Security** | Threat detection, defense, trust integrity | Threat Detector, Trust Integrity Monitor, Red Team Lead |
-| **Operations** | Resource management, scheduling, coordination | Resource Allocator, Scheduler, PoolScaler |
-| **Communications** | Channel adapters, federation, external interfaces | Discord Adapter, Slack Adapter, Federation Bridge |
-| **Bridge** | Strategic decisions, human approval gate | Introspection Agent, Human Approval Gate |
+| Department | Function | Key Agents |
+|------------|----------|------------|
+| **Medical** | Health monitoring, diagnosis, remediation | Diagnostician (CMO), Vitals Monitor, Surgeon, Pharmacist, Pathologist |
+| **Engineering** | Code generation, build pipeline, code review | BuilderAgent (Chief Engineer), CodeReviewAgent, CopilotAdapter |
+| **Science** | Architecture, research, codebase analysis | ArchitectAgent (CSO / First Officer), EmergentDetector |
+| **Security** | Threat detection, trust integrity, red team verification | Red Team Agents (2) |
+| **Operations** | Resource management, scheduling, watch rotation | TaskScheduler, PoolScaler, WatchManager |
+| **Communications** | Channel adapters, federation bridge | Discord Adapter, Federation Bridge |
+| **Bridge** | Strategic decisions, human approval, cognitive wellness | Captain (Human), CounselorAgent (Ship's Counselor) |
 
-The **Ship's Computer** provides shared infrastructure across all teams: the Intent Bus (intercom), Trust Network (crew records), Hebbian Router (navigation), Episodic Memory (ship's log), and CodebaseIndex (technical manual).
+The **Ship's Computer** provides shared infrastructure: Intent Bus (intercom), Trust Network (crew records), Hebbian Router (navigation), Episodic Memory (ship's log), CodebaseIndex (technical manual), Standing Orders (constitution), Structural Integrity Field (invariant enforcement), TaskTracker (task lifecycle).
 
 Each ProbOS instance is a ship. Multiple instances form a [Federation](federation.md). See the [Roadmap](../development/roadmap.md) for the full crew structure and build phases.
 

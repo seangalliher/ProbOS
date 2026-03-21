@@ -1,6 +1,6 @@
 # Cognitive Layer
 
-The Cognitive layer is the intelligence center — it handles natural language understanding, memory, learning, and self-modification.
+The Cognitive layer is the intelligence center — it handles natural language understanding, memory, learning, self-modification, and the builder/architect pipeline.
 
 ## Pipeline
 
@@ -19,6 +19,17 @@ Each agent class declares structured `IntentDescriptor` metadata. The decomposer
 
 This means adding a new agent type makes its intents available to the LLM automatically — no prompt editing, no routing tables, no configuration files.
 
+## Standing Orders
+
+A 4-tier instruction hierarchy composed at call time:
+
+1. **Federation Constitution** — universal, immutable rules
+2. **Ship Standing Orders** — per-instance configuration
+3. **Department Protocols** — per-department standards
+4. **Agent Standing Orders** — per-agent, evolvable through self-mod
+
+`compose_instructions()` assembles the complete system prompt for each `CognitiveAgent.decide()` call.
+
 ## Self-Modification
 
 When ProbOS encounters a capability gap (no agent can handle a request), it designs a new agent:
@@ -34,6 +45,18 @@ Capability gap detected
 ```
 
 Agents can also be designed collaboratively via the `/design` command.
+
+## Builder Pipeline (Transporter Pattern)
+
+Complex builds are decomposed into parallel chunks for concurrent execution:
+
+```
+BuildSpec → BuildBlueprint → ChunkDecomposer (Dematerializer)
+    → Parallel Chunk Execution (Matter Stream)
+    → ChunkAssembler (Rematerializer)
+    → InterfaceValidator (Heisenberg Compensator)
+    → Test-Fix Loop → Code Review → Commit Gate
+```
 
 ## Correction Feedback Loop
 
@@ -83,3 +106,13 @@ During idle periods, the dreaming engine:
 | `cognitive/emergent_detector.py` | 5 algorithms for emergent behavior |
 | `cognitive/embeddings.py` | Embedding utilities |
 | `cognitive/research.py` | Web research phase for agent design |
+| `cognitive/architect.py` | ArchitectAgent (First Officer / CSO) |
+| `cognitive/builder.py` | BuilderAgent (Chief Engineer) |
+| `cognitive/code_reviewer.py` | CodeReviewAgent (Standing Orders gate) |
+| `cognitive/counselor.py` | CounselorAgent (Ship's Counselor) |
+| `cognitive/codebase_index.py` | Codebase knowledge graph |
+| `cognitive/codebase_skill.py` | Skill interface to codebase index |
+| `cognitive/copilot_adapter.py` | Visiting officer (Copilot SDK) |
+| `cognitive/standing_orders.py` | Instruction composition |
+| `cognitive/self_model.py` | SystemSelfModel for grounding |
+| `cognitive/task_scheduler.py` | Task scheduling |
