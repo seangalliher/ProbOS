@@ -304,7 +304,8 @@ class TestDreamScheduler:
                     break
 
             assert scheduler.last_dream_report is not None
-            assert scheduler.last_dream_report.episodes_replayed >= 1
+            # Note: episodes_replayed may be 0 if micro-dream tick already
+            # consumed the episode before the full dream ran (BF-008)
         finally:
             await scheduler.stop()
 
@@ -649,6 +650,122 @@ class TestDreamPanel:
         output = con.file.getvalue()
         assert "Dreaming" in output
         assert "idle" in output
+
+
+# ---------------------------------------------------------------------------
+# BF-008: Dream cycle composability (no double-replay)
+# ---------------------------------------------------------------------------
+
+class TestBF008DreamComposability:
+    """Verify dream_cycle composes with micro_dream and no longer double-replays."""
+
+    @pytest.mark.asyncio
+    async def test_dream_cycle_calls_micro_dream_first(self, engine, memory):
+        """dream_cycle() starts with a micro_dream() flush."""
+        ep = _make_episode(intents=["read_file"], agent_ids=["a"], success=True)
+        await memory.store(ep)
+
+        calls: list[str] = []
+        original_micro = engine.micro_dream
+
+        async def tracking_micro():
+            calls.append("micro_dream")
+            return await original_micro()
+
+        engine.micro_dream = tracking_micro
+        await engine.dream_cycle()
+
+        assert calls == ["micro_dream"], "micro_dream should be called exactly once"
+
+    @pytest.mark.asyncio
+    async def test_dream_cycle_does_not_call_replay_directly(self, engine, memory):
+        """dream_cycle() does NOT call _replay_episodes directly (only via micro_dream)."""
+        ep = _make_episode(intents=["read_file"], agent_ids=["a"], success=True)
+        await memory.store(ep)
+
+        replay_calls: list[str] = []
+        original_replay = engine._replay_episodes
+
+        def tracking_replay(episodes):
+            replay_calls.append("replay")
+            return original_replay(episodes)
+
+        engine._replay_episodes = tracking_replay
+
+        # micro_dream will call _replay_episodes internally.
+        # We need to verify dream_cycle doesn't make an additional call.
+        await engine.dream_cycle()
+
+        # micro_dream may call _replay_episodes once for its flush.
+        # The key invariant: dream_cycle itself does NOT add an extra call.
+        # With 1 new episode, micro_dream calls _replay_episodes once.
+        assert len(replay_calls) <= 1, (
+            f"_replay_episodes called {len(replay_calls)} times; "
+            "dream_cycle should not call it separately"
+        )
+
+    @pytest.mark.asyncio
+    async def test_dream_cycle_still_runs_maintenance(self, engine, memory, trust, router):
+        """dream_cycle() still executes pruning, trust consolidation, pre-warm,
+        strategy extraction, and gap prediction after micro_dream flush."""
+        # Create several episodes for trust consolidation (needs >1 per agent)
+        for _ in range(3):
+            ep = _make_episode(
+                intents=["list_directory", "read_file"],
+                agent_ids=["agent_x"],
+                success=True,
+            )
+            await memory.store(ep)
+
+        # Seed a below-threshold weight that should get pruned
+        router._weights[("dead_intent", "dead_agent", REL_INTENT)] = 0.005
+        router._compat_weights[("dead_intent", "dead_agent")] = 0.005
+
+        report = await engine.dream_cycle()
+
+        assert report.weights_pruned >= 1, "Pruning should still run"
+        assert report.trust_adjustments >= 1, "Trust consolidation should still run"
+        assert len(report.pre_warm_intents) > 0, "Pre-warm should still run"
+
+    @pytest.mark.asyncio
+    async def test_dream_report_reflects_micro_dream_flush(self, engine, memory):
+        """DreamReport.episodes_replayed equals the micro_dream flush count,
+        not the full replay_episode_count."""
+        # Store 3 episodes — micro_dream flush should report 3 (not 50)
+        for _ in range(3):
+            ep = _make_episode(intents=["read_file"], agent_ids=["a"], success=True)
+            await memory.store(ep)
+
+        report = await engine.dream_cycle()
+
+        assert report.episodes_replayed == 3
+        assert report.weights_strengthened >= 3  # At least one per episode
+
+        # Second dream with no new episodes should show 0
+        report2 = await engine.dream_cycle()
+        assert report2.episodes_replayed == 0
+        assert report2.weights_strengthened == 0
+
+    @pytest.mark.asyncio
+    async def test_micro_dream_cursor_not_reset_by_full_dream(self, engine, memory):
+        """The micro-dream cursor (_last_consolidated_count) is only advanced
+        by micro_dream, not separately reset by dream_cycle."""
+        # Store 5 episodes
+        for _ in range(5):
+            ep = _make_episode(intents=["read_file"], agent_ids=["a"], success=True)
+            await memory.store(ep)
+
+        # Run micro_dream to advance the cursor
+        await engine.micro_dream()
+        cursor_after_micro = engine._last_consolidated_count
+        assert cursor_after_micro == 5
+
+        # Run dream_cycle — cursor should remain at 5 (no reset, no further advance)
+        await engine.dream_cycle()
+        cursor_after_dream = engine._last_consolidated_count
+        assert cursor_after_dream == cursor_after_micro, (
+            "dream_cycle should not reset the micro-dream cursor"
+        )
 
 
 # ---------------------------------------------------------------------------

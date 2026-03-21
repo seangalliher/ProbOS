@@ -83,20 +83,28 @@ class DreamingEngine:
         """Execute one full dream pass.
 
         Steps:
-        1. Replay recent episodes — strengthen/weaken Hebbian weights
+        0. Flush un-consolidated episodes via micro_dream (composable)
+        1. (removed — micro_dream owns incremental consolidation)
         2. Prune — decay all weights and remove below-threshold connections
         3. Trust consolidation — boost/penalize agents based on track records
         4. Pre-warm — identify temporal intent sequences for faster routing
+        5. Idle scale-down
+        6. Strategy extraction
+        7. Gap prediction
         """
         t_start = time.monotonic()
+
+        # Step 0: Flush any un-consolidated episodes (compose with micro-dream)
+        micro_report = await self.micro_dream()
 
         episodes = await self.episodic_memory.recent(k=self.config.replay_episode_count)
 
         if not episodes:
-            return DreamReport(duration_ms=(time.monotonic() - t_start) * 1000)
-
-        # Step 1: Replay
-        weights_strengthened = self._replay_episodes(episodes)
+            return DreamReport(
+                episodes_replayed=micro_report["episodes_replayed"],
+                weights_strengthened=micro_report["weights_strengthened"],
+                duration_ms=(time.monotonic() - t_start) * 1000,
+            )
 
         # Step 2: Prune
         weights_pruned = self._prune_weights()
@@ -136,8 +144,8 @@ class DreamingEngine:
         duration_ms = (time.monotonic() - t_start) * 1000
 
         report = DreamReport(
-            episodes_replayed=len(episodes),
-            weights_strengthened=weights_strengthened,
+            episodes_replayed=micro_report["episodes_replayed"],
+            weights_strengthened=micro_report["weights_strengthened"],
             weights_pruned=weights_pruned,
             trust_adjustments=trust_adjustments,
             pre_warm_intents=pre_warm,
@@ -147,16 +155,15 @@ class DreamingEngine:
         )
 
         logger.info(
-            "dream-cycle: replayed=%d strengthened=%d pruned=%d trust_adjusted=%d",
+            "dream-cycle: flushed=%d strengthened=%d pruned=%d trust_adjusted=%d "
+            "strategies=%d gaps=%d",
             report.episodes_replayed,
             report.weights_strengthened,
             report.weights_pruned,
             report.trust_adjustments,
+            report.strategies_extracted,
+            report.gaps_predicted,
         )
-
-        # Reset micro-dream cursor — full cycle replayed everything
-        stats = await self.episodic_memory.get_stats()
-        self._last_consolidated_count = stats.get("total", 0)
 
         return report
 

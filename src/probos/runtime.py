@@ -1510,23 +1510,54 @@ class ProbOSRuntime:
         violations: list[str] = []
         response_lower = response_text.lower()
 
-        # Check 1: Pool count claims
-        pool_count_matches = _re.findall(r'(\d+)\s+pools?\b', response_lower)
-        for match in pool_count_matches:
-            claimed = int(match)
-            if claimed != self_model.pool_count and claimed != 0:
-                violations.append(
-                    f"pools: claimed {claimed}, actual {self_model.pool_count}"
-                )
+        # Known pool sizes for whitelist matching (BF-004)
+        known_pool_sizes = {p.agent_count for p in self_model.pools}
+        known_pool_names = {p.name.lower() for p in self_model.pools}
+        known_depts_lower = {d.lower() for d in self_model.departments}
+        # Context words that indicate a subset rather than system-wide claim
+        _SUBSET_WORDS = {"pool", "department", "team", "group", "division", "each", "per"}
 
-        # Check 2: Agent count claims
-        agent_count_matches = _re.findall(r'(\d+)\s+agents?\b', response_lower)
-        for match in agent_count_matches:
-            claimed = int(match)
-            if claimed != self_model.agent_count and claimed != 0:
-                violations.append(
-                    f"agents: claimed {claimed}, actual {self_model.agent_count}"
-                )
+        def _is_subset_claim(match_start: int) -> bool:
+            """Check if the match is scoped to a pool/department (not system-wide)."""
+            ctx = response_lower[max(0, match_start - 80):match_start]
+            # Check for known pool name in context
+            for pn in known_pool_names:
+                if pn in ctx:
+                    return True
+            # Check for known department name in context
+            for dept in known_depts_lower:
+                if dept in ctx:
+                    return True
+            # Check for subset indicator words
+            for word in _SUBSET_WORDS:
+                if word in ctx:
+                    return True
+            return False
+
+        # Check 1: Pool count claims (BF-004: contextual awareness)
+        for m in _re.finditer(r'(\d+)\s+pools?\b', response_lower):
+            claimed = int(m.group(1))
+            if claimed == self_model.pool_count or claimed == 0:
+                continue
+            if _is_subset_claim(m.start()):
+                continue
+            violations.append(
+                f"pools: claimed {claimed}, actual {self_model.pool_count}"
+            )
+
+        # Check 2: Agent count claims (BF-004: contextual awareness)
+        for m in _re.finditer(r'(\d+)\s+agents?\b', response_lower):
+            claimed = int(m.group(1))
+            if claimed == self_model.agent_count or claimed == 0:
+                continue
+            # Skip if claimed count matches a known pool's agent count
+            if claimed in known_pool_sizes:
+                continue
+            if _is_subset_claim(m.start()):
+                continue
+            violations.append(
+                f"agents: claimed {claimed}, actual {self_model.agent_count}"
+            )
 
         # Check 3: Fabricated department names
         known_departments = {d.lower() for d in self_model.departments}

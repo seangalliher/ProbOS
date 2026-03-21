@@ -1213,6 +1213,48 @@ class TestPreResponseVerification:
         result = ProbOSRuntime._verify_response(runtime, text, model)
         assert "[Note:" not in result
 
+    def test_per_pool_agent_count_not_flagged(self):
+        """BF-004: Per-pool agent count should not trigger false positive."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()  # total=54, medical has 1 agent
+        text = "The medical pool has 3 agents assigned to monitoring duties."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" not in result
+
+    def test_per_department_breakdown_not_flagged(self):
+        """BF-004: Per-department breakdown should not trigger false positive."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()  # total=54
+        text = "Engineering has 18 agents, Science has 5 agents, Medical has 3 agents."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" not in result
+
+    def test_wrong_system_total_still_caught(self):
+        """BF-004: Wrong system-wide total is still caught."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()  # total=54
+        text = "The system has 100 agents running."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" in result
+        assert "54 agents" in result
+
+    def test_ambiguous_count_matching_known_pool_size_not_flagged(self):
+        """BF-004: Ambiguous count matching a known pool size is not flagged."""
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+        runtime = MagicMock(spec=ProbOSRuntime)
+        model = self._make_model()  # filesystem pool has 3 agents
+        # "3 agents" without explicit pool qualifier, but 3 matches filesystem.agent_count
+        text = "There are 3 agents handling file operations."
+        result = ProbOSRuntime._verify_response(runtime, text, model)
+        assert "[Note:" not in result
+
 
 class TestIntrospectionDelegation:
     """Tests for AD-320 introspection delegation with grounded context."""

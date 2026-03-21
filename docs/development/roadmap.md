@@ -904,7 +904,7 @@ The first concrete implementation: Opus designs the BuildBlueprint + ChunkSpecs 
 - **Fallback chains per provider** — extend current tier-based fallback (`deep → standard → fast`) to include cross-provider fallback: `claude-opus → gpt-4o → gemini-2 → local-qwen`. Provider health tracking via circuit breaker pattern (already planned in LLM Resilience)
 - **Hot-swap model rotation** — add/remove model providers at runtime without restart. `ModelRegistry.register()` / `ModelRegistry.deregister()` with live updates to routing weights
 - **Per-tier temperature tuning** *(absorbed from Kimi K2.5, 2026-03-20)* — **AD-358 DONE.** Per-tier `temperature` and `top_p` fields in CognitiveConfig, wired through LLM client. Configurable in `system.yaml`. Future: Hebbian-learned adjustments over time
-- **Per-model edit format selection** *(absorbed from Aider, 2026-03-21)* — different models need different output formats for code edits. Aider discovered empirically that the same model can show dramatically different success rates with different formats (Qwen 32B: 16.4% with `whole` format vs 8.0% with `diff`). When ModelRegistry enables multi-model routing, each model should have an `edit_format` preference. The Hebbian router can learn which format works best per model — this is the existing `(task_type, model)` relationship type. Builder/ChunkSpec output format becomes model-adaptive, not hardcoded
+- **Per-model edit format selection** *(absorbed from Aider, 2026-03-21)* — different models need different output formats for code edits. Aider discovered empirically that the same model can show dramatically different success rates with different formats (Qwen 32B: 16.4% with `whole` format vs 8.0% with `diff`). Candidate formats: `whole` (entire file, best for smaller/local models), `diff` (search/replace blocks), `udiff` (GNU unified diff — models trained on git data are fluent in this), `diff-fenced` (diff in fenced code blocks, helps models that struggle with raw diff syntax). When ModelRegistry enables multi-model routing, each model should have an `edit_format` preference stored in config and learnable via Hebbian router `(task_type, model)` relationship type. Builder/ChunkSpec output format becomes model-adaptive, not hardcoded
 - **Configuration** — `system.yaml` grows a `models:` section listing available providers, or auto-discovered via Ollama API (`/api/tags`) for local models
 
 **Cognitive Journal (Token Ledger)**
@@ -2382,6 +2382,8 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-004 | Transporter HXI visualization not rendered | Medium | **Closed** |
 | BF-005 | HTTP consensus docs drift (AD-150 removed gating) | Low | **Closed** |
 | BF-006 | Quorum trust docs drift in consensus.md | Low | **Closed** |
+| BF-007 | Verification false positive on per-pool agent counts | Medium | **Closed** |
+| BF-008 | Dream cycle double-replay after dolphin dreaming | Low | **Closed** |
 
 ### BF-001: Self-Mod False Positive on Knowledge Questions
 
@@ -2462,6 +2464,34 @@ Bugs found during development or testing. Squash as found when possible; queue h
 **Fix:** Add a `TransporterProgress` card to `IntentSurface.tsx` following the build proposal card pattern. Show: chunk list with per-chunk status (pending/executing/done/failed), wave progress, assembly phase indicator. Use the existing `transporterProgress` state from the store.
 
 **Files to modify:** `ui/src/components/IntentSurface.tsx` (add rendering block for `transporterProgress`)
+
+### BF-007: Verification False Positive on Per-Pool Agent Counts
+
+**Severity:** Medium — unnecessary correction footnotes on valid responses
+**Found:** 2026-03-21 (Captain log review)
+**Component:** `runtime.py` → `_verify_response()` → Check 1 & 2
+
+**Symptom:** When the LLM describes per-pool or per-department agent counts (e.g. "Engineering has 18 agents, Medical has 3 agents"), each number is flagged as a violation because the regex `(\d+)\s+agents?\b` compares every match against the system-wide total (53). Five false positives in a single response: `agents: claimed 18, actual 53; claimed 20, actual 53; claimed 5, actual 53; claimed 2, actual 53; claimed 3, actual 53`. Same issue affects pool count check.
+
+**Root Cause:** Checks 1 and 2 treat all numeric agent/pool references as system-wide total claims. No contextual awareness — "3 agents in the medical pool" is treated the same as "the system has 3 agents."
+
+**Fix:** Add context-window analysis around each regex match. Examine 80 chars before the match for pool/department names or subset-indicating words ("pool", "department", "team", "each", "per"). Skip matches that reference a specific pool or department. Also whitelist numbers matching any individual `pool.agent_count` from the self-model. Only flag matches claiming system-wide totals. See `prompts/bf-004-verification-false-positive.md`.
+
+**Files to modify:** `src/probos/runtime.py` (`_verify_response()`)
+
+### BF-008: Dream Cycle Double-Replay After Dolphin Dreaming
+
+**Severity:** Low — wasted computation, no data loss or incorrect behavior
+**Found:** 2026-03-21 (Captain log review)
+**Component:** `dreaming.py` → `DreamingEngine` → `dream_cycle()` + `micro_dream()`
+
+**Symptom:** Log shows static `replayed=50 strengthened=80` every 10 minutes even with no new user activity. The same 50 episodes are re-replayed every full dream cycle, double-strengthening Hebbian weights that micro-dream already consolidated.
+
+**Root Cause:** Micro-dream (Tier 1, every 10s) incrementally replays new episodes and advances `_last_consolidated_count`. Full dream (Tier 2, every 10min) then replays the last 50 episodes regardless, re-strengthening already-consolidated pathways. No coordination between tiers.
+
+**Fix:** Remove replay (`_replay_episodes()`) from `dream_cycle()` — micro-dream owns incremental Hebbian consolidation, full dream owns maintenance (pruning, trust consolidation, pre-warming, strategy extraction, gap prediction). Add `micro_dream()` flush before direct `dream_cycle()` callers (shutdown, Surgeon force_dream) to catch stragglers. See `prompts/bf-008-dream-double-replay.md`.
+
+**Files to modify:** `src/probos/cognitive/dreaming.py`, `src/probos/runtime.py`, `src/probos/agents/medical/surgeon.py`
 
 !!! info "Want to contribute?"
     See the [Contributing guide](contributing.md) for how to get involved.
