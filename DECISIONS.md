@@ -2251,3 +2251,39 @@ GPT-5.4 code review found 7 call sites in the experience layer using `asyncio.ge
 **Build prompt:** `prompts/fix-get-event-loop.md`
 
 **Status:** AD-364 — Implemented. 0 regressions.
+
+### AD-365: Red-Team Write Verification
+
+RedTeamAgent.verify() had no real handler for `write_file` intents — they fell through to a default that returned `verified=True` with `confidence=0.1`, making the governance path for writes weaker than it appeared. Added `_verify_write()` method that validates write proposals without re-executing: checks for empty path, missing content, path traversal (`..` in parts), forbidden paths (`.git/`, `.env`, `pyproject.toml`, `.github/workflows/`), and suspiciously large content (>1MB). Added `verify_write_file` capability descriptor. 4 new tests.
+
+**Status:** AD-365 complete — 2356 Python + 34 Vitest.
+
+### AD-366: Fix API Import Approval Callback Leak
+
+API self-mod path in `api.py` set `_import_approval_fn` to auto-approve but never restored it. After the first HXI-triggered self-mod, all future import approvals (including interactive shell) were silently auto-approved. Fixed by saving `original_import_approval_fn` before overwriting and restoring it in the `finally` block, matching the existing pattern for `_user_approval_fn`. 1 new test verifies the restore pattern via source inspection.
+
+**Status:** AD-366 complete — 2357 Python + 34 Vitest.
+
+### AD-367: Move Validation Check Before Commit
+
+In `execute_approved_build()`, `ast.parse()` validation errors were checked **after** the commit step. With `run_tests=False`, a file with syntax errors could be committed to the build branch, then marked as failed — but the commit was already done. Fixed by moving the `validation_errors` check before the commit block using an `if/elif` chain: syntax errors → block (no commit), test failures → escalation, clean → commit. 1 new test verifies syntax errors block commits even with `run_tests=False`.
+
+**Status:** AD-367 complete — 2358 Python + 34 Vitest.
+
+### AD-368: Self-Mod Registration Rollback
+
+If agent type registration succeeded (step 4) but pool creation failed (step 5), the agent type remained registered in the spawner and decomposer — a phantom agent type that would accept intents but have no pool to run them. Fixed by adding `unregister_fn` parameter to `SelfModificationPipeline`, `unregister_template()` to `AgentSpawner`, and `unregister_agent_type()` to the runtime. On pool creation failure, the failed_pool handler now rolls back the registration (wrapped in try/except to not mask the original error). 1 new test verifies rollback is called.
+
+**Status:** AD-368 complete — 2359 Python + 34 Vitest.
+
+### AD-369: Fix WebSocket Protocol Detection
+
+Hardcoded `ws://` in `useWebSocket.ts` would cause browsers to block WebSocket connections when ProbOS is served behind HTTPS. Changed to dynamic protocol detection: `wss:` for HTTPS origins, `ws:` for HTTP. Single-line fix.
+
+**Status:** AD-369 complete — 2359 Python + 34 Vitest.
+
+### BF-006: Fix Quorum Trust Docs Drift
+
+`docs/architecture/consensus.md` had two inaccuracies found by GPT-5.4 code review: (1) listed "HTTP fetches" as consensus-gated (removed in AD-150, already fixed in structure.md and inventory.md by BF-005 but missed here), and (2) claimed each vote carries "the agent's current trust reputation" — the actual `Vote` dataclass has no trust field; votes carry `confidence`, not trust. Fixed both: removed "HTTP fetches" from destructive ops list, replaced trust bullet with "optional reason string" matching the actual `Vote` fields.
+
+**Status:** BF-006 complete — docs only, no code changes.

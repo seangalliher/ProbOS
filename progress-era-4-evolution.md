@@ -399,3 +399,73 @@ Progression: AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-3
 
 **Build prompt:** `prompts/fix-http-consensus-docs.md`
 **Status:** BF-005 closed
+
+## GPT-5.4 Code Review — Round 2 (AD-365–369, BF-006)
+
+Second batch of GPT-5.4 code review findings across Runtime/Consensus, HXI/UI, Builder/Self-Mod. 9 findings triaged → 2 already addressed (AD-362, BF-004), 7 new issues fixed.
+
+### AD-365: Red-Team Write Verification (DONE)
+
+**Decision:** AD-365 — RedTeamAgent had no real handler for `write_file` intents — fell through to `verified=True` with `confidence=0.1`.
+
+**Changes:**
+- `red_team.py` — Added `_verify_write()` method: empty path, missing content, path traversal, forbidden paths, content size checks. Added `verify_write_file` capability descriptor.
+- `test_red_team.py` — 4 new tests (valid path, traversal, forbidden, empty)
+
+**Build prompt:** `prompts/red-team-write-verification.md`
+**Status:** AD-365 complete — 4 new tests, 0 regressions
+
+### AD-366: Fix API Import Approval Callback Leak (DONE)
+
+**Decision:** AD-366 — API self-mod path set `_import_approval_fn` to auto-approve but never restored it in `finally` block.
+
+**Changes:**
+- `api.py` — Save `original_import_approval_fn` before overwriting, restore in `finally` block
+- `test_selfmod_e2e.py` — 1 new source inspection test
+
+**Build prompt:** `prompts/fix-import-approval-leak.md`
+**Status:** AD-366 complete — 1 new test, 0 regressions
+
+### AD-367: Move Validation Check Before Commit (DONE)
+
+**Decision:** AD-367 — `validation_errors` checked after commit step; with `run_tests=False`, syntax-invalid files got committed then marked failed.
+
+**Changes:**
+- `builder.py` — Moved validation_errors check before commit using if/elif chain
+- `test_builder_guardrails.py` — 1 new integration test with real git repo
+
+**Build prompt:** `prompts/validation-before-commit.md`
+**Status:** AD-367 complete — 1 new test, 0 regressions
+
+### AD-368: Self-Mod Registration Rollback (DONE)
+
+**Decision:** AD-368 — Agent type registered in spawner/decomposer before pool creation; if pool fails, phantom type remained.
+
+**Changes:**
+- `self_mod.py` — Added `unregister_fn` parameter, rollback on pool failure
+- `spawner.py` — Added `unregister_template()` method
+- `runtime.py` — Added `unregister_agent_type()`, `_unregister_designed_agent()`, wired into pipeline
+- `test_self_mod.py` — 1 new test verifying rollback call
+
+**Build prompt:** `prompts/self-mod-registration-rollback.md`
+**Status:** AD-368 complete — 1 new test, 0 regressions
+
+### AD-369: Fix WebSocket Protocol Detection (DONE)
+
+**Decision:** AD-369 — Hardcoded `ws://` in `useWebSocket.ts` breaks behind HTTPS.
+
+**Changes:**
+- `useWebSocket.ts` — Dynamic protocol detection via `window.location.protocol`
+
+**Build prompt:** `prompts/fix-websocket-protocol.md`
+**Status:** AD-369 complete — single-line fix
+
+### BF-006: Fix Quorum Trust Docs Drift (DONE)
+
+**Bug:** `docs/architecture/consensus.md` had two inaccuracies: (1) "HTTP fetches" listed as consensus-gated, (2) claimed votes carry trust reputation when `Vote` has no trust field.
+
+**Changes:**
+- `consensus.md` — Removed "HTTP fetches" from destructive ops, replaced trust bullet with "optional reason string"
+
+**Build prompt:** `prompts/fix-quorum-trust-docs.md`
+**Status:** BF-006 closed

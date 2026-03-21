@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-364 complete — GPT-5.4 code review fixes (AD-362–364, BF-005), CI/CD Pipeline (AD-361), Builder Guardrails (AD-360)
+## Current Status: AD-369 complete — GPT-5.4 code review fixes (AD-365–369, BF-006), CI/CD Pipeline (AD-361), Builder Guardrails (AD-360)
 
 ---
 

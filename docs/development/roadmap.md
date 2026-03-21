@@ -2109,6 +2109,7 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-003 | "Run diagnostic" bypasses VitalsMonitor, asks user for alert data | Medium | **Closed** (AD-350) |
 | BF-004 | Transporter HXI visualization not rendered | Medium | Open |
 | BF-005 | HTTP consensus docs drift (AD-150 removed gating) | Low | **Closed** |
+| BF-006 | Quorum trust docs drift in consensus.md | Low | **Closed** |
 
 ### BF-001: Self-Mod False Positive on Knowledge Questions
 
