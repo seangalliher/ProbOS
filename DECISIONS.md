@@ -2201,3 +2201,21 @@ Inspired by: Aider (pre-edit dirty commit, edit-lint-test-reflect cycle), Cline 
 **Build prompt:** `prompts/builder-pipeline-guardrails.md`
 
 **Status:** AD-360 — Implemented. 10 new tests (6 path validation + 2 branch lifecycle + 1 dirty tree + 1 untracked cleanup), 0 regressions. 2358 Python + 34 Vitest total. Note: Architect implemented directly (should have been delegated to builder — lesson learned on role discipline).
+
+### AD-361: CI/CD Pipeline — GitHub Actions
+
+*"All hands, condition green — automated systems online."*
+
+GitHub Actions CI workflow running on every push to `main` and every pull request. Two parallel jobs:
+
+1. **python-tests** — `ubuntu-latest`, Python 3.12, `uv sync --group dev` from lockfile, `pytest -x -q --tb=short`. `live_llm` tests auto-skipped by conftest. 15-minute timeout.
+2. **ui-tests** — `ubuntu-latest`, Node 22 LTS, `npm ci`, `npm run test` (vitest), `npm run build` (tsc + vite type check). 10-minute timeout.
+
+**CI stabilization fixes:**
+- Flaky `test_decision_cache_ttl_expiry` — used `created_at=0.0` to force TTL expiry, but `time.monotonic()` returns system uptime. On freshly-booted CI runners, uptime < TTL so the entry wasn't expired. Fixed: `time.monotonic() - ttl - 1` guarantees expiry regardless of uptime.
+- `TestCopilotBuilderAdapterExecution` — patches `SessionEventType` from `github-copilot-sdk`, which is an optional dependency not installed in CI. Fixed: `@pytest.mark.skipif(not _SDK_AVAILABLE, ...)`.
+- `TestMCPToolHandlers` — tool handlers return `ToolResult` from the SDK. Fixed: fallback `ToolResult` class defined in `copilot_adapter.py` when SDK not importable.
+
+**Build prompt:** `prompts/ci-cd-pipeline.md`
+
+**Status:** AD-361 — Implemented and green. Both jobs passing on GitHub Actions.

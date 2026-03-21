@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-360 complete — Builder Pipeline Guardrails (AD-360), Per-Tier Temperature Tuning (AD-358), Yeoman AD (AD-359), /models + /registry (AD-356–357)
+## Current Status: AD-361 complete — CI/CD Pipeline (AD-361), Builder Pipeline Guardrails (AD-360), Per-Tier Temperature Tuning (AD-358), Yeoman AD (AD-359)
 
 ---
 

@@ -333,3 +333,20 @@ Progression: AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-3
 **Inspired by:** Aider, Cline, SWE-Agent, OpenHands safety patterns
 
 **Status:** AD-360 complete — 10 new tests, 0 regressions. 2358 Python + 34 Vitest total
+
+## CI/CD Pipeline (AD-361)
+
+### AD-361: CI/CD Pipeline — GitHub Actions (DONE)
+
+**Decision:** AD-361 — Automated test gate on GitHub Actions. Every push to main and every PR now runs the full test suite.
+
+**Changes:**
+- `.github/workflows/ci.yml` — Two parallel jobs: `python-tests` (Python 3.12, uv lockfile, pytest -x -q) and `ui-tests` (Node 22, npm ci, vitest + tsc build)
+- `tests/test_cognitive_agent.py` — Fixed flaky TTL test: `created_at=0.0` → `time.monotonic() - ttl - 1` (CI runners have low uptime, `monotonic()` near zero)
+- `tests/test_copilot_adapter.py` — Added `@pytest.mark.skipif(not _SDK_AVAILABLE)` on `TestCopilotBuilderAdapterExecution`
+- `src/probos/cognitive/copilot_adapter.py` — Added fallback `ToolResult` class when `github-copilot-sdk` not importable
+
+**Build prompt:** `prompts/ci-cd-pipeline.md`
+**Builder:** Claude Code (VS Code Copilot Chat) created the workflow file. CI stabilization fixes done by architect.
+
+**Status:** AD-361 complete — CI green. Both jobs passing on GitHub Actions

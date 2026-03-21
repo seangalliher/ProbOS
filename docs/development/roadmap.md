@@ -629,6 +629,7 @@ AD-342's `/orders` build revealed the next pipeline gap: when the builder fails,
 Visiting officer builds failed 2 of 3 times by creating files in wrong directories and generating files not in the spec. AD-360 adds six structural guardrails to catch these problems automatically. Inspired by Aider (pre-edit dirty commit), Cline (shadow git checkpoints, workspace access tiers), SWE-Agent (container isolation), OpenHands (overlay mounts).
 
 - **AD-360: Builder Pipeline Guardrails** *(done)* — Six guardrails: (1) branch lifecycle management — cleanup on failure + stale branch deletion, (2) `_validate_file_path()` — blocks traversal, absolute, forbidden, and out-of-scope paths (hard gate), (3) visiting officer disk scan filtering in `CopilotBuilderAdapter` (first line of defense), (4) build spec file allowlist warning (soft gate), (5) dirty working tree protection via `_is_dirty_working_tree()` (hard gate), (6) untracked file cleanup in `finally` block — deletes created files + empty parent dirs on failure. 10 tests.
+- **AD-361: CI/CD Pipeline** *(done)* — GitHub Actions workflow with two parallel jobs: `python-tests` (Python 3.12, uv, pytest) and `ui-tests` (Node 22, npm, vitest + tsc build). Runs on push to main and PRs. CI stabilization: flaky monotonic TTL fix, ToolResult SDK fallback, SDK test skip marker.
 
 **Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE**
 
