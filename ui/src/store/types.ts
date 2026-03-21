@@ -270,3 +270,16 @@ export interface AgentStateEvent {
   confidence: number;
   trust: number;
 }
+
+export interface NotificationView {
+  id: string;
+  agent_id: string;
+  agent_type: string;
+  department: string;
+  notification_type: 'info' | 'action_required' | 'error';
+  title: string;
+  detail: string;
+  action_url: string;
+  created_at: number;
+  acknowledged: boolean;
+}

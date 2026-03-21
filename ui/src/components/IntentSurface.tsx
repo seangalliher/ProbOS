@@ -9,6 +9,7 @@ import { startListening, stopListening, isSpeechRecognitionSupported } from '../
 import { soundEngine } from '../audio/soundEngine';
 import { MissionControl } from './MissionControl';
 import { ActivityDrawer } from './ActivityDrawer';
+import { NotificationDropdown } from './NotificationDropdown';
 
 /* ── spring easing ── */
 const spring = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -53,8 +54,11 @@ export function IntentSurface() {
   const buildQueue = useStore((s) => s.buildQueue);
   const missionControlView = useStore((s) => s.missionControlView);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const agentTasks = useStore((s) => s.agentTasks);
+  const notifications = useStore((s) => s.notifications);
   const needsAttentionCount = agentTasks?.filter(t => t.requires_action).length ?? 0;
+  const unreadCount = notifications?.filter(n => !n.acknowledged).length ?? 0;
 
   /* ── consume pending char from global keydown ── */
   useEffect(() => {
@@ -313,6 +317,32 @@ export function IntentSurface() {
 
   return (
     <>
+      {/* ── Notification bell toggle (AD-323) ── */}
+      <button
+        onClick={() => setNotifOpen(prev => !prev)}
+        style={{
+          position: 'fixed',
+          top: 12,
+          right: 210,
+          zIndex: 25,
+          padding: '3px 8px',
+          borderRadius: 4,
+          border: '1px solid rgba(255, 255, 255, 0.15)',
+          background: notifOpen ? 'rgba(240, 176, 96, 0.2)' : 'transparent',
+          color: unreadCount > 0 ? '#f0b060' : (notifOpen ? '#f0b060' : '#888'),
+          fontSize: 9,
+          fontWeight: 600,
+          cursor: 'pointer',
+          letterSpacing: 1,
+          pointerEvents: 'auto',
+        }}
+      >
+        {'NOTIF' + (unreadCount > 0 ? ` (${unreadCount})` : '')}
+      </button>
+
+      {/* ── Notification Dropdown (AD-323) ── */}
+      <NotificationDropdown open={notifOpen} onClose={() => setNotifOpen(false)} />
+
       {/* ── Activity Drawer toggle (AD-321) ── */}
       <button
         onClick={() => setDrawerOpen(prev => !prev)}

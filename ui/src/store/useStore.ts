@@ -5,7 +5,7 @@ import { soundEngine } from '../audio/soundEngine';
 import type {
   Agent, Connection, PoolInfo, PoolGroupInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
   BuildProposal, BuildFailureReport, ArchitectProposalView, BuildQueueItem, MissionControlTask,
-  AgentTaskView,
+  AgentTaskView, NotificationView,
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
@@ -204,6 +204,7 @@ export interface HXIState {
   missionControlTasks: MissionControlTask[] | null;
   missionControlView: boolean;
   agentTasks: AgentTaskView[] | null;
+  notifications: NotificationView[] | null;
   pendingRoutingPulse: { source: string; target: string } | null;
   pendingFeedbackPulse: 'good' | 'bad' | null;
 
@@ -307,6 +308,7 @@ export const useStore = create<HXIState>((set, get) => ({
   missionControlTasks: null,
   missionControlView: false,
   agentTasks: null,
+  notifications: null,
   pendingRoutingPulse: null,
   pendingFeedbackPulse: null,
   connected: false,
@@ -463,6 +465,11 @@ export const useStore = create<HXIState>((set, get) => ({
             agentTasks: tasks.length > 0 ? tasks : null,
             missionControlTasks: mcTasks.length > 0 ? mcTasks : null,
           });
+        }
+        // Hydrate notifications from snapshot (AD-323)
+        if ((data as any).notifications) {
+          const notifs = (data as any).notifications as NotificationView[];
+          set({ notifications: notifs.length > 0 ? notifs : null });
         }
         break;
       }
@@ -975,6 +982,14 @@ export const useStore = create<HXIState>((set, get) => ({
         if (msg) {
           get().addChatMessage('system', msg);
         }
+        break;
+      }
+
+      case 'notification':
+      case 'notification_ack':
+      case 'notification_snapshot': {
+        const notifications = (data.notifications || []) as NotificationView[];
+        set({ notifications: notifications.length > 0 ? notifications : null });
         break;
       }
 

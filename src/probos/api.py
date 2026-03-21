@@ -955,6 +955,18 @@ def create_app(runtime: Any) -> FastAPI:
             "active_count": runtime.build_queue.active_count,
         }
 
+    @app.post("/api/notifications/{notification_id}/ack")
+    async def ack_notification(notification_id: str) -> dict[str, Any]:
+        """Acknowledge a single notification (AD-323)."""
+        ok = runtime.notification_queue.acknowledge(notification_id)
+        return {"acknowledged": ok}
+
+    @app.post("/api/notifications/ack-all")
+    async def ack_all_notifications() -> dict[str, Any]:
+        """Acknowledge all unread notifications (AD-323)."""
+        count = runtime.notification_queue.acknowledge_all()
+        return {"acknowledged": count}
+
     async def _run_build(
         req: BuildRequest,
         build_id: str,

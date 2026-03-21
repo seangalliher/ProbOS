@@ -604,3 +604,72 @@ describe('build_generated builder_source (AD-354)', () => {
     expect(history[0].buildProposal?.builder_source).toBe('native');
   });
 });
+
+describe('notification events (AD-323)', () => {
+  it('handles notification event and updates state', () => {
+    useStore.getState().handleEvent({
+      type: 'notification',
+      data: {
+        notification: { id: 'n1', title: 'Test', notification_type: 'info', acknowledged: false },
+        notifications: [
+          { id: 'n1', agent_id: 'a1', agent_type: 'builder', department: 'engineering', notification_type: 'info', title: 'Test', detail: '', action_url: '', created_at: 1000, acknowledged: false },
+        ],
+        unread_count: 1,
+      },
+      timestamp: Date.now() / 1000,
+    });
+    const notifs = useStore.getState().notifications;
+    expect(notifs).toHaveLength(1);
+    expect(notifs![0].title).toBe('Test');
+  });
+
+  it('handles notification_ack event', () => {
+    useStore.getState().handleEvent({
+      type: 'notification_ack',
+      data: {
+        notification: { id: 'n1', title: 'Test', acknowledged: true },
+        notifications: [
+          { id: 'n1', agent_id: 'a1', agent_type: 'builder', department: 'engineering', notification_type: 'info', title: 'Test', detail: '', action_url: '', created_at: 1000, acknowledged: true },
+        ],
+        unread_count: 0,
+      },
+      timestamp: Date.now() / 1000,
+    });
+    const notifs = useStore.getState().notifications;
+    expect(notifs).toHaveLength(1);
+    expect(notifs![0].acknowledged).toBe(true);
+  });
+
+  it('sets notifications to null when empty', () => {
+    useStore.getState().handleEvent({
+      type: 'notification_snapshot',
+      data: {
+        notifications: [],
+        unread_count: 0,
+      },
+      timestamp: Date.now() / 1000,
+    });
+    expect(useStore.getState().notifications).toBeNull();
+  });
+
+  it('hydrates notifications from state_snapshot', () => {
+    useStore.getState().handleEvent({
+      type: 'state_snapshot',
+      data: {
+        agents: [],
+        connections: [],
+        pools: [],
+        system_mode: 'active',
+        tc_n: 0,
+        routing_entropy: 0,
+        notifications: [
+          { id: 'n1', agent_id: 'a1', agent_type: 'builder', department: 'engineering', notification_type: 'info', title: 'Hydrated', detail: '', action_url: '', created_at: 1000, acknowledged: false },
+        ],
+      },
+      timestamp: Date.now() / 1000,
+    });
+    const notifs = useStore.getState().notifications;
+    expect(notifs).toHaveLength(1);
+    expect(notifs![0].title).toBe('Hydrated');
+  });
+});

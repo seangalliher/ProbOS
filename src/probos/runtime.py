@@ -49,7 +49,7 @@ from probos.initiative import InitiativeEngine
 from probos.build_queue import BuildQueue
 from probos.worktree_manager import WorktreeManager
 from probos.build_dispatcher import BuildDispatcher
-from probos.task_tracker import TaskTracker
+from probos.task_tracker import NotificationQueue, TaskTracker
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
@@ -257,6 +257,9 @@ class ProbOSRuntime:
         # --- Directive Store (AD-386) ---
         self.directive_store: DirectiveStore | None = None
 
+        # --- Notification Queue (AD-323) ---
+        self.notification_queue = NotificationQueue(on_event=self._emit_event)
+
         # --- Semantic knowledge layer (AD-243) ---
         self._semantic_layer: SemanticKnowledgeLayer | None = None
 
@@ -419,6 +422,8 @@ class ProbOSRuntime:
             "pool_to_group": dict(self.pool_groups._pool_to_group),
             "tasks": self.task_tracker.snapshot() if self.task_tracker else [],
             "directives": self._directive_summary(),
+            "notifications": self.notification_queue.snapshot(),
+            "unread_count": self.notification_queue.unread_count(),
         }
 
     def _directive_summary(self) -> dict[str, int]:
@@ -430,6 +435,40 @@ class ProbOSRuntime:
             "active": len([d for d in active if d.status.value == "active"]),
             "pending": len([d for d in active if d.status.value == "pending_approval"]),
         }
+
+    def notify(
+        self,
+        agent_id: str,
+        title: str,
+        detail: str = "",
+        notification_type: str = "info",
+        action_url: str = "",
+    ) -> None:
+        """Let any agent emit a notification to the Captain (AD-323)."""
+        agent = self._find_agent(agent_id)
+        agent_type = agent.agent_type if agent else "unknown"
+        department = self._get_agent_department(agent_id) if agent else ""
+        self.notification_queue.notify(
+            agent_id=agent_id,
+            agent_type=agent_type,
+            department=department,
+            title=title,
+            detail=detail,
+            notification_type=notification_type,
+            action_url=action_url,
+        )
+
+    def _find_agent(self, agent_id: str) -> Any:
+        """Find an agent by ID across all pools."""
+        return self.registry.get(agent_id)
+
+    def _get_agent_department(self, agent_id: str) -> str:
+        """Get the department (pool group name) of an agent."""
+        agent = self.registry.get(agent_id)
+        if not agent:
+            return ""
+        pool_name = agent.pool
+        return self.pool_groups._pool_to_group.get(pool_name, "")
 
     async def create_pool(
         self,
