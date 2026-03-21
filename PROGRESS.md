@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-373 complete — HXI Build Dashboard (AD-373), BuildDispatcher (AD-372), BuildQueue + WorktreeManager (AD-371), SIF (AD-370)
+## Current Status: AD-375 complete — Dispatch Runtime Wiring (AD-375), HXI Build Dashboard (AD-373), BuildDispatcher (AD-372), BuildQueue + WorktreeManager (AD-371)
 
 ---
 

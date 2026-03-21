@@ -663,7 +663,7 @@ Full automation of the Architect→Builder pipeline. Captain approves ADs, build
 - **AD-372: BuildDispatcher + SDK Integration** *(done)* — Core dispatch loop: watches BuildQueue, allocates worktrees, invokes CopilotBuilderAdapter, applies changes via `execute_approved_build()` with full guardrails. Configurable concurrency, Captain approve/reject actions, `on_build_complete` callback. Absorbs AD-374. 11 tests.
 - **AD-373: HXI Build Dashboard** *(done)* — Real-time build queue card with engineering amber theme. `BuildQueueItem` type, `build_queue_update`/`build_queue_item` event handlers, status dots, approve/reject buttons, file footprint display.
 - **AD-374: File Footprint Conflict Detection** *(absorbed into AD-372)* — `_find_dispatchable()` checks `has_footprint_conflict()` before dispatch. Overlapping specs serialized, non-overlapping run concurrently.
-- **AD-375: Dispatch System Runtime Wiring** *(planned)* — Wire BuildQueue, WorktreeManager, BuildDispatcher into runtime lifecycle. Add API endpoints: `/api/build/queue/approve`, `/api/build/queue/reject`, `/api/build/enqueue`, `GET /api/build/queue`. WebSocket event emission for `build_queue_update`/`build_queue_item`. Fix HXI button URLs.
+- **AD-375: Dispatch System Runtime Wiring** *(done)* — Wire BuildQueue, WorktreeManager, BuildDispatcher into runtime lifecycle. API endpoints: `/api/build/queue/approve`, `/api/build/queue/reject`, `/api/build/enqueue`, `GET /api/build/queue`. `_emit_queue_snapshot` broadcasts full state, `_on_build_complete` emits per-item events. HXI button URLs fixed. 9 tests.
 
 **Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE**
 

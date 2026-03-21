@@ -531,3 +531,16 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/hxi-build-dashboard.md`
 **Status:** AD-373 complete — 0 new tests (UI only), 2402 pytest + 34 vitest = 2436 total
+
+### AD-375: Dispatch System Runtime Wiring (DONE)
+
+**Decision:** AD-375 — Wire BuildQueue, WorktreeManager, and BuildDispatcher into the runtime lifecycle + API layer. Closes the end-to-end loop: components are now live at startup with proper shutdown.
+
+**Changes:**
+- `runtime.py` — Import and instantiate `BuildQueue`, `WorktreeManager`, `BuildDispatcher` in start/stop (SIF pattern). `_on_build_complete` callback emits `build_queue_item` WebSocket events for real-time HXI updates.
+- `api.py` — 3 Pydantic models (`BuildQueueApproveRequest`, `BuildQueueRejectRequest`, `BuildEnqueueRequest`). 4 endpoints: `POST /api/build/queue/approve` (merge), `POST /api/build/queue/reject` (discard), `POST /api/build/enqueue` (add to queue), `GET /api/build/queue` (list state). `_emit_queue_snapshot` broadcasts full queue after mutations.
+- `IntentSurface.tsx` — Button URLs fixed from `/api/build/approve` → `/api/build/queue/approve`, `/api/build/reject` → `/api/build/queue/reject`.
+- `test_dispatch_wiring.py` (NEW) — 9 tests: runtime fields, callback, all 4 endpoints, dispatcher-not-running guard, snapshot emission.
+
+**Build prompt:** `prompts/dispatch-runtime-wiring.md`
+**Status:** AD-375 complete — 9 new tests, 2411 pytest + 34 vitest = 2445 total
