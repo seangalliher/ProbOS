@@ -2341,3 +2341,9 @@ Tier 5 personal standing orders for all 12 crew members. Auto-loaded by existing
 
 **Build prompt:** `prompts/per-agent-standing-orders.md`
 **Status:** AD-379 complete — config only, no test changes.
+
+### AD-377: Watch Rotation + Duty Shifts
+
+Naval-style watch rotation system for scheduled agent duty. Three watches: Alpha (full ops), Beta (reduced), Gamma (maintenance). `WatchManager` maintains a duty roster, dispatches `StandingTask` items (recurring department tasks with interval-based scheduling) and `CaptainOrder` directives (persistent orders, optionally one-shot) to on-duty agents via a configurable `dispatch_fn` callback. Orders for off-duty agents are deferred until their watch. The dispatch loop runs periodically and is start/stoppable. No runtime wiring yet — standalone module ready for integration. Fixed build prompt test: `get_active_orders()[0]` IndexError when one-shot order already deactivated (empty list); replaced with `executed_count` assertion.
+
+**Status:** AD-377 complete — 2454 Python + 34 Vitest.
