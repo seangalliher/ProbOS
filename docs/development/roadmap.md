@@ -990,6 +990,7 @@ In Star Trek, the EPS distributes power from the warp core through conduits to e
 - **Captain override** — "give Engineering all the power" as a manual reallocation command via HXI
 - **Utilization reporting** — per-department LLM usage feeds into Cognitive Journal and HXI dashboard. Captain sees where compute is going in real-time
 - **Back-pressure** — when a department exhausts its budget, requests queue or downgrade tier (deep → fast) rather than failing
+- **Atomic budget enforcement** — budget checks must be transactional with task assignment (not after-the-fact). When an agent checks out a task, the budget deduction is atomic — prevents cost overruns at the checkout level. Pattern validated by Paperclip AI's budget engine (30K stars, MIT)
 - **Integration** — sits between the IntentBus (which routes intents) and the tiered LLM client (which makes calls). EPS decides whether a request gets served now, queued, or downgraded based on budget and alert condition
 
 **Ward Room — Direct Agent-to-Agent Messaging**
