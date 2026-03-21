@@ -15,7 +15,7 @@
 
 ## Quick Links
 
-- **[Architectural Decisions](DECISIONS.md)** — AD-1 through AD-291+, append-only decision log
+- **[Architectural Decisions](DECISIONS.md)** — Era IV (AD-330+), with archives for [Era I](decisions-era-1-genesis.md), [Era II](decisions-era-2-emergence.md), [Era III](decisions-era-3-product.md)
 - **[Roadmap](docs/development/roadmap.md)** — crew structure, future phases, team details
 - **[Project Structure](docs/development/structure.md)** — file tree and module descriptions
 

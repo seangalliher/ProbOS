@@ -355,12 +355,6 @@ The Transporter Pattern (AD-330–336) emits 6 event types during parallel chunk
 
 **Status:** BF-004 complete — 2359 Python + 34 Vitest.
 
-### AD-376: CrewProfile + Personality System
-
-Foundational identity layer for every ProbOS agent. CrewProfile is the "personnel file" — identity (display name, callsign, department, role), rank (Ensign→Lieutenant→Commander→Senior Officer earned via trust), Big Five personality traits (seeded from YAML, evolvable, drift-trackable), and append-only performance review history. ProfileStore persists to SQLite following TrustNetwork patterns. `load_seed_profile()` reads agent-specific YAML from `config/standing_orders/crew_profiles/` (11 agent types + `_default.yaml` fallback). Personality traits are validated 0.0–1.0, with `distance_from()` for Counselor drift detection. No existing files modified — standalone module ready for runtime wiring in a follow-up AD.
-
-**Status:** AD-376 complete — 2436 Python + 34 Vitest.
-
 ### AD-370: Structural Integrity Field (SIF)
 
 "Medical detects damage. The SIF prevents structural failure." Lightweight runtime service that runs 7 pure-assertion invariant checks on every heartbeat cycle (5s). No LLM calls — every check reads in-memory data structures. `StructuralIntegrityField` is a Ship's Computer function, not an agent. Checks: trust bounds ([0,1] + finite), Hebbian weight bounds ([-10,10] + finite), pool consistency (agent types registered in spawner), IntentBus coherence (subscriber IDs exist in registry). Three checks (config validity, index consistency, memory integrity) are graceful no-ops pending future wiring. Each check is exception-isolated — one failure doesn't block others. `SIFReport` with `health_pct`, `all_passed`, `violations` properties. Background `asyncio.Task` with configurable interval. Wired into runtime `start()`/`stop()`. 12 tests.
