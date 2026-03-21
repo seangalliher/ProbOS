@@ -631,6 +631,14 @@ Visiting officer builds failed 2 of 3 times by creating files in wrong directori
 - **AD-360: Builder Pipeline Guardrails** *(done)* — Six guardrails: (1) branch lifecycle management — cleanup on failure + stale branch deletion, (2) `_validate_file_path()` — blocks traversal, absolute, forbidden, and out-of-scope paths (hard gate), (3) visiting officer disk scan filtering in `CopilotBuilderAdapter` (first line of defense), (4) build spec file allowlist warning (soft gate), (5) dirty working tree protection via `_is_dirty_working_tree()` (hard gate), (6) untracked file cleanup in `finally` block — deletes created files + empty parent dirs on failure. 10 tests.
 - **AD-361: CI/CD Pipeline** *(done)* — GitHub Actions workflow with two parallel jobs: `python-tests` (Python 3.12, uv, pytest) and `ui-tests` (Node 22, npm, vitest + tsc build). Runs on push to main and PRs. CI stabilization: flaky monotonic TTL fix, ToolResult SDK fallback, SDK test skip marker.
 
+**GPT-5.4 Code Review Findings (AD-362–364)**
+
+*Identified by GPT-5.4 via GitHub Copilot. All findings verified against source with line numbers confirmed.*
+
+- **AD-362: Fix Bundled Persistence** *(done)* — Silent data loss in TodoAgent, NoteTakerAgent, SchedulerAgent. `_mesh_write_file()` saw a proposal response as success without calling `commit_write()`. Fixed: call `FileWriterAgent.commit_write()` directly (personal data, no consensus needed), check return value, propagate failure. 4 tests.
+- **AD-363: Fix Mock Reminder Routing** *(done)* — "remind me to..." routed to `manage_todo` instead of `manage_schedule` in MockLLMClient due to first-match-wins regex ordering. Fixed: moved `remind` phrase to scheduler regex. 1 test.
+- **AD-364: Fix get_event_loop in Async Code** *(done)* — 7 call sites in shell.py and renderer.py using deprecated `get_event_loop()` inside `async def` methods, violating Standing Orders. Fixed: mechanical replacement with `get_running_loop()`.
+
 **Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE**
 
 *"The ship builds itself — with the Captain's approval."*
@@ -2100,6 +2108,7 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-002 | Agent orbs escape pool group spheres | High | **Closed** (AD-349) |
 | BF-003 | "Run diagnostic" bypasses VitalsMonitor, asks user for alert data | Medium | **Closed** (AD-350) |
 | BF-004 | Transporter HXI visualization not rendered | Medium | Open |
+| BF-005 | HTTP consensus docs drift (AD-150 removed gating) | Low | **Closed** |
 
 ### BF-001: Self-Mod False Positive on Knowledge Questions
 

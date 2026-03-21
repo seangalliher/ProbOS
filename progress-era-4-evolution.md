@@ -350,3 +350,52 @@ Progression: AD-317 (rules) → AD-318 (data) → AD-319 (verification) → AD-3
 **Builder:** Claude Code (VS Code Copilot Chat) created the workflow file. CI stabilization fixes done by architect.
 
 **Status:** AD-361 complete — CI green. Both jobs passing on GitHub Actions
+
+## GPT-5.4 Code Review Findings (AD-362–364, BF-005)
+
+*Identified by GPT-5.4 via GitHub Copilot, verified by architect, implemented by Claude Code builder.*
+
+### AD-362: Fix Bundled Persistence Silent Data Loss (DONE)
+
+**Decision:** AD-362 — `_mesh_write_file()` reported success from a FileWriterAgent proposal without actually calling `commit_write()`. Silent data loss for todos, notes, and reminders.
+
+**Changes:**
+- `productivity_agents.py` — `_mesh_write_file()` now calls `FileWriterAgent.commit_write()` directly. `TodoAgent.act()` checks return value.
+- `organizer_agents.py` — Same `_mesh_write_file()` fix. `NoteTakerAgent.act()` and `SchedulerAgent.act()` check return value.
+- `test_bundled_agents.py` — 4 new integration tests (3 disk persistence + 1 failure propagation)
+
+**Build prompt:** `prompts/bundled-persistence-fix.md`
+**Status:** AD-362 complete — 4 new tests, 0 regressions
+
+### AD-363: Fix Mock Reminder Routing (DONE)
+
+**Decision:** AD-363 — MockLLMClient first-match-wins dispatch routed "remind me to..." to `manage_todo` instead of `manage_schedule`.
+
+**Changes:**
+- `llm_client.py` — Removed `remind me to` from todo regex, added `remind(?:er| me)` to scheduler regex
+- `test_llm_client.py` — 1 new routing test
+
+**Build prompt:** `prompts/mock-reminder-routing-fix.md`
+**Status:** AD-363 complete — 1 new test, 0 regressions
+
+### AD-364: Fix get_event_loop in Async Code (DONE)
+
+**Decision:** AD-364 — 7 call sites using deprecated `asyncio.get_event_loop()` inside `async def` methods, violating Standing Orders.
+
+**Changes:**
+- `shell.py` — 6 replacements: `get_event_loop()` → `get_running_loop()`
+- `renderer.py` — 1 replacement
+
+**Build prompt:** `prompts/fix-get-event-loop.md`
+**Status:** AD-364 complete — mechanical fix, 0 regressions
+
+### BF-005: HTTP Consensus Docs Drift (DONE)
+
+**Bug:** AD-150 removed consensus gating from `http_fetch` but docs still described it as consensus-gated.
+
+**Changes:**
+- `docs/development/structure.md` — Removed "(consensus-gated)" from http_fetch line
+- `docs/agents/inventory.md` — Changed http row consensus to "No", updated note text
+
+**Build prompt:** `prompts/fix-http-consensus-docs.md`
+**Status:** BF-005 closed

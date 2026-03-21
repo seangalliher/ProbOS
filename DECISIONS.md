@@ -2219,3 +2219,35 @@ GitHub Actions CI workflow running on every push to `main` and every pull reques
 **Build prompt:** `prompts/ci-cd-pipeline.md`
 
 **Status:** AD-361 — Implemented and green. Both jobs passing on GitHub Actions.
+
+### AD-362: Fix Bundled Persistence Silent Data Loss
+
+*"Captain, the crew thinks they saved their work — but they didn't."*
+
+GPT-5.4 code review found that TodoAgent, NoteTakerAgent, and SchedulerAgent report successful persistence while nothing reaches disk. `_mesh_write_file()` broadcast a `write_file` intent and saw `IntentResult(success=True)` from FileWriterAgent — but that was only a **proposal** (`requires_consensus: True`). Nobody called `commit_write()`, so zero bytes were written. The bundled agents didn't even check the return value.
+
+**Fix:** Both copies of `_mesh_write_file()` (in `productivity_agents.py` and `organizer_agents.py`) now call `FileWriterAgent.commit_write()` directly, bypassing consensus (correct for user-owned personal data in `~/.probos/`). All three agents check the write return value and propagate failure.
+
+**Build prompt:** `prompts/bundled-persistence-fix.md`
+
+**Status:** AD-362 — Implemented. 4 new integration tests (3 disk persistence + 1 failure propagation), 0 regressions.
+
+### AD-363: Fix Mock Reminder Routing
+
+GPT-5.4 code review found that `MockLLMClient` routes "remind me to..." phrases to `manage_todo` instead of `manage_schedule`. The todo regex included `remind me to` as a final alternative and was registered before the scheduler pattern. First-match-wins dispatch meant reminders hit the wrong agent, masking scheduler regressions in tests.
+
+**Fix:** Removed `remind me to` from the todo regex. Added `remind(?:er| me)` to the front of the scheduler regex.
+
+**Build prompt:** `prompts/mock-reminder-routing-fix.md`
+
+**Status:** AD-363 — Implemented. 1 new routing test, 0 regressions.
+
+### AD-364: Fix get_event_loop in Async Code
+
+GPT-5.4 code review found 7 call sites in the experience layer using `asyncio.get_event_loop()` inside `async def` methods. ProbOS Standing Orders (`ship.md` line 24) mandate `get_running_loop()`. All sites are inside async methods where a running loop is guaranteed.
+
+**Fix:** Mechanical replacement of `get_event_loop()` → `get_running_loop()` at all 7 call sites (6 in `shell.py`, 1 in `renderer.py`).
+
+**Build prompt:** `prompts/fix-get-event-loop.md`
+
+**Status:** AD-364 — Implemented. 0 regressions.
