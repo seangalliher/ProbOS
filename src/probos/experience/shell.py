@@ -1055,8 +1055,60 @@ class ProbOSShell:
         )
         if directive:
             clear_cache()  # Invalidate composed instructions
-            self.console.print(f"[green]Order issued to {target}:[/green] {content}")
-            self.console.print(f"[dim]ID: {directive.id}[/dim]")
+            dept = get_department(target)
+            scope = f"{target}" + (f" ({dept})" if dept else "") + (" [all agents]" if target == "*" else "")
+            self.console.print(f"\n[bold green]Captain's Order Issued[/bold green]")
+            self.console.print(f"  [green]Target:[/green]    {scope}")
+            self.console.print(f"  [green]Directive:[/green] {content}")
+            self.console.print(f"  [green]Priority:[/green]  {directive.priority}/5 (highest)")
+            self.console.print(f"  [green]Status:[/green]    Active — composing into next LLM call")
+            self.console.print(f"  [dim]ID: {directive.id} | /directives to verify[/dim]")
+            # Crew acknowledgment — naval chain of command pattern
+            self.console.print()
+            if target == "*":
+                # Broadcast: each department chief confirms for their crew
+                dept_counts: dict[str, list[str]] = {}
+                for pool in self.runtime.pools.values():
+                    d = get_department(pool.agent_type)
+                    if d:
+                        count = len(pool.healthy_agents)
+                        if count > 0:
+                            dept_counts.setdefault(d, []).append(pool.agent_type)
+                for d, agent_types in dept_counts.items():
+                    chief_type = agent_types[0]
+                    chief_callsign = self._get_callsign(chief_type)
+                    total = sum(
+                        len(p.healthy_agents)
+                        for p in self.runtime.pools.values()
+                        if p.agent_type in agent_types
+                    )
+                    role = d.title()
+                    self.console.print(
+                        f'  [bold cyan]{chief_callsign}[/bold cyan] [dim]({role}, {total} crew)[/dim]: '
+                        f'[italic]"Aye Captain. Orders acknowledged, all {d} crew confirmed."[/italic]'
+                    )
+            else:
+                # Specific agent type
+                agent_count = sum(
+                    len(p.healthy_agents)
+                    for p in self.runtime.pools.values()
+                    if p.agent_type == target
+                )
+                callsign = self._get_callsign(target)
+                if agent_count <= 1:
+                    # Single crew member — personal acknowledgment
+                    self.console.print(
+                        f'  [bold cyan]{callsign}:[/bold cyan] '
+                        f'[italic]"Aye Captain. New standing orders acknowledged."[/italic]'
+                    )
+                else:
+                    # Multiple instances — chief confirms for the group
+                    role = (dept or target).replace("_", " ").title()
+                    self.console.print(
+                        f'  [bold cyan]{callsign}[/bold cyan] [dim](Chief {role}, {agent_count} crew)[/dim]: '
+                        f'[italic]"Aye Captain. Orders passed down, {agent_count} crew confirmed."[/italic]'
+                    )
+            self.console.print()  # trailing blank line
         else:
             self.console.print(f"[red]Authorization failed: {reason}[/red]")
 
@@ -1088,6 +1140,17 @@ class ProbOSShell:
                 f"[{status_color}][{dtype}][/{status_color}] -> {target}: {d.content}"
             )
             self.console.print(f"  [dim]by {d.issued_by} | priority {d.priority} | {d.id[:8]}[/dim]")
+
+    def _get_callsign(self, agent_type: str) -> str:
+        """Look up an agent type's callsign from seed crew profile."""
+        try:
+            from probos.crew_profile import load_seed_profile
+            seed = load_seed_profile(agent_type)
+            if seed and seed.get("callsign"):
+                return seed["callsign"]
+        except Exception:
+            pass
+        return agent_type.replace("_", " ").title()
 
     async def _cmd_debug(self, arg: str) -> None:
         if arg.lower() == "on":
