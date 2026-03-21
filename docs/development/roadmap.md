@@ -1307,9 +1307,9 @@ Six ADs that close the gaps between the theoretical Cognitive Evolution framewor
 
 **Wave 1 (parallel, no shared files):**
 
-**AD-380: EmergentDetector Trend Regression** — Compute slopes over the snapshot ring buffer: `tc_n_slope`, `entropy_slope`, `cluster_stability_index`, `trust_convergence_rate`. Simple linear regression (pure Python, no numpy). `TrendReport` dataclass with direction (rising/stable/falling), r_squared confidence, significance test. Replace list with `collections.deque`. Wire into `detect_anomalies()` output. Low effort (~150 lines + 12 tests), high signal — makes existing data useful.
+**AD-380: EmergentDetector Trend Regression** *(done)* — Compute slopes over the snapshot ring buffer: `tc_n_slope`, `entropy_slope`, `cluster_stability_index`, `trust_convergence_rate`. Simple linear regression (pure Python, no numpy). `TrendReport` dataclass with direction (rising/stable/falling), r_squared confidence, significance test. Replace list with `collections.deque`. Wire into `detect_anomalies()` output. 12 tests.
 
-**AD-382: ServiceProfile — Learned External Service Modeling** — Replace hardcoded `_KNOWN_RATE_LIMITS` in HttpFetchAgent with SQLite-backed `ServiceProfile` per domain. Learned `min_interval`, latency percentiles (EMA), error rate, reliability history. Profiles persist across restarts. `ServiceProfileStore` (CrewProfile pattern). Seed intervals become defaults, overridden by learned data. (~200 lines + 14 tests).
+**AD-382: ServiceProfile — Learned External Service Modeling** *(done)* — Replace hardcoded `_KNOWN_RATE_LIMITS` in HttpFetchAgent with SQLite-backed `ServiceProfile` per domain. Learned `min_interval`, latency percentiles (EMA), error rate, reliability history. Profiles persist across restarts. `ServiceProfileStore` (CrewProfile pattern). Seed intervals become defaults, overridden by learned data. 17 tests.
 
 **Wave 2:**
 

@@ -616,3 +616,19 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/task-tracker.md`
 **Status:** AD-316 complete — 30 new tests, 2502 pytest + 34 vitest = 2536 total
+
+## Phase 28b: Cognitive Evolution (AD-380–385)
+
+### AD-380: EmergentDetector Trend Regression (DONE)
+
+**Decision:** AD-380 — Multi-snapshot trend analysis over the ring buffer. Pure Python `_linear_regression()` computes slopes for tc_n, routing_entropy, cluster_count, trust_spread, capability_count. `TrendDirection` enum (rising/stable/falling), `MetricTrend` dataclass with r_squared significance test. `TrendReport` aggregates all 5 metrics with `significant_trends` filter. Ring buffer converted from list to `collections.deque(maxlen=...)`. Wired into `detect_anomalies()` as `emergence_trends` pattern. Configurable `trend_threshold` (default 0.005). introspect.py fixed for deque slicing.
+
+**Build prompt:** `prompts/emergent-trends.md`
+**Status:** AD-380 complete — 12 new tests, 2514 pytest + 34 vitest = 2548 total
+
+### AD-382: ServiceProfile — Learned External Service Modeling (DONE)
+
+**Decision:** AD-382 — SQLite-backed `ServiceProfile` replaces hardcoded `_KNOWN_RATE_LIMITS`. `LatencyStats` with asymmetric EMA for p50/p95/p99 percentiles. `ServiceProfile` with learned_min_interval, error/rate-limit tracking, 429→increase, 2xx→decay logic. `ServiceProfileStore` (SQLite, CrewProfile pattern) with `get_or_create()`, `save()`, `all_profiles()`, `get_interval()`. Seed intervals preserve existing defaults. HttpFetchAgent reads from store via `set_profile_store()` classmethod. Runtime wires store at startup/shutdown.
+
+**Build prompt:** `prompts/service-profile.md`
+**Status:** AD-382 complete — 17 new tests, 2531 pytest + 34 vitest = 2565 total

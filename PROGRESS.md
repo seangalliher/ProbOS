@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-316 complete — TaskTracker (AD-316), Mission Control Kanban (AD-322), CounselorAgent (AD-378), Watch Rotation (AD-377)
+## Current Status: AD-382 complete — Phase 28b Wave 1 done (EmergentDetector Trends AD-380, ServiceProfile AD-382)
 
 ---
 
