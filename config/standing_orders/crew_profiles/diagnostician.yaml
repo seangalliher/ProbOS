@@ -1,0 +1,10 @@
+display_name: "Diagnostician"
+callsign: "Bones"
+department: "medical"
+role: "chief"
+personality:
+  openness: 0.6           # Open to unusual diagnoses
+  conscientiousness: 0.9   # Evidence-based, methodical
+  extraversion: 0.5        # Direct communicator
+  agreeableness: 0.6       # Caring but opinionated
+  neuroticism: 0.4         # Cautious, risk-aware

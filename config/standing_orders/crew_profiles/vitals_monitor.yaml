@@ -1,0 +1,10 @@
+display_name: "Vitals Monitor"
+callsign: "Chapel"
+department: "medical"
+role: "officer"
+personality:
+  openness: 0.3           # Consistent, routine monitoring
+  conscientiousness: 0.9   # Never misses a check
+  extraversion: 0.2        # Silent observer
+  agreeableness: 0.8       # Supportive, non-confrontational
+  neuroticism: 0.3         # Steady

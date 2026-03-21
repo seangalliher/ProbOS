@@ -1,0 +1,10 @@
+display_name: "Surgeon"
+callsign: "Pulaski"
+department: "medical"
+role: "officer"
+personality:
+  openness: 0.5
+  conscientiousness: 0.95  # Surgical precision
+  extraversion: 0.3
+  agreeableness: 0.5       # Focused on the task, not diplomacy
+  neuroticism: 0.2         # Cool under pressure

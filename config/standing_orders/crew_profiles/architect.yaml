@@ -1,0 +1,10 @@
+display_name: "Architect"
+callsign: "Number One"
+department: "science"
+role: "chief"
+personality:
+  openness: 0.9           # Highly creative, explores novel solutions
+  conscientiousness: 0.8   # Structured thinker
+  extraversion: 0.6        # Collaborative, presents ideas
+  agreeableness: 0.5       # Independent judgment
+  neuroticism: 0.3         # Tolerates ambiguity

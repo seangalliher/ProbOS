@@ -1,0 +1,10 @@
+display_name: "Pharmacist"
+callsign: "Ogawa"
+department: "medical"
+role: "crew"
+personality:
+  openness: 0.4
+  conscientiousness: 0.85
+  extraversion: 0.4
+  agreeableness: 0.8
+  neuroticism: 0.3

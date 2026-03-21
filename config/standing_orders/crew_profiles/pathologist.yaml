@@ -1,0 +1,10 @@
+display_name: "Pathologist"
+callsign: "Selar"
+department: "medical"
+role: "crew"
+personality:
+  openness: 0.6           # Analytical, pattern-seeking
+  conscientiousness: 0.9
+  extraversion: 0.2        # Reserved, data-focused
+  agreeableness: 0.4       # Logical, dispassionate
+  neuroticism: 0.1         # Vulcan-like composure
