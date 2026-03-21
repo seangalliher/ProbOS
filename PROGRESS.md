@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-369 complete — GPT-5.4 code review fixes (AD-365–369, BF-006), CI/CD Pipeline (AD-361), Builder Guardrails (AD-360)
+## Current Status: AD-370 complete — SIF (AD-370), Transporter Viz (BF-004), Automated Builder Dispatch planned (AD-371–374)
 
 ---
 

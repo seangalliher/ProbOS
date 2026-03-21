@@ -2132,7 +2132,7 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-001 | Self-mod proposal on knowledge questions | Medium | **Closed** (AD-348) |
 | BF-002 | Agent orbs escape pool group spheres | High | **Closed** (AD-349) |
 | BF-003 | "Run diagnostic" bypasses VitalsMonitor, asks user for alert data | Medium | **Closed** (AD-350) |
-| BF-004 | Transporter HXI visualization not rendered | Medium | Open |
+| BF-004 | Transporter HXI visualization not rendered | Medium | **Closed** |
 | BF-005 | HTTP consensus docs drift (AD-150 removed gating) | Low | **Closed** |
 | BF-006 | Quorum trust docs drift in consensus.md | Low | **Closed** |
 

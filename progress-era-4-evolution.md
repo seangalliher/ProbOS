@@ -469,3 +469,29 @@ Second batch of GPT-5.4 code review findings across Runtime/Consensus, HXI/UI, B
 
 **Build prompt:** `prompts/fix-quorum-trust-docs.md`
 **Status:** BF-006 closed
+
+## BF-004 + AD-370 — First Parallel Builder Trial
+
+First trial of parallel builder dispatch: two builders ran simultaneously with zero file overlap. Builder 1 (UI, main worktree) handled BF-004, Builder 2 (Python, `ProbOS-builder-2` worktree) handled AD-370.
+
+### BF-004: Transporter HXI Visualization (DONE)
+
+**Bug:** Transporter Pattern (AD-330–336) emits 6 event types, Zustand store updates `transporterProgress` state, but `IntentSurface.tsx` had no rendering block — data went to nowhere.
+
+**Changes:**
+- `IntentSurface.tsx` — Added transporter progress card: phase badge, progress fraction, animated progress bar (teal fill + red for failures), chunk list with color-coded status dots, target file paths, footer stats. Auto-clears on completion.
+
+**Build prompt:** `prompts/bf-004-transporter-visualization.md`
+**Status:** BF-004 closed — 0 regressions
+
+### AD-370: Structural Integrity Field — SIF (DONE)
+
+**Decision:** AD-370 — Lightweight runtime service with 7 pure-assertion invariant checks running on 5s heartbeat. Ship's Computer function, not an agent. No LLM calls.
+
+**Changes:**
+- `sif.py` (NEW) — `StructuralIntegrityField` class with `SIFCheckResult`/`SIFReport` dataclasses. 4 active checks (trust bounds, Hebbian bounds, pool consistency, IntentBus coherence) + 3 graceful no-ops (config, index, memory — pending future wiring). Exception isolation per check. Background `asyncio.Task` with configurable interval. `health_pct`, `all_passed`, `violations` properties.
+- `runtime.py` — SIF instantiation in `start()`, cleanup in `stop()`
+- `test_sif.py` (NEW) — 12 tests: NaN/out-of-range/pass for trust and Hebbian, orphan/pass for pools, health_pct calculation, all-None graceful degradation, violations property, config validity
+
+**Build prompt:** `prompts/sif-structural-integrity.md`
+**Status:** AD-370 complete — 12 new tests, 2371 pytest + 34 vitest = 2405 total
