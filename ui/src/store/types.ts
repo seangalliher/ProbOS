@@ -110,6 +110,19 @@ export interface TransporterProgress {
   failed: number;
 }
 
+export interface BuildQueueItem {
+  id: string;
+  title: string;
+  ad_number: number;
+  status: 'queued' | 'dispatched' | 'building' | 'reviewing' | 'merged' | 'failed';
+  priority: number;
+  worktree_path: string;
+  builder_id: string;
+  error: string;
+  file_footprint: string[];
+  commit_hash: string;
+}
+
 export interface ArchitectProposalView {
   design_id: string;
   title: string;

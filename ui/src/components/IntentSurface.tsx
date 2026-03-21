@@ -48,6 +48,7 @@ export function IntentSurface() {
   const consumePendingChar = useStore((s) => s.consumePendingChar);
   const voiceEnabled = useStore((s) => s.voiceEnabled);
   const transporterProgress = useStore((s) => s.transporterProgress);
+  const buildQueue = useStore((s) => s.buildQueue);
 
   /* ── consume pending char from global keydown ── */
   useEffect(() => {
@@ -1170,6 +1171,166 @@ export function IntentSurface() {
                       )}
                     </div>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Build Queue Dashboard (AD-373) ── */}
+            {buildQueue && buildQueue.length > 0 && (
+              <div style={{ marginTop: 8, maxWidth: '80%', padding: '0 20px' }}>
+                <div style={{
+                  padding: '8px 12px',
+                  borderRadius: 8,
+                  background: 'rgba(176, 160, 80, 0.08)',
+                  border: '1px solid rgba(176, 160, 80, 0.2)',
+                  fontSize: 12,
+                  color: '#c8d0e0',
+                }}>
+                  {/* Header */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span style={{
+                      padding: '1px 6px',
+                      borderRadius: 4,
+                      background: 'rgba(176, 160, 80, 0.15)',
+                      border: '1px solid rgba(176, 160, 80, 0.3)',
+                      color: '#b0a050',
+                      fontSize: 10,
+                      fontWeight: 600,
+                      textTransform: 'uppercase' as const,
+                      letterSpacing: '0.5px',
+                    }}>
+                      Build Queue
+                    </span>
+                    <span style={{ color: '#8888a0', fontSize: 11 }}>
+                      {buildQueue.filter(b => !['merged', 'failed'].includes(b.status)).length} active
+                    </span>
+                  </div>
+
+                  {/* Build items list */}
+                  {buildQueue.map((item) => (
+                    <div key={item.id} style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      marginBottom: 6,
+                      padding: '4px 0',
+                      borderBottom: '1px solid rgba(176, 160, 80, 0.1)',
+                    }}>
+                      {/* Status dot */}
+                      <span style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        flexShrink: 0,
+                        background: item.status === 'merged' ? '#50c878'
+                          : item.status === 'failed' ? '#ff5555'
+                          : item.status === 'reviewing' ? '#b0a050'
+                          : item.status === 'building' ? '#ffaa44'
+                          : item.status === 'dispatched' ? '#6688cc'
+                          : '#555566',
+                        ...(item.status === 'building' ? {
+                          animation: 'neural-pulse 1.4s ease-in-out infinite',
+                        } : {}),
+                      }} />
+
+                      {/* Title + AD number */}
+                      <span style={{ fontSize: 11, color: '#c8d0e0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {item.title}
+                        {item.ad_number > 0 && (
+                          <span style={{ color: '#8888a0', marginLeft: 4 }}>AD-{item.ad_number}</span>
+                        )}
+                      </span>
+
+                      {/* Status badge */}
+                      <span style={{
+                        padding: '1px 5px',
+                        borderRadius: 3,
+                        fontSize: 9,
+                        fontWeight: 600,
+                        textTransform: 'uppercase' as const,
+                        letterSpacing: '0.3px',
+                        background: item.status === 'reviewing' ? 'rgba(176, 160, 80, 0.2)' : 'rgba(128, 128, 160, 0.15)',
+                        color: item.status === 'reviewing' ? '#b0a050'
+                          : item.status === 'merged' ? '#50c878'
+                          : item.status === 'failed' ? '#ff5555'
+                          : '#8888a0',
+                        border: item.status === 'reviewing' ? '1px solid rgba(176, 160, 80, 0.3)' : '1px solid rgba(128, 128, 160, 0.2)',
+                      }}>
+                        {item.status}
+                      </span>
+
+                      {/* Approve / Reject buttons for reviewing items */}
+                      {item.status === 'reviewing' && (
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: 4,
+                              border: '1px solid rgba(80, 200, 120, 0.3)',
+                              background: 'rgba(80, 200, 120, 0.15)',
+                              color: '#50c878',
+                              fontSize: 10,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                            onClick={async () => {
+                              try {
+                                await fetch('/api/build/approve', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ build_id: item.id }),
+                                });
+                              } catch { /* ignore */ }
+                            }}
+                          >
+                            Approve
+                          </button>
+                          <button
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: 4,
+                              border: '1px solid rgba(255, 85, 85, 0.3)',
+                              background: 'rgba(255, 85, 85, 0.15)',
+                              color: '#ff5555',
+                              fontSize: 10,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                            onClick={async () => {
+                              try {
+                                await fetch('/api/build/reject', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ build_id: item.id }),
+                                });
+                              } catch { /* ignore */ }
+                            }}
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {/* File footprint for reviewing items */}
+                  {buildQueue.filter(b => b.status === 'reviewing').map((item) => (
+                    item.file_footprint.length > 0 && (
+                      <div key={`fp-${item.id}`} style={{
+                        marginTop: 4,
+                        padding: '4px 8px',
+                        background: 'rgba(176, 160, 80, 0.05)',
+                        borderRadius: 4,
+                        fontSize: 10,
+                        color: '#8888a0',
+                        fontFamily: 'monospace',
+                      }}>
+                        {item.file_footprint.map((f, i) => (
+                          <div key={i}>{f}</div>
+                        ))}
+                      </div>
+                    )
+                  ))}
                 </div>
               </div>
             )}

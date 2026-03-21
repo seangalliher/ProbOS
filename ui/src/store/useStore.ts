@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { soundEngine } from '../audio/soundEngine';
 import type {
   Agent, Connection, PoolInfo, PoolGroupInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
-  BuildProposal, BuildFailureReport, ArchitectProposalView,
+  BuildProposal, BuildFailureReport, ArchitectProposalView, BuildQueueItem,
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
@@ -199,6 +199,7 @@ export interface HXIState {
     successful: number;
     failed: number;
   } | null;
+  buildQueue: BuildQueueItem[] | null;
   pendingRoutingPulse: { source: string; target: string } | null;
   pendingFeedbackPulse: 'good' | 'bad' | null;
 
@@ -271,6 +272,7 @@ export const useStore = create<HXIState>((set, get) => ({
   buildProgress: null,
   designProgress: null,
   transporterProgress: null,
+  buildQueue: null,
   pendingRoutingPulse: null,
   pendingFeedbackPulse: null,
   connected: false,
@@ -683,6 +685,52 @@ export const useStore = create<HXIState>((set, get) => ({
         const msg = (data.message || '') as string;
         if (msg) {
           get().addChatMessage('system', msg);
+        }
+        break;
+      }
+
+      case 'build_queue_update': {
+        // Full queue snapshot
+        const items = (data.items || []) as BuildQueueItem[];
+        set({ buildQueue: items.length > 0 ? items : null });
+        break;
+      }
+
+      case 'build_queue_item': {
+        // Single item update — upsert into existing queue
+        const item = data.item as BuildQueueItem;
+        if (!item) break;
+        const current = get().buildQueue || [];
+        const idx = current.findIndex(b => b.id === item.id);
+        const updated = [...current];
+        if (idx >= 0) {
+          updated[idx] = item;
+        } else {
+          updated.push(item);
+        }
+        // Remove merged/failed items older than 30s (auto-clear)
+        const active = updated.filter(
+          b => !['merged', 'failed'].includes(b.status)
+        );
+        const terminal = updated.filter(
+          b => ['merged', 'failed'].includes(b.status)
+        );
+        set({ buildQueue: [...active, ...terminal].length > 0
+          ? [...active, ...terminal] : null });
+
+        // Log status transitions to chat
+        if (item.status === 'building') {
+          get().addChatMessage('system',
+            `Builder started: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''}`);
+        } else if (item.status === 'reviewing') {
+          get().addChatMessage('system',
+            `Build ready for review: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''}`);
+        } else if (item.status === 'merged') {
+          get().addChatMessage('system',
+            `Build merged: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''} → ${item.commit_hash.slice(0, 7)}`);
+        } else if (item.status === 'failed') {
+          get().addChatMessage('system',
+            `Build failed: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''} — ${item.error}`);
         }
         break;
       }
