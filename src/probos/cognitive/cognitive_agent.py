@@ -55,11 +55,18 @@ class CognitiveAgent(BaseAgent):
         # Skills dict (AD-199)
         self._skills: dict[str, Skill] = {}
 
+        # Strategy advisor (AD-384) — optional cross-agent knowledge transfer
+        self._strategy_advisor = None
+
         # Validate instructions exist
         if not self.instructions:
             raise ValueError(
                 f"{self.__class__.__name__} requires non-empty instructions"
             )
+
+    def set_strategy_advisor(self, advisor) -> None:
+        """Attach a StrategyAdvisor for cross-agent knowledge transfer (AD-384)."""
+        self._strategy_advisor = advisor
 
     async def perceive(self, intent: Any) -> dict:
         """Package the intent as an observation for the LLM."""
@@ -103,6 +110,21 @@ class CognitiveAgent(BaseAgent):
         # --- LLM call (cache miss) ---
         user_message = self._build_user_message(observation)
 
+        # Strategy advice (AD-384)
+        applied_strategy_ids: list[str] = []
+        if self._strategy_advisor:
+            intent_type = observation.get("intent", "")
+            if intent_type:
+                strategies = self._strategy_advisor.query_strategies(
+                    intent_type, self.agent_type
+                )
+                context = self._strategy_advisor.format_for_context(strategies)
+                if context:
+                    user_message = user_message + "\n\n" + context
+                applied_strategy_ids = [
+                    s["id"] for s in strategies if s.get("id")
+                ]
+
         from probos.cognitive.standing_orders import compose_instructions
 
         composed = compose_instructions(
@@ -122,6 +144,13 @@ class CognitiveAgent(BaseAgent):
             "llm_output": response.content,
             "tier_used": response.tier,
         }
+
+        # Record strategy outcomes (AD-384)
+        if applied_strategy_ids and self._strategy_advisor:
+            for sid in applied_strategy_ids:
+                self._strategy_advisor.record_outcome(
+                    sid, self.agent_type, success=True
+                )
 
         # --- Store in cache ---
         ttl = self._get_cache_ttl()
