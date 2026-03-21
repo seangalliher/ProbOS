@@ -79,14 +79,13 @@ class HttpFetchAgent(BaseAgent):
     # Class-level shared state — all pool members share rate limit knowledge (AD-270)
     _domain_state: ClassVar[dict[str, DomainRateState]] = {}
 
-    _KNOWN_RATE_LIMITS: ClassVar[dict[str, float]] = {
-        "api.coingecko.com": 3.0,
-        "wttr.in": 2.0,
-        "feeds.reuters.com": 1.0,
-        "feeds.bbci.co.uk": 1.0,
-        "feeds.npr.org": 1.0,
-        "html.duckduckgo.com": 2.0,
-    }
+    # Persistent service profile store (AD-382) — set via runtime wiring
+    _profile_store: ClassVar[Any] = None
+
+    @classmethod
+    def set_profile_store(cls, store: Any) -> None:
+        """Wire or disconnect the ServiceProfileStore."""
+        cls._profile_store = store
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Full lifecycle: perceive -> decide -> act -> report."""
@@ -198,16 +197,22 @@ class HttpFetchAgent(BaseAgent):
                 headers={"User-Agent": self.USER_AGENT},
                 follow_redirects=True,
             ) as client:
+                req_start = time.monotonic()
                 response = await client.request(method, url)
+                latency_ms = (time.monotonic() - req_start) * 1000
 
                 self._update_rate_state(state, response)
+                self._record_to_profile(domain, latency_ms, response.status_code)
 
                 # Auto-retry once on 429 (AD-270)
                 if response.status_code == 429:
                     retry_delay = await self._wait_for_rate_limit(domain, state)
                     state.last_request_time = time.monotonic()
+                    req_start2 = time.monotonic()
                     response = await client.request(method, url)
+                    latency_ms2 = (time.monotonic() - req_start2) * 1000
                     self._update_rate_state(state, response)
+                    self._record_to_profile(domain, latency_ms2, response.status_code)
                     delay += retry_delay
 
                 body = response.content[:self.MAX_BODY_BYTES].decode(
@@ -245,7 +250,11 @@ class HttpFetchAgent(BaseAgent):
         """Look up or create rate-limit state for the URL's domain."""
         domain = urllib.parse.urlparse(url).netloc
         if domain not in self._domain_state:
-            interval = self._KNOWN_RATE_LIMITS.get(domain, 2.0)
+            if self._profile_store:
+                interval = self._profile_store.get_interval(domain)
+            else:
+                from probos.service_profile import DEFAULT_INTERVAL, _SEED_INTERVALS
+                interval = _SEED_INTERVALS.get(domain, DEFAULT_INTERVAL)
             self._domain_state[domain] = DomainRateState(min_interval_seconds=interval)
         return domain, self._domain_state[domain]
 
@@ -307,3 +316,14 @@ class HttpFetchAgent(BaseAgent):
                     state.reset_time = time.monotonic() + (reset_unix - now_unix)
             except (ValueError, TypeError):
                 pass
+
+    def _record_to_profile(self, domain: str, latency_ms: float, status_code: int) -> None:
+        """Record request to persistent ServiceProfile (AD-382)."""
+        if not self._profile_store:
+            return
+        try:
+            profile = self._profile_store.get_or_create(domain)
+            profile.record_request(latency_ms, status_code)
+            self._profile_store.save(profile)
+        except Exception:
+            pass  # Profile recording is best-effort

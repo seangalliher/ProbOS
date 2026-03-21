@@ -15,6 +15,7 @@ from probos.agents.file_search import FileSearchAgent
 from probos.agents.file_writer import FileWriterAgent
 from probos.agents.heartbeat_monitor import SystemHeartbeatAgent
 from probos.agents.http_fetch import HttpFetchAgent
+from probos.service_profile import ServiceProfileStore
 from probos.agents.introspect import IntrospectionAgent
 from probos.agents.red_team import RedTeamAgent
 from probos.agents.shell_command import ShellCommandAgent
@@ -240,6 +241,9 @@ class ProbOSRuntime:
 
         # --- Task Tracker (AD-316) ---
         self.task_tracker: TaskTracker | None = None
+
+        # --- Service Profiles (AD-382) ---
+        self.service_profiles: ServiceProfileStore | None = None
 
         # --- Semantic knowledge layer (AD-243) ---
         self._semantic_layer: SemanticKnowledgeLayer | None = None
@@ -930,6 +934,11 @@ class ProbOSRuntime:
         self.task_tracker = TaskTracker(on_event=self._emit_event)
         logger.info("task-tracker started")
 
+        # --- Service Profiles (AD-382) ---
+        self.service_profiles = ServiceProfileStore()
+        HttpFetchAgent.set_profile_store(self.service_profiles)
+        logger.info("service-profiles started")
+
         self._started = True
 
         await self.event_log.log(category="system", event="started")
@@ -969,6 +978,10 @@ class ProbOSRuntime:
         # Stop task tracker (AD-316)
         if self.task_tracker:
             self.task_tracker = None
+
+        # Disconnect service profiles (AD-382)
+        HttpFetchAgent.set_profile_store(None)
+        self.service_profiles = None
 
         # Stop red team agents
         for agent in self._red_team_agents:

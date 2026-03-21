@@ -710,7 +710,7 @@ class IntrospectionAgent(BaseAgent):
 
         # Build trend data from snapshot history
         trends: dict[str, list] = {"tc_n": [], "routing_entropy": []}
-        for snap in detector._history[-10:]:
+        for snap in list(detector._history)[-10:]:
             trends["tc_n"].append(round(snap.tc_n, 4))
             trends["routing_entropy"].append(round(snap.routing_entropy, 4))
 
