@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-381 complete — Phase 28b Waves 1-2 done (AD-380, AD-382, AD-381)
+## Current Status: AD-383 complete — Phase 28b Waves 1-3 in progress (AD-380, AD-382, AD-381, AD-383 done; AD-385, AD-384 next)
 
 ---
 

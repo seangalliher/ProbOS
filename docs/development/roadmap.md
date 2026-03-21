@@ -1313,11 +1313,11 @@ Six ADs that close the gaps between the theoretical Cognitive Evolution framewor
 
 **Wave 2:**
 
-**AD-381: InitiativeEngine — SIF → Remediation Proposals** — Bridge SIF (read-only monitoring) and the self-mod pipeline. New Ship's Computer service monitors SIF violations, EmergentDetector falling trends (from AD-380), Counselor red/yellow alerts. When triggers persist for N consecutive checks, generates `RemediationProposal` with trust-gated execution: AUTO (diagnose, alert_captain), COMMANDER (scale, recycle), CAPTAIN (patch). Fails-open, no LLM calls. (~300 lines + 18 tests).
+**AD-381: InitiativeEngine — SIF → Remediation Proposals** *(done)* — Bridge SIF (read-only monitoring) and the self-mod pipeline. New Ship's Computer service monitors SIF violations, EmergentDetector falling trends (from AD-380), Counselor red/yellow alerts. When triggers persist for N consecutive checks, generates `RemediationProposal` with trust-gated execution: AUTO (diagnose, alert_captain), COMMANDER (scale, recycle), CAPTAIN (patch). Fails-open, no LLM calls. (~300 lines + 18 tests).
 
 **Wave 3 (sequential chain):**
 
-**AD-383: Strategy Extraction — Dream-Derived Transferable Patterns** — New dream pass after trust consolidation. Scans episodic memory for cross-agent recurring patterns: error→recovery across agent types, high-confidence intent patterns across agents, intent co-occurrence sequences. Outputs `StrategyPattern` objects stored in KnowledgeStore. The dream cycle literally extracts crew wisdom from experience. (~250 lines + 15 tests).
+**AD-383: Strategy Extraction — Dream-Derived Transferable Patterns** *(done)* — New dream pass after trust consolidation. Scans episodic memory for cross-agent recurring patterns: error→recovery across agent types, high-confidence intent patterns across agents, intent co-occurrence sequences. Outputs `StrategyPattern` objects stored in KnowledgeStore. The dream cycle literally extracts crew wisdom from experience. (~250 lines + 15 tests).
 
 **AD-385: Capability Gap Prediction — Proactive Self-Mod** — New dream pass after strategy extraction. Analyzes episodic memory for: repeated low confidence on an intent type, repeated fallback (no intent matched), partial DAG coverage (one node consistently fails). Outputs `CapabilityGapPrediction` objects surfaced to Captain. The system says "I've noticed we struggle with X — shall I design a specialist?" instead of waiting for the user to hit the wall. (~200 lines + 14 tests).
 
@@ -1331,8 +1331,11 @@ Six ADs that close the gaps between the theoretical Cognitive Evolution framewor
 | AD-383 | Strategy Extraction | 3 | None | ~250 | 15 |
 | AD-385 | Capability Gap Prediction | 3 | AD-383 | ~200 | 14 |
 | AD-384 | Strategy Application | 3 | AD-383 | ~200 | 12 |
+| AD-386 | Runtime Directive Overlays | 4 | AD-376 (Rank) | ~200 | 30 |
 
 **Nooplex emergence impact:** AD-380 + AD-385 directly advance emergence criteria (trend measurement, proactive capability expansion). AD-383 + AD-384 close the biggest structural gap (cross-agent transfer learning). AD-381 + AD-382 create practical value while building infrastructure those criteria require.
+
+**AD-386: Runtime Directive Overlays — Evolvable Chain-of-Command Instructions** — Instructions today are static files; no crew member can issue new directives at runtime. This AD adds a persistent tier 6 instruction layer: `RuntimeDirective` objects issued through the chain of command (Captain→any, Bridge→advisory, Chief→subordinates, Self→self, Peer→suggestion). SQLite-backed `DirectiveStore`, authorized by `Rank` from CrewProfile. Self-updates tiered by trust: Ensign needs Captain approval, Lieutenant+ auto-approved (Counselor monitors drift). Wired into `compose_instructions()` as an additional layer after personal standing orders. Shell commands `/order` and `/directives`. (~200 lines + 30 tests). Build prompt: `prompts/runtime-directives.md`.
 
 ---
 

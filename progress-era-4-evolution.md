@@ -639,3 +639,10 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/initiative-engine.md`
 **Status:** AD-381 complete — 19 new tests, 2550 pytest + 34 vitest = 2584 total
+
+### AD-383: Strategy Extraction — Dream-Derived Transferable Patterns (DONE)
+
+**Decision:** AD-383 — New dream pass (step 6) extracting cross-agent transferable patterns from episodic memory. Three pattern detectors: (1) error recovery — same error resolved by 2+ different agent types, (2) high-confidence prompting — intent type with avg confidence >0.8 across 2+ agents, (3) coordination — intent co-occurrence within 60s window across 3+ episodes. `StrategyType` enum (ERROR_RECOVERY/PROMPT_TECHNIQUE/COORDINATION/OPTIMIZATION). `StrategyPattern` dataclass with deterministic SHA-256 ID, `reinforce()` for evidence accumulation, confidence formula `1 - 1/(count+1)`. `extract_strategies()` main function with dedup. File named `strategy_extraction.py` (not `strategy.py`) to avoid conflict with existing `StrategyRecommender`. Wired into `DreamingEngine.dream_cycle()` via `strategy_store_fn` callback. `DreamReport.strategies_extracted` field added (backward compatible default 0). Runtime persists strategies as JSON files under `knowledge_store.repo_path / "strategies/"`.
+
+**Build prompt:** `prompts/strategy-extraction.md`
+**Status:** AD-383 complete — 15 new tests, 2565 pytest + 34 vitest = 2599 total
