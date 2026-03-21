@@ -646,3 +646,17 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/strategy-extraction.md`
 **Status:** AD-383 complete — 15 new tests, 2565 pytest + 34 vitest = 2599 total
+
+### AD-385: Capability Gap Prediction — Proactive Self-Mod (DONE)
+
+**Decision:** AD-385 — New dream pass (step 7) analyzing episodic memory for recurring near-misses. Three detection methods: (1) repeated low confidence — intent type with avg confidence below threshold across 5+ episodes, (2) repeated fallback — no intent matched or very low confidence on similar topics 3+ times, (3) partial DAG coverage — DAG node fails >50% across 3+ attempts. `CapabilityGapPrediction` dataclass with descriptive ID, evidence type/summary/count, suggested intent, priority. `_extract_topic()` with stopword filtering, `_get_field()` for dict/object access. Wired into `DreamingEngine.dream_cycle()` via `gap_prediction_fn`. `DreamReport.gaps_predicted` field added. Runtime broadcasts to HXI as `capability_gap_predicted` events.
+
+**Build prompt:** `prompts/gap-prediction.md`
+**Status:** AD-385 complete — 14 new tests, 2579 pytest + 34 vitest = 2613 total
+
+### AD-384: Strategy Application — Cross-Agent Knowledge Transfer (DONE)
+
+**Decision:** AD-384 — Makes dream-extracted strategies (AD-383) consumable by all CognitiveAgents. `StrategyAdvisor` loads strategies from knowledge store's `strategies/` directory (JSON), matches by intent type against `source_intent_types` and `applicability`, filters low-confidence (<0.3), boosts with `REL_STRATEGY` Hebbian weight, returns top 3 sorted by relevance. `format_for_context()` produces `[CREW EXPERIENCE]` block injected into user message before LLM call. `record_outcome()` writes to HebbianRouter so strategy usefulness is learned per agent type. `REL_STRATEGY` constant added to `routing.py`. `CognitiveAgent` gains `_strategy_advisor` field + `set_strategy_advisor()`. Runtime wires advisor onto all CognitiveAgent instances after pool creation.
+
+**Build prompt:** `prompts/strategy-application.md`
+**Status:** AD-384 complete — 12 new tests, 2591 pytest + 34 vitest = 2625 total
