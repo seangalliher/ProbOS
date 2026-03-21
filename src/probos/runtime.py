@@ -16,6 +16,8 @@ from probos.agents.file_writer import FileWriterAgent
 from probos.agents.heartbeat_monitor import SystemHeartbeatAgent
 from probos.agents.http_fetch import HttpFetchAgent
 from probos.service_profile import ServiceProfileStore
+from probos.directive_store import DirectiveStore
+from probos.cognitive.standing_orders import set_directive_store
 from probos.agents.introspect import IntrospectionAgent
 from probos.agents.red_team import RedTeamAgent
 from probos.agents.shell_command import ShellCommandAgent
@@ -252,6 +254,9 @@ class ProbOSRuntime:
         # --- Service Profiles (AD-382) ---
         self.service_profiles: ServiceProfileStore | None = None
 
+        # --- Directive Store (AD-386) ---
+        self.directive_store: DirectiveStore | None = None
+
         # --- Semantic knowledge layer (AD-243) ---
         self._semantic_layer: SemanticKnowledgeLayer | None = None
 
@@ -413,6 +418,17 @@ class ProbOSRuntime:
             "pool_groups": self.pool_groups.status(self.pools),
             "pool_to_group": dict(self.pool_groups._pool_to_group),
             "tasks": self.task_tracker.snapshot() if self.task_tracker else [],
+            "directives": self._directive_summary(),
+        }
+
+    def _directive_summary(self) -> dict[str, int]:
+        """Build directive count summary for state snapshot (AD-386)."""
+        if not self.directive_store:
+            return {"active": 0, "pending": 0}
+        active = self.directive_store.all_directives(include_inactive=False)
+        return {
+            "active": len([d for d in active if d.status.value == "active"]),
+            "pending": len([d for d in active if d.status.value == "pending_approval"]),
         }
 
     async def create_pool(
@@ -981,6 +997,16 @@ class ProbOSRuntime:
         HttpFetchAgent.set_profile_store(self.service_profiles)
         logger.info("service-profiles started")
 
+        # --- Directive Store (AD-386) ---
+        try:
+            self.directive_store = DirectiveStore(
+                db_path=str(Path(self._data_dir) / "directives.db")
+            )
+            set_directive_store(self.directive_store)
+            logger.info("DirectiveStore initialized")
+        except Exception:
+            logger.exception("DirectiveStore init failed (non-fatal)")
+
         self._started = True
 
         await self.event_log.log(category="system", event="started")
@@ -1029,6 +1055,12 @@ class ProbOSRuntime:
         # Disconnect service profiles (AD-382)
         HttpFetchAgent.set_profile_store(None)
         self.service_profiles = None
+
+        # Disconnect directive store (AD-386)
+        if self.directive_store:
+            set_directive_store(None)
+            self.directive_store.close()
+            self.directive_store = None
 
         # Stop red team agents
         for agent in self._red_team_agents:

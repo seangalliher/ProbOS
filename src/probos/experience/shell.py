@@ -63,6 +63,8 @@ class ProbOSShell:
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
         "/prune":     "Permanently remove an agent (/prune <agent_id>)",
         "/imports":   "Manage allowed imports (/imports | /imports add <pkg> | /imports remove <pkg>)",
+        "/order":      "Issue a directive (/order <agent_type> <text>)",
+        "/directives": "Show active directives (/directives [agent_type])",
         "/ping":      "Show system uptime",
         "/debug":     "Toggle debug mode (/debug on|off)",
         "/help":      "Show this help message",
@@ -193,6 +195,8 @@ class ProbOSShell:
             "/ping":    self._cmd_ping,
             "/prune":   self._cmd_prune,
             "/imports": self._cmd_imports,
+            "/order":   self._cmd_order,
+            "/directives": self._cmd_directives,
             "/debug":   self._cmd_debug,
             "/help":    self._cmd_help,
             "/quit":    self._cmd_quit,
@@ -1019,6 +1023,71 @@ class ProbOSShell:
             for i in range(0, len(imports), 6):
                 chunk = ", ".join(imports[i:i + 6])
                 self.console.print(f"  {chunk}")
+
+    async def _cmd_order(self, arg: str) -> None:
+        """Issue a Captain's order to an agent type."""
+        if not arg:
+            self.console.print("[yellow]Usage: /order <agent_type> <instruction text>[/yellow]")
+            return
+        parts = arg.split(maxsplit=1)
+        if len(parts) < 2:
+            self.console.print("[yellow]Usage: /order <agent_type> <instruction text>[/yellow]")
+            return
+        target = parts[0]
+        content = parts[1]
+        store = self.runtime.directive_store
+        if not store:
+            self.console.print("[red]DirectiveStore not available[/red]")
+            return
+        from probos.directive_store import DirectiveType
+        from probos.crew_profile import Rank
+        from probos.cognitive.standing_orders import get_department, clear_cache
+        directive, reason = store.create_directive(
+            issuer_type="captain",
+            issuer_department=None,
+            issuer_rank=Rank.SENIOR,  # Captain has highest authority
+            target_agent_type=target,
+            target_department=get_department(target),
+            directive_type=DirectiveType.CAPTAIN_ORDER,
+            content=content,
+            authority=1.0,
+            priority=5,  # Captain orders are highest priority
+        )
+        if directive:
+            clear_cache()  # Invalidate composed instructions
+            self.console.print(f"[green]Order issued to {target}:[/green] {content}")
+            self.console.print(f"[dim]ID: {directive.id}[/dim]")
+        else:
+            self.console.print(f"[red]Authorization failed: {reason}[/red]")
+
+    async def _cmd_directives(self, arg: str) -> None:
+        """Show active directives, optionally filtered by agent type."""
+        store = self.runtime.directive_store
+        if not store:
+            self.console.print("[red]DirectiveStore not available[/red]")
+            return
+        directives = store.all_directives(include_inactive=False)
+        if arg:
+            from probos.cognitive.standing_orders import get_department
+            dept = get_department(arg)
+            directives = [
+                d for d in directives
+                if d.target_agent_type in (arg, "*") and
+                   (d.target_department is None or d.target_department == dept)
+            ]
+        if not directives:
+            self.console.print("[dim]No active directives[/dim]")
+            return
+        for d in directives:
+            status_color = "green" if d.status.value == "active" else "yellow"
+            dtype = d.directive_type.value.replace("_", " ").title()
+            target = d.target_agent_type
+            if d.target_department:
+                target += f" ({d.target_department})"
+            self.console.print(
+                f"[{status_color}][{dtype}][/{status_color}] -> {target}: {d.content}"
+            )
+            self.console.print(f"  [dim]by {d.issued_by} | priority {d.priority} | {d.id[:8]}[/dim]")
 
     async def _cmd_debug(self, arg: str) -> None:
         if arg.lower() == "on":

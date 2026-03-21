@@ -15,8 +15,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from functools import lru_cache
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Directive store reference, set by runtime at startup (AD-386)
+_directive_store: Any = None
 
 # Default location for standing orders
 _DEFAULT_ORDERS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "config" / "standing_orders"
@@ -55,6 +59,12 @@ def register_department(agent_type: str, department: str) -> None:
     Used by dynamically designed agents to declare their department.
     """
     _AGENT_DEPARTMENTS[agent_type] = department
+
+
+def set_directive_store(store: Any) -> None:
+    """Wire the DirectiveStore for tier 6 composition (AD-386)."""
+    global _directive_store
+    _directive_store = store
 
 
 @lru_cache(maxsize=32)
@@ -124,5 +134,16 @@ def compose_instructions(
     agent_text = _load_file(d / f"{agent_type}.md")
     if agent_text:
         parts.append(f"## Personal Standing Orders\n\n{agent_text}")
+
+    # 6. Active runtime directives (AD-386)
+    if _directive_store is not None:
+        dept = department or get_department(agent_type)
+        directives = _directive_store.get_active_for_agent(agent_type, dept)
+        if directives:
+            directive_lines = []
+            for directive in directives:
+                prefix = directive.directive_type.value.replace("_", " ").title()
+                directive_lines.append(f"- [{prefix}] {directive.content}")
+            parts.append("## Active Directives\n\n" + "\n".join(directive_lines))
 
     return "\n\n---\n\n".join(parts)
