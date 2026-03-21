@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { soundEngine } from '../audio/soundEngine';
 import type {
   Agent, Connection, PoolInfo, PoolGroupInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
-  BuildProposal, BuildFailureReport, ArchitectProposalView, BuildQueueItem,
+  BuildProposal, BuildFailureReport, ArchitectProposalView, BuildQueueItem, MissionControlTask,
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
@@ -200,6 +200,8 @@ export interface HXIState {
     failed: number;
   } | null;
   buildQueue: BuildQueueItem[] | null;
+  missionControlTasks: MissionControlTask[] | null;
+  missionControlView: boolean;
   pendingRoutingPulse: { source: string; target: string } | null;
   pendingFeedbackPulse: 'good' | 'bad' | null;
 
@@ -248,6 +250,33 @@ export interface HXIState {
   setVoiceEnabled: (v: boolean) => void;
 }
 
+/** Derive MissionControlTasks from BuildQueueItems (AD-322). */
+function buildQueueToTasks(items: BuildQueueItem[]): MissionControlTask[] {
+  const statusMap: Record<string, MissionControlTask['status']> = {
+    queued: 'queued',
+    dispatched: 'working',
+    building: 'working',
+    reviewing: 'review',
+    merged: 'done',
+    failed: 'failed',
+  };
+  return items.map(b => ({
+    id: b.id,
+    type: 'build' as const,
+    title: b.title,
+    department: 'engineering',
+    status: statusMap[b.status] || 'queued',
+    agent_type: 'builder',
+    agent_id: b.builder_id || '',
+    started_at: 0,
+    completed_at: 0,
+    priority: b.priority,
+    ad_number: b.ad_number,
+    error: b.error,
+    metadata: { file_footprint: b.file_footprint, commit_hash: b.commit_hash, worktree_path: b.worktree_path },
+  }));
+}
+
 export const useStore = create<HXIState>((set, get) => ({
   agents: new Map(),
   connections: [],
@@ -273,6 +302,8 @@ export const useStore = create<HXIState>((set, get) => ({
   designProgress: null,
   transporterProgress: null,
   buildQueue: null,
+  missionControlTasks: null,
+  missionControlView: false,
   pendingRoutingPulse: null,
   pendingFeedbackPulse: null,
   connected: false,
@@ -692,7 +723,10 @@ export const useStore = create<HXIState>((set, get) => ({
       case 'build_queue_update': {
         // Full queue snapshot
         const items = (data.items || []) as BuildQueueItem[];
-        set({ buildQueue: items.length > 0 ? items : null });
+        set({
+          buildQueue: items.length > 0 ? items : null,
+          missionControlTasks: items.length > 0 ? buildQueueToTasks(items) : null,
+        });
         break;
       }
 
@@ -716,7 +750,10 @@ export const useStore = create<HXIState>((set, get) => ({
           b => ['merged', 'failed'].includes(b.status)
         );
         set({ buildQueue: [...active, ...terminal].length > 0
-          ? [...active, ...terminal] : null });
+          ? [...active, ...terminal] : null,
+          missionControlTasks: [...active, ...terminal].length > 0
+          ? buildQueueToTasks([...active, ...terminal]) : null,
+        });
 
         // Log status transitions to chat
         if (item.status === 'building') {

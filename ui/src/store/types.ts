@@ -123,6 +123,22 @@ export interface BuildQueueItem {
   commit_hash: string;
 }
 
+export interface MissionControlTask {
+  id: string;
+  type: 'build' | 'design' | 'diagnostic' | 'assessment';
+  title: string;
+  department: string;
+  status: 'queued' | 'working' | 'review' | 'done' | 'failed';
+  agent_type: string;
+  agent_id: string;
+  started_at: number;
+  completed_at: number;
+  priority: number;
+  ad_number: number;
+  error: string;
+  metadata: Record<string, unknown>;
+}
+
 export interface ArchitectProposalView {
   design_id: string;
   title: string;

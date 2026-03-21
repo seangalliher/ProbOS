@@ -7,6 +7,7 @@ import type { SelfModProposal, BuildProposal, BuildFailureReport, ArchitectPropo
 import { speakResponse } from '../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
 import { soundEngine } from '../audio/soundEngine';
+import { MissionControl } from './MissionControl';
 
 /* ── spring easing ── */
 const spring = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -49,6 +50,7 @@ export function IntentSurface() {
   const voiceEnabled = useStore((s) => s.voiceEnabled);
   const transporterProgress = useStore((s) => s.transporterProgress);
   const buildQueue = useStore((s) => s.buildQueue);
+  const missionControlView = useStore((s) => s.missionControlView);
 
   /* ── consume pending char from global keydown ── */
   useEffect(() => {
@@ -307,6 +309,32 @@ export function IntentSurface() {
 
   return (
     <>
+      {/* ── Mission Control toggle (AD-322) ── */}
+      <button
+        onClick={() => useStore.setState((s) => ({ missionControlView: !s.missionControlView }))}
+        style={{
+          position: 'fixed',
+          top: 12,
+          right: 12,
+          zIndex: 25,
+          padding: '3px 8px',
+          borderRadius: 4,
+          border: '1px solid rgba(255, 255, 255, 0.15)',
+          background: missionControlView ? 'rgba(208, 160, 48, 0.2)' : 'transparent',
+          color: missionControlView ? '#d0a030' : '#888',
+          fontSize: 9,
+          fontWeight: 600,
+          cursor: 'pointer',
+          letterSpacing: 1,
+          pointerEvents: 'auto',
+        }}
+      >
+        {missionControlView ? 'HXI' : 'MISSION CTRL'}
+      </button>
+
+      {/* ── Mission Control overlay (AD-322) ── */}
+      {missionControlView && <MissionControl />}
+
       {/* ── Canvas dim overlay when active ── */}
       {active && (
         <div style={{
