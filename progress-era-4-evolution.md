@@ -589,3 +589,16 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/counselor-cognitive-profiles.md`
 **Status:** AD-378 complete — 18 new tests, 2472 pytest + 34 vitest = 2506 total
+
+### AD-322: Mission Control Kanban Dashboard (DONE)
+
+**Decision:** AD-322 — 4-column Kanban board (Queued → Working → Review → Done) as HXI overlay. Derives `MissionControlTask` from existing `BuildQueueItem` WebSocket events — no new backend code. Department color coding, status pulse animation, Approve/Reject buttons on review items.
+
+**Changes:**
+- New `ui/src/components/MissionControl.tsx` (209 lines): Full Kanban board with TaskCard component
+- Modified `ui/src/store/types.ts`: `MissionControlTask` interface
+- Modified `ui/src/store/useStore.ts`: `buildQueueToTasks()` derivation, `missionControlTasks` + `missionControlView` state, wired to both WebSocket handlers
+- Modified `ui/src/components/IntentSurface.tsx`: Toggle button and overlay rendering
+
+**Build prompt:** `prompts/mission-control-kanban.md`
+**Status:** AD-322 complete — 0 new tests (UI only), 2472 pytest + 34 vitest = 2506 total

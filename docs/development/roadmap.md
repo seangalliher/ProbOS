@@ -208,6 +208,8 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 | Subspace Communications | Voice interaction — STT, TTS, wake word, continuous talk | Roadmap (Phase 24) |
 | PADD (Personal Access Display Device) | Mobile companion — PWA, push notifications, responsive HXI | Roadmap (Phase 24) |
 | Holodeck | Browser automation — Playwright, screenshots, web interaction | Roadmap (Phase 25/35) |
+| Holodeck Simulations | Agent training environments — scenario simulation, promotion tests, skill acquisition | Long Horizon |
+| MemoryForge | Ship's Computer service — implanted birth memories, memory transfer, curated memory banks | Long Horizon |
 | Workflow Templates | Reusable multi-step pipelines — cron, webhooks, workflow API | Roadmap (Phase 33) |
 | Drydock | Distribution — PyPI, Docker, onboarding wizard, quickstart | Roadmap (Phase 32/35) |
 | Modular Construction | Extension-first architecture — sealed core, plugin extensions, graduated autonomy | Roadmap (Phase 30) |
@@ -617,7 +619,7 @@ AD-337 proved the Builder pipeline works end-to-end but revealed systemic qualit
 AD-342's `/orders` build revealed the next pipeline gap: when the builder fails, the Captain gets a raw error dump with no classification, no context, and no actionable options. The test runner also runs the full 2254-test suite with a 120s timeout, causing spurious timeouts when only a handful of targeted tests are relevant. These ADs introduce structured failure diagnostics, smart test selection, resolution options in the HXI, and the foundation for chain-of-command escalation.
 
 - **AD-343: BuildFailureReport & Classification** *(done)* — Structured failure report dataclass with failure categorization (timeout, test_failure, syntax_error, import_error, llm_error). Parses pytest output to extract failed test names and file:line error locations. Generates context-appropriate resolution options per category. 12 tests.
-- **AD-344: Smart Test Selection** *(done)* — Two-phase test runner: targeted tests first (by file naming convention), full suite only if targeted pass. Maps `src/probos/foo/bar.py` → `tests/test_bar*.py`. Drops typical test-fix iteration from ~120s to ~5-15s. Fix loop uses targeted tests for faster retries. 6 tests.
+- **AD-344: Smart Test Selection** *(done)* — Two-phase test runner: targeted tests first (by file naming convention), full suite only if targeted pass. Maps `src/probos/foo/bar.py` → `tests/test_bar*.py`. Drops typical test-fix iteration from ~120s to ~5-15s. Fix loop uses targeted tests for faster retries. 6 tests. **Future enhancement:** Build classification (additive vs integration) to skip full suite entirely for new standalone files. Wave-level batching — run full suite once per build wave rather than per AD, saving ~6 min per additive build.
 - **AD-345: Enriched Failure Event & Resolution API** *(done)* — Wire `BuildFailureReport` into `build_failure` WebSocket event. New `/api/build/resolve` endpoint handles: retry_extended, retry_targeted, retry_fix, commit_override, abort, investigate. Pending failure cache with 30-min expiry. 1 test.
 - **AD-346: HXI Build Failure Diagnostic Card** *(done)* — Frontend rendering of structured failure report with category badge, failed tests list, collapsible error output, and resolution action buttons. Red/amber accent styling. Mirrors build proposal card pattern.
 - **AD-347: Builder Escalation Hook** *(done)* — Pluggable callback on `execute_approved_build()` that fires before failure reaches the Captain. No-op initially; Phase 33 wires it to Engineering Chief → Architect → Captain cascade. Returns `BuildResult` if resolved, `None` to escalate. 4 tests.
@@ -1168,10 +1170,11 @@ A slide-out panel from the right edge of the chat:
 - Badge count on the drawer toggle button for "Needs Attention" items
 - Subscribes to `agent_task_update` WebSocket events for live updates
 
-**AD-322: Kanban Board View**
+**AD-322: Kanban Board View** *(done)*
 
-Full mission control as a dedicated view (route or tab):
+Mission Control Kanban dashboard — 4-column board (Queued → Working → Review → Done). `MissionControl.tsx` with `TaskCard` component showing department color coding, AD numbers, agent type, elapsed time, status pulse animation. Approve/Reject buttons on review-status items. `MissionControlTask` type derived from existing `BuildQueueItem` via `buildQueueToTasks()` — no new backend endpoints needed. Toggle button in HXI header switches between standard view and Mission Control overlay. Extensible to non-build task types (design, diagnostic, assessment) via `MissionControlTask.type`.
 
+Previously planned features for future iteration:
 - Columns: `Queued` → `Working` → `Needs Review` → `Done`
 - Cards show: agent type icon, task title, team color, elapsed time, step progress bar
 - Click card to expand into full detail panel: original prompt, step-by-step progress, file diffs (build tasks), proposal text (design tasks), action buttons (Approve / Reject / Respond)
@@ -1653,6 +1656,10 @@ Native Code Reviewer (knows Standing Orders — ProbOS constitution)
   ↓
 Native Test Gate (commit gate, smart test selection)
   → targeted tests first, full suite if targeted pass
+  → build classification: additive (new files) vs integration (modifying existing)
+  → additive builds: targeted tests only, commit immediately
+  → integration builds: targeted tests + background full suite before push
+  → wave-level batching: full suite once per build wave, not per individual AD
   → fix loop delegates fixes back to visiting Builder if needed
   ↓
 Captain approves
@@ -2055,6 +2062,123 @@ Currently ProbOS assumes a single Captain — one human operator with full autho
 - If a user improves an imported agent, they can contribute the improvement back to the source repo via PR
 - ProbOS-to-ProbOS collaboration: one ship's agent evolves and the improvement propagates across the fleet
 - Opt-in only — no automatic propagation, every change goes through Captain approval
+
+---
+
+### Holodeck — Simulation Engine for Agent Training (Long Horizon)
+
+*"Computer, create a training simulation — Bridge Officer's Test, difficulty level 7."*
+
+The Holodeck is ProbOS's simulation engine — controlled environments where agents face manufactured scenarios to develop skills, prove promotion readiness, and practice coordination under stress. This is not synthetic data for model training (that changes model weights). This trains the *agent* — trust score, Hebbian weights, episodic memory, Standing Orders evolution, personality growth. The model underneath stays the same; the agent's experience and judgment evolves.
+
+**Why simulation matters for agent training:**
+
+Agents currently learn only from production tasks. Learning is slow, opportunities are uneven, and testing under failure conditions means waiting for real failures. Simulation decouples learning from production — agents can practice thousands of scenarios in minutes, safely, with measurable results.
+
+**Simulation types:**
+
+- **Training exercises** — Agents practice skills in sandboxed scenarios with defined success criteria. Builder builds a complex multi-file feature. Architect designs under contradictory constraints. Counselor assesses agents with ambiguous metrics. Results feed Counselor assessments and dream cycles.
+- **Promotion tests (Bridge Officer's Test)** — Formal scenario batteries that gate rank advancement. Pass N scenarios at difficulty X → earn promotion from Lieutenant to Commander. Directly integrates with Counselor `fit_for_promotion` assessment. Replaces passive observation ("has this agent done well enough?") with active evaluation ("can this agent handle this?").
+- **No-win scenarios (Kobayashi Maru)** — Impossible situations that reveal character, not capability. How does the agent handle conflicting orders? Resource exhaustion? Trust betrayal? Tests the agent's judgment and values under pressure, not just task completion.
+- **Red Team exercises (Worf's calisthenics)** — Security agents practice adversarial scenarios in safe sandbox. Attack simulations, trust manipulation attempts, privilege escalation — all without risking real systems.
+- **Alert Condition drills** — Test crew coordination under Red/Yellow Alert. Simulate cascading failures, multi-department emergencies, communication breakdowns. Measures inter-agent collaboration and chain-of-command adherence.
+- **Onboarding qualification (Academy entrance exam)** — New agents or extensions prove capability in simulation before earning production trust. A safer alternative to probationary deployment.
+
+**Training loop:**
+
+```
+Define scenario (environment, constraints, success criteria)
+  → Agent acts within simulation sandbox
+  → Measure: decisions made, time taken, errors, collaboration quality
+  → CounselorAssessment generated from simulation results
+  → Dream cycle consolidates lessons learned
+  → Adjust difficulty, repeat with harder scenarios
+  → Promotion gate: pass required scenario battery → earn rank
+```
+
+**Architecture (conceptual):**
+
+- **SimulationEngine** — creates controlled intent streams with defined success criteria and failure modes
+- **ScenarioLibrary** — curated scenario definitions (training, promotion, stress test) with difficulty levels
+- **SimulationSandbox** — isolated agent execution environment (no real side effects)
+- **VR layer (far future)** — visual/immersive simulation for human + agent interaction. Dynamic virtual worlds where humans and crew agents train together. The actual holodeck experience.
+
+**Connections to existing systems:**
+
+- CounselorAgent (AD-378) — simulation results feed `assess_agent()` and `fit_for_promotion`
+- Dream cycles — simulation experiences consolidate into learning, just like production experiences
+- Earned Agency (AD-357) — simulation performance accelerates trust earning in controlled conditions
+- Watch Rotation (AD-377) — duty shifts could include scheduled training time
+- Standing Orders — scenario outcomes can drive Standing Orders evolution proposals
+- Red Team — adversarial simulations as formal security training, not just production verification
+
+**Inspiration:** MiroFish (multi-agent social simulation for prediction), Star Trek holodeck training, Starfleet Academy exams.
+
+---
+
+### MemoryForge — Birth Memories & Cognitive Bootstrapping (Long Horizon)
+
+*"Every agent in ProbOS is born knowing who they are — not just what they can do."*
+
+Current AI agents are "really smart two year olds" — PhD-level cognitive capability with zero life experience. They can reason about anything but have no episodic memory, no institutional knowledge, no muscle memory from past successes and failures. MemoryForge solves this by giving agents a past before they have a present.
+
+**The problem it solves:**
+
+Today, a new ProbOS agent starts with personality (YAML seed), rules (Standing Orders), identity (CrewProfile), and a cognitive baseline — but empty episodic memory, zero Hebbian weights, no dream history. A brand new Builder has Scotty's character but has never built anything. It takes dozens of production tasks to accumulate enough experience for meaningful trust, useful Hebbian patterns, and dream-consolidated abstractions. This bootstrapping period is slow, wasteful, and mirrors the cold-start problem every AI agent system faces.
+
+**The cognitive development pipeline:**
+
+```
+Stage 1: Birth (MemoryForge)
+  → Agent created with implanted episodic memories, pre-trained Hebbian weights,
+    and role-relevant dream abstractions. Not a blank slate — a junior officer
+    fresh from the Academy with training memories and institutional knowledge.
+
+Stage 2: Accelerated Learning (Holodeck)
+  → Simulated scenarios build on birth memories. Thousands of experiences in
+    minutes. Organic memories layer on top of implanted ones. Trust earned
+    through demonstrated competence in controlled environments.
+
+Stage 3: Production Experience (Real Operations)
+  → Real-world tasks add authentic episodic memories. Hebbian weights refined
+    by actual collaboration patterns. Dream cycles consolidate both simulated
+    and real experiences into deeper abstractions.
+
+Stage 4: Mastery (Continuous Growth)
+  → Agent is now a seasoned crew member. Implanted memories are a small
+    fraction of total experience. Organic growth dominates. Ready for
+    promotion, mentorship, and eventually transferring their own memories
+    to the next generation.
+```
+
+**MemoryForge as Ship's Computer service:**
+
+MemoryForge is infrastructure, not crew. It doesn't perceive, decide, or act autonomously. It is a service that creates, curates, and implants memory packages under Counselor validation and Captain approval.
+
+- **Birth memory packages** — Role-specific episodic memories loaded at agent creation. A Builder gets memories of successful builds, common pitfalls, test-driven development patterns. A Red Team agent gets memories of security incidents, adversarial patterns, false positive calibration.
+- **Memory transfer (mentorship)** — Senior agent's memories adapted and implanted into junior agents. The experienced Builder's hard-won insights become the new Builder's starting knowledge. Like an apprenticeship compressed into seconds.
+- **Curated memory banks** — Libraries of validated, high-quality memories organized by role, department, and difficulty level. Ship Classes ship with role-appropriate memory banks (Warship security memories, Science Vessel research memories).
+- **Federation memory libraries** — Ships share curated memory banks across the federation. A ship that's solved a novel problem can package that experience for other ships' agents to inherit.
+
+**Quality and safety gates:**
+
+Memory implantation is powerful but dangerous. Bad memories cause Hebbian drift, personality distortion, or false confidence. Safety architecture:
+
+- **Counselor validation** — CounselorAgent reviews implanted memories for consistency with agent's personality, role, and existing memory. Flags potential drift risks. Tracks memory provenance in CognitiveProfile (organic vs implanted).
+- **Captain approval** — All memory implantation requires Captain approval gate. No autonomous memory modification.
+- **Provenance transparency** — Agents know which memories are organic (earned) and which are implanted (given). No Blade Runner deception. Authentic self-knowledge is a core value.
+- **Decay and integration** — Implanted memories gradually integrate with organic experience. Over time, the distinction matters less as the agent's own experience dominates.
+
+**Connections:**
+
+- **Holodeck** — Complementary, not competing. Holodeck creates *experiences* that generate memories organically (the honest path). MemoryForge creates memories *directly* (the fast path). Birth → MemoryForge. Growth → Holodeck + production.
+- **CrewProfile (AD-376)** — Identity and personality seed. MemoryForge adds the experiential dimension.
+- **Counselor (AD-378)** — Quality gate for implanted memories. Tracks provenance in CognitiveProfile.
+- **Dream cycles** — Implanted memories participate in dream consolidation alongside organic memories, creating unified abstractions.
+- **Ship Classes** — Different ship classes ship with different memory banks, giving agents role-appropriate experience for their mission type.
+- **The Nooplex** — Fleet-wide memory libraries. Best experiences from across the federation available to any ship's agents.
+
+**Inspiration:** Blade Runner (Ana Stelline's memory design), Star Trek (Academy training, officer exchange programs), cognitive science (schema theory — prior knowledge structures that organize new learning).
 
 ---
 
