@@ -210,6 +210,7 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 | Holodeck | Browser automation — Playwright, screenshots, web interaction | Roadmap (Phase 25/35) |
 | Holodeck Simulations | Agent training environments — scenario simulation, promotion tests, skill acquisition | Long Horizon |
 | MemoryForge | Ship's Computer service — implanted birth memories, memory transfer, curated memory banks | Long Horizon |
+| Cognitive Evolution | Transfer learning, proactive initiative, service modeling, trend analysis, gap prediction | Roadmap (Phase 28b) |
 | Workflow Templates | Reusable multi-step pipelines — cron, webhooks, workflow API | Roadmap (Phase 33) |
 | Drydock | Distribution — PyPI, Docker, onboarding wizard, quickstart | Roadmap (Phase 32/35) |
 | Modular Construction | Extension-first architecture — sealed core, plugin extensions, graduated autonomy | Roadmap (Phase 30) |
@@ -1295,6 +1296,43 @@ Self-originated goals emerge from: dream consolidation ("I keep seeing pattern X
 - Phase 1 (Phase 28): Multi-dimensional rewards, hindsight replay, emergent capabilities, semantic Hebbian
 - Phase 2 (Phase 30/33): Tournament evaluation, memetic knowledge sharing, Counselor-driven curiosity
 - Phase 3 (Phase 33): Earned Agency tiers, self-originated goals, decreasing oversight
+
+---
+
+### Cognitive Evolution — Concrete ADs (Phase 28b)
+
+*"The biggest structural gap is that a sentiment agent learning doesn't help the file agent."*
+
+Six ADs that close the gaps between the theoretical Cognitive Evolution framework above and buildable code. Identified via Nooplex emergence criteria gap analysis. These make the existing data (ring buffers, episodic memory, dream cycles) actually useful for cross-agent learning.
+
+**Wave 1 (parallel, no shared files):**
+
+**AD-380: EmergentDetector Trend Regression** — Compute slopes over the snapshot ring buffer: `tc_n_slope`, `entropy_slope`, `cluster_stability_index`, `trust_convergence_rate`. Simple linear regression (pure Python, no numpy). `TrendReport` dataclass with direction (rising/stable/falling), r_squared confidence, significance test. Replace list with `collections.deque`. Wire into `detect_anomalies()` output. Low effort (~150 lines + 12 tests), high signal — makes existing data useful.
+
+**AD-382: ServiceProfile — Learned External Service Modeling** — Replace hardcoded `_KNOWN_RATE_LIMITS` in HttpFetchAgent with SQLite-backed `ServiceProfile` per domain. Learned `min_interval`, latency percentiles (EMA), error rate, reliability history. Profiles persist across restarts. `ServiceProfileStore` (CrewProfile pattern). Seed intervals become defaults, overridden by learned data. (~200 lines + 14 tests).
+
+**Wave 2:**
+
+**AD-381: InitiativeEngine — SIF → Remediation Proposals** — Bridge SIF (read-only monitoring) and the self-mod pipeline. New Ship's Computer service monitors SIF violations, EmergentDetector falling trends (from AD-380), Counselor red/yellow alerts. When triggers persist for N consecutive checks, generates `RemediationProposal` with trust-gated execution: AUTO (diagnose, alert_captain), COMMANDER (scale, recycle), CAPTAIN (patch). Fails-open, no LLM calls. (~300 lines + 18 tests).
+
+**Wave 3 (sequential chain):**
+
+**AD-383: Strategy Extraction — Dream-Derived Transferable Patterns** — New dream pass after trust consolidation. Scans episodic memory for cross-agent recurring patterns: error→recovery across agent types, high-confidence intent patterns across agents, intent co-occurrence sequences. Outputs `StrategyPattern` objects stored in KnowledgeStore. The dream cycle literally extracts crew wisdom from experience. (~250 lines + 15 tests).
+
+**AD-385: Capability Gap Prediction — Proactive Self-Mod** — New dream pass after strategy extraction. Analyzes episodic memory for: repeated low confidence on an intent type, repeated fallback (no intent matched), partial DAG coverage (one node consistently fails). Outputs `CapabilityGapPrediction` objects surfaced to Captain. The system says "I've noticed we struggle with X — shall I design a specialist?" instead of waiting for the user to hit the wall. (~200 lines + 14 tests).
+
+**AD-384: Strategy Application — Cross-Agent Knowledge Transfer** — `StrategyAdvisor` queries KnowledgeStore for strategies matching the current intent, formats them as "[CREW EXPERIENCE]" context for the LLM. New `REL_STRATEGY` relationship type on HebbianRouter tracks which strategies work for which agents. Strategies that help get reinforced; strategies that don't get decayed. MemoryForge (Long Horizon) becomes a consumer of the strategies collection. (~200 lines + 12 tests).
+
+| AD | Title | Wave | Depends On | Est. Lines | Est. Tests |
+|----|-------|------|------------|-----------|-----------|
+| AD-380 | EmergentDetector Trends | 1 | None | ~150 | 12 |
+| AD-382 | ServiceProfile | 1 | None | ~200 | 14 |
+| AD-381 | InitiativeEngine | 2 | AD-380 | ~300 | 18 |
+| AD-383 | Strategy Extraction | 3 | None | ~250 | 15 |
+| AD-385 | Capability Gap Prediction | 3 | AD-383 | ~200 | 14 |
+| AD-384 | Strategy Application | 3 | AD-383 | ~200 | 12 |
+
+**Nooplex emergence impact:** AD-380 + AD-385 directly advance emergence criteria (trend measurement, proactive capability expansion). AD-383 + AD-384 close the biggest structural gap (cross-agent transfer learning). AD-381 + AD-382 create practical value while building infrastructure those criteria require.
 
 ---
 
