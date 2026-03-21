@@ -45,6 +45,7 @@ from probos.sif import StructuralIntegrityField
 from probos.build_queue import BuildQueue
 from probos.worktree_manager import WorktreeManager
 from probos.build_dispatcher import BuildDispatcher
+from probos.task_tracker import TaskTracker
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
@@ -237,6 +238,9 @@ class ProbOSRuntime:
         self.build_queue: BuildQueue | None = None
         self.build_dispatcher: BuildDispatcher | None = None
 
+        # --- Task Tracker (AD-316) ---
+        self.task_tracker: TaskTracker | None = None
+
         # --- Semantic knowledge layer (AD-243) ---
         self._semantic_layer: SemanticKnowledgeLayer | None = None
 
@@ -397,6 +401,7 @@ class ProbOSRuntime:
             "fresh_boot": self._fresh_boot,
             "pool_groups": self.pool_groups.status(self.pools),
             "pool_to_group": dict(self.pool_groups._pool_to_group),
+            "tasks": self.task_tracker.snapshot() if self.task_tracker else [],
         }
 
     async def create_pool(
@@ -921,6 +926,10 @@ class ProbOSRuntime:
         await self.build_dispatcher.start()
         logger.info("build-dispatcher started")
 
+        # --- Task Tracker (AD-316) ---
+        self.task_tracker = TaskTracker(on_event=self._emit_event)
+        logger.info("task-tracker started")
+
         self._started = True
 
         await self.event_log.log(category="system", event="started")
@@ -956,6 +965,10 @@ class ProbOSRuntime:
             await self.build_dispatcher.stop()
             self.build_dispatcher = None
             self.build_queue = None
+
+        # Stop task tracker (AD-316)
+        if self.task_tracker:
+            self.task_tracker = None
 
         # Stop red team agents
         for agent in self._red_team_agents:

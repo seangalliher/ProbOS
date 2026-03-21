@@ -5,6 +5,7 @@ import { soundEngine } from '../audio/soundEngine';
 import type {
   Agent, Connection, PoolInfo, PoolGroupInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
   BuildProposal, BuildFailureReport, ArchitectProposalView, BuildQueueItem, MissionControlTask,
+  AgentTaskView,
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
@@ -202,6 +203,7 @@ export interface HXIState {
   buildQueue: BuildQueueItem[] | null;
   missionControlTasks: MissionControlTask[] | null;
   missionControlView: boolean;
+  agentTasks: AgentTaskView[] | null;
   pendingRoutingPulse: { source: string; target: string } | null;
   pendingFeedbackPulse: 'good' | 'bad' | null;
 
@@ -304,6 +306,7 @@ export const useStore = create<HXIState>((set, get) => ({
   buildQueue: null,
   missionControlTasks: null,
   missionControlView: false,
+  agentTasks: null,
   pendingRoutingPulse: null,
   pendingFeedbackPulse: null,
   connected: false,
@@ -438,6 +441,29 @@ export const useStore = create<HXIState>((set, get) => ({
           routingEntropy: snap.routing_entropy,
           ...(snap.fresh_boot ? { chatHistory: [] } : {}),
         });
+        // Hydrate agent tasks from snapshot (AD-316)
+        if ((data as any).tasks) {
+          const tasks = (data as any).tasks as AgentTaskView[];
+          const mcTasks: MissionControlTask[] = tasks.map(t => ({
+            id: t.id,
+            type: t.type as MissionControlTask['type'],
+            title: t.title,
+            department: t.department,
+            status: t.status as MissionControlTask['status'],
+            agent_type: t.agent_type,
+            agent_id: t.agent_id,
+            started_at: t.started_at,
+            completed_at: t.completed_at,
+            priority: t.priority,
+            ad_number: t.ad_number,
+            error: t.error,
+            metadata: t.metadata,
+          }));
+          set({
+            agentTasks: tasks.length > 0 ? tasks : null,
+            missionControlTasks: mcTasks.length > 0 ? mcTasks : null,
+          });
+        }
         break;
       }
 
@@ -769,6 +795,31 @@ export const useStore = create<HXIState>((set, get) => ({
           get().addChatMessage('system',
             `Build failed: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''} — ${item.error}`);
         }
+        break;
+      }
+
+      case 'task_created':
+      case 'task_updated': {
+        const tasks = (data.tasks || []) as AgentTaskView[];
+        const mcTasks: MissionControlTask[] = tasks.map(t => ({
+          id: t.id,
+          type: t.type as MissionControlTask['type'],
+          title: t.title,
+          department: t.department,
+          status: t.status as MissionControlTask['status'],
+          agent_type: t.agent_type,
+          agent_id: t.agent_id,
+          started_at: t.started_at,
+          completed_at: t.completed_at,
+          priority: t.priority,
+          ad_number: t.ad_number,
+          error: t.error,
+          metadata: t.metadata,
+        }));
+        set({
+          agentTasks: tasks.length > 0 ? tasks : null,
+          missionControlTasks: mcTasks.length > 0 ? mcTasks : null,
+        });
         break;
       }
 

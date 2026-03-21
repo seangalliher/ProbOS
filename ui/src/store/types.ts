@@ -139,6 +139,34 @@ export interface MissionControlTask {
   metadata: Record<string, unknown>;
 }
 
+export interface TaskStepView {
+  label: string;
+  status: 'pending' | 'in_progress' | 'done' | 'failed';
+  started_at: number;
+  duration_ms: number;
+}
+
+export interface AgentTaskView {
+  id: string;
+  agent_id: string;
+  agent_type: string;
+  department: string;
+  type: 'build' | 'design' | 'diagnostic' | 'assessment' | 'query';
+  title: string;
+  status: 'queued' | 'working' | 'review' | 'done' | 'failed';
+  steps: TaskStepView[];
+  requires_action: boolean;
+  action_type: string;
+  started_at: number;
+  completed_at: number;
+  error: string;
+  priority: number;
+  ad_number: number;
+  metadata: Record<string, unknown>;
+  step_current: number;
+  step_total: number;
+}
+
 export interface ArchitectProposalView {
   design_id: string;
   title: string;
