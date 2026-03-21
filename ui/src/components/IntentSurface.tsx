@@ -47,6 +47,7 @@ export function IntentSurface() {
   const pendingChar = useStore((s) => s.pendingChar);
   const consumePendingChar = useStore((s) => s.consumePendingChar);
   const voiceEnabled = useStore((s) => s.voiceEnabled);
+  const transporterProgress = useStore((s) => s.transporterProgress);
 
   /* ── consume pending char from global keydown ── */
   useEffect(() => {
@@ -1048,6 +1049,128 @@ export function IntentSurface() {
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* ── Transporter progress card (BF-004) ── */}
+            {transporterProgress && (
+              <div style={{ marginTop: 8, maxWidth: '80%', padding: '0 20px' }}>
+                {/* Header: phase badge + progress fraction */}
+                <div style={{
+                  padding: '8px 12px',
+                  borderRadius: 8,
+                  background: 'rgba(80, 200, 224, 0.08)',
+                  border: '1px solid rgba(80, 200, 224, 0.2)',
+                  fontSize: 12,
+                  color: '#c8d0e0',
+                  marginBottom: 8,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <span style={{
+                      padding: '1px 6px',
+                      borderRadius: 4,
+                      background: 'rgba(80, 200, 224, 0.15)',
+                      border: '1px solid rgba(80, 200, 224, 0.3)',
+                      color: '#50c8e0',
+                      fontSize: 10,
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}>
+                      {transporterProgress.phase}
+                    </span>
+                    <span style={{ color: '#8888a0', fontSize: 11 }}>
+                      {transporterProgress.successful} / {transporterProgress.total_chunks} chunks
+                    </span>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div style={{
+                    height: 4,
+                    borderRadius: 2,
+                    background: 'rgba(80, 200, 224, 0.15)',
+                    overflow: 'hidden',
+                    marginBottom: 8,
+                  }}>
+                    {transporterProgress.total_chunks > 0 && (
+                      <>
+                        <div style={{
+                          height: '100%',
+                          width: `${(transporterProgress.successful / transporterProgress.total_chunks) * 100}%`,
+                          background: '#50c8e0',
+                          borderRadius: 2,
+                          transition: 'width 0.3s ease',
+                          float: 'left',
+                        }} />
+                        {transporterProgress.failed > 0 && (
+                          <div style={{
+                            height: '100%',
+                            width: `${(transporterProgress.failed / transporterProgress.total_chunks) * 100}%`,
+                            background: '#ff5555',
+                            borderRadius: 2,
+                            transition: 'width 0.3s ease',
+                            float: 'left',
+                          }} />
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  {/* Chunk list */}
+                  {transporterProgress.chunks.map((chunk) => (
+                    <div key={chunk.chunk_id} style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      marginBottom: 3,
+                    }}>
+                      <span style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        flexShrink: 0,
+                        background: chunk.status === 'done' ? '#50c878'
+                          : chunk.status === 'failed' ? '#ff5555'
+                          : chunk.status === 'executing' ? '#ffaa44'
+                          : '#555566',
+                        ...(chunk.status === 'executing' ? {
+                          animation: 'neural-pulse 1.4s ease-in-out infinite',
+                        } : {}),
+                      }} />
+                      <span style={{ fontSize: 11, color: '#c8d0e0' }}>
+                        {chunk.description}
+                      </span>
+                      <span style={{
+                        fontSize: 10,
+                        color: '#8888a0',
+                        fontFamily: 'monospace',
+                        marginLeft: 'auto',
+                      }}>
+                        {chunk.target_file}
+                      </span>
+                    </div>
+                  ))}
+
+                  {/* Footer stats */}
+                  {(transporterProgress.waves_completed > 0 || transporterProgress.failed > 0) && (
+                    <div style={{
+                      display: 'flex',
+                      gap: 12,
+                      marginTop: 6,
+                      fontSize: 10,
+                      color: '#8888a0',
+                    }}>
+                      {transporterProgress.waves_completed > 0 && (
+                        <span>Waves: {transporterProgress.waves_completed}</span>
+                      )}
+                      {transporterProgress.failed > 0 && (
+                        <span style={{ color: '#ff5555' }}>
+                          Failed: {transporterProgress.failed}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 

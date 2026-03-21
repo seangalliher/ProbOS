@@ -41,6 +41,7 @@ from probos.agents.medical import (
 from probos.cognitive.builder import BuilderAgent
 from probos.cognitive.architect import ArchitectAgent
 from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
+from probos.sif import StructuralIntegrityField
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
@@ -225,6 +226,9 @@ class ProbOSRuntime:
 
         # --- Emergent detection (AD-236) ---
         self._emergent_detector: EmergentDetector | None = None
+
+        # --- Structural Integrity Field (AD-370) ---
+        self.sif: StructuralIntegrityField | None = None
 
         # --- Semantic knowledge layer (AD-243) ---
         self._semantic_layer: SemanticKnowledgeLayer | None = None
@@ -867,6 +871,16 @@ class ProbOSRuntime:
         if removed:
             logger.info("trust-reconcile removed=%d stale entries", removed)
 
+        # Start Structural Integrity Field (AD-370)
+        self.sif = StructuralIntegrityField(
+            trust_network=self.trust_network,
+            intent_bus=self.intent_bus,
+            hebbian_router=self.hebbian_router,
+            spawner=self.spawner,
+            pool_manager=self.pools,
+        )
+        await self.sif.start()
+
         self._started = True
 
         await self.event_log.log(category="system", event="started")
@@ -891,6 +905,11 @@ class ProbOSRuntime:
         # Cancel periodic flush
         if hasattr(self, '_flush_task'):
             self._flush_task.cancel()
+
+        # Stop SIF (AD-370)
+        if self.sif:
+            await self.sif.stop()
+            self.sif = None
 
         # Stop red team agents
         for agent in self._red_team_agents:
