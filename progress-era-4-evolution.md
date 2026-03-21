@@ -519,3 +519,15 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/build-dispatcher.md`
 **Status:** AD-372 complete — 11 new tests, 2402 pytest + 34 vitest = 2436 total
+
+### AD-373: HXI Build Dashboard (DONE)
+
+**Decision:** AD-373 — Real-time build queue visualization in the HXI. Engineering amber theme (`#b0a050`).
+
+**Changes:**
+- `types.ts` — Added `BuildQueueItem` interface with status union type, file footprint, commit hash fields
+- `useStore.ts` — Added `buildQueue: BuildQueueItem[] | null` state. `build_queue_update` (full snapshot) and `build_queue_item` (single upsert) event handlers. Chat logging for status transitions (building, reviewing, merged, failed). Auto-filtering of terminal items.
+- `IntentSurface.tsx` — Build Queue card with status dots (gray=queued, blue=dispatched, amber-pulsing=building, amber=reviewing, green=merged, red=failed). Approve/reject buttons for reviewing items with `/api/build/approve` and `/api/build/reject` POST calls. File footprint display for reviewing items. Active count in header.
+
+**Build prompt:** `prompts/hxi-build-dashboard.md`
+**Status:** AD-373 complete — 0 new tests (UI only), 2402 pytest + 34 vitest = 2436 total

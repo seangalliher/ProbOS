@@ -651,7 +651,7 @@ Visiting officer builds failed 2 of 3 times by creating files in wrong directori
 
 **SIF Implementation (AD-370)**
 
-- **AD-370: Structural Integrity Field** *(in progress)* — Runtime service with 7 invariant checks (trust bounds, Hebbian bounds, pool consistency, IntentBus coherence, config validity, index consistency, memory integrity). Background asyncio task at 5s interval. `SIFReport` with `health_pct` property. No LLM calls.
+- **AD-370: Structural Integrity Field** *(done)* — Runtime service with 7 invariant checks (trust bounds, Hebbian bounds, pool consistency, IntentBus coherence, config validity, index consistency, memory integrity). Background asyncio task at 5s interval. `SIFReport` with `health_pct` property. No LLM calls.
 
 **Automated Builder Dispatch (AD-371–374)**
 
@@ -661,7 +661,7 @@ Full automation of the Architect→Builder pipeline. Captain approves ADs, build
 
 - **AD-371: BuildQueue + WorktreeManager** *(done)* — Priority-ordered queue of `QueuedBuild` items with status lifecycle validation, file footprint conflict detection, cancel support. `WorktreeManager` handles async git worktree lifecycle: create, remove, collect diff, merge to main, cleanup. 20 tests.
 - **AD-372: BuildDispatcher + SDK Integration** *(done)* — Core dispatch loop: watches BuildQueue, allocates worktrees, invokes CopilotBuilderAdapter, applies changes via `execute_approved_build()` with full guardrails. Configurable concurrency, Captain approve/reject actions, `on_build_complete` callback. Absorbs AD-374. 11 tests.
-- **AD-373: HXI Build Dashboard** *(planned)* — Real-time queue visibility: active builds with progress, completed builds awaiting review, merge approval buttons. WebSocket events for live status updates.
+- **AD-373: HXI Build Dashboard** *(done)* — Real-time build queue card with engineering amber theme. `BuildQueueItem` type, `build_queue_update`/`build_queue_item` event handlers, status dots, approve/reject buttons, file footprint display.
 - **AD-374: File Footprint Conflict Detection** *(absorbed into AD-372)* — `_find_dispatchable()` checks `has_footprint_conflict()` before dispatch. Overlapping specs serialized, non-overlapping run concurrently.
 
 **Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE**
