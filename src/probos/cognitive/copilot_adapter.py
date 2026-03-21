@@ -28,7 +28,10 @@ try:
 
     _SDK_AVAILABLE = True
 except ImportError:
-    pass
+    # Minimal fallback so tool handlers work in tests without the SDK
+    class ToolResult:  # type: ignore[no-redef]
+        def __init__(self, *, text_result_for_llm: str = "") -> None:
+            self.text_result_for_llm = text_result_for_llm
 
 logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
