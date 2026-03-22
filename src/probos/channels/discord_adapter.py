@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import warnings
 from typing import Any
 
 from probos.channels.base import ChannelAdapter, ChannelMessage
@@ -103,14 +105,43 @@ class DiscordAdapter(ChannelAdapter):
             self._started = False
 
     async def stop(self) -> None:
-        """Close the Discord connection."""
+        """Close the Discord connection.
+
+        discord.py's keep-alive thread (a plain threading.Thread) races with
+        event-loop shutdown, producing RuntimeError + RuntimeWarning noise.
+        We suppress both here — this is a well-known discord.py issue.
+        """
+        # 1. Suppress RuntimeError from keep-alive thread
+        _original_excepthook = threading.excepthook
+
+        def _suppress_keepalive(args: threading.ExceptHookArgs) -> None:
+            if (
+                args.exc_type is RuntimeError
+                and args.thread
+                and "keep-alive" in (args.thread.name or "")
+            ):
+                return  # silently suppress
+            _original_excepthook(args)
+
+        threading.excepthook = _suppress_keepalive
+
+        # 2. Suppress "coroutine was never awaited" RuntimeWarning
+        warnings.filterwarnings(
+            "ignore",
+            message="coroutine.*was never awaited",
+            category=RuntimeWarning,
+        )
+
         if self._bot and not self._bot.is_closed():
-            await self._bot.close()
+            try:
+                await asyncio.wait_for(self._bot.close(), timeout=3.0)
+            except asyncio.TimeoutError:
+                logger.warning("Discord bot.close() timed out — forcing")
         if self._bot_task:
             self._bot_task.cancel()
             try:
-                await self._bot_task
-            except (asyncio.CancelledError, Exception):
+                await asyncio.wait_for(self._bot_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                 pass
         self._started = False
         logger.info("Discord adapter stopped")

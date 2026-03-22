@@ -236,6 +236,7 @@ class ScoutAgent(CognitiveAgent):
     async def _search_github(self, query: str, min_stars: int) -> list[dict[str, Any]]:
         """Search GitHub via gh CLI for authenticated rate limits (AD-395)."""
         encoded_query = f"{query} stars:>={min_stars}"
+        logger.info("Scout: searching GitHub — %s", encoded_query[:100])
         try:
             result = await asyncio.to_thread(
                 subprocess.run,
@@ -244,15 +245,20 @@ class ScoutAgent(CognitiveAgent):
                  "-f", f"q={encoded_query}",
                  "-f", "sort=stars",
                  "-f", "per_page=30"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, encoding="utf-8", errors="replace", timeout=30,
             )
             if result.returncode != 0:
-                logger.warning("Scout: gh api search failed: %s", result.stderr[:200])
+                logger.warning("Scout: gh api failed (rc=%d): %s", result.returncode, result.stderr[:200])
+                return []
+            if not result.stdout:
+                logger.warning("Scout: gh api returned empty stdout for: %s", query[:80])
                 return []
             data = json.loads(result.stdout)
-            return data.get("items", [])
-        except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
-            logger.warning("Scout: GitHub search error: %s", e)
+            items = data.get("items", [])
+            logger.info("Scout: found %d items for: %s", len(items), query[:60])
+            return items
+        except Exception as e:
+            logger.warning("Scout: GitHub search error (%s): %s", type(e).__name__, e)
             return []
 
     async def perceive(self, intent: dict[str, Any]) -> dict[str, Any]:
@@ -269,9 +275,15 @@ class ScoutAgent(CognitiveAgent):
             return result
 
         seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+        # GitHub search doesn't support OR between topic: qualifiers —
+        # each topic needs a separate query.
         queries = [
-            (f"topic:ai-agents OR topic:llm-agents OR topic:multi-agent OR topic:agent-framework created:>{seven_days_ago}", 50),
-            (f"topic:ai-coding OR topic:code-generation created:>{seven_days_ago}", 100),
+            (f"topic:ai-agents pushed:>{seven_days_ago}", 50),
+            (f"topic:llm-agents pushed:>{seven_days_ago}", 50),
+            (f"topic:multi-agent pushed:>{seven_days_ago}", 50),
+            (f"topic:agent-framework pushed:>{seven_days_ago}", 50),
+            (f"topic:ai-coding pushed:>{seven_days_ago}", 100),
+            (f"topic:code-generation pushed:>{seven_days_ago}", 100),
         ]
 
         seen = _load_seen()
@@ -322,12 +334,13 @@ class ScoutAgent(CognitiveAgent):
         self._repo_metadata = {r["full_name"]: r for r in new_repos}
         return result
 
-    async def act(self, decision: str) -> dict[str, Any]:
+    async def act(self, decision: dict[str, Any]) -> dict[str, Any]:
         """Parse LLM classification, store report, deliver notifications."""
-        if "No new repositories" in decision or not decision.strip():
+        llm_output = decision.get("llm_output", "")
+        if "No new repositories" in llm_output or not llm_output.strip():
             return {"success": True, "result": "No new findings to report."}
 
-        findings = parse_scout_reports(decision)
+        findings = parse_scout_reports(llm_output)
 
         # Enrich with metadata from perceive
         metadata = getattr(self, "_repo_metadata", {})

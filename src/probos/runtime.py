@@ -1056,7 +1056,9 @@ class ProbOSRuntime:
         logger.info("task-tracker started")
 
         # --- Service Profiles (AD-382) ---
-        self.service_profiles = ServiceProfileStore()
+        self.service_profiles = ServiceProfileStore(
+            db_path=self._data_dir / "service_profiles.db"
+        )
         HttpFetchAgent.set_profile_store(self.service_profiles)
         logger.info("service-profiles started")
 

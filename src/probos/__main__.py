@@ -324,13 +324,15 @@ async def _boot_and_run(config_path: Path | None = None, fresh: bool = False, da
     try:
         await shell.run()
     finally:
-        console.print("[bold red]ProbOS shutting down...[/bold red]")
+        console.print("\n[bold red]ProbOS shutting down...[/bold red]")
+        console.print("  [dim]Stopping runtime...[/dim]", end="")
         try:
             await asyncio.wait_for(runtime.stop(), timeout=5)
+            console.print(" [green]done[/green]")
         except asyncio.TimeoutError:
-            logger.warning("Graceful shutdown timed out after 5s — forcing exit")
+            console.print(" [yellow]timed out (5s)[/yellow]")
         except Exception as e:
-            logger.warning("Shutdown error: %s", e)
+            console.print(f" [yellow]warn: {e}[/yellow]")
         finally:
             console.print("[dim]ProbOS stopped.[/dim]")
             os._exit(0)
@@ -415,18 +417,25 @@ async def _serve(
             console.print()
             await server.serve()
     finally:
-        console.print("[bold red]ProbOS shutting down...[/bold red]")
+        console.print("\n[bold red]ProbOS shutting down...[/bold red]")
         for adapter in adapters:
+            name = type(adapter).__name__
+            console.print(f"  [dim]Stopping {name}...[/dim]", end="")
             try:
-                await adapter.stop()
+                await asyncio.wait_for(adapter.stop(), timeout=5)
+                console.print(" [green]done[/green]")
+            except asyncio.TimeoutError:
+                console.print(" [yellow]timed out (5s)[/yellow]")
             except Exception as e:
-                logger.warning("Adapter shutdown error: %s", e)
+                console.print(f" [yellow]warn: {e}[/yellow]")
+        console.print("  [dim]Stopping runtime...[/dim]", end="")
         try:
             await asyncio.wait_for(runtime.stop(), timeout=5)
+            console.print(" [green]done[/green]")
         except asyncio.TimeoutError:
-            logger.warning("Graceful shutdown timed out after 5s — forcing exit")
+            console.print(" [yellow]timed out (5s)[/yellow]")
         except Exception as e:
-            logger.warning("Shutdown error: %s", e)
+            console.print(f" [yellow]warn: {e}[/yellow]")
         finally:
             console.print("[dim]ProbOS stopped.[/dim]")
             os._exit(0)

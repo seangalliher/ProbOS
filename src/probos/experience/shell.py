@@ -17,7 +17,7 @@ from probos.experience import panels
 from probos.experience.panels import format_health
 from probos.experience.renderer import ExecutionRenderer
 from probos.runtime import ProbOSRuntime
-from probos.types import AgentState
+from probos.types import AgentState, IntentMessage
 
 logger = logging.getLogger(__name__)
 
@@ -1257,15 +1257,19 @@ class ProbOSShell:
         if not pool or not pool.healthy_agents:
             self.console.print("[yellow]Scout agent not available[/yellow]")
             return
-        agent = pool.healthy_agents[0]
+        agent_id = pool.healthy_agents[0]
+        agent = pool.registry.get(agent_id)
+        if not agent:
+            self.console.print("[yellow]Scout agent not found in registry[/yellow]")
+            return
         self.console.print(f"[dim]Running scout {intent_name}...[/dim]")
         try:
-            result = await agent.handle_intent({
-                "intent": intent_name,
-                "params": {},
-                "text": arg or "scout for new projects",
-            })
-            output = result.get("result", result.get("output", "No output"))
+            result = await agent.handle_intent(IntentMessage(
+                intent=intent_name,
+                params={},
+                context=arg or "scout for new projects",
+            ))
+            output = result.result if result else "No output"
             self.console.print(output)
         except Exception as e:
             self.console.print(f"[red]Scout error: {e}[/red]")
