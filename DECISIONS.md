@@ -497,3 +497,8 @@ Frosted glass task surface layered over the existing orb mesh. Three depth layer
 
 **Status:** AD-392 complete (Phase 5) — All 5 Glass Bridge phases done. 16 new Vitest tests, 99 Vitest total, tsc clean.
 
+### AD-393: Personality Activation — Big Five Traits Wired into Agent Behavior
+
+Agent personality profiles (Big Five traits, callsigns, roles) existed in crew_profiles/ YAML but were never injected into the LLM system prompt. AD-393 adds `_build_personality_block()` to `compose_instructions()` as Tier 1.5 (between hardcoded identity and Federation Constitution). High traits (>=0.7) produce "high" behavioral guidance, low traits (<=0.3) produce "low" guidance, neutral traits are silent. Identity line includes callsign, display_name, role, department. Cached via `@lru_cache`. Horizontal concern — activates personality for all 12 existing agents simultaneously.
+
+**Status:** AD-393 complete — 10 new Python tests, 2673 pytest + 99 vitest = 2772 total.

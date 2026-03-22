@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-392 complete — Glass Bridge Phase 5: Adaptive bridge, trust-driven reveal, Command Surface breathing, Captain's Gaze, responsive layout. All 5 Glass Bridge phases complete.
+## Current Status: AD-393 complete — Personality Activation: Big Five traits wired into agent system prompts via compose_instructions() Tier 1.5. All 12 agents now receive behavioral guidance from crew profile YAML.
 
 ---
 

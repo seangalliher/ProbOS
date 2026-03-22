@@ -833,3 +833,14 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 **Build prompt:** `prompts/ad-392-adaptive-bridge.md`
 **Status:** AD-392 complete — 16 vitest new, 2652 pytest + 99 vitest = 2751 total. All 5 Glass Bridge phases done.
 
+### AD-393: Personality Activation — Big Five Traits Wired into Agent Behavior (DONE)
+
+**Decision:** AD-393 — Wire existing crew profile Big Five personality traits into the LLM system prompt. Added `_build_personality_block()` to `compose_instructions()` as Tier 1.5 between hardcoded identity and Federation Constitution. High traits (>=0.7) produce behavioral guidance (e.g., "Explore creative approaches"), low traits (<=0.3) produce inverse guidance (e.g., "Prefer proven patterns"), neutral traits are silent. Identity line includes callsign, display_name, role, department. Cached via `@lru_cache`. Horizontal concern — activates personality for all 12 agents. Also added `"scout": "science"` to `_AGENT_DEPARTMENTS` preparing for AD-394.
+
+**Changes:**
+- Modified `src/probos/cognitive/standing_orders.py`: `_build_personality_block()`, `_TRAIT_GUIDANCE` mapping, Tier 1.5 insertion, `load_seed_profile` import, `clear_cache()` updated, `"scout"` department entry
+- Modified `tests/test_standing_orders.py`: 3 existing tests adjusted for personality block appearing in composed output
+- New `tests/test_personality_wiring.py`: 10 tests — high/low/neutral trait guidance, identity with/without callsign, no-profile graceful skip, composed ordering, all-high/all-neutral, cache verification
+
+**Build prompt:** `prompts/ad-393-personality-activation.md`
+**Status:** AD-393 complete — 10 pytest new, 2673 pytest + 99 vitest = 2772 total.
