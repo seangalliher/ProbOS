@@ -759,12 +759,19 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 **Decision:** Layer a frosted glass working surface over the existing orb mesh as a progressive enhancement. Three depth layers: Backdrop (3D mesh, z=0), Glass (task/collaboration surface, z=1), Controls (Bridge panel + Command Surface, z=2). The mesh is never replaced — every phase builds on the current HXI. Inspired by NeXTSTEP precision, cyberpunk soul, LCARS reconfiguration, Bloomberg density. Agent-first design: the glass surfaces what needs the Captain's attention, not apps.
 
 **Phases:**
-- **AD-388:** Glass overlay with center task cards, dynamic frost, multi-task constellation
+- **AD-388:** Glass overlay with center task cards, dynamic frost, multi-task constellation *(done)*
 - **AD-389:** DAG visualization — spatial sub-task nodes, decisions rise / results sink, inline agent commentary
 - **AD-390:** Ambient intelligence — three bridge states (Idle/Autonomous/Attention), ambient color temperature, return-to-bridge briefing, completion celebrations, Context Ribbon
 - **AD-391:** Cyberpunk atmosphere — opt-in scan lines, chromatic aberration, data rain, luminance ripple transitions, sound design
 - **AD-392:** Adaptive bridge — trust-driven progressive reveal, Command Surface breathing, Captain's Gaze attention weighting, responsive layout
 
+**AD-388 Changes:**
+- New `ui/src/components/GlassLayer.tsx`: full-viewport overlay at z-index 5, dynamic frost (backdrop-filter blur scales 0→2→4→6px), noise texture, constellation layout for 1-6+ tasks, sorts by requires_action → status → priority
+- New `ui/src/components/glass/GlassTaskCard.tsx`: glass morphism card (280px), department-colored left border, progress bar, JetBrains Mono system data, amber pulse animation on attention tasks, elevated -8px for requires_action, click opens Bridge panel
+- Modified `ui/src/App.tsx`: `<GlassLayer />` inserted between canvas and IntentSurface
+- New `ui/src/__tests__/GlassLayer.test.tsx`: 9 tests (null tasks, empty tasks, kanban mode, single/multiple tasks, done/failed exclusion, attention sorting, frost levels, bridge click)
+
 **Design spec:** `docs/design/hxi-glass-bridge.md`
-**Status:** Planned — design spec complete, no code yet
+**Build prompt:** `prompts/ad-388-glass-overlay.md`
+**Status:** AD-388 complete — 9 vitest new, 2652 pytest + 55 vitest = 2707 total
 

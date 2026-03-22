@@ -1256,9 +1256,9 @@ Replace three separate panels (NOTIF, ACTIVITY, MISSION CTRL) with a single BRID
 
 The Glass Bridge layers a frosted working surface over the existing orb mesh. Three depth layers: Backdrop (3D mesh, z=0), Glass (task/collaboration surface, z=1), Controls (Bridge panel + Command Surface, z=2). The mesh is never replaced — the glass is translucent, the orbs breathe beneath. Each phase builds on the current HXI. Full design spec: `docs/design/hxi-glass-bridge.md`.
 
-**AD-388: Glass Overlay & Center Task Cards** *(planned)*
+**AD-388: Glass Overlay & Center Task Cards** *(done)*
 
-Frosted glass layer over the canvas with center task card(s). Dynamic frost level based on task count (more tasks = more frost, fewer = more mesh). Multi-task constellation for concurrent agent workflows — most urgent card elevated, Captain's mouse position promotes attended tasks. Task cards rendered from existing `agentTasks` data (no new backend). Glass surface: Gaussian blur + noise texture, cyberpunk aesthetic, OLED-native true blacks.
+Frosted glass layer over the canvas with center task card(s). `GlassLayer.tsx` renders at z-index 5 between canvas and controls. Dynamic frost level (backdrop-filter blur scales 0→2→4→6px with task count). Multi-task constellation layout (1-5+ tasks arranged spatially). `GlassTaskCard.tsx` with glass morphism, department-colored left border, progress bar, JetBrains Mono system data. Attention tasks elevated (-8px) with amber pulse animation. Click-through opens Bridge panel. Noise texture overlay. 9 new vitest tests.
 
 **AD-389: DAG Visualization** *(planned)*
 

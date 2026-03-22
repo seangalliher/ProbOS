@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-387 complete — Unified Bridge panel with adaptive main viewer (single BRIDGE button, 5 priority sections, canvas/kanban switcher)
+## Current Status: AD-388 complete — Glass Bridge Phase 1: frosted glass overlay with center-stage task cards over orb mesh
 
 ---
 
