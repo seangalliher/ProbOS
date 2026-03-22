@@ -1272,9 +1272,9 @@ Three bridge states (idle/autonomous/attention) derived from agentTasks + notifi
 
 Opt-in visual effects: `ScanLineOverlay.tsx` (CSS repeating gradient, intensity-adjustable), `DataRainOverlay.tsx` (canvas hex characters colored by bridge state, Ctrl+Shift+D toggle), chromatic aberration (inline SVG filter with feColorMatrix/feOffset). Luminance ripple (80ms left-to-right sweep on bridge state change, always on). Sound engine: `playStepComplete` ascending chords, `playBridgeHum` continuous ambient per state, `playCaptainReturn` welcoming chime. All visual effects off by default, preferences persisted to localStorage. 10 new vitest tests.
 
-**AD-392: Adaptive Bridge** *(planned)*
+**AD-392: Adaptive Bridge** *(done)*
 
-Trust-driven progressive reveal: low-trust agents get prominent cards, high-trust agents get condensed representations — the glass gets quieter as the crew earns trust. Command Surface breathing: recedes to thin glow line during autonomous execution, swells on Captain engagement. Captain's Gaze: mouse/scroll position drives attention-weighted resource allocation (agents working on attended items get higher priority). Responsive behavior: five-zone layout on ultrawide, collapsed phantom zones on laptop, vertical stack on tablet, single-column on mobile.
+Trust-driven progressive reveal: `trustBand()` categorizes agents into low/medium/high with corresponding visual treatment (prominent→standard→condensed). Command Surface breathing via IntentSurface: pill recedes to 80x4px glow line during autonomous mode when mouse is far, swells on 200px proximity. Captain's Gaze: throttled mouse tracking (100ms) promotes nearest task card with scale(1.03) + glow. `useBreakpoint()` hook adapts layout across 5 viewport ranges. 16 new vitest tests.
 
 **Captain's Ready Room (Strategic Planning Interface)**
 

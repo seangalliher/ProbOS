@@ -763,7 +763,7 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 - **AD-389:** DAG visualization — spatial sub-task nodes, decisions rise / results sink, inline agent commentary *(done)*
 - **AD-390:** Ambient intelligence — three bridge states (Idle/Autonomous/Attention), ambient color temperature, return-to-bridge briefing, completion celebrations, Context Ribbon *(done)*
 - **AD-391:** Cyberpunk atmosphere — opt-in scan lines, chromatic aberration, data rain, luminance ripple transitions, sound design *(done)*
-- **AD-392:** Adaptive bridge — trust-driven progressive reveal, Command Surface breathing, Captain's Gaze attention weighting, responsive layout
+- **AD-392:** Adaptive bridge — trust-driven progressive reveal, Command Surface breathing, Captain's Gaze attention weighting, responsive layout *(done)*
 
 **AD-388 Changes:**
 - New `ui/src/components/GlassLayer.tsx`: full-viewport overlay at z-index 5, dynamic frost (backdrop-filter blur scales 0→2→4→6px), noise texture, constellation layout for 1-6+ tasks, sorts by requires_action → status → priority
@@ -817,4 +817,19 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/ad-391-cyberpunk-atmosphere.md`
 **Status:** AD-391 complete — 10 vitest new, 2652 pytest + 83 vitest = 2735 total
+
+### AD-392: Adaptive Bridge (DONE)
+
+**Decision:** AD-392 — Final Glass Bridge phase. Trust-driven progressive reveal: low-trust agents get prominent cards (brighter, thicker border), high-trust agents get condensed cards (smaller, dimmer). Command Surface breathing: resting pill recedes to thin glow line during autonomous bridge state when Captain is away, swells on proximity (200px threshold). Captain's Gaze: mouse position promotes nearest task card with scale(1.03) + glow boost, throttled to 100ms intervals. Responsive breakpoints via `useBreakpoint()` hook adapt layout across ultrawide/standard/laptop/tablet/mobile.
+
+**Changes:**
+- New `ui/src/hooks/useBreakpoint.ts`: `getBreakpoint()` pure function + `useBreakpoint()` hook detecting 5 viewport ranges (ultrawide >2560, standard >1440, laptop >1024, tablet >768, mobile <=768)
+- Modified `ui/src/components/glass/GlassTaskCard.tsx`: `trust` prop drives visual variants (low/medium/high bands with matching colors and sizes), `compact` prop for tablet/mobile, `isGazed` prop for Captain's Gaze boost. Exports `trustBand()` and `TRUST_COLORS` for testing.
+- Modified `ui/src/components/glass/ContextRibbon.tsx`: `compact` prop hides labels on mobile, shows only state dot + counts
+- Modified `ui/src/components/GlassLayer.tsx`: trust lookup from `agents` Map via `task.agent_id`, Captain's Gaze via throttled `onMouseMove` + `gazedTaskId` state, responsive layout via `useBreakpoint()`, compact props passed on tablet/mobile
+- Modified `ui/src/components/IntentSurface.tsx`: Command Surface breathing — pill recedes to 80x4px glow line during autonomous state when mouse >200px away, swells on proximity (300ms ease-out) or non-autonomous state (800ms ease-in recede)
+- New `ui/src/__tests__/GlassAdaptive.test.tsx`: 16 tests — trust band thresholds (3), trust color mapping (3), breakpoint detection (5), pill breathing logic (4), gaze throttle (1)
+
+**Build prompt:** `prompts/ad-392-adaptive-bridge.md`
+**Status:** AD-392 complete — 16 vitest new, 2652 pytest + 99 vitest = 2751 total. All 5 Glass Bridge phases done.
 
