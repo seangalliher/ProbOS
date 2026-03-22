@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-388 complete — Glass Bridge Phase 1: frosted glass overlay with center-stage task cards over orb mesh
+## Current Status: AD-389 complete — Glass Bridge Phase 2: DAG step nodes radially around expanded task cards
 
 ---
 

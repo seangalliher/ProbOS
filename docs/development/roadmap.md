@@ -1260,9 +1260,9 @@ The Glass Bridge layers a frosted working surface over the existing orb mesh. Th
 
 Frosted glass layer over the canvas with center task card(s). `GlassLayer.tsx` renders at z-index 5 between canvas and controls. Dynamic frost level (backdrop-filter blur scales 0→2→4→6px with task count). Multi-task constellation layout (1-5+ tasks arranged spatially). `GlassTaskCard.tsx` with glass morphism, department-colored left border, progress bar, JetBrains Mono system data. Attention tasks elevated (-8px) with amber pulse animation. Click-through opens Bridge panel. Noise texture overlay. 9 new vitest tests.
 
-**AD-389: DAG Visualization** *(planned)*
+**AD-389: DAG Visualization** *(done)*
 
-Sub-task nodes render spatially around task cards as a living DAG. Active nodes pulse, completed nodes dim and drift down, queued nodes are ghosted outlines. Dependencies shown as faint connecting lines. DAG steps sourced from existing `TaskStepView` data. Decisions rise (float upward when human input needed), results sink (completed tasks drift to history zone). Inline agent commentary: confidence scores and context as monospaced labels near nodes.
+`GlassDAGNodes.tsx` renders step nodes radially around expanded task cards. 28px circles with status-colored borders and icons (done=green filled, in_progress=pulsing dept color, pending=ghosted, failed=red). SVG dependency lines connecting sequential nodes. Hover tooltips show step label and duration. Single-click card → expand steps, double-click → open Bridge panel. `expandedGlassTask: string | null` in store (one expanded at a time). Staggered fade-in animation (80ms per node). 7 new vitest tests.
 
 **AD-390: Ambient Intelligence & Bridge States** *(planned)*
 

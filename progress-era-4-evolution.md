@@ -760,7 +760,7 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Phases:**
 - **AD-388:** Glass overlay with center task cards, dynamic frost, multi-task constellation *(done)*
-- **AD-389:** DAG visualization — spatial sub-task nodes, decisions rise / results sink, inline agent commentary
+- **AD-389:** DAG visualization — spatial sub-task nodes, decisions rise / results sink, inline agent commentary *(done)*
 - **AD-390:** Ambient intelligence — three bridge states (Idle/Autonomous/Attention), ambient color temperature, return-to-bridge briefing, completion celebrations, Context Ribbon
 - **AD-391:** Cyberpunk atmosphere — opt-in scan lines, chromatic aberration, data rain, luminance ripple transitions, sound design
 - **AD-392:** Adaptive bridge — trust-driven progressive reveal, Command Surface breathing, Captain's Gaze attention weighting, responsive layout
@@ -774,4 +774,18 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 **Design spec:** `docs/design/hxi-glass-bridge.md`
 **Build prompt:** `prompts/ad-388-glass-overlay.md`
 **Status:** AD-388 complete — 9 vitest new, 2652 pytest + 55 vitest = 2707 total
+
+### AD-389: DAG Visualization (DONE)
+
+**Decision:** AD-389 — Add spatial sub-task node visualization around expanded glass task cards. Click a card to expand its steps as radial nodes. Double-click opens Bridge panel.
+
+**Changes:**
+- New `ui/src/components/glass/GlassDAGNodes.tsx`: radial step nodes (28px circles), SVG dependency lines, hover tooltips (label + duration), status-colored borders/icons, staggered fade-in (80ms/node), `neural-pulse` animation on active nodes
+- Modified `ui/src/components/glass/GlassTaskCard.tsx`: single-click → toggle expand (set `expandedGlassTask`), double-click → open Bridge panel
+- Modified `ui/src/components/GlassLayer.tsx`: renders `GlassDAGNodes` for expanded task, reads `expandedGlassTask` from store, decisions-rise translateY(-20px) on requires_action tasks
+- Modified `ui/src/store/useStore.ts`: added `expandedGlassTask: string | null` (default null)
+- New `ui/src/__tests__/GlassDAGNodes.test.tsx`: 7 tests (default null, set/clear, one-at-a-time, status icons, empty steps, node count, toggle logic)
+
+**Build prompt:** `prompts/ad-389-dag-visualization.md`
+**Status:** AD-389 complete — 7 vitest new, 2652 pytest + 62 vitest = 2714 total
 
