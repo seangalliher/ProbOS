@@ -718,3 +718,17 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/ad-323-notification-queue.md`
 **Status:** AD-323 complete — 12 pytest + 4 vitest new, 2663 pytest + 38 vitest = 2701 total
+
+### AD-324: Orb Hover Enhancement (DONE)
+
+**Decision:** AD-324 — Enhanced agent orb interactivity with three features: (1) Amber pulsing animation on 3D orbs when any agent has a `requires_action` task — builds attention Set once per frame from `agentTasks` for O(1) per-instance lookup, pulses between normal color and amber `(0.94, 0.69, 0.38)` at ~2Hz with increased breathing amplitude (0.08 vs 0.03). (2) Enhanced AgentTooltip with current task info — title (50-char truncate), step label, elapsed time (formatted as "Xm Ys"), progress bar (4px, department-colored), department label from `poolToGroup`, amber attention badge for `requires_action`, click-through "View in Activity" button. (3) Moved `activityDrawerOpen` from IntentSurface local `useState` to Zustand store for cross-component access (tooltip can open drawer).
+
+**Changes:**
+- Modified `ui/src/canvas/agents.tsx`: attention set built once per frame, amber pulse sine wave, increased breath amplitude
+- Modified `ui/src/components/AgentTooltip.tsx`: task info section, department label, progress bar, attention badge, click-through
+- Modified `ui/src/components/IntentSurface.tsx`: `drawerOpen` reads from Zustand `activityDrawerOpen` instead of local state
+- Modified `ui/src/store/useStore.ts`: `activityDrawerOpen: boolean` added to store
+- Modified `ui/src/__tests__/useStore.test.ts`: 4 new vitest tests (drawer toggle, task lookup, no-task case, attention badge)
+
+**Build prompt:** `prompts/ad-324-orb-hover.md`
+**Status:** AD-324 complete — 0 pytest + 4 vitest new, 2663 pytest + 42 vitest = 2705 total

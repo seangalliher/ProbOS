@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-323 complete — Agent Notification Queue (bell icon, dropdown, notify API)
+## Current Status: AD-324 complete — Orb Hover Enhancement (amber pulse, task tooltip, department colors)
 
 ---
 
