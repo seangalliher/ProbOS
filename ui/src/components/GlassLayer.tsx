@@ -1,4 +1,4 @@
-/* GlassLayer — frosted glass overlay with center-stage task cards (AD-388, AD-390, AD-391) */
+/* GlassLayer — frosted glass overlay with center-stage task cards (AD-388, AD-390, AD-391, AD-392) */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../store/useStore';
@@ -12,6 +12,7 @@ import { BriefingCard } from './glass/BriefingCard';
 import { ScanLineOverlay } from './glass/ScanLineOverlay';
 import { DataRainOverlay } from './glass/DataRainOverlay';
 import { soundEngine } from '../audio/soundEngine';
+import { useBreakpoint } from '../hooks/useBreakpoint';
 
 const STATUS_ORDER: Record<string, number> = {
   working: 0,
@@ -108,6 +109,18 @@ export function GlassLayer() {
   const chromaticAberrationEnabled = useStore((s) => s.chromaticAberrationEnabled);
   const dataRainEnabled = useStore((s) => s.dataRainEnabled);
   const atmosphereIntensity = useStore((s) => s.atmosphereIntensity);
+
+  // Agent trust lookup (AD-392)
+  const agents = useStore((s) => s.agents);
+
+  // Responsive breakpoint (AD-392)
+  const breakpoint = useBreakpoint();
+  const isCompact = breakpoint === 'tablet' || breakpoint === 'mobile';
+
+  // Captain's Gaze — throttled mouse-nearest task promotion (AD-392)
+  const [gazedTaskId, setGazedTaskId] = useState<string | null>(null);
+  const gazeRef = useRef<{ x: number; y: number } | null>(null);
+  const gazeTimestampRef = useRef(0);
 
   // Briefing state (local, not store)
   const [showBriefing, setShowBriefing] = useState(false);
@@ -233,7 +246,7 @@ export function GlassLayer() {
   if (activeTasks.length === 0 && !showBriefing) return null;
 
   const sorted = sortTasks(activeTasks);
-  const compact = sorted.length >= 6;
+  const compact = isCompact || sorted.length >= 6;
   const positions = constellationPositions(sorted.length);
 
   // Chromatic aberration offset scales with intensity
@@ -242,7 +255,33 @@ export function GlassLayer() {
   return (
     <div
       data-testid="glass-layer"
-      onMouseMove={handleActivity}
+      onMouseMove={(e) => {
+        handleActivity();
+        gazeRef.current = { x: e.clientX, y: e.clientY };
+        // Throttle gaze calculation to 100ms
+        const now = Date.now();
+        if (now - gazeTimestampRef.current < 100) return;
+        gazeTimestampRef.current = now;
+        // Find nearest task card wrapper
+        const wrappers = e.currentTarget.querySelectorAll<HTMLElement>('[data-testid="glass-task-card-wrapper"]');
+        let closestId: string | null = null;
+        let closestDist = Infinity;
+        wrappers.forEach((el) => {
+          const rect = el.getBoundingClientRect();
+          const cx = rect.left + rect.width / 2;
+          const cy = rect.top + rect.height / 2;
+          const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
+          if (dist < closestDist) {
+            closestDist = dist;
+            closestId = el.getAttribute('data-task-id');
+          }
+        });
+        setGazedTaskId(closestDist < 300 ? closestId : null);
+      }}
+      onMouseLeave={() => {
+        gazeRef.current = null;
+        setGazedTaskId(null);
+      }}
       onKeyDown={handleActivity}
       style={{
         position: 'absolute',
@@ -304,18 +343,20 @@ export function GlassLayer() {
         }} />
       )}
 
-      {/* Context Ribbon (AD-390) */}
-      <ContextRibbon bridgeState={bridgeState} />
+      {/* Context Ribbon (AD-390, AD-392) */}
+      <ContextRibbon bridgeState={bridgeState} compact={isCompact} />
 
       {/* Task cards in constellation layout */}
       {sorted.map((task, idx) => {
         const isExpanded = expandedGlassTask === task.id;
         const isCelebrating = celebrating.has(task.id);
         const deptColor = DEPT_COLORS[task.department?.toLowerCase()] || '#666';
+        const agentTrust = agents.get(task.agent_id)?.trust ?? 0.5;
         return (
           <div
             key={task.id}
             data-testid="glass-task-card-wrapper"
+            data-task-id={task.id}
             style={{
               ...(positions[idx] || { position: 'absolute', top: '40%', left: '50%', transform: 'translateX(-50%)' }),
               transform: `${(positions[idx]?.transform as string) || 'translateX(-50%)'} ${compact ? 'scale(0.9)' : ''} ${task.requires_action ? 'translateY(-20px)' : ''}`.trim(),
@@ -326,6 +367,9 @@ export function GlassLayer() {
             <GlassTaskCard
               task={task}
               elevated={false}
+              trust={agentTrust}
+              compact={compact}
+              isGazed={gazedTaskId === task.id}
             />
             {isExpanded && task.steps && task.steps.length > 0 && (
               <GlassDAGNodes

@@ -42,9 +42,10 @@ const sep = (
 
 interface ContextRibbonProps {
   bridgeState: BridgeState;
+  compact?: boolean;
 }
 
-export function ContextRibbon({ bridgeState }: ContextRibbonProps) {
+export function ContextRibbon({ bridgeState, compact }: ContextRibbonProps) {
   const agents = useStore((s) => s.agents);
   const agentTasks = useStore((s) => s.agentTasks);
   const notifications = useStore((s) => s.notifications);
@@ -92,15 +93,21 @@ export function ContextRibbon({ bridgeState }: ContextRibbonProps) {
         marginRight: 6, flexShrink: 0,
         boxShadow: `0 0 6px ${stateColor}66`,
       }} />
-      <span style={{ color: stateColor, fontWeight: 600 }}>
-        {STATE_LABELS[bridgeState]}
-      </span>
+      {!compact && (
+        <span style={{ color: stateColor, fontWeight: 600 }}>
+          {STATE_LABELS[bridgeState]}
+        </span>
+      )}
 
       {sep}
       <span>{agents.size} agents</span>
 
-      {sep}
-      <span>{activeTasks.length} active</span>
+      {!compact && (
+        <>
+          {sep}
+          <span>{activeTasks.length} active</span>
+        </>
+      )}
 
       {attentionCount > 0 && (
         <>
@@ -109,8 +116,12 @@ export function ContextRibbon({ bridgeState }: ContextRibbonProps) {
         </>
       )}
 
-      {sep}
-      <span>{systemMode}</span>
+      {!compact && (
+        <>
+          {sep}
+          <span>{systemMode}</span>
+        </>
+      )}
     </div>
   );
 }

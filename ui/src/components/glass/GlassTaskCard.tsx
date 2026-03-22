@@ -1,20 +1,46 @@
-/* GlassTaskCard — center-stage task card on the glass surface (AD-388) */
+/* GlassTaskCard — center-stage task card on the glass surface (AD-388, AD-392) */
 
 import type { AgentTaskView } from '../../store/types';
 import { useStore } from '../../store/useStore';
 import { DEPT_COLORS, STATUS_COLORS, formatElapsed, truncate } from '../bridge/BridgeCards';
 
+export const TRUST_COLORS = {
+  low: '#7060a8',
+  medium: '#88a4c8',
+  high: '#f0b060',
+};
+
+export function trustBand(trust: number): 'low' | 'medium' | 'high' {
+  if (trust < 0.35) return 'low';
+  if (trust <= 0.7) return 'medium';
+  return 'high';
+}
+
 interface GlassTaskCardProps {
   task: AgentTaskView;
   elevated?: boolean;
+  trust?: number;
+  compact?: boolean;
+  isGazed?: boolean;
 }
 
-export function GlassTaskCard({ task, elevated }: GlassTaskCardProps) {
+export function GlassTaskCard({ task, elevated, trust = 0.5, compact, isGazed }: GlassTaskCardProps) {
   const deptColor = DEPT_COLORS[task.department?.toLowerCase()] || '#666';
   const statusColor = STATUS_COLORS[task.status] || '#888';
   const isWorking = task.status === 'working';
   const needsAttention = task.requires_action;
   const pct = task.step_total > 0 ? Math.round((task.step_current / task.step_total) * 100) : 0;
+
+  const band = trustBand(trust);
+  const trustColor = TRUST_COLORS[band];
+
+  // Trust-driven dimensions
+  const cardWidth = compact ? 'calc(100% - 32px)' : (band === 'high' ? 240 : 280);
+  const borderWidth = band === 'low' ? 4 : (band === 'high' ? 2 : 3);
+  const bgAlpha = band === 'low' ? 0.8 : (band === 'high' ? 0.55 : 0.7);
+  const titleSize = (compact || band === 'high') ? 12 : 14;
+  const systemSize = (compact || band === 'high') ? 9 : 10;
+  const cardPadding = (compact || band === 'high') ? '8px 10px 8px 13px' : '10px 14px 10px 17px';
 
   return (
     <div
@@ -30,23 +56,23 @@ export function GlassTaskCard({ task, elevated }: GlassTaskCardProps) {
         useStore.setState({ bridgeOpen: true });
       }}
       style={{
-        width: 280,
-        padding: '10px 14px 10px 17px',
-        background: 'rgba(26, 26, 46, 0.7)',
+        width: cardWidth,
+        padding: cardPadding,
+        background: `rgba(26, 26, 46, ${bgAlpha})`,
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: needsAttention
           ? '1px solid rgba(240, 176, 96, 0.35)'
           : '1px solid rgba(255, 255, 255, 0.08)',
-        borderLeft: `3px solid ${deptColor}`,
+        borderLeft: `${borderWidth}px solid ${deptColor}`,
         borderRadius: 2,
         boxShadow: needsAttention
           ? '0 2px 12px rgba(240, 176, 96, 0.15), 0 2px 8px rgba(0, 0, 0, 0.4)'
           : '0 2px 8px rgba(0, 0, 0, 0.4)',
         cursor: 'pointer',
         pointerEvents: 'auto' as const,
-        transform: elevated ? 'translateY(-8px)' : 'none',
-        transition: 'opacity 0.3s ease, transform 0.3s ease',
+        transform: `${elevated ? 'translateY(-8px)' : ''} ${isGazed ? 'scale(1.03)' : ''}`.trim() || 'none',
+        transition: 'opacity 0.3s ease, transform 0.2s ease-out, box-shadow 0.2s ease-out, width 0.3s ease',
         animation: needsAttention ? 'glass-attention 2s ease-in-out infinite' : undefined,
       }}
     >
@@ -60,14 +86,14 @@ export function GlassTaskCard({ task, elevated }: GlassTaskCardProps) {
         {task.ad_number > 0 && (
           <span style={{
             fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 10, fontWeight: 400, color: deptColor, flexShrink: 0,
+            fontSize: systemSize, fontWeight: 400, color: deptColor, flexShrink: 0,
           }}>
             AD-{task.ad_number}
           </span>
         )}
         <span style={{
           fontFamily: "'Inter', sans-serif",
-          fontSize: 14, fontWeight: 600, color: '#e0e0e0',
+          fontSize: titleSize, fontWeight: 600, color: '#e0e0e0',
           flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>
           {truncate(task.title, 50)}
@@ -79,7 +105,7 @@ export function GlassTaskCard({ task, elevated }: GlassTaskCardProps) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
           <span style={{
             fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 10, color: '#808090',
+            fontSize: systemSize, color: '#808090',
           }}>
             {task.step_current}/{task.step_total}
           </span>
@@ -96,11 +122,11 @@ export function GlassTaskCard({ task, elevated }: GlassTaskCardProps) {
         </div>
       )}
 
-      {/* Bottom row: agent_type + elapsed + department */}
+      {/* Bottom row: agent_type + elapsed + trust dot + department */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 6, marginTop: 6,
         fontFamily: "'JetBrains Mono', monospace",
-        fontSize: 10, fontWeight: 400, color: '#808090',
+        fontSize: systemSize, fontWeight: 400, color: '#808090',
       }}>
         <span>{task.agent_type}</span>
         {task.started_at > 0 && (
@@ -109,7 +135,12 @@ export function GlassTaskCard({ task, elevated }: GlassTaskCardProps) {
             <span>{formatElapsed(task.started_at)}</span>
           </>
         )}
-        <span style={{ marginLeft: 'auto', textTransform: 'capitalize' as const }}>
+        <span style={{
+          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+          background: trustColor, display: 'inline-block',
+          marginLeft: 'auto',
+        }} />
+        <span style={{ textTransform: 'capitalize' as const }}>
           {task.department}
         </span>
       </div>

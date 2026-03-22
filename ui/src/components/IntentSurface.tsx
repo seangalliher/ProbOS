@@ -9,6 +9,7 @@ import { startListening, stopListening, isSpeechRecognitionSupported } from '../
 import { soundEngine } from '../audio/soundEngine';
 import { BridgePanel } from './BridgePanel';
 import { ViewSwitcher } from './ViewSwitcher';
+import { deriveBridgeState } from './glass/ContextRibbon';
 
 /* ── spring easing ── */
 const spring = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -38,6 +39,10 @@ export function IntentSurface() {
   const inputRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Command Surface breathing (AD-392)
+  const pillRef = useRef<HTMLDivElement>(null);
+  const [pillReceded, setPillReceded] = useState(false);
 
   const chatHistory = useStore((s) => s.chatHistory);
   const activeDag = useStore((s) => s.activeDag);
@@ -104,6 +109,28 @@ export function IntentSurface() {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [active]);
+
+  /* ── Command Surface breathing (AD-392) ── */
+  useEffect(() => {
+    const bridgeState = deriveBridgeState(agentTasks, notifications);
+    if (bridgeState !== 'autonomous' || active) {
+      setPillReceded(false);
+      return;
+    }
+    // Track mouse distance to pill center
+    function handleMouseMove(e: MouseEvent) {
+      if (!pillRef.current) return;
+      const rect = pillRef.current.getBoundingClientRect();
+      const pillCx = rect.left + rect.width / 2;
+      const pillCy = rect.top + rect.height / 2;
+      const dist = Math.hypot(e.clientX - pillCx, e.clientY - pillCy);
+      setPillReceded(dist > 200);
+    }
+    // Start receded (mouse presumed far)
+    setPillReceded(true);
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, [agentTasks, notifications, active]);
 
   /* ── DAG progress text ── */
   const dagProgress = activeDag && activeDag.length > 0
@@ -1516,24 +1543,30 @@ export function IntentSurface() {
             </form>
           </div>
         ) : (
-          /* ── Resting Pill ── */
+          /* ── Resting Pill (AD-392: breathing) ── */
           <div
+            ref={pillRef}
             onClick={handlePillClick}
             style={{
-              width: 160,
-              height: 40,
-              ...glass(0.5),
-              borderRadius: 24,
+              width: pillReceded ? 80 : 160,
+              height: pillReceded ? 4 : 40,
+              ...glass(pillReceded ? 0.3 : 0.5),
+              borderRadius: pillReceded ? 2 : 24,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              padding: '0 16px',
+              padding: pillReceded ? 0 : '0 16px',
               cursor: 'pointer',
               pointerEvents: 'auto',
               position: 'relative',
-              animation: pendingRequests === 0 ? 'pulse-pill 1.2s ease-in-out infinite' : undefined,
-              boxShadow: '0 0 8px rgba(240, 176, 96, 0.05)',
-              transition: 'box-shadow 0.3s ease',
+              opacity: pillReceded ? 0.4 : undefined,
+              animation: !pillReceded && pendingRequests === 0 ? 'pulse-pill 1.2s ease-in-out infinite' : undefined,
+              boxShadow: pillReceded
+                ? '0 0 12px rgba(56, 200, 192, 0.15)'
+                : '0 0 8px rgba(240, 176, 96, 0.05)',
+              transition: pillReceded
+                ? 'width 0.8s ease-in, height 0.8s ease-in, opacity 0.8s ease-in, border-radius 0.8s ease-in, box-shadow 0.8s ease-in, padding 0.8s ease-in'
+                : 'width 0.3s ease-out, height 0.3s ease-out, opacity 0.3s ease-out, border-radius 0.3s ease-out, box-shadow 0.3s ease-out, padding 0.3s ease-out',
             }}
           >
             <span style={{
@@ -1545,6 +1578,8 @@ export function IntentSurface() {
               alignItems: 'center',
               gap: 6,
               whiteSpace: 'nowrap',
+              opacity: pillReceded ? 0 : 1,
+              transition: pillReceded ? 'opacity 0.3s ease-in' : 'opacity 0.3s ease-out 0.15s',
             }}>
               <span style={{ fontSize: 14 }}>{'\u2726'}</span>
               Ask ProbOS...
@@ -1561,6 +1596,8 @@ export function IntentSurface() {
                 fontFamily: 'monospace',
                 minWidth: 16,
                 textAlign: 'center',
+                opacity: pillReceded ? 0 : 1,
+                transition: pillReceded ? 'opacity 0.3s ease-in' : 'opacity 0.3s ease-out 0.15s',
               }}>
                 {msgCount > 99 ? '99+' : msgCount}
               </span>
