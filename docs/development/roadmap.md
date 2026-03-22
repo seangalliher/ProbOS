@@ -1246,6 +1246,10 @@ Upgrade the existing system health orb with per-agent hover preview:
 - Visual indicator on the orb when any agent requires Captain attention (pulsing amber)
 - Click-through from orb tooltip to the Activity Drawer card for that agent
 
+**AD-387: Unified Bridge — Single Panel HXI Redesign** *(done)*
+
+Replace three separate panels (NOTIF, ACTIVITY, MISSION CTRL) with a single BRIDGE button and unified command panel. Bridge panel (380px right sidebar) has five priority-ordered sections: Attention (merged `requires_action` tasks + `action_required` notifications, always expanded), Active (working tasks), Notifications (info/error), Kanban (compact inline, expandable to main viewer), Recent (done/failed). Empty sections auto-hide. Shared card components extracted into `bridge/` subdirectory. Main viewer switches between 3D canvas and full kanban via `mainViewer` state. ViewSwitcher appears top-left when non-canvas view active. Old components deleted: ActivityDrawer, NotificationDropdown, MissionControl. `bridgeOpen` + `mainViewer` replace `missionControlView` + `activityDrawerOpen` in Zustand store.
+
 **Captain's Ready Room (Strategic Planning Interface)**
 
 *"In my ready room, Number One."*

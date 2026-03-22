@@ -732,3 +732,24 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/ad-324-orb-hover.md`
 **Status:** AD-324 complete — 0 pytest + 4 vitest new, 2663 pytest + 42 vitest = 2705 total
+
+### AD-387: Unified Bridge — Single Panel HXI Redesign (DONE)
+
+**Decision:** AD-387 — Replace three separate panels (NOTIF, ACTIVITY, MISSION CTRL) with a single BRIDGE button and unified command panel. Bridge panel (380px right sidebar, glass morphism) has five priority-ordered sections: Attention (merged `requires_action` tasks + `action_required` notifications, amber accent, always expanded when items exist), Active (working tasks, teal accent), Notifications (info/error notifs, blue accent), Kanban (compact 4-column inline grid with expand-to-main-viewer button, gold accent), Recent (done/failed, collapsed by default). Empty sections auto-hide. Shared card components extracted into `bridge/` subdirectory (BridgeCards, BridgeNotifications, BridgeKanban, FullKanban). Main viewer becomes adaptive focus surface via `mainViewer: 'canvas' | 'kanban'` state — FullKanban replaces 3D canvas in center area when activated from Bridge's kanban expand button or ViewSwitcher. ViewSwitcher (top-left tabs) appears only when non-canvas view active. Old components deleted. `bridgeOpen` + `mainViewer` replace `missionControlView` + `activityDrawerOpen` in Zustand store.
+
+**Changes:**
+- New `ui/src/components/BridgePanel.tsx`: unified panel with BridgeSection collapsible sub-component, 5 sections, mark-all-read
+- New `ui/src/components/bridge/BridgeCards.tsx`: TaskCard, DEPT_COLORS, STATUS_COLORS, formatElapsed, ProgressBar, StepList (extracted from ActivityDrawer)
+- New `ui/src/components/bridge/BridgeNotifications.tsx`: NotificationCard, TYPE_COLORS, formatRelativeTime (extracted from NotificationDropdown)
+- New `ui/src/components/bridge/BridgeKanban.tsx`: compact 4-column kanban for sidebar
+- New `ui/src/components/bridge/FullKanban.tsx`: full-width kanban board for main viewer (extracted from MissionControl)
+- New `ui/src/components/ViewSwitcher.tsx`: top-left canvas/kanban tab switcher
+- Modified `ui/src/App.tsx`: conditional render canvas vs FullKanban based on mainViewer
+- Modified `ui/src/components/IntentSurface.tsx`: 3 buttons → 1 BRIDGE button with combined attention badge, BridgePanel + ViewSwitcher
+- Modified `ui/src/store/useStore.ts`: bridgeOpen + mainViewer replace missionControlView + activityDrawerOpen
+- Modified `ui/src/components/AgentTooltip.tsx`: "Open Bridge" replaces "View in Activity"
+- Deleted `ui/src/components/ActivityDrawer.tsx`, `NotificationDropdown.tsx`, `MissionControl.tsx`
+- Modified `ui/src/__tests__/useStore.test.ts`: 4 new tests (mainViewer default, kanban switch, independence, attention merge), existing test updated
+
+**Build prompt:** `prompts/ad-325-unified-bridge.md`
+**Status:** AD-387 complete — 0 pytest + 4 vitest new, 2652 pytest + 46 vitest = 2698 total

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-324 complete — Orb Hover Enhancement (amber pulse, task tooltip, department colors)
+## Current Status: AD-387 complete — Unified Bridge panel with adaptive main viewer (single BRIDGE button, 5 priority sections, canvas/kanban switcher)
 
 ---
 
