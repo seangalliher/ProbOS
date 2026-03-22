@@ -675,12 +675,12 @@ describe('notification events (AD-323)', () => {
 });
 
 describe('orb hover enhancements (AD-324)', () => {
-  it('activityDrawerOpen defaults to false and can be toggled', () => {
-    expect(useStore.getState().activityDrawerOpen).toBe(false);
-    useStore.setState({ activityDrawerOpen: true });
-    expect(useStore.getState().activityDrawerOpen).toBe(true);
-    useStore.setState({ activityDrawerOpen: false });
-    expect(useStore.getState().activityDrawerOpen).toBe(false);
+  it('bridgeOpen defaults to false and can be toggled', () => {
+    expect(useStore.getState().bridgeOpen).toBe(false);
+    useStore.setState({ bridgeOpen: true });
+    expect(useStore.getState().bridgeOpen).toBe(true);
+    useStore.setState({ bridgeOpen: false });
+    expect(useStore.getState().bridgeOpen).toBe(false);
   });
 
   it('tooltip can find current task for agent', () => {
@@ -742,5 +742,54 @@ describe('orb hover enhancements (AD-324)', () => {
     const attentionTasks = tasks?.filter(t => t.requires_action);
     expect(attentionTasks).toHaveLength(1);
     expect(attentionTasks![0].agent_id).toBe('builder-001');
+  });
+});
+
+describe('unified bridge (AD-325)', () => {
+  it('mainViewer defaults to canvas', () => {
+    expect(useStore.getState().mainViewer).toBe('canvas');
+  });
+
+  it('mainViewer can be set to kanban', () => {
+    useStore.setState({ mainViewer: 'kanban' });
+    expect(useStore.getState().mainViewer).toBe('kanban');
+    useStore.setState({ mainViewer: 'canvas' });
+    expect(useStore.getState().mainViewer).toBe('canvas');
+  });
+
+  it('bridgeOpen and mainViewer are independent', () => {
+    useStore.setState({ bridgeOpen: true, mainViewer: 'kanban' });
+    expect(useStore.getState().bridgeOpen).toBe(true);
+    expect(useStore.getState().mainViewer).toBe('kanban');
+    useStore.setState({ bridgeOpen: false });
+    expect(useStore.getState().mainViewer).toBe('kanban');
+  });
+
+  it('attention count merges tasks and notifications', () => {
+    useStore.setState({
+      agentTasks: [
+        {
+          id: 't1', agent_id: 'a1', agent_type: 'builder',
+          department: 'engineering', type: 'build', title: 'task',
+          status: 'working', steps: [], requires_action: true,
+          action_type: 'approve_build', started_at: 0, completed_at: 0,
+          error: '', priority: 3, ad_number: 0, metadata: {},
+          step_current: 0, step_total: 0,
+        },
+      ],
+      notifications: [
+        {
+          id: 'n1', agent_id: 'a2', agent_type: 'monitor',
+          department: 'medical', notification_type: 'action_required' as const,
+          title: 'alert', detail: '', action_url: '',
+          created_at: 0, acknowledged: false,
+        },
+      ],
+    });
+    const tasks = useStore.getState().agentTasks!;
+    const notifs = useStore.getState().notifications!;
+    const attentionTasks = tasks.filter(t => t.requires_action && (t.status === 'working' || t.status === 'review'));
+    const attentionNotifs = notifs.filter(n => n.notification_type === 'action_required' && !n.acknowledged);
+    expect(attentionTasks.length + attentionNotifs.length).toBe(2);
   });
 });

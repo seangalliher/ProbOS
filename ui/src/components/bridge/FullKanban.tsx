@@ -1,7 +1,7 @@
-/* Mission Control — Captain's Kanban Dashboard (AD-322) */
+/* Full Kanban — full-width kanban board for main viewer (AD-325) */
 
-import { useStore } from '../store/useStore';
-import type { MissionControlTask } from '../store/types';
+import { useStore } from '../../store/useStore';
+import type { MissionControlTask } from '../../store/types';
 
 const DEPT_COLORS: Record<string, string> = {
   engineering: '#b0a050',
@@ -9,6 +9,14 @@ const DEPT_COLORS: Record<string, string> = {
   medical: '#5090d0',
   security: '#d05050',
   bridge: '#d0a030',
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  queued: '#555566',
+  working: '#ffaa44',
+  review: '#66ccff',
+  done: '#50c878',
+  failed: '#ff5555',
 };
 
 function elapsedTime(task: MissionControlTask): string {
@@ -20,15 +28,7 @@ function elapsedTime(task: MissionControlTask): string {
   return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  queued: '#555566',
-  working: '#ffaa44',
-  review: '#66ccff',
-  done: '#50c878',
-  failed: '#ff5555',
-};
-
-function TaskCard({ task }: { task: MissionControlTask }) {
+function KanbanCard({ task }: { task: MissionControlTask }) {
   const deptColor = DEPT_COLORS[task.department] || '#888';
 
   return (
@@ -42,7 +42,6 @@ function TaskCard({ task }: { task: MissionControlTask }) {
       fontSize: 11,
       color: '#e0dcd4',
     }}>
-      {/* Title line */}
       <div style={{ fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{
           width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
@@ -56,13 +55,11 @@ function TaskCard({ task }: { task: MissionControlTask }) {
           {task.title.slice(0, 40)}
         </span>
       </div>
-      {/* Meta line */}
       <div style={{ fontSize: 9, color: '#888', display: 'flex', gap: 8, marginLeft: 12 }}>
         <span>{task.agent_type}</span>
         {task.started_at > 0 && <span>{elapsedTime(task)}</span>}
         <span style={{ marginLeft: 'auto', textTransform: 'capitalize' }}>{task.department}</span>
       </div>
-      {/* Action buttons for review status */}
       {task.status === 'review' && (
         <div style={{ marginTop: 6, display: 'flex', gap: 6, marginLeft: 12 }}>
           <button
@@ -105,7 +102,6 @@ function TaskCard({ task }: { task: MissionControlTask }) {
           </button>
         </div>
       )}
-      {/* Error for failed */}
       {task.status === 'failed' && task.error && (
         <div style={{ color: '#ff5555', fontSize: 9, marginTop: 4, marginLeft: 12 }}>
           {task.error.slice(0, 80)}
@@ -115,7 +111,7 @@ function TaskCard({ task }: { task: MissionControlTask }) {
   );
 }
 
-export function MissionControl() {
+export function FullKanban() {
   const tasks = useStore(s => s.missionControlTasks) || [];
 
   const columns = [
@@ -127,11 +123,11 @@ export function MissionControl() {
 
   return (
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 15,
+      position: 'absolute', inset: 0, zIndex: 0,
       background: '#0a0a12',
       display: 'flex', flexDirection: 'column',
+      fontFamily: "'JetBrains Mono', monospace",
     }}>
-      {/* Header */}
       <div style={{
         padding: '12px 20px',
         borderBottom: '1px solid rgba(208, 160, 48, 0.15)',
@@ -148,7 +144,6 @@ export function MissionControl() {
         </span>
       </div>
 
-      {/* Kanban columns */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(4, 1fr)',
@@ -166,7 +161,6 @@ export function MissionControl() {
             display: 'flex',
             flexDirection: 'column',
           }}>
-            {/* Column header */}
             <div style={{
               textTransform: 'uppercase',
               letterSpacing: 2,
@@ -188,9 +182,8 @@ export function MissionControl() {
                 color: col.items.length > 0 ? '#e0dcd4' : '#555',
               }}>{col.items.length}</span>
             </div>
-            {/* Cards */}
             <div style={{ flex: 1, overflow: 'auto' }}>
-              {col.items.map(task => <TaskCard key={task.id} task={task} />)}
+              {col.items.map(task => <KanbanCard key={task.id} task={task} />)}
               {col.items.length === 0 && (
                 <div style={{
                   color: '#333', fontSize: 10, textAlign: 'center',

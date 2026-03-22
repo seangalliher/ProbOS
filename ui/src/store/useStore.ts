@@ -202,10 +202,10 @@ export interface HXIState {
   } | null;
   buildQueue: BuildQueueItem[] | null;
   missionControlTasks: MissionControlTask[] | null;
-  missionControlView: boolean;
+  bridgeOpen: boolean;
+  mainViewer: 'canvas' | 'kanban';
   agentTasks: AgentTaskView[] | null;
   notifications: NotificationView[] | null;
-  activityDrawerOpen: boolean;
   pendingRoutingPulse: { source: string; target: string } | null;
   pendingFeedbackPulse: 'good' | 'bad' | null;
 
@@ -307,10 +307,10 @@ export const useStore = create<HXIState>((set, get) => ({
   transporterProgress: null,
   buildQueue: null,
   missionControlTasks: null,
-  missionControlView: false,
+  bridgeOpen: false,
+  mainViewer: 'canvas' as const,
   agentTasks: null,
   notifications: null,
-  activityDrawerOpen: false,
   pendingRoutingPulse: null,
   pendingFeedbackPulse: null,
   connected: false,

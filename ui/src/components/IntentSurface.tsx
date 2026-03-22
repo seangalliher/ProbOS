@@ -7,9 +7,8 @@ import type { SelfModProposal, BuildProposal, BuildFailureReport, ArchitectPropo
 import { speakResponse } from '../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
 import { soundEngine } from '../audio/soundEngine';
-import { MissionControl } from './MissionControl';
-import { ActivityDrawer } from './ActivityDrawer';
-import { NotificationDropdown } from './NotificationDropdown';
+import { BridgePanel } from './BridgePanel';
+import { ViewSwitcher } from './ViewSwitcher';
 
 /* ── spring easing ── */
 const spring = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -52,13 +51,12 @@ export function IntentSurface() {
   const voiceEnabled = useStore((s) => s.voiceEnabled);
   const transporterProgress = useStore((s) => s.transporterProgress);
   const buildQueue = useStore((s) => s.buildQueue);
-  const missionControlView = useStore((s) => s.missionControlView);
-  const drawerOpen = useStore((s) => s.activityDrawerOpen);
-  const [notifOpen, setNotifOpen] = useState(false);
+  const bridgeOpen = useStore((s) => s.bridgeOpen);
   const agentTasks = useStore((s) => s.agentTasks);
   const notifications = useStore((s) => s.notifications);
   const needsAttentionCount = agentTasks?.filter(t => t.requires_action).length ?? 0;
   const unreadCount = notifications?.filter(n => !n.acknowledged).length ?? 0;
+  const badgeCount = needsAttentionCount + unreadCount;
 
   /* ── consume pending char from global keydown ── */
   useEffect(() => {
@@ -317,58 +315,9 @@ export function IntentSurface() {
 
   return (
     <>
-      {/* ── Notification bell toggle (AD-323) ── */}
+      {/* ── Bridge toggle (AD-325) ── */}
       <button
-        onClick={() => setNotifOpen(prev => !prev)}
-        style={{
-          position: 'fixed',
-          top: 12,
-          right: 210,
-          zIndex: 25,
-          padding: '3px 8px',
-          borderRadius: 4,
-          border: '1px solid rgba(255, 255, 255, 0.15)',
-          background: notifOpen ? 'rgba(240, 176, 96, 0.2)' : 'transparent',
-          color: unreadCount > 0 ? '#f0b060' : (notifOpen ? '#f0b060' : '#888'),
-          fontSize: 9,
-          fontWeight: 600,
-          cursor: 'pointer',
-          letterSpacing: 1,
-          pointerEvents: 'auto',
-        }}
-      >
-        {'NOTIF' + (unreadCount > 0 ? ` (${unreadCount})` : '')}
-      </button>
-
-      {/* ── Notification Dropdown (AD-323) ── */}
-      <NotificationDropdown open={notifOpen} onClose={() => setNotifOpen(false)} />
-
-      {/* ── Activity Drawer toggle (AD-321) ── */}
-      <button
-        onClick={() => useStore.setState((s) => ({ activityDrawerOpen: !s.activityDrawerOpen }))}
-        style={{
-          position: 'fixed',
-          top: 12,
-          right: 110,
-          zIndex: 25,
-          padding: '3px 8px',
-          borderRadius: 4,
-          border: '1px solid rgba(255, 255, 255, 0.15)',
-          background: drawerOpen ? 'rgba(240, 176, 96, 0.2)' : 'transparent',
-          color: drawerOpen ? '#f0b060' : '#888',
-          fontSize: 9,
-          fontWeight: 600,
-          cursor: 'pointer',
-          letterSpacing: 1,
-          pointerEvents: 'auto',
-        }}
-      >
-        {'ACTIVITY' + (needsAttentionCount > 0 ? ` (${needsAttentionCount})` : '')}
-      </button>
-
-      {/* ── Mission Control toggle (AD-322) ── */}
-      <button
-        onClick={() => useStore.setState((s) => ({ missionControlView: !s.missionControlView }))}
+        onClick={() => useStore.setState((s) => ({ bridgeOpen: !s.bridgeOpen }))}
         style={{
           position: 'fixed',
           top: 12,
@@ -377,23 +326,24 @@ export function IntentSurface() {
           padding: '3px 8px',
           borderRadius: 4,
           border: '1px solid rgba(255, 255, 255, 0.15)',
-          background: missionControlView ? 'rgba(208, 160, 48, 0.2)' : 'transparent',
-          color: missionControlView ? '#d0a030' : '#888',
+          background: bridgeOpen ? 'rgba(240, 176, 96, 0.2)' : 'transparent',
+          color: badgeCount > 0 ? '#f0b060' : (bridgeOpen ? '#f0b060' : '#888'),
           fontSize: 9,
           fontWeight: 600,
           cursor: 'pointer',
           letterSpacing: 1,
           pointerEvents: 'auto',
+          fontFamily: "'JetBrains Mono', monospace",
         }}
       >
-        {missionControlView ? 'HXI' : 'MISSION CTRL'}
+        {'BRIDGE' + (badgeCount > 0 ? ` (${badgeCount})` : '')}
       </button>
 
-      {/* ── Mission Control overlay (AD-322) ── */}
-      {missionControlView && <MissionControl />}
+      {/* ── Bridge Panel (AD-325) ── */}
+      <BridgePanel open={bridgeOpen} onClose={() => useStore.setState({ bridgeOpen: false })} />
 
-      {/* ── Activity Drawer (AD-321) ── */}
-      <ActivityDrawer open={drawerOpen} onClose={() => useStore.setState({ activityDrawerOpen: false })} />
+      {/* ── View Switcher (AD-325) ── */}
+      <ViewSwitcher />
 
       {/* ── Canvas dim overlay when active ── */}
       {active && (

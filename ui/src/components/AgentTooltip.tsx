@@ -176,7 +176,7 @@ export function AgentTooltip() {
           {/* Click-through to Activity Drawer when pinned */}
           {pinned && (
             <button
-              onClick={() => useStore.setState({ activityDrawerOpen: true })}
+              onClick={() => useStore.setState({ bridgeOpen: true })}
               style={{
                 background: 'none',
                 border: 'none',
@@ -187,7 +187,7 @@ export function AgentTooltip() {
                 textDecoration: 'underline',
               }}
             >
-              View in Activity
+              Open Bridge
             </button>
           )}
         </>

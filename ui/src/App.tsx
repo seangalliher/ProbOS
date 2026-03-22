@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useStore } from './store/useStore';
 import { CognitiveCanvas } from './components/CognitiveCanvas';
+import { FullKanban } from './components/bridge/FullKanban';
 import { IntentSurface } from './components/IntentSurface';
 import { DecisionSurface } from './components/DecisionSurface';
 import { AgentTooltip } from './components/AgentTooltip';
@@ -11,6 +12,7 @@ import { WelcomeOverlay } from './components/WelcomeOverlay';
 
 export default function App() {
   useWebSocket();
+  const mainViewer = useStore((s) => s.mainViewer);
 
   /* ── Global keydown: type-to-focus like Spotlight ── */
   useEffect(() => {
@@ -29,7 +31,7 @@ export default function App() {
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <CognitiveCanvas />
+      {mainViewer === 'canvas' ? <CognitiveCanvas /> : <FullKanban />}
       <IntentSurface />
       <DecisionSurface />
       <AgentTooltip />
