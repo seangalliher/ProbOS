@@ -21,6 +21,12 @@ export function GlassTaskCard({ task, elevated }: GlassTaskCardProps) {
       className={needsAttention ? 'glass-card-attention' : undefined}
       onClick={(e) => {
         e.stopPropagation();
+        useStore.setState((s) => ({
+          expandedGlassTask: s.expandedGlassTask === task.id ? null : task.id,
+        }));
+      }}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
         useStore.setState({ bridgeOpen: true });
       }}
       style={{

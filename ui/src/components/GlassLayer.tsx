@@ -3,6 +3,7 @@
 import { useStore } from '../store/useStore';
 import type { AgentTaskView } from '../store/types';
 import { GlassTaskCard } from './glass/GlassTaskCard';
+import { GlassDAGNodes } from './glass/GlassDAGNodes';
 
 const STATUS_ORDER: Record<string, number> = {
   working: 0,
@@ -84,6 +85,7 @@ function constellationPositions(count: number): React.CSSProperties[] {
 export function GlassLayer() {
   const mainViewer = useStore((s) => s.mainViewer);
   const agentTasks = useStore((s) => s.agentTasks);
+  const expandedGlassTask = useStore((s) => s.expandedGlassTask);
 
   // Only render on canvas view
   if (mainViewer !== 'canvas') return null;
@@ -124,21 +126,32 @@ export function GlassLayer() {
       }} />
 
       {/* Task cards in constellation layout */}
-      {sorted.map((task, idx) => (
-        <div
-          key={task.id}
-          data-testid="glass-task-card-wrapper"
-          style={{
-            ...(positions[idx] || { position: 'absolute', top: '40%', left: '50%', transform: 'translateX(-50%)' }),
-            transform: `${(positions[idx]?.transform as string) || 'translateX(-50%)'} ${compact ? 'scale(0.9)' : ''}`.trim(),
-          } as React.CSSProperties}
-        >
-          <GlassTaskCard
-            task={task}
-            elevated={task.requires_action}
-          />
-        </div>
-      ))}
+      {sorted.map((task, idx) => {
+        const isExpanded = expandedGlassTask === task.id;
+        return (
+          <div
+            key={task.id}
+            data-testid="glass-task-card-wrapper"
+            style={{
+              ...(positions[idx] || { position: 'absolute', top: '40%', left: '50%', transform: 'translateX(-50%)' }),
+              transform: `${(positions[idx]?.transform as string) || 'translateX(-50%)'} ${compact ? 'scale(0.9)' : ''} ${task.requires_action ? 'translateY(-20px)' : ''}`.trim(),
+              transition: 'transform 0.3s ease',
+            } as React.CSSProperties}
+          >
+            <GlassTaskCard
+              task={task}
+              elevated={false}
+            />
+            {isExpanded && task.steps && task.steps.length > 0 && (
+              <GlassDAGNodes
+                steps={task.steps}
+                department={task.department}
+                requiresAction={task.requires_action}
+              />
+            )}
+          </div>
+        );
+      })}
 
       {/* Keyframe for attention pulse */}
       <style>{`

@@ -205,6 +205,7 @@ export interface HXIState {
   bridgeOpen: boolean;
   mainViewer: 'canvas' | 'kanban';
   agentTasks: AgentTaskView[] | null;
+  expandedGlassTask: string | null;
   notifications: NotificationView[] | null;
   pendingRoutingPulse: { source: string; target: string } | null;
   pendingFeedbackPulse: 'good' | 'bad' | null;
@@ -310,6 +311,7 @@ export const useStore = create<HXIState>((set, get) => ({
   bridgeOpen: false,
   mainViewer: 'canvas' as const,
   agentTasks: null,
+  expandedGlassTask: null,
   notifications: null,
   pendingRoutingPulse: null,
   pendingFeedbackPulse: null,
