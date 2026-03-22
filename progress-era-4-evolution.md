@@ -761,7 +761,7 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 **Phases:**
 - **AD-388:** Glass overlay with center task cards, dynamic frost, multi-task constellation *(done)*
 - **AD-389:** DAG visualization — spatial sub-task nodes, decisions rise / results sink, inline agent commentary *(done)*
-- **AD-390:** Ambient intelligence — three bridge states (Idle/Autonomous/Attention), ambient color temperature, return-to-bridge briefing, completion celebrations, Context Ribbon
+- **AD-390:** Ambient intelligence — three bridge states (Idle/Autonomous/Attention), ambient color temperature, return-to-bridge briefing, completion celebrations, Context Ribbon *(done)*
 - **AD-391:** Cyberpunk atmosphere — opt-in scan lines, chromatic aberration, data rain, luminance ripple transitions, sound design
 - **AD-392:** Adaptive bridge — trust-driven progressive reveal, Command Surface breathing, Captain's Gaze attention weighting, responsive layout
 
@@ -788,4 +788,17 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/ad-389-dag-visualization.md`
 **Status:** AD-389 complete — 7 vitest new, 2652 pytest + 62 vitest = 2714 total
+
+### AD-390: Ambient Intelligence & Bridge States (DONE)
+
+**Decision:** AD-390 — Add ambient visual intelligence to the glass layer. Three bridge states (idle/autonomous/attention) derived from agentTasks + notifications drive ambient edge glow colors and the new Context Ribbon HUD strip. Return-to-bridge briefing card after Captain absence. Completion celebrations bloom department colors.
+
+**Changes:**
+- New `ui/src/components/glass/ContextRibbon.tsx`: dense HUD strip (32px) at top of glass layer, JetBrains Mono 10px, shows bridge state dot+label, agent count, active task count, attention count (conditional), system mode. Exports `deriveBridgeState()` and `BridgeState` type. State-colored bottom border glow with 1.2s transition.
+- New `ui/src/components/glass/BriefingCard.tsx`: return-to-bridge summary card (320px), glass morphism, shows completed tasks + new notifications + bridge state. Auto-dismiss 8s, click-to-dismiss. Briefing-fade-in animation.
+- Modified `ui/src/components/GlassLayer.tsx`: ambient edge glow (`EDGE_GLOW` per bridge state — cyan/gold/amber inset box-shadow), ContextRibbon integration, activity tracking (lastActivityRef, wasAwayRef, snapshotRef for 3-min inactivity threshold), celebration detection (prevStatusesRef comparing status transitions, 600ms department-colored bloom), briefing state (showBriefing useState keeps layer mounted during briefing). Renders when active tasks exist OR briefing is pending.
+- New `ui/src/__tests__/GlassBridgeState.test.tsx`: 11 tests — deriveBridgeState (6 cases: null/empty→idle, done/failed→idle, active→autonomous, requires_action→attention, action_required notif→attention, acknowledged notif→autonomous), edge glow color mapping (3), celebration detection (2: working→done triggers, done→done doesn't)
+
+**Build prompt:** `prompts/ad-390-ambient-intelligence.md`
+**Status:** AD-390 complete — 11 vitest new, 2652 pytest + 73 vitest = 2725 total
 

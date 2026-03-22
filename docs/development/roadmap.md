@@ -1264,9 +1264,9 @@ Frosted glass layer over the canvas with center task card(s). `GlassLayer.tsx` r
 
 `GlassDAGNodes.tsx` renders step nodes radially around expanded task cards. 28px circles with status-colored borders and icons (done=green filled, in_progress=pulsing dept color, pending=ghosted, failed=red). SVG dependency lines connecting sequential nodes. Hover tooltips show step label and duration. Single-click card → expand steps, double-click → open Bridge panel. `expandedGlassTask: string | null` in store (one expanded at a time). Staggered fade-in animation (80ms per node). 7 new vitest tests.
 
-**AD-390: Ambient Intelligence & Bridge States** *(planned)*
+**AD-390: Ambient Intelligence & Bridge States** *(done)*
 
-Three bridge states drive visual mood: Idle (no tasks, mesh dominates, cool cyan edges), Autonomous (agents working, nothing needs Captain — golden warmth, the satisfaction of delegation), Attention (Captain needed — amber edge glow, attention items float upward). Ambient color temperature as glanceable system state. Return-to-bridge briefing card after absence. Completion celebrations: department-colored mesh blooms on task success. Context Ribbon (Zone 1): dense monospaced HUD strip across the top.
+Three bridge states (idle/autonomous/attention) derived from agentTasks + notifications. `ContextRibbon.tsx` HUD strip at top with bridge state dot, agent count, active tasks, attention count, system mode. Ambient edge glow (inset box-shadow: cyan→gold→amber, 1.2s transition). `BriefingCard.tsx` return-to-bridge summary after 3+ min inactivity (auto-dismiss 8s). Completion celebrations: department-colored bloom (600ms) on task status → done. 11 new vitest tests.
 
 **AD-391: Cyberpunk Atmosphere Layer** *(planned)*
 

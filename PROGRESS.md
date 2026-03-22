@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-389 complete — Glass Bridge Phase 2: DAG step nodes radially around expanded task cards
+## Current Status: AD-390 complete — Glass Bridge Phase 3: Ambient intelligence, bridge states, Context Ribbon, briefing card, celebrations
 
 ---
 
