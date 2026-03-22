@@ -24,7 +24,7 @@ export function deriveBridgeState(
   return 'idle';
 }
 
-const STATE_COLORS: Record<BridgeState, string> = {
+export const STATE_COLORS: Record<BridgeState, string> = {
   idle: '#38c8c0',
   autonomous: '#d4a029',
   attention: '#f0ae40',

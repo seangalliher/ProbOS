@@ -9,6 +9,8 @@ class SoundEngine {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private dreamDrone: OscillatorNode | null = null;
   private dreamNoise: AudioBufferSourceNode | null = null;
+  private bridgeHumOscs: OscillatorNode[] = [];
+  private bridgeHumGains: GainNode[] = [];
 
   get initialized(): boolean { return this.ctx !== null; }
   get muted(): boolean { return this._muted; }
@@ -255,6 +257,102 @@ class SoundEngine {
       osc.connect(gain).connect(this.masterGain!);
       osc.start(t);
       osc.stop(t + 0.35);
+    });
+  }
+
+  // ── DAG step completion: ascending chime (AD-391) ──
+
+  playStepComplete(stepIndex: number, totalSteps: number): void {
+    if (!this.ctx || !this.masterGain || !this._connected) return;
+    const t = this.ctx.currentTime;
+    const freq = 523 * Math.pow(2, (stepIndex * 4) / (12 * totalSteps));
+    const isFinal = stepIndex === totalSteps - 1;
+    const duration = isFinal ? 0.4 : 0.2;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(0.08, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    osc.connect(gain).connect(this.masterGain);
+    osc.start(t);
+    osc.stop(t + duration + 0.05);
+
+    // Final step: play completion chord (all accumulated notes)
+    if (isFinal && totalSteps > 1) {
+      for (let i = 0; i < totalSteps; i++) {
+        const chordFreq = 523 * Math.pow(2, (i * 4) / (12 * totalSteps));
+        const chordOsc = this.ctx.createOscillator();
+        const chordGain = this.ctx.createGain();
+        chordOsc.type = 'sine';
+        chordOsc.frequency.value = chordFreq;
+        chordGain.gain.setValueAtTime(0, t + 0.05);
+        chordGain.gain.linearRampToValueAtTime(0.04, t + 0.07);
+        chordGain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+        chordOsc.connect(chordGain).connect(this.masterGain);
+        chordOsc.start(t + 0.05);
+        chordOsc.stop(t + 0.5);
+      }
+    }
+  }
+
+  // ── Bridge ambient hum (AD-391) ──
+
+  playBridgeHum(state: 'idle' | 'autonomous' | 'attention'): void {
+    if (!this.ctx || !this.masterGain) return;
+    const t = this.ctx.currentTime;
+
+    // Fade out existing hum
+    for (const g of this.bridgeHumGains) {
+      g.gain.setTargetAtTime(0, t, 0.5);
+    }
+    for (const o of this.bridgeHumOscs) {
+      try { o.stop(t + 2); } catch { /* already stopped */ }
+    }
+    this.bridgeHumOscs = [];
+    this.bridgeHumGains = [];
+
+    const configs: Record<string, { freqs: number[]; gain: number }> = {
+      idle: { freqs: [55], gain: 0.02 },
+      autonomous: { freqs: [80, 120], gain: 0.04 },
+      attention: { freqs: [65, 98], gain: 0.05 },
+    };
+
+    const cfg = configs[state];
+    for (const freq of cfg.freqs) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.setTargetAtTime(cfg.gain, t, 0.5); // 2s cross-fade
+      osc.connect(gain).connect(this.masterGain);
+      osc.start(t);
+      this.bridgeHumOscs.push(osc);
+      this.bridgeHumGains.push(gain);
+    }
+  }
+
+  // ── Captain return: welcoming two-note chime (AD-391) ──
+
+  playCaptainReturn(): void {
+    if (!this.ctx || !this.masterGain || !this._connected) return;
+    const t = this.ctx.currentTime;
+
+    [659, 784].forEach((freq, i) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const offset = i * 0.21; // 150ms note + 60ms gap
+      gain.gain.setValueAtTime(0, t + offset);
+      gain.gain.linearRampToValueAtTime(0.1, t + offset + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + offset + 0.15);
+      osc.connect(gain).connect(this.masterGain!);
+      osc.start(t + offset);
+      osc.stop(t + offset + 0.2);
     });
   }
 }

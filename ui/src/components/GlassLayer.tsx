@@ -1,4 +1,4 @@
-/* GlassLayer — frosted glass overlay with center-stage task cards (AD-388, AD-390) */
+/* GlassLayer — frosted glass overlay with center-stage task cards (AD-388, AD-390, AD-391) */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../store/useStore';
@@ -6,9 +6,12 @@ import type { AgentTaskView } from '../store/types';
 import { DEPT_COLORS } from './bridge/BridgeCards';
 import { GlassTaskCard } from './glass/GlassTaskCard';
 import { GlassDAGNodes } from './glass/GlassDAGNodes';
-import { ContextRibbon, deriveBridgeState } from './glass/ContextRibbon';
+import { ContextRibbon, deriveBridgeState, STATE_COLORS } from './glass/ContextRibbon';
 import type { BridgeState } from './glass/ContextRibbon';
 import { BriefingCard } from './glass/BriefingCard';
+import { ScanLineOverlay } from './glass/ScanLineOverlay';
+import { DataRainOverlay } from './glass/DataRainOverlay';
+import { soundEngine } from '../audio/soundEngine';
 
 const STATUS_ORDER: Record<string, number> = {
   working: 0,
@@ -50,7 +53,7 @@ const EDGE_GLOW: Record<BridgeState, string> = {
 
 export { EDGE_GLOW };
 
-const INACTIVITY_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
+const INACTIVITY_THRESHOLD_MS = 3 * 60 * 1000;
 const BRIEFING_DURATION_MS = 8000;
 
 function constellationPositions(count: number): React.CSSProperties[] {
@@ -98,6 +101,13 @@ export function GlassLayer() {
   const agentTasks = useStore((s) => s.agentTasks);
   const notifications = useStore((s) => s.notifications);
   const expandedGlassTask = useStore((s) => s.expandedGlassTask);
+  const soundEnabled = useStore((s) => s.soundEnabled);
+
+  // Atmosphere preferences (AD-391)
+  const scanLinesEnabled = useStore((s) => s.scanLinesEnabled);
+  const chromaticAberrationEnabled = useStore((s) => s.chromaticAberrationEnabled);
+  const dataRainEnabled = useStore((s) => s.dataRainEnabled);
+  const atmosphereIntensity = useStore((s) => s.atmosphereIntensity);
 
   // Briefing state (local, not store)
   const [showBriefing, setShowBriefing] = useState(false);
@@ -109,12 +119,15 @@ export function GlassLayer() {
   // Activity tracking for return-to-bridge briefing
   const lastActivityRef = useRef(Date.now());
   const wasAwayRef = useRef(false);
-  // Snapshot counts when Captain goes idle
   const snapshotRef = useRef<{ doneCount: number; notifCount: number }>({ doneCount: 0, notifCount: 0 });
 
   // Celebration tracking
   const prevStatusesRef = useRef<Map<string, string>>(new Map());
   const [celebrating, setCelebrating] = useState<Set<string>>(new Set());
+
+  // Luminance ripple tracking (AD-391)
+  const prevBridgeStateRef = useRef<BridgeState | null>(null);
+  const [rippleActive, setRippleActive] = useState(false);
 
   // Track activity
   const handleActivity = useCallback(() => {
@@ -122,7 +135,6 @@ export function GlassLayer() {
     const elapsed = now - lastActivityRef.current;
     lastActivityRef.current = now;
 
-    // If Captain was away (3+ min), check for briefing
     if (elapsed >= INACTIVITY_THRESHOLD_MS) {
       const currentDoneCount = agentTasks?.filter(t => t.status === 'done').length ?? 0;
       const currentNotifCount = notifications?.length ?? 0;
@@ -135,12 +147,13 @@ export function GlassLayer() {
           newNotifCount: Math.max(0, newNotifs),
         });
         setShowBriefing(true);
+        if (soundEnabled) soundEngine.playCaptainReturn();
       }
     }
     wasAwayRef.current = false;
-  }, [agentTasks, notifications]);
+  }, [agentTasks, notifications, soundEnabled]);
 
-  // Mark idle after threshold — snapshot current counts
+  // Mark idle after threshold
   useEffect(() => {
     const interval = setInterval(() => {
       const elapsed = Date.now() - lastActivityRef.current;
@@ -178,7 +191,6 @@ export function GlassLayer() {
     }
     if (newCelebrations.size > 0) {
       setCelebrating(prev => new Set([...prev, ...newCelebrations]));
-      // Clear celebrations after bloom duration
       setTimeout(() => {
         setCelebrating(prev => {
           const next = new Set(prev);
@@ -189,6 +201,18 @@ export function GlassLayer() {
     }
   }, [agentTasks]);
 
+  // Ctrl+Shift+D toggle for data rain (AD-391)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+        e.preventDefault();
+        useStore.getState().setDataRainEnabled(!useStore.getState().dataRainEnabled);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
   // Only render on canvas view
   if (mainViewer !== 'canvas') return null;
 
@@ -198,12 +222,22 @@ export function GlassLayer() {
 
   const bridgeState = deriveBridgeState(agentTasks, notifications);
 
+  // Luminance ripple on bridge state change (AD-391)
+  if (prevBridgeStateRef.current !== null && prevBridgeStateRef.current !== bridgeState && !rippleActive) {
+    setRippleActive(true);
+    setTimeout(() => setRippleActive(false), 800);
+  }
+  prevBridgeStateRef.current = bridgeState;
+
   // Render if active tasks exist OR briefing is pending
   if (activeTasks.length === 0 && !showBriefing) return null;
 
   const sorted = sortTasks(activeTasks);
   const compact = sorted.length >= 6;
   const positions = constellationPositions(sorted.length);
+
+  // Chromatic aberration offset scales with intensity
+  const caOffset = atmosphereIntensity * 1.5;
 
   return (
     <div
@@ -220,8 +254,26 @@ export function GlassLayer() {
         background: frostBg(sorted.length),
         boxShadow: EDGE_GLOW[bridgeState],
         transition: 'backdrop-filter 0.5s ease, background 0.5s ease, box-shadow 1.2s linear',
+        filter: chromaticAberrationEnabled ? 'url(#chromatic-aberration)' : undefined,
       }}
     >
+      {/* SVG filter for chromatic aberration (AD-391) */}
+      {chromaticAberrationEnabled && (
+        <svg style={{ position: 'absolute', width: 0, height: 0 }}>
+          <defs>
+            <filter id="chromatic-aberration">
+              <feColorMatrix type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="red" />
+              <feOffset in="red" dx={caOffset} dy={0} result="red-shifted" />
+              <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="blue" />
+              <feOffset in="blue" dx={-caOffset} dy={0} result="blue-shifted" />
+              <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="green" />
+              <feBlend in="red-shifted" in2="green" mode="screen" result="rg" />
+              <feBlend in="rg" in2="blue-shifted" mode="screen" />
+            </filter>
+          </defs>
+        </svg>
+      )}
+
       {/* Noise texture overlay */}
       <div style={{
         position: 'absolute', inset: 0,
@@ -230,6 +282,27 @@ export function GlassLayer() {
         backgroundSize: '128px 128px',
         pointerEvents: 'none',
       }} />
+
+      {/* Scan lines (AD-391) */}
+      {scanLinesEnabled && <ScanLineOverlay intensity={atmosphereIntensity} />}
+
+      {/* Data rain (AD-391) */}
+      {dataRainEnabled && (
+        <DataRainOverlay
+          intensity={atmosphereIntensity}
+          stateColor={STATE_COLORS[bridgeState]}
+        />
+      )}
+
+      {/* Luminance ripple (AD-391) */}
+      {rippleActive && (
+        <div style={{
+          position: 'absolute', inset: 0,
+          pointerEvents: 'none',
+          zIndex: 3,
+          animation: 'luminance-ripple 0.8s ease-out forwards',
+        }} />
+      )}
 
       {/* Context Ribbon (AD-390) */}
       <ContextRibbon bridgeState={bridgeState} />
@@ -287,6 +360,10 @@ export function GlassLayer() {
         @keyframes briefing-fade-in {
           from { opacity: 0; transform: translateX(-50%) translateY(10px); }
           to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+        @keyframes luminance-ripple {
+          0% { background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.04) 50%, rgba(255,255,255,0) 100%); background-position: -100% 0; }
+          100% { background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.04) 50%, rgba(255,255,255,0) 100%); background-position: 200% 0; }
         }
       `}</style>
     </div>

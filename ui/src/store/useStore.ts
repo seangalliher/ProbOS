@@ -233,6 +233,12 @@ export interface HXIState {
   soundEnabled: boolean;
   voiceEnabled: boolean;
 
+  // Atmosphere preferences (AD-391)
+  scanLinesEnabled: boolean;
+  chromaticAberrationEnabled: boolean;
+  dataRainEnabled: boolean;
+  atmosphereIntensity: number;
+
   // Actions
   handleEvent: (event: WSEvent) => void;
   addChatMessage: (role: 'user' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal; buildProposal?: BuildProposal; buildFailureReport?: BuildFailureReport; architectProposal?: ArchitectProposalView }) => void;
@@ -253,6 +259,10 @@ export interface HXIState {
   consumePendingChar: () => string;
   setSoundEnabled: (v: boolean) => void;
   setVoiceEnabled: (v: boolean) => void;
+  setScanLinesEnabled: (v: boolean) => void;
+  setChromaticAberrationEnabled: (v: boolean) => void;
+  setDataRainEnabled: (v: boolean) => void;
+  setAtmosphereIntensity: (v: number) => void;
 }
 
 /** Derive MissionControlTasks from BuildQueueItems (AD-322). */
@@ -330,6 +340,21 @@ export const useStore = create<HXIState>((set, get) => ({
   pendingChar: '',
   soundEnabled: false,
   voiceEnabled: false,
+  ...(() => {
+    try {
+      const stored = localStorage.getItem('hxi_atmosphere_prefs');
+      if (stored) {
+        const p = JSON.parse(stored);
+        return {
+          scanLinesEnabled: !!p.scanLinesEnabled,
+          chromaticAberrationEnabled: !!p.chromaticAberrationEnabled,
+          dataRainEnabled: !!p.dataRainEnabled,
+          atmosphereIntensity: typeof p.atmosphereIntensity === 'number' ? p.atmosphereIntensity : 0.3,
+        };
+      }
+    } catch {}
+    return { scanLinesEnabled: false, chromaticAberrationEnabled: false, dataRainEnabled: false, atmosphereIntensity: 0.3 };
+  })(),
 
   setConnected: (v) => { soundEngine.setConnected(v); set({ connected: v }); },
   setHoveredAgent: (agent, pos) => set(pos ? { hoveredAgent: agent, tooltipPos: pos } : { hoveredAgent: agent }),
@@ -358,6 +383,39 @@ export const useStore = create<HXIState>((set, get) => ({
   setVoiceEnabled: (v) => {
     set({ voiceEnabled: v });
     localStorage.setItem('hxi_voice_enabled', v ? '1' : '0');
+  },
+  setScanLinesEnabled: (v) => {
+    set({ scanLinesEnabled: v });
+    const s = get();
+    localStorage.setItem('hxi_atmosphere_prefs', JSON.stringify({
+      scanLinesEnabled: v, chromaticAberrationEnabled: s.chromaticAberrationEnabled,
+      dataRainEnabled: s.dataRainEnabled, atmosphereIntensity: s.atmosphereIntensity,
+    }));
+  },
+  setChromaticAberrationEnabled: (v) => {
+    set({ chromaticAberrationEnabled: v });
+    const s = get();
+    localStorage.setItem('hxi_atmosphere_prefs', JSON.stringify({
+      scanLinesEnabled: s.scanLinesEnabled, chromaticAberrationEnabled: v,
+      dataRainEnabled: s.dataRainEnabled, atmosphereIntensity: s.atmosphereIntensity,
+    }));
+  },
+  setDataRainEnabled: (v) => {
+    set({ dataRainEnabled: v });
+    const s = get();
+    localStorage.setItem('hxi_atmosphere_prefs', JSON.stringify({
+      scanLinesEnabled: s.scanLinesEnabled, chromaticAberrationEnabled: s.chromaticAberrationEnabled,
+      dataRainEnabled: v, atmosphereIntensity: s.atmosphereIntensity,
+    }));
+  },
+  setAtmosphereIntensity: (v) => {
+    const clamped = Math.max(0, Math.min(1, v));
+    set({ atmosphereIntensity: clamped });
+    const s = get();
+    localStorage.setItem('hxi_atmosphere_prefs', JSON.stringify({
+      scanLinesEnabled: s.scanLinesEnabled, chromaticAberrationEnabled: s.chromaticAberrationEnabled,
+      dataRainEnabled: s.dataRainEnabled, atmosphereIntensity: clamped,
+    }));
   },
 
   addChatMessage: (role, text, meta) => {
