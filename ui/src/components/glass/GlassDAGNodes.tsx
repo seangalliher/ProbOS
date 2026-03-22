@@ -40,10 +40,10 @@ export function GlassDAGNodes({ steps, department, requiresAction }: GlassDAGNod
 
   if (steps.length === 0) return null;
 
-  const radius = Math.min(160, 120 + steps.length * 4);
-  // Card center is at (140, ~45) — half of card width=280, approximate card midheight
+  const radius = Math.min(220, 180 + steps.length * 4);
+  // Card center is at (140, ~55) — half of card width=280, approximate card midheight
   const cx = 140;
-  const cy = 45;
+  const cy = 55;
 
   // Compute node positions radially (clockwise from top)
   const nodePositions = steps.map((_, i) => {
@@ -53,6 +53,8 @@ export function GlassDAGNodes({ steps, department, requiresAction }: GlassDAGNod
       y: cy + radius * Math.sin(angle),
     };
   });
+
+  const off = radius + 20; // SVG origin offset
 
   return (
     <div
@@ -67,7 +69,7 @@ export function GlassDAGNodes({ steps, department, requiresAction }: GlassDAGNod
         transition: 'top 0.3s ease',
       }}
     >
-      {/* SVG dependency lines */}
+      {/* SVG: glass backdrop circle + dependency lines */}
       <svg
         style={{
           position: 'absolute',
@@ -79,11 +81,25 @@ export function GlassDAGNodes({ steps, department, requiresAction }: GlassDAGNod
           overflow: 'visible',
         }}
       >
+        <defs>
+          <radialGradient id="dag-glass-fill">
+            <stop offset="0%" stopColor={`${deptColor}18`} />
+            <stop offset="60%" stopColor="rgba(20, 50, 70, 0.18)" />
+            <stop offset="100%" stopColor="rgba(20, 50, 70, 0.08)" />
+          </radialGradient>
+        </defs>
+        {/* Glass polygon backdrop matching constellation shape */}
+        <polygon
+          points={nodePositions.map(p => `${p.x - cx + off},${p.y - cy + off}`).join(' ')}
+          fill="url(#dag-glass-fill)"
+          stroke={`${deptColor}20`}
+          strokeWidth={1}
+          strokeLinejoin="round"
+        />
         {steps.map((step, i) => {
           if (i === steps.length - 1) return null;
           const from = nodePositions[i];
           const to = nodePositions[i + 1];
-          const off = radius + 20; // SVG origin offset
           const completed = step.status === 'done';
           return (
             <line
@@ -115,19 +131,19 @@ export function GlassDAGNodes({ steps, department, requiresAction }: GlassDAGNod
             onMouseLeave={() => setHoveredIdx(null)}
             style={{
               position: 'absolute',
-              left: pos.x - 14,
-              top: pos.y - 14,
-              width: 28,
-              height: 28,
+              left: pos.x - 17,
+              top: pos.y - 17,
+              width: 34,
+              height: 34,
               borderRadius: '50%',
-              background: 'rgba(26, 26, 46, 0.8)',
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-              border: `1px solid ${borderColor}`,
+              background: 'rgba(10, 10, 18, 0.85)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              border: `1.5px solid ${borderColor}`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: 12,
+              fontSize: 14,
               color: iconColor,
               pointerEvents: 'auto',
               cursor: 'default',
@@ -144,7 +160,7 @@ export function GlassDAGNodes({ steps, department, requiresAction }: GlassDAGNod
             {hoveredIdx === i && (
               <div style={{
                 position: 'absolute',
-                top: 34,
+                top: 40,
                 left: '50%',
                 transform: 'translateX(-50%)',
                 whiteSpace: 'nowrap',

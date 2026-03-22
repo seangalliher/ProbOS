@@ -40,7 +40,7 @@ export function GlassTaskCard({ task, elevated, trust = 0.5, compact, isGazed }:
   const bgAlpha = band === 'low' ? 0.85 : (band === 'high' ? 0.65 : 0.75);
   const titleSize = (compact || band === 'high') ? 12 : 14;
   const systemSize = (compact || band === 'high') ? 9 : 10;
-  const cardPadding = (compact || band === 'high') ? '8px 10px 8px 13px' : '10px 14px 10px 17px';
+  const cardPadding = (compact || band === 'high') ? '10px 12px 10px 15px' : '14px 16px 14px 19px';
 
   return (
     <div
@@ -65,7 +65,7 @@ export function GlassTaskCard({ task, elevated, trust = 0.5, compact, isGazed }:
           ? '1px solid rgba(240, 176, 96, 0.35)'
           : '1px solid rgba(255, 255, 255, 0.08)',
         borderLeft: `${borderWidth}px solid ${deptColor}`,
-        borderRadius: 2,
+        borderRadius: 6,
         boxShadow: needsAttention
           ? '0 2px 12px rgba(240, 176, 96, 0.15), 0 2px 8px rgba(0, 0, 0, 0.4)'
           : '0 2px 8px rgba(0, 0, 0, 0.4)',
@@ -77,9 +77,9 @@ export function GlassTaskCard({ task, elevated, trust = 0.5, compact, isGazed }:
       }}
     >
       {/* Top row: status dot + AD number + title */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{
-          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
           background: statusColor, display: 'inline-block',
           animation: isWorking ? 'neural-pulse 2s ease-in-out infinite' : 'none',
         }} />
@@ -102,7 +102,7 @@ export function GlassTaskCard({ task, elevated, trust = 0.5, compact, isGazed }:
 
       {/* Middle: progress bar */}
       {task.step_total > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
           <span style={{
             fontFamily: "'JetBrains Mono', monospace",
             fontSize: systemSize, color: '#808090',
@@ -110,7 +110,7 @@ export function GlassTaskCard({ task, elevated, trust = 0.5, compact, isGazed }:
             {task.step_current}/{task.step_total}
           </span>
           <div style={{
-            flex: 1, height: 3, borderRadius: 1, background: 'rgba(255,255,255,0.06)',
+            flex: 1, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)',
             overflow: 'hidden',
           }}>
             <div style={{
@@ -124,7 +124,7 @@ export function GlassTaskCard({ task, elevated, trust = 0.5, compact, isGazed }:
 
       {/* Bottom row: agent_type + elapsed + trust dot + department */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 6, marginTop: 6,
+        display: 'flex', alignItems: 'center', gap: 8, marginTop: 10,
         fontFamily: "'JetBrains Mono', monospace",
         fontSize: systemSize, fontWeight: 400, color: '#808090',
       }}>
@@ -136,7 +136,7 @@ export function GlassTaskCard({ task, elevated, trust = 0.5, compact, isGazed }:
           </>
         )}
         <span style={{
-          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
           background: trustColor, display: 'inline-block',
           marginLeft: 'auto',
         }} />

@@ -59,39 +59,39 @@ const BRIEFING_DURATION_MS = 8000;
 
 function constellationPositions(count: number): React.CSSProperties[] {
   if (count === 1) {
-    return [{ position: 'absolute', top: '38%', left: '50%', transform: 'translateX(-50%)' }];
+    return [{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }];
   }
   if (count === 2) {
     return [
-      { position: 'absolute', top: '38%', left: '50%', transform: 'translateX(calc(-50% - 152px))' },
-      { position: 'absolute', top: '38%', left: '50%', transform: 'translateX(calc(-50% + 152px))' },
+      { position: 'absolute', top: '50%', left: '50%', transform: 'translate(calc(-50% - 240px), -50%)' },
+      { position: 'absolute', top: '50%', left: '50%', transform: 'translate(calc(-50% + 240px), -50%)' },
     ];
   }
   if (count === 3) {
     return [
-      { position: 'absolute', top: '32%', left: '50%', transform: 'translateX(-50%)' },
-      { position: 'absolute', top: '50%', left: '50%', transform: 'translateX(calc(-50% - 152px))' },
-      { position: 'absolute', top: '50%', left: '50%', transform: 'translateX(calc(-50% + 152px))' },
+      { position: 'absolute', top: '38%', left: '50%', transform: 'translate(-50%, -50%)' },
+      { position: 'absolute', top: '62%', left: '50%', transform: 'translate(calc(-50% - 200px), -50%)' },
+      { position: 'absolute', top: '62%', left: '50%', transform: 'translate(calc(-50% + 200px), -50%)' },
     ];
   }
 
   const positions: React.CSSProperties[] = [];
   const topCount = Math.ceil(count / 2);
   const bottomCount = count - topCount;
-  const gap = 296;
+  const gap = 480;
 
   for (let i = 0; i < topCount; i++) {
     const offset = (i - (topCount - 1) / 2) * gap;
     positions.push({
-      position: 'absolute', top: '30%', left: '50%',
-      transform: `translateX(calc(-50% + ${offset}px))`,
+      position: 'absolute', top: '38%', left: '50%',
+      transform: `translate(calc(-50% + ${offset}px), -50%)`,
     });
   }
   for (let i = 0; i < bottomCount; i++) {
     const offset = (i - (bottomCount - 1) / 2) * gap;
     positions.push({
-      position: 'absolute', top: '52%', left: '50%',
-      transform: `translateX(calc(-50% + ${offset}px))`,
+      position: 'absolute', top: '58%', left: '50%',
+      transform: `translate(calc(-50% + ${offset}px), -50%)`,
     });
   }
   return positions;
