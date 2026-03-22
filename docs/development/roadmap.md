@@ -112,12 +112,40 @@ Not a team — shared infrastructure that all teams use:
 - **Ship's Telemetry** — internal performance instrumentation: LLM call timing, pipeline duration, token metering, build path comparison. The sensor grid that Cognitive Journal, EPS, and Observability Export all read from (Phase 32)
 - **Model Registry** — catalog of available model providers with neural routing via Hebbian learning (Phase 32)
 - **Trust Network** — reputation system, crew performance records
+- **Profile Store** — crew identity, personality (Big Five), rank, performance reviews (AD-376)
 - **Intent Bus** — internal communications, the ship's intercom (with priority levels and back-pressure — Phase 33)
 - **Ward Room** — direct agent-to-agent messaging, the officers' private channel (Phase 33)
 - **Hebbian Router** — navigation, learned routing pathways (extended for model routing — Phase 32)
 - **Alert Conditions** — ship-wide operational modes that change system behavior simultaneously (Phase 33)
 - **Structural Integrity Field** — proactive invariant enforcement, continuous runtime health assertions (Phase 32)
 - **EPS (Compute/Token Distribution)** — LLM capacity budgeting and allocation across departments (Phase 33)
+
+**Shared Cognitive Fabric Principle (AD-393)**
+
+*"The Enterprise has one computer — not one per crew member."*
+
+Within a ship, agents share centralized Ship's Computer services rather than maintaining per-agent micro-datastores. Each agent has **scoped records** within the shared services — like shards in a platform — not separate databases. This is the same pattern used by enterprise platforms (D365, Salesforce): one database, many tenants, each with their own data.
+
+| Service | Shared Infrastructure | Per-Agent Scoped Data |
+|---|---|---|
+| ProfileStore | One SQLite database | Individual personality traits, rank, reviews |
+| TrustNetwork | One trust graph | Individual trust scores, alpha/beta params |
+| EpisodicMemory | One memory store | Individual episode histories |
+| KnowledgeStore | One knowledge base | Individual learned facts |
+| HebbianRouter | One routing mesh | Individual routing weights per intent |
+| DirectiveStore | One directive registry | Individual standing orders, learned lessons |
+
+**Why this is correct:**
+- Enables cross-agent queries (Counselor comparing cognitive profiles, Captain reviewing crew health)
+- Prevents micro-datastore proliferation (55 agents = 55 SQLite files without this)
+- Maintains clean separation of concerns (infrastructure vs. data)
+- Matches the federation boundary: shared within a ship, sovereign between ships
+
+**Why this is NOT a hive mind:**
+- Each agent's data evolves **independently** based on their own experiences
+- One agent's personality change does not cascade to others
+- Shared infrastructure ≠ shared consciousness — the filing cabinet is shared, the personnel files inside are individual
+- Federation gossip exchanges metadata (trust scores, capabilities), not personality or memories
 
 **Alert Conditions (Red / Yellow / Green)**
 
