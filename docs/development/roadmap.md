@@ -1268,9 +1268,9 @@ Frosted glass layer over the canvas with center task card(s). `GlassLayer.tsx` r
 
 Three bridge states (idle/autonomous/attention) derived from agentTasks + notifications. `ContextRibbon.tsx` HUD strip at top with bridge state dot, agent count, active tasks, attention count, system mode. Ambient edge glow (inset box-shadow: cyan→gold→amber, 1.2s transition). `BriefingCard.tsx` return-to-bridge summary after 3+ min inactivity (auto-dismiss 8s). Completion celebrations: department-colored bloom (600ms) on task status → done. 11 new vitest tests.
 
-**AD-391: Cyberpunk Atmosphere Layer** *(planned)*
+**AD-391: Cyberpunk Atmosphere Layer** *(done)*
 
-Opt-in aesthetic effects: configurable scan lines, chromatic aberration, data rain (Ctrl+Shift+D toggle). All off by default — the cyberpunk soul comes from the color palette, typography, and spatial design, not CRT simulation. Luminance ripple transitions (50-100ms directional sweep on state changes). Sound design: ascending chords for DAG completion, ambient bridge hum, Captain return tone. Focus-based depth blur (sharp task cards, soft mesh beneath).
+Opt-in visual effects: `ScanLineOverlay.tsx` (CSS repeating gradient, intensity-adjustable), `DataRainOverlay.tsx` (canvas hex characters colored by bridge state, Ctrl+Shift+D toggle), chromatic aberration (inline SVG filter with feColorMatrix/feOffset). Luminance ripple (80ms left-to-right sweep on bridge state change, always on). Sound engine: `playStepComplete` ascending chords, `playBridgeHum` continuous ambient per state, `playCaptainReturn` welcoming chime. All visual effects off by default, preferences persisted to localStorage. 10 new vitest tests.
 
 **AD-392: Adaptive Bridge** *(planned)*
 

@@ -762,7 +762,7 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 - **AD-388:** Glass overlay with center task cards, dynamic frost, multi-task constellation *(done)*
 - **AD-389:** DAG visualization — spatial sub-task nodes, decisions rise / results sink, inline agent commentary *(done)*
 - **AD-390:** Ambient intelligence — three bridge states (Idle/Autonomous/Attention), ambient color temperature, return-to-bridge briefing, completion celebrations, Context Ribbon *(done)*
-- **AD-391:** Cyberpunk atmosphere — opt-in scan lines, chromatic aberration, data rain, luminance ripple transitions, sound design
+- **AD-391:** Cyberpunk atmosphere — opt-in scan lines, chromatic aberration, data rain, luminance ripple transitions, sound design *(done)*
 - **AD-392:** Adaptive bridge — trust-driven progressive reveal, Command Surface breathing, Captain's Gaze attention weighting, responsive layout
 
 **AD-388 Changes:**
@@ -801,4 +801,20 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/ad-390-ambient-intelligence.md`
 **Status:** AD-390 complete — 11 vitest new, 2652 pytest + 73 vitest = 2725 total
+
+### AD-391: Cyberpunk Atmosphere Layer (DONE)
+
+**Decision:** AD-391 — Add opt-in cyberpunk atmosphere effects to the glass layer. Configurable scan lines, chromatic aberration, and data rain (Ctrl+Shift+D toggle) — all off by default. Luminance ripple transitions sweep on bridge state changes. Sound engine gains DAG step chords, bridge state ambient hum, and Captain return tone. Atmosphere preferences persisted to localStorage.
+
+**Changes:**
+- New `ui/src/components/glass/ScanLineOverlay.tsx`: CSS-only repeating-linear-gradient scan lines (2px spacing), opacity scales with `atmosphereIntensity` (0→0, 1→0.8), slow vertical scroll animation (8s loop), data-testid
+- New `ui/src/components/glass/DataRainOverlay.tsx`: canvas-based falling hex characters (0-9, A-F, unicode blocks), bridge-state-colored, column density scales with intensity, requestAnimationFrame loop with proper cleanup, JetBrains Mono 10px, fade top→bottom
+- Modified `ui/src/components/glass/ContextRibbon.tsx`: exported `STATE_COLORS` record for DataRainOverlay consumption
+- Modified `ui/src/components/GlassLayer.tsx`: integrated ScanLineOverlay + DataRainOverlay + chromatic aberration SVG filter + luminance ripple (80ms left-to-right sweep on bridgeState change) + Ctrl+Shift+D keyboard handler + Captain return sound cue on briefing appearance
+- Modified `ui/src/audio/soundEngine.ts`: `playStepComplete(stepIndex, totalSteps)` ascending major-third chord, `playBridgeHum(state)` continuous ambient oscillators with cross-fade, `playCaptainReturn()` two-note welcoming chime (E5→G5)
+- Modified `ui/src/store/useStore.ts`: `scanLinesEnabled`, `chromaticAberrationEnabled`, `dataRainEnabled` (all default false), `atmosphereIntensity` (default 0.3, clamped 0-1), setters persist to `hxi_atmosphere_prefs` localStorage key
+- New `ui/src/__tests__/GlassAtmosphere.test.tsx`: 10 tests — atmosphere defaults (3 false + 0.3 intensity), 3 setter+persistence tests, intensity clamping, localStorage round-trip, ripple detection logic, 3 sound engine method existence tests
+
+**Build prompt:** `prompts/ad-391-cyberpunk-atmosphere.md`
+**Status:** AD-391 complete — 10 vitest new, 2652 pytest + 83 vitest = 2735 total
 
