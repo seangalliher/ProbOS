@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-393 complete — Personality Activation: Big Five traits wired into agent system prompts via compose_instructions() Tier 1.5. All 12 agents now receive behavioral guidance from crew profile YAML.
+## Current Status: AD-394 complete — ScoutAgent: daily GitHub intelligence gathering, absorb/visiting_officer classification, Discord digest, Bridge notifications, /scout command.
 
 ---
 

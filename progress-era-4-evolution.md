@@ -844,3 +844,19 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/ad-393-personality-activation.md`
 **Status:** AD-393 complete — 10 pytest new, 2673 pytest + 99 vitest = 2772 total.
+
+### AD-394: ScoutAgent — Daily GitHub Intelligence Gathering (DONE)
+
+**Decision:** AD-394 — Science department officer (callsign Wesley) that searches GitHub REST API for recent AI agent repos, classifies as absorb/visiting_officer/skip via LLM with structured ===SCOUT_REPORT=== blocks, filters by relevance (>=3), stores daily JSON reports in data/scout_reports/, delivers Discord digest to configured scout_channel_id, posts Bridge notifications for relevance >=4. /scout and /scout report slash commands. TaskScheduler daily interval. Seen repos tracked with 90-day pruning. First agent to use AD-393 personality activation — high openness (0.9), low neuroticism (0.2).
+
+**Changes:**
+- New `src/probos/cognitive/scout.py`: ScoutAgent, ScoutFinding, parse_scout_reports(), filter_findings(), format_digest(), GitHub REST API search, Discord delivery, report persistence
+- New `config/standing_orders/crew_profiles/scout.yaml`: Big Five personality + Wesley callsign
+- Modified `src/probos/runtime.py`: register scout template, create pool, add to Science group, schedule daily scan
+- Modified `src/probos/experience/shell.py`: /scout command (COMMANDS dict + _dispatch_slash + _cmd_scout handler)
+- Modified `src/probos/config.py`: scout_channel_id field on DiscordConfig
+- Modified `config/system.yaml`: scout_channel_id default
+- New `tests/test_scout.py`: 10 tests — parsing, classification, filtering, seen tracking, Discord format, notification threshold, graceful no-Discord
+
+**Build prompt:** `prompts/ad-394-scout-agent.md`
+**Status:** AD-394 complete — 10 pytest new, 2683 pytest + 99 vitest = 2782 total.
