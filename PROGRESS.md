@@ -52,6 +52,20 @@ This means:
 
 This principle applies retroactively: as new features ship, their configuration and management surfaces ship with them. A feature without an HXI management surface is incomplete.
 
+### HXI Agent-First Design
+
+The Bridge is an ops console, not an app launcher. The HXI is fundamentally different from traditional software because the agents are the primary workers — the human is the Captain, not the operator.
+
+**Design hierarchy:**
+
+1. **Agent-first.** Agents orchestrate work through processes. The Bridge surfaces agent activity, attention items, and mission status. There is no focus on "apps."
+2. **Headless by default.** If agents can handle it, no UI needed. The Captain doesn't open an app to run tests — they see a task card showing the agent running tests with progress. Agents are the Captain's digital eyes and hands.
+3. **Human sensory needs.** Humans are still sensory creatures — they will want to see, interact with, and verify things themselves. The Main Viewer (center focus surface) must be totally adaptable: diff viewer, document, video, kanban. This is the hybrid model: agent-first workflow with human-accessible views when the Captain chooses to engage directly.
+4. **Render natively, embed as last resort.** If ProbOS can render the experience natively in the HXI, do that. If it can't, embed the native app (iframe, webview). Never send the Captain away from the Bridge.
+5. **Bridge as transition.** The hybrid model "bridges" users from app-centric workflows to truly agentic flows. As trust grows and agents earn autonomy, Captains need the Main Viewer less and rely on the Bridge panel more. The end state: the Captain reviews and approves, agents execute.
+
+**Inspiration:** NeXTSTEP (inspector panels, everything visible, contextual detail without modal takeover), NASA Mission Control (multiple data streams, main viewer shows what needs attention), Star Trek Bridge (main viewer adapts, Captain gives orders, crew executes). Modernized with cyberpunk glass morphism aesthetic.
+
 ### Probabilistic Agents, Consensus Governance
 
 ProbOS must remain probabilistic at its core. There is a critical distinction between **deterministic logic** and **governance**. Agents are not deterministic automata — they are probabilistic entities with Bayesian confidence, stochastic routing (Hebbian weights), and non-deterministic LLM-driven decision-making. Like humans with free will who still follow rules in a society, agents in the ProbOS ecosystem are probabilistic but must still follow consensus.
