@@ -43,6 +43,7 @@ from probos.agents.medical import (
 )
 from probos.cognitive.builder import BuilderAgent
 from probos.cognitive.architect import ArchitectAgent
+from probos.cognitive.scout import ScoutAgent
 from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
 from probos.sif import StructuralIntegrityField
 from probos.initiative import InitiativeEngine
@@ -302,6 +303,7 @@ class ProbOSRuntime:
         self.spawner.register_template("builder", BuilderAgent)
         # Science team (AD-306)
         self.spawner.register_template("architect", ArchitectAgent)
+        self.spawner.register_template("scout", ScoutAgent)
 
         # --- CodebaseIndex (AD-290) ---
         self.codebase_index: Any = None
@@ -606,6 +608,13 @@ class ProbOSRuntime:
                 llm_client=self.llm_client, runtime=self,
             )
 
+        # Science team — Scout Agent (AD-394)
+        if self.config.bundled_agents.enabled:
+            await self.create_pool(
+                "scout", "scout", target_size=1,
+                llm_client=self.llm_client, runtime=self,
+            )
+
         # Build CodebaseIndex — ship's library, available to all agents (AD-297)
         from probos.cognitive.codebase_index import CodebaseIndex
         self.codebase_index = CodebaseIndex(source_root=Path(__file__).resolve().parent)
@@ -730,7 +739,7 @@ class ProbOSRuntime:
         self.pool_groups.register(PoolGroup(
             name="science",
             display_name="Science",
-            pool_names={"architect"},
+            pool_names={"architect", "scout"},
             exclude_from_scaler=True,
         ))
 
@@ -966,6 +975,15 @@ class ProbOSRuntime:
             process_fn=self.process_natural_language,
         )
         self.task_scheduler.start()
+
+        # Schedule daily scout scan (AD-394)
+        if self.config.channels.discord.scout_channel_id:
+            self.task_scheduler.schedule(
+                text="/scout",
+                delay_seconds=60,
+                interval_seconds=86400,
+                channel_id=str(self.config.channels.discord.scout_channel_id),
+            )
 
         # Start periodic flush of trust + routing weights
         self._flush_task = asyncio.create_task(self._periodic_flush_loop())

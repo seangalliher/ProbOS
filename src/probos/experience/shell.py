@@ -67,6 +67,7 @@ class ProbOSShell:
         "/amend":      "Amend an existing directive (/amend <id> <new text>)",
         "/revoke":     "Revoke a directive (/revoke <id>)",
         "/directives": "Show active directives (/directives [agent_type])",
+        "/scout":     "Run scout intelligence scan (/scout) or view report (/scout report)",
         "/ping":      "Show system uptime",
         "/debug":     "Toggle debug mode (/debug on|off)",
         "/help":      "Show this help message",
@@ -201,6 +202,7 @@ class ProbOSShell:
             "/amend":   self._cmd_amend,
             "/revoke":  self._cmd_revoke,
             "/directives": self._cmd_directives,
+            "/scout":   self._cmd_scout,
             "/debug":   self._cmd_debug,
             "/help":    self._cmd_help,
             "/quit":    self._cmd_quit,
@@ -1235,6 +1237,26 @@ class ProbOSShell:
         except Exception:
             pass
         return agent_type.replace("_", " ").title()
+
+    async def _cmd_scout(self, arg: str) -> None:
+        """Run scout scan or show latest report."""
+        intent_name = "scout_report" if arg.strip() == "report" else "scout_search"
+        pool = self.runtime.pools.get("scout")
+        if not pool or not pool.healthy_agents:
+            self.console.print("[yellow]Scout agent not available[/yellow]")
+            return
+        agent = pool.healthy_agents[0]
+        self.console.print(f"[dim]Running scout {intent_name}...[/dim]")
+        try:
+            result = await agent.handle_intent({
+                "intent": intent_name,
+                "params": {},
+                "text": arg or "scout for new projects",
+            })
+            output = result.get("result", result.get("output", "No output"))
+            self.console.print(output)
+        except Exception as e:
+            self.console.print(f"[red]Scout error: {e}[/red]")
 
     async def _cmd_debug(self, arg: str) -> None:
         if arg.lower() == "on":

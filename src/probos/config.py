@@ -275,6 +275,7 @@ class DiscordConfig(BaseModel):
     allowed_user_ids: list[int] = []         # Empty = respond to all users (SECURITY RISK)
     command_prefix: str = "!"                # "!status" -> "/status"
     mention_required: bool = False           # Only respond when @mentioned
+    scout_channel_id: int = 0                # Discord channel ID for scout reports (0 = disabled)
 
 
 class ChannelsConfig(BaseModel):
