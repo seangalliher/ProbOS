@@ -361,6 +361,8 @@ export function IntentSurface() {
           letterSpacing: 1,
           pointerEvents: 'auto',
           fontFamily: "'JetBrains Mono', monospace",
+          opacity: bridgeOpen ? 0 : 1,
+          transition: 'opacity 0.15s ease-out',
         }}
       >
         {'BRIDGE' + (badgeCount > 0 ? ` (${badgeCount})` : '')}

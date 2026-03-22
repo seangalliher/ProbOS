@@ -37,7 +37,7 @@ export function GlassTaskCard({ task, elevated, trust = 0.5, compact, isGazed }:
   // Trust-driven dimensions
   const cardWidth = compact ? 'calc(100% - 32px)' : (band === 'high' ? 240 : 280);
   const borderWidth = band === 'low' ? 4 : (band === 'high' ? 2 : 3);
-  const bgAlpha = band === 'low' ? 0.8 : (band === 'high' ? 0.55 : 0.7);
+  const bgAlpha = band === 'low' ? 0.85 : (band === 'high' ? 0.65 : 0.75);
   const titleSize = (compact || band === 'high') ? 12 : 14;
   const systemSize = (compact || band === 'high') ? 9 : 10;
   const cardPadding = (compact || band === 'high') ? '8px 10px 8px 13px' : '10px 14px 10px 17px';
@@ -58,9 +58,9 @@ export function GlassTaskCard({ task, elevated, trust = 0.5, compact, isGazed }:
       style={{
         width: cardWidth,
         padding: cardPadding,
-        background: `rgba(26, 26, 46, ${bgAlpha})`,
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
+        background: `rgba(10, 10, 18, ${bgAlpha})`,
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
         border: needsAttention
           ? '1px solid rgba(240, 176, 96, 0.35)'
           : '1px solid rgba(255, 255, 255, 0.08)',

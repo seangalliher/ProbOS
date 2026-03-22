@@ -1062,3 +1062,8 @@ export const useStore = create<HXIState>((set, get) => ({
 }));
 
 export { POOL_HUES, GROUP_TINT_HEXES, computeLayout };
+
+// Expose store in dev for console testing (e.g. Glass Bridge mock data)
+if (import.meta.env.DEV) {
+  (window as any).__store = useStore;
+}

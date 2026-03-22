@@ -41,9 +41,9 @@ function frostBlur(count: number): string {
 
 function frostBg(count: number): string {
   if (count <= 0) return 'rgba(10, 10, 18, 0.0)';
-  if (count <= 2) return 'rgba(10, 10, 18, 0.05)';
-  if (count <= 5) return 'rgba(10, 10, 18, 0.1)';
-  return 'rgba(10, 10, 18, 0.15)';
+  if (count <= 2) return 'rgba(10, 10, 18, 0.35)';
+  if (count <= 5) return 'rgba(10, 10, 18, 0.45)';
+  return 'rgba(10, 10, 18, 0.55)';
 }
 
 const EDGE_GLOW: Record<BridgeState, string> = {
