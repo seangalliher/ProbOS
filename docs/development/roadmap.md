@@ -1250,6 +1250,32 @@ Upgrade the existing system health orb with per-agent hover preview:
 
 Replace three separate panels (NOTIF, ACTIVITY, MISSION CTRL) with a single BRIDGE button and unified command panel. Bridge panel (380px right sidebar) has five priority-ordered sections: Attention (merged `requires_action` tasks + `action_required` notifications, always expanded), Active (working tasks), Notifications (info/error), Kanban (compact inline, expandable to main viewer), Recent (done/failed). Empty sections auto-hide. Shared card components extracted into `bridge/` subdirectory. Main viewer switches between 3D canvas and full kanban via `mainViewer` state. ViewSwitcher appears top-left when non-canvas view active. Old components deleted: ActivityDrawer, NotificationDropdown, MissionControl. `bridgeOpen` + `mainViewer` replace `missionControlView` + `activityDrawerOpen` in Zustand store.
 
+#### HXI Glass Bridge — Progressive Enhancement
+
+*"A sheet of frosted glass over a living neural mesh — the Captain's bridge for a starship that runs on agents, not engines."*
+
+The Glass Bridge layers a frosted working surface over the existing orb mesh. Three depth layers: Backdrop (3D mesh, z=0), Glass (task/collaboration surface, z=1), Controls (Bridge panel + Command Surface, z=2). The mesh is never replaced — the glass is translucent, the orbs breathe beneath. Each phase builds on the current HXI. Full design spec: `docs/design/hxi-glass-bridge.md`.
+
+**AD-388: Glass Overlay & Center Task Cards** *(planned)*
+
+Frosted glass layer over the canvas with center task card(s). Dynamic frost level based on task count (more tasks = more frost, fewer = more mesh). Multi-task constellation for concurrent agent workflows — most urgent card elevated, Captain's mouse position promotes attended tasks. Task cards rendered from existing `agentTasks` data (no new backend). Glass surface: Gaussian blur + noise texture, cyberpunk aesthetic, OLED-native true blacks.
+
+**AD-389: DAG Visualization** *(planned)*
+
+Sub-task nodes render spatially around task cards as a living DAG. Active nodes pulse, completed nodes dim and drift down, queued nodes are ghosted outlines. Dependencies shown as faint connecting lines. DAG steps sourced from existing `TaskStepView` data. Decisions rise (float upward when human input needed), results sink (completed tasks drift to history zone). Inline agent commentary: confidence scores and context as monospaced labels near nodes.
+
+**AD-390: Ambient Intelligence & Bridge States** *(planned)*
+
+Three bridge states drive visual mood: Idle (no tasks, mesh dominates, cool cyan edges), Autonomous (agents working, nothing needs Captain — golden warmth, the satisfaction of delegation), Attention (Captain needed — amber edge glow, attention items float upward). Ambient color temperature as glanceable system state. Return-to-bridge briefing card after absence. Completion celebrations: department-colored mesh blooms on task success. Context Ribbon (Zone 1): dense monospaced HUD strip across the top.
+
+**AD-391: Cyberpunk Atmosphere Layer** *(planned)*
+
+Opt-in aesthetic effects: configurable scan lines, chromatic aberration, data rain (Ctrl+Shift+D toggle). All off by default — the cyberpunk soul comes from the color palette, typography, and spatial design, not CRT simulation. Luminance ripple transitions (50-100ms directional sweep on state changes). Sound design: ascending chords for DAG completion, ambient bridge hum, Captain return tone. Focus-based depth blur (sharp task cards, soft mesh beneath).
+
+**AD-392: Adaptive Bridge** *(planned)*
+
+Trust-driven progressive reveal: low-trust agents get prominent cards, high-trust agents get condensed representations — the glass gets quieter as the crew earns trust. Command Surface breathing: recedes to thin glow line during autonomous execution, swells on Captain engagement. Captain's Gaze: mouse/scroll position drives attention-weighted resource allocation (agents working on attended items get higher priority). Responsive behavior: five-zone layout on ultrawide, collapsed phantom zones on laptop, vertical stack on tablet, single-column on mobile.
+
 **Captain's Ready Room (Strategic Planning Interface)**
 
 *"In my ready room, Number One."*

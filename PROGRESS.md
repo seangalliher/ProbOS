@@ -66,6 +66,8 @@ The Bridge is an ops console, not an app launcher. The HXI is fundamentally diff
 
 **Inspiration:** NeXTSTEP (inspector panels, everything visible, contextual detail without modal takeover), NASA Mission Control (multiple data streams, main viewer shows what needs attention), Star Trek Bridge (main viewer adapts, Captain gives orders, crew executes). Modernized with cyberpunk glass morphism aesthetic.
 
+**Glass Bridge (AD-388 through AD-392):** Progressive enhancement layering a frosted glass task surface over the existing orb mesh. Three depth layers: Backdrop (mesh), Glass (tasks/collaboration), Controls (Bridge panel + chat). Five phases: Glass Overlay & Center Task Cards → DAG Visualization → Ambient Intelligence & Bridge States → Cyberpunk Atmosphere → Adaptive Bridge. Full design spec: `docs/design/hxi-glass-bridge.md`.
+
 ### Probabilistic Agents, Consensus Governance
 
 ProbOS must remain probabilistic at its core. There is a critical distinction between **deterministic logic** and **governance**. Agents are not deterministic automata — they are probabilistic entities with Bayesian confidence, stochastic routing (Hebbian weights), and non-deterministic LLM-driven decision-making. Like humans with free will who still follow rules in a society, agents in the ProbOS ecosystem are probabilistic but must still follow consensus.

@@ -753,3 +753,18 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/ad-325-unified-bridge.md`
 **Status:** AD-387 complete — 0 pytest + 4 vitest new, 2652 pytest + 46 vitest = 2698 total
+
+### HXI Glass Bridge — Progressive Enhancement (AD-388 through AD-392, PLANNED)
+
+**Decision:** Layer a frosted glass working surface over the existing orb mesh as a progressive enhancement. Three depth layers: Backdrop (3D mesh, z=0), Glass (task/collaboration surface, z=1), Controls (Bridge panel + Command Surface, z=2). The mesh is never replaced — every phase builds on the current HXI. Inspired by NeXTSTEP precision, cyberpunk soul, LCARS reconfiguration, Bloomberg density. Agent-first design: the glass surfaces what needs the Captain's attention, not apps.
+
+**Phases:**
+- **AD-388:** Glass overlay with center task cards, dynamic frost, multi-task constellation
+- **AD-389:** DAG visualization — spatial sub-task nodes, decisions rise / results sink, inline agent commentary
+- **AD-390:** Ambient intelligence — three bridge states (Idle/Autonomous/Attention), ambient color temperature, return-to-bridge briefing, completion celebrations, Context Ribbon
+- **AD-391:** Cyberpunk atmosphere — opt-in scan lines, chromatic aberration, data rain, luminance ripple transitions, sound design
+- **AD-392:** Adaptive bridge — trust-driven progressive reveal, Command Surface breathing, Captain's Gaze attention weighting, responsive layout
+
+**Design spec:** `docs/design/hxi-glass-bridge.md`
+**Status:** Planned — design spec complete, no code yet
+
