@@ -68,6 +68,7 @@ class ProbOSShell:
         "/revoke":     "Revoke a directive (/revoke <id>)",
         "/directives": "Show active directives (/directives [agent_type])",
         "/scout":     "Run scout intelligence scan (/scout) or view report (/scout report)",
+        "/credentials": "List registered credentials and their status (/credentials)",
         "/ping":      "Show system uptime",
         "/debug":     "Toggle debug mode (/debug on|off)",
         "/help":      "Show this help message",
@@ -203,6 +204,7 @@ class ProbOSShell:
             "/revoke":  self._cmd_revoke,
             "/directives": self._cmd_directives,
             "/scout":   self._cmd_scout,
+            "/credentials": self._cmd_credentials,
             "/debug":   self._cmd_debug,
             "/help":    self._cmd_help,
             "/quit":    self._cmd_quit,
@@ -1237,6 +1239,16 @@ class ProbOSShell:
         except Exception:
             pass
         return agent_type.replace("_", " ").title()
+
+    async def _cmd_credentials(self, arg: str) -> None:
+        """List credential status (names + available/unavailable, never values)."""
+        store = getattr(self.runtime, "credential_store", None)
+        if not store:
+            self.console.print("[yellow]CredentialStore not available[/yellow]")
+            return
+        for cred in store.list_credentials():
+            status = "[green]available[/green]" if cred["available"] else "[red]unavailable[/red]"
+            self.console.print(f"  {cred['name']}: {status} — {cred['description']}")
 
     async def _cmd_scout(self, arg: str) -> None:
         """Run scout scan or show latest report."""

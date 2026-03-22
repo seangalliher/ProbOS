@@ -1,10 +1,10 @@
-"""ScoutAgent -- Daily GitHub intelligence gathering for ProbOS (AD-394)."""
+"""ScoutAgent -- Daily GitHub intelligence gathering for ProbOS (AD-394, AD-395)."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import os
 import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -41,6 +41,8 @@ _INSTRUCTIONS = (
     "URL: https://github.com/owner/name\n"
     "CLASS: absorb | visiting_officer | skip\n"
     "RELEVANCE: 3\n"
+    "CREDIBILITY: 3\n"
+    "RELIABILITY: 3\n"
     "SUMMARY: One-line description.\n"
     "INSIGHT: Why this matters to ProbOS.\n"
     "===END===\n\n"
@@ -49,6 +51,10 @@ _INSTRUCTIONS = (
     "- Include the 'so what' -- why should the Captain care?\n"
     "- Relevance scale: 1=tangential, 2=somewhat related, 3=useful pattern, "
     "4=important insight, 5=critical find\n"
+    "- Credibility scale: 1-5 (project maturity -- docs quality, CI status, "
+    "contributor count, release cadence)\n"
+    "- Reliability scale: 1-5 (maintenance health -- last commit recency, "
+    "issue response, test coverage indicators)\n"
 )
 
 
@@ -61,11 +67,18 @@ class ScoutFinding:
     url: str
     classification: str  # "absorb" | "visiting_officer"
     relevance: int  # 1-5
+    credibility: int  # 1-5 (AD-395)
+    reliability: int  # 1-5 (AD-395)
     summary: str
     insight: str
     language: str = ""
     license: str = ""
     topics: list[str] = field(default_factory=list)
+
+    @property
+    def composite_score(self) -> float:
+        """Weighted composite: relevance 50%, credibility 25%, reliability 25%."""
+        return self.relevance * 0.5 + self.credibility * 0.25 + self.reliability * 0.25
 
 
 def parse_scout_reports(text: str) -> list[ScoutFinding]:
@@ -92,12 +105,24 @@ def parse_scout_reports(text: str) -> list[ScoutFinding]:
         except ValueError:
             relevance = 0
 
+        try:
+            credibility = int(fields.get("CREDIBILITY", "3"))
+        except ValueError:
+            credibility = 3
+
+        try:
+            reliability = int(fields.get("RELIABILITY", "3"))
+        except ValueError:
+            reliability = 3
+
         findings.append(ScoutFinding(
             repo_full_name=fields.get("REPO", ""),
             stars=int(fields.get("STARS", "0")) if fields.get("STARS", "0").isdigit() else 0,
             url=fields.get("URL", ""),
             classification=classification,
             relevance=relevance,
+            credibility=credibility,
+            reliability=reliability,
             summary=fields.get("SUMMARY", ""),
             insight=fields.get("INSIGHT", ""),
         ))
@@ -105,10 +130,10 @@ def parse_scout_reports(text: str) -> list[ScoutFinding]:
 
 
 def filter_findings(findings: list[ScoutFinding], min_relevance: int = 3) -> list[ScoutFinding]:
-    """Filter findings by minimum relevance and sort descending."""
+    """Filter findings by minimum composite score and sort descending."""
     return sorted(
-        [f for f in findings if f.relevance >= min_relevance],
-        key=lambda f: f.relevance,
+        [f for f in findings if f.composite_score >= min_relevance],
+        key=lambda f: f.composite_score,
         reverse=True,
     )
 
@@ -128,10 +153,10 @@ def format_digest(findings: list[ScoutFinding], date_str: str) -> str:
                 meta += f", {f.language}"
             if f.license:
                 meta += f", {f.license}"
-            lines.append(f"- **{f.repo_full_name}** ({meta})")
+            lines.append(f"- **{f.repo_full_name}** ({meta}) [score: {f.composite_score:.1f}]")
             lines.append(f"  {f.summary}")
             lines.append(f"  *Insight:* {f.insight}")
-            lines.append(f"  {f.url}")
+            lines.append(f"  R:{f.relevance} C:{f.credibility} L:{f.reliability} | {f.url}")
         lines.append("")
 
     if visiting:
@@ -142,10 +167,10 @@ def format_digest(findings: list[ScoutFinding], date_str: str) -> str:
                 meta += f", {f.language}"
             if f.license:
                 meta += f", {f.license}"
-            lines.append(f"- **{f.repo_full_name}** ({meta})")
+            lines.append(f"- **{f.repo_full_name}** ({meta}) [score: {f.composite_score:.1f}]")
             lines.append(f"  {f.summary}")
             lines.append(f"  *Integration:* {f.insight}")
-            lines.append(f"  {f.url}")
+            lines.append(f"  R:{f.relevance} C:{f.credibility} L:{f.reliability} | {f.url}")
         lines.append("")
 
     if not absorb and not visiting:
@@ -172,23 +197,6 @@ def _save_seen(seen: dict[str, str]) -> None:
     pruned = {k: v for k, v in seen.items() if v >= cutoff}
     _SEEN_FILE.parent.mkdir(parents=True, exist_ok=True)
     _SEEN_FILE.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
-
-
-def _get_gh_token() -> str | None:
-    """Get GitHub token from env or gh CLI."""
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-    if token:
-        return token
-    try:
-        result = subprocess.run(
-            ["gh", "auth", "token"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
 
 
 class ScoutAgent(CognitiveAgent):
@@ -225,13 +233,34 @@ class ScoutAgent(CognitiveAgent):
     def _resolve_tier(self) -> str:
         return "standard"
 
+    async def _search_github(self, query: str, min_stars: int) -> list[dict[str, Any]]:
+        """Search GitHub via gh CLI for authenticated rate limits (AD-395)."""
+        encoded_query = f"{query} stars:>={min_stars}"
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["gh", "api", "search/repositories",
+                 "--method", "GET",
+                 "-f", f"q={encoded_query}",
+                 "-f", "sort=stars",
+                 "-f", "per_page=30"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                logger.warning("Scout: gh api search failed: %s", result.stderr[:200])
+                return []
+            data = json.loads(result.stdout)
+            return data.get("items", [])
+        except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
+            logger.warning("Scout: GitHub search error: %s", e)
+            return []
+
     async def perceive(self, intent: dict[str, Any]) -> dict[str, Any]:
         """Search GitHub for recent AI agent repositories."""
         result = await super().perceive(intent)
         intent_name = result.get("intent", "")
 
         if intent_name == "scout_report":
-            # Load latest report from disk
             report_text = self._load_latest_report()
             result["context"] = report_text or "No scout reports found yet. Run /scout to generate one."
             return result
@@ -239,52 +268,33 @@ class ScoutAgent(CognitiveAgent):
         if intent_name != "scout_search":
             return result
 
-        import httpx
-
-        token = _get_gh_token()
-        headers: dict[str, str] = {"Accept": "application/vnd.github+json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-
         seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
         queries = [
-            f"topic:ai-agents OR topic:llm-agents OR topic:multi-agent OR topic:agent-framework created:>{seven_days_ago} stars:>50",
-            f"topic:ai-coding OR topic:code-generation created:>{seven_days_ago} stars:>100",
+            (f"topic:ai-agents OR topic:llm-agents OR topic:multi-agent OR topic:agent-framework created:>{seven_days_ago}", 50),
+            (f"topic:ai-coding OR topic:code-generation created:>{seven_days_ago}", 100),
         ]
 
         seen = _load_seen()
         new_repos: list[dict[str, Any]] = []
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            for query in queries:
-                try:
-                    resp = await client.get(
-                        "https://api.github.com/search/repositories",
-                        params={"q": query, "sort": "stars", "order": "desc", "per_page": 20},
-                        headers=headers,
-                    )
-                    if resp.status_code != 200:
-                        logger.warning("Scout: GitHub API returned %d for query", resp.status_code)
-                        continue
-                    data = resp.json()
-                    for item in data.get("items", []):
-                        full_name = item.get("full_name", "")
-                        if full_name in seen:
-                            continue
-                        seen[full_name] = datetime.now(timezone.utc).isoformat()
-                        new_repos.append({
-                            "full_name": full_name,
-                            "description": item.get("description", "") or "",
-                            "stars": item.get("stargazers_count", 0),
-                            "created_at": item.get("created_at", ""),
-                            "updated_at": item.get("updated_at", ""),
-                            "language": item.get("language", "") or "",
-                            "license": (item.get("license") or {}).get("spdx_id", ""),
-                            "topics": item.get("topics", []),
-                            "url": item.get("html_url", ""),
-                        })
-                except Exception as exc:
-                    logger.warning("Scout: GitHub search failed: %s", exc)
+        for query, min_stars in queries:
+            items = await self._search_github(query, min_stars)
+            for item in items:
+                full_name = item.get("full_name", "")
+                if full_name in seen:
+                    continue
+                seen[full_name] = datetime.now(timezone.utc).isoformat()
+                new_repos.append({
+                    "full_name": full_name,
+                    "description": item.get("description", "") or "",
+                    "stars": item.get("stargazers_count", 0),
+                    "created_at": item.get("created_at", ""),
+                    "updated_at": item.get("updated_at", ""),
+                    "language": item.get("language", "") or "",
+                    "license": (item.get("license") or {}).get("spdx_id", ""),
+                    "topics": item.get("topics", []),
+                    "url": item.get("html_url", ""),
+                })
 
         _save_seen(seen)
 
@@ -292,7 +302,6 @@ class ScoutAgent(CognitiveAgent):
             result["context"] = "No new repositories found since last scan."
             return result
 
-        # Build observation for LLM classification
         repo_text = []
         for r in new_repos:
             repo_text.append(
@@ -310,7 +319,6 @@ class ScoutAgent(CognitiveAgent):
             + "\n---\n".join(repo_text)
         )
 
-        # Stash repo metadata for enrichment in act()
         self._repo_metadata = {r["full_name"]: r for r in new_repos}
         return result
 
@@ -345,10 +353,10 @@ class ScoutAgent(CognitiveAgent):
         }
         report_path.write_text(json.dumps(report_data, indent=2), encoding="utf-8")
 
-        # Bridge notifications for high-relevance findings
+        # Bridge notifications for high-scoring findings (AD-395: composite_score)
         if self._runtime and hasattr(self._runtime, "notification_queue"):
             for f in filtered:
-                if f.relevance >= 4:
+                if f.composite_score >= 4:
                     self._runtime.notification_queue.notify(
                         agent_id=self.id,
                         agent_type="scout",

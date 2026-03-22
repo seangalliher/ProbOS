@@ -44,6 +44,7 @@ from probos.agents.medical import (
 from probos.cognitive.builder import BuilderAgent
 from probos.cognitive.architect import ArchitectAgent
 from probos.cognitive.scout import ScoutAgent
+from probos.credential_store import CredentialStore
 from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
 from probos.sif import StructuralIntegrityField
 from probos.initiative import InitiativeEngine
@@ -134,6 +135,11 @@ class ProbOSRuntime:
 
         # --- Event log ---
         self.event_log = EventLog(db_path=self._data_dir / "events.db")
+
+        # --- Credential Store (AD-395) ---
+        self.credential_store = CredentialStore(
+            config=self.config, event_log=self.event_log,
+        )
 
         # --- Consensus ---
         consensus_cfg = self.config.consensus

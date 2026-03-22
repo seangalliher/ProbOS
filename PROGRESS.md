@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-394 complete — ScoutAgent: daily GitHub intelligence gathering, absorb/visiting_officer classification, Discord digest, Bridge notifications, /scout command.
+## Current Status: AD-395 complete — CredentialStore (Ship's Computer credential resolution service) + Scout gh CLI migration + multi-dimensional source curation (credibility/reliability scoring from GPT Researcher).
 
 ---
 

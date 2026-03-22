@@ -860,3 +860,18 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/ad-394-scout-agent.md`
 **Status:** AD-394 complete — 10 pytest new, 2683 pytest + 99 vitest = 2782 total.
+
+### AD-395: CredentialStore + Scout gh CLI Enhancement (DONE)
+
+**Decision:** AD-395 — CredentialStore: Ship's Computer centralized credential resolution service. Resolution chain: config key (dot-path traversal) → env var → env var aliases → CLI command (subprocess) → None. Cached with 5-min TTL (configurable), audit-logged to event_log, department-scoped access control (future-ready). Built-in specs for github, discord, llm_api. Extensions register custom credentials via `register()`. Scout migrated from httpx to `gh api` subprocess for authenticated 5000 req/hr rate limits. Multi-dimensional source curation absorbed from GPT Researcher (25.9K stars): credibility and reliability scoring alongside relevance, with weighted composite_score. /credentials command for Captain visibility.
+
+**Changes:**
+- New `src/probos/credential_store.py`: CredentialSpec dataclass, CredentialStore class (resolution chain, caching, audit logging, department-scoped access, register(), available(), list_credentials())
+- Modified `src/probos/cognitive/scout.py`: removed _get_gh_token() and httpx, added _search_github() via gh api subprocess, added credibility/reliability fields to ScoutFinding, composite_score property, updated parse_scout_reports/filter_findings/format_digest/act for multi-dimensional scoring
+- Modified `src/probos/runtime.py`: register CredentialStore on Runtime.__init__
+- Modified `src/probos/experience/shell.py`: /credentials command (COMMANDS dict + _dispatch_slash + _cmd_credentials handler)
+- New `tests/test_credential_store.py`: 13 tests — config key, env var, aliases, CLI, priority chain, cache TTL, available, list_credentials, department scope, extension registration, audit logging, unknown credential
+- Modified `tests/test_scout.py`: 16 tests total (6 new) — credibility/reliability parsing, backward compat defaults, composite_score calculation, gh CLI search, gh not found graceful degradation
+
+**Build prompt:** `prompts/ad-395-credential-store-scout-enhancement.md`
+**Status:** AD-395 complete — 19 pytest new (13 credential store + 6 scout), 2702 pytest + 99 vitest = 2801 total.

@@ -34,7 +34,7 @@ ProbOS doesn't just orchestrate agents — it gives them a civilization to come 
 |------|-----------------|-----------------|--------|
 | **Medical** | Sickbay (Crusher) | Health monitoring, diagnosis, remediation, post-mortems | Built (AD-290) |
 | **Engineering** | Main Engineering (Scotty) | Performance optimization, maintenance, builds, infrastructure | Partial (Builder, Architect built) |
-| **Science** | Science Lab (Spock) | Research, discovery, architectural analysis, codebase knowledge | Built (Architect, CodebaseIndex) |
+| **Science** | Science Lab (Spock) | Research, discovery, architectural analysis, codebase knowledge, intelligence gathering | Built (Architect, CodebaseIndex, Scout) |
 | **Security** | Tactical (Worf) | Threat detection, defense, trust integrity, input validation | Partial |
 | **Operations** | Ops (Data/O'Brien) | Resource management, scheduling, load balancing, coordination | Partial |
 | **Communications** | Comms (Uhura) | Channel adapters, federation, external interfaces | Partial |
@@ -472,6 +472,41 @@ Trust events, episodes, escalation results, and agent selections exist as separa
 - **Captain's review** — when audit trail shows repeated low-confidence routing or escalation patterns, the Captain can identify systemic issues (e.g., "Agent X is always the fallback — maybe we need a specialist")
 - **Post-hoc analysis** — dreaming engine can consolidate decision traces to identify patterns: which decomposition strategies lead to best outcomes, which agent selections correlate with escalation
 - **Complement to AD-319** — Pre-Response Verification (AD-319) checks *before* responding; Decision Audit Trail documents *what happened and why* for later review
+
+**ScoutAgent — Intelligence Gathering (AD-394, Built)**
+
+*"Long-range sensors detecting multiple contacts, Captain."*
+
+Daily automated intelligence scan of the GitHub ecosystem, classifying discoveries as absorption candidates or visiting officer candidates. Part of the Science team.
+
+- **GitHub search** — queries multiple topic clusters (ai-agents, llm-agents, multi-agent, agent-framework, ai-coding, code-generation) filtered by recency and star count
+- **LLM classification** — each discovery evaluated against ProbOS's federation philosophy: ABSORB (pattern/technique to learn from), VISITING_OFFICER (tool that could integrate under ProbOS command, must pass Subordination Principle), or SKIP
+- **Relevance scoring** — 1-5 scale, only findings scoring >=3 are reported
+- **Deduplication** — seen repos tracked in `data/scout_seen.json` with 90-day TTL
+- **Discord digest** — formatted daily report delivered to configured Discord channel
+- **Bridge notifications** — high-relevance findings (>=4) posted to Bridge notification queue
+- **Stored reports** — JSON reports archived in `data/scout_reports/` for historical analysis
+- **Crew profile** — callsign "Wesley", Science department, high openness (0.9) for exploration
+
+**Source Curation Enrichment (Future)**
+
+*Absorbed from GPT Researcher (25.9K stars, Apache 2.0, 2026-03-22) — multi-dimensional source evaluation.*
+
+Scout currently scores repositories on a single relevance dimension (1-5). GPT Researcher's SourceCurator evaluates sources across credibility, relevance, and reliability dimensions with LLM-scored ranking. Enriching Scout with multi-dimensional curation:
+
+- **Credibility scoring** — repository maturity (age, contributor count, release cadence, documentation quality), not just stars
+- **Reliability assessment** — CI status, test coverage badges, maintenance activity (last commit, issue response time)
+- **Composite score** — weighted combination of relevance, credibility, and reliability replaces single relevance number
+
+**Breadth × Depth Research Decomposition (Future)**
+
+*Absorbed from GPT Researcher (25.9K stars, Apache 2.0, 2026-03-22) — iterative sub-query expansion.*
+
+Scout currently runs a fixed set of GitHub search queries. GPT Researcher's DeepResearchSkill decomposes a research topic into N sub-queries (breadth), researches each, identifies gaps, then expands deeper (depth), with configurable breadth and depth parameters. Applicable to:
+
+- **Scout v2** — configurable breadth (number of topic clusters) and depth (follow-up searches on promising discoveries, e.g., searching a discovered repo's dependency graph for related projects)
+- **Ready Room research briefings** (Phase 34) — when Captain proposes an idea, the research pipeline decomposes it into sub-questions, researches each in parallel, identifies gaps, and synthesizes a comprehensive briefing
+- **Retriever ABC** — GPT Researcher uses 16+ search backends behind a common interface. ProbOS should adopt a `Retriever` ABC when expanding beyond GitHub (arXiv, Semantic Scholar, HackerNews, etc.)
 
 ---
 
@@ -1885,6 +1920,7 @@ Beyond the Builder role, Copilot's other capabilities can serve as federated ser
 | Tool | Protocol | Adapter | Status |
 |------|----------|---------|--------|
 | GitHub Copilot | **Copilot SDK (Python)** | `CopilotBuilderAdapter` | **Implemented (AD-351–355)** — SDK in Technical Preview |
+| GPT Researcher | **Python pip package** | `GPTResearcher` API | **Visiting Officer candidate** — deep research via `conduct_research()` + `write_report()` |
 | Claude Code | Anthropic SDK / A2A | A2A Federation Adapter | Alternative — requires separate API key |
 | Cursor / Others | A2A / MCP | Protocol-dependent | Future |
 
