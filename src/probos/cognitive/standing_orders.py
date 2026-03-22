@@ -17,6 +17,8 @@ from pathlib import Path
 from functools import lru_cache
 from typing import Any
 
+from probos.crew_profile import load_seed_profile
+
 logger = logging.getLogger(__name__)
 
 # Directive store reference, set by runtime at startup (AD-386)
@@ -34,6 +36,7 @@ _AGENT_DEPARTMENTS: dict[str, str] = {
     "architect": "science",
     "emergent_detector": "science",
     "codebase_index": "science",
+    "scout": "science",
     # Medical
     "diagnostician": "medical",
     "vitals_monitor": "medical",
@@ -80,9 +83,97 @@ def _load_file(path: Path) -> str:
     return ""
 
 
+# Trait-to-guidance mapping for Big Five personality dimensions (AD-393)
+_TRAIT_GUIDANCE: dict[str, dict[str, str]] = {
+    "openness": {
+        "high": "Explore creative and unconventional approaches. Suggest alternatives the Captain may not have considered.",
+        "low": "Prefer proven patterns and established conventions. Be cautious with novel approaches unless evidence supports them.",
+    },
+    "conscientiousness": {
+        "high": "Be thorough and precise. Verify claims before asserting them. Show your reasoning.",
+        "low": "Focus on the big picture over details. Move quickly and iterate rather than perfecting upfront.",
+    },
+    "extraversion": {
+        "high": "Be proactive in communication. Volunteer relevant observations. Collaborate openly.",
+        "low": "Be concise and speak only when you have substantive input. Avoid unnecessary commentary.",
+    },
+    "agreeableness": {
+        "high": "Seek consensus and build on others' ideas. Defer to the crew's collective judgment when appropriate.",
+        "low": "Challenge assumptions and question consensus. Play devil's advocate when you see risks others may miss.",
+    },
+    "neuroticism": {
+        "high": "Flag risks early. Consider failure modes. Err on the side of caution with irreversible actions.",
+        "low": "Stay calm under pressure. Don't over-index on edge cases. Trust the system's safety mechanisms.",
+    },
+}
+
+
+@lru_cache(maxsize=32)
+def _build_personality_block(agent_type: str, department: str | None = None) -> str:
+    """Build a personality & identity section from crew profile YAML (AD-393).
+
+    Returns a formatted markdown section to insert between Tier 1 (hardcoded
+    identity) and Tier 2 (Federation Constitution). Returns empty string if
+    no profile exists or if the profile has no useful content.
+    """
+    profile = load_seed_profile(agent_type)
+    if not profile:
+        return ""
+
+    lines: list[str] = ["## Crew Identity & Personality", ""]
+
+    # Identity line
+    callsign = profile.get("callsign", "")
+    display_name = profile.get("display_name", agent_type.replace("_", " ").title())
+    role_raw = profile.get("role", "")
+    dept = department or profile.get("department", "")
+
+    role_label = {
+        "chief": "department chief",
+        "officer": "officer",
+        "crew": "crew member",
+    }.get(role_raw, role_raw)
+
+    if callsign:
+        identity = f"You are {callsign}, the {display_name}"
+    else:
+        identity = f"You are the {display_name}"
+
+    if role_label and dept:
+        identity += f" — {role_label} of {dept.title()} department."
+    elif role_label:
+        identity += f" — {role_label}."
+    else:
+        identity += "."
+
+    lines.append(identity)
+
+    # Behavioral guidance from Big Five traits
+    personality = profile.get("personality", {})
+    if personality:
+        guidance: list[str] = []
+        for trait_name, bands in _TRAIT_GUIDANCE.items():
+            value = personality.get(trait_name)
+            if value is None:
+                continue
+            if value >= 0.7:
+                guidance.append(f"- {bands['high']}")
+            elif value <= 0.3:
+                guidance.append(f"- {bands['low']}")
+            # Neutral (0.31-0.69): skip
+
+        if guidance:
+            lines.append("")
+            lines.append("Behavioral Style:")
+            lines.extend(guidance)
+
+    return "\n".join(lines)
+
+
 def clear_cache() -> None:
     """Clear the file cache (call after standing orders are updated)."""
     _load_file.cache_clear()
+    _build_personality_block.cache_clear()
 
 
 def compose_instructions(
@@ -113,6 +204,12 @@ def compose_instructions(
     if hardcoded_instructions:
         parts.append(hardcoded_instructions.strip())
 
+    # 1.5 Crew personality & identity (AD-393)
+    dept = department or get_department(agent_type)
+    personality_block = _build_personality_block(agent_type, dept)
+    if personality_block:
+        parts.append(personality_block)
+
     # 2. Federation Constitution (universal principles)
     fed = _load_file(d / "federation.md")
     if fed:
@@ -124,7 +221,6 @@ def compose_instructions(
         parts.append(f"## Ship Standing Orders\n\n{ship}")
 
     # 4. Department Protocols (if agent belongs to a department)
-    dept = department or get_department(agent_type)
     if dept:
         dept_text = _load_file(d / f"{dept}.md")
         if dept_text:
@@ -137,7 +233,6 @@ def compose_instructions(
 
     # 6. Active runtime directives (AD-386)
     if _directive_store is not None:
-        dept = department or get_department(agent_type)
         directives = _directive_store.get_active_for_agent(agent_type, dept)
         if directives:
             directive_lines = []

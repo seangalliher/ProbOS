@@ -77,17 +77,20 @@ class TestComposeInstructions:
         assert "Personal Standing Orders" not in result
 
     def test_compose_empty_directory(self, tmp_path: Path):
-        """Empty orders dir returns just the hardcoded instructions."""
+        """Empty orders dir returns hardcoded instructions + personality only."""
         clear_cache()
         result = compose_instructions(
             "builder",
             "I am the Builder.",
             orders_dir=tmp_path,
         )
-        assert result == "I am the Builder."
+        assert result.startswith("I am the Builder.")
+        # No standing-order tiers loaded from empty dir
+        assert "## Federation Constitution" not in result
+        assert "## Ship Standing Orders" not in result
 
     def test_compose_missing_directory(self, tmp_path: Path):
-        """Non-existent orders dir returns just hardcoded instructions."""
+        """Non-existent orders dir returns hardcoded instructions + personality only."""
         clear_cache()
         missing = tmp_path / "does_not_exist"
         result = compose_instructions(
@@ -95,7 +98,8 @@ class TestComposeInstructions:
             "I am the Builder.",
             orders_dir=missing,
         )
-        assert result == "I am the Builder."
+        assert result.startswith("I am the Builder.")
+        assert "## Federation Constitution" not in result
 
     def test_compose_preserves_hardcoded_first(self, tmp_path: Path):
         """Hardcoded instructions always appear before standing orders."""
