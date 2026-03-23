@@ -44,6 +44,9 @@ from probos.agents.medical import (
 from probos.cognitive.builder import BuilderAgent
 from probos.cognitive.architect import ArchitectAgent
 from probos.cognitive.scout import ScoutAgent
+from probos.cognitive.security_officer import SecurityAgent
+from probos.cognitive.operations_officer import OperationsAgent
+from probos.cognitive.engineering_officer import EngineeringAgent
 from probos.credential_store import CredentialStore
 from probos.crew_profile import CallsignRegistry
 from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
@@ -316,6 +319,12 @@ class ProbOSRuntime:
         # Science team (AD-306)
         self.spawner.register_template("architect", ArchitectAgent)
         self.spawner.register_template("scout", ScoutAgent)
+        # Security team (AD-398)
+        self.spawner.register_template("security_officer", SecurityAgent)
+        # Operations team (AD-398)
+        self.spawner.register_template("operations_officer", OperationsAgent)
+        # Engineering team (AD-398)
+        self.spawner.register_template("engineering_officer", EngineeringAgent)
 
         # --- CodebaseIndex (AD-290) ---
         self.codebase_index: Any = None
@@ -627,6 +636,27 @@ class ProbOSRuntime:
                 llm_client=self.llm_client, runtime=self,
             )
 
+        # Security team — Security Officer (AD-398)
+        if self.config.bundled_agents.enabled:
+            await self.create_pool(
+                "security_officer", "security_officer", target_size=1,
+                llm_client=self.llm_client, runtime=self,
+            )
+
+        # Operations team — Operations Officer (AD-398)
+        if self.config.bundled_agents.enabled:
+            await self.create_pool(
+                "operations_officer", "operations_officer", target_size=1,
+                llm_client=self.llm_client, runtime=self,
+            )
+
+        # Engineering team — Engineering Officer (AD-398)
+        if self.config.bundled_agents.enabled:
+            await self.create_pool(
+                "engineering_officer", "engineering_officer", target_size=1,
+                llm_client=self.llm_client, runtime=self,
+            )
+
         # Build CodebaseIndex — ship's library, available to all agents (AD-297)
         from probos.cognitive.codebase_index import CodebaseIndex
         self.codebase_index = CodebaseIndex(source_root=Path(__file__).resolve().parent)
@@ -701,7 +731,7 @@ class ProbOSRuntime:
         self.pool_groups.register(PoolGroup(
             name="core",
             display_name="Core Systems",
-            pool_names={"system", "filesystem", "filesystem_writers", "directory", "search", "shell", "http", "introspect"},
+            pool_names={"system", "filesystem", "filesystem_writers", "directory", "search", "shell", "http", "introspect", "medical_vitals", "red_team", "system_qa"},
             exclude_from_scaler=True,
         ))
 
@@ -716,14 +746,12 @@ class ProbOSRuntime:
             self.pool_groups.register(PoolGroup(
                 name="medical",
                 display_name="Medical",
-                pool_names={"medical_vitals", "medical_diagnostician", "medical_surgeon", "medical_pharmacist", "medical_pathologist"},
+                pool_names={"medical_diagnostician", "medical_surgeon", "medical_pharmacist", "medical_pathologist"},
                 exclude_from_scaler=True,
             ))
 
         if self.config.self_mod.enabled:
             sm_pools = {"skills"}
-            if self.config.qa.enabled:
-                sm_pools.add("system_qa")
             self.pool_groups.register(PoolGroup(
                 name="self_mod",
                 display_name="Self-Modification",
@@ -731,19 +759,19 @@ class ProbOSRuntime:
                 exclude_from_scaler=True,
             ))
 
-        # Security pool group — red team agents (AD-296)
+        # Security pool group (AD-398: cognitive security officer)
         self.pool_groups.register(PoolGroup(
             name="security",
             display_name="Security",
-            pool_names={"red_team"},
-            exclude_from_scaler=False,
+            pool_names={"security_officer"},
+            exclude_from_scaler=True,
         ))
 
-        # Engineering pool group (AD-302)
+        # Engineering pool group (AD-302, AD-398: add engineering_officer)
         self.pool_groups.register(PoolGroup(
             name="engineering",
             display_name="Engineering",
-            pool_names={"builder"},
+            pool_names={"builder", "engineering_officer"},
             exclude_from_scaler=True,
         ))
 
@@ -752,6 +780,14 @@ class ProbOSRuntime:
             name="science",
             display_name="Science",
             pool_names={"architect", "scout"},
+            exclude_from_scaler=True,
+        ))
+
+        # Operations pool group (AD-398)
+        self.pool_groups.register(PoolGroup(
+            name="operations",
+            display_name="Operations",
+            pool_names={"operations_officer"},
             exclude_from_scaler=True,
         ))
 

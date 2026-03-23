@@ -358,6 +358,9 @@ class CounselorAgent(CognitiveAgent):
 
     async def act(self, plan: Any) -> Any:
         """Execute the counselor's assessment plan."""
+        # AD-398: pass through conversational responses for 1:1 sessions
+        if isinstance(plan, dict) and plan.get("intent") == "direct_message":
+            return {"success": True, "result": plan.get("llm_output", "")}
         if isinstance(plan, dict) and plan.get("action") == "assess":
             agent_id = plan.get("agent_id", "")
             if agent_id:

@@ -71,7 +71,7 @@ class ChannelAdapter(ABC):
         to process_natural_language(). Maintains per-channel conversation
         history.
         """
-        from probos.channels.response_formatter import extract_response_text
+        from probos.utils.response_formatter import extract_response_text
 
         text = message.text.strip()
         if not text:
@@ -82,9 +82,14 @@ class ChannelAdapter(ABC):
             result = await _handle_slash_command(text, self.runtime)
             return result.get("response", "")
 
-        # AD-397: @callsign one-shot direct message via channel
-        if text.startswith("@"):
-            return await self._handle_callsign_message(text)
+        # AD-397/BF-009: @callsign one-shot direct message via channel (anywhere in text)
+        from probos.crew_profile import extract_callsign_mention
+        mention = extract_callsign_mention(text)
+        if mention:
+            callsign, message_text = mention
+            resolved = self.runtime.callsign_registry.resolve(callsign)
+            if resolved is not None:
+                return await self._handle_callsign_resolved(resolved, callsign, message_text)
 
         # Natural language path
         history = self._conversation_histories.get(message.channel_id, [])
@@ -109,21 +114,9 @@ class ChannelAdapter(ABC):
 
         return response_text
 
-    async def _handle_callsign_message(self, text: str) -> str:
-        """Route @callsign message to a specific agent (AD-397). One-shot, no session."""
+    async def _handle_callsign_resolved(self, resolved: dict, callsign: str, message_text: str) -> str:
+        """Route to a resolved crew member (AD-397, BF-009). One-shot, no session."""
         from probos.types import IntentMessage
-
-        raw = text.lstrip("@")
-        parts = raw.split(None, 1)
-        callsign = parts[0] if parts else ""
-        message_text = parts[1] if len(parts) > 1 else ""
-
-        if not callsign:
-            return "Usage: @callsign message"
-
-        resolved = self.runtime.callsign_registry.resolve(callsign)
-        if resolved is None:
-            return f"Unknown crew member: @{callsign}"
 
         if resolved["agent_id"] is None:
             return f"{resolved['callsign']} is not currently on duty."

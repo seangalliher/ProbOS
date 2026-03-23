@@ -563,6 +563,9 @@ Recipe: NEW API ENDPOINT
 
     async def act(self, decision: dict) -> dict:
         """Parse LLM output into an ArchitectProposal."""
+        # AD-398: pass through conversational responses for 1:1 sessions
+        if decision.get("intent") == "direct_message":
+            return {"success": True, "result": decision.get("llm_output", "")}
         if decision.get("action") == "error":
             return {"success": False, "error": decision.get("reason")}
 

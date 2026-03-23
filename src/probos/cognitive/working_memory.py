@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from probos.consensus.trust import TrustNetwork
+    from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — assembles trust summary for LLM context
     from probos.mesh.routing import HebbianRouter
     from probos.substrate.registry import AgentRegistry
 

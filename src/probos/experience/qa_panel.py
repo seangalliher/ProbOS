@@ -9,7 +9,7 @@ from rich.table import Table
 from rich.text import Text
 
 if TYPE_CHECKING:
-    from probos.agents.system_qa import QAReport
+    from probos.types import QAReport
     from probos.consensus.trust import TrustNetwork
 
 

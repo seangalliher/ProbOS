@@ -107,11 +107,16 @@ class DiscordAdapter(ChannelAdapter):
     async def stop(self) -> None:
         """Close the Discord connection.
 
-        discord.py's keep-alive thread (a plain threading.Thread) races with
-        event-loop shutdown, producing RuntimeError + RuntimeWarning noise.
-        We suppress both here — this is a well-known discord.py issue.
+        discord.py's shutdown path can block the event loop on Windows
+        (SSL teardown, keep-alive thread joins). We isolate the teardown
+        in a dedicated thread with its own event loop so blocking calls
+        can't defeat asyncio.wait_for() timeouts on the main loop.
         """
-        # 1. Suppress RuntimeError from keep-alive thread
+        if not self._started:
+            return
+
+        # ---- Suppress known discord.py shutdown noise ----
+
         _original_excepthook = threading.excepthook
 
         def _suppress_keepalive(args: threading.ExceptHookArgs) -> None:
@@ -120,38 +125,75 @@ class DiscordAdapter(ChannelAdapter):
                 and args.thread
                 and "keep-alive" in (args.thread.name or "")
             ):
-                return  # silently suppress
+                return
             _original_excepthook(args)
 
         threading.excepthook = _suppress_keepalive
-
-        # 2. Suppress "coroutine was never awaited" RuntimeWarning
         warnings.filterwarnings(
             "ignore",
             message="coroutine.*was never awaited",
             category=RuntimeWarning,
         )
 
-        if self._bot and not self._bot.is_closed():
-            try:
-                await asyncio.wait_for(self._bot.close(), timeout=3.0)
-            except asyncio.TimeoutError:
-                logger.warning("Discord bot.close() timed out — forcing")
-            except Exception:
-                pass
-        if self._bot_task:
-            self._bot_task.cancel()
-            try:
-                await asyncio.wait_for(
-                    asyncio.shield(self._bot_task), timeout=2.0
-                )
-            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
-                pass
-        # Force-close the underlying HTTP connector if still open
-        if self._bot and hasattr(self._bot, "http") and hasattr(self._bot.http, "_HTTPClient__session"):
-            session = self._bot.http._HTTPClient__session
-            if session and not session.closed:
-                await session.close()
+        # ---- Thread-isolated teardown ----
+
+        bot = self._bot
+        bot_task = self._bot_task
+
+        def _teardown_in_thread() -> None:
+            """Run discord teardown in a separate thread with a hard deadline.
+
+            This prevents discord.py's blocking SSL/WebSocket cleanup from
+            stalling the main event loop on Windows SelectorEventLoop.
+            """
+            if bot and not bot.is_closed():
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(
+                        asyncio.wait_for(bot.close(), timeout=2.0)
+                    )
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        loop.close()
+                    except Exception:
+                        pass
+
+            # Force-close the HTTP session if still open
+            if bot and hasattr(bot, "http"):
+                http = bot.http
+                session = getattr(http, "_HTTPClient__session", None)
+                if session and not session.closed:
+                    loop2 = asyncio.new_event_loop()
+                    try:
+                        loop2.run_until_complete(session.close())
+                    except Exception:
+                        pass
+                    finally:
+                        try:
+                            loop2.close()
+                        except Exception:
+                            pass
+
+        # Run teardown in a thread with a hard 3-second wall-clock deadline.
+        # threading.Thread.join(timeout) is a real OS timeout that can't be
+        # blocked by asyncio event loop issues.
+        teardown_thread = threading.Thread(
+            target=_teardown_in_thread,
+            name="discord-teardown",
+            daemon=True,
+        )
+        teardown_thread.start()
+        # Use to_thread so we don't block the main event loop while waiting
+        await asyncio.to_thread(teardown_thread.join, 3.0)
+
+        # Cancel the bot task (don't await — avoids the double-close hang)
+        if bot_task and not bot_task.done():
+            bot_task.cancel()
+
+        self._bot = None
+        self._bot_task = None
         self._started = False
         logger.info("Discord adapter stopped")
 

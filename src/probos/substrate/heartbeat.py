@@ -10,7 +10,7 @@ from probos.substrate.agent import BaseAgent
 from probos.types import CapabilityDescriptor
 
 if TYPE_CHECKING:
-    from probos.mesh.gossip import GossipProtocol
+    from probos.mesh.gossip import GossipProtocol  # AD-399: allowed edge — TYPE_CHECKING + DI
 
 logger = logging.getLogger(__name__)
 

@@ -187,7 +187,7 @@ class StrategyRecommender:
         Uses embedding-based similarity when available, falls back to Jaccard.
         """
         try:
-            from probos.cognitive.embeddings import compute_similarity
+            from probos.knowledge.embeddings import compute_similarity
             sim = compute_similarity(text_a, text_b)
             if sim > 0.0:
                 return sim

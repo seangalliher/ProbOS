@@ -16,7 +16,7 @@ from typing import Any
 from probos.cognitive.gap_predictor import predict_gaps
 from probos.cognitive.strategy_extraction import extract_strategies
 from probos.config import DreamingConfig
-from probos.consensus.trust import TrustNetwork
+from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — dream consolidation mutates trust
 from probos.mesh.routing import HebbianRouter, REL_INTENT
 from probos.types import DreamReport, Episode
 

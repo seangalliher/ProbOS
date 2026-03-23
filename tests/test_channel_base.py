@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import pytest
 
 from probos.channels.base import ChannelAdapter, ChannelConfig, ChannelMessage
-from probos.channels.response_formatter import extract_response_text
+from probos.utils.response_formatter import extract_response_text
 from probos.cognitive.llm_client import MockLLMClient
 from probos.config import SystemConfig
 from probos.runtime import ProbOSRuntime

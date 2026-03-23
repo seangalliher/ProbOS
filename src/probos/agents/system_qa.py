@@ -5,11 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
 from probos.substrate.agent import BaseAgent
-from probos.types import IntentDescriptor, IntentMessage, IntentResult
+from probos.types import IntentDescriptor, IntentMessage, IntentResult, QAReport
 
 if TYPE_CHECKING:
     from probos.cognitive.self_mod import DesignedAgentRecord
@@ -17,23 +16,6 @@ if TYPE_CHECKING:
     from probos.substrate.pool import ResourcePool
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class QAReport:
-    """Result of a smoke-test run for a designed agent."""
-
-    agent_type: str
-    intent_name: str
-    pool_name: str
-    total_tests: int
-    passed: int
-    failed: int
-    pass_rate: float
-    verdict: str  # "passed" | "failed" | "error"
-    test_details: list[dict] = field(default_factory=list)
-    duration_ms: float = 0.0
-    timestamp: float = 0.0
 
 
 # ---------------------------------------------------------------------------

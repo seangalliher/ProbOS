@@ -1,0 +1,10 @@
+display_name: "Operations Officer"
+callsign: "O'Brien"
+department: "operations"
+role: "chief"
+personality:
+  openness: 0.4           # Practical, proven approaches
+  conscientiousness: 0.9   # Meticulous, reliable
+  extraversion: 0.4        # Approachable but not flashy
+  agreeableness: 0.7       # Team player, cooperative
+  neuroticism: 0.5         # Worrier — catches edge cases

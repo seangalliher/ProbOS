@@ -35,7 +35,7 @@ class EpisodicMemory:
 
     async def start(self) -> None:
         import chromadb
-        from probos.cognitive.embeddings import get_embedding_function
+        from probos.knowledge.embeddings import get_embedding_function
 
         db_dir = Path(self.db_path).parent
         db_dir.mkdir(parents=True, exist_ok=True)

@@ -127,10 +127,30 @@ class CognitiveAgent(BaseAgent):
 
         from probos.cognitive.standing_orders import compose_instructions
 
-        composed = compose_instructions(
-            agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
-            hardcoded_instructions=self.instructions or "",
-        )
+        # BF-010: conversational system prompt for 1:1 sessions
+        is_conversation = observation.get("intent") == "direct_message"
+
+        if is_conversation:
+            # For 1:1 conversations, use personality + standing orders only.
+            # Exclude domain-specific task instructions (report formats, output blocks)
+            # so the LLM responds naturally as itself.
+            composed = compose_instructions(
+                agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
+                hardcoded_instructions="",
+            )
+            composed += (
+                "\n\nYou are in a 1:1 conversation with the Captain. "
+                "Respond naturally and conversationally as yourself. "
+                "Do NOT use any structured output formats, report blocks, "
+                "code blocks, or task-specific templates. "
+                "Be genuine, personable, and engage with what the Captain says. "
+                "Draw on your expertise and personality, but keep it conversational."
+            )
+        else:
+            composed = compose_instructions(
+                agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
+                hardcoded_instructions=self.instructions or "",
+            )
 
         request = LLMRequest(
             prompt=user_message,
@@ -200,6 +220,7 @@ class CognitiveAgent(BaseAgent):
         # Cognitive lifecycle — LLM-guided reasoning
         observation = await self.perceive(intent)
         decision = await self.decide(observation)
+        decision["intent"] = intent.intent  # AD-398: propagate intent name to act()
         result = await self.act(decision)
         report = await self.report(result)
 

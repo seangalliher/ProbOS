@@ -2152,6 +2152,9 @@ Rules for MODIFY blocks:
 
     async def act(self, decision: dict) -> dict:
         """Parse LLM output into file blocks — does NOT write files."""
+        # AD-398: pass through conversational responses for 1:1 sessions
+        if decision.get("intent") == "direct_message":
+            return {"success": True, "result": decision.get("llm_output", "")}
         if decision.get("action") == "error":
             logger.warning("Builder act: LLM returned error: %s", decision.get("reason"))
             return {"success": False, "error": decision.get("reason")}

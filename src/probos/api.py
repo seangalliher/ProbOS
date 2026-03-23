@@ -338,6 +338,36 @@ def create_app(runtime: Any) -> FastAPI:
                 }
             return await _handle_slash_command(text, runtime)
 
+        # AD-397/BF-009: @callsign direct message routing
+        from probos.crew_profile import extract_callsign_mention
+        mention = extract_callsign_mention(text)
+        if mention:
+            callsign, message_text = mention
+            resolved = runtime.callsign_registry.resolve(callsign)
+            if resolved is not None:
+                if resolved["agent_id"] is None:
+                    return {
+                        "response": f"{resolved['callsign']} is not currently on duty.",
+                        "dag": None,
+                        "results": None,
+                    }
+                if not message_text:
+                    return {
+                        "response": f"{resolved['callsign']} is available. Send a message: @{callsign} <message>",
+                        "dag": None,
+                        "results": None,
+                    }
+                from probos.types import IntentMessage
+                intent = IntentMessage(
+                    intent="direct_message",
+                    params={"text": message_text, "from": "hxi", "session": False},
+                    target_agent_id=resolved["agent_id"],
+                )
+                result = await runtime.intent_bus.send(intent)
+                response = f"{resolved['callsign']}: {result.result}" if result and result.result else f"{resolved['callsign']}: (no response)"
+                return {"response": response, "dag": None, "results": None}
+            # Callsign not found — fall through to NL processing
+
         events: list[dict[str, Any]] = []
 
         async def on_event(event_type: str, data: dict[str, Any] | None = None) -> None:
@@ -392,7 +422,7 @@ def create_app(runtime: Any) -> FastAPI:
 
         # Use shared response extraction for reflection/correction/results fallback
         if not response_text:
-            from probos.channels.response_formatter import extract_response_text
+            from probos.utils.response_formatter import extract_response_text
             response_text = extract_response_text(dag_result)
 
         # Diagnose empty response — check decomposer state for LLM issues

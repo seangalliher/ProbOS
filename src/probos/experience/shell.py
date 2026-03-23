@@ -166,15 +166,21 @@ class ProbOSShell:
 
         # 1:1 session mode — route to session agent (AD-397)
         if self._session_callsign and not line.startswith("/"):
-            if line.startswith("@"):
+            # BF-009: detect @callsign anywhere for session-switching
+            from probos.crew_profile import extract_callsign_mention
+            mention = extract_callsign_mention(line)
+            if mention:
                 # Allow switching sessions via @callsign during a session
-                await self._handle_at(line)
+                await self._handle_at_parsed(mention[0], mention[1])
             else:
                 await self._handle_session_message(line)
             return
 
-        if line.startswith("@"):
-            await self._handle_at(line)
+        # BF-009: detect @callsign anywhere in the line
+        from probos.crew_profile import extract_callsign_mention as _ecm
+        mention = _ecm(line)
+        if mention:
+            await self._handle_at_parsed(mention[0], mention[1])
         elif line.startswith("/"):
             await self._dispatch_slash(line)
         else:
@@ -1422,12 +1428,15 @@ class ProbOSShell:
 
     async def _handle_at(self, line: str) -> None:
         """Parse @callsign and enter 1:1 session mode."""
-        # Parse: @callsign [optional message]
-        raw = line.lstrip("@")
-        parts = raw.split(None, 1)
-        callsign = parts[0] if parts else ""
-        message = parts[1] if len(parts) > 1 else ""
+        from probos.crew_profile import extract_callsign_mention
+        mention = extract_callsign_mention(line)
+        if not mention:
+            self.console.print("[red]Usage: @callsign [message][/red]")
+            return
+        await self._handle_at_parsed(mention[0], mention[1])
 
+    async def _handle_at_parsed(self, callsign: str, message: str) -> None:
+        """Resolve callsign and enter 1:1 session mode (BF-009)."""
         if not callsign:
             self.console.print("[red]Usage: @callsign [message][/red]")
             return

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-397 complete — Callsign Addressing (`@callsign` targeted dispatch, 1:1 crew sessions with sovereign episodic memory, CallsignRegistry, IntentBus.send(), /bridge command, 27 new tests).
+## Current Status: AD-399 complete — cross-layer dependency cleanup. Moved `embeddings.py` from `cognitive/` to `knowledge/` (fixes 2 violations), moved `response_formatter.py` from `channels/` to `utils/` (fixes 1 violation), moved `QAReport` dataclass to `types.py` (fixes 1 violation). Documented 6 allowed cross-layer edges. All 2776 tests pass.
 
 ---
 

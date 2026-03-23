@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import time
 from dataclasses import dataclass, field, asdict
@@ -398,3 +399,18 @@ def load_seed_profile(agent_type: str, profiles_dir: str = "") -> dict[str, Any]
     import yaml
     with open(target, "r") as f:
         return yaml.safe_load(f) or {}
+
+
+def extract_callsign_mention(text: str) -> tuple[str, str] | None:
+    """Extract the first @callsign mention from text (BF-009).
+
+    Returns (callsign, remaining_text) or None if no @mention found.
+    The remaining_text has the @callsign removed and is stripped.
+    """
+    match = re.search(r'@(\w+)', text)
+    if match:
+        callsign = match.group(1)
+        remaining = text[:match.start()] + text[match.end():]
+        remaining = re.sub(r'  +', ' ', remaining).strip()
+        return (callsign, remaining)
+    return None

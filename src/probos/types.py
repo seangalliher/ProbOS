@@ -448,3 +448,20 @@ class FederationMessage:
     message_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     payload: dict[str, Any] = field(default_factory=dict)
     timestamp: float = 0.0
+
+
+@dataclass
+class QAReport:
+    """Result of a smoke-test run for a designed agent (AD-399: moved from system_qa)."""
+
+    agent_type: str
+    intent_name: str
+    pool_name: str
+    total_tests: int
+    passed: int
+    failed: int
+    pass_rate: float
+    verdict: str  # "passed" | "failed" | "error"
+    test_details: list[dict] = field(default_factory=list)
+    duration_ms: float = 0.0
+    timestamp: float = 0.0

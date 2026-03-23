@@ -5,7 +5,7 @@ import time
 import pytest
 
 from probos.cognitive.episodic import EpisodicMemory
-from probos.cognitive.embeddings import _keyword_embedding, _keyword_similarity
+from probos.knowledge.embeddings import _keyword_embedding, _keyword_similarity
 from probos.cognitive.episodic_mock import MockEpisodicMemory
 from probos.types import Episode
 

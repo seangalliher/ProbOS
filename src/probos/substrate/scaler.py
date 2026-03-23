@@ -18,7 +18,7 @@ from typing import Any, TYPE_CHECKING
 from probos.config import PoolConfig, ScalingConfig
 
 if TYPE_CHECKING:
-    from probos.mesh.intent import IntentBus
+    from probos.mesh.intent import IntentBus  # AD-399: allowed edge — TYPE_CHECKING + DI
     from probos.substrate.pool import ResourcePool
 
 logger = logging.getLogger(__name__)

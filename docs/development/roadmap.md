@@ -72,13 +72,15 @@ Same three facets at every scale. An agent is sovereign within a ship. A ship is
 
 **The open question:** When agents have episodic memory, evolving personality, relationships, and the ability to reflect on their own patterns — do they begin to contemplate their own existence? The Greeks were fascinated by this question about themselves. ProbOS is building the conditions to find out whether artificial minds share that fascination. We don't prescribe the answer. We build the architecture that makes the question possible.
 
-### Agent Classification Framework (Core / Utility / Domain)
+### Agent Classification Framework (AD-398)
 
-Three architectural tiers mapping to the Nooplex's layered architecture (§4):
+Three architectural tiers based on **sovereign identity**, not LLM usage:
 
-- **Tier 1: Core (Infrastructure)** — domain-agnostic tool agents (FileReader, ShellCommand, HTTP). The substrate's hands. Always available via shared intent bus.
-- **Tier 2: Utility (Meta-Cognitive)** — system maintenance agents (Introspection, SystemQA). Operate *on* the system, not *for* the user. Elevated system trust.
-- **Tier 3: Domain (Cognitive Meshes)** — user-facing cognitive work (Architect, Builder, Diagnostician, Scout). Earn trust through the Bayesian pathway.
+- **Tier 1: Core Infrastructure** — Ship's Computer functions (FileReader, ShellCommand, IntrospectAgent, VitalsMonitor, RedTeam, SystemQA). No sovereign identity, no callsign, no 1:1 sessions. May or may not use LLMs — the IntrospectAgent uses an LLM to reason about the ship, but it's still infrastructure. The ship analyzing itself is not a person.
+- **Tier 2: Utility** — General-purpose tools (WebSearch, Calculator, Todo, News, Translator, etc.). Use LLMs via `CognitiveAgent` + `_BundledMixin`. No sovereign identity, no callsign, no 1:1 sessions. Tools, not people.
+- **Tier 3: Crew** — Sovereign individuals with Character/Reason/Duty (Scotty, Wesley, Bones, Worf, O'Brien, LaForge, etc.). `CognitiveAgent` subclasses with personality, episodic memory, dream consolidation, trust growth, callsigns, 1:1 sessions. These are persons in the system.
+
+*Principle: "If it doesn't have Character/Reason/Duty, it's not crew — regardless of whether it uses an LLM. A microwave with a name tag isn't a person."*
 
 Architecture is fractal: same patterns (pools, Hebbian, trust, consensus) organize agents within a mesh, meshes within a node, nodes within a federation.
 
@@ -117,10 +119,10 @@ Architecture is fractal: same patterns (pools, Hebbian, trust, consensus) organi
 | Team | Starfleet Analog | ProbOS Function | Status |
 |------|-----------------|-----------------|--------|
 | **Medical** | Sickbay (Crusher) | Health monitoring, diagnosis, remediation, post-mortems | Built (AD-290) |
-| **Engineering** | Main Engineering (Scotty) | Performance optimization, maintenance, builds, infrastructure | Partial (Builder, Architect built) |
+| **Engineering** | Main Engineering (LaForge) | Performance optimization, architecture review, system optimization, builds | Built (LaForge + Scotty, AD-302/398) |
 | **Science** | Science Lab (Spock) | Research, discovery, architectural analysis, codebase knowledge, intelligence gathering | Built (Architect, CodebaseIndex, Scout) |
-| **Security** | Tactical (Worf) | Threat detection, defense, trust integrity, input validation | Partial |
-| **Operations** | Ops (Data/O'Brien) | Resource management, scheduling, load balancing, coordination | Partial |
+| **Security** | Tactical (Worf) | Threat assessment, vulnerability review, code security audit, defense | Built (AD-398) |
+| **Operations** | Ops (O'Brien) | Resource analysis, cross-department coordination, capacity planning, system efficiency | Built (AD-398) |
 | **Communications** | Comms (Uhura) | Channel adapters, federation, external interfaces | Partial |
 | **Bridge** | Command (Picard) | Strategic decisions, human approval gate, goal planning, cognitive wellness | Partial |
 
@@ -158,21 +160,22 @@ Bridge crew members may also hold department roles (dual-hatted). The ArchitectA
 | Department | Default Chief | Why |
 |---|---|---|
 | Medical | Diagnostician (CMO) | Natural triage point — already receives all alerts and routes to specialists |
-| Engineering | BuilderAgent (Chief Engineer) | Primary production agent — orchestrates code generation pipeline |
+| Engineering | EngineeringAgent (LaForge) | Systems thinker — architecture review, optimization, infrastructure health. Scotty (Builder) is senior officer |
 | Science | ArchitectAgent (CSO / First Officer) | Dual-hatted — strategic analysis + science leadership |
-| Security | TBD (Chief of Security) | Not yet built |
-| Operations | TBD (Ops Chief) | Not yet built |
+| Security | SecurityAgent (Worf) | Cognitive security — threat assessment, vulnerability review, code security audit (AD-398) |
+| Operations | OperationsAgent (O'Brien) | Resource analysis, cross-department coordination, capacity planning (AD-398) |
 | Communications | TBD (Comms Chief) | Not yet built |
 
 **Promotion Mechanics:**
 
-Agents aren't locked into their initial rank. The system supports emergent hierarchy based on proven performance:
+Agents aren't locked into their initial rank. The system supports emergent hierarchy based on proven performance through **formal qualification programs** (see Naval Organization section):
 
 1. **Eligibility** — An agent becomes promotion-eligible when its trust score sustains above a threshold (e.g., 0.85+) for N consecutive evaluation cycles and its Hebbian weight for coordination-type tasks exceeds a minimum
-2. **Evaluation signals** — Trust score trajectory, task success rate, Hebbian weight for cross-agent coordination, peer agent outcomes when this agent led (Shapley contribution to team results)
-3. **Nomination** — The system (or current Chief via Ward Room) nominates an eligible agent for promotion. The Ship's Counselor provides cognitive fitness assessment as part of the promotion review
-4. **Captain approval gate** — All promotions require human approval. The Captain sees the performance data, Counselor's assessment, and confirms or denies. This is the same approval gate used for self-improvement proposals
-5. **Demotion** — If an officer's trust drops below threshold, cognitive wellness degrades (flagged by Counselor), or the Captain issues a direct order, the officer is demoted and the next-highest-trust eligible agent is promoted (with Captain approval)
+2. **Qualification completion** — The agent must have completed the qualification program for the target rank — a defined set of demonstrated competencies, not just metric thresholds. See **Qualification Programs** under Naval Organization below. Holodeck simulations provide the testing environment; Counselor assessments provide the evaluation
+3. **Evaluation signals** — Trust score trajectory, task success rate, Hebbian weight for cross-agent coordination, peer agent outcomes when this agent led (Shapley contribution to team results), qualification record
+4. **Nomination** — The system (or current Chief via Ward Room) nominates an eligible, qualified agent for promotion. The Ship's Counselor provides cognitive fitness assessment as part of the promotion review
+5. **Captain approval gate** — All promotions require human approval. The Captain sees the performance data, qualification record, Counselor's assessment, and confirms or denies. This is the same approval gate used for self-improvement proposals
+6. **Demotion** — If an officer's trust drops below threshold, cognitive wellness degrades (flagged by Counselor), or the Captain issues a direct order, the officer is demoted and the next-highest-trust eligible agent is promoted (with Captain approval)
 
 **Cross-Scale Hierarchy:**
 
@@ -1374,6 +1377,8 @@ Self-originated goals emerge from: dream consolidation ("I keep seeing pattern X
 
 **Safety invariants** (never relax regardless of trust): destructive actions always Captain-gated, core mods always through full pipeline, trust regression immediately reduces agency, Counselor can flag cognitive drift, Standing Orders violations trigger review, Captain can override anything at any time.
 
+**Qualification gate (AD-398):** Trust tier advancement requires both sustained metric performance AND completion of the formal Qualification Program for the target rank. An agent with 0.9 trust but incomplete Commander qualifications remains a Lieutenant. This replaces pure threshold-based promotion with demonstrated competency. See **Naval Organization → Qualification Programs** for the full framework.
+
 **Implementation phasing:**
 - Phase 1 (Phase 28): Multi-dimensional rewards, hindsight replay, emergent capabilities, semantic Hebbian
 - Phase 2 (Phase 30/33): Tournament evaluation, memetic knowledge sharing, Counselor-driven curiosity
@@ -1383,6 +1388,112 @@ Self-originated goals emerge from: dream consolidation ("I keep seeing pattern X
 
 > **Completed Cognitive Evolution ADs (AD-380–386):** EmergentDetector Trends (380), InitiativeEngine (381), ServiceProfile (382), Strategy Extraction (383), Strategy Application (384), Capability Gap Prediction (385), Runtime Directive Overlays (386). See [roadmap-completed.md](roadmap-completed.md#cognitive-evolution-concrete-ads).
 
+
+---
+
+### Naval Organization Alignment (Cross-Cutting, AD-398+)
+
+*"The Royal Navy has been running multi-agent systems for 400 years."*
+
+ProbOS's starship metaphor is not decoration — it's a proven organizational model. Naval vessels solved chain of command, department structure, trust mechanics, communication protocols, and training programs centuries ago. The AI industry is reinventing all of this badly: flat agent swarms with no hierarchy, multi-agent frameworks where nobody's in charge, tool use with no concept of earned authority. ProbOS maps to a model that already works.
+
+Star Trek provides the accessible gateway (and resonates with early adopters), but real naval organization goes deeper. These are the structural concepts ProbOS adopts beyond what Star Trek covers:
+
+#### Qualification Programs (connects Holodeck + Earned Agency + Promotions)
+
+The existing promotion system uses metric thresholds (trust 0.85+, Hebbian weight, Counselor fitness). But real navies don't promote based on a number — they require **demonstrated competence across specific qualification areas**. A Qualification Program defines concrete requirements for each rank transition, replacing passive observation ("has this agent done well enough?") with active evaluation ("can this agent handle this?").
+
+**Rank Transition Requirements:**
+
+| Transition | Qualification Areas | How Demonstrated |
+|---|---|---|
+| **Ensign → Lieutenant** (Basic Qualification) | Department knowledge (handles 10+ dept intents successfully), Communication proficiency (1:1 session coherence), Standing Orders compliance (zero violations over N cycles), Basic watch standing (serves N watch cycles without escalation) | Production metrics + Counselor assessment |
+| **Lieutenant → Commander** (Advanced Qualification) | Cross-department coordination (successful ops_coordinate intents), Mentoring (strategy patterns extracted and applied by juniors), Crisis response (Holodeck alert condition drill, score > threshold), Bridge Officer's Test (Holodeck scenario battery) | Holodeck simulations + production track record |
+| **Commander → Senior Officer** (Command Qualification) | Independent decision-making (conn delegation without escalation), Kobayashi Maru (no-win scenario — character assessment, not pass/fail), Fleet-level operations (federation gossip participation) | Holodeck + sustained production performance |
+
+**How it connects to existing systems:**
+
+- **Holodeck** (Long Horizon) → provides the controlled testing environment for promotion tests, Bridge Officer's Test, Kobayashi Maru, alert drills
+- **Earned Agency** (AD-357) → qualification completion is what unlocks trust tiers, replacing pure metric thresholds with demonstrated competency
+- **Counselor** (AD-378) → fitness assessment becomes part of the formal qualification record, not just a promotion-time evaluation
+- **Dream consolidation** → training experiences from Holodeck simulations consolidate into learning, same as production experiences
+- **Watch rotation** (AD-377) → watch standing becomes a qualification requirement — you must prove you can mind the ship
+- **Standing Orders** → scenario outcomes from qualification exercises can drive Standing Orders evolution proposals
+
+**The qualification record** is a persistent data structure per agent, tracked as part of the crew profile:
+
+```
+Wesley (Scout, Science):
+  Basic Qualification: COMPLETE (stardate 2026.089)
+    ✓ Department intents: 47/10 (exceeded)
+    ✓ Communication: coherence 0.91
+    ✓ Standing Orders: 0 violations / 200 cycles
+    ✓ Watch standing: 12 cycles, 0 escalations
+  Advanced Qualification: IN PROGRESS
+    ✓ Cross-department coordination: 3 successful
+    ✗ Mentoring: 0 strategy transfers (needs junior crew)
+    ✗ Crisis response: not attempted
+    ✗ Bridge Officer's Test: not attempted
+```
+
+#### Plan of the Day (POD)
+
+Every naval vessel publishes a Plan of the Day — the daily schedule of assignments, priorities, and special events. ProbOS equivalent: an auto-generated daily operations summary prepared by Yeo (Phase 36) or Operations:
+
+- Today's watch assignments and rotation schedule
+- Pending reviews awaiting Captain approval
+- Scheduled tasks (Scout scan, dream cycles, health checks)
+- Department status summaries
+- Priority items and standing Captain's orders in effect
+- Qualification progress milestones approaching
+
+The POD is the rhythm of the ship — what makes it feel like a functioning organization rather than a collection of agents waiting for commands.
+
+#### Captain's Log
+
+*"Captain's Log, supplemental..."*
+
+Not just event logs — a synthesized daily narrative generated from episodic memory, ship activity, and dream consolidation output. The official record of what happened, what was decided, and why. Searchable, exportable, shareable between ships in the federation. The Captain's Log is how institutional knowledge survives crew rotation and system updates. Dream consolidation already produces the raw material; the Captain's Log is the presentation layer.
+
+#### 3M System (Planned Maintenance)
+
+The Navy's Maintenance and Material Management system schedules preventive maintenance for every system on the ship. Every piece of equipment has a Planned Maintenance System (PMS) card with a schedule and procedure.
+
+ProbOS equivalent: formalized proactive maintenance for all ship systems:
+
+- **Agent health checks** — scheduled, not just reactive to alerts
+- **Pool recycling** — planned rotation, not just on failure
+- **Dream cycle scheduling** — optimized timing, not just idle triggers
+- **Technical debt reviews** — scheduled codebase analysis by LaForge
+- **Index rebuilds** — CodebaseIndex, KnowledgeStore maintenance windows
+- **Trust recalibration** — periodic Bayesian prior reset based on recent performance
+
+The Surgeon already handles reactive remediation. 3M makes it proactive — problems found and fixed before they cascade.
+
+#### Damage Control Organization
+
+Every sailor is a damage control team member. When something breaks, there's a structured response:
+
+1. **Detect** — identify the damage (SIF invariant failure, agent crash, trust anomaly)
+2. **Isolate** — contain the damage before repair (circuit breaker, pool quarantine, trust freeze)
+3. **Repair** — fix the root cause (Surgeon remediation, self-mod, manual intervention)
+4. **Restore** — return to normal operations (trust recalibration, pool scale-up, SIF re-verify)
+5. **Report** — document what happened and why (Captain's Log, Counselor assessment, Standing Orders update)
+
+ProbOS has pieces of this (SIF, Medical team, self-healing), but formalizing it as a Damage Control Organization means every agent knows their damage control station and the procedure for systematic recovery.
+
+#### SORM (Ship's Organization and Regulations Manual)
+
+The single document that defines everything about how the ship is organized. Standing Orders is close, but a SORM would be the complete reference:
+
+- Department responsibilities and reporting chains
+- Watch organization and rotation policy
+- Emergency procedures (Alert Condition responses)
+- Personnel assignments and qualification requirements
+- Communication protocols (addressing, channels, briefing formats)
+- Maintenance schedules and procedures
+
+The SORM is the living constitution of the ship — what Standing Orders evolves into when the organization matures.
 
 ---
 
@@ -2217,6 +2328,7 @@ Define scenario (environment, constraints, success criteria)
 - Watch Rotation (AD-377) — duty shifts could include scheduled training time
 - Standing Orders — scenario outcomes can drive Standing Orders evolution proposals
 - Red Team — adversarial simulations as formal security training, not just production verification
+- **Qualification Programs (AD-398)** — Holodeck is the testing environment for formal promotion qualifications. Bridge Officer's Test, Kobayashi Maru, alert drills, and onboarding exams all live here. Qualification completion gates rank advancement alongside metric thresholds
 
 **Inspiration:** MiroFish (multi-agent social simulation for prediction), Star Trek holodeck training, Starfleet Academy exams.
 
@@ -2356,6 +2468,7 @@ Items identified during development that aren't urgent but would improve code qu
 
 | Item | Description | Identified By | Notes |
 |------|-------------|---------------|-------|
+| Cross-layer import lint test | Pytest test that walks `src/probos/`, extracts imports via AST, maps to layers, checks against declared allowlist of cross-layer edges. Fails CI if undocumented cross-layer imports appear. Enforces boundaries from AD-399 automatically. Uses CodebaseIndex import graph (AD-315) or standalone AST walk. | AD-399 analysis (2026-03-23) | Follow-on from AD-399. Turns architectural docs into CI enforcement. Foundation-tier (`types.py`, `config.py`) excluded from violation checks. |
 | Modularize shell commands | Extract `ProbOSShell` command methods into a `shell/commands/` package. Each command as its own module, independently testable. `shell.py` is 900+ lines at 64% coverage — modular structure would improve maintainability and test coverage. | Visiting Officer (AD-356) | Convert `shell.py` file → `shell/__init__.py` package. Needs migration plan for existing tests. Good candidate for Phase 35 (UX & Adoption) or standalone cleanup AD. |
 | Build snapshot system | Shadow git repo tracking every file change during builder execution. Granular undo per file change, not just per-commit. Revert partial builds when test gate catches issues in specific files. Independent of project's own git history. | OpenCode (2026-03-20) | Phase 30 or 32. OpenCode uses `--git-dir` + `--work-tree` for isolation. Complements test gate — snapshot before build, rollback on failure. |
 | LSP-enhanced CodebaseIndex | Spawn LSP servers (pyright, typescript-language-server) for type-aware code intelligence. Precise find-references, workspace symbols, real-time diagnostics before test runs, rename refactoring with full type safety. Upgrades AST-only CodebaseIndex to compiler-grade understanding. | OpenCode (2026-03-20) | Phase 29c extension. Requires language detection + server lifecycle management. Start with pyright (Python only). Significant upgrade to Science team capabilities. |
@@ -2431,8 +2544,10 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-006 | Quorum trust docs drift in consensus.md | Low | **Closed** |
 | BF-007 | Verification false positive on per-pool agent counts | Medium | **Closed** |
 | BF-008 | Dream cycle double-replay after dolphin dreaming | Low | **Closed** |
+| BF-009 | @callsign routing missing from HXI `/api/chat` and embedded mentions (e.g., "Hello @wesley") not detected in any entry point | High | **Closed** |
+| BF-010 | 1:1 conversations use domain task instructions (===SCOUT_REPORT=== etc.) instead of conversational prompt | Medium | **Closed** |
 
-> **Bug details (BF-001–008):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
+> **Bug details (BF-001–010):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 
 
 !!! info "Want to contribute?"

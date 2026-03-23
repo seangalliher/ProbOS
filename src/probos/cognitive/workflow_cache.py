@@ -85,7 +85,7 @@ class WorkflowCache:
         pre_warm_set = set(pre_warm_intents)
         best_entry: WorkflowCacheEntry | None = None
 
-        from probos.cognitive.embeddings import compute_similarity
+        from probos.knowledge.embeddings import compute_similarity
 
         for entry in self._cache.values():
             # Check intent subset requirement

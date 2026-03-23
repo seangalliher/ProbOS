@@ -11,11 +11,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from probos.agents.system_qa import QAReport, SystemQAAgent, _infer_param_type
+from probos.agents.system_qa import SystemQAAgent, _infer_param_type
 from probos.cognitive.self_mod import DesignedAgentRecord
 from probos.config import QAConfig, SystemConfig
 from probos.substrate.agent import BaseAgent
-from probos.types import IntentDescriptor, IntentMessage, IntentResult
+from probos.types import IntentDescriptor, IntentMessage, IntentResult, QAReport
 
 
 # ===================================================================

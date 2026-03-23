@@ -110,7 +110,7 @@ class CapabilityRegistry:
         # Semantic similarity via embeddings (when enabled)
         if self._semantic_matching:
             try:
-                from probos.cognitive.embeddings import compute_similarity
+                from probos.knowledge.embeddings import compute_similarity
                 cap_text = f"{can_lower} {detail_lower}".strip()
                 intent_text = intent_lower.replace("_", " ")
                 sim = compute_similarity(intent_text, cap_text)

@@ -10,7 +10,7 @@ from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from probos.cognitive.episodic import EpisodicMemory
-    from probos.consensus.trust import TrustNetwork
+    from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — feedback records trust outcomes
     from probos.mesh.routing import HebbianRouter
     from probos.substrate.event_log import EventLog
     from probos.types import TaskDAG, TaskNode

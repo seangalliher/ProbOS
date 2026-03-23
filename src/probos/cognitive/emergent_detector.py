@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from probos.consensus.trust import TrustNetwork
+from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — reads trust for emergent pattern detection
 from probos.mesh.routing import HebbianRouter, REL_INTENT
 
 logger = logging.getLogger(__name__)

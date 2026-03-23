@@ -98,3 +98,46 @@ class TestDiscordConfig:
         sc = SystemConfig()
         assert sc.channels.discord.enabled is False
         assert sc.channels.discord.token == ""
+
+
+# ---------------------------------------------------------------------------
+# TestDiscordShutdownHang (BF-011)
+# ---------------------------------------------------------------------------
+
+class TestDiscordShutdownHang:
+    """BF-011: stop() must return promptly even if bot.close() hangs."""
+
+    @pytest.mark.asyncio
+    async def test_stop_returns_despite_hanging_close(self):
+        """Mock bot with a hanging close() — stop() must return within 5s."""
+        import asyncio
+        import time
+        from unittest.mock import MagicMock, AsyncMock
+
+        dc = DiscordConfig(enabled=True, token="fake-token")
+        rt = MagicMock()
+        adapter = DiscordAdapter(rt, dc)
+
+        # Mock a bot whose close() hangs forever
+        mock_bot = MagicMock()
+        mock_bot.is_closed.return_value = False
+        mock_bot.http = MagicMock()
+        mock_bot.http._HTTPClient__session = None
+
+        async def _hang_forever():
+            await asyncio.sleep(999)
+
+        mock_bot.close = _hang_forever
+
+        adapter._bot = mock_bot
+        adapter._bot_task = MagicMock()
+        adapter._bot_task.done.return_value = False
+        adapter._started = True
+
+        start = time.monotonic()
+        await adapter.stop()
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 5.0, f"stop() took {elapsed:.1f}s — should complete within 5s"
+        assert adapter._started is False
+        assert adapter._bot is None

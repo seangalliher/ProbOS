@@ -168,7 +168,7 @@ class TaskScheduler:
         if not task.channel_id or not task.last_result:
             return
 
-        from probos.channels.response_formatter import extract_response_text
+        from probos.utils.response_formatter import extract_response_text
 
         text = extract_response_text(task.last_result)
         if not text:

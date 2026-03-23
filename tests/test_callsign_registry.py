@@ -13,12 +13,12 @@ class TestLoadFromProfiles:
     """Test loading callsigns from crew profile YAMLs."""
 
     def test_load_from_profiles(self):
-        """Load real YAML profiles, verify all 12 callsigns indexed."""
+        """Load real YAML profiles, verify all 10 callsigns indexed (AD-398: reclassified infra)."""
         registry = CallsignRegistry()
         registry.load_from_profiles()
         callsigns = registry.all_callsigns()
-        # 12 profiles with callsigns (excluding _default.yaml)
-        assert len(callsigns) == 12
+        # 10 profiles with callsigns (excluding _default.yaml; AD-398 removed 5 infra, added 3 crew)
+        assert len(callsigns) == 10
 
     def test_resolve_known_callsign(self):
         """Resolve 'wesley' -> agent_type 'scout'."""
