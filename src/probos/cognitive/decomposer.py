@@ -354,26 +354,44 @@ class IntentDecomposer:
             temperature=0.0,
         )
 
-        # Call LLM
+        # Call LLM with retry on parse failure
+        from probos.utils.json_extract import complete_with_retry
+
+        def _validate_decomposition(content: str) -> dict:
+            """Parse and validate decomposition response."""
+            from probos.utils.json_extract import extract_json
+            data = extract_json(content)
+            if not isinstance(data, dict) or "intents" not in data:
+                raise ValueError("Response missing 'intents' key")
+            if not isinstance(data["intents"], list):
+                raise ValueError("'intents' is not a list")
+            return data
+
         try:
-            response = await asyncio.wait_for(
-                self.llm_client.complete(request),
+            data, response = await asyncio.wait_for(
+                complete_with_retry(
+                    self.llm_client,
+                    request,
+                    _validate_decomposition,
+                    max_retries=1,
+                ),
                 timeout=self.timeout,
             )
         except asyncio.TimeoutError:
             logger.error("LLM decomposition timed out for: %s", text[:50])
             return TaskDAG(source_text=text)
-
-        if response.error:
-            logger.error("LLM error during decomposition: %s", response.error)
+        except ValueError as exc:
+            logger.warning("Decomposer parse failed after retry: %s", exc)
             return TaskDAG(source_text=text)
 
-        # Parse response into TaskDAG
+        # Store metadata for diagnostics
         self.last_raw_response = response.content
         self.last_tier = response.tier
         self.last_model = response.model
         logger.debug("Raw LLM response: %s", response.content)
-        dag = self._parse_response(response.content, text)
+
+        # Build TaskDAG from validated data
+        dag = self._build_dag(data, text, response)
         return dag
 
     # Payload budget for reflect prompt (~3000 tokens ≈ 12000 chars).
@@ -434,27 +452,12 @@ class IntentDecomposer:
 
         return response.content.strip()
 
-    def _parse_response(self, content: str, source_text: str) -> TaskDAG:
-        """Parse LLM JSON response into a TaskDAG.
+    def _build_dag(self, data: dict, source_text: str, response: Any = None) -> TaskDAG:
+        """Build a TaskDAG from validated decomposition data.
 
-        Handles malformed responses gracefully.
+        Expects data to already contain a valid 'intents' list.
         """
-        try:
-            # Try to extract JSON from the response
-            json_str = self._extract_json(content)
-            data = json.loads(json_str)
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.warning("Failed to parse LLM response as JSON: %s", e)
-            return TaskDAG(source_text=source_text)
-
-        if not isinstance(data, dict) or "intents" not in data:
-            logger.warning("LLM response missing 'intents' key")
-            return TaskDAG(source_text=source_text)
-
         intents = data["intents"]
-        if not isinstance(intents, list):
-            logger.warning("LLM response 'intents' is not a list")
-            return TaskDAG(source_text=source_text)
 
         nodes = []
         for item in intents:
@@ -478,9 +481,9 @@ class IntentDecomposer:
                 nodes.append(node)
 
         # Extract optional conversational response
-        response = data.get("response", "")
-        if not isinstance(response, str):
-            response = ""
+        resp_text = data.get("response", "")
+        if not isinstance(resp_text, str):
+            resp_text = ""
 
         # Extract optional reflect flag
         reflect = bool(data.get("reflect", False))
@@ -488,37 +491,29 @@ class IntentDecomposer:
         # Extract optional capability_gap flag
         capability_gap = bool(data.get("capability_gap", False))
 
-        return TaskDAG(nodes=nodes, source_text=source_text, response=response, reflect=reflect, capability_gap=capability_gap)
+        return TaskDAG(nodes=nodes, source_text=source_text, response=resp_text, reflect=reflect, capability_gap=capability_gap)
+
+    def _parse_response(self, content: str, source_text: str) -> TaskDAG:
+        """Parse LLM JSON response into a TaskDAG. Delegates to shared utility."""
+        from probos.utils.json_extract import extract_json
+        try:
+            data = extract_json(content)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning("Failed to parse LLM response as JSON: %s", e)
+            return TaskDAG(source_text=source_text)
+        if not isinstance(data, dict) or "intents" not in data:
+            logger.warning("LLM response missing 'intents' key")
+            return TaskDAG(source_text=source_text)
+        if not isinstance(data.get("intents"), list):
+            logger.warning("LLM response 'intents' is not a list")
+            return TaskDAG(source_text=source_text)
+        return self._build_dag(data, source_text)
 
     def _extract_json(self, content: str) -> str:
-        """Extract JSON from LLM response, handling markdown code blocks."""
-        import re
-        # Strip <think>...</think> blocks (common with qwen / reasoning models)
-        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
-
-        # Try to find JSON in code blocks
-        code_block = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', content, re.DOTALL)
-        if code_block:
-            return code_block.group(1).strip()
-
-        # Try the raw content as JSON
-        if content.startswith("{"):
-            return content
-
-        # Try to find a JSON object anywhere in the content
-        brace_start = content.find("{")
-        if brace_start >= 0:
-            # Find matching closing brace
-            depth = 0
-            for i in range(brace_start, len(content)):
-                if content[i] == "{":
-                    depth += 1
-                elif content[i] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        return content[brace_start:i + 1]
-
-        raise ValueError("No JSON object found in response")
+        """Extract JSON from LLM response. Delegates to shared utility."""
+        from probos.utils.json_extract import extract_json
+        result = extract_json(content)
+        return json.dumps(result)
 
     # Common query-parameter names that indicate fabricated credentials
     _CREDENTIAL_PARAMS = frozenset({

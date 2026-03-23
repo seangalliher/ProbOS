@@ -137,20 +137,16 @@ RULES:
         """Parse LLM review response into ReviewResult."""
         result = ReviewResult()
 
-        # Extract JSON from response (may be wrapped in markdown code block)
-        text = content.strip()
-        if "```json" in text:
-            text = text.split("```json", 1)[1].split("```", 1)[0].strip()
-        elif "```" in text:
-            text = text.split("```", 1)[1].split("```", 1)[0].strip()
+        from probos.utils.json_extract import extract_json
 
         try:
-            data = json.loads(text)
+            data = extract_json(content)
             result.approved = data.get("approved", False)
             result.issues = data.get("issues", [])
             result.suggestions = data.get("suggestions", [])
             result.summary = data.get("summary", "")
-        except (json.JSONDecodeError, AttributeError):
+        except (ValueError, json.JSONDecodeError):
+            # Text-based fallback
             lower = content.lower()
             if "no issues" in lower or '"approved": true' in lower:
                 result.approved = True

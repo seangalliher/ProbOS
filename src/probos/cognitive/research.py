@@ -148,10 +148,10 @@ class ResearchPhase:
             return []
 
         try:
-            queries = json.loads(response.content)
-            if isinstance(queries, list):
-                return [str(q) for q in queries[:3]]
-        except (json.JSONDecodeError, TypeError):
+            from probos.utils.json_extract import extract_json_list
+            queries = extract_json_list(response.content)
+            return [str(q) for q in queries[:3]]
+        except (ValueError, json.JSONDecodeError, TypeError):
             pass
 
         return []

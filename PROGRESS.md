@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-399 complete — cross-layer dependency cleanup. Moved `embeddings.py` from `cognitive/` to `knowledge/` (fixes 2 violations), moved `response_formatter.py` from `channels/` to `utils/` (fixes 1 violation), moved `QAReport` dataclass to `types.py` (fixes 1 violation). Documented 6 allowed cross-layer edges. All 2776 tests pass.
+## Current Status: AD-401 complete — structured LLM output validation with auto-retry. Shared `json_extract.py` utility with string-aware brace matching, `extract_json()`, `extract_json_list()`, `complete_with_retry()`. Decomposer retrofitted with 1-retry on parse failure (temperature bump + error feedback to LLM). CodeReviewer and Research agent migrated to shared utility. Eliminates silent empty responses from malformed LLM output.
 
 ---
 

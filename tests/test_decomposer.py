@@ -167,7 +167,7 @@ class TestExtractJson:
         assert json.loads(result) == {"key": "value"}
 
     def test_no_json_raises(self, decomposer):
-        with pytest.raises(ValueError, match="No JSON"):
+        with pytest.raises(ValueError, match="No valid JSON"):
             decomposer._extract_json("no json here")
 
 
