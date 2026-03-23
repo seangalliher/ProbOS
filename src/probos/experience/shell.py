@@ -17,7 +17,7 @@ from probos.experience import panels
 from probos.experience.panels import format_health
 from probos.experience.renderer import ExecutionRenderer
 from probos.runtime import ProbOSRuntime
-from probos.types import AgentState, IntentMessage
+from probos.types import AgentState, Episode, IntentMessage
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,7 @@ class ProbOSShell:
         "/directives": "Show active directives (/directives [agent_type])",
         "/scout":     "Run scout intelligence scan (/scout) or view report (/scout report)",
         "/credentials": "List registered credentials and their status (/credentials)",
+        "/bridge":    "Return to bridge (exit 1:1 crew session)",
         "/ping":      "Show system uptime",
         "/debug":     "Toggle debug mode (/debug on|off)",
         "/help":      "Show this help message",
@@ -85,6 +86,13 @@ class ProbOSShell:
         self.debug = False
         self.renderer = ExecutionRenderer(self.console, runtime, debug=self.debug)
         self._running = False
+
+        # AD-397: 1:1 session state
+        self._session_callsign: str | None = None
+        self._session_agent_id: str | None = None
+        self._session_agent_type: str | None = None
+        self._session_department: str | None = None
+        self._session_history: list[dict[str, str]] = []
 
         # Wire user escalation callback
         if hasattr(self.runtime, "escalation_manager") and self.runtime.escalation_manager:
@@ -120,7 +128,9 @@ class ProbOSShell:
         return sum(a.confidence for a in active) / len(active)
 
     def _build_prompt(self) -> str:
-        """Build the prompt string: [N agents | health: 0.XX] probos> """
+        """Build the prompt string: session mode or normal bridge mode."""
+        if self._session_callsign:
+            return f"{self._session_callsign} \u25b8 "
         count = self.runtime.registry.count
         health = self._compute_health()
         return f"[{count} agents | health: {health:.2f}] probos> "
@@ -154,7 +164,18 @@ class ProbOSShell:
         if not line:
             return
 
-        if line.startswith("/"):
+        # 1:1 session mode — route to session agent (AD-397)
+        if self._session_callsign and not line.startswith("/"):
+            if line.startswith("@"):
+                # Allow switching sessions via @callsign during a session
+                await self._handle_at(line)
+            else:
+                await self._handle_session_message(line)
+            return
+
+        if line.startswith("@"):
+            await self._handle_at(line)
+        elif line.startswith("/"):
             await self._dispatch_slash(line)
         else:
             await self._handle_nl(line)
@@ -205,6 +226,7 @@ class ProbOSShell:
             "/directives": self._cmd_directives,
             "/scout":   self._cmd_scout,
             "/credentials": self._cmd_credentials,
+            "/bridge":  self._cmd_bridge,
             "/debug":   self._cmd_debug,
             "/help":    self._cmd_help,
             "/quit":    self._cmd_quit,
@@ -241,6 +263,7 @@ class ProbOSShell:
             self.runtime.pool_groups,
             self.runtime.registry,
             trust_scores,
+            callsign_registry=self.runtime.callsign_registry,
         ))
 
     async def _cmd_weights(self, arg: str) -> None:
@@ -1392,6 +1415,140 @@ class ProbOSShell:
             await self.renderer.process_with_feedback(text)
         except Exception as e:
             self.console.print(f"[red]Processing error: {e}[/red]")
+
+    # ------------------------------------------------------------------
+    # @callsign addressing and 1:1 sessions (AD-397)
+    # ------------------------------------------------------------------
+
+    async def _handle_at(self, line: str) -> None:
+        """Parse @callsign and enter 1:1 session mode."""
+        # Parse: @callsign [optional message]
+        raw = line.lstrip("@")
+        parts = raw.split(None, 1)
+        callsign = parts[0] if parts else ""
+        message = parts[1] if len(parts) > 1 else ""
+
+        if not callsign:
+            self.console.print("[red]Usage: @callsign [message][/red]")
+            return
+
+        resolved = self.runtime.callsign_registry.resolve(callsign)
+        if resolved is None:
+            self.console.print(
+                f"[red]Unknown crew member: @{callsign}. Use /agents to see available crew.[/red]"
+            )
+            return
+
+        if resolved["agent_id"] is None:
+            self.console.print(
+                f"[yellow]{resolved['callsign']} is not currently on duty.[/yellow]"
+            )
+            return
+
+        # Enter 1:1 session
+        self._session_callsign = resolved["callsign"]
+        self._session_agent_id = resolved["agent_id"]
+        self._session_agent_type = resolved["agent_type"]
+        self._session_department = resolved["department"]
+        self._session_history = []
+
+        # Cross-session recall — seed with agent's own past memories
+        if self.runtime.episodic_memory and hasattr(self.runtime.episodic_memory, "recall_for_agent"):
+            try:
+                past = await self.runtime.episodic_memory.recall_for_agent(
+                    agent_id=resolved["agent_id"],
+                    query=f"1:1 with {resolved['callsign']}",
+                    k=3,
+                )
+                for ep in past:
+                    self._session_history.append({
+                        "role": "system",
+                        "text": f"[Your memory of a previous conversation] {ep.user_input}",
+                    })
+            except Exception:
+                pass
+
+        if message:
+            await self._handle_session_message(message)
+        else:
+            dept = resolved["department"] or "unknown"
+            self.console.print(
+                f"[cyan][1:1 with {resolved['callsign']} ({dept})] "
+                f"Type /bridge to return to the bridge.[/cyan]"
+            )
+
+    async def _handle_session_message(self, text: str) -> None:
+        """Dispatch a message to the current 1:1 session agent."""
+        if not self._session_agent_id or not self._session_callsign:
+            return
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={
+                "text": text,
+                "from": "captain",
+                "session": True,
+                "session_history": self._session_history,
+            },
+            target_agent_id=self._session_agent_id,
+        )
+
+        result = await self.runtime.intent_bus.send(intent)
+        response_text = ""
+        if result and result.result:
+            response_text = str(result.result)
+
+        if not response_text:
+            response_text = "(no response)"
+
+        # Display with callsign
+        dept = self._session_department or ""
+        dept_colors = {
+            "science": "blue",
+            "engineering": "yellow",
+            "medical": "green",
+            "security": "red",
+        }
+        color = dept_colors.get(dept, "white")
+        self.console.print(f"[{color}]{self._session_callsign}[/{color}]: {response_text}")
+
+        # Accumulate session history
+        self._session_history.append({"role": "captain", "text": text})
+        self._session_history.append({"role": self._session_callsign, "text": response_text})
+
+        # Store episodic memory
+        if self.runtime.episodic_memory:
+            try:
+                import time as _time
+                episode = Episode(
+                    user_input=f"[1:1 with {self._session_callsign}] Captain: {text}",
+                    timestamp=_time.time(),
+                    agent_ids=[self._session_agent_id],
+                    outcomes=[{
+                        "intent": "direct_message",
+                        "success": True,
+                        "response": response_text,
+                        "session_type": "1:1",
+                        "callsign": self._session_callsign,
+                        "agent_type": self._session_agent_type,
+                    }],
+                    reflection=f"Captain had a 1:1 conversation with {self._session_callsign}.",
+                )
+                await self.runtime.episodic_memory.store(episode)
+            except Exception:
+                pass
+
+    async def _cmd_bridge(self, arg: str) -> None:
+        """Return to bridge — exit 1:1 session."""
+        if self._session_callsign:
+            self.console.print("[cyan]Returned to bridge.[/cyan]")
+            self._session_callsign = None
+            self._session_agent_id = None
+            self._session_agent_type = None
+            self._session_department = None
+            self._session_history = []
+        else:
+            self.console.print("[dim]You're already on the bridge.[/dim]")
 
     # ------------------------------------------------------------------
     # Escalation user callback

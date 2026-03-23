@@ -45,6 +45,7 @@ from probos.cognitive.builder import BuilderAgent
 from probos.cognitive.architect import ArchitectAgent
 from probos.cognitive.scout import ScoutAgent
 from probos.credential_store import CredentialStore
+from probos.crew_profile import CallsignRegistry
 from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
 from probos.sif import StructuralIntegrityField
 from probos.initiative import InitiativeEngine
@@ -140,6 +141,11 @@ class ProbOSRuntime:
         self.credential_store = CredentialStore(
             config=self.config, event_log=self.event_log,
         )
+
+        # --- Callsign Registry (AD-397) ---
+        self.callsign_registry = CallsignRegistry()
+        self.callsign_registry.load_from_profiles()
+        self.callsign_registry.bind_registry(self.registry)
 
         # --- Consensus ---
         consensus_cfg = self.config.consensus
@@ -969,6 +975,8 @@ class ProbOSRuntime:
             trust_network=self.trust_network,
             episodic_memory=self.episodic_memory,
         )
+        # Provide live agent roster so detector filters out defunct agents
+        self._refresh_emergent_detector_roster()
 
         # Wire post-dream analysis callback (AD-237)
         if self.dream_scheduler:
@@ -2582,6 +2590,17 @@ class ProbOSRuntime:
         """Pre-dream callback: emit system_mode event for HXI (AD-254)."""
         self._emit_event("system_mode", {"mode": "dreaming", "previous": "idle"})
 
+    def _refresh_emergent_detector_roster(self) -> None:
+        """Update EmergentDetector with the current live agent roster."""
+        if not self._emergent_detector:
+            return
+        live_ids: set[str] = set()
+        for pool in self.pools.values():
+            for agent_id in pool.healthy_agents:
+                aid = agent_id if isinstance(agent_id, str) else agent_id.id
+                live_ids.add(aid)
+        self._emergent_detector.set_live_agents(live_ids)
+
     def _on_post_dream(self, dream_report: Any) -> None:
         """Post-dream callback: run emergent detection and log patterns (AD-237)."""
         # Emit system_mode event for HXI (AD-254) — dream cycle ended
@@ -2780,6 +2799,11 @@ class ProbOSRuntime:
 
     async def _wire_agent(self, agent: Any) -> None:
         """Connect an agent to the mesh infrastructure."""
+        # Set callsign from registry (AD-397)
+        callsign = self.callsign_registry.get_callsign(agent.agent_type)
+        if callsign:
+            agent.callsign = callsign
+
         # Register capabilities
         if hasattr(agent, "capabilities") and agent.capabilities:
             self.capability_registry.register(agent.id, agent.capabilities)

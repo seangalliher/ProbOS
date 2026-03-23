@@ -291,6 +291,7 @@ def render_agent_roster(
     pool_groups: Any,
     registry: Any,
     trust_scores: dict[str, float],
+    callsign_registry: Any = None,
 ) -> Panel:
     """Pool-level org chart of all agents.
 
@@ -362,7 +363,9 @@ def render_agent_roster(
         conf_text = _format_score(pool_conf)
 
         table.add_row(
-            pool.agent_type,
+            (f"{pool.agent_type} ({callsign_registry.get_callsign(pool.agent_type)})"
+             if callsign_registry and callsign_registry.get_callsign(pool.agent_type)
+             else pool.agent_type),
             tier_text,
             team,
             pool_name,

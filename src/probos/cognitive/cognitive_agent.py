@@ -179,10 +179,17 @@ class CognitiveAgent(BaseAgent):
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Skills first, then cognitive lifecycle.
 
-        Returns None (self-deselect) for intents not in _handled_intents.
+        Returns None (self-deselect) for intents not in _handled_intents,
+        unless it's a targeted direct_message (AD-397 1:1 sessions).
         """
+        # AD-397: always accept direct_message if targeted to this agent
+        is_direct = (
+            intent.intent == "direct_message"
+            and intent.target_agent_id == self.id
+        )
+
         # Fast path: self-deselect for unrecognized intents before any LLM call
-        if intent.intent not in self._handled_intents:
+        if not is_direct and intent.intent not in self._handled_intents:
             return None
 
         # Skill dispatch — direct handler call, no LLM reasoning
@@ -251,9 +258,26 @@ class CognitiveAgent(BaseAgent):
     def _build_user_message(self, observation: dict) -> str:
         """Build the user message from the observation dict.
         Override in subclasses for custom formatting."""
-        parts = [f"Intent: {observation.get('intent', 'unknown')}"]
-        if observation.get("params"):
-            parts.append(f"Parameters: {observation['params']}")
+        intent_name = observation.get("intent", "unknown")
+        params = observation.get("params", {})
+
+        # AD-397: direct_message — conversational context for 1:1 sessions
+        if intent_name == "direct_message":
+            parts: list[str] = []
+            session_history = params.get("session_history", [])
+            if session_history:
+                parts.append("Previous conversation:")
+                for entry in session_history:
+                    role = entry.get("role", "unknown")
+                    text = entry.get("text", "")
+                    parts.append(f"  {role}: {text}")
+                parts.append("")
+            parts.append(f"Captain says: {params.get('text', '')}")
+            return "\n".join(parts)
+
+        parts = [f"Intent: {intent_name}"]
+        if params:
+            parts.append(f"Parameters: {params}")
         if observation.get("context"):
             parts.append(f"Context: {observation['context']}")
         if observation.get("fetched_content"):

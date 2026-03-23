@@ -82,6 +82,10 @@ class ChannelAdapter(ABC):
             result = await _handle_slash_command(text, self.runtime)
             return result.get("response", "")
 
+        # AD-397: @callsign one-shot direct message via channel
+        if text.startswith("@"):
+            return await self._handle_callsign_message(text)
+
         # Natural language path
         history = self._conversation_histories.get(message.channel_id, [])
         dag_result = await asyncio.wait_for(
@@ -104,3 +108,35 @@ class ChannelAdapter(ABC):
             self._conversation_histories[message.channel_id] = hist[-(self._max_history * 2):]
 
         return response_text
+
+    async def _handle_callsign_message(self, text: str) -> str:
+        """Route @callsign message to a specific agent (AD-397). One-shot, no session."""
+        from probos.types import IntentMessage
+
+        raw = text.lstrip("@")
+        parts = raw.split(None, 1)
+        callsign = parts[0] if parts else ""
+        message_text = parts[1] if len(parts) > 1 else ""
+
+        if not callsign:
+            return "Usage: @callsign message"
+
+        resolved = self.runtime.callsign_registry.resolve(callsign)
+        if resolved is None:
+            return f"Unknown crew member: @{callsign}"
+
+        if resolved["agent_id"] is None:
+            return f"{resolved['callsign']} is not currently on duty."
+
+        if not message_text:
+            return f"{resolved['callsign']} is available. Send a message: @{callsign} <message>"
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": message_text, "from": "channel", "session": False},
+            target_agent_id=resolved["agent_id"],
+        )
+        result = await self.runtime.intent_bus.send(intent)
+        if result and result.result:
+            return f"{resolved['callsign']}: {result.result}"
+        return f"{resolved['callsign']}: (no response)"

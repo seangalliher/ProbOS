@@ -61,6 +61,29 @@ class IntentBus:
     def subscriber_count(self) -> int:
         return len(self._subscribers)
 
+    async def send(self, intent: IntentMessage) -> IntentResult | None:
+        """Deliver an intent to a specific agent (targeted dispatch, AD-397).
+
+        Requires intent.target_agent_id to be set.
+        Returns the single result, or None if the agent isn't subscribed.
+        """
+        if not intent.target_agent_id:
+            raise ValueError("send() requires target_agent_id")
+        handler = self._subscribers.get(intent.target_agent_id)
+        if handler is None:
+            return None
+        try:
+            result = await asyncio.wait_for(handler(intent), timeout=intent.ttl_seconds)
+            return result
+        except asyncio.TimeoutError:
+            return IntentResult(
+                intent_id=intent.id,
+                agent_id=intent.target_agent_id,
+                success=False,
+                error="Agent did not respond in time.",
+                confidence=0.0,
+            )
+
     async def broadcast(
         self,
         intent: IntentMessage,
@@ -73,7 +96,14 @@ class IntentBus:
         Each subscriber is called concurrently. Subscribers that return
         None are treated as having declined the intent (self-deselected).
         Waits up to `timeout` seconds (defaults to intent TTL) for results.
+
+        If intent.target_agent_id is set, delegates to send() for targeted dispatch.
         """
+        # AD-397: targeted dispatch
+        if intent.target_agent_id:
+            result = await self.send(intent)
+            return [result] if result else []
+
         timeout = timeout if timeout is not None else intent.ttl_seconds
 
         self.record_broadcast(intent.intent)

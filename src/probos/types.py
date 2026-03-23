@@ -57,6 +57,7 @@ class IntentMessage:
     ttl_seconds: float = 30.0
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    target_agent_id: str | None = None  # AD-397: if set, deliver only to this agent
 
 
 @dataclass

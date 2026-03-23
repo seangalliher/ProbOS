@@ -17,7 +17,10 @@ import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from probos.substrate.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +297,84 @@ class ProfileStore:
         if self._conn:
             self._conn.close()
             self._conn = None
+
+
+class CallsignRegistry:
+    """Ship's universal crew directory. Maps callsigns to agent_type and live agent_id."""
+
+    def __init__(self) -> None:
+        self._callsign_to_type: dict[str, str] = {}   # "wesley" -> "scout"
+        self._type_to_callsign: dict[str, str] = {}   # "scout" -> "Wesley" (original case)
+        self._type_to_profile: dict[str, dict[str, str]] = {}  # agent_type -> {display_name, department}
+        self._agent_registry: AgentRegistry | None = None
+
+    def load_from_profiles(self, profiles_dir: str = "") -> None:
+        """Scan all crew profile YAMLs and build the callsign index."""
+        if not profiles_dir:
+            profiles_dir = str(
+                Path(__file__).resolve().parent.parent.parent
+                / "config" / "standing_orders" / "crew_profiles"
+            )
+        profiles_path = Path(profiles_dir)
+        if not profiles_path.is_dir():
+            return
+
+        import yaml
+        for yaml_file in sorted(profiles_path.glob("*.yaml")):
+            if yaml_file.stem.startswith("_"):
+                continue
+            try:
+                with open(yaml_file, "r") as f:
+                    data = yaml.safe_load(f) or {}
+            except Exception:
+                continue
+            callsign = data.get("callsign", "")
+            if not callsign:
+                continue
+            agent_type = yaml_file.stem
+            self._callsign_to_type[callsign.lower()] = agent_type
+            self._type_to_callsign[agent_type] = callsign
+            self._type_to_profile[agent_type] = {
+                "display_name": data.get("display_name", ""),
+                "department": data.get("department", ""),
+            }
+
+    def bind_registry(self, registry: AgentRegistry) -> None:
+        """Bind the live AgentRegistry for runtime resolution."""
+        self._agent_registry = registry
+
+    def resolve(self, callsign: str) -> dict[str, Any] | None:
+        """Resolve a callsign to {callsign, agent_type, agent_id, display_name, department}.
+
+        Returns None if callsign not found.
+        If multiple agents share the type, picks the first live one from the registry.
+        """
+        agent_type = self._callsign_to_type.get(callsign.lower())
+        if agent_type is None:
+            return None
+        profile = self._type_to_profile.get(agent_type, {})
+        result: dict[str, Any] = {
+            "callsign": self._type_to_callsign.get(agent_type, callsign),
+            "agent_type": agent_type,
+            "agent_id": None,
+            "display_name": profile.get("display_name", ""),
+            "department": profile.get("department", ""),
+        }
+        if self._agent_registry:
+            agents = self._agent_registry.get_by_pool(agent_type)
+            for agent in agents:
+                if agent.is_alive:
+                    result["agent_id"] = agent.id
+                    break
+        return result
+
+    def get_callsign(self, agent_type: str) -> str:
+        """Get the display callsign for an agent type. Returns empty string if none."""
+        return self._type_to_callsign.get(agent_type, "")
+
+    def all_callsigns(self) -> list[str]:
+        """List all registered callsigns (display case). For tab-completion."""
+        return list(self._type_to_callsign.values())
 
 
 def load_seed_profile(agent_type: str, profiles_dir: str = "") -> dict[str, Any]:
