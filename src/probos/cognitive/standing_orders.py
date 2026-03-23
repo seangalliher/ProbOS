@@ -156,6 +156,8 @@ def _build_personality_block(agent_type: str, department: str | None = None) -> 
             value = personality.get(trait_name)
             if value is None:
                 continue
+            if not isinstance(value, (int, float)):
+                continue  # skip malformed trait values
             if value >= 0.7:
                 guidance.append(f"- {bands['high']}")
             elif value <= 0.3:

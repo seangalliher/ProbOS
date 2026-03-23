@@ -137,12 +137,21 @@ class DiscordAdapter(ChannelAdapter):
                 await asyncio.wait_for(self._bot.close(), timeout=3.0)
             except asyncio.TimeoutError:
                 logger.warning("Discord bot.close() timed out — forcing")
+            except Exception:
+                pass
         if self._bot_task:
             self._bot_task.cancel()
             try:
-                await asyncio.wait_for(self._bot_task, timeout=2.0)
+                await asyncio.wait_for(
+                    asyncio.shield(self._bot_task), timeout=2.0
+                )
             except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                 pass
+        # Force-close the underlying HTTP connector if still open
+        if self._bot and hasattr(self._bot, "http") and hasattr(self._bot.http, "_HTTPClient__session"):
+            session = self._bot.http._HTTPClient__session
+            if session and not session.closed:
+                await session.close()
         self._started = False
         logger.info("Discord adapter stopped")
 

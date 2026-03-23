@@ -426,6 +426,8 @@ async def _serve(
                 console.print(" [green]done[/green]")
             except asyncio.TimeoutError:
                 console.print(" [yellow]timed out (5s)[/yellow]")
+            except (KeyboardInterrupt, SystemExit):
+                console.print(" [yellow]interrupted[/yellow]")
             except Exception as e:
                 console.print(f" [yellow]warn: {e}[/yellow]")
         console.print("  [dim]Stopping runtime...[/dim]", end="")
@@ -434,6 +436,8 @@ async def _serve(
             console.print(" [green]done[/green]")
         except asyncio.TimeoutError:
             console.print(" [yellow]timed out (5s)[/yellow]")
+        except (KeyboardInterrupt, SystemExit):
+            console.print(" [yellow]interrupted[/yellow]")
         except Exception as e:
             console.print(f" [yellow]warn: {e}[/yellow]")
         finally:
@@ -555,23 +559,31 @@ def _cmd_reset(args: argparse.Namespace) -> None:
         shutil.rmtree(chroma_dir)
         chroma_cleared = True
 
+    # Clear Hebbian weights DB (stale weights from defunct agents cause ghost anomalies)
+    hebbian_cleared = False
+    hebbian_db = data_dir / "hebbian_weights.db"
+    if hebbian_db.is_file():
+        hebbian_db.unlink()
+        hebbian_cleared = True
+
     # Git commit if repo is git-initialized
     if (repo_path / ".git").is_dir():
         try:
             subprocess.run(
                 ["git", "-C", str(repo_path), "add", "-A"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, encoding="utf-8", errors="replace", timeout=30,
             )
             subprocess.run(
                 ["git", "-C", str(repo_path), "commit", "-m", "probos reset: cleared all artifacts"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, encoding="utf-8", errors="replace", timeout=30,
             )
         except Exception:
             pass  # Best-effort commit
 
     summary = ", ".join(cleared) if cleared else "nothing"
     chroma_msg = " ChromaDB wiped." if chroma_cleared else ""
-    console.print(f"[bold green]Reset complete.[/bold green] Cleared: {summary}.{chroma_msg}")
+    hebbian_msg = " Hebbian weights wiped." if hebbian_cleared else ""
+    console.print(f"[bold green]Reset complete.[/bold green] Cleared: {summary}.{chroma_msg}{hebbian_msg}")
 
 
 def main() -> None:

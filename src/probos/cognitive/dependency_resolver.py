@@ -184,7 +184,7 @@ class DependencyResolver:
                 None,
                 lambda: subprocess.run(
                     [sys.executable, "-m", "pip", "install", package_name],
-                    capture_output=True, text=True, timeout=120,
+                    capture_output=True, encoding="utf-8", errors="replace", timeout=120,
                 ),
             )
             if result.returncode == 0:
@@ -201,7 +201,7 @@ class DependencyResolver:
                     None,
                     lambda: subprocess.run(
                         [uv_path, "pip", "install", package_name],
-                        capture_output=True, text=True, timeout=120,
+                        capture_output=True, encoding="utf-8", errors="replace", timeout=120,
                     ),
                 )
                 if result.returncode == 0:
@@ -215,7 +215,7 @@ class DependencyResolver:
                     None,
                     lambda: subprocess.run(
                         [uv_path, "add", package_name],
-                        capture_output=True, text=True, timeout=120,
+                        capture_output=True, encoding="utf-8", errors="replace", timeout=120,
                     ),
                 )
                 if result.returncode == 0:

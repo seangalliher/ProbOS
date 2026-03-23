@@ -16,9 +16,7 @@ from probos.types import CapabilityDescriptor, IntentDescriptor
 
 logger = logging.getLogger(__name__)
 
-_DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
-_SEEN_FILE = _DATA_DIR / "scout_seen.json"
-_REPORTS_DIR = _DATA_DIR / "scout_reports"
+_DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
 
 _INSTRUCTIONS = (
     "You are the ProbOS Scout, a Science department officer responsible for "
@@ -181,22 +179,22 @@ def format_digest(findings: list[ScoutFinding], date_str: str) -> str:
     return "\n".join(lines)
 
 
-def _load_seen() -> dict[str, str]:
+def _load_seen(seen_file: Path) -> dict[str, str]:
     """Load seen repo IDs with timestamps. Returns {repo_full_name: iso_date}."""
-    if _SEEN_FILE.exists():
+    if seen_file.exists():
         try:
-            return json.loads(_SEEN_FILE.read_text(encoding="utf-8"))
+            return json.loads(seen_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return {}
     return {}
 
 
-def _save_seen(seen: dict[str, str]) -> None:
+def _save_seen(seen: dict[str, str], seen_file: Path) -> None:
     """Save seen repo IDs, pruning entries older than 90 days."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
     pruned = {k: v for k, v in seen.items() if v >= cutoff}
-    _SEEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _SEEN_FILE.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
+    seen_file.parent.mkdir(parents=True, exist_ok=True)
+    seen_file.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
 
 
 class ScoutAgent(CognitiveAgent):
@@ -229,6 +227,21 @@ class ScoutAgent(CognitiveAgent):
         super().__init__(**kwargs)
         self._runtime = kwargs.get("runtime")
         self._last_findings: list[ScoutFinding] = []
+
+    @property
+    def _data_dir(self) -> Path:
+        """Resolve data directory from runtime, falling back to project default."""
+        if self._runtime and hasattr(self._runtime, "_data_dir"):
+            return Path(self._runtime._data_dir)
+        return _DEFAULT_DATA_DIR
+
+    @property
+    def _seen_file(self) -> Path:
+        return self._data_dir / "scout_seen.json"
+
+    @property
+    def _reports_dir(self) -> Path:
+        return self._data_dir / "scout_reports"
 
     def _resolve_tier(self) -> str:
         return "standard"
@@ -286,7 +299,7 @@ class ScoutAgent(CognitiveAgent):
             (f"topic:code-generation pushed:>{seven_days_ago}", 100),
         ]
 
-        seen = _load_seen()
+        seen = _load_seen(self._seen_file)
         new_repos: list[dict[str, Any]] = []
 
         for query, min_stars in queries:
@@ -308,7 +321,7 @@ class ScoutAgent(CognitiveAgent):
                     "url": item.get("html_url", ""),
                 })
 
-        _save_seen(seen)
+        _save_seen(seen, self._seen_file)
 
         if not new_repos:
             result["context"] = "No new repositories found since last scan."
@@ -356,8 +369,8 @@ class ScoutAgent(CognitiveAgent):
 
         # Store report
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        _REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-        report_path = _REPORTS_DIR / f"{date_str}.json"
+        self._reports_dir.mkdir(parents=True, exist_ok=True)
+        report_path = self._reports_dir / f"{date_str}.json"
         report_data = {
             "date": date_str,
             "total_classified": len(findings),
@@ -412,9 +425,9 @@ class ScoutAgent(CognitiveAgent):
 
     def _load_latest_report(self) -> str | None:
         """Load the most recent scout report and format it."""
-        if not _REPORTS_DIR.exists():
+        if not self._reports_dir.exists():
             return None
-        reports = sorted(_REPORTS_DIR.glob("*.json"), reverse=True)
+        reports = sorted(self._reports_dir.glob("*.json"), reverse=True)
         if not reports:
             return None
         try:

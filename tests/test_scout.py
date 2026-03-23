@@ -172,14 +172,13 @@ class TestSeenTracking:
         """Seen repos are persisted and duplicates are skipped."""
         seen_file = tmp_path / "scout_seen.json"
 
-        with patch("probos.cognitive.scout._SEEN_FILE", seen_file):
-            from probos.cognitive.scout import _load_seen, _save_seen
+        from probos.cognitive.scout import _load_seen, _save_seen
 
-            assert _load_seen() == {}
-            seen = {"owner/repo1": "2026-03-22T00:00:00+00:00"}
-            _save_seen(seen)
-            loaded = _load_seen()
-            assert "owner/repo1" in loaded
+        assert _load_seen(seen_file) == {}
+        seen = {"owner/repo1": "2026-03-22T00:00:00+00:00"}
+        _save_seen(seen, seen_file)
+        loaded = _load_seen(seen_file)
+        assert "owner/repo1" in loaded
 
 
 class TestDiscordFormat:

@@ -479,7 +479,8 @@ class KnowledgeStore:
             lambda: subprocess.run(
                 ["git", "-C", str(self._repo_path), *args],
                 capture_output=True,
-                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
             ),
         )

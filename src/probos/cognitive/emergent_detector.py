@@ -112,6 +112,10 @@ class EmergentDetector:
         self._max_history = max_history
         self._trend_threshold = trend_threshold
 
+        # Live agent roster — set via set_live_agents() from runtime at startup.
+        # When set, cooperation cluster detection filters out defunct agents.
+        self._live_agent_ids: set[str] | None = None
+
         # Ring buffer of snapshots for trend analysis
         self._history: collections.deque[SystemDynamicsSnapshot] = collections.deque(maxlen=max_history)
 
@@ -123,6 +127,10 @@ class EmergentDetector:
 
         # Dream report history for consolidation anomaly baselines
         self._dream_history: list[dict] = []
+
+    def set_live_agents(self, agent_ids: set[str]) -> None:
+        """Update the set of live agent IDs from the runtime pool registry."""
+        self._live_agent_ids = agent_ids
 
     def analyze(self, dream_report: Any = None) -> list[EmergentPattern]:
         """Main analysis entry point. Runs all detectors and returns detected patterns."""
@@ -144,7 +152,7 @@ class EmergentDetector:
         # Run detectors
         patterns: list[EmergentPattern] = []
 
-        clusters = self.detect_cooperation_clusters()
+        clusters = self.detect_cooperation_clusters(self._live_agent_ids)
         for cluster in clusters:
             patterns.append(EmergentPattern(
                 pattern_type="cooperation_cluster",
@@ -232,8 +240,13 @@ class EmergentDetector:
 
         return multi_pool_count / total if total > 0 else 0.0
 
-    def detect_cooperation_clusters(self) -> list[dict]:
-        """Analyze Hebbian weight graph for agent cooperation clusters."""
+    def detect_cooperation_clusters(self, live_agent_ids: set[str] | None = None) -> list[dict]:
+        """Analyze Hebbian weight graph for agent cooperation clusters.
+
+        If *live_agent_ids* is provided, weights referencing agents not in the
+        set are filtered out before cluster detection (prevents ghost clusters
+        from agents removed by /reset).
+        """
         # Don't detect cooperation clusters until we have enough data (AD-288)
         if self._episodic_memory:
             try:
@@ -246,6 +259,13 @@ class EmergentDetector:
 
         weights = self._router.all_weights_typed()
         intent_weights = {k: v for k, v in weights.items() if k[2] == REL_INTENT}
+
+        # Filter out weights referencing defunct agents
+        if live_agent_ids is not None:
+            intent_weights = {
+                k: v for k, v in intent_weights.items()
+                if k[1] in live_agent_ids or not self._extract_pool(k[1])
+            }
 
         if not intent_weights:
             return []
@@ -635,7 +655,7 @@ class EmergentDetector:
         return SystemDynamicsSnapshot(
             timestamp=time.monotonic(),
             tc_n=self.compute_tc_n(),
-            cooperation_clusters=self.detect_cooperation_clusters(),
+            cooperation_clusters=self.detect_cooperation_clusters(self._live_agent_ids),
             trust_distribution=trust_dist,
             routing_entropy=self.compute_routing_entropy(),
             capability_count=len(intent_types),

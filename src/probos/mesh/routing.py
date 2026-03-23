@@ -182,6 +182,32 @@ class HebbianRouter:
             self._compat_weights[(src, tgt)] = w
         return pruned
 
+    def prune_defunct_agents(self, live_agent_ids: set[str]) -> int:
+        """Remove weights referencing agent targets not in the live roster.
+
+        Only prunes entries where the target looks like a pool-based agent ID
+        (contains underscore + hex suffix). Intent names are left alone.
+
+        Returns count of pruned entries.
+        """
+        keys_to_remove = []
+        for key in self._weights:
+            target = key[1]
+            # Heuristic: pool-based agent IDs have format like
+            # "poolname_agenttype_N_hexhash" — skip bare intent names
+            parts = target.split("_")
+            if len(parts) >= 3 and target not in live_agent_ids:
+                keys_to_remove.append(key)
+        for key in keys_to_remove:
+            del self._weights[key]
+        # Rebuild compat view
+        self._compat_weights.clear()
+        for (src, tgt, _), w in self._weights.items():
+            self._compat_weights[(src, tgt)] = w
+        if keys_to_remove:
+            logger.info("Pruned %d Hebbian weights for defunct agents", len(keys_to_remove))
+        return len(keys_to_remove)
+
     @property
     def weight_count(self) -> int:
         return len(self._weights)
