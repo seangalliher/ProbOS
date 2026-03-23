@@ -3,6 +3,7 @@
 export interface Agent {
   id: string;
   agentType: string;
+  callsign: string;  // BF-013
   pool: string;
   state: 'spawning' | 'active' | 'degraded' | 'recycling';
   confidence: number;
@@ -210,6 +211,7 @@ export interface StateSnapshot {
   agents: Array<{
     id: string;
     agent_type: string;
+    callsign: string;  // BF-013
     pool: string;
     state: string;
     confidence: number;

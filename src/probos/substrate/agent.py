@@ -145,6 +145,7 @@ class BaseAgent(ABC):
         return {
             "id": self.id,
             "type": self.agent_type,
+            "callsign": self.callsign,  # BF-013
             "pool": self.pool,
             "state": self.state.value,
             "confidence": round(self.confidence, 4),

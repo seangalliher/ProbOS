@@ -10,6 +10,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any, TYPE_CHECKING
 
+from probos.cognitive.checkpoint import write_checkpoint, delete_checkpoint
 from probos.cognitive.llm_client import BaseLLMClient
 from probos.cognitive.prompt_builder import PromptBuilder, get_platform_context
 from probos.cognitive.working_memory import WorkingMemoryManager, WorkingMemorySnapshot
@@ -242,6 +243,7 @@ class IntentDecomposer:
         self.last_model: str = ""  # Model used for last LLM call
         self._pre_warm_intents: list[str] = []
         self._intent_descriptors: list[IntentDescriptor] = []
+        self._callsign_map: dict[str, str] = {}  # BF-013
         self._prompt_builder = PromptBuilder()
 
     @property
@@ -343,7 +345,10 @@ class IntentDecomposer:
 
         # Select system prompt: dynamic if descriptors available, else legacy
         if self._intent_descriptors:
-            system_prompt = self._prompt_builder.build_system_prompt(self._intent_descriptors)
+            system_prompt = self._prompt_builder.build_system_prompt(
+                self._intent_descriptors,
+                callsign_map=self._callsign_map or None,
+            )
         else:
             system_prompt = _LEGACY_SYSTEM_PROMPT + "\n\n" + get_platform_context()
 
@@ -654,11 +659,13 @@ class DAGExecutor:
         timeout: float = 60.0,
         attention: Any | None = None,  # AttentionManager (optional)
         escalation_manager: Any | None = None,  # EscalationManager (optional)
+        checkpoint_dir: Any | None = None,  # AD-405
     ) -> None:
         self.runtime = runtime
         self.timeout = timeout
         self.attention = attention
         self.escalation_manager = escalation_manager
+        self._checkpoint_dir = checkpoint_dir
         self._dag_start: float = 0.0
 
     async def execute(
@@ -681,6 +688,10 @@ class DAGExecutor:
 
         self._dag_start = time.monotonic()
 
+        # Write initial checkpoint (AD-405)
+        if self._checkpoint_dir:
+            write_checkpoint(self._checkpoint_dir, dag, results)
+
         try:
             await self._execute_dag(dag, results, on_event=on_event)
         except asyncio.TimeoutError:
@@ -690,6 +701,10 @@ class DAGExecutor:
                 if node.status == "pending":
                     node.status = "failed"
                     results[node.id] = {"error": "DAG execution timed out"}
+        finally:
+            # Delete checkpoint on completion (AD-405)
+            if self._checkpoint_dir:
+                delete_checkpoint(self._checkpoint_dir, dag.id)
 
         return {
             "dag": dag,
@@ -888,6 +903,10 @@ class DAGExecutor:
             elif on_event and node.status == "failed":
                 await on_event("node_failed", {"node": node, "result": results.get(node.id)})
 
+            # Checkpoint after node state change (AD-405)
+            if self._checkpoint_dir:
+                write_checkpoint(self._checkpoint_dir, dag, results)
+
         except Exception as e:
             logger.error("Node %s failed: %s", node.id, e)
             if self.escalation_manager is not None:
@@ -942,6 +961,10 @@ class DAGExecutor:
                 results[node.id] = {"error": str(e)}
                 if on_event:
                     await on_event("node_failed", {"node": node, "error": str(e)})
+
+            # Checkpoint after exception handling (AD-405)
+            if self._checkpoint_dir:
+                write_checkpoint(self._checkpoint_dir, dag, results)
 
     async def _handle_rejection(
         self,

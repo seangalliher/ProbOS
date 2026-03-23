@@ -463,3 +463,62 @@ class TestShellExplain:
         output = console.file.getvalue()
         # Should produce some output without crashing
         assert len(output) > 0
+
+
+# ---------------------------------------------------------------------------
+# BF-013: Callsign awareness tests
+# ---------------------------------------------------------------------------
+
+
+class TestCallsignAwareness:
+    """Tests for callsign resolution in _agent_info (BF-013)."""
+
+    def test_agent_info_resolves_callsign(self):
+        """_agent_info resolves callsign to agent_type."""
+        scout = _make_agent(agent_type="scout", agent_id="scout-001")
+        rt = _mock_runtime(agents=[scout])
+        # Add callsign_registry mock
+        rt.callsign_registry = MagicMock()
+        rt.callsign_registry.resolve.return_value = {
+            "callsign": "Wesley",
+            "agent_type": "scout",
+            "agent_id": "scout-001",
+            "display_name": "Wesley",
+            "department": "Science",
+        }
+        agent = IntrospectionAgent(pool="introspection")
+        agent._runtime_ref = rt
+
+        result = agent._agent_info(rt, {"agent_type": "wesley"})
+        assert result["success"]
+        assert len(result["data"]["agents"]) == 1
+        assert result["data"]["agents"][0]["type"] == "scout"
+
+    def test_agent_info_callsign_case_insensitive(self):
+        """Callsign resolution works with different cases."""
+        scout = _make_agent(agent_type="scout", agent_id="scout-001")
+        rt = _mock_runtime(agents=[scout])
+        rt.callsign_registry = MagicMock()
+        rt.callsign_registry.resolve.return_value = {
+            "callsign": "Wesley",
+            "agent_type": "scout",
+            "agent_id": "scout-001",
+        }
+        agent = IntrospectionAgent(pool="introspection")
+        agent._runtime_ref = rt
+
+        for variant in ["Wesley", "WESLEY", "wesley"]:
+            result = agent._agent_info(rt, {"agent_type": variant})
+            assert result["success"]
+            assert len(result["data"]["agents"]) == 1
+
+    def test_agent_info_no_callsign_registry(self):
+        """Falls back gracefully when no callsign_registry exists."""
+        rt = _mock_runtime(agents=[])
+        # No callsign_registry attribute
+        del rt.callsign_registry
+        agent = IntrospectionAgent(pool="introspection")
+        agent._runtime_ref = rt
+
+        result = agent._agent_info(rt, {"agent_type": "wesley"})
+        assert result["data"]["agents"] == []

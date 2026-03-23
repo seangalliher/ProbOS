@@ -704,6 +704,34 @@ class TestConversationContext:
 # ---------------------------------------------------------------------------
 
 
+class TestCallsignPromptInjection:
+    """BF-013: Callsign mapping in decomposer prompt."""
+
+    def test_prompt_includes_callsign_section(self):
+        from probos.cognitive.prompt_builder import PromptBuilder
+        pb = PromptBuilder()
+        descriptors = [IntentDescriptor(name="agent_info", params={"agent_type": ""}, description="Info")]
+        callsign_map = {"scout": "Wesley", "medical": "Bones"}
+        prompt = pb.build_system_prompt(descriptors, callsign_map=callsign_map)
+        assert "Crew callsigns" in prompt
+        assert "Wesley = scout" in prompt
+        assert "Bones = medical" in prompt
+
+    def test_prompt_no_callsigns_when_empty(self):
+        from probos.cognitive.prompt_builder import PromptBuilder
+        pb = PromptBuilder()
+        descriptors = [IntentDescriptor(name="agent_info", params={}, description="Info")]
+        prompt = pb.build_system_prompt(descriptors, callsign_map=None)
+        assert "Crew callsigns" not in prompt
+
+    def test_prompt_example_includes_callsign(self):
+        from probos.cognitive.prompt_builder import PromptBuilder
+        pb = PromptBuilder()
+        descriptors = [IntentDescriptor(name="agent_info", params={}, description="Info")]
+        prompt = pb.build_system_prompt(descriptors)
+        assert "Wesley" in prompt
+
+
 class TestShipsComputerIdentity:
     @pytest.fixture
     def llm(self):

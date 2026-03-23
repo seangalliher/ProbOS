@@ -155,3 +155,24 @@ class TestConfidenceTracking:
         assert a.meta.total_operations == 3
         assert a.meta.success_count == 2
         assert a.meta.failure_count == 1
+
+
+# ---------------------------------------------------------------------------
+# BF-013: BaseAgent.info() includes callsign
+# ---------------------------------------------------------------------------
+
+
+class TestAgentInfoCallsign:
+    def test_info_includes_callsign_field(self):
+        """info() dict includes callsign key."""
+        a = DummyAgent()
+        a.callsign = "Wesley"
+        info = a.info()
+        assert "callsign" in info
+        assert info["callsign"] == "Wesley"
+
+    def test_info_callsign_default_empty(self):
+        """info() callsign defaults to empty string."""
+        a = DummyAgent()
+        info = a.info()
+        assert info["callsign"] == ""

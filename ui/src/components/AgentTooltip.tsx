@@ -87,7 +87,7 @@ export function AgentTooltip() {
       }}
     >
       <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>
-        {agent.agentType || agent.pool}
+        {agent.callsign ? `${agent.callsign} (${agent.agentType})` : (agent.agentType || agent.pool)}
       </div>
       <div style={{ color: '#8888a0', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
         <span>Pool: {agent.pool}</span>

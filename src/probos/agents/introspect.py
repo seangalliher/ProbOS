@@ -291,6 +291,12 @@ class IntrospectionAgent(BaseAgent):
                             resolved = rt.registry.get(aid)
                             if resolved:
                                 agents.append(resolved)
+            if not agents and hasattr(rt, 'callsign_registry'):
+                # Callsign resolution fallback (BF-013)
+                resolved = rt.callsign_registry.resolve(agent_type or agent_id or "")
+                if resolved:
+                    agents = [a for a in rt.registry.all()
+                              if a.agent_type == resolved["agent_type"]]
         else:
             # No filter — return all agents
             agents = list(rt.registry.all())

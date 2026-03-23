@@ -115,6 +115,7 @@ class ProbOSRuntime:
     ) -> None:
         self.config = config or load_config(_DEFAULT_CONFIG)
         self._data_dir = Path(data_dir) if data_dir else _DEFAULT_DATA_DIR
+        self._checkpoint_dir = self._data_dir / "checkpoints"
 
         # --- Substrate ---
         self.registry = AgentRegistry()
@@ -181,6 +182,7 @@ class ProbOSRuntime:
             timeout=cog_cfg.decomposition_timeout_seconds,
             workflow_cache=self.workflow_cache,
         )
+        self.decomposer._callsign_map = self.callsign_registry.all_callsigns()  # BF-013
         self.attention = AttentionManager(
             max_concurrent=cog_cfg.max_concurrent_tasks,
             decay_rate=cog_cfg.attention_decay_rate,
@@ -197,6 +199,7 @@ class ProbOSRuntime:
             timeout=cog_cfg.dag_execution_timeout_seconds,
             attention=self.attention,
             escalation_manager=self.escalation_manager,
+            checkpoint_dir=self._checkpoint_dir,  # AD-405
         )
 
         # --- Episodic memory ---
@@ -391,6 +394,7 @@ class ProbOSRuntime:
             agents.append({
                 "id": agent.id,
                 "agent_type": agent.agent_type,
+                "callsign": agent.callsign,  # BF-013
                 "pool": agent.pool,
                 "state": agent.state.value if hasattr(agent.state, "value") else str(agent.state),
                 "confidence": agent.confidence,
@@ -1116,6 +1120,25 @@ class ProbOSRuntime:
             logger.info("DirectiveStore initialized")
         except Exception:
             logger.exception("DirectiveStore init failed (non-fatal)")
+
+        # Scan for abandoned DAG checkpoints from previous session (AD-405)
+        from probos.cognitive.checkpoint import scan_checkpoints
+        stale = scan_checkpoints(self._checkpoint_dir)
+        if stale:
+            logger.info(
+                "Found %d incomplete DAG checkpoint(s) from previous session",
+                len(stale),
+            )
+            for cp in stale:
+                completed = sum(
+                    1 for s in cp.node_states.values()
+                    if s.get("status") == "completed"
+                )
+                logger.info(
+                    "  - DAG %s: '%s' (%d/%d nodes completed)",
+                    cp.dag_id[:8], cp.source_text[:60],
+                    completed, len(cp.node_states),
+                )
 
         self._started = True
 

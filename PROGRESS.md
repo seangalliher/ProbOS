@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-404 complete — fixed 19 Windows-specific test failures (missing git mocks, subprocess skip guards). AD-403: memory contradiction detection. BF-012: Discord shutdown hang fix confirmed working.
+## Current Status: BF-013 complete — ship's computer now resolves crew callsigns. IntrospectAgent callsign fallback, BaseAgent.info() includes callsign, decomposer prompt injected with callsign mapping, orb tooltips show crew names.
 
 ---
 

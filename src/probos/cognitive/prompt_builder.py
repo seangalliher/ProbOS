@@ -128,7 +128,10 @@ User: "tell me about file_reader agents"
 {"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "file_reader"}, "depends_on": [], "use_consensus": false}], "reflect": true}
 
 User: "describe the agents" or "what agents are active?"
-{"intents": [{"id": "t1", "intent": "agent_info", "params": {}, "depends_on": [], "use_consensus": false}], "reflect": true}"""
+{"intents": [{"id": "t1", "intent": "agent_info", "params": {}, "depends_on": [], "use_consensus": false}], "reflect": true}
+
+User: "is Wesley aboard?" or "tell me about Bones"
+{"intents": [{"id": "t1", "intent": "agent_info", "params": {"agent_type": "scout"}, "depends_on": [], "use_consensus": false}], "reflect": true}"""
 
 # Capability-gap examples conditionally appended when no matching intent
 # exists.  Each entry: (user_input, gap_response, intent_keyword).
@@ -157,7 +160,11 @@ _GAP_EXAMPLES: list[tuple[str, str, str]] = [
 class PromptBuilder:
     """Assembles the decomposer system prompt dynamically from IntentDescriptors."""
 
-    def build_system_prompt(self, descriptors: list[IntentDescriptor]) -> str:
+    def build_system_prompt(
+        self,
+        descriptors: list[IntentDescriptor],
+        callsign_map: dict[str, str] | None = None,  # BF-013
+    ) -> str:
         """Build the full system prompt with a dynamically generated intent table.
 
         The output is functionally equivalent to the legacy SYSTEM_PROMPT when
@@ -201,6 +208,19 @@ class PromptBuilder:
         # Intent table
         parts.append("")
         parts.append(self._build_intent_table(unique))
+
+        # Crew callsigns (BF-013)
+        if callsign_map:
+            callsign_lines = [
+                f"  {callsign} = {agent_type}"
+                for agent_type, callsign in callsign_map.items()
+            ]
+            if callsign_lines:
+                parts.append("")
+                parts.append(
+                    "## Crew callsigns (use agent_type when referenced by callsign)\n\n"
+                    + "\n".join(callsign_lines)
+                )
 
         # Response format
         parts.append("")

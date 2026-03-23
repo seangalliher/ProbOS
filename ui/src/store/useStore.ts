@@ -458,6 +458,7 @@ export const useStore = create<HXIState>((set, get) => ({
           agentMap.set(a.id, {
             id: a.id,
             agentType: a.agent_type,
+            callsign: a.callsign || '',  // BF-013
             pool: a.pool,
             state: a.state as Agent['state'],
             confidence: a.confidence,

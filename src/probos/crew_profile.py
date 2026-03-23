@@ -373,9 +373,9 @@ class CallsignRegistry:
         """Get the display callsign for an agent type. Returns empty string if none."""
         return self._type_to_callsign.get(agent_type, "")
 
-    def all_callsigns(self) -> list[str]:
-        """List all registered callsigns (display case). For tab-completion."""
-        return list(self._type_to_callsign.values())
+    def all_callsigns(self) -> dict[str, str]:
+        """Return {agent_type: display_callsign} for all registered callsigns."""
+        return dict(self._type_to_callsign)
 
 
 def load_seed_profile(agent_type: str, profiles_dir: str = "") -> dict[str, Any]:

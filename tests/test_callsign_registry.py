@@ -53,14 +53,14 @@ class TestLoadFromProfiles:
         assert registry.get_callsign("builder") == "Scotty"
 
     def test_all_callsigns(self):
-        """Returns list of all display-case callsigns."""
+        """Returns dict mapping agent_type to display-case callsign."""
         registry = CallsignRegistry()
         registry.load_from_profiles()
         callsigns = registry.all_callsigns()
-        assert isinstance(callsigns, list)
-        assert "Wesley" in callsigns
-        assert "Scotty" in callsigns
-        assert "Bones" in callsigns
+        assert isinstance(callsigns, dict)
+        assert "Wesley" in callsigns.values()
+        assert "Scotty" in callsigns.values()
+        assert "Bones" in callsigns.values()
 
     def test_resolve_with_live_agent(self):
         """Bind a mock AgentRegistry with a live scout, verify agent_id returned."""
@@ -98,7 +98,7 @@ class TestLoadFromProfiles:
         """Loading from nonexistent directory doesn't crash."""
         registry = CallsignRegistry()
         registry.load_from_profiles(profiles_dir="/nonexistent/path")
-        assert registry.all_callsigns() == []
+        assert registry.all_callsigns() == {}
 
     def test_get_callsign_unknown_type(self):
         """get_callsign returns empty string for unknown type."""
