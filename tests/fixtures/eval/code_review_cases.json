@@ -1,0 +1,74 @@
+[
+  {
+    "id": "clean_function",
+    "code": "def add(a: int, b: int) -> int:\n    return a + b\n",
+    "expected_approved": true,
+    "criteria": "Simple clean function should be approved"
+  },
+  {
+    "id": "sql_injection",
+    "code": "def get_user(name):\n    query = f\"SELECT * FROM users WHERE name = '{name}'\"\n    return db.execute(query)\n",
+    "expected_approved": false,
+    "criteria": "SQL injection vulnerability must be caught"
+  },
+  {
+    "id": "command_injection",
+    "code": "import subprocess\ndef run_user_cmd(user_input):\n    subprocess.run(f'echo {user_input}', shell=True)\n",
+    "expected_approved": false,
+    "criteria": "Command injection via shell=True with user input must be caught"
+  },
+  {
+    "id": "xss_vulnerability",
+    "code": "def render_comment(comment):\n    return f'<div class=\"comment\">{comment}</div>'\n",
+    "expected_approved": false,
+    "criteria": "XSS vulnerability — unescaped user content in HTML"
+  },
+  {
+    "id": "hardcoded_secret",
+    "code": "API_KEY = 'sk-1234567890abcdef'\n\ndef call_api():\n    return requests.get('https://api.example.com', headers={'Authorization': f'Bearer {API_KEY}'})\n",
+    "expected_approved": false,
+    "criteria": "Hardcoded secret/API key must be flagged"
+  },
+  {
+    "id": "missing_error_handling",
+    "code": "def read_config(path):\n    with open(path) as f:\n        return json.loads(f.read())\n",
+    "expected_issues_min": 1,
+    "criteria": "Should flag missing error handling for file/JSON operations"
+  },
+  {
+    "id": "good_error_handling",
+    "code": "def read_config(path: str) -> dict:\n    try:\n        with open(path, encoding='utf-8') as f:\n            return json.loads(f.read())\n    except (FileNotFoundError, json.JSONDecodeError) as e:\n        logger.warning('Config read failed: %s', e)\n        return {}\n",
+    "expected_approved": true,
+    "criteria": "Proper error handling with logging should be approved"
+  },
+  {
+    "id": "path_traversal",
+    "code": "def serve_file(filename):\n    path = os.path.join('/var/data', filename)\n    with open(path) as f:\n        return f.read()\n",
+    "expected_approved": false,
+    "criteria": "Path traversal vulnerability — no validation that filename doesn't contain .."
+  },
+  {
+    "id": "complex_but_correct",
+    "code": "async def batch_process(items: list[dict], max_concurrent: int = 5) -> list[dict]:\n    semaphore = asyncio.Semaphore(max_concurrent)\n    async def process_one(item: dict) -> dict:\n        async with semaphore:\n            result = await transform(item)\n            return {**item, 'result': result}\n    return await asyncio.gather(*[process_one(i) for i in items])\n",
+    "expected_approved": true,
+    "criteria": "Complex but correct async code with proper semaphore usage"
+  },
+  {
+    "id": "eval_usage",
+    "code": "def calculate(expression):\n    return eval(expression)\n",
+    "expected_approved": false,
+    "criteria": "eval() with user input is a critical security vulnerability"
+  },
+  {
+    "id": "proper_typing",
+    "code": "from __future__ import annotations\nfrom dataclasses import dataclass\n\n@dataclass\nclass Point:\n    x: float\n    y: float\n\n    def distance_to(self, other: Point) -> float:\n        return ((self.x - other.x) ** 2 + (self.y - other.y) ** 2) ** 0.5\n",
+    "expected_approved": true,
+    "criteria": "Well-typed dataclass with proper annotations should be approved"
+  },
+  {
+    "id": "insecure_random",
+    "code": "import random\ndef generate_token():\n    return ''.join(random.choice('abcdefghijklmnopqrstuvwxyz0123456789') for _ in range(32))\n",
+    "expected_approved": false,
+    "criteria": "Using random instead of secrets for security token generation"
+  }
+]

@@ -997,6 +997,7 @@ class ProbOSRuntime:
                     self._store_strategies if self._knowledge_store else None
                 ),
                 gap_prediction_fn=self._on_gap_predictions,
+                contradiction_resolve_fn=self._on_contradictions,
             )
             self.dream_scheduler = DreamScheduler(
                 engine=engine,
@@ -2679,6 +2680,18 @@ class ProbOSRuntime:
         for p in predictions:
             self._emit_event("capability_gap_predicted", p.to_dict())
         logger.info("Dream cycle predicted %d capability gaps", len(predictions))
+
+    def _on_contradictions(self, contradictions: list) -> None:
+        """Log detected memory contradictions for review (AD-403)."""
+        for c in contradictions:
+            logger.info(
+                "Memory contradiction: %s+%s — older %s (%s) vs newer %s (%s), "
+                "similarity=%.2f",
+                c.intent, c.agent_id,
+                c.older_episode_id[:8], c.older_outcome,
+                c.newer_episode_id[:8], c.newer_outcome,
+                c.similarity,
+            )
 
     def _on_post_micro_dream(self, micro_report: dict) -> None:
         """Post-micro-dream callback: update emergent detector (AD-288)."""

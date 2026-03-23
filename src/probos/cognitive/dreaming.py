@@ -13,6 +13,7 @@ import time
 from collections import Counter
 from typing import Any
 
+from probos.cognitive.contradiction_detector import detect_contradictions
 from probos.cognitive.gap_predictor import predict_gaps
 from probos.cognitive.strategy_extraction import extract_strategies
 from probos.config import DreamingConfig
@@ -35,6 +36,7 @@ class DreamingEngine:
         idle_scale_down_fn: Any = None,
         strategy_store_fn: Any = None,
         gap_prediction_fn: Any = None,
+        contradiction_resolve_fn: Any = None,  # AD-403
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -44,6 +46,7 @@ class DreamingEngine:
         self._idle_scale_down_fn = idle_scale_down_fn
         self._strategy_store_fn = strategy_store_fn
         self._gap_prediction_fn = gap_prediction_fn
+        self._contradiction_resolve_fn = contradiction_resolve_fn
         self._last_consolidated_count: int = 0  # Cursor for micro-dream dedup
 
     async def micro_dream(self) -> dict[str, Any]:
@@ -112,6 +115,15 @@ class DreamingEngine:
         # Step 3: Trust consolidation
         trust_adjustments = self._consolidate_trust(episodes)
 
+        # Step 3.5: Contradiction detection (AD-403)
+        contradictions = detect_contradictions(episodes)
+        contradictions_found = len(contradictions)
+        if contradictions and self._contradiction_resolve_fn:
+            try:
+                self._contradiction_resolve_fn(contradictions)
+            except Exception as e:
+                logger.debug("Contradiction resolve callback failed: %s", e)
+
         # Step 4: Pre-warm
         pre_warm = self._compute_pre_warm(episodes)
         self.pre_warm_intents = pre_warm
@@ -152,17 +164,19 @@ class DreamingEngine:
             duration_ms=duration_ms,
             strategies_extracted=strategies_extracted,
             gaps_predicted=gaps_predicted,
+            contradictions_found=contradictions_found,
         )
 
         logger.info(
             "dream-cycle: flushed=%d strengthened=%d pruned=%d trust_adjusted=%d "
-            "strategies=%d gaps=%d",
+            "strategies=%d gaps=%d contradictions=%d",
             report.episodes_replayed,
             report.weights_strengthened,
             report.weights_pruned,
             report.trust_adjustments,
             report.strategies_extracted,
             report.gaps_predicted,
+            report.contradictions_found,
         )
 
         return report

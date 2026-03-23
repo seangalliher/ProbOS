@@ -1,5 +1,8 @@
 """Tests for Phase 5 expansion agents — unit, integration, and error cases."""
 
+import subprocess
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from probos.agents.directory_list import DirectoryListAgent
@@ -202,7 +205,11 @@ class TestShellCommandAgent:
         intent = IntentMessage(
             intent="run_command", params={"command": "echo hello"}
         )
-        result = await agent.handle_intent(intent)
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (b"hello\n", b"")
+        mock_proc.returncode = 0
+        with patch("probos.agents.shell_command.subprocess.Popen", return_value=mock_proc):
+            result = await agent.handle_intent(intent)
 
         assert result is not None
         assert result.success
@@ -216,7 +223,11 @@ class TestShellCommandAgent:
         intent = IntentMessage(
             intent="run_command", params={"command": "exit 42"}
         )
-        result = await agent.handle_intent(intent)
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (b"", b"")
+        mock_proc.returncode = 42
+        with patch("probos.agents.shell_command.subprocess.Popen", return_value=mock_proc):
+            result = await agent.handle_intent(intent)
 
         assert result is not None
         assert result.success  # Still True per design
@@ -623,9 +634,13 @@ class TestExpansionIntegration:
     @pytest.mark.asyncio
     async def test_nl_run_command(self, runtime):
         """NL 'run the command echo hello' -> run_command with consensus."""
-        result = await runtime.process_natural_language(
-            "run the command echo hello"
-        )
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (b"hello\n", b"")
+        mock_proc.returncode = 0
+        with patch("probos.agents.shell_command.subprocess.Popen", return_value=mock_proc):
+            result = await runtime.process_natural_language(
+                "run the command echo hello"
+            )
         assert result["node_count"] == 1
         assert result["completed_count"] == 1
 
@@ -676,11 +691,15 @@ class TestExpansionIntegration:
     @pytest.mark.asyncio
     async def test_submit_run_command_with_consensus(self, runtime):
         """Direct submit_intent_with_consensus for run_command."""
-        result = await runtime.submit_intent_with_consensus(
-            "run_command",
-            params={"command": "echo consensus_test"},
-            timeout=5.0,
-        )
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (b"consensus_test\n", b"")
+        mock_proc.returncode = 0
+        with patch("probos.agents.shell_command.subprocess.Popen", return_value=mock_proc):
+            result = await runtime.submit_intent_with_consensus(
+                "run_command",
+                params={"command": "echo consensus_test"},
+                timeout=5.0,
+            )
         assert len(result["results"]) == 3
         assert result["consensus"].outcome.value in (
             "approved", "rejected", "insufficient"
@@ -715,9 +734,13 @@ class TestExpansionErrors:
 
     @pytest.mark.asyncio
     async def test_failing_command_via_runtime(self, runtime):
-        results = await runtime.submit_intent(
-            "run_command", params={"command": "exit 42"}, timeout=5.0
-        )
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (b"", b"")
+        mock_proc.returncode = 42
+        with patch("probos.agents.shell_command.subprocess.Popen", return_value=mock_proc):
+            results = await runtime.submit_intent(
+                "run_command", params={"command": "exit 42"}, timeout=5.0
+            )
         assert len(results) == 3
         for r in results:
             assert r.success  # success=True even with nonzero exit code

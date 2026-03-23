@@ -185,8 +185,12 @@ class DiscordAdapter(ChannelAdapter):
             daemon=True,
         )
         teardown_thread.start()
-        # Use to_thread so we don't block the main event loop while waiting
-        await asyncio.to_thread(teardown_thread.join, 3.0)
+        # Poll with async sleep — asyncio.to_thread hangs on Windows
+        # SelectorEventLoop, so we yield to the loop between checks.
+        for _ in range(30):  # 3 seconds max (30 × 0.1s)
+            if not teardown_thread.is_alive():
+                break
+            await asyncio.sleep(0.1)
 
         # Cancel the bot task (don't await — avoids the double-close hang)
         if bot_task and not bot_task.done():

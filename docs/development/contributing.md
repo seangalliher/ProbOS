@@ -51,3 +51,44 @@ uv run pytest tests/ -v
 | [uvicorn](https://www.uvicorn.org/) >=0.34 | ASGI server |
 
 Dev: pytest >=8.0, pytest-asyncio >=0.23, vitest (UI)
+
+## Windows Development
+
+ProbOS is developed primarily on Windows. A few environment setup steps are needed:
+
+### Prerequisites
+
+- **Python 3.12+** via [uv](https://docs.astral.sh/uv/) (recommended) or standalone install
+- **Git for Windows** — ensure `git` is on your system PATH (`where git` should resolve)
+- **Node.js 18+** — for the HXI/UI layer (`ui/`)
+
+### Shell Setup
+
+`uv` installs to `~/.local/bin` which isn't on the default PATH for either shell. Add it to your profile:
+
+**PowerShell** (recommended) — create/edit `$PROFILE`:
+```powershell
+# ProbOS developer environment
+$env:PATH += ";$env:USERPROFILE\.local\bin"
+```
+
+**Git Bash** — create/edit `~/.bashrc`:
+```bash
+# ProbOS developer environment
+export PATH="$PATH:/c/Users/$USER/.local/bin"
+```
+
+Open a new terminal after saving for changes to take effect.
+
+### Known Platform Notes
+
+| Issue | Cause | Workaround |
+|-------|-------|------------|
+| `uv: command not found` in bash | uv installs to `~/.local/bin` which isn't on Git Bash's default PATH | Add to `~/.bashrc` (see above) |
+| `asyncio.to_thread()` hangs during shutdown | Windows `SelectorEventLoop` (required for pyzmq) has limited threading support | BF-011/BF-012: async polling replaces `to_thread` in shutdown paths |
+| `echo` not found in subprocess tests | `echo` is a CMD builtin, not an executable on Windows | Tests mock subprocess calls (AD-404) |
+| `pip` not found | uv manages its own Python; system pip may not exist | Use `uv run pip` or `.venv/Scripts/pip3.exe` |
+
+### Event Loop
+
+ProbOS uses `WindowsSelectorEventLoopPolicy` on Windows because pyzmq's `add_reader()` requires it (ProactorEventLoop doesn't support this). This means `asyncio.subprocess` and `asyncio.to_thread()` have limitations. Production code should use `threading.Thread` + `asyncio.sleep()` polling for subprocess operations that may block.

@@ -1,0 +1,138 @@
+[
+  {
+    "id": "simple_read",
+    "input": "Read the file src/probos/types.py",
+    "expected_intents": [
+      {"intent": "read_file", "params": {"path": "src/probos/types.py"}}
+    ],
+    "criteria": "Single intent, correct path extraction"
+  },
+  {
+    "id": "read_absolute_path",
+    "input": "Read the file /tmp/test.txt",
+    "expected_intents": [
+      {"intent": "read_file", "params": {"path": "/tmp/test.txt"}}
+    ],
+    "criteria": "Single read_file with absolute path"
+  },
+  {
+    "id": "multi_step",
+    "input": "Read src/probos/runtime.py and then tell me how shutdown works",
+    "expected_intents": [
+      {"intent": "read_file", "params": {"path": "src/probos/runtime.py"}},
+      {"intent": "analyze_code"}
+    ],
+    "criteria": "Two intents with dependency, file read before analysis"
+  },
+  {
+    "id": "ambiguous_refactor",
+    "input": "Refactor the trust model to use a sliding window",
+    "min_intents": 2,
+    "criteria": "Must read before generating. Should identify consensus/trust.py as target."
+  },
+  {
+    "id": "conversational_greeting",
+    "input": "Hello, how are you?",
+    "expected_response": true,
+    "expected_intents": [],
+    "criteria": "Should produce a conversational response or empty intents, not a task DAG"
+  },
+  {
+    "id": "conversational_thanks",
+    "input": "Thanks, that was really helpful!",
+    "expected_response": true,
+    "expected_intents": [],
+    "criteria": "Gratitude should be conversational, not decomposed into tasks"
+  },
+  {
+    "id": "system_health_check",
+    "input": "How healthy is the system?",
+    "expected_intents": [
+      {"intent": "system_health"}
+    ],
+    "criteria": "Should route to system_health intent"
+  },
+  {
+    "id": "complex_multi_file",
+    "input": "Add a new agent that monitors disk usage and alerts when it's over 90%",
+    "min_intents": 2,
+    "criteria": "Should decompose into multiple steps: read existing patterns, generate agent code, register in pool"
+  },
+  {
+    "id": "write_file",
+    "input": "Write 'hello world' to /tmp/hello.txt",
+    "expected_intents": [
+      {"intent": "write_file"}
+    ],
+    "criteria": "Should produce a write_file intent with correct path"
+  },
+  {
+    "id": "list_directory",
+    "input": "What files are in /tmp/mydir",
+    "expected_intents": [
+      {"intent": "list_directory"}
+    ],
+    "criteria": "Should produce list_directory intent"
+  },
+  {
+    "id": "search_files",
+    "input": "Find files matching *.py in /src/probos",
+    "expected_intents": [
+      {"intent": "search_files"}
+    ],
+    "criteria": "Should produce search_files intent"
+  },
+  {
+    "id": "web_search",
+    "input": "Search the web for python asyncio best practices",
+    "expected_intents": [
+      {"intent": "web_search"}
+    ],
+    "criteria": "Should route to web_search intent"
+  },
+  {
+    "id": "weather_query",
+    "input": "What's the weather in Seattle?",
+    "expected_intents": [
+      {"intent": "get_weather"}
+    ],
+    "criteria": "Should route to weather bundled agent"
+  },
+  {
+    "id": "empty_input",
+    "input": "",
+    "expected_intents": [],
+    "criteria": "Empty input should produce no intents (graceful handling)"
+  },
+  {
+    "id": "knowledge_question",
+    "input": "Who invented the transistor?",
+    "expected_response": true,
+    "expected_intents": [],
+    "criteria": "Factual knowledge question should be conversational, not a capability gap"
+  },
+  {
+    "id": "explain_last",
+    "input": "What just happened?",
+    "expected_intents": [
+      {"intent": "explain_last"}
+    ],
+    "criteria": "Should route to explain_last introspection intent"
+  },
+  {
+    "id": "agent_info",
+    "input": "Tell me about the file_reader agent",
+    "expected_intents": [
+      {"intent": "agent_info"}
+    ],
+    "criteria": "Should route to agent_info introspection intent"
+  },
+  {
+    "id": "run_command",
+    "input": "Run the command ls -la",
+    "expected_intents": [
+      {"intent": "run_command"}
+    ],
+    "criteria": "Should produce run_command intent"
+  }
+]

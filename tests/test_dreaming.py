@@ -660,6 +660,77 @@ class TestBF008DreamComposability:
     """Verify dream_cycle composes with micro_dream and no longer double-replays."""
 
     @pytest.mark.asyncio
+    async def test_dream_cycle_includes_contradiction_count(self, engine, memory):
+        """Dream cycle with contradictory episodes → contradictions_found > 0."""
+        ep_old = _make_episode(
+            intents=["read_file"],
+            agent_ids=["agent_a"],
+            success=True,
+            user_input="read the file foo.txt",
+        )
+        ep_old.timestamp = 1.0
+        ep_new = _make_episode(
+            intents=["read_file"],
+            agent_ids=["agent_a"],
+            success=False,
+            user_input="read the file foo.txt",
+        )
+        ep_new.timestamp = 2.0
+        await memory.store(ep_old)
+        await memory.store(ep_new)
+
+        report = await engine.dream_cycle()
+        assert report.contradictions_found >= 1
+
+    @pytest.mark.asyncio
+    async def test_dream_cycle_no_contradictions(self, engine, memory):
+        """Normal episodes → contradictions_found == 0."""
+        ep = _make_episode(
+            intents=["read_file"],
+            agent_ids=["agent_a"],
+            success=True,
+            user_input="read the file foo.txt",
+        )
+        await memory.store(ep)
+
+        report = await engine.dream_cycle()
+        assert report.contradictions_found == 0
+
+    @pytest.mark.asyncio
+    async def test_contradiction_callback_invoked(self, router, trust, memory, dream_config):
+        """Provide a mock contradiction_resolve_fn, verify it's called."""
+        callback_args: list = []
+
+        def mock_resolve(contradictions):
+            callback_args.append(contradictions)
+
+        engine = DreamingEngine(
+            router, trust, memory, dream_config,
+            contradiction_resolve_fn=mock_resolve,
+        )
+
+        ep_old = _make_episode(
+            intents=["read_file"],
+            agent_ids=["agent_a"],
+            success=True,
+            user_input="read the file foo.txt",
+        )
+        ep_old.timestamp = 1.0
+        ep_new = _make_episode(
+            intents=["read_file"],
+            agent_ids=["agent_a"],
+            success=False,
+            user_input="read the file foo.txt",
+        )
+        ep_new.timestamp = 2.0
+        await memory.store(ep_old)
+        await memory.store(ep_new)
+
+        await engine.dream_cycle()
+        assert len(callback_args) == 1
+        assert len(callback_args[0]) >= 1
+
+    @pytest.mark.asyncio
     async def test_dream_cycle_calls_micro_dream_first(self, engine, memory):
         """dream_cycle() starts with a micro_dream() flush."""
         ep = _make_episode(intents=["read_file"], agent_ids=["a"], success=True)

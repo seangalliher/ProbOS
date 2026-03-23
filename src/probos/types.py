@@ -361,6 +361,7 @@ class DreamReport:
     duration_ms: float = 0.0
     strategies_extracted: int = 0
     gaps_predicted: int = 0
+    contradictions_found: int = 0  # AD-403
 
 
 # ------------------------------------------------------------------

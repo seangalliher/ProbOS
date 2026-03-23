@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from probos.worktree_manager import WorktreeManager, WorktreeInfo
 @pytest.fixture
 def git_repo(tmp_path: Path) -> str:
     """Create a minimal git repo for testing."""
+    if shutil.which("git") is None:
+        pytest.skip("git not available on PATH")
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init"], cwd=str(repo), check=True, capture_output=True)

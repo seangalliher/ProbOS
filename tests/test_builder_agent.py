@@ -3043,12 +3043,13 @@ class TestEscalationHook:
         with patch("probos.cognitive.builder._run_targeted_tests", return_value=(False, "FAILED tests/test_x.py::test_y", [])):
             with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
                 with patch("probos.cognitive.builder._git_checkout_main"):
-                    result = await execute_approved_build(
-                        changes, spec, str(tmp_path),
-                        run_tests=True,
-                        max_fix_attempts=0,
-                        escalation_hook=mock_hook,
-                    )
+                    with patch("probos.cognitive.builder._git_current_branch", return_value="main"):
+                        result = await execute_approved_build(
+                            changes, spec, str(tmp_path),
+                            run_tests=True,
+                            max_fix_attempts=0,
+                            escalation_hook=mock_hook,
+                        )
 
         assert len(hook_called) == 1
         assert hook_called[0].failure_category == "test_failure"
@@ -3073,12 +3074,13 @@ class TestEscalationHook:
             with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
                 with patch("probos.cognitive.builder._git_checkout_main"):
                     with patch("probos.cognitive.builder._git_add_and_commit", return_value=(True, "abc123")):
-                        result = await execute_approved_build(
-                            changes, spec, str(tmp_path),
-                            run_tests=True,
-                            max_fix_attempts=0,
-                            escalation_hook=resolving_hook,
-                        )
+                        with patch("probos.cognitive.builder._git_current_branch", return_value="main"):
+                            result = await execute_approved_build(
+                                changes, spec, str(tmp_path),
+                                run_tests=True,
+                                max_fix_attempts=0,
+                                escalation_hook=resolving_hook,
+                            )
 
         assert result.success
         assert result.tests_passed
@@ -3100,12 +3102,13 @@ class TestEscalationHook:
                 with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
                     with patch("probos.cognitive.builder._git_checkout_main"):
                         with patch("probos.cognitive.builder._git_add_and_commit", return_value=(True, "abc123")):
-                            result = await execute_approved_build(
-                                changes, spec, str(tmp_path),
-                                run_tests=True,
-                                max_fix_attempts=0,
-                                escalation_hook=mock_hook,
-                            )
+                            with patch("probos.cognitive.builder._git_current_branch", return_value="main"):
+                                result = await execute_approved_build(
+                                    changes, spec, str(tmp_path),
+                                    run_tests=True,
+                                    max_fix_attempts=0,
+                                    escalation_hook=mock_hook,
+                                )
 
         assert len(hook_called) == 0
         assert result.success
@@ -3119,10 +3122,11 @@ class TestEscalationHook:
         with patch("probos.cognitive.builder._run_targeted_tests", return_value=(False, "FAILED", [])):
             with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
                 with patch("probos.cognitive.builder._git_checkout_main"):
-                    result = await execute_approved_build(
-                        changes, spec, str(tmp_path),
-                        run_tests=True,
-                        max_fix_attempts=0,
-                    )
+                    with patch("probos.cognitive.builder._git_current_branch", return_value="main"):
+                        result = await execute_approved_build(
+                            changes, spec, str(tmp_path),
+                            run_tests=True,
+                            max_fix_attempts=0,
+                        )
 
         assert not result.success

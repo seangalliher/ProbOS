@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-401 complete — structured LLM output validation with auto-retry. Shared `json_extract.py` utility with string-aware brace matching, `extract_json()`, `extract_json_list()`, `complete_with_retry()`. Decomposer retrofitted with 1-retry on parse failure (temperature bump + error feedback to LLM). CodeReviewer and Research agent migrated to shared utility. Eliminates silent empty responses from malformed LLM output.
+## Current Status: AD-404 complete — fixed 19 Windows-specific test failures (missing git mocks, subprocess skip guards). AD-403: memory contradiction detection. BF-012: Discord shutdown hang fix confirmed working.
 
 ---
 

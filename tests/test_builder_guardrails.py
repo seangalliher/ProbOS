@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -98,6 +99,7 @@ class TestValidateFilePath:
 class TestBranchLifecycle:
     """Tests for build branch lifecycle management."""
 
+    @pytest.mark.skipif(shutil.which("git") is None, reason="git not found on PATH")
     @pytest.mark.asyncio
     async def test_stale_branch_cleanup(self, tmp_path):
         """Pre-existing branch with same name is auto-deleted."""
@@ -149,6 +151,7 @@ class TestBranchLifecycle:
         assert ok is True
         assert name == "builder-test-stale"
 
+    @pytest.mark.skipif(shutil.which("git") is None, reason="git not found on PATH")
     @pytest.mark.asyncio
     async def test_failed_build_deletes_branch(self, tmp_path):
         """Failed build cleans up its branch."""
@@ -228,9 +231,10 @@ class TestDirtyWorkingTree:
             {"path": "src/probos/foo.py", "mode": "create", "content": "# test"},
         ]
 
-        with patch("probos.cognitive.builder._is_dirty_working_tree", new_callable=AsyncMock) as mock_dirty:
-            mock_dirty.return_value = True
-            result = await execute_approved_build(file_changes, spec, work_dir)
+        with patch("probos.cognitive.builder._git_current_branch", return_value="main"):
+            with patch("probos.cognitive.builder._is_dirty_working_tree", new_callable=AsyncMock) as mock_dirty:
+                mock_dirty.return_value = True
+                result = await execute_approved_build(file_changes, spec, work_dir)
 
         assert result.success is False
         assert "uncommitted" in result.error.lower()
@@ -244,6 +248,7 @@ class TestDirtyWorkingTree:
 class TestUntrackedFileCleanup:
     """Tests for untracked file cleanup on failed builds."""
 
+    @pytest.mark.skipif(shutil.which("git") is None, reason="git not found on PATH")
     @pytest.mark.asyncio
     async def test_untracked_files_cleaned_on_failure(self, tmp_path):
         """Created files and empty parent dirs are cleaned up on failed build."""
@@ -299,6 +304,7 @@ class TestUntrackedFileCleanup:
 # ── AD-367: Validation before commit ─────────────────────────────────────
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not found on PATH")
 @pytest.mark.asyncio
 async def test_validation_errors_block_commit(tmp_path):
     """Files with syntax errors should not be committed even with run_tests=False."""
