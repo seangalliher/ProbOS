@@ -1,4 +1,6 @@
-# Era IV: Evolution — The Ship Evolves
+# Era IV: Evolution — The Ship Evolves (ARCHIVED)
+
+> **ARCHIVED:** This file is no longer updated. As of AD-396, the canonical decision log is [DECISIONS.md](DECISIONS.md). Historical entries below are preserved for reference.
 
 *Phases 30+: Self-Improvement Pipeline, Security Team, Engineering Team, Operations Team*
 
@@ -875,3 +877,17 @@ First trial of parallel builder dispatch: two builders ran simultaneously with z
 
 **Build prompt:** `prompts/ad-395-credential-store-scout-enhancement.md`
 **Status:** AD-395 complete — 19 pytest new (13 credential store + 6 scout), 2702 pytest + 99 vitest = 2801 total.
+
+### AD-396: Quality Hardening — Subprocess Encoding, Path Safety, Integration Tests (IN PROGRESS)
+
+Dogfooding ScoutAgent on Windows exposed 9 integration bugs that unit tests with mocks couldn't catch. This AD fixes all known instances of systemic issues and adds integration tests to prevent regression. Four categories: (1) Windows subprocess encoding — 7 calls using `text=True` (cp1252 default) instead of `encoding="utf-8"`, (2) Scout hardcoded `_DATA_DIR` from `__file__` instead of runtime `_data_dir`, (3) personality trait type safety in standing_orders.py, (4) integration tests for shell↔agent boundary, encoding, and path resolution.
+
+**Changes:**
+- Fix 7 subprocess.run calls across 4 files: `text=True` → `encoding="utf-8", errors="replace"`
+- Replace Scout module-level `_DATA_DIR` with runtime-resolved properties
+- Add `isinstance` type guard for personality trait values
+- New `tests/test_quality_hardening.py` — integration tests for encoding, paths, types, boundaries
+- Update `tests/test_scout.py` for new `_load_seen`/`_save_seen` signatures
+
+**Build prompt:** `prompts/ad-396-quality-hardening.md`
+**Status:** AD-396 complete — 13 pytest new (net +2 after scout test consolidation), 2704 pytest + 99 vitest = 2803 total.
