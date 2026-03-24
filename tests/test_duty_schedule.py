@@ -154,8 +154,8 @@ class TestProactiveLoopDutyIntegration:
         assert call_args.params["duty"]["duty_id"] == "scout_report"
 
     @pytest.mark.asyncio
-    async def test_no_duty_passes_none(self):
-        """When no duty is due, duty param is None."""
+    async def test_no_duty_allows_freeform_think(self):
+        """When no duty is due, agent does a free-form think (duty=None)."""
         from unittest.mock import AsyncMock, patch
 
         from probos.proactive import ProactiveCognitiveLoop
@@ -185,8 +185,47 @@ class TestProactiveLoopDutyIntegration:
 
         await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
 
-        # BF-021: When duty schedule is active and no duty is due,
-        # the agent is skipped entirely (hard gate, saves tokens).
+        # BF-021 refined: Agent gets a free-form think (no duty),
+        # but with 3x cooldown between thinks.
+        agent.handle_intent.assert_called_once()
+        call_args = agent.handle_intent.call_args[0][0]
+        assert call_args.params["duty"] is None
+
+    @pytest.mark.asyncio
+    async def test_no_duty_throttled_by_cooldown(self):
+        """Between duties, free-form thinks are throttled at 3x cooldown."""
+        from unittest.mock import AsyncMock
+
+        from probos.proactive import ProactiveCognitiveLoop
+        from probos.crew_profile import Rank
+
+        loop = ProactiveCognitiveLoop(interval=120, cooldown=300)
+
+        from probos.duty_schedule import DutyScheduleTracker
+        loop._duty_tracker = DutyScheduleTracker({})
+
+        rt = MagicMock()
+        rt.episodic_memory = None
+        rt.bridge_alerts = None
+        rt.event_log = None
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[])
+        rt.ward_room.get_recent_activity = AsyncMock(return_value=[])
+        loop._runtime = rt
+
+        agent = MagicMock()
+        agent.id = "scout-1"
+        agent.agent_type = "scout"
+        agent.handle_intent = AsyncMock(return_value=MagicMock(
+            success=True, result="[NO_RESPONSE]"
+        ))
+
+        # Simulate recent proactive activity (within 3x cooldown)
+        loop._last_proactive["scout-1"] = time.monotonic()
+
+        await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
+
+        # Agent should be skipped — within 3x cooldown window
         agent.handle_intent.assert_not_called()
 
     @pytest.mark.asyncio

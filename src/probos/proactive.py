@@ -150,10 +150,13 @@ class ProactiveCognitiveLoop:
             if due_duties:
                 duty = due_duties[0]  # Highest priority
             else:
-                # BF-021: No duty due — skip agent entirely.
-                # Don't rely on LLM to say [NO_RESPONSE]; hard gate saves tokens
-                # and prevents agents from ignoring duty schedule constraints.
-                return
+                # BF-021 refined: No duty due — allow free-form thinks but at
+                # reduced frequency (3x cooldown). Agents stay alive between
+                # duty cycles instead of going completely dark.
+                last = self._last_proactive.get(agent.id, 0.0)
+                idle_cooldown = self.get_agent_cooldown(agent.id) * 3
+                if time.monotonic() - last < idle_cooldown:
+                    return
 
         # AD-417: Record proactive activity for dream scheduler awareness
         if hasattr(self._runtime, 'dream_scheduler') and self._runtime.dream_scheduler:
