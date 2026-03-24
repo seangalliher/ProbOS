@@ -32,6 +32,7 @@ _AGENT_DEPARTMENTS: dict[str, str] = {
     # Engineering
     "builder": "engineering",
     "code_reviewer": "engineering",
+    "engineering_officer": "engineering",
     # Science
     "architect": "science",
     "emergent_detector": "science",
@@ -46,6 +47,9 @@ _AGENT_DEPARTMENTS: dict[str, str] = {
     # Security
     "red_team": "security",
     "system_qa": "security",
+    "security_officer": "security",
+    # Operations
+    "operations_officer": "operations",
     # Bridge
     "counselor": "bridge",
 }
