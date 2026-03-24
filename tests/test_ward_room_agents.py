@@ -328,7 +328,7 @@ class TestAgentToAgentRouting:
         """Agent post in department channel reaches department peers."""
         runtime = _make_mock_runtime()
         eng1 = _make_agent("eng1", "engineering_officer")
-        eng2 = _make_agent("eng2", "builder")
+        eng2 = _make_agent("eng2", "operations_officer")
         sci1 = _make_agent("sci1", "architect")
         runtime.registry.all.return_value = [eng1, eng2, sci1]
         runtime.registry.get.side_effect = lambda aid: {
@@ -351,7 +351,7 @@ class TestAgentToAgentRouting:
         with patch("probos.cognitive.standing_orders.get_department") as mock_dept:
             mock_dept.side_effect = lambda t: {
                 "engineering_officer": "engineering",
-                "builder": "engineering",
+                "operations_officer": "engineering",
                 "architect": "science",
             }.get(t)
 

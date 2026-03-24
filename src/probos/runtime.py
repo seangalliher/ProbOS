@@ -3142,7 +3142,7 @@ class ProbOSRuntime:
     # Medical sub-crew (surgeon, pharmacist, pathologist), infrastructure agents
     # (vitals_monitor, red_team, system_qa), and utility agents are excluded.
     _WARD_ROOM_CREW = {
-        "architect", "builder", "scout", "counselor",
+        "architect", "scout", "counselor",
         "security_officer", "operations_officer", "engineering_officer",
         "diagnostician",  # Bones — CMO participates, medical sub-crew does not
     }
