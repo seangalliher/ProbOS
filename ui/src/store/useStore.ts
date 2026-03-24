@@ -237,6 +237,8 @@ export interface HXIState {
   wardRoomUnread: Record<string, number>;
   // Assignments (AD-408)
   assignments: Assignment[];
+  // Scheduled Tasks (Phase 25a)
+  scheduledTasks: ScheduledTaskView[];
   showIntro: boolean;
   showLegend: boolean;
 
@@ -298,6 +300,8 @@ export interface HXIState {
   setChromaticAberrationEnabled: (v: boolean) => void;
   setDataRainEnabled: (v: boolean) => void;
   setAtmosphereIntensity: (v: number) => void;
+  // Scheduled Tasks (Phase 25a)
+  refreshScheduledTasks: () => Promise<void>;
 }
 
 /** Derive MissionControlTasks from BuildQueueItems (AD-322). */
