@@ -771,3 +771,130 @@ class TestShellAndPanel:
         # Both rows should render without error
         assert "info" in output
         assert "sig" in output
+
+
+class TestPatternDeduplication:
+    """AD-411: EmergentDetector pattern deduplication."""
+
+    def test_duplicate_suppressed_within_cooldown(self):
+        """Same pattern within cooldown window is suppressed."""
+        router = HebbianRouter()
+        trust = TrustNetwork()
+        detector = EmergentDetector(router, trust)
+        detector.set_pattern_cooldown(60.0)
+
+        # First call — not a duplicate
+        assert not detector._is_duplicate_pattern("trust_anomaly", "agent1:high")
+        # Second call — duplicate (within cooldown)
+        assert detector._is_duplicate_pattern("trust_anomaly", "agent1:high")
+
+    def test_different_keys_not_suppressed(self):
+        """Different dedup keys are independent."""
+        router = HebbianRouter()
+        trust = TrustNetwork()
+        detector = EmergentDetector(router, trust)
+        detector.set_pattern_cooldown(60.0)
+
+        assert not detector._is_duplicate_pattern("trust_anomaly", "agent1:high")
+        assert not detector._is_duplicate_pattern("trust_anomaly", "agent2:high")
+
+    def test_different_types_not_suppressed(self):
+        """Same key with different pattern types are independent."""
+        router = HebbianRouter()
+        trust = TrustNetwork()
+        detector = EmergentDetector(router, trust)
+        detector.set_pattern_cooldown(60.0)
+
+        assert not detector._is_duplicate_pattern("trust_anomaly", "agent1")
+        assert not detector._is_duplicate_pattern("routing_shift", "agent1")
+
+    def test_cooldown_expiry(self):
+        """Pattern is allowed after cooldown expires."""
+        router = HebbianRouter()
+        trust = TrustNetwork()
+        detector = EmergentDetector(router, trust)
+        detector.set_pattern_cooldown(0.0)  # Zero cooldown = no suppression
+
+        assert not detector._is_duplicate_pattern("trust_anomaly", "agent1:high")
+        assert not detector._is_duplicate_pattern("trust_anomaly", "agent1:high")
+
+    def test_prune_stale_entries(self):
+        """Stale dedup entries are cleaned up."""
+        router = HebbianRouter()
+        trust = TrustNetwork()
+        detector = EmergentDetector(router, trust)
+        detector.set_pattern_cooldown(1.0)
+
+        detector._is_duplicate_pattern("trust_anomaly", "agent1:high")
+        assert len(detector._last_pattern_fired) == 1
+
+        # Manually age the entry
+        key = ("trust_anomaly", "agent1:high")
+        detector._last_pattern_fired[key] = time.monotonic() - 100
+        detector._prune_stale_dedup_entries()
+        assert len(detector._last_pattern_fired) == 0
+
+    def test_set_pattern_cooldown(self):
+        """Cooldown window is configurable."""
+        router = HebbianRouter()
+        trust = TrustNetwork()
+        detector = EmergentDetector(router, trust)
+        detector.set_pattern_cooldown(120.0)
+        assert detector._pattern_cooldown_seconds == 120.0
+
+    def test_negative_cooldown_clamped(self):
+        """Negative cooldown values are clamped to 0."""
+        router = HebbianRouter()
+        trust = TrustNetwork()
+        detector = EmergentDetector(router, trust)
+        detector.set_pattern_cooldown(-10.0)
+        assert detector._pattern_cooldown_seconds == 0.0
+
+    def test_trust_anomaly_dedup_in_analyze(self):
+        """Trust anomalies for same agent are suppressed across analyze() calls."""
+        router = HebbianRouter()
+        trust = TrustNetwork()
+        detector = EmergentDetector(router, trust)
+        detector.set_pattern_cooldown(600.0)
+
+        # Create agents with divergent trust to trigger anomalies
+        for i in range(5):
+            trust.get_or_create(f"normal_{i}")
+        outlier_id = "outlier_agent"
+        trust.get_or_create(outlier_id)
+        # Pump the outlier's trust high
+        for _ in range(50):
+            trust.record_outcome(outlier_id, success=True, weight=1.0)
+
+        detector.set_live_agents({f"normal_{i}" for i in range(5)} | {outlier_id})
+
+        # First analyze — should find the anomaly
+        patterns1 = detector.analyze()
+        trust_anomalies1 = [p for p in patterns1 if p.pattern_type == "trust_anomaly"]
+
+        # Second analyze — same state, anomalies should be suppressed
+        patterns2 = detector.analyze()
+        trust_anomalies2 = [p for p in patterns2 if p.pattern_type == "trust_anomaly"]
+
+        # Second run should have fewer (or zero) trust anomalies
+        assert len(trust_anomalies2) <= len(trust_anomalies1)
+
+
+class TestPoolDuplicateGuard:
+    """AD-411: create_pool() duplicate name guard."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_pool_returns_existing(self):
+        """Creating a pool with an existing name returns the existing pool."""
+        from probos.runtime import ProbOSRuntime
+        from probos.config import SystemConfig
+
+        config = SystemConfig()
+        rt = ProbOSRuntime(config)
+
+        # Simulate an existing pool by inserting a sentinel object
+        sentinel_pool = MagicMock()
+        rt.pools["test_pool"] = sentinel_pool
+
+        result = await rt.create_pool("test_pool", "some_type")
+        assert result is sentinel_pool

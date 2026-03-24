@@ -535,6 +535,11 @@ class ProbOSRuntime:
         **spawn_kwargs: Any,
     ) -> ResourcePool:
         """Create and start a resource pool."""
+        # AD-411: Guard against duplicate pool names
+        if name in self.pools:
+            logger.warning("Pool '%s' already exists — skipping duplicate creation", name)
+            return self.pools[name]
+
         pool = ResourcePool(
             name=name,
             agent_type=agent_type,

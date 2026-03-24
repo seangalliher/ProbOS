@@ -128,13 +128,45 @@ class EmergentDetector:
         # Dream report history for consolidation anomaly baselines
         self._dream_history: list[dict] = []
 
+        # Pattern deduplication (AD-411): suppress duplicate patterns within cooldown
+        self._pattern_cooldown_seconds: float = 600.0  # 10 minutes default
+        self._last_pattern_fired: dict[tuple[str, str], float] = {}  # (pattern_type, dedup_key) → monotonic timestamp
+
     def set_live_agents(self, agent_ids: set[str]) -> None:
         """Update the set of live agent IDs from the runtime pool registry."""
         self._live_agent_ids = agent_ids
 
+    def set_pattern_cooldown(self, seconds: float) -> None:
+        """Set the deduplication cooldown window (seconds)."""
+        self._pattern_cooldown_seconds = max(0, seconds)
+
+    def _is_duplicate_pattern(self, pattern_type: str, dedup_key: str) -> bool:
+        """Check if this pattern was already reported within the cooldown window.
+
+        Returns True if this pattern should be suppressed (duplicate).
+        """
+        now = time.monotonic()
+        cache_key = (pattern_type, dedup_key)
+        last_fired = self._last_pattern_fired.get(cache_key)
+        if last_fired is not None and (now - last_fired) < self._pattern_cooldown_seconds:
+            return True  # Suppress — fired too recently
+        self._last_pattern_fired[cache_key] = now
+        return False
+
+    def _prune_stale_dedup_entries(self) -> None:
+        """Remove expired entries from the dedup cache to prevent unbounded growth."""
+        now = time.monotonic()
+        cutoff = now - self._pattern_cooldown_seconds * 2
+        stale_keys = [k for k, t in self._last_pattern_fired.items() if t < cutoff]
+        for k in stale_keys:
+            del self._last_pattern_fired[k]
+
     def analyze(self, dream_report: Any = None) -> list[EmergentPattern]:
         """Main analysis entry point. Runs all detectors and returns detected patterns."""
         now = time.monotonic()
+
+        # AD-411: Prune expired dedup entries
+        self._prune_stale_dedup_entries()
 
         # Cache episode total for early-session guards (AD-288)
         if dream_report is not None:
@@ -154,6 +186,11 @@ class EmergentDetector:
 
         clusters = self.detect_cooperation_clusters(self._live_agent_ids)
         for cluster in clusters:
+            # AD-411: Dedup by cluster membership (sorted agent IDs)
+            members = sorted(cluster.get("members", []))
+            dedup_key = ",".join(m[:8] for m in members) if members else str(cluster.get("size", 0))
+            if self._is_duplicate_pattern("cooperation_cluster", dedup_key):
+                continue
             patterns.append(EmergentPattern(
                 pattern_type="cooperation_cluster",
                 description=f"Cooperation cluster: {cluster['size']} nodes, avg weight {cluster['avg_weight']:.3f}",
@@ -356,6 +393,12 @@ class EmergentDetector:
                 if deviation > 2.0:
                     direction = "high" if score > mean else "low"
                     severity = "significant" if deviation > 3.0 else "notable"
+
+                    # AD-411: Suppress duplicate trust anomaly for same agent+direction
+                    dedup_key = f"{agent_id}:{direction}"
+                    if self._is_duplicate_pattern("trust_anomaly", dedup_key):
+                        continue
+
                     # Causal back-references (AD-295c)
                     recent_events = self._trust.get_events_for_agent(agent_id, n=5)
                     causal_events = [
@@ -396,6 +439,9 @@ class EmergentDetector:
             for agent_id, record in raw.items():
                 obs = record["observations"]
                 if obs_mean > 0 and obs > obs_mean + 2 * obs_std:
+                    # AD-411: Suppress duplicate hyperactivity alerts
+                    if self._is_duplicate_pattern("trust_anomaly", f"hyperactive:{agent_id}"):
+                        continue
                     patterns.append(EmergentPattern(
                         pattern_type="trust_anomaly",
                         description=f"Agent {agent_id[:8]} is hyperactive — {obs:.0f} observations vs population mean {obs_mean:.0f}",
@@ -424,6 +470,9 @@ class EmergentDetector:
                         delta = abs(current_score - prev_record_score)
                         if delta > 0.15:
                             direction = "increased" if current_score > prev_record_score else "decreased"
+                            # AD-411: Suppress duplicate change-point alerts
+                            if self._is_duplicate_pattern("trust_anomaly", f"changepoint:{agent_id}"):
+                                continue
                             patterns.append(EmergentPattern(
                                 pattern_type="trust_anomaly",
                                 description=f"Agent {agent_id[:8]} trust {direction} by {delta:.3f} (change point)",
@@ -455,6 +504,9 @@ class EmergentDetector:
             prev_agents = self._prev_intent_agent_map.get(intent, set())
             new_agents = agents - prev_agents
             for agent in new_agents:
+                # AD-411: Suppress duplicate routing shift alerts
+                if self._is_duplicate_pattern("routing_shift", f"{agent[:8]}:{intent}"):
+                    continue
                 # Include trust and Hebbian context (AD-295c)
                 agent_trust = self._trust.get_score(agent)
                 hebbian_weight = self._router.get_weight(intent, agent, rel_type=REL_INTENT)
@@ -476,6 +528,8 @@ class EmergentDetector:
         # Check for new intents that didn't exist before
         new_intents = set(current_map.keys()) - set(self._prev_intent_agent_map.keys())
         for intent in new_intents:
+            if self._is_duplicate_pattern("routing_shift", f"new_intent:{intent}"):
+                continue
             patterns.append(EmergentPattern(
                 pattern_type="routing_shift",
                 description=f"New intent type appeared: '{intent}'",
@@ -496,18 +550,21 @@ class EmergentDetector:
             entropy_delta = abs(current_entropy - prev_entropy)
             if entropy_delta > 0.5 and prev_entropy > 0:
                 direction = "increased" if current_entropy > prev_entropy else "decreased"
-                patterns.append(EmergentPattern(
-                    pattern_type="routing_shift",
-                    description=f"Routing entropy {direction} by {entropy_delta:.2f} ({prev_entropy:.2f} → {current_entropy:.2f})",
-                    confidence=min(1.0, entropy_delta / 1.0),
-                    evidence={
-                        "previous_entropy": prev_entropy,
-                        "current_entropy": current_entropy,
-                        "delta": entropy_delta,
-                    },
-                    timestamp=now,
-                    severity="significant" if entropy_delta > 1.0 else "notable",
-                ))
+                # AD-411: Quantize to 0.5 buckets to avoid near-duplicate entropy alerts
+                bucket = f"entropy:{direction}:{round(current_entropy * 2) / 2:.1f}"
+                if not self._is_duplicate_pattern("routing_shift", bucket):
+                    patterns.append(EmergentPattern(
+                        pattern_type="routing_shift",
+                        description=f"Routing entropy {direction} by {entropy_delta:.2f} ({prev_entropy:.2f} → {current_entropy:.2f})",
+                        confidence=min(1.0, entropy_delta / 1.0),
+                        evidence={
+                            "previous_entropy": prev_entropy,
+                            "current_entropy": current_entropy,
+                            "delta": entropy_delta,
+                        },
+                        timestamp=now,
+                        severity="significant" if entropy_delta > 1.0 else "notable",
+                    ))
 
         return patterns
 

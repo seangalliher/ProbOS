@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 25a (Persistent Task Engine) COMPLETE. Phase 28b (Proactive Cognitive Loop) COMPLETE. BF-017 closed. AD-411, AD-412 on roadmap. 3086 pytest + 118 vitest = 3204 total tests.
+## Current Status: Phase 25a (Persistent Task Engine) COMPLETE. Phase 28b (Proactive Cognitive Loop) COMPLETE. BF-017 closed. AD-411 COMPLETE. AD-412 through AD-419 on roadmap. 3095 pytest + 118 vitest = 3213 total tests.
 
 ---
 
