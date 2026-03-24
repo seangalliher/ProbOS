@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-419 (Duty Schedule & Justification) COMPLETE. AD-413, AD-411 COMPLETE. Phase 25a, 28b COMPLETE. BF-020 closed. AD-412, AD-414 through AD-418 on roadmap. 3118 pytest + 118 vitest = 3236 total tests.
+## Current Status: AD-417 (Dream Scheduler Proactive Awareness) COMPLETE. AD-419, AD-414, AD-413, AD-411 COMPLETE. Phase 25a, 28b COMPLETE. BF-020, BF-021 closed. BF-022 open. AD-412, AD-415, AD-416, AD-418 on roadmap. AD-424–427 designed. 3145 pytest + 118 vitest = 3263 total tests.
 
 ---
 
