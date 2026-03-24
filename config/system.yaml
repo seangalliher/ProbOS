@@ -86,6 +86,7 @@ memory:
 dreaming:
   idle_threshold_seconds: 300
   dream_interval_seconds: 600
+  proactive_extends_idle: true    # AD-417: Proactive thinks extend idle timer
   replay_episode_count: 50
   pathway_strengthening_factor: 0.03
   pathway_weakening_factor: 0.02

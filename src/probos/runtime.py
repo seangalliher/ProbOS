@@ -1056,6 +1056,7 @@ class ProbOSRuntime:
                 engine=engine,
                 idle_threshold_seconds=dream_cfg.idle_threshold_seconds,
                 dream_interval_seconds=dream_cfg.dream_interval_seconds,
+                proactive_extends_idle=dream_cfg.proactive_extends_idle,
             )
             self.dream_scheduler.start()
 
@@ -3280,6 +3281,11 @@ class ProbOSRuntime:
     def _on_post_micro_dream(self, micro_report: dict) -> None:
         """Post-micro-dream callback: update emergent detector (AD-288)."""
         if not self._emergent_detector:
+            return
+        # AD-417: Skip analysis during proactive-busy periods to reduce noise.
+        # Micro-dreams keep running (Hebbian updates), but EmergentDetector
+        # analysis waits for true idle when data is more stable.
+        if self.dream_scheduler and self.dream_scheduler.is_proactively_busy:
             return
         try:
             self._emergent_detector.analyze(dream_report=micro_report)

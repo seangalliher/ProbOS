@@ -155,6 +155,10 @@ class ProactiveCognitiveLoop:
                 # and prevents agents from ignoring duty schedule constraints.
                 return
 
+        # AD-417: Record proactive activity for dream scheduler awareness
+        if hasattr(self._runtime, 'dream_scheduler') and self._runtime.dream_scheduler:
+            self._runtime.dream_scheduler.record_proactive_activity()
+
         intent = IntentMessage(
             intent="proactive_think",
             params={
