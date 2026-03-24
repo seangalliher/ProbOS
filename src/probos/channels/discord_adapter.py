@@ -69,10 +69,10 @@ class DiscordAdapter(ChannelAdapter):
         """Create the discord.py client and start it as a background task."""
         try:
             import discord
-        except ImportError:
+        except (ImportError, Exception) as exc:
             logger.error(
-                "discord.py is not installed. Install with: "
-                "uv add 'discord.py>=2.0'"
+                "discord.py failed to load: %s. Install/fix with: "
+                "uv add 'discord.py>=2.0'", exc
             )
             return
 
