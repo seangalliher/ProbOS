@@ -200,6 +200,53 @@ Every tool, regardless of category, has these measurable properties:
 | **Reversibility** | Can effects be undone? | fully reversible, partially, irreversible |
 | **Audit** | Logging requirements | none, internal log, audit trail, Captain notification |
 | **Scope** | Availability | ship-wide, department, individual |
+| **Concurrency** | Access mode | concurrent (multiple agents), exclusive (LOTO — one at a time) |
+
+### Exclusive Access (LOTO — Lock Out / Tag Out)
+
+Some tools are **exclusive** — only one agent can hold the lock at a time. This is the software equivalent of industrial LOTO: when an agent checks out an exclusive tool, others are blocked until it's released.
+
+**Which tools need LOTO:**
+
+| Tool | Why Exclusive |
+|------|--------------|
+| Computer Use (desktop) | One mouse, one keyboard — concurrent control is chaos |
+| Deployment pipeline | Only one deployment at a time prevents conflicts |
+| Database migrations | Concurrent migrations corrupt schema state |
+| Git force push | Concurrent force pushes create race conditions |
+
+**Which tools do NOT need LOTO:**
+
+| Tool | Why Concurrent |
+|------|---------------|
+| CodebaseIndex | Read-only queries, no contention |
+| MCP Servers | Stateless queries, server handles concurrency |
+| LLM Gateway | API handles parallel requests |
+| BuilderAgent | Multiple agents can generate code simultaneously |
+| Ward Room | Communication is inherently concurrent |
+
+**LOTO mechanics:**
+
+```
+1. Agent requests exclusive tool    → Registry.acquire("desktop-control", agent="scotty")
+2. Registry checks: is tool locked? → No → grant lock, record holder + timestamp
+3. Tool is now locked to Scotty     → Other agents get "tool locked by Scotty" on attempt
+4. Scotty completes work            → Registry.release("desktop-control", agent="scotty")
+5. Tool available again             → Next queued agent (if any) gets the lock
+```
+
+- **Timeout:** Locks auto-expire after a configurable duration (prevents zombie locks)
+- **Captain break-lock:** Captain can force-release any lock from HXI (`/tool-release`)
+- **Queue:** Agents waiting for an exclusive tool are queued by priority (Earned Agency tier)
+- **Audit:** Lock acquire/release events logged with agent, tool, duration, outcome
+
+The registration schema gains:
+```
+ToolRegistration:
+  ...
+  concurrency: concurrent | exclusive
+  lock_timeout_seconds: float | None     # Auto-release after this duration (exclusive only)
+```
 
 ## Department Tool Scoping
 
@@ -247,17 +294,76 @@ Crew members can request access to another department's tools:
 
 ### How This Maps to the Registry
 
-The Tool Registration Schema gains a `scope` field:
+The Tool Registration Schema gains scope and access fields:
 
 ```
 ToolRegistration:
   ...
-  scope: ship-wide | department | individual
-  department: str | None          # If department-scoped, which department
-  assigned_to: list[str] | None   # If individual-scoped, which agent IDs/types
+  scope: ship-wide | department               # Visibility — who can see this tool
+  department: str | None                       # If department-scoped, which department
+  restricted_to: list[str] | None             # If set, only these agents can invoke (within scope)
 ```
 
-Standing Orders (Tier 3, Department) define the default tool set per department. The Tool Registry enforces these at runtime.
+### Permission Resolution Chain
+
+Permissions resolve through a layered chain. Each layer narrows access — never widens it.
+
+```
+1. Scope Filter        → Can this agent SEE the tool? (ship-wide or agent's department)
+2. Restriction Filter  → Is the agent in the restricted_to list? (if set)
+3. Rank Gate           → Does the agent's Earned Agency tier meet the minimum?
+4. Permission Level    → What CRUD+O level does this agent get?
+5. Captain Override    → Any per-agent grants or restrictions?
+```
+
+**Layer interaction:**
+
+| Scope | restricted_to | Who Can Use |
+|-------|-------------|-------------|
+| ship-wide | None | All crew (gated by rank) |
+| ship-wide | ["scotty"] | All crew can see, only Scotty can invoke |
+| department: medical | None | All medical crew (gated by rank) |
+| department: medical | ["diagnostician"] | Only Bones — medical-scoped, individually restricted |
+| department: security | ["security_officer"] | Only Worf — security-scoped, individually restricted |
+
+**Example: Medical diagnostic tool**
+
+A sensitive cognitive assessment scanner. Medical department only, Bones only:
+```
+tool_id: "cognitive-deep-scan"
+scope: department
+department: medical
+restricted_to: ["diagnostician"]    # Only Bones
+side_effects: read-only
+default_permissions:
+  ensign: ---
+  lieutenant: OR-
+  commander: ORW
+  senior: ORWD
+```
+
+Chapel (Medical Ensign) can see the tool exists in her department but gets `---`. A future Medical Lieutenant could see `OR-` but is blocked by `restricted_to`. Only Bones passes all layers.
+
+**Example: Vulnerability scanner**
+
+Security department only, Worf only, destructive capability:
+```
+tool_id: "vuln-scanner-active"
+scope: department
+department: security
+restricted_to: ["security_officer"]    # Only Worf
+side_effects: destructive              # Active scanning can affect targets
+default_permissions:
+  commander: ORW
+  senior: ORWD
+```
+
+**Captain override still trumps everything.** The Captain can:
+- Add an agent to `restricted_to` at runtime
+- Remove restrictions temporarily (time-scoped)
+- Grant cross-department + individual access in a single override
+
+Standing Orders (Tier 3, Department) define the default tool set per department. The Tool Registry enforces the full resolution chain at runtime.
 
 ## Design Principles
 
@@ -351,10 +457,15 @@ ToolRegistration:
   capabilities: list[str]         # Semantic tags: ["code-generation", "file-write", "llm-inference"]
   side_effects: read-only | write | destructive
   cost_model: free | metered | reciprocal
+  scope: ship-wide | department   # Visibility level
+  department: str | None          # If department-scoped, which department
+  restricted_to: list[str] | None # If set, only these agents can invoke (within scope)
   default_permissions: dict[Rank, PermissionLevel]
   health_check: HealthCheckConfig | None
   sandbox: SandboxConfig | None
   enabled: bool                   # Captain kill switch
+  concurrency: concurrent | exclusive  # LOTO — exclusive tools need lock acquisition
+  lock_timeout_seconds: float | None   # Auto-release for exclusive tools (prevents zombie locks)
   registered_at: float            # When this tool was added
   last_healthy: float | None      # Last successful health check
 ```
