@@ -285,3 +285,108 @@ export interface NotificationView {
   created_at: number;
   acknowledged: boolean;
 }
+
+// Agent Profile Panel types (AD-406)
+
+export interface AgentProfileMessage {
+  id: string;
+  role: 'user' | 'agent';
+  text: string;
+  timestamp: number;
+}
+
+export interface AgentConversation {
+  agentId: string;
+  messages: AgentProfileMessage[];
+  unreadCount: number;
+  minimized: boolean;
+}
+
+export interface AgentProfileData {
+  id: string;
+  agentType: string;
+  callsign: string;
+  displayName: string;
+  rank: string;
+  agencyLevel: string;
+  department: string;
+  personality: Record<string, number>;
+  specialization: string[];
+  trust: number;
+  trustHistory: number[];
+  confidence: number;
+  state: string;
+  tier: string;
+  pool: string;
+  hebbianConnections: { targetId: string; weight: number; relType: string }[];
+  memoryCount: number;
+  uptime: number;
+}
+
+// Ward Room types (AD-407)
+
+export interface WardRoomChannel {
+  id: string;
+  name: string;
+  channel_type: 'ship' | 'department' | 'custom' | 'dm';
+  department: string;
+  created_by: string;
+  created_at: number;
+  archived: boolean;
+  description: string;
+}
+
+export interface WardRoomThread {
+  id: string;
+  channel_id: string;
+  author_id: string;
+  title: string;
+  body: string;
+  created_at: number;
+  last_activity: number;
+  pinned: boolean;
+  locked: boolean;
+  reply_count: number;
+  net_score: number;
+  author_callsign: string;
+  channel_name: string;
+}
+
+export interface WardRoomPost {
+  id: string;
+  thread_id: string;
+  parent_id: string | null;
+  author_id: string;
+  body: string;
+  created_at: number;
+  edited_at: number | null;
+  deleted: boolean;
+  delete_reason: string;
+  deleted_by: string;
+  net_score: number;
+  author_callsign: string;
+  children?: WardRoomPost[];
+}
+
+export interface WardRoomCredibility {
+  agent_id: string;
+  total_posts: number;
+  total_endorsements: number;
+  credibility_score: number;
+  restrictions: string[];
+}
+
+// Assignment types (AD-408)
+
+export interface Assignment {
+  id: string;
+  name: string;
+  assignment_type: 'bridge' | 'away_team' | 'working_group';
+  members: string[];
+  created_by: string;
+  created_at: number;
+  completed_at: number | null;
+  mission: string;
+  ward_room_channel_id: string;
+  status: 'active' | 'completed' | 'dissolved';
+}

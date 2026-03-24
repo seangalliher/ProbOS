@@ -180,10 +180,10 @@ async def test_scheduled_task_executes_via_runtime():
 @pytest.mark.asyncio
 async def test_scheduler_agent_remind_creates_task():
     """SchedulerAgent 'remind' action schedules a task."""
-    from probos.agents.bundled.organizer_agents import SchedulerAgent
+    from probos.agents.utility.organizer_agents import SchedulerAgent
     from probos.types import IntentMessage
 
-    agent = SchedulerAgent(agent_id="sched-0", pool="bundled_scheduler")
+    agent = SchedulerAgent(agent_id="sched-0", pool="utility_scheduler")
     # Give it a mock runtime with a task_scheduler
     sched = TaskScheduler()
 
@@ -208,9 +208,9 @@ async def test_scheduler_agent_remind_creates_task():
 @pytest.mark.asyncio
 async def test_scheduler_agent_list_returns_tasks():
     """SchedulerAgent 'list' action returns scheduled tasks."""
-    from probos.agents.bundled.organizer_agents import SchedulerAgent
+    from probos.agents.utility.organizer_agents import SchedulerAgent
 
-    agent = SchedulerAgent(agent_id="sched-0", pool="bundled_scheduler")
+    agent = SchedulerAgent(agent_id="sched-0", pool="utility_scheduler")
     sched = TaskScheduler()
     sched.schedule("task-a", delay_seconds=30)
     sched.schedule("task-b", delay_seconds=60)
@@ -229,9 +229,9 @@ async def test_scheduler_agent_list_returns_tasks():
 @pytest.mark.asyncio
 async def test_scheduler_agent_cancel_removes_task():
     """SchedulerAgent 'cancel' action removes a scheduled task."""
-    from probos.agents.bundled.organizer_agents import SchedulerAgent
+    from probos.agents.utility.organizer_agents import SchedulerAgent
 
-    agent = SchedulerAgent(agent_id="sched-0", pool="bundled_scheduler")
+    agent = SchedulerAgent(agent_id="sched-0", pool="utility_scheduler")
     sched = TaskScheduler()
     t = sched.schedule("doomed", delay_seconds=120)
 
@@ -250,9 +250,9 @@ async def test_scheduler_agent_cancel_removes_task():
 @pytest.mark.asyncio
 async def test_scheduler_agent_persist_reload():
     """Reminders persist to file and can be reloaded."""
-    from probos.agents.bundled.organizer_agents import SchedulerAgent
+    from probos.agents.utility.organizer_agents import SchedulerAgent
 
-    agent = SchedulerAgent(agent_id="sched-0", pool="bundled_scheduler")
+    agent = SchedulerAgent(agent_id="sched-0", pool="utility_scheduler")
     # Verify the agent still has _REMINDERS_PATH for persistence
     assert hasattr(agent, "_REMINDERS_PATH")
 

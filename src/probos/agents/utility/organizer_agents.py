@@ -1,4 +1,4 @@
-"""Organizer bundled agents (AD-251).
+"""Organizer utility agents (AD-251).
 
 NoteTakerAgent and SchedulerAgent — both file-backed via mesh I/O.
 """

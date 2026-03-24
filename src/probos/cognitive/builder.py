@@ -1941,6 +1941,10 @@ Rules for MODIFY blocks:
         """
         obs = await super().perceive(intent)
 
+        # Skip domain enrichment for conversational intents
+        if obs.get("intent") in ("direct_message", "ward_room_notification"):
+            return obs
+
         params = obs.get("params", {})
         reference_files = params.get("reference_files", [])
         target_files = params.get("target_files", [])
@@ -2119,6 +2123,11 @@ Rules for MODIFY blocks:
 
     def _build_user_message(self, observation: dict) -> str:
         """Format the build spec and reference files into an LLM prompt."""
+        # Delegate to parent for conversational intents
+        intent_name = observation.get("intent", "unknown")
+        if intent_name in ("direct_message", "ward_room_notification"):
+            return super()._build_user_message(observation)
+
         params = observation.get("params", {})
         title = params.get("title", "Untitled")
         description = params.get("description", "")
@@ -2152,8 +2161,8 @@ Rules for MODIFY blocks:
 
     async def act(self, decision: dict) -> dict:
         """Parse LLM output into file blocks — does NOT write files."""
-        # AD-398: pass through conversational responses for 1:1 sessions
-        if decision.get("intent") == "direct_message":
+        # AD-398: pass through conversational responses for 1:1 and ward room
+        if decision.get("intent") in ("direct_message", "ward_room_notification"):
             return {"success": True, "result": decision.get("llm_output", "")}
         if decision.get("action") == "error":
             logger.warning("Builder act: LLM returned error: %s", decision.get("reason"))

@@ -349,8 +349,8 @@ class ScoutAgent(CognitiveAgent):
 
     async def act(self, decision: dict[str, Any]) -> dict[str, Any]:
         """Parse LLM classification, store report, deliver notifications."""
-        # AD-398: pass through conversational responses for 1:1 sessions
-        if decision.get("intent") == "direct_message":
+        # AD-398: pass through conversational responses for 1:1 and ward room
+        if decision.get("intent") in ("direct_message", "ward_room_notification"):
             return {"success": True, "result": decision.get("llm_output", "")}
         llm_output = decision.get("llm_output", "")
         if "No new repositories" in llm_output or not llm_output.strip():

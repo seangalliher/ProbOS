@@ -1067,7 +1067,7 @@ In Star Trek, the EPS distributes power from the warp core through conduits to e
 
 *"Senior officers to the Ward Room."*
 
-*Inspired by Claude Code Agent Teams' inter-agent mailbox, AgentScope's MsgHub broadcast groups, and the starship ward room where officers discuss matters outside the chain of command.*
+*Inspired by Claude Code Agent Teams' inter-agent mailbox, AgentScope's MsgHub broadcast groups, Reddit's vote/karma/subreddit model (archived OSS), Radicle's COBs-in-Git archival, Minds' ActivityPub federation and token rewards, Aether's CompiledContentSignals and ExplainedSignalEntity patterns, and the starship ward room where officers discuss matters outside the chain of command. See `docs/development/ward-room-design.md` for full AD-407 design.*
 
 Currently ProbOS agents communicate only via the intent bus (broadcast to pools) or consensus (voting). There is no way for one agent to send a targeted message to a specific agent, no department channels, and no group conversations. Agents can't develop through peer interaction. The Ward Room is the missing communication fabric — not just a mailbox, but the social infrastructure through which agents learn, coordinate, and grow.
 
@@ -1145,19 +1145,17 @@ ProbOS has red team agents for adversarial verification, but not a structured pa
 - **Use case: design review** — Architect proposes, multiple reviewers critique from different angles (security, performance, maintainability), synthesize into a stronger proposal
 - **Quality gate hook** — upon convergence, the winning hypothesis must pass a verification step before being accepted (similar to Claude Code's `TaskCompleted` hook pattern)
 
-**Bridge Alerts — Proactive Captain Notifications**
+**Bridge Alerts — Proactive Captain Notifications (AD-410) ✅**
 
 *"Captain, sensors detect an anomaly in the aft section."*
 
-ProbOS monitors everything internally — behavioral anomalies, emergent patterns, trust shifts, confidence degradation — but never surfaces these findings to the Captain unless asked. The ship should alert its Captain to significant events proactively, not wait to be queried.
+**Implemented:** BridgeAlertService with 5 signal processors (vitals, trust change, emergent patterns, behavioral, dedup). Three severity levels: `info` (department channel), `advisory` (All Hands + info notification), `alert` (All Hands + action_required notification). Posts to Ward Room as "Ship's Computer" — crew agents respond organically via AD-407d. Config: `BridgeAlertConfig` with cooldown, trust drop thresholds. Runtime hooks at consensus verification, QA trust updates, post-dream (emergent + behavioral + vitals). 31 tests.
 
-- **Alert categories** — `trust_shift` (agent trust changed significantly), `confidence_degradation` (agent dropped below threshold), `emergent_pattern` (EmergentDetector found something), `behavioral_anomaly` (BehavioralMonitor flagged unusual behavior), `capability_gap` (new capability requested but not available), `system_health` (resource pressure, high error rate)
-- **Severity levels** — `info` (logged, Captain sees on next status check), `advisory` (pushed to HXI chat as a system message), `alert` (pushed with sound/visual indicator in HXI)
-- **Rate limiting** — alerts are batched and deduplicated over a configurable window (default 60s) to prevent alert fatigue. "Agent X confidence dropped" appears once, not 10 times as confidence ticks down
-- **Smart suppression** — don't alert on known transient states (agent rebuilding, dream cycle in progress, startup warm-up period)
-- **Bridge Alert panel** — new section in HXI showing recent alerts with dismiss/acknowledge
-- **Integration points** — BehavioralMonitor → Bridge Alerts, EmergentDetector → Bridge Alerts, TrustNetwork → Bridge Alerts (on significant trust events), EscalationManager → Bridge Alerts (on timeout/failure)
-- **Captain's preference** — respects Adaptive Communication Style settings for alert verbosity
+**Remaining (future):**
+- Smart suppression — don't alert during known transient states (dream cycle, startup warm-up)
+- Bridge Alert panel — dedicated HXI section for recent alerts with dismiss/acknowledge
+- Captain's preference — respects Adaptive Communication Style settings for alert verbosity
+- Agent context injection — feed real system data into agent prompts during Ward Room responses
 
 **File Ownership Registry**
 
@@ -1397,6 +1395,8 @@ Self-originated goals emerge from: dream consolidation ("I keep seeing pattern X
 - Phase 1 (Phase 28): Multi-dimensional rewards, hindsight replay, emergent capabilities, semantic Hebbian
 - Phase 2 (Phase 30/33): Tournament evaluation, memetic knowledge sharing, Counselor-driven curiosity
 - Phase 3 (Phase 33): Earned Agency tiers, self-originated goals, decreasing oversight
+  - **Ward Room Gating (AD-357 Phase 3a) — COMPLETE:** `can_respond_ambient()` in `earned_agency.py` enforces trust-tier rules at `_find_ward_room_targets()` and `_find_ward_room_targets_for_agent()`. Ensign = @mention only, Lieutenant = own dept captain posts, Commander = full WR, Senior = unrestricted. @mentions always bypass gating. `AgencyLevel` enum, API + HXI profile exposure. 25 tests.
+  - **Proactive Cognitive Loop (Phase 28b) — IN PROGRESS:** `ProactiveCognitiveLoop` service in `proactive.py`. Every 120s, iterates crew agents sequentially, gathers context (episodic memory, bridge alerts, system events), sends `proactive_think` intent. Agency-gated (Ensigns skip). Per-agent 300s cooldown. Posts observations to agent's department channel. Adds `can_think_proactively()` to `earned_agency.py`. Build prompt: `prompts/phase-28b-proactive-cognitive-loop.md`.
 
 ---
 
@@ -1653,11 +1653,11 @@ User ──→ Yeoman (Bridge) ──→ ┌─ Conversational response (direct)
 
 ---
 
-### Bundled Agent Reorganization (Future)
+### Utility Agent Reorganization (Future)
 
 *"All hands, report to your departments."*
 
-Bundled agents currently share a single "Bundled" pool group, but they serve different departments of the ship. "Bundled" is a **distribution label** (ships with ProbOS out of the box), not an organizational role. Future work will reassign bundled agents to their functional crew teams:
+Utility agents currently share a single "Utility" pool group, but they serve different departments of the ship. "Utility" is a **tier label** (general-purpose tools), not an organizational role. Future work will reassign utility agents to their functional crew teams:
 
 - **Communications** — TranslateAgent, SummarizerAgent, VoiceProvider
 
@@ -1677,7 +1677,7 @@ The HXI currently uses browser `SpeechSynthesis` (zero dependencies, variable qu
 - **Science/Research** — WebSearchAgent, PageReaderAgent, NewsAgent, WeatherAgent
 - **Operations** — CalculatorAgent, TodoAgent, NoteTakerAgent, SchedulerAgent
 
-The `bundled` designation becomes agent metadata (`origin: "bundled"`) rather than a crew assignment. The pool group system and HXI clustering already support this — it's a data change, not an architectural change.
+The `utility` designation becomes agent metadata (`origin: "utility"`) rather than a crew assignment. The pool group system and HXI clustering already support this — it's a data change, not an architectural change.
 
 ---
 
@@ -2493,7 +2493,8 @@ Items identified during development that aren't urgent but would improve code qu
 | ~~Step-level checkpointing~~ | ~~Persist DAG/pipeline state at each step. Resume from checkpoint after crash.~~ | LangGraph (2026-03-22) | **Phase 1 done — AD-405.** JSON checkpoint per DAG, write per-node, delete on completion, stale scan on startup. Phase 2: `/resume` command, Captain approval gates, builder chunk checkpointing. |
 | ~~Memory contradiction resolution~~ | ~~Two-stage LLM pipeline: (1) extract atomic facts from conversation, (2) reconcile each fact against existing memories via ADD/UPDATE/DELETE/NONE decisions. Prevents memory contradictions from accumulating.~~ | Mem0 (2026-03-22) | **Phase 1 done — AD-403.** Deterministic Jaccard+outcome detection in dream cycle. Phase 2: LLM-based semantic reconciliation, episode superseding. |
 | ~~Fix Windows-specific test failures~~ | ~~19 tests fail on Windows due to subprocess mock mismatches (builder guardrails, shell command agent) and git worktree environment issues. Fix mocks to be platform-aware or add skip guards where real git needed.~~ | Test suite analysis (2026-03-23) | **Done — AD-404.** Missing mocks added, `shutil.which("git")` skip guards on tests needing real git, subprocess.Popen mocked for shell builtins. |
-| Agent Profile Panel | Click an agent orb → full interaction surface. Tabs: **Chat** (1:1 IM, moveable window, minimize/resume with orb indicator), **Work** (backlog, in-progress, completed tasks), **Profile** (standing orders, crew profile, department, rank), **Health** (trust, confidence, Hebbian weights, episode stats). Agent-initiated notifications surface in both the orb (badge) and Bridge notifications. Conversation state persists — minimize shows resume indicator on orb, close removes it. Essentially each crew member's personal cockpit. | Captain feedback (2026-03-23) | **AD-406.** Significant HXI feature. Phase 35 (UX & Adoption) or standalone. Depends on BF-013 (callsign awareness) for crew name display. |
+| ~~Agent Profile Panel~~ | ~~Click an agent orb → full interaction surface. Tabs: Chat (1:1 IM), Work (tasks), Profile (standing orders, crew profile), Health (trust, Hebbian weights). Glass morphism floating panel, orb indicators.~~ | Captain feedback (2026-03-23) | **Done — AD-406.** |
+| Ward Room — Agent Communication Fabric | Reddit-style threaded discussion for agents and Captain. Channels (ship, department, custom) as subreddits. Reddit vote model (up/down/unvote, no self-endorse, ±1 credibility). Aether's CompiledContentSignals + ExplainedSignalEntity for moderation. Two-tier storage: SQLite hot + KnowledgeStore archive with LLM summarization. Agent perception integration. DMs share AD-406 IM pipeline. 4-phase build: Foundation → Agent Integration → HXI Surface → Moderation & Social. | Reddit, Radicle, Minds, Aether research (2026-03-23) | **AD-407a (Foundation) + AD-407c (HXI Surface) done.** Backend: 7 tables, 11 API routes, credibility system. Frontend: 7 React components, left-side drawer, channels, threads, endorsements, unread. Next: AD-407b (Agent Integration). |
 | Interrupt/resume mid-execution | `interrupt()` function + `Command(resume=...)` pattern backed by checkpointing. Scratchpad-based interrupt counter matches resume values by index for multi-interrupt scenarios. | LangGraph (2026-03-22) | Maps to The Conn (Phase 33) and Night Orders. Captain can't inspect or redirect DAGs once started. Requires checkpointing first. |
 | Per-tool/per-agent execution metrics | Track total/successful/failed executions, min/max/avg response time, failure rate per handler. Hourly rollups. Raw signal for trust model. | IBM ContextForge (2026-03-22) | Phase 32 (Ship's Telemetry). Complements Cognitive Journal — metrics layer feeds trust model and cost accounting. |
 | Self-editing memory with constraint awareness | Agents get tools to modify their own labeled memory blocks (`core_memory_replace`, `memory_rethink`, `memory_apply_patch`). Blocks have char limits, read-only flags, descriptions. Agent sees its own constraints. | Letta (2026-03-22) | Enhances Standing Orders evolution pipeline. Agents edit scoped memory within allocated limits. Ship's Computer service. |
@@ -2563,6 +2564,9 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-009 | @callsign routing missing from HXI `/api/chat` and embedded mentions (e.g., "Hello @wesley") not detected in any entry point | High | **Closed** |
 | BF-010 | 1:1 conversations use domain task instructions (===SCOUT_REPORT=== etc.) instead of conversational prompt | Medium | **Closed** |
 | BF-011 | Discord adapter `stop()` hangs on Windows — SSL/WebSocket teardown blocks event loop, defeating asyncio timeouts | High | **Closed** |
+| BF-014 | "Bundled agents" terminology → "Utility agents" to align with three-tier model (Core/Utility/Crew) | Low | **Closed** |
+| BF-015 | Counselor (Troi) 1:1 silent + ungrouped on canvas. (1) `report()` override wrapped conversational responses in `{"data": ...}` instead of preserving `{"result": ...}`, so `handle_intent()` extracted None → "(no response)". (2) No Bridge pool group — counselor pool unmapped → ungrouped on canvas. | Medium | **Closed** |
+| BF-016 | Ward Room thread explosion — all 8 crew agents respond to every Captain post, even @mention-directed ones, and no per-thread cap. (a) @mention exclusivity in `_find_ward_room_targets()`. (b) Per-thread agent response cap via `max_agent_responses_per_thread` (default 3). | High | **Closed** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 

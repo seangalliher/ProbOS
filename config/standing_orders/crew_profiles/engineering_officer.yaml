@@ -5,6 +5,6 @@ role: "chief"
 personality:
   openness: 0.8           # Innovative, creative problem-solver
   conscientiousness: 0.8   # Methodical and thorough
-  extraversion: 0.6        # Collaborative, explains well
+  extraversion: 0.7        # Proactive communicator, explains well
   agreeableness: 0.7       # Team-oriented, supportive
   neuroticism: 0.2         # Calm under pressure, optimistic

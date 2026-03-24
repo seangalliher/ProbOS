@@ -9,7 +9,58 @@ import { GlassLayer } from './components/GlassLayer';
 import { IntentSurface } from './components/IntentSurface';
 import { DecisionSurface } from './components/DecisionSurface';
 import { AgentTooltip } from './components/AgentTooltip';
+import { AgentProfilePanel } from './components/profile';
+import { WardRoomPanel } from './components/wardroom';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
+
+function WardRoomToggle() {
+  const open = useStore(s => s.wardRoomOpen);
+  const openWardRoom = useStore(s => s.openWardRoom);
+  const closeWardRoom = useStore(s => s.closeWardRoom);
+  const unread = useStore(s => s.wardRoomUnread);
+  const totalUnread = Object.values(unread).reduce((sum, n) => sum + n, 0);
+
+  if (open) return null;
+
+  return (
+    <div
+      onClick={() => openWardRoom()}
+      style={{
+        position: 'fixed',
+        top: 12, left: 12,
+        zIndex: 25,
+        padding: '6px 12px',
+        background: 'rgba(10, 10, 18, 0.75)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        border: `1px solid rgba(240, 176, 96, ${open ? 0.35 : 0.15})`,
+        borderRadius: 6,
+        cursor: 'pointer',
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: 1.5,
+        fontFamily: "'JetBrains Mono', monospace",
+        color: open ? '#f0b060' : '#8888a0',
+        userSelect: 'none' as const,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+      }}
+    >
+      WARD ROOM
+      {totalUnread > 0 && (
+        <span style={{
+          background: '#f0b060',
+          color: '#0a0a12',
+          borderRadius: 8,
+          padding: '1px 6px',
+          fontSize: 9,
+          fontWeight: 700,
+        }}>{totalUnread}</span>
+      )}
+    </div>
+  );
+}
 
 export default function App() {
   useWebSocket();
@@ -37,6 +88,9 @@ export default function App() {
       <IntentSurface />
       <DecisionSurface />
       <AgentTooltip />
+      <AgentProfilePanel />
+      <WardRoomPanel />
+      <WardRoomToggle />
       <WelcomeOverlay />
     </div>
   );

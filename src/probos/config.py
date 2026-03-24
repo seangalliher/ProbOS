@@ -260,10 +260,38 @@ class KnowledgeConfig(BaseModel):
     restore_on_boot: bool = True    # Warm boot from existing repo
 
 
-class BundledAgentsConfig(BaseModel):
-    """Bundled agent suite configuration (AD-252)."""
+class UtilityAgentsConfig(BaseModel):
+    """Utility agent suite configuration (AD-252)."""
 
-    enabled: bool = True  # Create bundled CognitiveAgent pools at boot
+    enabled: bool = True  # Create utility CognitiveAgent pools at boot
+
+
+class WardRoomConfig(BaseModel):
+    """Ward Room communication fabric configuration (AD-407)."""
+
+    enabled: bool = False  # Disabled by default — enable after HXI surface is ready
+    max_agent_rounds: int = 3           # AD-407d: max consecutive agent-only rounds per thread
+    agent_cooldown_seconds: float = 45  # AD-407d: cooldown for agent-triggered responses
+    max_agent_responses_per_thread: int = 3  # BF-016b: per-agent cap per thread (prevents explosion)
+
+
+class AssignmentConfig(BaseModel):
+    """Dynamic assignment groups configuration (AD-408)."""
+
+    enabled: bool = False  # Disabled by default — enable after HXI surface is ready
+
+
+class BridgeAlertConfig(BaseModel):
+    """Bridge Alerts — proactive Captain & crew notifications (AD-410)."""
+    enabled: bool = False
+    cooldown_seconds: float = 300        # Dedup window per alert type+subject
+    trust_drop_threshold: float = 0.15   # Trust drop triggering advisory
+    trust_drop_alert_threshold: float = 0.25  # Trust drop triggering alert
+
+
+class EarnedAgencyConfig(BaseModel):
+    """Earned Agency — trust-tiered behavioral gating (AD-357)."""
+    enabled: bool = False
 
 
 class DiscordConfig(BaseModel):
@@ -320,7 +348,11 @@ class SystemConfig(BaseModel):
     self_mod: SelfModConfig = SelfModConfig()
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
-    bundled_agents: BundledAgentsConfig = BundledAgentsConfig()
+    utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()
+    ward_room: WardRoomConfig = WardRoomConfig()
+    assignments: AssignmentConfig = AssignmentConfig()
+    bridge_alerts: BridgeAlertConfig = BridgeAlertConfig()
+    earned_agency: EarnedAgencyConfig = EarnedAgencyConfig()
     channels: ChannelsConfig = ChannelsConfig()
     medical: MedicalConfig = MedicalConfig()
 

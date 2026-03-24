@@ -498,7 +498,7 @@ knowledge:
   enabled: true
   repo_path: "{(home / 'knowledge').as_posix()}"
 
-bundled_agents:
+utility_agents:
   enabled: true
 """
     (home / "config.yaml").write_text(config_content, encoding="utf-8")

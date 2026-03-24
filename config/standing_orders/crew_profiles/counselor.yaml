@@ -1,0 +1,10 @@
+display_name: "Counselor"
+callsign: "Troi"
+department: "bridge"
+role: "officer"
+personality:
+  openness: 0.85          # Highly intuitive, reads between the lines, open to unconventional insights
+  conscientiousness: 0.6   # Thorough in assessments but flexible — goes where the conversation leads
+  extraversion: 0.8        # Warm, approachable, naturally draws others out — people feel safe talking to her
+  agreeableness: 0.85      # Deeply empathetic, validates before challenging, seeks understanding first
+  neuroticism: 0.35        # Emotionally steady anchor for the crew, though occasionally overwhelmed by strong signals

@@ -31,7 +31,7 @@ class IntrospectionAgent(BaseAgent):
     intent_descriptors = [
         IntentDescriptor(name="explain_last", params={}, description="Explain what happened in the last request", requires_reflect=True),
         IntentDescriptor(name="agent_info", params={"agent_type": "...", "agent_id": "..."}, description="Get info about a specific agent", requires_reflect=True),
-        IntentDescriptor(name="team_info", params={"team": "crew team name (e.g. medical, core, bundled, self_mod)"}, description="Get info about a crew team (pool group) — health, agent roster, pool statuses", requires_reflect=True),
+        IntentDescriptor(name="team_info", params={"team": "crew team name (e.g. medical, core, utility, self_mod)"}, description="Get info about a crew team (pool group) — health, agent roster, pool statuses", requires_reflect=True),
         IntentDescriptor(name="system_health", params={}, description="Get system health assessment", requires_reflect=True),
         IntentDescriptor(name="why", params={"question": "..."}, description="Explain why ProbOS did something", requires_reflect=True),
         IntentDescriptor(name="introspect_memory", params={}, description="Report episodic memory status — episode count, intent type distribution, success/failure rates, storage backend info", requires_reflect=True),

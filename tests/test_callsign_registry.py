@@ -17,8 +17,8 @@ class TestLoadFromProfiles:
         registry = CallsignRegistry()
         registry.load_from_profiles()
         callsigns = registry.all_callsigns()
-        # 10 profiles with callsigns (excluding _default.yaml; AD-398 removed 5 infra, added 3 crew)
-        assert len(callsigns) == 10
+        # 11 profiles with callsigns (excluding _default.yaml)
+        assert len(callsigns) == 11
 
     def test_resolve_known_callsign(self):
         """Resolve 'wesley' -> agent_type 'scout'."""

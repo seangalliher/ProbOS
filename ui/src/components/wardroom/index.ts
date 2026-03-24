@@ -1,0 +1,1 @@
+export { WardRoomPanel } from './WardRoomPanel';

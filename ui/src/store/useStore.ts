@@ -6,6 +6,10 @@ import type {
   Agent, Connection, PoolInfo, PoolGroupInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
   BuildProposal, BuildFailureReport, ArchitectProposalView, BuildQueueItem, MissionControlTask,
   AgentTaskView, NotificationView,
+  AgentProfileMessage, AgentConversation,  // AD-406
+  WardRoomChannel,  // AD-407
+  WardRoomThread, WardRoomPost,  // AD-407c
+  Assignment,  // AD-408
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
@@ -43,7 +47,7 @@ const POOL_HUES: Record<string, [number, number, number]> = {
 
 const GROUP_TINT_HEXES: Record<string, string> = {
   core: '#7090c0',       // cool blue — infrastructure
-  bundled: '#70a080',    // teal green — user-facing tools
+  utility: '#70a080',    // teal green — user-facing tools
   medical: '#c06060',    // warm red — sickbay
   self_mod: '#a078b0',   // purple — self-modification
   consensus: '#c85068',  // red — tactical
@@ -217,6 +221,21 @@ export interface HXIState {
   hoveredAgent: Agent | null;
   tooltipPos: { x: number; y: number };
   pinnedAgent: Agent | null;
+  // Agent Profile Panel (AD-406)
+  activeProfileAgent: string | null;
+  profilePanelPos: { x: number; y: number };
+  agentConversations: Map<string, AgentConversation>;
+  // Ward Room (AD-407)
+  wardRoomChannels: WardRoomChannel[];
+  // Ward Room HXI (AD-407c)
+  wardRoomOpen: boolean;
+  wardRoomActiveChannel: string | null;
+  wardRoomThreads: WardRoomThread[];
+  wardRoomActiveThread: string | null;
+  wardRoomThreadDetail: { thread: WardRoomThread; posts: WardRoomPost[] } | null;
+  wardRoomUnread: Record<string, number>;
+  // Assignments (AD-408)
+  assignments: Assignment[];
   showIntro: boolean;
   showLegend: boolean;
 
@@ -246,6 +265,21 @@ export interface HXIState {
   setConnected: (v: boolean) => void;
   setHoveredAgent: (agent: Agent | null, pos?: { x: number; y: number }) => void;
   setPinnedAgent: (agent: Agent | null) => void;
+  // Agent Profile Panel actions (AD-406)
+  openAgentProfile: (agentId: string) => void;
+  closeAgentProfile: () => void;
+  minimizeAgentProfile: () => void;
+  addAgentMessage: (agentId: string, role: 'user' | 'agent', text: string) => void;
+  markAgentRead: (agentId: string) => void;
+  setProfilePanelPos: (pos: { x: number; y: number }) => void;
+  // Ward Room HXI actions (AD-407c)
+  openWardRoom: (channelId?: string) => void;
+  closeWardRoom: () => void;
+  selectWardRoomChannel: (channelId: string) => void;
+  selectWardRoomThread: (threadId: string) => void;
+  closeWardRoomThread: () => void;
+  refreshWardRoomThreads: () => void;
+  refreshWardRoomUnread: () => void;
   setShowIntro: (v: boolean) => void;
   setShowLegend: (v: boolean) => void;
   setShowHistory: (v: boolean) => void;
@@ -329,6 +363,21 @@ export const useStore = create<HXIState>((set, get) => ({
   hoveredAgent: null,
   tooltipPos: { x: 0, y: 0 },
   pinnedAgent: null,
+  // Agent Profile Panel (AD-406)
+  activeProfileAgent: null,
+  profilePanelPos: { x: 100, y: 100 },
+  agentConversations: new Map(),
+  // Ward Room (AD-407)
+  wardRoomChannels: [],
+  // Ward Room HXI (AD-407c)
+  wardRoomOpen: false,
+  wardRoomActiveChannel: null,
+  wardRoomThreads: [],
+  wardRoomActiveThread: null,
+  wardRoomThreadDetail: null,
+  wardRoomUnread: {},
+  // Assignments (AD-408)
+  assignments: [],
   showIntro: typeof localStorage !== 'undefined' && !localStorage.getItem('hxi_seen_intro'),
   showLegend: false,
   showHistory: false,
@@ -359,6 +408,120 @@ export const useStore = create<HXIState>((set, get) => ({
   setConnected: (v) => { soundEngine.setConnected(v); set({ connected: v }); },
   setHoveredAgent: (agent, pos) => set(pos ? { hoveredAgent: agent, tooltipPos: pos } : { hoveredAgent: agent }),
   setPinnedAgent: (agent) => set({ pinnedAgent: agent }),
+  // Agent Profile Panel actions (AD-406)
+  openAgentProfile: (agentId) => set({
+    activeProfileAgent: agentId,
+    pinnedAgent: null,  // dismiss tooltip when profile opens
+  }),
+  closeAgentProfile: () => set({ activeProfileAgent: null }),
+  minimizeAgentProfile: () => {
+    const agentId = get().activeProfileAgent;
+    if (!agentId) return;
+    const convs = new Map(get().agentConversations);
+    const conv = convs.get(agentId);
+    if (conv) {
+      convs.set(agentId, { ...conv, minimized: true });
+    }
+    set({ activeProfileAgent: null, agentConversations: convs });
+  },
+  addAgentMessage: (agentId, role, text) => {
+    const convs = new Map(get().agentConversations);
+    const existing = convs.get(agentId) || {
+      agentId,
+      messages: [],
+      unreadCount: 0,
+      minimized: false,
+    };
+    const msg: AgentProfileMessage = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      role,
+      text,
+      timestamp: Date.now() / 1000,
+    };
+    const isOpen = get().activeProfileAgent === agentId;
+    convs.set(agentId, {
+      ...existing,
+      messages: [...existing.messages.slice(-99), msg],
+      unreadCount: (role === 'agent' && !isOpen) ? existing.unreadCount + 1 : existing.unreadCount,
+      minimized: existing.minimized,
+    });
+    set({ agentConversations: convs });
+  },
+  markAgentRead: (agentId) => {
+    const convs = new Map(get().agentConversations);
+    const conv = convs.get(agentId);
+    if (conv) {
+      convs.set(agentId, { ...conv, unreadCount: 0, minimized: false });
+      set({ agentConversations: convs });
+    }
+  },
+  setProfilePanelPos: (pos) => set({ profilePanelPos: pos }),
+  // Ward Room HXI actions (AD-407c)
+  openWardRoom: async (channelId?: string) => {
+    set({ wardRoomOpen: true });
+    // Ensure channels are loaded (fallback fetch if snapshot hasn't arrived)
+    let channels = get().wardRoomChannels;
+    if (channels.length === 0) {
+      try {
+        const resp = await fetch('/api/wardroom/channels');
+        if (resp.ok) {
+          const data = await resp.json();
+          channels = data.channels || [];
+          set({ wardRoomChannels: channels });
+        }
+      } catch { /* swallow */ }
+    }
+    if (channelId) {
+      get().selectWardRoomChannel(channelId);
+    } else {
+      if (channels.length > 0 && !get().wardRoomActiveChannel) {
+        get().selectWardRoomChannel(channels[0].id);
+      }
+    }
+    get().refreshWardRoomUnread();
+  },
+  closeWardRoom: () => set({ wardRoomOpen: false }),
+  selectWardRoomChannel: async (channelId: string) => {
+    set({ wardRoomActiveChannel: channelId, wardRoomActiveThread: null, wardRoomThreadDetail: null });
+    try {
+      const resp = await fetch(`/api/wardroom/channels/${channelId}/threads?limit=50&sort=recent`);
+      if (resp.ok) {
+        const data = await resp.json();
+        set({ wardRoomThreads: data.threads || [] });
+      }
+    } catch { /* swallow */ }
+  },
+  selectWardRoomThread: async (threadId: string) => {
+    set({ wardRoomActiveThread: threadId });
+    try {
+      const resp = await fetch(`/api/wardroom/threads/${threadId}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        set({ wardRoomThreadDetail: { thread: data.thread, posts: data.posts || [] } });
+      }
+    } catch { /* swallow */ }
+  },
+  closeWardRoomThread: () => set({ wardRoomActiveThread: null, wardRoomThreadDetail: null }),
+  refreshWardRoomThreads: async () => {
+    const channelId = get().wardRoomActiveChannel;
+    if (!channelId) return;
+    try {
+      const resp = await fetch(`/api/wardroom/channels/${channelId}/threads?limit=50&sort=recent`);
+      if (resp.ok) {
+        const data = await resp.json();
+        set({ wardRoomThreads: data.threads || [] });
+      }
+    } catch { /* swallow */ }
+  },
+  refreshWardRoomUnread: async () => {
+    try {
+      const resp = await fetch('/api/wardroom/notifications?agent_id=captain');
+      if (resp.ok) {
+        const data = await resp.json();
+        set({ wardRoomUnread: data.unread || {} });
+      }
+    } catch { /* swallow */ }
+  },
   setShowIntro: (v) => set({ showIntro: v }),
   setShowLegend: (v) => set({ showLegend: v }),
   setShowHistory: (v) => set({ showHistory: v }),
@@ -534,6 +697,15 @@ export const useStore = create<HXIState>((set, get) => ({
           const notifs = (data as any).notifications as NotificationView[];
           set({ notifications: notifs.length > 0 ? notifs : null });
         }
+        // Hydrate ward room channels from snapshot (AD-407c)
+        if ((data as any).ward_room_channels) {
+          set({ wardRoomChannels: (data as any).ward_room_channels as WardRoomChannel[] });
+          get().refreshWardRoomUnread();
+        }
+        // Hydrate assignments from snapshot (AD-408)
+        if ((data as any).assignments) {
+          set({ assignments: (data as any).assignments as Assignment[] });
+        }
         break;
       }
 
@@ -555,6 +727,7 @@ export const useStore = create<HXIState>((set, get) => ({
             const newAgent: Agent = {
               id: d.agent_id,
               agentType,
+              callsign: '',
               pool: d.pool,
               state: d.state as Agent['state'],
               confidence: d.confidence,
@@ -1053,6 +1226,37 @@ export const useStore = create<HXIState>((set, get) => ({
       case 'notification_snapshot': {
         const notifications = (data.notifications || []) as NotificationView[];
         set({ notifications: notifications.length > 0 ? notifications : null });
+        break;
+      }
+
+      // Ward Room events (AD-407c)
+      case 'ward_room_thread_created': {
+        // BF-015: always refresh thread list and unread when a new thread arrives
+        get().refreshWardRoomThreads();
+        get().refreshWardRoomUnread();
+        break;
+      }
+      case 'ward_room_post_created': {
+        const threadId = (data as any).thread_id;
+        if (get().wardRoomActiveThread === threadId) {
+          get().selectWardRoomThread(threadId);
+        }
+        // BF-015: always refresh thread list (updates reply counts, last_activity)
+        get().refreshWardRoomThreads();
+        get().refreshWardRoomUnread();
+        break;
+      }
+      case 'ward_room_endorsement':
+      case 'ward_room_mod_action':
+      case 'ward_room_mention': {
+        get().refreshWardRoomUnread();
+        break;
+      }
+
+      // Assignment events (AD-408) — log only, canvas integration is Phase 2
+      case 'assignment_created':
+      case 'assignment_updated':
+      case 'assignment_completed': {
         break;
       }
 

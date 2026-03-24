@@ -37,9 +37,14 @@ function AgentRaycastLayer() {
 
   const handleClick = useCallback((e: ThreeEvent<MouseEvent>) => {
     if (e.instanceId !== undefined && e.instanceId < agentListRef.current.length) {
-      useStore.getState().setPinnedAgent(agentListRef.current[e.instanceId]);
+      const agent = agentListRef.current[e.instanceId];
+      useStore.getState().openAgentProfile(agent.id);
     } else {
-      useStore.getState().setPinnedAgent(null);
+      // Click on empty space — close profile if open
+      const store = useStore.getState();
+      if (store.activeProfileAgent) {
+        store.closeAgentProfile();
+      }
     }
     e.stopPropagation();
   }, []);

@@ -15,7 +15,7 @@ from typing import Any
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -180,6 +180,53 @@ class DesignRequest(BaseModel):
 class DesignApproveRequest(BaseModel):
     """Request to approve an architect proposal — forwards BuildSpec to builder."""
     design_id: str
+
+
+class AgentChatRequest(BaseModel):
+    """Request to send a direct message to a specific agent."""
+    message: str
+
+
+# Ward Room models (AD-407)
+
+class CreateChannelRequest(BaseModel):
+    name: str
+    description: str = ""
+    created_by: str  # agent_id
+
+class CreateThreadRequest(BaseModel):
+    author_id: str
+    title: str
+    body: str
+    author_callsign: str = ""
+
+class CreatePostRequest(BaseModel):
+    author_id: str
+    body: str
+    parent_id: str | None = None
+    author_callsign: str = ""
+
+class EndorseRequest(BaseModel):
+    voter_id: str
+    direction: str  # "up" | "down" | "unvote"
+
+class SubscribeRequest(BaseModel):
+    agent_id: str
+    action: str = "subscribe"  # "subscribe" | "unsubscribe"
+
+
+# Assignment models (AD-408)
+
+class CreateAssignmentRequest(BaseModel):
+    name: str
+    assignment_type: str  # "bridge" | "away_team" | "working_group"
+    members: list[str]    # agent_ids
+    created_by: str = "captain"
+    mission: str = ""
+
+class ModifyMembersRequest(BaseModel):
+    agent_id: str
+    action: str = "add"  # "add" | "remove"
 
 
 def create_app(runtime: Any) -> FastAPI:
@@ -996,6 +1043,319 @@ def create_app(runtime: Any) -> FastAPI:
         """Acknowledge all unread notifications (AD-323)."""
         count = runtime.notification_queue.acknowledge_all()
         return {"acknowledged": count}
+
+    # ---------- Agent Profile Panel (AD-406) ----------
+
+    @app.get("/api/agent/{agent_id}/profile")
+    async def agent_profile(agent_id: str) -> dict[str, Any]:
+        """Get detailed profile for a specific agent."""
+        agent = runtime.registry.get(agent_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+        # Basic info
+        callsign = ""
+        department = ""
+        rank = "ensign"
+        display_name = ""
+        personality: dict[str, float] = {}
+        specialization: list[str] = []
+
+        # Crew profile from YAML seed data
+        if hasattr(runtime, 'callsign_registry'):
+            callsign = runtime.callsign_registry.get_callsign(agent.agent_type)
+            resolved = runtime.callsign_registry.resolve(callsign) if callsign else None
+            if resolved:
+                department = resolved.get("department", "")
+                display_name = resolved.get("display_name", "")
+
+        # Load full seed profile for personality
+        from probos.crew_profile import load_seed_profile, Rank
+        seed = load_seed_profile(agent.agent_type)
+        if seed:
+            personality = seed.get("personality", {})
+            specialization = seed.get("specialization", [])
+            display_name = display_name or seed.get("display_name", "")
+            department = department or seed.get("department", "")
+
+        # Trust
+        trust_score = 0.5
+        trust_history: list[float] = []
+        if hasattr(runtime, 'trust_network'):
+            trust_score = runtime.trust_network.get_score(agent.id)
+            rank = Rank.from_trust(trust_score).value
+            from probos.earned_agency import agency_from_rank
+            agency_level = agency_from_rank(Rank.from_trust(trust_score)).value
+            # Get recent trust history if available
+            if hasattr(runtime.trust_network, 'get_history'):
+                trust_history = runtime.trust_network.get_history(agent.id, limit=20)
+
+        # Hebbian connections
+        hebbian_connections: list[dict[str, Any]] = []
+        if hasattr(runtime, 'hebbian_router'):
+            for (source, target, rel_type), weight in runtime.hebbian_router.all_weights_typed().items():
+                if source == agent.id or target == agent.id:
+                    other_id = target if source == agent.id else source
+                    hebbian_connections.append({
+                        "targetId": other_id,
+                        "weight": round(weight, 4),
+                        "relType": rel_type,
+                    })
+            # Sort by weight descending, limit to top 10
+            hebbian_connections.sort(key=lambda c: c["weight"], reverse=True)
+            hebbian_connections = hebbian_connections[:10]
+
+        # Memory count
+        memory_count = 0
+        if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
+            if hasattr(runtime.episodic_memory, 'count_for_agent'):
+                memory_count = await runtime.episodic_memory.count_for_agent(agent.id)
+
+        return {
+            "id": agent.id,
+            "agentType": agent.agent_type,
+            "callsign": callsign,
+            "displayName": display_name,
+            "rank": rank,
+            "agencyLevel": agency_level,
+            "department": department,
+            "personality": personality,
+            "specialization": specialization,
+            "trust": round(trust_score, 4),
+            "trustHistory": trust_history,
+            "confidence": round(agent.confidence, 4),
+            "state": agent.state.value if hasattr(agent.state, 'value') else str(agent.state),
+            "tier": agent.tier if hasattr(agent, 'tier') else "domain",
+            "pool": agent.pool,
+            "hebbianConnections": hebbian_connections,
+            "memoryCount": memory_count,
+            "uptime": 0.0,
+        }
+
+    @app.post("/api/agent/{agent_id}/chat")
+    async def agent_chat(agent_id: str, req: AgentChatRequest) -> dict[str, Any]:
+        """Send a direct message to a specific agent and get their response."""
+        agent = runtime.registry.get(agent_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+        from probos.types import IntentMessage
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": req.message, "from": "hxi_profile", "session": False},
+            target_agent_id=agent_id,
+        )
+        result = await runtime.intent_bus.send(intent)
+
+        callsign = ""
+        if hasattr(runtime, 'callsign_registry'):
+            callsign = runtime.callsign_registry.get_callsign(agent.agent_type)
+
+        response_text = ""
+        if result and result.result:
+            response_text = str(result.result)
+        elif result and result.error:
+            response_text = f"(error: {result.error})"
+        else:
+            response_text = "(no response)"
+
+        return {
+            "response": response_text,
+            "callsign": callsign,
+            "agentId": agent_id,
+        }
+
+    # --- Ward Room (AD-407) ---
+
+    @app.get("/api/wardroom/channels")
+    async def wardroom_channels():
+        if not runtime.ward_room:
+            return {"channels": []}
+        channels = await runtime.ward_room.list_channels()
+        return {"channels": [vars(c) for c in channels]}
+
+    @app.post("/api/wardroom/channels")
+    async def wardroom_create_channel(req: CreateChannelRequest):
+        if not runtime.ward_room:
+            raise HTTPException(503, "Ward Room not available")
+        try:
+            ch = await runtime.ward_room.create_channel(
+                name=req.name, channel_type="custom",
+                created_by=req.created_by, description=req.description,
+            )
+            return vars(ch)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/wardroom/channels/{channel_id}/threads")
+    async def wardroom_threads(channel_id: str, limit: int = 50, offset: int = 0, sort: str = "recent"):
+        if not runtime.ward_room:
+            return {"threads": []}
+        threads = await runtime.ward_room.list_threads(channel_id, limit=limit, offset=offset, sort=sort)
+        return {"threads": [vars(t) for t in threads]}
+
+    @app.post("/api/wardroom/channels/{channel_id}/threads")
+    async def wardroom_create_thread(channel_id: str, req: CreateThreadRequest):
+        if not runtime.ward_room:
+            raise HTTPException(503, "Ward Room not available")
+        try:
+            thread = await runtime.ward_room.create_thread(
+                channel_id=channel_id, author_id=req.author_id,
+                title=req.title, body=req.body,
+                author_callsign=req.author_callsign,
+            )
+            return vars(thread)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/wardroom/threads/{thread_id}")
+    async def wardroom_thread_detail(thread_id: str):
+        if not runtime.ward_room:
+            raise HTTPException(503, "Ward Room not available")
+        result = await runtime.ward_room.get_thread(thread_id)
+        if not result:
+            raise HTTPException(404, "Thread not found")
+        return result
+
+    @app.post("/api/wardroom/threads/{thread_id}/posts")
+    async def wardroom_create_post(thread_id: str, req: CreatePostRequest):
+        if not runtime.ward_room:
+            raise HTTPException(503, "Ward Room not available")
+        try:
+            post = await runtime.ward_room.create_post(
+                thread_id=thread_id, author_id=req.author_id,
+                body=req.body, parent_id=req.parent_id,
+                author_callsign=req.author_callsign,
+            )
+            return vars(post)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/wardroom/posts/{post_id}/endorse")
+    async def wardroom_endorse(post_id: str, req: EndorseRequest):
+        if not runtime.ward_room:
+            raise HTTPException(503, "Ward Room not available")
+        try:
+            result = await runtime.ward_room.endorse(
+                target_id=post_id, target_type="post",
+                voter_id=req.voter_id, direction=req.direction,
+            )
+            return result
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/wardroom/threads/{thread_id}/endorse")
+    async def wardroom_endorse_thread(thread_id: str, req: EndorseRequest):
+        if not runtime.ward_room:
+            raise HTTPException(503, "Ward Room not available")
+        try:
+            result = await runtime.ward_room.endorse(
+                target_id=thread_id, target_type="thread",
+                voter_id=req.voter_id, direction=req.direction,
+            )
+            return result
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/wardroom/channels/{channel_id}/subscribe")
+    async def wardroom_subscribe(channel_id: str, req: SubscribeRequest):
+        if not runtime.ward_room:
+            raise HTTPException(503, "Ward Room not available")
+        if req.action == "unsubscribe":
+            await runtime.ward_room.unsubscribe(req.agent_id, channel_id)
+        else:
+            await runtime.ward_room.subscribe(req.agent_id, channel_id)
+        return {"ok": True}
+
+    @app.get("/api/wardroom/agent/{agent_id}/credibility")
+    async def wardroom_credibility(agent_id: str):
+        if not runtime.ward_room:
+            raise HTTPException(503, "Ward Room not available")
+        cred = await runtime.ward_room.get_credibility(agent_id)
+        result = vars(cred)
+        result["restrictions"] = list(cred.restrictions)
+        return result
+
+    @app.get("/api/wardroom/notifications")
+    async def wardroom_notifications(agent_id: str):
+        if not runtime.ward_room:
+            return {"unread": {}}
+        counts = await runtime.ward_room.get_unread_counts(agent_id)
+        return {"unread": counts}
+
+    # --- Assignments (AD-408) ---
+
+    @app.get("/api/assignments")
+    async def list_assignments(status: str = "active"):
+        if not runtime.assignment_service:
+            return {"assignments": []}
+        assignments = await runtime.assignment_service.list_assignments(status=status)
+        return {"assignments": [vars(a) for a in assignments]}
+
+    @app.post("/api/assignments")
+    async def create_assignment(req: CreateAssignmentRequest):
+        if not runtime.assignment_service:
+            raise HTTPException(503, "Assignment service not available")
+        try:
+            assignment = await runtime.assignment_service.create_assignment(
+                name=req.name,
+                assignment_type=req.assignment_type,
+                created_by=req.created_by,
+                members=req.members,
+                mission=req.mission,
+            )
+            return vars(assignment)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/assignments/{assignment_id}")
+    async def get_assignment(assignment_id: str):
+        if not runtime.assignment_service:
+            raise HTTPException(503, "Assignment service not available")
+        assignment = await runtime.assignment_service.get_assignment(assignment_id)
+        if not assignment:
+            raise HTTPException(404, "Assignment not found")
+        return vars(assignment)
+
+    @app.post("/api/assignments/{assignment_id}/members")
+    async def modify_assignment_members(assignment_id: str, req: ModifyMembersRequest):
+        if not runtime.assignment_service:
+            raise HTTPException(503, "Assignment service not available")
+        try:
+            if req.action == "remove":
+                assignment = await runtime.assignment_service.remove_member(assignment_id, req.agent_id)
+            else:
+                assignment = await runtime.assignment_service.add_member(assignment_id, req.agent_id)
+            return vars(assignment)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/assignments/{assignment_id}/complete")
+    async def complete_assignment(assignment_id: str):
+        if not runtime.assignment_service:
+            raise HTTPException(503, "Assignment service not available")
+        try:
+            assignment = await runtime.assignment_service.complete_assignment(assignment_id)
+            return vars(assignment)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/assignments/{assignment_id}")
+    async def dissolve_assignment(assignment_id: str):
+        if not runtime.assignment_service:
+            raise HTTPException(503, "Assignment service not available")
+        try:
+            assignment = await runtime.assignment_service.dissolve_assignment(assignment_id)
+            return vars(assignment)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/assignments/agent/{agent_id}")
+    async def agent_assignments(agent_id: str):
+        if not runtime.assignment_service:
+            return {"assignments": []}
+        assignments = await runtime.assignment_service.get_agent_assignments(agent_id)
+        return {"assignments": [vars(a) for a in assignments]}
 
     async def _run_build(
         req: BuildRequest,

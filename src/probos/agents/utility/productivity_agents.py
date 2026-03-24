@@ -1,4 +1,4 @@
-"""Productivity bundled agents (AD-250).
+"""Productivity utility agents (AD-250).
 
 CalculatorAgent uses safe eval for simple arithmetic + LLM fallback.
 TodoAgent persists via mesh file I/O (read_file/write_file).

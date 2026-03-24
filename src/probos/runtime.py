@@ -21,7 +21,7 @@ from probos.cognitive.standing_orders import set_directive_store
 from probos.agents.introspect import IntrospectionAgent
 from probos.agents.red_team import RedTeamAgent
 from probos.agents.shell_command import ShellCommandAgent
-from probos.agents.bundled import (
+from probos.agents.utility import (
     WebSearchAgent,
     PageReaderAgent,
     WeatherAgent,
@@ -44,6 +44,7 @@ from probos.agents.medical import (
 from probos.cognitive.builder import BuilderAgent
 from probos.cognitive.architect import ArchitectAgent
 from probos.cognitive.scout import ScoutAgent
+from probos.cognitive.counselor import CounselorAgent
 from probos.cognitive.security_officer import SecurityAgent
 from probos.cognitive.operations_officer import OperationsAgent
 from probos.cognitive.engineering_officer import EngineeringAgent
@@ -205,6 +206,21 @@ class ProbOSRuntime:
         # --- Episodic memory ---
         self.episodic_memory = episodic_memory  # None = disabled
 
+        # --- Ward Room (AD-407) ---
+        self.ward_room: Any | None = None  # Initialized in start()
+        self._ward_room_cooldowns: dict[str, float] = {}  # agent_id -> last_response_timestamp
+        # AD-407d: Agent-to-agent conversation tracking
+        self._ward_room_thread_rounds: dict[str, int] = {}           # thread_id -> current agent round count
+        self._ward_room_round_participants: dict[str, set[str]] = {}  # "thread_id:round" -> set of agent_ids
+        # BF-016b: Per-thread agent response cap (prevents thread explosion)
+        self._ward_room_agent_thread_responses: dict[str, int] = {}  # "thread_id:agent_id" -> count
+
+        # --- Assignment Service (AD-408) ---
+        self.assignment_service: Any | None = None  # Initialized in start()
+
+        # --- Bridge Alerts (AD-410) ---
+        self.bridge_alerts: Any | None = None
+
         # --- Dreaming ---
         self.dream_scheduler: DreamScheduler | None = None
         self._last_request_time: float = time.monotonic()
@@ -322,6 +338,8 @@ class ProbOSRuntime:
         # Science team (AD-306)
         self.spawner.register_template("architect", ArchitectAgent)
         self.spawner.register_template("scout", ScoutAgent)
+        # Bridge crew (AD-398)
+        self.spawner.register_template("counselor", CounselorAgent)
         # Security team (AD-398)
         self.spawner.register_template("security_officer", SecurityAgent)
         # Operations team (AD-398)
@@ -388,6 +406,9 @@ class ProbOSRuntime:
 
     def build_state_snapshot(self) -> dict[str, Any]:
         """Build a full state snapshot for HXI clients (AD-254)."""
+        from probos.earned_agency import agency_from_rank
+        from probos.crew_profile import Rank
+
         agents = []
         for agent in self.registry.all():
             trust_score = self.trust_network.get_score(agent.id)
@@ -400,6 +421,7 @@ class ProbOSRuntime:
                 "confidence": agent.confidence,
                 "trust": round(trust_score, 4),
                 "tier": getattr(agent, "tier", "core"),
+                "agency": agency_from_rank(Rank.from_trust(trust_score)).value,
             })
 
         connections = []
@@ -599,8 +621,8 @@ class ProbOSRuntime:
         await self.create_pool("introspect", "introspect", target_size=2, agent_ids=ids, runtime=self)
 
         # Bundled CognitiveAgent pools (Phase 22, AD-252)
-        if self.config.bundled_agents.enabled:
-            _bundled_pools = [
+        if self.config.utility_agents.enabled:
+            _utility_pools = [
                 ("web_search", "web_search", 2),
                 ("page_reader", "page_reader", 2),
                 ("weather", "weather", 2),
@@ -612,7 +634,7 @@ class ProbOSRuntime:
                 ("note_taker", "note_taker", 2),
                 ("scheduler", "scheduler", 2),
             ]
-            for pool_name, agent_type, size in _bundled_pools:
+            for pool_name, agent_type, size in _utility_pools:
                 ids = generate_pool_ids(agent_type, pool_name, size)
                 await self.create_pool(
                     pool_name, agent_type, target_size=size,
@@ -620,42 +642,49 @@ class ProbOSRuntime:
                 )
 
         # Engineering team — Builder Agent (AD-302)
-        if self.config.bundled_agents.enabled:
+        if self.config.utility_agents.enabled:
             await self.create_pool(
                 "builder", "builder", target_size=1,
                 llm_client=self.llm_client, runtime=self,
             )
 
         # Science team — Architect Agent (AD-307)
-        if self.config.bundled_agents.enabled:
+        if self.config.utility_agents.enabled:
             await self.create_pool(
                 "architect", "architect", target_size=1,
                 llm_client=self.llm_client, runtime=self,
             )
 
         # Science team — Scout Agent (AD-394)
-        if self.config.bundled_agents.enabled:
+        if self.config.utility_agents.enabled:
             await self.create_pool(
                 "scout", "scout", target_size=1,
                 llm_client=self.llm_client, runtime=self,
             )
 
+        # Bridge crew — Counselor (AD-398)
+        if self.config.utility_agents.enabled:
+            await self.create_pool(
+                "counselor", "counselor", target_size=1,
+                llm_client=self.llm_client, runtime=self,
+            )
+
         # Security team — Security Officer (AD-398)
-        if self.config.bundled_agents.enabled:
+        if self.config.utility_agents.enabled:
             await self.create_pool(
                 "security_officer", "security_officer", target_size=1,
                 llm_client=self.llm_client, runtime=self,
             )
 
         # Operations team — Operations Officer (AD-398)
-        if self.config.bundled_agents.enabled:
+        if self.config.utility_agents.enabled:
             await self.create_pool(
                 "operations_officer", "operations_officer", target_size=1,
                 llm_client=self.llm_client, runtime=self,
             )
 
         # Engineering team — Engineering Officer (AD-398)
-        if self.config.bundled_agents.enabled:
+        if self.config.utility_agents.enabled:
             await self.create_pool(
                 "engineering_officer", "engineering_officer", target_size=1,
                 llm_client=self.llm_client, runtime=self,
@@ -707,7 +736,7 @@ class ProbOSRuntime:
                             agent.add_skill(codebase_skill)
 
         # Attach codebase_knowledge skill to architect pool (AD-307)
-        if self.config.bundled_agents.enabled:
+        if self.config.utility_agents.enabled:
             from probos.cognitive.codebase_skill import create_codebase_skill as _create_cb_skill
             _cb_skill = _create_cb_skill(self.codebase_index)
             pool = self.pools.get("architect")
@@ -739,10 +768,10 @@ class ProbOSRuntime:
             exclude_from_scaler=True,
         ))
 
-        if self.config.bundled_agents.enabled:
+        if self.config.utility_agents.enabled:
             self.pool_groups.register(PoolGroup(
-                name="bundled",
-                display_name="Bundled Agents",
+                name="utility",
+                display_name="Utility Agents",
                 pool_names={"web_search", "page_reader", "weather", "news", "translator", "summarizer", "calculator", "todo_manager", "note_taker", "scheduler"},
             ))
 
@@ -792,6 +821,14 @@ class ProbOSRuntime:
             name="operations",
             display_name="Operations",
             pool_names={"operations_officer"},
+            exclude_from_scaler=True,
+        ))
+
+        # Bridge pool group (BF-015: Counselor was ungrouped)
+        self.pool_groups.register(PoolGroup(
+            name="bridge",
+            display_name="Bridge",
+            pool_names={"counselor"},
             exclude_from_scaler=True,
         ))
 
@@ -1140,6 +1177,42 @@ class ProbOSRuntime:
                     completed, len(cp.node_states),
                 )
 
+        # --- Ward Room (AD-407) ---
+        if self.config.ward_room.enabled:
+            from probos.ward_room import WardRoomService
+
+            def _ward_room_emit(event_type: str, data: dict) -> None:
+                self._emit_event(event_type, data)  # WebSocket broadcast
+                asyncio.create_task(self._route_ward_room_event(event_type, data))
+
+            self.ward_room = WardRoomService(
+                db_path=str(self._data_dir / "ward_room.db"),
+                emit_event=_ward_room_emit,
+            )
+            await self.ward_room.start()
+            logger.info("ward-room started")
+
+        # --- Assignment Service (AD-408) ---
+        if self.config.assignments.enabled:
+            from probos.assignment import AssignmentService
+            self.assignment_service = AssignmentService(
+                db_path=str(self._data_dir / "assignments.db"),
+                emit_event=self._emit_event,
+                ward_room=self.ward_room,  # May be None if WR disabled
+            )
+            await self.assignment_service.start()
+            logger.info("assignment-service started")
+
+        # --- Bridge Alerts (AD-410) ---
+        if self.config.bridge_alerts.enabled and self.ward_room:
+            from probos.bridge_alerts import BridgeAlertService
+            self.bridge_alerts = BridgeAlertService(
+                cooldown_seconds=self.config.bridge_alerts.cooldown_seconds,
+                trust_drop_threshold=self.config.bridge_alerts.trust_drop_threshold,
+                trust_drop_alert_threshold=self.config.bridge_alerts.trust_drop_alert_threshold,
+            )
+            logger.info("bridge-alerts started")
+
         self._started = True
 
         await self.event_log.log(category="system", event="started")
@@ -1194,6 +1267,16 @@ class ProbOSRuntime:
             set_directive_store(None)
             self.directive_store.close()
             self.directive_store = None
+
+        # Stop Ward Room (AD-407)
+        if self.ward_room:
+            await self.ward_room.stop()
+            self.ward_room = None
+
+        # Stop Assignment Service (AD-408)
+        if self.assignment_service:
+            await self.assignment_service.stop()
+            self.assignment_service = None
 
         # Stop red team agents
         for agent in self._red_team_agents:
@@ -1442,6 +1525,7 @@ class ProbOSRuntime:
                             consensus.shapley_values.get(result.agent_id, 0.0),
                             0.1,
                         )
+                    _old_trust = self.trust_network.get_score(result.agent_id)  # AD-410
                     self.trust_network.record_outcome(
                         result.agent_id,
                         success=vr.verified,
@@ -1456,6 +1540,15 @@ class ProbOSRuntime:
                         "new_score": round(self.trust_network.get_score(result.agent_id), 4),
                         "success": vr.verified,
                     })
+
+                    # AD-410: Bridge Alert on significant trust drop
+                    if self.bridge_alerts:
+                        _trust_alert = self.bridge_alerts.check_trust_change(
+                            result.agent_id, _old_trust,
+                            self.trust_network.get_score(result.agent_id),
+                        )
+                        if _trust_alert:
+                            asyncio.create_task(self._deliver_bridge_alert(_trust_alert))
 
                     # Step 5: Update hebbian (agent-to-agent)
                     self.hebbian_router.record_verification(
@@ -2638,7 +2731,378 @@ class ProbOSRuntime:
             if self.task_scheduler
             else {"enabled": False}
         )
+        if self.ward_room:
+            result["ward_room_available"] = True
+            result["ward_room_channels"] = self.ward_room.get_channel_snapshot()
+        if self.assignment_service:
+            result["assignments"] = self.assignment_service.get_assignment_snapshot()
+        if self.bridge_alerts:
+            result["bridge_alerts"] = {
+                "recent": [
+                    {"id": a.id, "severity": a.severity.value, "title": a.title, "timestamp": a.timestamp}
+                    for a in self.bridge_alerts.get_recent_alerts(10)
+                ],
+            }
         return result
+
+    # ------------------------------------------------------------------
+    # Bridge Alert delivery (AD-410)
+    # ------------------------------------------------------------------
+
+    async def _deliver_bridge_alert(self, alert: Any) -> None:
+        """Post a Bridge Alert to the Ward Room and optionally notify the Captain."""
+        from probos.bridge_alerts import AlertSeverity
+
+        if not self.ward_room:
+            return
+
+        # Determine target channel
+        channels = await self.ward_room.list_channels()
+        if alert.severity == AlertSeverity.INFO and alert.department:
+            channel = next((c for c in channels if c.department == alert.department), None)
+        else:
+            channel = next((c for c in channels if c.channel_type == "ship"), None)
+
+        if not channel:
+            logger.warning("Bridge alert: no suitable channel for %s", alert.alert_type)
+            return
+
+        # Post as Ship's Computer (captain author_id for proper crew routing)
+        try:
+            await self.ward_room.create_thread(
+                channel_id=channel.id,
+                author_id="captain",
+                title=f"[{alert.severity.value.upper()}] {alert.title}",
+                body=alert.detail,
+                author_callsign="Ship's Computer",
+            )
+        except Exception as e:
+            logger.warning("Bridge alert WR post failed: %s", e)
+            return
+
+        # Captain notification for advisory/alert severity
+        if alert.severity in (AlertSeverity.ADVISORY, AlertSeverity.ALERT):
+            notif_type = "action_required" if alert.severity == AlertSeverity.ALERT else "info"
+            self.notify(
+                agent_id=alert.related_agent_id or "system",
+                title=alert.title,
+                detail=alert.detail,
+                notification_type=notif_type,
+            )
+
+        await self.event_log.log(
+            category="bridge_alert",
+            event=alert.alert_type,
+            detail=f"severity={alert.severity.value} {alert.title}",
+        )
+
+    # ------------------------------------------------------------------
+    # Ward Room agent routing (AD-407b)
+    # ------------------------------------------------------------------
+
+    _WARD_ROOM_COOLDOWN_SECONDS = 30  # Minimum seconds between responses per agent (captain-triggered)
+
+    async def _route_ward_room_event(self, event_type: str, data: dict) -> None:
+        """Route Ward Room events to relevant crew agents as intents.
+
+        AD-407d: Supports both Captain->Agent and Agent->Agent routing
+        with multi-layered loop prevention (depth cap, selective targeting,
+        once-per-round, cooldown, [NO_RESPONSE]).
+        """
+        if not self.ward_room:
+            return
+
+        # Only route new threads and new posts (not endorsements, mod actions)
+        if event_type not in ("ward_room_thread_created", "ward_room_post_created"):
+            return
+
+        author_id = data.get("author_id", "")
+        is_captain = (author_id == "captain")
+        is_agent_post = not is_captain and author_id != ""
+
+        thread_id = data.get("thread_id", "")
+
+        # --- Layer 1: Thread depth tracking ---
+        max_rounds = getattr(self.config.ward_room, 'max_agent_rounds', 3)
+        if is_agent_post and thread_id:
+            current_round = self._ward_room_thread_rounds.get(thread_id, 0)
+            if current_round >= max_rounds:
+                logger.debug(
+                    "Ward Room: thread %s hit agent round limit (%d), silencing",
+                    thread_id[:8], max_rounds,
+                )
+                return
+
+        # Captain posts reset the round counter
+        if is_captain and thread_id:
+            self._ward_room_thread_rounds[thread_id] = 0
+            # Clear round participation tracking for this thread
+            keys_to_clear = [k for k in self._ward_room_round_participants
+                             if k.startswith(f"{thread_id}:")]
+            for k in keys_to_clear:
+                del self._ward_room_round_participants[k]
+
+        # --- Get channel info ---
+        channel_id = data.get("channel_id", "")
+        if event_type == "ward_room_post_created":
+            # Posts don't include channel_id — look up the thread
+            if thread_id:
+                thread_detail = await self.ward_room.get_thread(thread_id)
+                if thread_detail and "thread" in thread_detail:
+                    channel_id = thread_detail["thread"].get("channel_id", "")
+
+        if not channel_id:
+            return
+
+        # Find the channel to determine routing scope
+        channels = await self.ward_room.list_channels()
+        channel = next((c for c in channels if c.id == channel_id), None)
+        if not channel:
+            return
+
+        # --- Layer 2: Selective targeting ---
+        if is_captain:
+            # Captain posts: full targeting rules (backwards compatible with AD-407b)
+            target_agent_ids = self._find_ward_room_targets(
+                channel=channel,
+                author_id=author_id,
+                mentions=data.get("mentions", []),
+            )
+        else:
+            # Agent posts: narrow targeting — @mentions + department peers only
+            target_agent_ids = self._find_ward_room_targets_for_agent(
+                channel=channel,
+                author_id=author_id,
+                mentions=data.get("mentions", []),
+            )
+
+        if not target_agent_ids:
+            return
+
+        # --- Build thread context ---
+        title = data.get("title", "")
+        thread_context = ""
+        if thread_id:
+            thread_detail = await self.ward_room.get_thread(thread_id)
+            if thread_detail:
+                thread_obj = thread_detail.get("thread", {})
+                posts = thread_detail.get("posts", [])
+                title = title or (thread_obj.get("title", "") if isinstance(thread_obj, dict) else getattr(thread_obj, "title", ""))
+                body = thread_obj.get("body", "") if isinstance(thread_obj, dict) else getattr(thread_obj, "body", "")
+                thread_context = f"Thread: {title}\n{body}"
+                # Include recent posts (last 5) for context
+                recent_posts = posts[-5:] if len(posts) > 5 else posts
+                for p in recent_posts:
+                    p_callsign = p.get("author_callsign", "") if isinstance(p, dict) else getattr(p, "author_callsign", "")
+                    p_body = p.get("body", "") if isinstance(p, dict) else getattr(p, "body", "")
+                    thread_context += f"\n{p_callsign}: {p_body}"
+
+        # --- Send intents to target agents ---
+        from probos.types import IntentMessage
+        now = time.time()
+
+        # Layer 4: Use longer cooldown for agent-triggered responses
+        agent_cooldown = getattr(self.config.ward_room, 'agent_cooldown_seconds', 45)
+        cooldown = agent_cooldown if is_agent_post else self._WARD_ROOM_COOLDOWN_SECONDS
+
+        # Layer 3: Per-thread round participation
+        current_round = self._ward_room_thread_rounds.get(thread_id, 0)
+        round_key = f"{thread_id}:{current_round}"
+        round_participants = self._ward_room_round_participants.setdefault(round_key, set())
+
+        responded_this_event = False
+
+        for agent_id in target_agent_ids:
+            # Layer 4: Per-agent cooldown
+            last_response = self._ward_room_cooldowns.get(agent_id, 0)
+            if now - last_response < cooldown:
+                continue
+
+            # Layer 3: Agent already responded in this round of this thread
+            if is_agent_post and agent_id in round_participants:
+                continue
+
+            # BF-016b: Per-thread agent response cap — prevent thread explosion
+            # Each agent gets max N responses per thread, regardless of round resets
+            max_per_thread = getattr(self.config.ward_room, 'max_agent_responses_per_thread', 3)
+            thread_agent_key = f"{thread_id}:{agent_id}"
+            prior_responses = self._ward_room_agent_thread_responses.get(thread_agent_key, 0)
+            if prior_responses >= max_per_thread:
+                logger.debug(
+                    "Ward Room: agent %s hit per-thread response cap (%d) in thread %s",
+                    agent_id[:12], max_per_thread, thread_id[:8],
+                )
+                continue
+
+            intent = IntentMessage(
+                intent="ward_room_notification",
+                params={
+                    "event_type": event_type,
+                    "thread_id": thread_id,
+                    "channel_id": channel_id,
+                    "channel_name": channel.name,
+                    "title": title,
+                    "author_id": author_id,
+                    "author_callsign": data.get("author_callsign", ""),
+                },
+                context=thread_context,
+                target_agent_id=agent_id,
+            )
+            try:
+                result = await self.intent_bus.send(intent)
+                # Layer 5: [NO_RESPONSE] filtering
+                if result and result.result:
+                    response_text = str(result.result).strip()
+                    if response_text and response_text != "[NO_RESPONSE]":
+                        # Get agent's callsign for attribution
+                        agent = self.registry.get(agent_id)
+                        agent_callsign = ""
+                        if agent and hasattr(self, 'callsign_registry'):
+                            agent_callsign = self.callsign_registry.get_callsign(agent.agent_type)
+                        await self.ward_room.create_post(
+                            thread_id=thread_id,
+                            author_id=agent_id,
+                            body=response_text,
+                            # BF-015: reply to the specific post, not just the thread
+                            parent_id=data.get("post_id") if event_type == "ward_room_post_created" else None,
+                            author_callsign=agent_callsign or (agent.agent_type if agent else "unknown"),
+                        )
+                        self._ward_room_cooldowns[agent_id] = time.time()
+                        round_participants.add(agent_id)
+                        responded_this_event = True
+                        # BF-016b: Increment per-thread response count
+                        self._ward_room_agent_thread_responses[thread_agent_key] = prior_responses + 1
+            except Exception as e:
+                logger.debug("Ward Room agent notification failed for %s: %s", agent_id, e)
+
+        # Increment round counter if any agent responded to an agent post
+        if is_agent_post and responded_this_event:
+            self._ward_room_thread_rounds[thread_id] = current_round + 1
+
+    def _find_ward_room_targets(
+        self,
+        channel: Any,
+        author_id: str,
+        mentions: list[str] | None = None,
+    ) -> list[str]:
+        """Determine which crew agents should be notified about a Ward Room event."""
+        target_ids: list[str] = []
+
+        # 1. @mentioned agents always get notified
+        if mentions:
+            for callsign in mentions:
+                resolved = self.callsign_registry.resolve(callsign)
+                if resolved and resolved["agent_id"] and resolved["agent_id"] != author_id:
+                    target_ids.append(resolved["agent_id"])
+
+        # BF-016a: If Captain @mentions specific agents, only target those.
+        # Prevents 8 agents piling in when Captain addresses 1-2 directly.
+        if mentions and target_ids:
+            return target_ids
+
+        # 2. Route based on channel type (ambient — no @mentions)
+        if channel.channel_type == "ship":
+            # Ship-wide channel: notify all crew agents
+            for agent in self.registry.all():
+                if (agent.is_alive
+                        and agent.id != author_id
+                        and agent.id not in target_ids
+                        and hasattr(agent, 'handle_intent')
+                        and self._is_crew_agent(agent)):
+                    # AD-357: Earned Agency trust-tier gating
+                    if self.config.earned_agency.enabled:
+                        from probos.earned_agency import can_respond_ambient
+                        from probos.crew_profile import Rank
+                        _agent_rank = Rank.from_trust(self.trust_network.get_score(agent.id))
+                        if not can_respond_ambient(_agent_rank, is_captain_post=True,
+                                                   same_department=False):
+                            continue
+                    target_ids.append(agent.id)
+
+        elif channel.channel_type == "department" and channel.department:
+            # Department channel: notify agents in that department
+            from probos.cognitive.standing_orders import get_department
+            for agent in self.registry.all():
+                if (agent.is_alive
+                        and agent.id != author_id
+                        and agent.id not in target_ids
+                        and hasattr(agent, 'handle_intent')
+                        and self._is_crew_agent(agent)
+                        and get_department(agent.agent_type) == channel.department):
+                    # AD-357: Earned Agency trust-tier gating
+                    if self.config.earned_agency.enabled:
+                        from probos.earned_agency import can_respond_ambient
+                        from probos.crew_profile import Rank
+                        _agent_rank = Rank.from_trust(self.trust_network.get_score(agent.id))
+                        if not can_respond_ambient(_agent_rank, is_captain_post=True,
+                                                   same_department=True):
+                            continue
+                    target_ids.append(agent.id)
+
+        return target_ids
+
+    def _find_ward_room_targets_for_agent(
+        self,
+        channel: Any,
+        author_id: str,
+        mentions: list[str] | None = None,
+    ) -> list[str]:
+        """Determine targets for agent-authored posts (narrower than Captain posts).
+
+        AD-407d: Agent posts only notify:
+        1. @mentioned agents (always)
+        2. Department peers (if in a department channel)
+        3. Never ship-wide broadcast for agent-to-agent
+        """
+        target_ids: list[str] = []
+
+        # 1. @mentioned agents always get notified
+        if mentions:
+            for callsign in mentions:
+                resolved = self.callsign_registry.resolve(callsign)
+                if resolved and resolved["agent_id"] and resolved["agent_id"] != author_id:
+                    target_ids.append(resolved["agent_id"])
+
+        # 2. Department channel: notify department peers
+        if channel.channel_type == "department" and channel.department:
+            from probos.cognitive.standing_orders import get_department
+            for agent in self.registry.all():
+                if (agent.is_alive
+                        and agent.id != author_id
+                        and agent.id not in target_ids
+                        and hasattr(agent, 'handle_intent')
+                        and self._is_crew_agent(agent)
+                        and get_department(agent.agent_type) == channel.department):
+                    # AD-357: Earned Agency trust-tier gating
+                    if self.config.earned_agency.enabled:
+                        from probos.earned_agency import can_respond_ambient
+                        from probos.crew_profile import Rank
+                        _agent_rank = Rank.from_trust(self.trust_network.get_score(agent.id))
+                        if not can_respond_ambient(_agent_rank, is_captain_post=False,
+                                                   same_department=True):
+                            continue
+                    target_ids.append(agent.id)
+
+        # 3. Ship-wide channel: do NOT broadcast for agent-to-agent.
+        #    Only @mentioned agents get notified. This prevents all 8 crew
+        #    piling onto every agent post in "All Hands".
+
+        return target_ids
+
+    # Core crew eligible for Ward Room participation.
+    # Medical sub-crew (surgeon, pharmacist, pathologist), infrastructure agents
+    # (vitals_monitor, red_team, system_qa), and utility agents are excluded.
+    _WARD_ROOM_CREW = {
+        "architect", "builder", "scout", "counselor",
+        "security_officer", "operations_officer", "engineering_officer",
+        "diagnostician",  # Bones — CMO participates, medical sub-crew does not
+    }
+
+    def _is_crew_agent(self, agent: Any) -> bool:
+        """Check if an agent is core crew eligible for Ward Room participation."""
+        if not hasattr(agent, 'agent_type'):
+            return False
+        return agent.agent_type in self._WARD_ROOM_CREW
 
     async def recall_similar(self, query: str, k: int = 5) -> list[Episode]:
         """Recall similar past episodes from episodic memory."""
@@ -2681,8 +3145,51 @@ class ProbOSRuntime:
                     ))
                 except RuntimeError:
                     pass  # No running loop — skip logging
+
+            # AD-410: Bridge Alerts from emergent patterns
+            if self.bridge_alerts and patterns:
+                emergent_alerts = self.bridge_alerts.check_emergent_patterns(patterns)
+                for ea in emergent_alerts:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self._deliver_bridge_alert(ea))
+                    except RuntimeError:
+                        pass
+
         except Exception as e:
             logger.debug("Post-dream emergent analysis failed: %s", e)
+
+        # AD-410: Bridge Alerts from behavioral monitor
+        if self.bridge_alerts and self._behavioral_monitor:
+            behavioral_alerts = self.bridge_alerts.check_behavioral(self._behavioral_monitor)
+            for ba in behavioral_alerts:
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self._deliver_bridge_alert(ba))
+                except RuntimeError:
+                    pass
+
+        # AD-410: Bridge Alerts from vitals snapshot
+        if self.bridge_alerts:
+            vitals_agent = None
+            for agent in self.registry.get_by_pool("medical_vitals"):
+                if hasattr(agent, "_window") and agent._window:
+                    vitals_agent = agent
+                    break
+            if vitals_agent and vitals_agent._window:
+                latest = vitals_agent._window[-1]
+                vitals_data = {
+                    "pool_health": latest.get("pool_health", {}),
+                    "system_health": latest.get("system_health"),
+                    "trust_outlier_count": len(latest.get("trust_outliers", [])),
+                }
+                vitals_alerts = self.bridge_alerts.check_vitals(vitals_data)
+                for va in vitals_alerts:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self._deliver_bridge_alert(va))
+                    except RuntimeError:
+                        pass
 
     def _store_strategies(self, strategies: list) -> None:
         """Persist dream-extracted strategies to knowledge store (AD-383)."""
@@ -3470,6 +3977,7 @@ class ProbOSRuntime:
                         if test["passed"]
                         else self.config.qa.trust_penalty_weight
                     )
+                    _old_trust_qa = self.trust_network.get_score(aid)  # AD-410
                     self.trust_network.record_outcome(
                         aid, success=test["passed"], weight=weight,
                     )
@@ -3480,6 +3988,15 @@ class ProbOSRuntime:
                         "new_score": round(self.trust_network.get_score(aid), 4),
                         "success": test["passed"],
                     })
+
+                    # AD-410: Bridge Alert on significant trust drop
+                    if self.bridge_alerts:
+                        _trust_alert_qa = self.bridge_alerts.check_trust_change(
+                            aid, _old_trust_qa,
+                            self.trust_network.get_score(aid),
+                        )
+                        if _trust_alert_qa:
+                            asyncio.create_task(self._deliver_bridge_alert(_trust_alert_qa))
 
             # Episodic memory
             if self.episodic_memory:

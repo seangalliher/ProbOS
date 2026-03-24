@@ -206,8 +206,8 @@ knowledge:
   max_workflows: 200
   restore_on_boot: true
 
-bundled_agents:
-  enabled: true                    # Phase 22: bundled CognitiveAgent suite (AD-252)
+utility_agents:
+  enabled: true                    # Phase 22: utility CognitiveAgent suite (AD-252)
 
 # --- Medical Team (AD-290) ---
 medical:

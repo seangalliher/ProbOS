@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: BF-013 complete — ship's computer now resolves crew callsigns. IntrospectAgent callsign fallback, BaseAgent.info() includes callsign, decomposer prompt injected with callsign mapping, orb tooltips show crew names.
+## Current Status: Phase 28b (Proactive Cognitive Loop) in progress — build prompt written. Prior: AD-357 Phase 3 (Earned Agency) complete, BF-016 fixed, AD-410 complete (Bridge Alerts). 3021 pytest + 118 vitest = 3139 total tests.
 
 ---
 

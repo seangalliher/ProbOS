@@ -1,20 +1,20 @@
-"""Bundled agent suite — pre-built CognitiveAgent subclasses (Phase 22)."""
+"""Utility agent suite — pre-built CognitiveAgent subclasses (Phase 22)."""
 
-from probos.agents.bundled.web_agents import (
+from probos.agents.utility.web_agents import (
     WebSearchAgent,
     PageReaderAgent,
     WeatherAgent,
     NewsAgent,
 )
-from probos.agents.bundled.language_agents import (
+from probos.agents.utility.language_agents import (
     TranslateAgent,
     SummarizerAgent,
 )
-from probos.agents.bundled.productivity_agents import (
+from probos.agents.utility.productivity_agents import (
     CalculatorAgent,
     TodoAgent,
 )
-from probos.agents.bundled.organizer_agents import (
+from probos.agents.utility.organizer_agents import (
     NoteTakerAgent,
     SchedulerAgent,
 )

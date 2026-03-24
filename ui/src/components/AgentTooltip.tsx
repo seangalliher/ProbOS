@@ -24,6 +24,7 @@ function formatElapsed(startedAt: number): string {
 export function AgentTooltip() {
   const hovered = useStore((s) => s.hoveredAgent);
   const pinned = useStore((s) => s.pinnedAgent);
+  const activeProfileAgent = useStore((s) => s.activeProfileAgent);  // AD-406
   const pos = useStore((s) => s.tooltipPos);
   const agentTasks = useStore((s) => s.agentTasks);
   const poolToGroup = useStore((s) => s.poolToGroup);
@@ -52,6 +53,9 @@ export function AgentTooltip() {
 
   const agent = pinned || hovered;
   if (!agent) return null;
+
+  // Suppress tooltip when profile panel is showing (AD-406)
+  if (activeProfileAgent) return null;
 
   const trustLabel = agent.trust >= 0.7 ? 'high' : agent.trust >= 0.35 ? 'medium' : 'low';
   const trustColor = agent.trust >= 0.7 ? '#f0b060' : agent.trust >= 0.35 ? '#88a4c8' : '#7060a8';

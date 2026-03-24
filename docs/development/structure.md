@@ -26,7 +26,7 @@ src/probos/
 │   ├── system_qa.py         #   Smoke tests for designed agents
 │   ├── red_team.py          #   Independent verification + write checks
 │   ├── corrupted.py         #   Test agent (deliberately wrong)
-│   ├── bundled/             #   10 CognitiveAgent types ("useful on Day 1")
+│   ├── utility/             #   10 CognitiveAgent types ("useful on Day 1")
 │   │   ├── web_agents.py    #     WebSearch, PageReader, Weather, News
 │   │   ├── language_agents.py #   Translator, Summarizer
 │   │   ├── productivity_agents.py # Calculator, Todo, NoteTaker

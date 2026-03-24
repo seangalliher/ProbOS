@@ -36,7 +36,7 @@ ProbOS boots with 55 agents across 27+ pools organized in 7 departments (PoolGro
 | `note_taker` | Note creation and retrieval |
 | `scheduler` | Scheduling and reminders |
 
-All bundled agents are `CognitiveAgent` subclasses — they use LLM-backed instructions rather than deterministic code. Each declares `IntentDescriptor` metadata so the decomposer discovers them automatically.
+All utility agents are `CognitiveAgent` subclasses — they use LLM-backed instructions rather than deterministic code. Each declares `IntentDescriptor` metadata so the decomposer discovers them automatically.
 
 ## Medical Team (5 agents)
 

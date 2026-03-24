@@ -1,4 +1,4 @@
-"""Web + Content bundled agents (AD-248).
+"""Web + Content utility agents (AD-248).
 
 All web-facing agents dispatch ``http_fetch`` through the mesh via
 ``self._runtime.intent_bus.broadcast()`` — never httpx directly.

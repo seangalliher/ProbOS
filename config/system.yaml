@@ -222,8 +222,25 @@ knowledge:
   max_workflows: 200
   restore_on_boot: true            # Warm boot: restore trust, routing, agents, skills, episodes (AD-162/AD-181)
 
-bundled_agents:
-  enabled: true                    # Phase 22: bundled CognitiveAgent suite (AD-252)
+utility_agents:
+  enabled: true                    # Phase 22: utility CognitiveAgent suite (AD-252)
+
+# --- Ward Room (AD-407) ---
+ward_room:
+  enabled: true                    # Ward Room communication fabric
+  max_agent_rounds: 3              # AD-407d: max consecutive agent rounds before silence
+  agent_cooldown_seconds: 45       # AD-407d: cooldown for agent-triggered responses
+
+# --- Bridge Alerts (AD-410) ---
+bridge_alerts:
+  enabled: true
+  cooldown_seconds: 300
+  trust_drop_threshold: 0.15
+  trust_drop_alert_threshold: 0.25
+
+# --- Earned Agency (AD-357) ---
+earned_agency:
+  enabled: true
 
 # --- Channel Adapters (Phase 24) ---
 channels:

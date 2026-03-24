@@ -128,24 +128,36 @@ class CognitiveAgent(BaseAgent):
         from probos.cognitive.standing_orders import compose_instructions
 
         # BF-010: conversational system prompt for 1:1 sessions
-        is_conversation = observation.get("intent") == "direct_message"
+        # AD-407b: conversational system prompt for ward room notifications
+        is_conversation = observation.get("intent") in ("direct_message", "ward_room_notification")
 
         if is_conversation:
-            # For 1:1 conversations, use personality + standing orders only.
+            # For 1:1 and ward room, use personality + standing orders only.
             # Exclude domain-specific task instructions (report formats, output blocks)
             # so the LLM responds naturally as itself.
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
                 hardcoded_instructions="",
             )
-            composed += (
-                "\n\nYou are in a 1:1 conversation with the Captain. "
-                "Respond naturally and conversationally as yourself. "
-                "Do NOT use any structured output formats, report blocks, "
-                "code blocks, or task-specific templates. "
-                "Be genuine, personable, and engage with what the Captain says. "
-                "Draw on your expertise and personality, but keep it conversational."
-            )
+            if observation.get("intent") == "ward_room_notification":
+                composed += (
+                    "\n\nYou are participating in the Ward Room — the ship's discussion forum. "
+                    "Write concise, conversational posts (2-4 sentences). "
+                    "Speak in your natural voice. Don't be formal unless the topic demands it. "
+                    "You may be responding to the Captain or to a fellow crew member. "
+                    "Engage naturally — agree, disagree, build on ideas, ask questions. "
+                    "Do NOT repeat what someone else already said. "
+                    "If you have nothing meaningful to add, respond with exactly: [NO_RESPONSE]"
+                )
+            else:
+                composed += (
+                    "\n\nYou are in a 1:1 conversation with the Captain. "
+                    "Respond naturally and conversationally as yourself. "
+                    "Do NOT use any structured output formats, report blocks, "
+                    "code blocks, or task-specific templates. "
+                    "Be genuine, personable, and engage with what the Captain says. "
+                    "Draw on your expertise and personality, but keep it conversational."
+                )
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
@@ -187,6 +199,9 @@ class CognitiveAgent(BaseAgent):
         """Execute based on LLM decision.  Override for structured output."""
         if decision.get("action") == "error":
             return {"success": False, "error": decision.get("reason")}
+        # AD-407b: pass through conversational responses for ward room
+        if decision.get("intent") in ("direct_message", "ward_room_notification"):
+            return {"success": True, "result": decision.get("llm_output", "")}
         return {
             "success": True,
             "result": decision.get("llm_output", ""),
@@ -203,8 +218,9 @@ class CognitiveAgent(BaseAgent):
         unless it's a targeted direct_message (AD-397 1:1 sessions).
         """
         # AD-397: always accept direct_message if targeted to this agent
+        # AD-407b: always accept ward_room_notification if targeted to this agent
         is_direct = (
-            intent.intent == "direct_message"
+            intent.intent in ("direct_message", "ward_room_notification")
             and intent.target_agent_id == self.id
         )
 
@@ -295,6 +311,28 @@ class CognitiveAgent(BaseAgent):
                 parts.append("")
             parts.append(f"Captain says: {params.get('text', '')}")
             return "\n".join(parts)
+
+        # AD-407b: ward_room_notification — thread context for Ward Room
+        if intent_name == "ward_room_notification":
+            channel_name = params.get("channel_name", "")
+            author_callsign = params.get("author_callsign", "unknown")
+            title = params.get("title", "")
+            context = observation.get("context", "")
+
+            wr_parts: list[str] = []
+            wr_parts.append(f"[Ward Room — #{channel_name}]")
+            wr_parts.append(f"Thread: {title}")
+            if context:
+                wr_parts.append(f"\nConversation so far:\n{context}")
+            # AD-407d: Distinguish Captain vs crew member posts
+            author_id = params.get("author_id", "")
+            if author_id == "captain":
+                wr_parts.append(f"\nThe Captain posted the above.")
+            else:
+                wr_parts.append(f"\n{author_callsign} posted the above.")
+            wr_parts.append("Respond naturally as yourself. Share your perspective if you have something meaningful to contribute.")
+            wr_parts.append("If this topic is outside your expertise or you have nothing to add, respond with exactly: [NO_RESPONSE]")
+            return "\n".join(wr_parts)
 
         parts = [f"Intent: {intent_name}"]
         if params:

@@ -1,6 +1,6 @@
-"""Tests for Phase 22: Bundled Agents Distribution (AD-253).
+"""Tests for Phase 22: Utility Agents Distribution (AD-253).
 
-Covers all 10 bundled CognitiveAgent subclasses across 4 modules:
+Covers all 10 utility CognitiveAgent subclasses across 4 modules:
   - web_agents: WebSearchAgent, PageReaderAgent, WeatherAgent, NewsAgent
   - language_agents: TranslateAgent, SummarizerAgent
   - productivity_agents: CalculatorAgent, TodoAgent
@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from probos.agents.bundled import (
+from probos.agents.utility import (
     CalculatorAgent,
     NewsAgent,
     NoteTakerAgent,
@@ -42,12 +42,12 @@ from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, 
 # ---------------------------------------------------------------------------
 
 def _make_agent(cls, agent_id="test-1", **kwargs):
-    """Instantiate a bundled agent with a MockLLMClient and no runtime."""
+    """Instantiate a utility agent with a MockLLMClient and no runtime."""
     return cls(agent_id=agent_id, llm_client=MockLLMClient(), **kwargs)
 
 
 def _unrecognized_intent() -> IntentMessage:
-    """Return an IntentMessage that no bundled agent should recognize."""
+    """Return an IntentMessage that no utility agent should recognize."""
     return IntentMessage(intent="absolutely_unknown_intent_xyz", params={})
 
 
@@ -572,11 +572,11 @@ class TestSchedulerAgent:
 # Cross-cutting: __init__.py exports
 # ===================================================================
 
-class TestBundledExports:
+class TestUtilityExports:
 
     def test_all_agents_exported(self):
-        """__init__.py exports all 10 bundled agents."""
-        from probos.agents.bundled import __all__
+        """__init__.py exports all 10 utility agents."""
+        from probos.agents.utility import __all__
 
         expected = {
             "WebSearchAgent",
@@ -593,7 +593,7 @@ class TestBundledExports:
         assert set(__all__) == expected
 
     def test_all_agents_are_cognitive_subclasses(self):
-        """Every bundled agent is a subclass of CognitiveAgent."""
+        """Every utility agent is a subclass of CognitiveAgent."""
         from probos.cognitive.cognitive_agent import CognitiveAgent
 
         agents = [
@@ -604,8 +604,8 @@ class TestBundledExports:
         for cls in agents:
             assert issubclass(cls, CognitiveAgent), f"{cls.__name__} is not a CognitiveAgent subclass"
 
-    def test_all_agents_have_bundled_mixin_behavior(self):
-        """Every bundled agent has _handled_intents and intent_descriptors defined."""
+    def test_all_agents_have_utility_mixin_behavior(self):
+        """Every utility agent has _handled_intents and intent_descriptors defined."""
         agents = [
             WebSearchAgent, PageReaderAgent, WeatherAgent, NewsAgent,
             TranslateAgent, SummarizerAgent, CalculatorAgent, TodoAgent,
@@ -625,8 +625,8 @@ class TestBundledExports:
 # Persistence tests (AD-362)
 # ===================================================================
 
-class TestBundledPersistence:
-    """Verify bundled agents actually write to disk (AD-362)."""
+class TestUtilityPersistence:
+    """Verify utility agents actually write to disk (AD-362)."""
 
     @pytest.mark.asyncio
     async def test_todo_agent_persists_to_disk(self, tmp_path):

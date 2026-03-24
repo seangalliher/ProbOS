@@ -219,7 +219,8 @@ class CounselorAgent(CognitiveAgent):
     )
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(pool="bridge", **kwargs)
+        kwargs.setdefault("pool", "bridge")
+        super().__init__(**kwargs)
         self._cognitive_profiles: dict[str, CognitiveProfile] = {}
 
     # -- Profile management --
@@ -358,8 +359,8 @@ class CounselorAgent(CognitiveAgent):
 
     async def act(self, plan: Any) -> Any:
         """Execute the counselor's assessment plan."""
-        # AD-398: pass through conversational responses for 1:1 sessions
-        if isinstance(plan, dict) and plan.get("intent") == "direct_message":
+        # AD-398: pass through conversational responses for 1:1 and ward room
+        if isinstance(plan, dict) and plan.get("intent") in ("direct_message", "ward_room_notification"):
             return {"success": True, "result": plan.get("llm_output", "")}
         if isinstance(plan, dict) and plan.get("action") == "assess":
             agent_id = plan.get("agent_id", "")
@@ -383,6 +384,10 @@ class CounselorAgent(CognitiveAgent):
                 "type": "counselor_assessment",
                 "data": result.to_dict(),
             }
+        # BF-015: conversational responses must preserve "result" key
+        # for handle_intent() → IntentResult extraction
+        if isinstance(result, dict) and "result" in result:
+            return result
         return {
             "agent_id": self.id,
             "type": "counselor_response",

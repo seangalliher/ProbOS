@@ -1,7 +1,7 @@
 """Distribution + runtime integration tests for Phase 22 (AD-253).
 
 Tests cover:
-- Runtime integration: bundled agent pools, descriptors, config gating
+- Runtime integration: utility agent pools, descriptors, config gating
 - Distribution: `probos init`, FastAPI endpoints, WebSocket
 """
 
@@ -29,7 +29,7 @@ from probos.runtime import ProbOSRuntime
 
 @pytest.fixture
 async def runtime(tmp_path):
-    """Runtime with MockLLMClient and bundled agents enabled."""
+    """Runtime with MockLLMClient and utility agents enabled."""
     llm = MockLLMClient()
     rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=llm)
     await rt.start()
@@ -38,10 +38,10 @@ async def runtime(tmp_path):
 
 
 @pytest.fixture
-async def runtime_no_bundled(tmp_path):
-    """Runtime with bundled agents disabled."""
+async def runtime_no_utility(tmp_path):
+    """Runtime with utility agents disabled."""
     config = SystemConfig()
-    config.bundled_agents.enabled = False
+    config.utility_agents.enabled = False
     llm = MockLLMClient()
     rt = ProbOSRuntime(config=config, data_dir=tmp_path / "data", llm_client=llm)
     await rt.start()
@@ -53,33 +53,33 @@ async def runtime_no_bundled(tmp_path):
 # Runtime integration tests
 # ------------------------------------------------------------------
 
-class TestBundledRuntimeIntegration:
-    """Runtime-level tests for bundled agent registration and lifecycle."""
+class TestUtilityRuntimeIntegration:
+    """Runtime-level tests for utility agent registration and lifecycle."""
 
-    BUNDLED_POOLS = {
+    UTILITY_POOLS = {
         "web_search", "page_reader", "weather", "news",
         "translator", "summarizer", "calculator",
         "todo_manager", "note_taker", "scheduler",
     }
 
-    BUNDLED_INTENTS = {
+    UTILITY_INTENTS = {
         "web_search", "read_page", "get_weather", "get_news",
         "translate_text", "summarize_text", "calculate",
         "manage_todo", "manage_notes", "manage_schedule",
     }
 
     @pytest.mark.asyncio
-    async def test_all_bundled_pools_created(self, runtime):
-        """All 10 bundled pool types are created at boot."""
+    async def test_all_utility_pools_created(self, runtime):
+        """All 10 utility pool types are created at boot."""
         pool_names = set(runtime.pools.keys())
-        assert self.BUNDLED_POOLS.issubset(pool_names), (
-            f"Missing bundled pools: {self.BUNDLED_POOLS - pool_names}"
+        assert self.UTILITY_POOLS.issubset(pool_names), (
+            f"Missing utility pools: {self.UTILITY_POOLS - pool_names}"
         )
 
     @pytest.mark.asyncio
-    async def test_bundled_agents_have_llm_client(self, runtime):
-        """Bundled agents have llm_client reference set."""
-        for pool_name in self.BUNDLED_POOLS:
+    async def test_utility_agents_have_llm_client(self, runtime):
+        """Utility agents have llm_client reference set."""
+        for pool_name in self.UTILITY_POOLS:
             pool = runtime.pools[pool_name]
             for agent_id in pool._agent_ids:
                 agent = runtime.registry.get(agent_id)
@@ -89,9 +89,9 @@ class TestBundledRuntimeIntegration:
                 )
 
     @pytest.mark.asyncio
-    async def test_bundled_agents_have_runtime(self, runtime):
-        """Bundled agents have runtime reference set."""
-        for pool_name in self.BUNDLED_POOLS:
+    async def test_utility_agents_have_runtime(self, runtime):
+        """Utility agents have runtime reference set."""
+        for pool_name in self.UTILITY_POOLS:
             pool = runtime.pools[pool_name]
             for agent_id in pool._agent_ids:
                 agent = runtime.registry.get(agent_id)
@@ -101,43 +101,43 @@ class TestBundledRuntimeIntegration:
                 )
 
     @pytest.mark.asyncio
-    async def test_intent_descriptors_include_bundled(self, runtime):
-        """_collect_intent_descriptors() includes all bundled agent intents."""
+    async def test_intent_descriptors_include_utility(self, runtime):
+        """_collect_intent_descriptors() includes all utility agent intents."""
         descriptors = runtime.decomposer._intent_descriptors
         descriptor_names = {d.name for d in descriptors}
-        assert self.BUNDLED_INTENTS.issubset(descriptor_names), (
-            f"Missing bundled intents: {self.BUNDLED_INTENTS - descriptor_names}"
+        assert self.UTILITY_INTENTS.issubset(descriptor_names), (
+            f"Missing utility intents: {self.UTILITY_INTENTS - descriptor_names}"
         )
 
     @pytest.mark.asyncio
-    async def test_disabled_skips_bundled_pools(self, runtime_no_bundled):
-        """bundled_agents.enabled: false skips bundled pool creation."""
-        pool_names = set(runtime_no_bundled.pools.keys())
-        overlap = self.BUNDLED_POOLS & pool_names
+    async def test_disabled_skips_utility_pools(self, runtime_no_utility):
+        """utility_agents.enabled: false skips utility pool creation."""
+        pool_names = set(runtime_no_utility.pools.keys())
+        overlap = self.UTILITY_POOLS & pool_names
         assert len(overlap) == 0, (
-            f"Bundled pools should not exist when disabled: {overlap}"
+            f"Utility pools should not exist when disabled: {overlap}"
         )
 
     @pytest.mark.asyncio
-    async def test_status_includes_bundled_pools(self, runtime):
-        """Runtime status() includes bundled agent pools."""
+    async def test_status_includes_utility_pools(self, runtime):
+        """Runtime status() includes utility agent pools."""
         status = runtime.status()
-        for pool_name in self.BUNDLED_POOLS:
+        for pool_name in self.UTILITY_POOLS:
             assert pool_name in status["pools"], (
                 f"Pool {pool_name} missing from status"
             )
 
     @pytest.mark.asyncio
     async def test_total_agent_count(self, runtime):
-        """Total agent count includes bundled agents (~47 total)."""
+        """Total agent count includes utility agents (~47 total)."""
         status = runtime.status()
         total = status["total_agents"]
-        # 20 bundled (10 pools × 2) + core agents
+        # 20 utility (10 pools × 2) + core agents
         assert total >= 40, f"Expected >= 40 agents, got {total}"
 
     @pytest.mark.asyncio
-    async def test_bundled_nl_query(self, runtime):
-        """Bundled agents respond to NL queries via MockLLMClient."""
+    async def test_utility_nl_query(self, runtime):
+        """Utility agents respond to NL queries via MockLLMClient."""
         result = await runtime.process_natural_language("what's the weather in Paris")
         assert result["node_count"] >= 1
         assert result["complete"]
@@ -183,7 +183,7 @@ class TestProbOSInit:
         assert isinstance(config, dict)
         assert config["system"]["name"] == "ProbOS"
         assert "cognitive" in config
-        assert config.get("bundled_agents", {}).get("enabled") is True
+        assert config.get("utility_agents", {}).get("enabled") is True
 
     def test_init_force_overwrites(self, tmp_path):
         """probos init --force overwrites existing config."""

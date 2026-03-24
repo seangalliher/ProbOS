@@ -1,4 +1,4 @@
-"""Language + Content bundled agents (AD-249).
+"""Language + Content utility agents (AD-249).
 
 Pure LLM agents — no perceive() override needed.
 """

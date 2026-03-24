@@ -92,7 +92,7 @@ class TestPoolGroupRegistry:
             exclude_from_scaler=True,
         ))
         registry.register(PoolGroup(
-            name="bundled", display_name="Bundled",
+            name="utility", display_name="Utility",
             pool_names={"weather", "news"},
             exclude_from_scaler=False,
         ))
@@ -105,9 +105,9 @@ class TestPoolGroupRegistry:
         """all_groups returns groups sorted alphabetically by name."""
         registry.register(PoolGroup(name="medical", display_name="Medical", pool_names=set()))
         registry.register(PoolGroup(name="core", display_name="Core", pool_names=set()))
-        registry.register(PoolGroup(name="bundled", display_name="Bundled", pool_names=set()))
+        registry.register(PoolGroup(name="utility", display_name="Utility", pool_names=set()))
         names = [g.name for g in registry.all_groups()]
-        assert names == ["bundled", "core", "medical"]
+        assert names == ["core", "medical", "utility"]
 
     def test_group_health(self, registry: PoolGroupRegistry):
         """group_health aggregates across pools in a group."""

@@ -1,0 +1,310 @@
+"""Bridge Alerts — proactive notifications to Ward Room & Captain (AD-410).
+
+Monitors ship systems (VitalsMonitor, EmergentDetector, BehavioralMonitor,
+TrustNetwork) and posts significant events to the Ward Room as threads.
+Crew agents respond naturally via existing AD-407d mechanics.
+
+No LLM calls — purely mechanical threshold checking with deduplication.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+import uuid
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class AlertSeverity(str, Enum):
+    """Bridge Alert severity levels."""
+    INFO = "info"          # Department channel, no Captain notification
+    ADVISORY = "advisory"  # All Hands, info notification to Captain
+    ALERT = "alert"        # All Hands, action_required notification to Captain
+
+
+@dataclass
+class BridgeAlert:
+    """A single bridge alert ready for delivery."""
+    id: str
+    severity: AlertSeverity
+    source: str              # "vitals_monitor", "emergent_detector", etc.
+    alert_type: str          # "pool_health_warning", "trust_drop", etc.
+    title: str
+    detail: str
+    department: str | None   # For info-severity routing to department channel
+    dedup_key: str
+    timestamp: float = field(default_factory=time.time)
+    related_agent_id: str | None = None
+    related_pool: str | None = None
+
+
+class BridgeAlertService:
+    """Evaluates monitoring signals and produces alerts for Ward Room + notifications.
+
+    The service itself does NOT post to the Ward Room — it returns BridgeAlert
+    objects that the runtime delivers via _deliver_bridge_alert().
+    """
+
+    def __init__(
+        self,
+        cooldown_seconds: float = 300,
+        trust_drop_threshold: float = 0.15,
+        trust_drop_alert_threshold: float = 0.25,
+    ) -> None:
+        self._cooldown = cooldown_seconds
+        self._trust_drop_threshold = trust_drop_threshold
+        self._trust_drop_alert = trust_drop_alert_threshold
+        self._recent: dict[str, float] = {}     # dedup_key -> monotonic timestamp
+        self._alert_log: list[BridgeAlert] = []
+        self._max_log = 200
+
+    def _should_emit(self, dedup_key: str) -> bool:
+        """Check dedup cache. Returns True if alert should fire."""
+        now = time.monotonic()
+        last = self._recent.get(dedup_key)
+        if last is not None and now - last < self._cooldown:
+            return False
+        self._recent[dedup_key] = now
+        # Prune expired entries
+        cutoff = now - self._cooldown * 2
+        self._recent = {k: v for k, v in self._recent.items() if v > cutoff}
+        return True
+
+    def _record(self, alert: BridgeAlert) -> None:
+        """Add alert to the ring buffer log."""
+        self._alert_log.append(alert)
+        if len(self._alert_log) > self._max_log:
+            self._alert_log = self._alert_log[-self._max_log:]
+
+    # --- Signal processors ---
+
+    def check_vitals(self, vitals_data: dict) -> list[BridgeAlert]:
+        """Process VitalsMonitor snapshot data. Returns alerts to emit.
+
+        Expected vitals_data keys:
+            pool_health: dict[str, float]   -- pool_name -> health ratio (0-1)
+            system_health: float | None     -- overall system health (0-1)
+            trust_outlier_count: int        -- number of agents below trust floor
+        """
+        alerts: list[BridgeAlert] = []
+
+        # Pool health checks
+        for pool_name, health in vitals_data.get("pool_health", {}).items():
+            if health < 0.25:
+                key = f"pool_health_critical:{pool_name}"
+                if self._should_emit(key):
+                    a = BridgeAlert(
+                        id=str(uuid.uuid4()), severity=AlertSeverity.ALERT,
+                        source="vitals_monitor", alert_type="pool_health_critical",
+                        title=f"Pool '{pool_name}' Critical \u2014 {int(health * 100)}% capacity",
+                        detail=(
+                            f"Pool '{pool_name}' has dropped to {int(health * 100)}% of target capacity. "
+                            f"Agents may be degraded or failing to spawn."
+                        ),
+                        department="engineering", dedup_key=key,
+                        related_pool=pool_name,
+                    )
+                    self._record(a)
+                    alerts.append(a)
+            elif health < 0.5:
+                key = f"pool_health_warning:{pool_name}"
+                if self._should_emit(key):
+                    a = BridgeAlert(
+                        id=str(uuid.uuid4()), severity=AlertSeverity.ADVISORY,
+                        source="vitals_monitor", alert_type="pool_health_warning",
+                        title=f"Pool '{pool_name}' Degraded \u2014 {int(health * 100)}% capacity",
+                        detail=f"Pool '{pool_name}' is running at {int(health * 100)}% of target capacity.",
+                        department="engineering", dedup_key=key,
+                        related_pool=pool_name,
+                    )
+                    self._record(a)
+                    alerts.append(a)
+
+        # System health checks
+        sys_health = vitals_data.get("system_health")
+        if sys_health is not None:
+            if sys_health < 0.3:
+                key = "system_health_critical"
+                if self._should_emit(key):
+                    a = BridgeAlert(
+                        id=str(uuid.uuid4()), severity=AlertSeverity.ALERT,
+                        source="vitals_monitor", alert_type="system_health_critical",
+                        title=f"System Health Critical \u2014 {sys_health:.2f}",
+                        detail=(
+                            f"Overall system health has dropped to {sys_health:.2f}. "
+                            f"Multiple agent pools may be affected."
+                        ),
+                        department=None, dedup_key=key,
+                    )
+                    self._record(a)
+                    alerts.append(a)
+            elif sys_health < 0.6:
+                key = "system_health_warning"
+                if self._should_emit(key):
+                    a = BridgeAlert(
+                        id=str(uuid.uuid4()), severity=AlertSeverity.ADVISORY,
+                        source="vitals_monitor", alert_type="system_health_warning",
+                        title=f"System Health Warning \u2014 {sys_health:.2f}",
+                        detail=f"Overall system health is at {sys_health:.2f}.",
+                        department=None, dedup_key=key,
+                    )
+                    self._record(a)
+                    alerts.append(a)
+
+        # Trust outlier checks
+        outlier_count = vitals_data.get("trust_outlier_count", 0)
+        if outlier_count > 3:
+            key = f"trust_outliers:{outlier_count}"
+            if self._should_emit(key):
+                a = BridgeAlert(
+                    id=str(uuid.uuid4()), severity=AlertSeverity.ADVISORY,
+                    source="vitals_monitor", alert_type="trust_outliers",
+                    title=f"Multiple Trust Outliers Detected ({outlier_count} agents)",
+                    detail=(
+                        f"{outlier_count} agents are below the trust floor. "
+                        f"This may indicate systemic task difficulty or environmental changes."
+                    ),
+                    department=None, dedup_key=key,
+                )
+                self._record(a)
+                alerts.append(a)
+
+        return alerts
+
+    def check_trust_change(
+        self, agent_id: str, old_score: float, new_score: float,
+    ) -> BridgeAlert | None:
+        """Check if a trust change is significant enough to alert.
+
+        Args:
+            agent_id: The agent whose trust changed.
+            old_score: Trust score before the change.
+            new_score: Trust score after the change.
+
+        Returns:
+            A BridgeAlert if the drop exceeds the threshold, else None.
+        """
+        drop = old_score - new_score
+        if drop < self._trust_drop_threshold:
+            return None
+
+        if drop >= self._trust_drop_alert:
+            severity = AlertSeverity.ALERT
+            alert_type = "trust_drop_alert"
+        else:
+            severity = AlertSeverity.ADVISORY
+            alert_type = "trust_drop_advisory"
+
+        key = f"trust_drop:{agent_id}"
+        if not self._should_emit(key):
+            return None
+
+        a = BridgeAlert(
+            id=str(uuid.uuid4()), severity=severity,
+            source="trust_network", alert_type=alert_type,
+            title=f"Trust Drop \u2014 {agent_id[:20]} ({old_score:.2f} \u2192 {new_score:.2f})",
+            detail=f"Agent {agent_id} experienced a trust drop of {drop:.2f} in a single event.",
+            department=None, dedup_key=key,
+            related_agent_id=agent_id,
+        )
+        self._record(a)
+        return a
+
+    def check_emergent_patterns(self, patterns: list) -> list[BridgeAlert]:
+        """Process EmergentDetector patterns. Returns alerts to emit.
+
+        Args:
+            patterns: List of EmergentPattern objects from the detector.
+        """
+        alerts: list[BridgeAlert] = []
+        for p in patterns:
+            ptype = getattr(p, "pattern_type", "")
+            severity_str = getattr(p, "severity", "info")
+            desc = getattr(p, "description", str(p))
+
+            if ptype == "trust_anomaly" and severity_str in ("significant", "notable"):
+                sev = AlertSeverity.ADVISORY
+            elif ptype == "cooperation_cluster":
+                sev = AlertSeverity.INFO
+            elif ptype == "routing_shift" and severity_str == "significant":
+                sev = AlertSeverity.ADVISORY
+            else:
+                continue  # Skip info-level or unknown patterns
+
+            key = f"emergent:{ptype}"
+            if not self._should_emit(key):
+                continue
+
+            dept = None
+            if ptype == "cooperation_cluster":
+                dept = "science"
+
+            a = BridgeAlert(
+                id=str(uuid.uuid4()), severity=sev,
+                source="emergent_detector", alert_type=f"emergent_{ptype}",
+                title=f"{ptype.replace('_', ' ').title()} Detected",
+                detail=desc, department=dept, dedup_key=key,
+            )
+            self._record(a)
+            alerts.append(a)
+
+        return alerts
+
+    def check_behavioral(self, behavioral_monitor: Any) -> list[BridgeAlert]:
+        """Check BehavioralMonitor for actionable alerts.
+
+        Args:
+            behavioral_monitor: The BehavioralMonitor instance.
+        """
+        alerts: list[BridgeAlert] = []
+        if not behavioral_monitor:
+            return alerts
+
+        for alert in behavioral_monitor.get_alerts():
+            atype = getattr(alert, "alert_type", "")
+            agent_type = getattr(alert, "agent_type", "unknown")
+
+            if atype == "high_failure_rate":
+                key = f"behavioral_failure:{agent_type}"
+                if self._should_emit(key):
+                    a = BridgeAlert(
+                        id=str(uuid.uuid4()), severity=AlertSeverity.ADVISORY,
+                        source="behavioral_monitor", alert_type="behavioral_failure",
+                        title=f"High Failure Rate \u2014 {agent_type}",
+                        detail=getattr(
+                            alert, "detail",
+                            f"Agent type {agent_type} is experiencing a high failure rate (>50%).",
+                        ),
+                        department="engineering", dedup_key=key,
+                    )
+                    self._record(a)
+                    alerts.append(a)
+
+        # Check for removal recommendations
+        status = behavioral_monitor.get_status()
+        for agent_type_key in status:
+            if behavioral_monitor.should_recommend_removal(agent_type_key):
+                key = f"behavioral_removal:{agent_type_key}"
+                if self._should_emit(key):
+                    a = BridgeAlert(
+                        id=str(uuid.uuid4()), severity=AlertSeverity.ALERT,
+                        source="behavioral_monitor", alert_type="behavioral_removal",
+                        title=f"Agent Removal Recommended \u2014 {agent_type_key}",
+                        detail=(
+                            f"Agent type '{agent_type_key}' has sustained failure rates "
+                            f"warranting removal consideration."
+                        ),
+                        department="engineering", dedup_key=key,
+                    )
+                    self._record(a)
+                    alerts.append(a)
+
+        return alerts
+
+    def get_recent_alerts(self, limit: int = 50) -> list[BridgeAlert]:
+        """Return recent alerts for status/API exposure."""
+        return self._alert_log[-limit:]
