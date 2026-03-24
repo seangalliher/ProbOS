@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -227,6 +228,19 @@ class CreateAssignmentRequest(BaseModel):
 class ModifyMembersRequest(BaseModel):
     agent_id: str
     action: str = "add"  # "add" | "remove"
+
+class ScheduledTaskRequest(BaseModel):
+    """Request to create a persistent scheduled task (Phase 25a)."""
+    intent_text: str
+    name: str = ""
+    schedule_type: str = "once"   # once | interval | cron
+    execute_at: float | None = None
+    interval_seconds: float | None = None
+    cron_expr: str | None = None
+    channel_id: str | None = None
+    max_runs: int | None = None
+    created_by: str = "captain"
+    webhook_name: str | None = None
 
 
 def create_app(runtime: Any) -> FastAPI:
@@ -1378,6 +1392,78 @@ def create_app(runtime: Any) -> FastAPI:
             return {"assignments": []}
         assignments = await runtime.assignment_service.get_agent_assignments(agent_id)
         return {"assignments": [vars(a) for a in assignments]}
+
+    # --- Scheduled Tasks (Phase 25a) ---
+
+    @app.get("/api/scheduled-tasks")
+    async def list_scheduled_tasks(status: str | None = None) -> dict[str, Any]:
+        """List persistent scheduled tasks."""
+        if not runtime.persistent_task_store:
+            return {"tasks": [], "error": "Persistent task store not enabled"}
+        tasks = await runtime.persistent_task_store.list_tasks(status=status)
+        return {"tasks": [runtime.persistent_task_store._task_to_dict(t) for t in tasks]}
+
+    @app.post("/api/scheduled-tasks")
+    async def create_scheduled_task(req: ScheduledTaskRequest) -> dict[str, Any]:
+        """Create a new persistent scheduled task."""
+        if not runtime.persistent_task_store:
+            return JSONResponse(status_code=503, content={"error": "Persistent task store not enabled"})
+        try:
+            task = await runtime.persistent_task_store.create_task(
+                intent_text=req.intent_text,
+                schedule_type=req.schedule_type,
+                name=req.name,
+                execute_at=req.execute_at,
+                interval_seconds=req.interval_seconds,
+                cron_expr=req.cron_expr,
+                channel_id=req.channel_id,
+                max_runs=req.max_runs,
+                created_by=req.created_by,
+                webhook_name=req.webhook_name,
+            )
+            return runtime.persistent_task_store._task_to_dict(task)
+        except ValueError as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+
+    @app.get("/api/scheduled-tasks/{task_id}")
+    async def get_scheduled_task(task_id: str) -> dict[str, Any]:
+        """Get a single scheduled task by ID."""
+        if not runtime.persistent_task_store:
+            return JSONResponse(status_code=503, content={"error": "Persistent task store not enabled"})
+        task = await runtime.persistent_task_store.get_task(task_id)
+        if not task:
+            return JSONResponse(status_code=404, content={"error": "Task not found"})
+        return runtime.persistent_task_store._task_to_dict(task)
+
+    @app.delete("/api/scheduled-tasks/{task_id}")
+    async def cancel_scheduled_task(task_id: str) -> dict[str, Any]:
+        """Cancel a scheduled task."""
+        if not runtime.persistent_task_store:
+            return JSONResponse(status_code=503, content={"error": "Persistent task store not enabled"})
+        cancelled = await runtime.persistent_task_store.cancel_task(task_id)
+        if not cancelled:
+            return JSONResponse(status_code=404, content={"error": "Task not found or already cancelled"})
+        return {"cancelled": True, "task_id": task_id}
+
+    @app.post("/api/scheduled-tasks/webhook/{webhook_name}")
+    async def trigger_webhook(webhook_name: str) -> dict[str, Any]:
+        """Trigger a named webhook task."""
+        if not runtime.persistent_task_store:
+            return JSONResponse(status_code=503, content={"error": "Persistent task store not enabled"})
+        task = await runtime.persistent_task_store.trigger_webhook(webhook_name)
+        if not task:
+            return JSONResponse(status_code=404, content={"error": f"Webhook '{webhook_name}' not found"})
+        return {"triggered": True, "task_id": task.id, "webhook_name": webhook_name}
+
+    @app.post("/api/scheduled-tasks/dag/{dag_id}/resume")
+    async def resume_dag_checkpoint(dag_id: str) -> dict[str, Any]:
+        """Resume a stale DAG checkpoint (Captain-approved)."""
+        if not runtime.persistent_task_store:
+            return JSONResponse(status_code=503, content={"error": "Persistent task store not enabled"})
+        result = await runtime.persistent_task_store.resume_dag(dag_id)
+        if "error" in result:
+            return JSONResponse(status_code=400, content=result)
+        return result
 
     async def _run_build(
         req: BuildRequest,

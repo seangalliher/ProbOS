@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
@@ -201,9 +202,9 @@ class SchedulerAgent(_BundledMixin, CognitiveAgent):
         "- cancel: Cancel a reminder by task_id\n"
         "- check: Check what's coming up today/this week\n\n"
         "Reminders will now be delivered on schedule as long as ProbOS is running. "
-        "For recurring tasks, specify an interval (e.g., 'every hour', 'every day'). "
-        "Tasks do not survive server restarts — they will be re-loaded from saved "
-        "reminders on next boot.\n\n"
+        "Tasks are now persistent and survive server restarts. For recurring tasks, "
+        "specify an interval (e.g., 'every hour', 'every day'). Cron expressions "
+        "are also supported for complex schedules.\n\n"
         "Return a JSON object with:\n"
         "  action: the action performed\n"
         "  For 'remind': delay_seconds (number), text (what to do), "
@@ -249,6 +250,17 @@ class SchedulerAgent(_BundledMixin, CognitiveAgent):
                     parts.append(f"Active scheduled tasks ({len(tasks)}):\n" + "\n".join(lines))
                 else:
                     parts.append("Active scheduled tasks: none")
+            # Include persistent scheduled tasks (Phase 25a)
+            if hasattr(self._runtime, "persistent_task_store") and self._runtime.persistent_task_store:
+                try:
+                    p_tasks = await self._runtime.persistent_task_store.list_tasks(limit=20)
+                    if p_tasks:
+                        lines = [f"  {t.id}: {t.name} ({t.schedule_type}, status={t.status}, runs={t.run_count})" for t in p_tasks]
+                        parts.append(f"Persistent scheduled tasks ({len(p_tasks)}):\n" + "\n".join(lines))
+                    else:
+                        parts.append("Persistent scheduled tasks: none")
+                except Exception:
+                    pass
             obs["fetched_content"] = "\n\n".join(parts)
         return obs
 
@@ -264,26 +276,47 @@ class SchedulerAgent(_BundledMixin, CognitiveAgent):
                 if isinstance(data, dict):
                     action = data.get("action", "")
 
-                    # --- Schedule a task via TaskScheduler (AD-283) ---
-                    if action == "remind" and hasattr(self._runtime, "task_scheduler") and self._runtime.task_scheduler:
+                    # --- Schedule a task (AD-283 + Phase 25a) ---
+                    if action == "remind":
                         delay = data.get("delay_seconds", 60)
                         text = data.get("text", "")
                         interval = data.get("interval_seconds")
                         channel_id = data.get("channel_id")
                         if text:
-                            self._runtime.task_scheduler.schedule(
-                                text,
-                                delay_seconds=float(delay),
-                                interval_seconds=float(interval) if interval else None,
-                                channel_id=channel_id,
-                            )
+                            # Prefer persistent store (Phase 25a) over in-memory scheduler
+                            if hasattr(self._runtime, "persistent_task_store") and self._runtime.persistent_task_store:
+                                schedule_type = "interval" if interval else "once"
+                                execute_at = time.time() + float(delay) if not interval else None
+                                await self._runtime.persistent_task_store.create_task(
+                                    intent_text=text,
+                                    schedule_type=schedule_type,
+                                    execute_at=execute_at,
+                                    interval_seconds=float(interval) if interval else None,
+                                    channel_id=channel_id,
+                                )
+                            elif hasattr(self._runtime, "task_scheduler") and self._runtime.task_scheduler:
+                                self._runtime.task_scheduler.schedule(
+                                    text,
+                                    delay_seconds=float(delay),
+                                    interval_seconds=float(interval) if interval else None,
+                                    channel_id=channel_id,
+                                )
 
-                    # --- List tasks from TaskScheduler ---
-                    elif action == "list" and hasattr(self._runtime, "task_scheduler") and self._runtime.task_scheduler:
-                        tasks = self._runtime.task_scheduler.list_tasks()
-                        if tasks:
-                            lines = [f"  {t.id}: {t.intent_text} (status={t.status})" for t in tasks]
-                            return {"success": True, "result": f"{len(tasks)} scheduled task(s):\n" + "\n".join(lines)}
+                    # --- List tasks from both stores ---
+                    elif action == "list":
+                        all_lines = []
+                        # Persistent tasks (Phase 25a)
+                        if hasattr(self._runtime, "persistent_task_store") and self._runtime.persistent_task_store:
+                            p_tasks = await self._runtime.persistent_task_store.list_tasks(limit=20)
+                            for t in p_tasks:
+                                all_lines.append(f"  [{t.schedule_type}] {t.id}: {t.name} (status={t.status}, runs={t.run_count})")
+                        # In-memory tasks
+                        if hasattr(self._runtime, "task_scheduler") and self._runtime.task_scheduler:
+                            tasks = self._runtime.task_scheduler.list_tasks()
+                            for t in tasks:
+                                all_lines.append(f"  [session] {t.id}: {t.intent_text} (status={t.status})")
+                        if all_lines:
+                            return {"success": True, "result": f"{len(all_lines)} task(s):\n" + "\n".join(all_lines)}
                         return {"success": True, "result": data.get("message", "No scheduled tasks.")}
 
                     # --- Cancel a task ---

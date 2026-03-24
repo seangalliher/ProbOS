@@ -10,6 +10,7 @@ import type {
   WardRoomChannel,  // AD-407
   WardRoomThread, WardRoomPost,  // AD-407c
   Assignment,  // AD-408
+  ScheduledTaskView,  // Phase 25a
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
@@ -378,6 +379,8 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomUnread: {},
   // Assignments (AD-408)
   assignments: [],
+  // Scheduled Tasks (Phase 25a)
+  scheduledTasks: [] as ScheduledTaskView[],
   showIntro: typeof localStorage !== 'undefined' && !localStorage.getItem('hxi_seen_intro'),
   showLegend: false,
   showHistory: false,
@@ -521,6 +524,13 @@ export const useStore = create<HXIState>((set, get) => ({
         set({ wardRoomUnread: data.unread || {} });
       }
     } catch { /* swallow */ }
+  },
+  refreshScheduledTasks: async () => {
+    try {
+      const res = await fetch('/api/scheduled-tasks?status=pending');
+      const data = await res.json();
+      set({ scheduledTasks: data.tasks || [] });
+    } catch { /* fail silently */ }
   },
   setShowIntro: (v) => set({ showIntro: v }),
   setShowLegend: (v) => set({ showLegend: v }),
@@ -705,6 +715,10 @@ export const useStore = create<HXIState>((set, get) => ({
         // Hydrate assignments from snapshot (AD-408)
         if ((data as any).assignments) {
           set({ assignments: (data as any).assignments as Assignment[] });
+        }
+        // Hydrate scheduled tasks from snapshot (Phase 25a)
+        if ((data as any).scheduled_tasks) {
+          set({ scheduledTasks: (data as any).scheduled_tasks });
         }
         break;
       }
@@ -1257,6 +1271,19 @@ export const useStore = create<HXIState>((set, get) => ({
       case 'assignment_created':
       case 'assignment_updated':
       case 'assignment_completed': {
+        break;
+      }
+
+      // Scheduled Task events (Phase 25a)
+      case 'scheduled_task_created':
+      case 'scheduled_task_updated':
+      case 'scheduled_task_cancelled':
+      case 'scheduled_task_fired': {
+        get().refreshScheduledTasks();
+        break;
+      }
+      case 'scheduled_task_dag_stale': {
+        // Surface as notification — stale DAGs need Captain review
         break;
       }
 

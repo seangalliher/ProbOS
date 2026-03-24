@@ -228,6 +228,9 @@ class ProbOSRuntime:
         # --- Task Scheduler ---
         self.task_scheduler: TaskScheduler | None = None
 
+        # --- Persistent Task Store (Phase 25a) ---
+        self.persistent_task_store: Any = None  # PersistentTaskStore | None
+
         # --- Pool scaling ---
         self.pool_scaler: PoolScaler | None = None
 
@@ -476,6 +479,7 @@ class ProbOSRuntime:
             "directives": self._directive_summary(),
             "notifications": self.notification_queue.snapshot(),
             "unread_count": self.notification_queue.unread_count(),
+            "scheduled_tasks": self.persistent_task_store.snapshot() if self.persistent_task_store else [],
         }
 
     def _directive_summary(self) -> dict[str, int]:
@@ -1161,24 +1165,39 @@ class ProbOSRuntime:
         except Exception:
             logger.exception("DirectiveStore init failed (non-fatal)")
 
-        # Scan for abandoned DAG checkpoints from previous session (AD-405)
-        from probos.cognitive.checkpoint import scan_checkpoints
-        stale = scan_checkpoints(self._checkpoint_dir)
-        if stale:
-            logger.info(
-                "Found %d incomplete DAG checkpoint(s) from previous session",
-                len(stale),
+        # --- Persistent Task Store (Phase 25a) ---
+        # Replaces the old checkpoint-scan-only block (AD-405).
+        # PersistentTaskStore handles stale checkpoint detection internally.
+        if self.config.persistent_tasks.enabled:
+            from probos.persistent_tasks import PersistentTaskStore
+            self.persistent_task_store = PersistentTaskStore(
+                db_path=str(self._data_dir / "scheduled_tasks.db"),
+                emit_event=self._emit_event,
+                process_fn=self.process_natural_language,
+                tick_interval=self.config.persistent_tasks.tick_interval_seconds,
+                checkpoint_dir=self._checkpoint_dir,
             )
-            for cp in stale:
-                completed = sum(
-                    1 for s in cp.node_states.values()
-                    if s.get("status") == "completed"
-                )
+            await self.persistent_task_store.start()
+            logger.info("persistent-task-store started")
+        else:
+            # Fallback: still scan checkpoints for logging (original AD-405 behavior)
+            from probos.cognitive.checkpoint import scan_checkpoints
+            stale = scan_checkpoints(self._checkpoint_dir)
+            if stale:
                 logger.info(
-                    "  - DAG %s: '%s' (%d/%d nodes completed)",
-                    cp.dag_id[:8], cp.source_text[:60],
-                    completed, len(cp.node_states),
+                    "Found %d incomplete DAG checkpoint(s) from previous session",
+                    len(stale),
                 )
+                for cp in stale:
+                    completed = sum(
+                        1 for s in cp.node_states.values()
+                        if s.get("status") == "completed"
+                    )
+                    logger.info(
+                        "  - DAG %s: '%s' (%d/%d nodes completed)",
+                        cp.dag_id[:8], cp.source_text[:60],
+                        completed, len(cp.node_states),
+                    )
 
         # --- Ward Room (AD-407) ---
         if self.config.ward_room.enabled:
@@ -1267,6 +1286,11 @@ class ProbOSRuntime:
         if self.proactive_loop:
             await self.proactive_loop.stop()
             self.proactive_loop = None
+
+        # Stop Persistent Task Store (Phase 25a)
+        if self.persistent_task_store:
+            await self.persistent_task_store.stop()
+            self.persistent_task_store = None
 
         # Stop build dispatcher (AD-375)
         if self.build_dispatcher:

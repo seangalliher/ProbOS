@@ -301,6 +301,14 @@ class ProactiveCognitiveConfig(BaseModel):
     cooldown_seconds: float = 300.0
 
 
+class PersistentTasksConfig(BaseModel):
+    """Persistent Task Engine — SQLite-backed scheduled tasks (Phase 25a)."""
+    enabled: bool = False
+    tick_interval_seconds: float = 5.0
+    max_concurrent_executions: int = 1   # Sequential by design
+    dag_auto_resume: bool = False        # Future: auto-resume stale DAGs
+
+
 class DiscordConfig(BaseModel):
     """Discord bot adapter configuration."""
 
@@ -361,6 +369,7 @@ class SystemConfig(BaseModel):
     bridge_alerts: BridgeAlertConfig = BridgeAlertConfig()
     earned_agency: EarnedAgencyConfig = EarnedAgencyConfig()
     proactive_cognitive: ProactiveCognitiveConfig = ProactiveCognitiveConfig()
+    persistent_tasks: PersistentTasksConfig = PersistentTasksConfig()
     channels: ChannelsConfig = ChannelsConfig()
     medical: MedicalConfig = MedicalConfig()
 

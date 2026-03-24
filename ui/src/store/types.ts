@@ -392,3 +392,26 @@ export interface Assignment {
   ward_room_channel_id: string;
   status: 'active' | 'completed' | 'dissolved';
 }
+
+// Scheduled Task types (Phase 25a)
+
+export interface ScheduledTaskView {
+  id: string;
+  name: string;
+  intent_text: string;
+  created_at: number;
+  schedule_type: 'once' | 'interval' | 'cron';
+  execute_at: number | null;
+  interval_seconds: number | null;
+  cron_expr: string | null;
+  channel_id: string | null;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  last_result: string | null;
+  last_run_at: number | null;
+  next_run_at: number | null;
+  run_count: number;
+  max_runs: number | null;
+  created_by: string;
+  webhook_name: string | null;
+  enabled: boolean;
+}

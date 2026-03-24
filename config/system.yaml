@@ -248,6 +248,13 @@ proactive_cognitive:
   interval_seconds: 120
   cooldown_seconds: 300
 
+# --- Persistent Task Engine (Phase 25a) ---
+persistent_tasks:
+  enabled: true
+  tick_interval_seconds: 5
+  max_concurrent_executions: 1
+  dag_auto_resume: false
+
 # --- Channel Adapters (Phase 24) ---
 channels:
   discord:
