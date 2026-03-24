@@ -109,8 +109,8 @@ export function ProfileHealthTab({ profileData, agent }: Props) {
         </div>
       )}
 
-      {/* Proactive Think Interval (Phase 28b) */}
-      {profileData && (
+      {/* Proactive Think Interval (Phase 28b) — crew only (BF-017) */}
+      {profileData && profileData.isCrew && profileData.proactiveCooldown != null && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ color: '#8888a0', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>
             Proactive Think Interval

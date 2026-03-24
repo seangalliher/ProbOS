@@ -321,7 +321,8 @@ export interface AgentProfileData {
   hebbianConnections: { targetId: string; weight: number; relType: string }[];
   memoryCount: number;
   uptime: number;
-  proactiveCooldown: number;  // Phase 28b: per-agent proactive think cooldown (seconds)
+  proactiveCooldown: number | null;  // Phase 28b: per-agent proactive think cooldown (seconds), null for non-crew (BF-017)
+  isCrew: boolean;  // BF-017: true for crew agents, false for utility/infrastructure
 }
 
 // Ward Room types (AD-407)

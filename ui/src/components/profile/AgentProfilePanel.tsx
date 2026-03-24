@@ -87,6 +87,15 @@ export function AgentProfilePanel() {
   const displayName = callsign || agent.agentType;
   const department = profileData?.department || poolToGroup?.[agent.pool] || '';
   const deptColor = DEPT_COLORS[department?.toLowerCase()] || '#666';
+  const isCrew = profileData?.isCrew ?? true;  // BF-017: default true until profile loads
+
+  // BF-017: Filter tabs — non-crew agents don't get Chat tab
+  const visibleTabs = isCrew
+    ? TAB_LABELS
+    : TAB_LABELS.filter(t => t.key !== 'chat');
+
+  // If current tab is hidden for non-crew, switch to profile
+  const effectiveTab = visibleTabs.some(t => t.key === activeTab) ? activeTab : 'profile';
 
   return (
     <div
@@ -168,7 +177,7 @@ export function AgentProfilePanel() {
         display: 'flex',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
       }}>
-        {TAB_LABELS.map(({ key, label }) => (
+        {visibleTabs.map(({ key, label }) => (
           <button
             key={key}
             onClick={() => setActiveTab(key)}
@@ -176,8 +185,8 @@ export function AgentProfilePanel() {
               flex: 1,
               background: 'none',
               border: 'none',
-              borderBottom: activeTab === key ? '2px solid #f0b060' : '2px solid transparent',
-              color: activeTab === key ? '#f0b060' : '#8888a0',
+              borderBottom: effectiveTab === key ? '2px solid #f0b060' : '2px solid transparent',
+              color: effectiveTab === key ? '#f0b060' : '#8888a0',
               fontSize: 12,
               fontFamily: "'JetBrains Mono', monospace",
               padding: '8px 0',
@@ -192,10 +201,10 @@ export function AgentProfilePanel() {
 
       {/* Tab content */}
       <div style={{ flex: 1, overflow: 'hidden' }}>
-        {activeTab === 'chat' && <ProfileChatTab agentId={agentId} />}
-        {activeTab === 'work' && <ProfileWorkTab agentId={agentId} />}
-        {activeTab === 'profile' && <ProfileInfoTab profileData={profileData} agent={agent} />}
-        {activeTab === 'health' && <ProfileHealthTab profileData={profileData} agent={agent} />}
+        {effectiveTab === 'chat' && isCrew && <ProfileChatTab agentId={agentId} />}
+        {effectiveTab === 'work' && <ProfileWorkTab agentId={agentId} />}
+        {effectiveTab === 'profile' && <ProfileInfoTab profileData={profileData} agent={agent} />}
+        {effectiveTab === 'health' && <ProfileHealthTab profileData={profileData} agent={agent} />}
       </div>
     </div>
   );

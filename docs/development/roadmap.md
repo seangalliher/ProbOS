@@ -2568,6 +2568,7 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-014 | "Bundled agents" terminology → "Utility agents" to align with three-tier model (Core/Utility/Crew) | Low | **Closed** |
 | BF-015 | Counselor (Troi) 1:1 silent + ungrouped on canvas. (1) `report()` override wrapped conversational responses in `{"data": ...}` instead of preserving `{"result": ...}`, so `handle_intent()` extracted None → "(no response)". (2) No Bridge pool group — counselor pool unmapped → ungrouped on canvas. | Medium | **Closed** |
 | BF-016 | Ward Room thread explosion — all 8 crew agents respond to every Captain post, even @mention-directed ones, and no per-thread cap. (a) @mention exclusivity in `_find_ward_room_targets()`. (b) Per-thread agent response cap via `max_agent_responses_per_thread` (default 3). | High | **Closed** |
+| BF-017 | Non-crew agents (utility, infrastructure, self-mod) exposed crew-only capabilities: direct chat, personality profiles, proactive cooldown slider. (a) API crew gates on `/api/agent/{id}/chat` and `/api/agent/{id}/proactive-cooldown`. (b) Profile returns `isCrew` flag; empty personality + null proactiveCooldown for non-crew. (c) HXI hides Chat tab and proactive slider for non-crew agents. | Medium | **Closed** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 

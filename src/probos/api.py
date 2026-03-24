@@ -1111,6 +1111,9 @@ def create_app(runtime: Any) -> FastAPI:
             if hasattr(runtime.episodic_memory, 'count_for_agent'):
                 memory_count = await runtime.episodic_memory.count_for_agent(agent.id)
 
+        # BF-017: Only crew agents get personality and proactive controls
+        is_crew = runtime._is_crew_agent(agent)
+
         return {
             "id": agent.id,
             "agentType": agent.agent_type,
@@ -1119,7 +1122,7 @@ def create_app(runtime: Any) -> FastAPI:
             "rank": rank,
             "agencyLevel": agency_level,
             "department": department,
-            "personality": personality,
+            "personality": personality if is_crew else {},
             "specialization": specialization,
             "trust": round(trust_score, 4),
             "trustHistory": trust_history,
@@ -1130,7 +1133,8 @@ def create_app(runtime: Any) -> FastAPI:
             "hebbianConnections": hebbian_connections,
             "memoryCount": memory_count,
             "uptime": 0.0,
-            "proactiveCooldown": runtime.proactive_loop.get_agent_cooldown(agent.id) if hasattr(runtime, 'proactive_loop') and runtime.proactive_loop else 300.0,
+            "isCrew": is_crew,
+            "proactiveCooldown": runtime.proactive_loop.get_agent_cooldown(agent.id) if is_crew and hasattr(runtime, 'proactive_loop') and runtime.proactive_loop else None,
         }
 
     @app.put("/api/agent/{agent_id}/proactive-cooldown")
@@ -1139,6 +1143,9 @@ def create_app(runtime: Any) -> FastAPI:
         agent = runtime.registry.get(agent_id)
         if agent is None:
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+        # BF-017: Only crew agents have proactive thinking
+        if not runtime._is_crew_agent(agent):
+            raise HTTPException(status_code=400, detail=f"Agent {agent_id} is not a crew agent")
         cooldown = float(req.get("cooldown", 300))
         if hasattr(runtime, 'proactive_loop') and runtime.proactive_loop:
             runtime.proactive_loop.set_agent_cooldown(agent_id, cooldown)
@@ -1150,6 +1157,9 @@ def create_app(runtime: Any) -> FastAPI:
         agent = runtime.registry.get(agent_id)
         if agent is None:
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+        # BF-017: Only crew agents support direct chat
+        if not runtime._is_crew_agent(agent):
+            raise HTTPException(status_code=400, detail=f"Agent {agent_id} is not a crew agent — direct chat is crew-only")
 
         from probos.types import IntentMessage
         intent = IntentMessage(
