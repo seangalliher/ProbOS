@@ -247,6 +247,10 @@ proactive_cognitive:
   enabled: true
   interval_seconds: 120
   cooldown_seconds: 300
+  # AD-414: Trust signal weights
+  trust_reward_weight: 0.1
+  trust_no_response_weight: 0.0
+  trust_duty_bonus: 0.1
   duty_schedule:
     enabled: true
     schedules:

@@ -314,6 +314,10 @@ class ProactiveCognitiveConfig(BaseModel):
     enabled: bool = False
     interval_seconds: float = 120.0
     cooldown_seconds: float = 300.0
+    # AD-414: Trust signal weights for proactive thinks
+    trust_reward_weight: float = 0.1        # Trust signal for successful proactive think (posted to Ward Room)
+    trust_no_response_weight: float = 0.0   # Trust signal for [NO_RESPONSE] (0 = no signal, silence is fine)
+    trust_duty_bonus: float = 0.1           # Additional trust weight when completing a scheduled duty
     duty_schedule: DutyScheduleConfig = DutyScheduleConfig()
 
 

@@ -636,3 +636,138 @@ class TestProactiveWardRoomContext:
         assert "ward_room_activity" in context
         assert len(context["ward_room_activity"]) == 1
         assert context["ward_room_activity"][0]["author"] == "LaForge"
+
+
+class TestProactiveTrustSignal:
+    """Tests for AD-414: Proactive loop trust signal emission."""
+
+    def _make_loop_with_config(self, trust_reward_weight=0.1, trust_no_response_weight=0.0, trust_duty_bonus=0.1):
+        """Create a ProactiveCognitiveLoop with config and mocked runtime."""
+        loop = ProactiveCognitiveLoop(interval=120, cooldown=300)
+
+        config = MagicMock()
+        config.trust_reward_weight = trust_reward_weight
+        config.trust_no_response_weight = trust_no_response_weight
+        config.trust_duty_bonus = trust_duty_bonus
+        loop._config = config
+
+        rt = MagicMock()
+        rt.episodic_memory = None
+        rt.bridge_alerts = None
+        rt.event_log = None
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[])
+        rt.ward_room.get_recent_activity = AsyncMock(return_value=[])
+        rt.trust_network = MagicMock()
+        rt.trust_network.record_outcome = MagicMock(return_value=0.55)
+        loop._runtime = rt
+        loop._duty_tracker = None
+
+        return loop, rt
+
+    def _make_agent(self, response_text="Observation: systems nominal"):
+        agent = MagicMock()
+        agent.id = "scout-1"
+        agent.agent_type = "scout"
+        agent.handle_intent = AsyncMock(return_value=MagicMock(
+            success=True, result=response_text,
+        ))
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_successful_think_emits_trust_signal(self):
+        """Successful proactive think emits attenuated trust signal."""
+        loop, rt = self._make_loop_with_config(trust_reward_weight=0.1)
+        agent = self._make_agent("EPS conduits nominal. No anomalies detected.")
+
+        await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
+
+        rt.trust_network.record_outcome.assert_called_once_with(
+            "scout-1", success=True, weight=0.1, intent_type="proactive_think",
+        )
+
+    @pytest.mark.asyncio
+    async def test_duty_completion_adds_bonus(self):
+        """Duty completion adds bonus weight to trust signal."""
+        loop, rt = self._make_loop_with_config(trust_reward_weight=0.1, trust_duty_bonus=0.1)
+
+        # Wire a duty tracker with a due duty
+        duty_mock = MagicMock()
+        duty_mock.duty_id = "scout_report"
+        duty_mock.description = "Perform scout report"
+        duty_mock.cron = ""
+        duty_mock.interval_seconds = 86400
+        duty_mock.priority = 3
+        from probos.duty_schedule import DutyScheduleTracker
+        loop._duty_tracker = DutyScheduleTracker({"scout": [duty_mock]})
+
+        agent = self._make_agent("Scout report: All systems nominal.")
+
+        await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
+
+        rt.trust_network.record_outcome.assert_called_once_with(
+            "scout-1", success=True, weight=0.2, intent_type="proactive_think",
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_response_no_trust_signal_by_default(self):
+        """[NO_RESPONSE] does not emit trust signal when weight is 0."""
+        loop, rt = self._make_loop_with_config(trust_no_response_weight=0.0)
+        agent = self._make_agent("[NO_RESPONSE]")
+
+        await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
+
+        rt.trust_network.record_outcome.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_response_emits_signal_when_configured(self):
+        """[NO_RESPONSE] emits trust signal when weight > 0."""
+        loop, rt = self._make_loop_with_config(trust_no_response_weight=0.05)
+        agent = self._make_agent("[NO_RESPONSE]")
+
+        await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
+
+        rt.trust_network.record_outcome.assert_called_once_with(
+            "scout-1", success=True, weight=0.05, intent_type="proactive_no_response",
+        )
+
+    @pytest.mark.asyncio
+    async def test_failed_think_no_negative_trust(self):
+        """Failed handle_intent does not emit any trust signal."""
+        loop, rt = self._make_loop_with_config()
+        agent = MagicMock()
+        agent.id = "scout-1"
+        agent.agent_type = "scout"
+        agent.handle_intent = AsyncMock(return_value=MagicMock(
+            success=False, result=None,
+        ))
+
+        await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
+
+        rt.trust_network.record_outcome.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_trust_update_event_emitted(self):
+        """Successful proactive think emits trust_update event."""
+        events = []
+        loop, rt = self._make_loop_with_config(trust_reward_weight=0.1)
+        loop._on_event = lambda evt: events.append(evt)
+        agent = self._make_agent("EPS conduits nominal.")
+
+        await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
+
+        trust_events = [e for e in events if e["type"] == "trust_update"]
+        assert len(trust_events) == 1
+        assert trust_events[0]["data"]["source"] == "proactive"
+        assert trust_events[0]["data"]["agent_id"] == "scout-1"
+        assert trust_events[0]["data"]["weight"] == 0.1
+
+    @pytest.mark.asyncio
+    async def test_zero_weight_skips_record(self):
+        """Zero trust_reward_weight skips record_outcome entirely."""
+        loop, rt = self._make_loop_with_config(trust_reward_weight=0.0, trust_duty_bonus=0.0)
+        agent = self._make_agent("Observation: something.")
+
+        await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
+
+        rt.trust_network.record_outcome.assert_not_called()

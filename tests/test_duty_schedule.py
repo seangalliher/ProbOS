@@ -185,8 +185,9 @@ class TestProactiveLoopDutyIntegration:
 
         await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
 
-        call_args = agent.handle_intent.call_args[0][0]
-        assert call_args.params["duty"] is None
+        # BF-021: When duty schedule is active and no duty is due,
+        # the agent is skipped entirely (hard gate, saves tokens).
+        agent.handle_intent.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_duty_recorded_after_execution(self):

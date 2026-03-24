@@ -1249,6 +1249,8 @@ class ProbOSRuntime:
                 on_event=lambda evt: self._emit_event(evt.get("type", ""), evt.get("data", {})),
             )
             self.proactive_loop.set_runtime(self)
+            # AD-414: Wire config for trust signal weights
+            self.proactive_loop.set_config(self.config.proactive_cognitive)
             # AD-419: Wire duty schedule
             if self.config.proactive_cognitive.duty_schedule.enabled:
                 self.proactive_loop.set_duty_schedule(self.config.proactive_cognitive.duty_schedule)

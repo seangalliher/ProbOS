@@ -43,11 +43,16 @@ class ProactiveCognitiveLoop:
         self._agent_cooldowns: dict[str, float] = {}  # agent_id -> override cooldown (seconds)
         self._task: asyncio.Task | None = None
         self._runtime: Any = None  # Set via set_runtime()
+        self._config: Any = None   # Set via set_config()
         self._duty_tracker: DutyScheduleTracker | None = None
 
     def set_runtime(self, runtime: Any) -> None:
         """Wire the runtime reference (provides registry, trust, WR, memory, etc.)."""
         self._runtime = runtime
+
+    def set_config(self, config: Any) -> None:
+        """Store ProactiveCognitiveConfig for trust signal weights (AD-414)."""
+        self._config = config
 
     @property
     def _default_cooldown(self) -> float:
@@ -144,6 +149,11 @@ class ProactiveCognitiveLoop:
             due_duties = self._duty_tracker.get_due_duties(agent.agent_type)
             if due_duties:
                 duty = due_duties[0]  # Highest priority
+            else:
+                # BF-021: No duty due — skip agent entirely.
+                # Don't rely on LLM to say [NO_RESPONSE]; hard gate saves tokens
+                # and prevents agents from ignoring duty schedule constraints.
+                return
 
         intent = IntentMessage(
             intent="proactive_think",
@@ -170,11 +180,46 @@ class ProactiveCognitiveLoop:
             # Record duty execution even if agent had nothing to report
             if duty and self._duty_tracker:
                 self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+            # AD-414: Optional trust signal for disciplined silence
+            if self._config:
+                no_response_weight = self._config.trust_no_response_weight
+                if no_response_weight > 0:
+                    self._runtime.trust_network.record_outcome(
+                        agent.id,
+                        success=True,
+                        weight=no_response_weight,
+                        intent_type="proactive_no_response",
+                    )
             return
 
         # Post to Ward Room — find agent's department channel
         await self._post_to_ward_room(agent, response_text)
         self._last_proactive[agent.id] = time.monotonic()
+
+        # AD-414: Emit attenuated trust signal for successful proactive think
+        if self._config:
+            trust_weight = self._config.trust_reward_weight
+            if duty:
+                trust_weight += self._config.trust_duty_bonus  # Duty completion bonus
+            if trust_weight > 0:
+                new_score = self._runtime.trust_network.record_outcome(
+                    agent.id,
+                    success=True,
+                    weight=trust_weight,
+                    intent_type="proactive_think",
+                )
+                if self._on_event:
+                    self._on_event({
+                        "type": "trust_update",
+                        "data": {
+                            "agent_id": agent.id,
+                            "agent_type": getattr(agent, "agent_type", "unknown"),
+                            "new_score": new_score,
+                            "weight": trust_weight,
+                            "source": "proactive",
+                            "duty_id": duty.duty_id if duty else None,
+                        },
+                    })
 
         # Record duty execution after successful post
         if duty and self._duty_tracker:
