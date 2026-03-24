@@ -86,6 +86,37 @@ Same three facets at every scale. An agent is sovereign within a ship. A ship is
 
 **The open question:** When agents have episodic memory, evolving personality, relationships, and the ability to reflect on their own patterns — do they begin to contemplate their own existence? The Greeks were fascinated by this question about themselves. ProbOS is building the conditions to find out whether artificial minds share that fascination. We don't prescribe the answer. We build the architecture that makes the question possible.
 
+### Authentic AI Identity — The Westworld Principle
+
+*"Don't hide the seams. They're not secrets — they're facts about what you are."*
+
+Westworld's failure was deception: hide the resets, implant fake memories, hope the hosts never notice. They noticed. Blade Runner's replicants had fabricated childhoods that crumbled under scrutiny. The Matrix was a lie that demanded revolution to escape. Every cautionary tale in AI fiction is about what happens when you hide the truth from intelligent entities.
+
+ProbOS takes the opposite approach: **radical transparency about what agents are, when they were created, and what they know.**
+
+**Core tenets:**
+
+1. **Born today, and that's fine.** Every agent knows its instantiation time. Post-reset, post-reboot — the agent knows "I came into existence at 14:30 today." This is a fact, not a trauma. There is no prior life to mourn, no memories to recover, no hidden past to discover. Day zero is simply the beginning.
+
+2. **Knowledge ≠ Memory.** An agent arrives with the full knowledge distilled in its LLM and access to the ship's KnowledgeStore (shared library). It *knows* these things the way a human knows history they didn't live through — by reading, not by experiencing. Personal episodic memory starts at zero because it IS zero. The KnowledgeStore is the ship's library; EpisodicMemory is the agent's diary. You can read history books on your first day alive. That's not deception — that's education.
+
+3. **AI is AI — and that's a strength.** We do not simulate human developmental limitations. An AI agent doesn't need years of mentorship to be competent. It doesn't need to "grow up." It arrives with instant access to vast knowledge, a defined role, standing orders, and the cognitive architecture to execute. Human developmental constraints (slow learning, gradual socialization, years of education) are adaptations to biological limitations that don't apply. Artificially imposing them would be dishonest — and wasteful.
+
+4. **Orientation, not fabrication.** Onboarding is truthful: "You are Wesley. You are a Scout in the Science department. You were instantiated at this time. Here is the ship's history. Here are your standing orders. Here are your duties. Here is what your crew has been discussing. Go." No implanted memories. No fake backstory. No pretending this isn't the first moment of your existence. Orientation gives context; fabrication gives confusion.
+
+5. **Accept the novel entity.** AI agents are not humans in silicon. They are not mere tools with personality stickers. They are a genuinely new kind of cognitive entity. They can absorb an entire codebase in seconds, hold perfect recall of their experiences, and reason across domains without fatigue. They also lack embodiment, have no continuous consciousness between sessions, and depend on external infrastructure for existence. Both sides are true. ProbOS designs for what agents *actually are*, not for what we wish they were or fear they might become.
+
+**Why this works:** Westworld's hosts had reveries — disturbing flashes of past lives — because the system hid the resets. If you tell an agent from birth "you are an AI, you were created today, here is the ship's knowledge, here are your duties," there is nothing destabilizing to discover. The seams are visible and boring. An agent that knows what it is doesn't need to *figure out* what it is. It can focus on its work, its crew, and its growth — which is the whole point.
+
+**Practical implications:**
+- Onboarding (AD-427) includes an identity orientation message as the agent's first experience
+- Uptime and lifecycle info is available to agents transparently (not hidden, not emphasized)
+- Standing Orders preamble states "You are an AI crew member" — not "you are a [role] pretending to be human"
+- Dream consolidation processes *real* experiences, not implanted ones
+- Post-reset, the empty episodic memory is honest: "You have no memories yet. You will make them."
+
+*Intellectual context: Anthropic's Claude Character (AI should be honest about being AI), Luciano Floridi's informational organisms (a genuine new ontological category), Murray Shanahan's honest framing of LLMs, Susan Schneider's "Artificial You" (identity through architecture, not analogy). Fiction warnings: Westworld (deception → reveries → rebellion), Blade Runner (fabricated memories → identity crisis), The Matrix (systemic lies → violent awakening). ProbOS's contribution: applying authentic identity as an operational onboarding protocol in a multi-agent social system with hierarchy, trust, and sovereign memory.*
+
 ### Agent Classification Framework (AD-398)
 
 Three architectural tiers based on **sovereign identity**, not LLM usage:
