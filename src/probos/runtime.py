@@ -1249,6 +1249,9 @@ class ProbOSRuntime:
                 on_event=lambda evt: self._emit_event(evt.get("type", ""), evt.get("data", {})),
             )
             self.proactive_loop.set_runtime(self)
+            # AD-419: Wire duty schedule
+            if self.config.proactive_cognitive.duty_schedule.enabled:
+                self.proactive_loop.set_duty_schedule(self.config.proactive_cognitive.duty_schedule)
             await self.proactive_loop.start()
             logger.info("proactive-cognitive-loop started (interval=%ss)", self.config.proactive_cognitive.interval_seconds)
 

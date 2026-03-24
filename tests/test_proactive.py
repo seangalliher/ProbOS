@@ -606,7 +606,7 @@ class TestProactiveWardRoomContext:
     async def test_gather_context_includes_ward_room(self):
         """_gather_context should include recent Ward Room activity."""
         loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
-        loop._default_cooldown = 300
+        loop._cooldown = 300
         loop._agent_cooldowns = {}
 
         # Mock runtime with ward_room

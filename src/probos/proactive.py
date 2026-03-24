@@ -8,6 +8,7 @@ import time
 from typing import Any, Callable
 
 from probos.crew_profile import Rank
+from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import agency_from_rank, can_think_proactively
 from probos.types import IntentMessage
 
@@ -42,10 +43,24 @@ class ProactiveCognitiveLoop:
         self._agent_cooldowns: dict[str, float] = {}  # agent_id -> override cooldown (seconds)
         self._task: asyncio.Task | None = None
         self._runtime: Any = None  # Set via set_runtime()
+        self._duty_tracker: DutyScheduleTracker | None = None
 
     def set_runtime(self, runtime: Any) -> None:
         """Wire the runtime reference (provides registry, trust, WR, memory, etc.)."""
         self._runtime = runtime
+
+    @property
+    def _default_cooldown(self) -> float:
+        return self._cooldown
+
+    def set_duty_schedule(self, config: Any) -> None:
+        """Initialize duty schedule tracker from DutyScheduleConfig."""
+        if config and config.enabled and config.schedules:
+            self._duty_tracker = DutyScheduleTracker(config.schedules)
+            logger.info("Duty schedule loaded: %d agent types configured",
+                         len(config.schedules))
+        else:
+            self._duty_tracker = None
 
     def get_agent_cooldown(self, agent_id: str) -> float:
         """Get effective cooldown for an agent (override or global default)."""
@@ -115,9 +130,20 @@ class ProactiveCognitiveLoop:
                 )
 
     async def _think_for_agent(self, agent: Any, rank: Rank, trust_score: float) -> None:
-        """Gather context, send proactive_think intent, post result if meaningful."""
+        """Gather context, send proactive_think intent, post result if meaningful.
+
+        AD-419: If a duty is due, send a duty-specific prompt. If no duty is due,
+        send a free-form think prompt that requires justification.
+        """
         rt = self._runtime
         context_parts = await self._gather_context(agent, trust_score)
+
+        # AD-419: Check duty schedule
+        duty = None
+        if self._duty_tracker:
+            due_duties = self._duty_tracker.get_due_duties(agent.agent_type)
+            if due_duties:
+                duty = due_duties[0]  # Highest priority
 
         intent = IntentMessage(
             intent="proactive_think",
@@ -126,6 +152,10 @@ class ProactiveCognitiveLoop:
                 "trust_score": round(trust_score, 4),
                 "agency_level": agency_from_rank(rank).value,
                 "agent_type": agent.agent_type,
+                "duty": {
+                    "duty_id": duty.duty_id,
+                    "description": duty.description,
+                } if duty else None,
             },
             target_agent_id=agent.id,
         )
@@ -137,11 +167,18 @@ class ProactiveCognitiveLoop:
 
         response_text = str(result.result).strip()
         if not response_text or "[NO_RESPONSE]" in response_text:
+            # Record duty execution even if agent had nothing to report
+            if duty and self._duty_tracker:
+                self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
             return
 
         # Post to Ward Room — find agent's department channel
         await self._post_to_ward_room(agent, response_text)
         self._last_proactive[agent.id] = time.monotonic()
+
+        # Record duty execution after successful post
+        if duty and self._duty_tracker:
+            self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
 
         if self._on_event:
             self._on_event({
@@ -150,12 +187,14 @@ class ProactiveCognitiveLoop:
                     "agent_id": agent.id,
                     "agent_type": agent.agent_type,
                     "response_length": len(response_text),
+                    "duty_id": duty.duty_id if duty else None,
                 },
             })
 
         logger.info(
-            "Proactive thought from %s (%s): %d chars",
+            "Proactive thought from %s (%s): %d chars%s",
             agent.agent_type, rank.value, len(response_text),
+            f" [duty: {duty.duty_id}]" if duty else " [free-form]",
         )
 
     async def _gather_context(self, agent: Any, trust_score: float) -> dict:

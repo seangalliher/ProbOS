@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-413 (Fine-Grained Reset + Ward Room Awareness) COMPLETE. AD-411 COMPLETE. Phase 25a, 28b COMPLETE. BF-017 closed. AD-412, AD-414 through AD-419 on roadmap. 3105 pytest + 118 vitest = 3223 total tests.
+## Current Status: AD-419 (Duty Schedule & Justification) COMPLETE. AD-413, AD-411 COMPLETE. Phase 25a, 28b COMPLETE. BF-020 closed. AD-412, AD-414 through AD-418 on roadmap. 3118 pytest + 118 vitest = 3236 total tests.
 
 ---
 

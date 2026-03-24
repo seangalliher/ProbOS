@@ -294,11 +294,27 @@ class EarnedAgencyConfig(BaseModel):
     enabled: bool = False
 
 
+class DutyDefinition(BaseModel):
+    """A single recurring duty for a crew agent type."""
+    duty_id: str                # e.g., "scout_report"
+    description: str            # Human-readable task description
+    cron: str = ""              # Cron expression (croniter format). Empty = interval-based.
+    interval_seconds: float = 0 # Alternative to cron: simple interval. 0 = use cron.
+    priority: int = 2           # 1-5, higher = more important when multiple due
+
+
+class DutyScheduleConfig(BaseModel):
+    """Duty schedule definitions per agent type (AD-419)."""
+    enabled: bool = True
+    schedules: dict[str, list[DutyDefinition]] = {}
+
+
 class ProactiveCognitiveConfig(BaseModel):
     """Proactive Cognitive Loop — periodic idle-think (Phase 28b)."""
     enabled: bool = False
     interval_seconds: float = 120.0
     cooldown_seconds: float = 300.0
+    duty_schedule: DutyScheduleConfig = DutyScheduleConfig()
 
 
 class PersistentTasksConfig(BaseModel):

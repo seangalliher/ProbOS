@@ -247,6 +247,44 @@ proactive_cognitive:
   enabled: true
   interval_seconds: 120
   cooldown_seconds: 300
+  duty_schedule:
+    enabled: true
+    schedules:
+      scout:
+        - duty_id: scout_report
+          description: "Perform a comprehensive review of recent codebase and system changes"
+          interval_seconds: 86400   # Once daily
+          priority: 3
+      security_officer:
+        - duty_id: security_audit
+          description: "Review system security posture, access patterns, and potential vulnerabilities"
+          interval_seconds: 14400   # Every 4 hours
+          priority: 3
+      engineering_officer:
+        - duty_id: systems_check
+          description: "Review engineering systems health, performance metrics, and technical debt"
+          interval_seconds: 7200    # Every 2 hours
+          priority: 2
+      operations_officer:
+        - duty_id: ops_status
+          description: "Review operational status, resource utilization, pool health, and queue depths"
+          interval_seconds: 10800   # Every 3 hours
+          priority: 2
+      diagnostician:
+        - duty_id: crew_health_check
+          description: "Assess crew cognitive health, trust dynamics, and behavioral patterns"
+          interval_seconds: 21600   # Every 6 hours
+          priority: 2
+      counselor:
+        - duty_id: wellness_review
+          description: "Review crew morale, interpersonal dynamics, and communication patterns"
+          interval_seconds: 43200   # Every 12 hours
+          priority: 2
+      architect:
+        - duty_id: architecture_review
+          description: "Review system architecture, design patterns, and improvement opportunities"
+          interval_seconds: 86400   # Once daily
+          priority: 3
 
 # --- Persistent Task Engine (Phase 25a) ---
 persistent_tasks:

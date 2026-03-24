@@ -348,11 +348,27 @@ class CognitiveAgent(BaseAgent):
             context_parts = params.get("context_parts", {})
             trust_score = params.get("trust_score", 0.5)
             agency_level = params.get("agency_level", "suggestive")
+            duty = params.get("duty")  # AD-419: may be None
 
             pt_parts: list[str] = []
-            pt_parts.append("[Proactive Review Cycle]")
-            pt_parts.append(f"Your trust: {trust_score} | Agency: {agency_level}")
-            pt_parts.append("")
+
+            if duty:
+                # AD-419: Duty cycle — agent has a scheduled task
+                pt_parts.append(f"[Duty Cycle: {duty.get('description', duty.get('duty_id', 'unknown'))}]")
+                pt_parts.append(f"Your trust: {trust_score} | Agency: {agency_level}")
+                pt_parts.append("")
+                pt_parts.append("This is a scheduled duty. Perform your assigned task and report your findings.")
+                pt_parts.append("")
+            else:
+                # Free-form think — no duty due, requires justification
+                pt_parts.append("[Proactive Review — No Scheduled Duty]")
+                pt_parts.append(f"Your trust: {trust_score} | Agency: {agency_level}")
+                pt_parts.append("")
+                pt_parts.append("You have no scheduled duty at this time. You may share an observation")
+                pt_parts.append("ONLY if you notice something genuinely noteworthy or actionable.")
+                pt_parts.append("If you do post, include a brief justification for why it matters now.")
+                pt_parts.append("Silence is professionalism — [NO_RESPONSE] is the expected default.")
+                pt_parts.append("")
 
             # Recent memories
             memories = context_parts.get("recent_memories", [])
@@ -390,9 +406,12 @@ class CognitiveAgent(BaseAgent):
                     pt_parts.append(f"  - {prefix} {a.get('author', '?')}: {a.get('body', '?')}")
                 pt_parts.append("")
 
-            pt_parts.append("Based on this review, decide if anything warrants an observation or insight.")
-            pt_parts.append("If something is noteworthy, compose a brief Ward Room post (2-4 sentences).")
-            pt_parts.append("If nothing warrants attention, respond with exactly: [NO_RESPONSE]")
+            if duty:
+                pt_parts.append("Compose a Ward Room post with your findings (2-4 sentences).")
+                pt_parts.append("If nothing noteworthy to report, respond with exactly: [NO_RESPONSE]")
+            else:
+                pt_parts.append("If something genuinely warrants attention, compose a brief observation (2-4 sentences).")
+                pt_parts.append("Include your justification. Otherwise respond with exactly: [NO_RESPONSE]")
             return "\n".join(pt_parts)
 
         parts = [f"Intent: {intent_name}"]
