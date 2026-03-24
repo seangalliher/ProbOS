@@ -369,8 +369,11 @@ async def _serve(
             discord_cfg = discord_cfg.model_copy(update={"token": token})
             adapter = DiscordAdapter(runtime, discord_cfg)
             await adapter.start()
-            adapters.append(adapter)
-            console.print("  [green]\u2713[/green] Discord bot adapter started")
+            if adapter._started:
+                adapters.append(adapter)
+                console.print("  [green]\u2713[/green] Discord bot adapter started")
+            else:
+                console.print("  [red]\u2717[/red] Discord adapter failed — run: uv sync --extra discord")
         else:
             console.print("  [yellow]![/yellow] Discord enabled but no token set (PROBOS_DISCORD_TOKEN)")
 
