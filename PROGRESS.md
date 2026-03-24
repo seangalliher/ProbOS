@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Phase 28b (Proactive Cognitive Loop) in progress — build prompt written. Prior: AD-357 Phase 3 (Earned Agency) complete, BF-016 fixed, AD-410 complete (Bridge Alerts). 3021 pytest + 118 vitest = 3139 total tests.
+## Current Status: Phase 25a (Persistent Task Engine) in progress — build prompt written. Phase 28b (Proactive Cognitive Loop) COMPLETE. Prior: AD-357 Phase 3 (Earned Agency) complete, BF-016 fixed, AD-410 complete (Bridge Alerts). 3053 pytest + 118 vitest = 3171 total tests.
 
 ---
 

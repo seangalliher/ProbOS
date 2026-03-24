@@ -109,6 +109,43 @@ export function ProfileHealthTab({ profileData, agent }: Props) {
         </div>
       )}
 
+      {/* Proactive Think Interval (Phase 28b) */}
+      {profileData && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ color: '#8888a0', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>
+            Proactive Think Interval
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="range"
+              min={60}
+              max={1800}
+              step={30}
+              value={profileData.proactiveCooldown}
+              onChange={async (e) => {
+                const cooldown = Number(e.target.value);
+                try {
+                  await fetch(`/api/agent/${agent.id}/proactive-cooldown`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cooldown }),
+                  });
+                } catch { /* fail silently */ }
+              }}
+              style={{ flex: 1, accentColor: '#5090d0' }}
+            />
+            <span style={{ color: '#e0dcd4', fontSize: 12, minWidth: 36, textAlign: 'right' }}>
+              {profileData.proactiveCooldown < 120
+                ? `${Math.floor(profileData.proactiveCooldown)}s`
+                : `${Math.floor(profileData.proactiveCooldown / 60)}m`}
+            </span>
+          </div>
+          <div style={{ color: '#555568', fontSize: 10, marginTop: 2 }}>
+            How often this crew member reviews activity independently
+          </div>
+        </div>
+      )}
+
       {/* Agent ID */}
       <div>
         <div style={{ color: '#8888a0', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>

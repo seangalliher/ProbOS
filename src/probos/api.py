@@ -1130,7 +1130,19 @@ def create_app(runtime: Any) -> FastAPI:
             "hebbianConnections": hebbian_connections,
             "memoryCount": memory_count,
             "uptime": 0.0,
+            "proactiveCooldown": runtime.proactive_loop.get_agent_cooldown(agent.id) if hasattr(runtime, 'proactive_loop') and runtime.proactive_loop else 300.0,
         }
+
+    @app.put("/api/agent/{agent_id}/proactive-cooldown")
+    async def set_agent_proactive_cooldown(agent_id: str, req: dict) -> dict[str, Any]:
+        """Set per-agent proactive cooldown (seconds). Range: 60-1800."""
+        agent = runtime.registry.get(agent_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+        cooldown = float(req.get("cooldown", 300))
+        if hasattr(runtime, 'proactive_loop') and runtime.proactive_loop:
+            runtime.proactive_loop.set_agent_cooldown(agent_id, cooldown)
+        return {"agentId": agent_id, "cooldown": runtime.proactive_loop.get_agent_cooldown(agent_id) if runtime.proactive_loop else 300.0}
 
     @app.post("/api/agent/{agent_id}/chat")
     async def agent_chat(agent_id: str, req: AgentChatRequest) -> dict[str, Any]:

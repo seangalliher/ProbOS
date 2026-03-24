@@ -242,6 +242,12 @@ bridge_alerts:
 earned_agency:
   enabled: true
 
+# --- Proactive Cognitive Loop (Phase 28b) ---
+proactive_cognitive:
+  enabled: true
+  interval_seconds: 120
+  cooldown_seconds: 300
+
 # --- Channel Adapters (Phase 24) ---
 channels:
   discord:

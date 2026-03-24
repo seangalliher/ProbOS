@@ -276,6 +276,9 @@ class ProbOSRuntime:
         # --- InitiativeEngine (AD-381) ---
         self.initiative: InitiativeEngine | None = None
 
+        # --- Proactive Cognitive Loop (Phase 28b) ---
+        self.proactive_loop: Any = None
+
         # --- Strategy Advisor (AD-384) ---
         self._strategy_advisor: Any = None
 
@@ -1213,6 +1216,18 @@ class ProbOSRuntime:
             )
             logger.info("bridge-alerts started")
 
+        # --- Proactive Cognitive Loop (Phase 28b) ---
+        if self.config.proactive_cognitive.enabled and self.ward_room:
+            from probos.proactive import ProactiveCognitiveLoop
+            self.proactive_loop = ProactiveCognitiveLoop(
+                interval=self.config.proactive_cognitive.interval_seconds,
+                cooldown=self.config.proactive_cognitive.cooldown_seconds,
+                on_event=lambda evt: self._emit_event(evt.get("type", ""), evt.get("data", {})),
+            )
+            self.proactive_loop.set_runtime(self)
+            await self.proactive_loop.start()
+            logger.info("proactive-cognitive-loop started (interval=%ss)", self.config.proactive_cognitive.interval_seconds)
+
         self._started = True
 
         await self.event_log.log(category="system", event="started")
@@ -1247,6 +1262,11 @@ class ProbOSRuntime:
         if self.initiative:
             await self.initiative.stop()
             self.initiative = None
+
+        # Stop Proactive Cognitive Loop (Phase 28b)
+        if self.proactive_loop:
+            await self.proactive_loop.stop()
+            self.proactive_loop = None
 
         # Stop build dispatcher (AD-375)
         if self.build_dispatcher:

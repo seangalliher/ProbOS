@@ -47,3 +47,12 @@ def can_respond_ambient(
 
     # Senior: unrestricted ambient response
     return True
+
+
+def can_think_proactively(rank: Rank) -> bool:
+    """Can this agent initiate proactive thought?
+
+    Ensigns are reactive-only — they haven't earned the trust to
+    self-initiate. Everyone else can think proactively.
+    """
+    return rank != Rank.ENSIGN

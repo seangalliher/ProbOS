@@ -129,7 +129,7 @@ class CognitiveAgent(BaseAgent):
 
         # BF-010: conversational system prompt for 1:1 sessions
         # AD-407b: conversational system prompt for ward room notifications
-        is_conversation = observation.get("intent") in ("direct_message", "ward_room_notification")
+        is_conversation = observation.get("intent") in ("direct_message", "ward_room_notification", "proactive_think")
 
         if is_conversation:
             # For 1:1 and ward room, use personality + standing orders only.
@@ -148,6 +148,15 @@ class CognitiveAgent(BaseAgent):
                     "Engage naturally — agree, disagree, build on ideas, ask questions. "
                     "Do NOT repeat what someone else already said. "
                     "If you have nothing meaningful to add, respond with exactly: [NO_RESPONSE]"
+                )
+            elif observation.get("intent") == "proactive_think":
+                composed += (
+                    "\n\nYou are reviewing recent ship activity during a quiet moment. "
+                    "If you notice something noteworthy — a pattern, a concern, an insight "
+                    "related to your expertise — compose a brief observation (2-4 sentences). "
+                    "This will be posted to the Ward Room as a new thread. "
+                    "Speak in your natural voice. Be specific and actionable. "
+                    "If nothing warrants attention right now, respond with exactly: [NO_RESPONSE]"
                 )
             else:
                 composed += (
@@ -220,7 +229,7 @@ class CognitiveAgent(BaseAgent):
         # AD-397: always accept direct_message if targeted to this agent
         # AD-407b: always accept ward_room_notification if targeted to this agent
         is_direct = (
-            intent.intent in ("direct_message", "ward_room_notification")
+            intent.intent in ("direct_message", "ward_room_notification", "proactive_think")
             and intent.target_agent_id == self.id
         )
 
@@ -333,6 +342,49 @@ class CognitiveAgent(BaseAgent):
             wr_parts.append("Respond naturally as yourself. Share your perspective if you have something meaningful to contribute.")
             wr_parts.append("If this topic is outside your expertise or you have nothing to add, respond with exactly: [NO_RESPONSE]")
             return "\n".join(wr_parts)
+
+        # Phase 28b: proactive_think — idle review cycle
+        if intent_name == "proactive_think":
+            context_parts = params.get("context_parts", {})
+            trust_score = params.get("trust_score", 0.5)
+            agency_level = params.get("agency_level", "suggestive")
+
+            pt_parts: list[str] = []
+            pt_parts.append("[Proactive Review Cycle]")
+            pt_parts.append(f"Your trust: {trust_score} | Agency: {agency_level}")
+            pt_parts.append("")
+
+            # Recent memories
+            memories = context_parts.get("recent_memories", [])
+            if memories:
+                pt_parts.append("Recent memories (your experiences):")
+                for m in memories:
+                    if m.get("reflection"):
+                        pt_parts.append(f"  - {m['reflection']}")
+                    elif m.get("input"):
+                        pt_parts.append(f"  - Handled: {m['input']}")
+                pt_parts.append("")
+
+            # Recent alerts
+            alerts = context_parts.get("recent_alerts", [])
+            if alerts:
+                pt_parts.append("Recent bridge alerts:")
+                for a in alerts:
+                    pt_parts.append(f"  - [{a.get('severity', '?')}] {a.get('title', '?')} (from {a.get('source', '?')})")
+                pt_parts.append("")
+
+            # Recent events
+            events = context_parts.get("recent_events", [])
+            if events:
+                pt_parts.append("Recent system events:")
+                for e in events:
+                    pt_parts.append(f"  - [{e.get('category', '?')}] {e.get('event', '?')}")
+                pt_parts.append("")
+
+            pt_parts.append("Based on this review, decide if anything warrants an observation or insight.")
+            pt_parts.append("If something is noteworthy, compose a brief Ward Room post (2-4 sentences).")
+            pt_parts.append("If nothing warrants attention, respond with exactly: [NO_RESPONSE]")
+            return "\n".join(pt_parts)
 
         parts = [f"Intent: {intent_name}"]
         if params:

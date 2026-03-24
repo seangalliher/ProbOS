@@ -321,6 +321,7 @@ export interface AgentProfileData {
   hebbianConnections: { targetId: string; weight: number; relType: string }[];
   memoryCount: number;
   uptime: number;
+  proactiveCooldown: number;  // Phase 28b: per-agent proactive think cooldown (seconds)
 }
 
 // Ward Room types (AD-407)

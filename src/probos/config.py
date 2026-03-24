@@ -294,6 +294,13 @@ class EarnedAgencyConfig(BaseModel):
     enabled: bool = False
 
 
+class ProactiveCognitiveConfig(BaseModel):
+    """Proactive Cognitive Loop — periodic idle-think (Phase 28b)."""
+    enabled: bool = False
+    interval_seconds: float = 120.0
+    cooldown_seconds: float = 300.0
+
+
 class DiscordConfig(BaseModel):
     """Discord bot adapter configuration."""
 
@@ -353,6 +360,7 @@ class SystemConfig(BaseModel):
     assignments: AssignmentConfig = AssignmentConfig()
     bridge_alerts: BridgeAlertConfig = BridgeAlertConfig()
     earned_agency: EarnedAgencyConfig = EarnedAgencyConfig()
+    proactive_cognitive: ProactiveCognitiveConfig = ProactiveCognitiveConfig()
     channels: ChannelsConfig = ChannelsConfig()
     medical: MedicalConfig = MedicalConfig()
 

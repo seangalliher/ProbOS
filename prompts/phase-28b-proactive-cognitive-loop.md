@@ -845,6 +845,178 @@ class TestProactiveConfig:
         assert cfg.proactive_cognitive.enabled is False
 ```
 
+### Part 8: Per-Agent Proactive Cooldown Slider — HXI + API
+
+The global `cooldown_seconds` (300s) is the default, but the Captain should be able to tune how often each crew member thinks proactively. Expose this as a slider in the Profile Panel's Health tab, backed by a per-agent override stored in the `ProactiveCognitiveLoop`.
+
+**8a. `src/probos/proactive.py`** — Add per-agent cooldown override support:
+
+Add a `_agent_cooldowns` dict alongside `_last_proactive`:
+
+```python
+        self._agent_cooldowns: dict[str, float] = {}  # agent_id -> override cooldown (seconds)
+```
+
+Add getter/setter methods:
+
+```python
+    def get_agent_cooldown(self, agent_id: str) -> float:
+        """Get effective cooldown for an agent (override or global default)."""
+        return self._agent_cooldowns.get(agent_id, self._cooldown)
+
+    def set_agent_cooldown(self, agent_id: str, cooldown: float) -> None:
+        """Set per-agent proactive cooldown override. Clamp to [60, 1800]."""
+        cooldown = max(60.0, min(1800.0, cooldown))
+        self._agent_cooldowns[agent_id] = cooldown
+```
+
+Update the cooldown check in `_run_cycle()` to use `get_agent_cooldown()`:
+
+```python
+            # Cooldown: skip if agent posted proactively recently
+            last = self._last_proactive.get(agent.id, 0.0)
+            if time.monotonic() - last < self.get_agent_cooldown(agent.id):
+                continue
+```
+
+**8b. `src/probos/api.py`** — Add endpoints for getting/setting per-agent cooldown:
+
+Add a PUT endpoint near the existing `/api/agent/{agent_id}/profile` route:
+
+```python
+    @app.put("/api/agent/{agent_id}/proactive-cooldown")
+    async def set_agent_proactive_cooldown(agent_id: str, req: dict) -> dict[str, Any]:
+        """Set per-agent proactive cooldown (seconds). Range: 60-1800."""
+        agent = runtime.registry.get(agent_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+        cooldown = float(req.get("cooldown", 300))
+        if hasattr(runtime, 'proactive_loop') and runtime.proactive_loop:
+            runtime.proactive_loop.set_agent_cooldown(agent_id, cooldown)
+        return {"agentId": agent_id, "cooldown": runtime.proactive_loop.get_agent_cooldown(agent_id) if runtime.proactive_loop else 300.0}
+```
+
+Add the current proactive cooldown to the existing `/api/agent/{agent_id}/profile` response. After the `"uptime"` field (line 1132), add:
+
+```python
+            "proactiveCooldown": runtime.proactive_loop.get_agent_cooldown(agent.id) if hasattr(runtime, 'proactive_loop') and runtime.proactive_loop else 300.0,
+```
+
+**8c. `ui/src/store/types.ts`** — Add `proactiveCooldown` to `AgentProfileData`:
+
+After the `uptime: number;` field (line 323):
+
+```typescript
+  proactiveCooldown: number;  // Phase 28b: per-agent proactive think cooldown (seconds)
+```
+
+**8d. `ui/src/components/profile/ProfileHealthTab.tsx`** — Add cooldown slider:
+
+Add the slider after the Uptime section (after line 110, before the Agent ID section). The slider should:
+- Range from 60 to 1800 seconds (1 min to 30 min)
+- Display the current value as human-readable time ("2m", "5m", "15m", etc.)
+- Call `PUT /api/agent/{agentId}/proactive-cooldown` on change (debounced)
+- Use the existing styling conventions (color `#8888a0` headers, `#e0dcd4` text)
+- Label: "Proactive Think Interval"
+- Show the HXI Cockpit View principle: this is the Captain's manual control over how frequently the agent self-initiates
+
+```tsx
+      {/* Proactive Think Interval (Phase 28b) */}
+      {profileData && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ color: '#8888a0', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>
+            Proactive Think Interval
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="range"
+              min={60}
+              max={1800}
+              step={30}
+              value={profileData.proactiveCooldown}
+              onChange={async (e) => {
+                const cooldown = Number(e.target.value);
+                try {
+                  await fetch(`/api/agent/${agent.id}/proactive-cooldown`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cooldown }),
+                  });
+                } catch { /* fail silently */ }
+              }}
+              style={{ flex: 1, accentColor: '#5090d0' }}
+            />
+            <span style={{ color: '#e0dcd4', fontSize: 12, minWidth: 36, textAlign: 'right' }}>
+              {profileData.proactiveCooldown < 120
+                ? `${Math.floor(profileData.proactiveCooldown)}s`
+                : `${Math.floor(profileData.proactiveCooldown / 60)}m`}
+            </span>
+          </div>
+          <div style={{ color: '#555568', fontSize: 10, marginTop: 2 }}>
+            How often this crew member reviews activity independently
+          </div>
+        </div>
+      )}
+```
+
+**8e. Tests** — Add to `tests/test_proactive.py`:
+
+```python
+class TestPerAgentCooldown:
+    """Per-agent cooldown override (Phase 28b slider)."""
+
+    def test_default_returns_global_cooldown(self):
+        loop = ProactiveCognitiveLoop(cooldown=300.0)
+        assert loop.get_agent_cooldown("agent1") == 300.0
+
+    def test_set_override(self):
+        loop = ProactiveCognitiveLoop(cooldown=300.0)
+        loop.set_agent_cooldown("agent1", 120.0)
+        assert loop.get_agent_cooldown("agent1") == 120.0
+
+    def test_override_does_not_affect_others(self):
+        loop = ProactiveCognitiveLoop(cooldown=300.0)
+        loop.set_agent_cooldown("agent1", 120.0)
+        assert loop.get_agent_cooldown("agent2") == 300.0
+
+    def test_clamp_minimum(self):
+        loop = ProactiveCognitiveLoop(cooldown=300.0)
+        loop.set_agent_cooldown("agent1", 10.0)
+        assert loop.get_agent_cooldown("agent1") == 60.0
+
+    def test_clamp_maximum(self):
+        loop = ProactiveCognitiveLoop(cooldown=300.0)
+        loop.set_agent_cooldown("agent1", 5000.0)
+        assert loop.get_agent_cooldown("agent1") == 1800.0
+
+    @pytest.mark.asyncio
+    async def test_per_agent_cooldown_used_in_cycle(self):
+        """Agent with short cooldown thinks, agent with long cooldown skipped."""
+        agent_fast = _make_mock_agent(agent_type="architect", agent_id="fast")
+        agent_fast.handle_intent.return_value = IntentResult(
+            intent_id="x", agent_id="fast", success=True, result="[NO_RESPONSE]"
+        )
+        agent_slow = _make_mock_agent(agent_type="builder", agent_id="slow")
+        agent_slow.handle_intent.return_value = IntentResult(
+            intent_id="x", agent_id="slow", success=True, result="[NO_RESPONSE]"
+        )
+        rt = _make_mock_runtime(agents=[agent_fast, agent_slow])
+
+        loop = ProactiveCognitiveLoop(cooldown=300.0)
+        loop.set_runtime(rt)
+        # Both posted 100s ago
+        loop._last_proactive["fast"] = time.monotonic() - 100
+        loop._last_proactive["slow"] = time.monotonic() - 100
+
+        # Fast agent has 60s cooldown (100s > 60s → thinks)
+        # Slow agent uses global 300s (100s < 300s → skipped)
+        loop.set_agent_cooldown("fast", 60.0)
+
+        await loop._run_cycle()
+        agent_fast.handle_intent.assert_called_once()
+        agent_slow.handle_intent.assert_not_called()
+```
+
 ## Test & Verify
 
 ```bash
