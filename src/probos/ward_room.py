@@ -392,6 +392,56 @@ class WardRoomService:
                 ))
         return threads
 
+    async def get_recent_activity(
+        self, channel_id: str, since: float, limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Recent threads + posts in a channel since a timestamp.
+
+        Returns a flat list of dicts with author_callsign, body (truncated),
+        created_at, and type ('thread' or 'reply').  Designed for proactive
+        loop context injection — compact, no nesting.
+        """
+        if not self._db:
+            return []
+
+        items: list[dict[str, Any]] = []
+
+        # Recent threads
+        async with self._db.execute(
+            "SELECT author_callsign, title, body, created_at "
+            "FROM threads WHERE channel_id = ? AND created_at > ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (channel_id, since, limit),
+        ) as cursor:
+            async for row in cursor:
+                items.append({
+                    "type": "thread",
+                    "author": row[0] or "unknown",
+                    "title": row[1][:100],
+                    "body": row[2][:200],
+                    "created_at": row[3],
+                })
+
+        # Recent replies in threads from this channel
+        async with self._db.execute(
+            "SELECT p.author_callsign, p.body, p.created_at "
+            "FROM posts p JOIN threads t ON p.thread_id = t.id "
+            "WHERE t.channel_id = ? AND p.created_at > ? AND p.deleted = 0 "
+            "ORDER BY p.created_at DESC LIMIT ?",
+            (channel_id, since, limit),
+        ) as cursor:
+            async for row in cursor:
+                items.append({
+                    "type": "reply",
+                    "author": row[0] or "unknown",
+                    "body": row[1][:200],
+                    "created_at": row[2],
+                })
+
+        # Sort by time, most recent first, cap total
+        items.sort(key=lambda x: x["created_at"], reverse=True)
+        return items[:limit]
+
     async def create_thread(
         self, channel_id: str, author_id: str, title: str, body: str,
         author_callsign: str = "",

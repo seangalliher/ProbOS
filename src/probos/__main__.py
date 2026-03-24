@@ -532,7 +532,8 @@ def _cmd_reset(args: argparse.Namespace) -> None:
     if not args.yes:
         answer = input(
             "This will permanently delete all learned state "
-            "(designed agents, trust, routing weights, episodes, workflows, QA reports). "
+            "(designed agents, trust, routing weights, episodes, workflows, QA reports, "
+            "Ward Room history, event log, DAG checkpoints). "
             "Continue? [y/N]: "
         ).strip().lower()
         if answer != "y":
@@ -566,6 +567,35 @@ def _cmd_reset(args: argparse.Namespace) -> None:
         hebbian_db.unlink()
         hebbian_cleared = True
 
+    # Clear Ward Room DB (AD-413)
+    wardroom_cleared = False
+    wardroom_db = data_dir / "ward_room.db"
+    if wardroom_db.is_file() and not args.keep_wardroom:
+        # Archive before wiping
+        archive_dir = data_dir / "archives"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        archive_path = archive_dir / f"ward_room_{timestamp}.db"
+        shutil.copy2(str(wardroom_db), str(archive_path))
+        wardroom_db.unlink()
+        wardroom_cleared = True
+
+    # Clear DAG checkpoints (AD-413)
+    checkpoints_cleared = False
+    checkpoint_dir = data_dir / "checkpoints"
+    if checkpoint_dir.is_dir():
+        for fp in checkpoint_dir.glob("*.json"):
+            fp.unlink()
+        checkpoints_cleared = True
+
+    # Clear event log (AD-413)
+    events_cleared = False
+    events_db = data_dir / "events.db"
+    if events_db.is_file():
+        events_db.unlink()
+        events_cleared = True
+
     # Git commit if repo is git-initialized
     if (repo_path / ".git").is_dir():
         try:
@@ -583,7 +613,15 @@ def _cmd_reset(args: argparse.Namespace) -> None:
     summary = ", ".join(cleared) if cleared else "nothing"
     chroma_msg = " ChromaDB wiped." if chroma_cleared else ""
     hebbian_msg = " Hebbian weights wiped." if hebbian_cleared else ""
-    console.print(f"[bold green]Reset complete.[/bold green] Cleared: {summary}.{chroma_msg}{hebbian_msg}")
+    wardroom_msg = " Ward Room archived and wiped." if wardroom_cleared else ""
+    checkpoint_msg = " DAG checkpoints cleared." if checkpoints_cleared else ""
+    events_msg = " Event log cleared." if events_cleared else ""
+    console.print(
+        f"[bold green]Reset complete.[/bold green] Cleared: {summary}."
+        f"{chroma_msg}{hebbian_msg}{wardroom_msg}{checkpoint_msg}{events_msg}"
+    )
+    if wardroom_cleared:
+        console.print(f"  Ward Room archived to: {archive_path}")
 
 
 def main() -> None:
@@ -640,6 +678,7 @@ def main() -> None:
     reset_parser = subparsers.add_parser("reset", help="Clear all learned state (designed agents, trust, episodes, etc.)")
     reset_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
     reset_parser.add_argument("--keep-trust", action="store_true", help="Preserve trust scores")
+    reset_parser.add_argument("--keep-wardroom", action="store_true", help="Preserve Ward Room history")
     reset_parser.add_argument("--config", "-c", type=Path, default=None, help="Path to config YAML")
     reset_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")
 

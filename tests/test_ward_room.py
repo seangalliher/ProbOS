@@ -378,3 +378,62 @@ class TestEvents:
         await ward_room.endorse(post.id, "post", "a1", "up")
         types = [e["type"] for e in ward_room._captured_events]
         assert "ward_room_endorsement" in types
+
+
+class TestWardRoomRecentActivity:
+    """AD-413: Recent activity for proactive loop context."""
+
+    @pytest.fixture
+    async def wr(self, tmp_path):
+        svc = WardRoomService(db_path=str(tmp_path / "wr.db"))
+        await svc.start()
+        yield svc
+        await svc.stop()
+
+    @pytest.mark.asyncio
+    async def test_get_recent_activity_returns_threads(self, wr):
+        channels = await wr.list_channels()
+        ch = channels[0]  # All Hands
+        await wr.create_thread(ch.id, "agent1", "Test Thread", "Body text", author_callsign="LaForge")
+        activity = await wr.get_recent_activity(ch.id, since=0.0, limit=10)
+        assert len(activity) >= 1
+        assert activity[0]["type"] == "thread"
+        assert activity[0]["author"] == "LaForge"
+
+    @pytest.mark.asyncio
+    async def test_get_recent_activity_respects_since(self, wr):
+        channels = await wr.list_channels()
+        ch = channels[0]
+        await wr.create_thread(ch.id, "agent1", "Old Thread", "old", author_callsign="Worf")
+        import time
+        cutoff = time.time() + 1  # Future cutoff
+        activity = await wr.get_recent_activity(ch.id, since=cutoff, limit=10)
+        assert len(activity) == 0
+
+    @pytest.mark.asyncio
+    async def test_get_recent_activity_includes_replies(self, wr):
+        channels = await wr.list_channels()
+        ch = channels[0]
+        thread = await wr.create_thread(ch.id, "agent1", "Thread", "body", author_callsign="Number One")
+        await wr.create_post(thread.id, "agent2", "I agree", author_callsign="Wesley")
+        activity = await wr.get_recent_activity(ch.id, since=0.0, limit=10)
+        types = {a["type"] for a in activity}
+        assert "thread" in types
+        assert "reply" in types
+
+    @pytest.mark.asyncio
+    async def test_get_recent_activity_limits_results(self, wr):
+        channels = await wr.list_channels()
+        ch = channels[0]
+        for i in range(10):
+            await wr.create_thread(ch.id, "agent1", f"Thread {i}", "body", author_callsign="LaForge")
+        activity = await wr.get_recent_activity(ch.id, since=0.0, limit=3)
+        assert len(activity) == 3
+
+    @pytest.mark.asyncio
+    async def test_get_recent_activity_no_db(self):
+        svc = WardRoomService(db_path=None)
+        await svc.start()
+        result = await svc.get_recent_activity("fake", since=0.0)
+        assert result == []
+        await svc.stop()

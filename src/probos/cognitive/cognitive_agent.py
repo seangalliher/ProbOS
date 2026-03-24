@@ -381,6 +381,15 @@ class CognitiveAgent(BaseAgent):
                     pt_parts.append(f"  - [{e.get('category', '?')}] {e.get('event', '?')}")
                 pt_parts.append("")
 
+            # Recent Ward Room activity (AD-413)
+            wr_activity = context_parts.get("ward_room_activity", [])
+            if wr_activity:
+                pt_parts.append("Recent Ward Room discussion in your department:")
+                for a in wr_activity:
+                    prefix = "[thread]" if a.get("type") == "thread" else "[reply]"
+                    pt_parts.append(f"  - {prefix} {a.get('author', '?')}: {a.get('body', '?')}")
+                pt_parts.append("")
+
             pt_parts.append("Based on this review, decide if anything warrants an observation or insight.")
             pt_parts.append("If something is noteworthy, compose a brief Ward Room post (2-4 sentences).")
             pt_parts.append("If nothing warrants attention, respond with exactly: [NO_RESPONSE]")

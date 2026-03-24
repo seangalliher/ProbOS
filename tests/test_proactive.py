@@ -452,3 +452,187 @@ class TestPerAgentCooldown:
         await loop._run_cycle()
         agent_fast.handle_intent.assert_called_once()
         agent_slow.handle_intent.assert_not_called()
+
+
+class TestResetScope:
+    """AD-413: Fine-grained reset scope tests."""
+
+    def test_reset_archives_wardroom(self, tmp_path):
+        """probos reset should archive ward_room.db before deleting."""
+        import argparse
+        import shutil
+        from probos.__main__ import _cmd_reset
+
+        # Create fake data_dir with ward_room.db
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        wr_db = data_dir / "ward_room.db"
+        wr_db.write_text("fake ward room data")
+
+        # Create minimal knowledge dir
+        knowledge_dir = tmp_path / "knowledge"
+        knowledge_dir.mkdir()
+
+        # Mock args
+        args = argparse.Namespace(
+            yes=True,
+            keep_trust=False,
+            keep_wardroom=False,
+            config=None,
+            data_dir=data_dir,
+        )
+
+        # Patch _load_config_with_fallback and _default_data_dir
+        from unittest.mock import patch as mock_patch
+        mock_config = MagicMock()
+        mock_config.knowledge.repo_path = str(knowledge_dir)
+
+        with mock_patch("probos.__main__._load_config_with_fallback", return_value=(mock_config, None)):
+            with mock_patch("probos.__main__._default_data_dir", return_value=data_dir):
+                _cmd_reset(args)
+
+        # ward_room.db should be gone
+        assert not wr_db.exists()
+
+        # Archive should exist
+        archive_dir = data_dir / "archives"
+        assert archive_dir.exists()
+        archives = list(archive_dir.glob("ward_room_*.db"))
+        assert len(archives) == 1
+        assert archives[0].read_text() == "fake ward room data"
+
+    def test_reset_keeps_wardroom_with_flag(self, tmp_path):
+        """--keep-wardroom should preserve ward_room.db."""
+        import argparse
+        from probos.__main__ import _cmd_reset
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        wr_db = data_dir / "ward_room.db"
+        wr_db.write_text("keep me")
+
+        knowledge_dir = tmp_path / "knowledge"
+        knowledge_dir.mkdir()
+
+        args = argparse.Namespace(
+            yes=True,
+            keep_trust=False,
+            keep_wardroom=True,
+            config=None,
+            data_dir=data_dir,
+        )
+
+        from unittest.mock import patch as mock_patch
+        mock_config = MagicMock()
+        mock_config.knowledge.repo_path = str(knowledge_dir)
+
+        with mock_patch("probos.__main__._load_config_with_fallback", return_value=(mock_config, None)):
+            with mock_patch("probos.__main__._default_data_dir", return_value=data_dir):
+                _cmd_reset(args)
+
+        assert wr_db.exists()
+        assert wr_db.read_text() == "keep me"
+
+    def test_reset_clears_checkpoints(self, tmp_path):
+        """probos reset should clear DAG checkpoint JSON files."""
+        import argparse
+        from probos.__main__ import _cmd_reset
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        cp_dir = data_dir / "checkpoints"
+        cp_dir.mkdir()
+        (cp_dir / "dag1.json").write_text("{}")
+        (cp_dir / "dag2.json").write_text("{}")
+
+        knowledge_dir = tmp_path / "knowledge"
+        knowledge_dir.mkdir()
+
+        args = argparse.Namespace(
+            yes=True,
+            keep_trust=False,
+            keep_wardroom=False,
+            config=None,
+            data_dir=data_dir,
+        )
+
+        from unittest.mock import patch as mock_patch
+        mock_config = MagicMock()
+        mock_config.knowledge.repo_path = str(knowledge_dir)
+
+        with mock_patch("probos.__main__._load_config_with_fallback", return_value=(mock_config, None)):
+            with mock_patch("probos.__main__._default_data_dir", return_value=data_dir):
+                _cmd_reset(args)
+
+        remaining = list(cp_dir.glob("*.json"))
+        assert len(remaining) == 0
+
+    def test_reset_clears_events_db(self, tmp_path):
+        """probos reset should clear events.db."""
+        import argparse
+        from probos.__main__ import _cmd_reset
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        events_db = data_dir / "events.db"
+        events_db.write_text("fake events")
+
+        knowledge_dir = tmp_path / "knowledge"
+        knowledge_dir.mkdir()
+
+        args = argparse.Namespace(
+            yes=True,
+            keep_trust=False,
+            keep_wardroom=False,
+            config=None,
+            data_dir=data_dir,
+        )
+
+        from unittest.mock import patch as mock_patch
+        mock_config = MagicMock()
+        mock_config.knowledge.repo_path = str(knowledge_dir)
+
+        with mock_patch("probos.__main__._load_config_with_fallback", return_value=(mock_config, None)):
+            with mock_patch("probos.__main__._default_data_dir", return_value=data_dir):
+                _cmd_reset(args)
+
+        assert not events_db.exists()
+
+
+class TestProactiveWardRoomContext:
+    """AD-413: Proactive loop Ward Room context gathering."""
+
+    @pytest.mark.asyncio
+    async def test_gather_context_includes_ward_room(self):
+        """_gather_context should include recent Ward Room activity."""
+        loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
+        loop._default_cooldown = 300
+        loop._agent_cooldowns = {}
+
+        # Mock runtime with ward_room
+        rt = MagicMock()
+        rt.episodic_memory = None
+        rt.bridge_alerts = None
+        rt.event_log = None
+
+        mock_channel = MagicMock()
+        mock_channel.channel_type = "department"
+        mock_channel.department = "engineering"
+        mock_channel.id = "ch-eng"
+
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[mock_channel])
+        rt.ward_room.get_recent_activity = AsyncMock(return_value=[
+            {"type": "thread", "author": "LaForge", "title": "EPS conduit check", "body": "All nominal", "created_at": 1.0},
+        ])
+
+        loop._runtime = rt
+
+        agent = MagicMock()
+        agent.id = "eng-1"
+        agent.agent_type = "builder"
+
+        context = await loop._gather_context(agent, trust_score=0.7)
+        assert "ward_room_activity" in context
+        assert len(context["ward_room_activity"]) == 1
+        assert context["ward_room_activity"][0]["author"] == "LaForge"

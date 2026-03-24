@@ -212,6 +212,39 @@ class ProactiveCognitiveLoop:
             except Exception:
                 logger.debug("Event log query failed", exc_info=True)
 
+        # 4. Recent Ward Room activity in agent's department (AD-413)
+        if hasattr(rt, 'ward_room') and rt.ward_room:
+            try:
+                from probos.cognitive.standing_orders import get_department
+                dept = get_department(agent.agent_type)
+
+                if dept:
+                    channels = await rt.ward_room.list_channels()
+                    dept_channel = None
+                    for ch in channels:
+                        if ch.channel_type == "department" and ch.department == dept:
+                            dept_channel = ch
+                            break
+
+                    if dept_channel:
+                        # Look back one cooldown window (what happened since last think)
+                        cooldown = self._agent_cooldowns.get(agent.id, self._default_cooldown)
+                        since = time.time() - cooldown
+                        activity = await rt.ward_room.get_recent_activity(
+                            dept_channel.id, since=since, limit=5
+                        )
+                        if activity:
+                            context["ward_room_activity"] = [
+                                {
+                                    "type": a["type"],
+                                    "author": a["author"],
+                                    "body": a.get("title", a.get("body", ""))[:150],
+                                }
+                                for a in activity
+                            ]
+            except Exception:
+                logger.debug("Ward Room context fetch failed for %s", agent.id, exc_info=True)
+
         return context
 
     async def _post_to_ward_room(self, agent: Any, text: str) -> None:
