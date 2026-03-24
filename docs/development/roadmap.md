@@ -1107,6 +1107,8 @@ Currently ProbOS agents communicate only via the intent bus (broadcast to pools)
 
 **Audit trail** — all messages logged to Cognitive Journal for replay and post-hoc analysis. Captain can review any channel's history
 
+**HXI Channel Administration** — Channel management (create, rename, archive, set permissions) must be a Captain capability in the Ward Room web app, not a code deployment. The `POST /api/ward-room/channels` endpoint already exists; this adds the HXI surface: channel creation form, channel settings panel, member management, and archive/delete controls. System channels (e.g., `#improvement-proposals` from AD-412) can be created directly from the Bridge without a build prompt. Follows the **HXI Cockpit View Principle** — every agent-mediated capability must have a direct manual control.
+
 **IntentBus Enhancements — Priority & Back-Pressure**
 
 *"All decks, this is a priority one message."*
