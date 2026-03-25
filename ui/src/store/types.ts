@@ -213,6 +213,7 @@ export interface StateSnapshot {
     id: string;
     agent_type: string;
     callsign: string;  // BF-013
+    display_name: string;  // BF-026
     pool: string;
     state: string;
     confidence: number;

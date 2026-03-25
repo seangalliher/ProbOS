@@ -159,9 +159,11 @@ class ProactiveCognitiveLoop:
                 # BF-021 refined: No duty due — allow free-form thinks but at
                 # reduced frequency (3x cooldown). Agents stay alive between
                 # duty cycles instead of going completely dark.
+                # BF-025: Guard with last > 0 so first-ever think always passes.
+                # time.monotonic() on fresh CI runners can be < idle_cooldown.
                 last = self._last_proactive.get(agent.id, 0.0)
                 idle_cooldown = self.get_agent_cooldown(agent.id) * 3
-                if time.monotonic() - last < idle_cooldown:
+                if last > 0 and time.monotonic() - last < idle_cooldown:
                     return
 
         # AD-417: Record proactive activity for dream scheduler awareness

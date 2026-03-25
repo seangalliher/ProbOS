@@ -2,22 +2,23 @@
 
 ## Context
 
-ProbOS's HXI agent profile chat (`/api/agent/{id}/chat`) is stateless — each message is a one-shot request with no conversation history. The agent has no memory of what was just discussed. Meanwhile, the shell `/hail` command maintains full session history, passes it to the agent via `session_history` in IntentMessage params, and stores episodes. The cognitive layer's `_build_user_message()` already handles `session_history` — it just never receives it from the HXI path.
+ProbOS's HXI agent profile chat (`/api/agent/{id}/chat`) is stateless — each message is a one-shot request with no conversation history. The agent has no memory of what was just discussed. Meanwhile, the shell `/hail` command maintains full session history, passes it to the agent via `session_history` in IntentMessage params, and stores episodes. The cognitive layer's `_build_user_message()` (cognitive_agent.py line 310) already handles `session_history` — it just never receives it from the HXI path.
 
 **The gap is pure plumbing:** the HXI client already tracks conversation history in the Zustand store (`agentConversations` map); it just never sends it to the server.
 
-**Prerequisite:** AD-430a (episodic memory write paths) must be merged first.
+**Prerequisite:** AD-430a (episodic memory write paths) must be merged first. ✅ Done.
 
 ## Changes
 
 ### Step 1: API Request Model — Add history field
 
-**File:** `src/probos/api.py`
+**File:** `src/probos/api.py`, line 186
 
-Find the `AgentChatRequest` model (near line 186). Add an optional `history` field:
+Find the `AgentChatRequest` model. Add an optional `history` field:
 
 ```python
 class AgentChatRequest(BaseModel):
+    """Request to send a direct message to a specific agent."""
     message: str
     history: list[dict[str, str]] = []  # AD-430b: conversation history from HXI
 ```
@@ -26,30 +27,42 @@ The history format matches the shell pattern: `[{"role": "user", "text": "..."},
 
 ### Step 2: API Endpoint — Pass history through IntentMessage
 
-**File:** `src/probos/api.py`
+**File:** `src/probos/api.py`, line 1188
 
-Find the `agent_chat()` endpoint (the `POST /api/agent/{agent_id}/chat` handler). Update the IntentMessage construction to pass history:
+Find the IntentMessage construction inside `agent_chat()`. Replace the current block (lines 1188–1192):
 
 ```python
+# Before (current):
+intent = IntentMessage(
+    intent="direct_message",
+    params={"text": req.message, "from": "hxi_profile", "session": False},
+    target_agent_id=agent_id,
+)
+```
+
+With:
+
+```python
+# After (AD-430b):
 intent = IntentMessage(
     intent="direct_message",
     params={
         "text": req.message,
         "from": "hxi_profile",
         "session": bool(req.history),  # AD-430b: session=True when history present
-        "session_history": req.history[-10:] if req.history else [],  # AD-430b: last 10 exchanges max
+        "session_history": req.history[-10:] if req.history else [],  # AD-430b: last 10 exchanges
     },
     target_agent_id=agent_id,
 )
 ```
 
-**Cap at 10 exchanges** (20 messages) — prevents unbounded context growth. The shell `/hail` has no cap because it manages its own session lifecycle; HXI conversations can run indefinitely.
+**Cap at 10 entries** — prevents unbounded context growth. The shell `/hail` has no cap because it manages its own session lifecycle; HXI conversations can run indefinitely.
 
 ### Step 3: API Endpoint — Store episode after response
 
 **File:** `src/probos/api.py`
 
-In the same `agent_chat()` endpoint, after the response is obtained from `handle_intent()` and before returning, store an episode. Follow the shell `/hail` pattern:
+In the same `agent_chat()` function, after `response_text` is resolved (after line 1205) and before the `return` statement at line 1207, insert episode storage:
 
 ```python
 # AD-430b: Store HXI 1:1 interaction as episodic memory
@@ -57,9 +70,6 @@ if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
     try:
         import time as _time
         from probos.types import Episode
-        callsign = ""
-        if hasattr(runtime, 'callsign_registry'):
-            callsign = runtime.callsign_registry.get_callsign(agent_type) or ""
         episode = Episode(
             user_input=f"[1:1 with {callsign or agent_id}] Captain: {req.message}",
             timestamp=_time.time(),
@@ -71,6 +81,7 @@ if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
                 "session_type": "1:1",
                 "callsign": callsign,
                 "source": "hxi_profile",
+                "agent_type": agent.agent_type,
             }],
             reflection=f"Captain had a 1:1 conversation with {callsign or agent_id} via HXI.",
         )
@@ -79,51 +90,66 @@ if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
         pass  # Non-critical — don't block the response
 ```
 
-**Note:** You'll need to extract `response_text` and `agent_type` from the handle_intent result. Look at how the endpoint currently processes the response to determine the right variable names. The `agent_type` can be resolved from `agent_id` via the runtime's pool registry — check how the endpoint currently resolves the agent for the request.
+**Note:** `callsign` is already resolved at line 1196–1197. `response_text` is already resolved at lines 1199–1205. `agent` is already resolved at line 1180. No new lookups needed — all variables are in scope.
 
 ### Step 4: HXI Client — Send history with chat requests
 
 **File:** `ui/src/components/profile/ProfileChatTab.tsx`
 
-Find the `fetch` call that posts to `/api/agent/${agentId}/chat`. Update the body to include conversation history from the Zustand store:
+**Critical ordering:** The current code (line 28) calls `addAgentMessage(agentId, 'user', text)` BEFORE the fetch. This means the current user message is already in the Zustand store when we build history. We must capture history BEFORE adding the current message — otherwise the current message appears in both `history` AND `req.message`, duplicating it.
+
+Replace the `handleSend` body (lines 22–42) with:
 
 ```typescript
-// Get conversation history from store
-const conversation = useStore.getState().agentConversations.get(agentId);
-const history = (conversation?.messages || [])
-    .slice(-20)  // Last 20 messages (10 exchanges)
-    .map(m => ({
-        role: m.role === 'user' ? 'user' : 'agent',
-        text: m.text,
-    }));
+const handleSend = useCallback(async () => {
+    const text = input.trim();
+    if (!text || sending) return;
+    setInput('');
+    setSending(true);
 
-const res = await fetch(`/api/agent/${agentId}/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: text, history }),
-});
+    // AD-430b: Capture conversation history BEFORE adding current message
+    const conv = useStore.getState().agentConversations.get(agentId);
+    const history = (conv?.messages || [])
+        .slice(-20)  // Last 20 messages (10 exchanges)
+        .map(m => ({
+            role: m.role === 'user' ? 'user' : 'agent',
+            text: m.text,
+        }));
+
+    // Add user message immediately (after capturing history)
+    useStore.getState().addAgentMessage(agentId, 'user', text);
+
+    try {
+        const res = await fetch(`/api/agent/${agentId}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text, history }),  // AD-430b: send history
+        });
+        const data = await res.json();
+        useStore.getState().addAgentMessage(agentId, 'agent', data.response || '(no response)');
+    } catch {
+        useStore.getState().addAgentMessage(agentId, 'agent', '(communication error)');
+    } finally {
+        setSending(false);
+    }
+}, [agentId, input, sending]);
 ```
 
-**Important:** Send the history from the store state at the time of the request, BEFORE appending the current user message to the store. The current message is already in `req.message` — don't duplicate it in history. Check the component's flow to ensure correct ordering.
-
-### Step 5: Cross-session memory seeding (optional but valuable)
+### Step 5: Cross-session memory seeding
 
 **File:** `src/probos/api.py`
 
-When the HXI profile chat panel opens, it should seed with relevant past episodes — just like the shell `/hail` command seeds `_session_history` with recalled episodes before the first message.
-
-Add a new endpoint:
+Add a new endpoint after the `agent_chat()` function (after line 1211). This mirrors how the shell `/hail` command seeds `_session_history` with recalled episodes before the first message:
 
 ```python
 @app.get("/api/agent/{agent_id}/chat/history")
 async def agent_chat_history(agent_id: str) -> dict[str, Any]:
     """Recall past 1:1 interactions with this agent for session seeding."""
-    runtime = _require_runtime()
     memories: list[dict[str, str]] = []
     if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
         try:
             episodes = await runtime.episodic_memory.recall_for_agent(
-                agent_id, f"1:1 conversation with Captain", k=3
+                agent_id, "1:1 conversation with Captain", k=3
             )
             for ep in episodes:
                 memories.append({
@@ -135,11 +161,29 @@ async def agent_chat_history(agent_id: str) -> dict[str, Any]:
     return {"memories": memories}
 ```
 
-On the HXI side, call this endpoint when the chat panel first opens and prepend the returned memories to the first message's history. This gives the agent long-term conversational continuity across HXI sessions.
-
 **File:** `ui/src/components/profile/ProfileChatTab.tsx`
 
-On component mount (or first message send), fetch `/api/agent/${agentId}/chat/history` and store the returned memories. Pass them as the first entries in each request's `history` array, before client-tracked conversation messages.
+Add a `useEffect` to fetch cross-session memories when the chat panel mounts. Store them in component state and prepend to the first request's history:
+
+```typescript
+const [seedMemories, setSeedMemories] = useState<{role: string; text: string}[]>([]);
+
+// AD-430b: Fetch cross-session memories on mount
+useEffect(() => {
+    fetch(`/api/agent/${agentId}/chat/history`)
+        .then(r => r.json())
+        .then(data => setSeedMemories(data.memories || []))
+        .catch(() => {});  // Non-critical
+}, [agentId]);
+```
+
+Then in `handleSend`, prepend seed memories to the history array (only on first message, when no prior conversation exists):
+
+```typescript
+const fullHistory = conv?.messages?.length ? history : [...seedMemories, ...history];
+// Use fullHistory instead of history in the fetch body
+body: JSON.stringify({ message: text, history: fullHistory }),
+```
 
 ## Tests
 
@@ -197,22 +241,14 @@ GET /api/agent/{id}/chat/history with runtime that has no episodic_memory.
 Assert response has memories == [].
 ```
 
-**File:** `ui/src/components/profile/__tests__/ProfileChatTab.test.tsx` (if vitest tests exist for this component)
-
-### Test 9: Chat sends history from store
-```
-Populate store with agentConversations for an agent. Trigger a chat send.
-Assert the fetch body includes history array matching store messages.
-```
-
 ## Constraints
 
 - All episode storage is wrapped in try/except — non-critical, never blocks the response.
 - History is capped at 10 entries server-side to prevent unbounded context growth.
 - `response_text` in episode outcomes is truncated to 500 chars (consistent with AD-430a pattern).
 - The `_build_user_message()` in `cognitive_agent.py` already handles `session_history` — NO changes needed there.
-- Cross-session recall (Step 5) is a net-new endpoint. If it adds too much scope, it can be deferred — the core value (history passing + episode storage) is in Steps 1-4.
-- Vitest tests (Step 9) are optional if the component doesn't have an existing test file — don't create test infrastructure just for one test.
+- No vitest test files exist for this component — don't create test infrastructure for one test.
+- The `/api/chat` endpoint's @callsign path (line 431) is NOT modified — it's a one-shot command interface, not a conversation. Only the profile chat panel (`/api/agent/{id}/chat`) gets history support.
 
 ## Run
 

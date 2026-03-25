@@ -186,6 +186,7 @@ class DesignApproveRequest(BaseModel):
 class AgentChatRequest(BaseModel):
     """Request to send a direct message to a specific agent."""
     message: str
+    history: list[dict[str, str]] = []  # AD-430b: conversation history from HXI
 
 
 # Ward Room models (AD-407)
@@ -1187,7 +1188,12 @@ def create_app(runtime: Any) -> FastAPI:
         from probos.types import IntentMessage
         intent = IntentMessage(
             intent="direct_message",
-            params={"text": req.message, "from": "hxi_profile", "session": False},
+            params={
+                "text": req.message,
+                "from": "hxi_profile",
+                "session": bool(req.history),  # AD-430b: session=True when history present
+                "session_history": req.history[-10:] if req.history else [],  # AD-430b: last 10 exchanges
+            },
             target_agent_id=agent_id,
         )
         result = await runtime.intent_bus.send(intent)
@@ -1204,11 +1210,53 @@ def create_app(runtime: Any) -> FastAPI:
         else:
             response_text = "(no response)"
 
+        # AD-430b: Store HXI 1:1 interaction as episodic memory
+        if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
+            try:
+                import time as _time
+                from probos.types import Episode
+                episode = Episode(
+                    user_input=f"[1:1 with {callsign or agent_id}] Captain: {req.message}",
+                    timestamp=_time.time(),
+                    agent_ids=[agent_id],
+                    outcomes=[{
+                        "intent": "direct_message",
+                        "success": True,
+                        "response": response_text[:500],
+                        "session_type": "1:1",
+                        "callsign": callsign,
+                        "source": "hxi_profile",
+                        "agent_type": agent.agent_type,
+                    }],
+                    reflection=f"Captain had a 1:1 conversation with {callsign or agent_id} via HXI.",
+                )
+                await runtime.episodic_memory.store(episode)
+            except Exception:
+                pass  # Non-critical — don't block the response
+
         return {
             "response": response_text,
             "callsign": callsign,
             "agentId": agent_id,
         }
+
+    @app.get("/api/agent/{agent_id}/chat/history")
+    async def agent_chat_history(agent_id: str) -> dict[str, Any]:
+        """Recall past 1:1 interactions with this agent for session seeding."""
+        memories: list[dict[str, str]] = []
+        if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
+            try:
+                episodes = await runtime.episodic_memory.recall_for_agent(
+                    agent_id, "1:1 conversation with Captain", k=3
+                )
+                for ep in episodes:
+                    memories.append({
+                        "role": "system",
+                        "text": f"[Previous conversation] {ep.user_input}",
+                    })
+            except Exception:
+                pass
+        return {"memories": memories}
 
     # --- Ward Room (AD-407) ---
 

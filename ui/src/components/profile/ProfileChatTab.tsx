@@ -10,6 +10,7 @@ export function ProfileChatTab({ agentId }: Props) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [seedMemories, setSeedMemories] = useState<{role: string; text: string}[]>([]);
 
   const messages = conversation?.messages ?? [];
 
@@ -18,20 +19,40 @@ export function ProfileChatTab({ agentId }: Props) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
+  // AD-430b: Fetch cross-session memories on mount
+  useEffect(() => {
+    fetch(`/api/agent/${agentId}/chat/history`)
+        .then(r => r.json())
+        .then(data => setSeedMemories(data.memories || []))
+        .catch(() => {});  // Non-critical
+  }, [agentId]);
+
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || sending) return;
     setInput('');
     setSending(true);
 
-    // Add user message immediately
+    // AD-430b: Capture conversation history BEFORE adding current message
+    const conv = useStore.getState().agentConversations.get(agentId);
+    const history = (conv?.messages || [])
+        .slice(-20)  // Last 20 messages (10 exchanges)
+        .map(m => ({
+            role: m.role === 'user' ? 'user' : 'agent',
+            text: m.text,
+        }));
+
+    // Prepend seed memories on first message (no prior conversation)
+    const fullHistory = conv?.messages?.length ? history : [...seedMemories, ...history];
+
+    // Add user message immediately (after capturing history)
     useStore.getState().addAgentMessage(agentId, 'user', text);
 
     try {
       const res = await fetch(`/api/agent/${agentId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, history: fullHistory }),  // AD-430b: send history
       });
       const data = await res.json();
       useStore.getState().addAgentMessage(agentId, 'agent', data.response || '(no response)');
@@ -40,7 +61,7 @@ export function ProfileChatTab({ agentId }: Props) {
     } finally {
       setSending(false);
     }
-  }, [agentId, input, sending]);
+  }, [agentId, input, sending, seedMemories]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
