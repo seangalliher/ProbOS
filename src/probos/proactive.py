@@ -251,7 +251,9 @@ class ProactiveCognitiveLoop:
                         }],
                         reflection=f"{callsign or agent.agent_type} reviewed context but had nothing to report.",
                     )
-                    await rt.episodic_memory.store(episode)
+                    from probos.cognitive.episodic import EpisodicMemory
+                    if EpisodicMemory.should_store(episode):
+                        await rt.episodic_memory.store(episode)
                 except Exception:
                     logger.debug("Failed to store no-response episode for %s", agent.agent_type, exc_info=True)
             return
@@ -310,7 +312,9 @@ class ProactiveCognitiveLoop:
                     }],
                     reflection=f"{callsign or agent.agent_type} observed: {thought_summary}",
                 )
-                await rt.episodic_memory.store(episode)
+                from probos.cognitive.episodic import EpisodicMemory
+                if EpisodicMemory.should_store(episode):
+                    await rt.episodic_memory.store(episode)
             except Exception:
                 logger.debug("Failed to store proactive thought episode for %s", agent.agent_type, exc_info=True)
 

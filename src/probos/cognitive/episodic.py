@@ -106,6 +106,50 @@ class EpisodicMemory:
 
         return seeded
 
+    # ---- selective encoding gate ------------------------------------
+
+    @staticmethod
+    def should_store(episode: Episode) -> bool:
+        """Selective Encoding Gate — biologically-inspired memory filter.
+
+        Not every experience merits a memory. Skip noise; store signal.
+        The brain encodes experiences with significance, novelty, or goal relevance.
+        """
+        text = episode.user_input or ""
+        outcomes = episode.outcomes or []
+
+        # Always store Captain-initiated interactions (high significance)
+        if text.startswith("[1:1 with"):
+            return True
+
+        # Always store failures (learning opportunities)
+        for o in outcomes:
+            if isinstance(o, dict) and not o.get("success", True):
+                return True
+
+        # Skip proactive no-response episodes (highest-volume noise)
+        if "[Proactive thought" in text and "no response" in text.lower():
+            return False
+
+        # Skip QA routine passes (mechanical, no insight)
+        if text.startswith("[SystemQA]"):
+            for o in outcomes:
+                if isinstance(o, dict) and not o.get("success", True):
+                    return True  # QA failures ARE signal
+            return False  # QA passes are noise
+
+        # Skip episodes with no meaningful content
+        for o in outcomes:
+            if isinstance(o, dict):
+                response = o.get("response", "")
+                if isinstance(response, str) and response.strip() in ("", "[NO_RESPONSE]"):
+                    continue
+                return True  # Has a real response → store
+        # No outcomes with real responses and not caught above
+        if not outcomes:
+            return True  # No outcomes metadata → store conservatively
+        return False
+
     # ---- storage --------------------------------------------------
 
     async def store(self, episode: Episode) -> None:

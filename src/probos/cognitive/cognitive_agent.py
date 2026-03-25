@@ -623,7 +623,9 @@ class CognitiveAgent(BaseAgent):
                 }],
                 reflection=f"{callsign or self.agent_type} handled {intent.intent}: {result_text[:100]}",
             )
-            await self._runtime.episodic_memory.store(episode)
+            from probos.cognitive.episodic import EpisodicMemory
+            if EpisodicMemory.should_store(episode):
+                await self._runtime.episodic_memory.store(episode)
         except Exception:
             pass  # Non-critical — never block the action
 

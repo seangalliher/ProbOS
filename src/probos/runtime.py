@@ -4189,7 +4189,9 @@ class ProbOSRuntime:
                     duration_ms=report.duration_ms,
                     embedding=[],
                 )
-                await self.episodic_memory.store(episode)
+                from probos.cognitive.episodic import EpisodicMemory
+                if EpisodicMemory.should_store(episode):
+                    await self.episodic_memory.store(episode)
 
             # Flagging
             if report.verdict == "failed" and self.config.qa.flag_on_fail:

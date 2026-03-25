@@ -44,6 +44,12 @@ class MockEpisodicMemory:
     async def stop(self) -> None:
         pass
 
+    @staticmethod
+    def should_store(episode: Episode) -> bool:
+        """Delegate to the real gate for test consistency."""
+        from probos.cognitive.episodic import EpisodicMemory
+        return EpisodicMemory.should_store(episode)
+
     async def seed(self, episodes: list[Episode]) -> int:
         """Bulk-restore episodes preserving original IDs and timestamps.
 

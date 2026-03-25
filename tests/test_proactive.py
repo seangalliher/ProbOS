@@ -955,7 +955,7 @@ class TestProactiveEpisodicMemory:
 
     @pytest.mark.asyncio
     async def test_no_response_stores_episode(self):
-        """No-response proactive thought stores a '[no response]' episode."""
+        """AD-433: No-response proactive thought is filtered by selective encoding gate."""
         agent = _make_mock_agent(agent_type="scout", agent_id="scout-1")
         agent.handle_intent.return_value = IntentResult(
             intent_id="x", agent_id="scout-1", success=True,
@@ -970,11 +970,8 @@ class TestProactiveEpisodicMemory:
         loop.set_runtime(rt)
         await loop._run_cycle()
 
-        rt.episodic_memory.store.assert_called_once()
-        episode = rt.episodic_memory.store.call_args[0][0]
-        assert "[Proactive thought \u2014 no response]" in episode.user_input
-        assert episode.agent_ids == ["scout-1"]
-        assert episode.outcomes[0]["response"] == "[NO_RESPONSE]"
+        # AD-433: Selective encoding gate blocks no-response noise episodes
+        rt.episodic_memory.store.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_episodic_memory_no_crash(self):
