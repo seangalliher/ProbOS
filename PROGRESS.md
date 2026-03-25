@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-431 COMPLETE (Cognitive Journal — LLM reasoning trace service). AD-430 COMPLETE (Agent Experiential Memory — all 5 pillars). AD-415 COMPLETE (Proactive cooldown persistence). BF-027/028 CLOSED (memory recall hardening). AD-416 COMPLETE. BF-020–028 all closed. 3266 pytest + 118 vitest = 3384 total tests.
+## Current Status: AD-433 COMPLETE (Selective Encoding Gate — biologically-inspired memory filtering). AD-432 COMPLETE (Cognitive Journal Expansion — traceability + query depth). AD-431 COMPLETE (Cognitive Journal MVP). BF-029/030 CLOSED. AD-430 COMPLETE (Agent Experiential Memory — all 5 pillars). BF-020–030 all closed. 3302 pytest + 118 vitest = 3420 total tests.
 
 ---
 
