@@ -98,15 +98,13 @@ export function AgentTooltip() {
           : agent.agentType || agent.pool}
       </div>
       <div style={{ color: '#8888a0', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
-        <span>Pool: {agent.pool}</span>
+        {department ? (
+          <span style={{ color: deptColor, textTransform: 'capitalize' }}>{department}</span>
+        ) : (
+          <span>Pool: {agent.pool}</span>
+        )}
         <span>{'\u00B7'}</span>
         <span>{agent.tier}</span>
-        {department && (
-          <>
-            <span>{'\u00B7'}</span>
-            <span style={{ color: deptColor, textTransform: 'capitalize' }}>{department}</span>
-          </>
-        )}
       </div>
       <div style={{ marginTop: 4 }}>
         <span style={{ color: '#8888a0' }}>Trust: </span>
