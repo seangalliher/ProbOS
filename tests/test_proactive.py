@@ -993,3 +993,150 @@ class TestProactiveEpisodicMemory:
         rt.ward_room.create_thread.assert_called_once()
         # Cooldown still recorded
         assert "scout-1" in loop._last_proactive
+
+
+# ---------------------------------------------------------------------------
+# AD-415: Proactive cooldown persistence
+# ---------------------------------------------------------------------------
+
+
+class TestCooldownPersistence:
+    """AD-415: Per-agent cooldown overrides persisted to KnowledgeStore."""
+
+    @pytest.mark.asyncio
+    async def test_set_agent_cooldown_persists_to_store(self):
+        """Test 1: set_agent_cooldown writes through to KnowledgeStore."""
+        loop = ProactiveCognitiveLoop(cooldown=300.0)
+        mock_store = MagicMock()
+        mock_store.store_cooldowns = AsyncMock()
+        loop._knowledge_store = mock_store
+
+        loop.set_agent_cooldown("agent-1", 600.0)
+        # Let the fire-and-forget task run
+        await asyncio.sleep(0)
+
+        mock_store.store_cooldowns.assert_called_once()
+        call_arg = mock_store.store_cooldowns.call_args[0][0]
+        assert call_arg == {"agent-1": 600.0}
+
+    @pytest.mark.asyncio
+    async def test_restore_cooldowns_loads_from_store(self):
+        """Test 2: restore_cooldowns loads saved overrides."""
+        loop = ProactiveCognitiveLoop(cooldown=300.0)
+        mock_store = MagicMock()
+        mock_store.load_cooldowns = AsyncMock(return_value={"agent-1": 450.0, "agent-2": 120.0})
+        loop._knowledge_store = mock_store
+
+        await loop.restore_cooldowns()
+
+        assert loop.get_agent_cooldown("agent-1") == 450.0
+        assert loop.get_agent_cooldown("agent-2") == 120.0
+
+    @pytest.mark.asyncio
+    async def test_restore_cooldowns_clamps_values(self):
+        """Test 3: restore_cooldowns clamps values to [60, 1800]."""
+        loop = ProactiveCognitiveLoop(cooldown=300.0)
+        mock_store = MagicMock()
+        mock_store.load_cooldowns = AsyncMock(return_value={"agent-1": 30.0, "agent-2": 5000.0})
+        loop._knowledge_store = mock_store
+
+        await loop.restore_cooldowns()
+
+        assert loop.get_agent_cooldown("agent-1") == 60.0   # Clamped to min
+        assert loop.get_agent_cooldown("agent-2") == 1800.0  # Clamped to max
+
+    @pytest.mark.asyncio
+    async def test_restore_cooldowns_no_store_noop(self):
+        """Test 4: restore_cooldowns with no KnowledgeStore doesn't crash."""
+        loop = ProactiveCognitiveLoop(cooldown=300.0)
+        loop._knowledge_store = None
+
+        await loop.restore_cooldowns()
+
+        assert loop._agent_cooldowns == {}
+
+    @pytest.mark.asyncio
+    async def test_restore_cooldowns_load_failure_noop(self):
+        """Test 5: restore_cooldowns with load failure doesn't crash."""
+        loop = ProactiveCognitiveLoop(cooldown=300.0)
+        mock_store = MagicMock()
+        mock_store.load_cooldowns = AsyncMock(side_effect=RuntimeError("disk error"))
+        loop._knowledge_store = mock_store
+
+        await loop.restore_cooldowns()
+
+        assert loop._agent_cooldowns == {}
+
+    def test_persist_cooldowns_no_store_noop(self):
+        """Test 6: _persist_cooldowns with no KnowledgeStore is a no-op."""
+        loop = ProactiveCognitiveLoop(cooldown=300.0)
+        loop._knowledge_store = None
+
+        loop.set_agent_cooldown("agent-1", 600.0)
+
+        # Still works in-memory
+        assert loop._agent_cooldowns["agent-1"] == 600.0
+
+    @pytest.mark.asyncio
+    async def test_store_cooldowns_writes_json(self, tmp_path):
+        """Test 7: store_cooldowns writes JSON file to proactive/ subdir."""
+        import json
+        from probos.knowledge.store import KnowledgeStore
+        from probos.config import KnowledgeConfig
+
+        config = KnowledgeConfig(repo_path=str(tmp_path))
+        store = KnowledgeStore(config)
+        await store.initialize()
+
+        await store.store_cooldowns({"agent-1": 600.0})
+
+        cooldown_file = tmp_path / "proactive" / "cooldowns.json"
+        assert cooldown_file.is_file()
+        data = json.loads(cooldown_file.read_text())
+        assert data == {"agent-1": 600.0}
+
+    @pytest.mark.asyncio
+    async def test_load_cooldowns_reads_json(self, tmp_path):
+        """Test 8: load_cooldowns reads existing JSON file."""
+        import json
+        from probos.knowledge.store import KnowledgeStore
+        from probos.config import KnowledgeConfig
+
+        config = KnowledgeConfig(repo_path=str(tmp_path))
+        store = KnowledgeStore(config)
+        await store.initialize()
+
+        # Write a file manually
+        cooldown_file = tmp_path / "proactive" / "cooldowns.json"
+        cooldown_file.write_text(json.dumps({"agent-1": 450.0, "agent-2": 900.0}))
+
+        result = await store.load_cooldowns()
+        assert result == {"agent-1": 450.0, "agent-2": 900.0}
+
+    @pytest.mark.asyncio
+    async def test_load_cooldowns_returns_none_if_missing(self, tmp_path):
+        """Test 9: load_cooldowns returns None when no file exists."""
+        from probos.knowledge.store import KnowledgeStore
+        from probos.config import KnowledgeConfig
+
+        config = KnowledgeConfig(repo_path=str(tmp_path))
+        store = KnowledgeStore(config)
+        await store.initialize()
+
+        result = await store.load_cooldowns()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_store_cooldowns_skips_empty_dict(self, tmp_path):
+        """Test 10: store_cooldowns skips empty dict (no file written)."""
+        from probos.knowledge.store import KnowledgeStore
+        from probos.config import KnowledgeConfig
+
+        config = KnowledgeConfig(repo_path=str(tmp_path))
+        store = KnowledgeStore(config)
+        await store.initialize()
+
+        await store.store_cooldowns({})
+
+        cooldown_file = tmp_path / "proactive" / "cooldowns.json"
+        assert not cooldown_file.is_file()

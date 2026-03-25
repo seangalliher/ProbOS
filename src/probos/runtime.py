@@ -1284,6 +1284,10 @@ class ProbOSRuntime:
             # AD-419: Wire duty schedule
             if self.config.proactive_cognitive.duty_schedule.enabled:
                 self.proactive_loop.set_duty_schedule(self.config.proactive_cognitive.duty_schedule)
+            # AD-415: Wire knowledge store for cooldown persistence
+            if self._knowledge_store:
+                self.proactive_loop._knowledge_store = self._knowledge_store
+                await self.proactive_loop.restore_cooldowns()
             await self.proactive_loop.start()
             logger.info("proactive-cognitive-loop started (interval=%ss)", self.config.proactive_cognitive.interval_seconds)
 
@@ -1324,6 +1328,12 @@ class ProbOSRuntime:
 
         # Stop Proactive Cognitive Loop (Phase 28b)
         if self.proactive_loop:
+            # AD-415: Persist proactive cooldown overrides before stopping
+            if self._knowledge_store and self.proactive_loop._agent_cooldowns:
+                try:
+                    await self._knowledge_store.store_cooldowns(self.proactive_loop._agent_cooldowns.copy())
+                except Exception:
+                    pass  # Non-critical
             await self.proactive_loop.stop()
             self.proactive_loop = None
 

@@ -25,7 +25,7 @@ from probos.types import Episode
 log = logging.getLogger(__name__)
 
 # Subdirectory names — one per artifact type (AD-160).
-_SUBDIRS = ("episodes", "agents", "skills", "trust", "routing", "workflows", "qa")
+_SUBDIRS = ("episodes", "agents", "skills", "trust", "routing", "workflows", "qa", "proactive")
 
 _SCHEMA_VERSION = 1
 
@@ -259,6 +259,31 @@ class KnowledgeStore:
             return await self._read_json(path)
         except Exception as exc:
             log.warning("Failed to load routing weights: %s", exc)
+            return None
+
+    # ------------------------------------------------------------------
+    # Proactive cooldown persistence (AD-415)
+    # ------------------------------------------------------------------
+
+    async def store_cooldowns(self, cooldowns: dict[str, float]) -> None:
+        """Persist per-agent proactive cooldown overrides."""
+        if not cooldowns:
+            return
+        path = self._repo_path / "proactive" / "cooldowns.json"
+        await self._write_json(path, cooldowns)
+
+    async def load_cooldowns(self) -> dict[str, float] | None:
+        """Load per-agent proactive cooldown overrides."""
+        path = self._repo_path / "proactive" / "cooldowns.json"
+        if not path.is_file():
+            return None
+        try:
+            data = await self._read_json(path)
+            if isinstance(data, dict):
+                return {k: float(v) for k, v in data.items()}
+            return None
+        except Exception as exc:
+            log.warning("Failed to load cooldowns: %s", exc)
             return None
 
     # ------------------------------------------------------------------

@@ -205,7 +205,12 @@ class EpisodicMemory:
         for i, doc_id in enumerate(result["ids"][0]):
             distance = result["distances"][0][i] if result["distances"] else 0.0
             similarity = 1.0 - distance
-            if similarity < self.relevance_threshold:
+            # BF-027: Use a relaxed threshold for agent-scoped recall.
+            # The sovereign shard filter (agent_ids) already constrains results.
+            # Conversational queries from the Captain ("what did you post?") are
+            # semantically distant from stored episode text — 0.7 filters too aggressively.
+            agent_recall_threshold = min(self.relevance_threshold, 0.3)
+            if similarity < agent_recall_threshold:
                 continue
             metadata = result["metadatas"][0][i] if result["metadatas"] else {}
 
@@ -225,6 +230,45 @@ class EpisodicMemory:
                 break
 
         return episodes
+
+    async def recent_for_agent(self, agent_id: str, k: int = 5) -> list[Episode]:
+        """BF-027: Return the k most recent episodes for a specific agent.
+
+        Timestamp-based fallback when semantic recall returns nothing.
+        No relevance threshold — just the most recent experiences.
+        """
+        if not self._collection:
+            return []
+        count = self._collection.count()
+        if count == 0:
+            return []
+
+        result = self._collection.get(
+            include=["metadatas", "documents"],
+        )
+        if not result or not result["ids"]:
+            return []
+
+        # Filter to this agent's sovereign shard, sort by timestamp
+        agent_episodes: list[tuple[str, dict, str]] = []
+        for i, doc_id in enumerate(result["ids"]):
+            metadata = result["metadatas"][i] if result["metadatas"] else {}
+            agent_ids_json = metadata.get("agent_ids_json", "[]")
+            try:
+                agent_ids = json.loads(agent_ids_json)
+            except (json.JSONDecodeError, TypeError):
+                agent_ids = []
+            if agent_id in agent_ids:
+                document = result["documents"][i] if result["documents"] else ""
+                agent_episodes.append((doc_id, metadata, document))
+
+        # Sort by timestamp descending (most recent first)
+        agent_episodes.sort(key=lambda x: x[1].get("timestamp", 0), reverse=True)
+
+        return [
+            self._metadata_to_episode(doc_id, document, metadata)
+            for doc_id, metadata, document in agent_episodes[:k]
+        ]
 
     async def recall_by_intent(self, intent_type: str, k: int = 5) -> list[Episode]:
         """Filter by intent type, then rank by recency."""

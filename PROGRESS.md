@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-430a COMPLETE (Experiential Memory write paths — proactive think + Ward Room episodes). AD-416 COMPLETE. BF-020–024 all closed. AD-425, AD-424, AD-417, AD-419, AD-414, AD-413, AD-411 COMPLETE. Phase 25a, 28b COMPLETE. AD-412, AD-415, AD-418 on roadmap. AD-430b–c next. 3204 pytest + 118 vitest = 3322 total tests.
+## Current Status: AD-430 COMPLETE (Agent Experiential Memory — all 5 pillars). AD-430a (write paths), AD-430b (HXI 1:1 memory), AD-430c (recall + act-store hook) all done. AD-416 COMPLETE. BF-020–026 all closed. AD-425, AD-424, AD-417, AD-419, AD-414, AD-413, AD-411 COMPLETE. Phase 25a, 28b COMPLETE. AD-412, AD-415, AD-418 on roadmap. 3236 pytest + 118 vitest = 3354 total tests.
 
 ---
 

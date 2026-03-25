@@ -41,6 +41,7 @@ class ProactiveCognitiveLoop:
         self._on_event = on_event
         self._last_proactive: dict[str, float] = {}  # agent_id -> monotonic timestamp
         self._agent_cooldowns: dict[str, float] = {}  # agent_id -> override cooldown (seconds)
+        self._knowledge_store: Any = None  # AD-415: Set by runtime for persistence
         self._task: asyncio.Task | None = None
         self._runtime: Any = None  # Set via set_runtime()
         self._config: Any = None   # Set via set_config()
@@ -75,6 +76,31 @@ class ProactiveCognitiveLoop:
         """Set per-agent proactive cooldown override. Clamp to [60, 1800]."""
         cooldown = max(60.0, min(1800.0, cooldown))
         self._agent_cooldowns[agent_id] = cooldown
+        # AD-415: Write-through to KnowledgeStore
+        self._persist_cooldowns()
+
+    def _persist_cooldowns(self) -> None:
+        """AD-415: Fire-and-forget persistence of cooldown overrides."""
+        if not self._knowledge_store:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._knowledge_store.store_cooldowns(self._agent_cooldowns.copy()))
+        except RuntimeError:
+            pass  # No event loop — skip persistence (e.g., during shutdown)
+
+    async def restore_cooldowns(self) -> None:
+        """AD-415: Restore per-agent cooldowns from KnowledgeStore on boot."""
+        if not self._knowledge_store:
+            return
+        try:
+            saved = await self._knowledge_store.load_cooldowns()
+            if saved:
+                for agent_id, cooldown in saved.items():
+                    # Apply same clamping as set_agent_cooldown
+                    self._agent_cooldowns[agent_id] = max(60.0, min(1800.0, cooldown))
+        except Exception:
+            pass  # Non-critical — boot proceeds with defaults
 
     async def start(self) -> None:
         """Start the periodic think loop."""

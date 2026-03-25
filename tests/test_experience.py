@@ -638,8 +638,9 @@ class TestEpisodicMemoryIntegration:
         await rt.process_natural_language(f"read the file at {test_file}")
 
         recent = await mem.recent(k=10)
-        assert len(recent) == 1
-        ep = recent[0]
+        assert len(recent) >= 1  # AD-430c act-store hook may add extras
+        # Find the DAG-originated episode (has read_file intent)
+        ep = next(e for e in recent if any(o.get("intent") == "read_file" for o in e.outcomes))
         assert "read the file" in ep.user_input
         assert len(ep.outcomes) == 1
         assert ep.outcomes[0]["intent"] == "read_file"
@@ -675,8 +676,15 @@ class TestEpisodicMemoryIntegration:
         rt, mem = mem_runtime
         await rt.process_natural_language("what is the meaning of life?")
         recent = await mem.recent(k=10)
-        # Filter out SystemQA episodes (background task from AD-154)
-        user_episodes = [e for e in recent if not e.user_input.startswith("[SystemQA]")]
+        # Filter out non-user episodes: SystemQA (AD-154), act-store hook (AD-430c),
+        # proactive thoughts + Ward Room posts (AD-430a — proactive loop may fire during test)
+        user_episodes = [
+            e for e in recent
+            if not e.user_input.startswith("[SystemQA]")
+            and not e.user_input.startswith("[Action:")
+            and not e.user_input.startswith("[Proactive thought")
+            and not e.user_input.startswith("[Ward Room")
+        ]
         assert len(user_episodes) == 0  # Empty DAGs don't produce episodes
 
 

@@ -445,3 +445,418 @@ class TestDecisionCache:
         result2 = await agent.decide(obs)
         assert result2["cached"] is True
         assert result2["action"] == "execute"
+
+
+# ---------------------------------------------------------------------------
+# AD-430c: Memory recall + act-store lifecycle hooks
+# ---------------------------------------------------------------------------
+
+from unittest.mock import MagicMock, AsyncMock
+
+
+class TestMemoryRecall:
+    """AD-430c Pillar 4: Memory recall in handle_intent()."""
+
+    def _make_crew_runtime(self, *, has_memory=True, recall_result=None, recall_side_effect=None):
+        """Create a mock runtime with episodic memory for crew agents."""
+        rt = MagicMock()
+        rt._is_crew_agent.return_value = True
+        rt.callsign_registry.get_callsign.return_value = "Wesley"
+        if has_memory:
+            rt.episodic_memory = MagicMock()
+            if recall_side_effect:
+                rt.episodic_memory.recall_for_agent = AsyncMock(side_effect=recall_side_effect)
+            else:
+                rt.episodic_memory.recall_for_agent = AsyncMock(return_value=recall_result or [])
+            rt.episodic_memory.store = AsyncMock()
+        else:
+            rt.episodic_memory = None
+        return rt
+
+    @pytest.mark.asyncio
+    async def test_memory_recall_injects_recent_memories(self):
+        """Memory recall injects recent_memories into observation."""
+        ep1 = MagicMock()
+        ep1.user_input = "[1:1 with Wesley] Captain: status?"
+        ep1.reflection = "Captain asked about status."
+        ep2 = MagicMock()
+        ep2.user_input = "[Proactive thought] checked systems"
+        ep2.reflection = "Systems nominal."
+
+        rt = self._make_crew_runtime(recall_result=[ep1, ep2])
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": "How are you?", "from": "test"},
+            target_agent_id=agent.id,
+        )
+        result = await agent.handle_intent(intent)
+
+        rt.episodic_memory.recall_for_agent.assert_called_once()
+        assert result.success is True
+        # Verify _build_user_message got the memories (check LLM call content)
+        prompt = llm.last_request.prompt
+        assert "Your recent memories" in prompt
+        assert "Captain asked about status" in prompt
+
+    @pytest.mark.asyncio
+    async def test_memory_recall_skips_proactive_think(self):
+        """Memory recall skips proactive_think (avoids duplication)."""
+        rt = self._make_crew_runtime()
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="proactive_think",
+            params={"text": "review", "context_parts": {}},
+            target_agent_id=agent.id,
+        )
+        await agent.handle_intent(intent)
+
+        rt.episodic_memory.recall_for_agent.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_memory_recall_skips_non_crew(self):
+        """Memory recall skips non-crew agents."""
+        rt = self._make_crew_runtime()
+        rt._is_crew_agent.return_value = False
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": "hello", "from": "test"},
+            target_agent_id=agent.id,
+        )
+        await agent.handle_intent(intent)
+
+        rt.episodic_memory.recall_for_agent.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_memory_recall_failure_doesnt_block(self):
+        """Memory recall failure doesn't block decide()."""
+        rt = self._make_crew_runtime(recall_side_effect=RuntimeError("ChromaDB down"))
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": "hello", "from": "test"},
+            target_agent_id=agent.id,
+        )
+        result = await agent.handle_intent(intent)
+
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_memory_recall_no_runtime_no_crash(self):
+        """Memory recall with _runtime=None doesn't crash."""
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=None)
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": "hello", "from": "test"},
+            target_agent_id=agent.id,
+        )
+        result = await agent.handle_intent(intent)
+
+        assert result.success is True
+
+
+class TestActStoreHook:
+    """AD-430c Pillar 5: Act-store lifecycle hook."""
+
+    def _make_crew_runtime(self, *, store_side_effect=None):
+        """Create a mock runtime with episodic memory for crew agents."""
+        rt = MagicMock()
+        rt._is_crew_agent.return_value = True
+        rt.callsign_registry.get_callsign.return_value = "Wesley"
+        rt.episodic_memory = MagicMock()
+        rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
+        if store_side_effect:
+            rt.episodic_memory.store = AsyncMock(side_effect=store_side_effect)
+        else:
+            rt.episodic_memory.store = AsyncMock()
+        return rt
+
+    @pytest.mark.asyncio
+    async def test_act_store_stores_episode_for_uncovered_intents(self):
+        """Act-store stores episode for intents without dedicated storage."""
+        rt = self._make_crew_runtime()
+        llm = MockLLMClient()
+
+        class AnalyzeAgent(CognitiveAgent):
+            agent_type = "analyzer"
+            _handled_intents = {"analyze"}
+            instructions = "You analyze things."
+            intent_descriptors = [
+                IntentDescriptor(name="analyze", params={}, description="Analyze", tier="domain")
+            ]
+
+        agent = AnalyzeAgent(llm_client=llm, runtime=rt)
+        intent = IntentMessage(intent="analyze", params={"text": "check this"})
+        result = await agent.handle_intent(intent)
+
+        assert result.success is True
+        rt.episodic_memory.store.assert_called_once()
+        episode = rt.episodic_memory.store.call_args[0][0]
+        assert "[Action: analyze]" in episode.user_input
+        assert episode.agent_ids == [agent.id]
+        assert episode.outcomes[0]["intent"] == "analyze"
+
+    @pytest.mark.asyncio
+    async def test_act_store_skips_proactive_think(self):
+        """Act-store skips proactive_think (dedup with AD-430a)."""
+        rt = self._make_crew_runtime()
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="proactive_think",
+            params={"text": "review", "context_parts": {}},
+            target_agent_id=agent.id,
+        )
+        await agent.handle_intent(intent)
+
+        rt.episodic_memory.store.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_act_store_skips_ward_room_notification(self):
+        """Act-store skips ward_room_notification (dedup with AD-430a)."""
+        rt = self._make_crew_runtime()
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="ward_room_notification",
+            params={"title": "Test", "channel_name": "All Hands", "author_callsign": "Bones", "author_id": "bones-1"},
+            target_agent_id=agent.id,
+        )
+        await agent.handle_intent(intent)
+
+        rt.episodic_memory.store.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_act_store_skips_hxi_profile_dm(self):
+        """Act-store skips direct_message from hxi_profile (dedup with AD-430b)."""
+        rt = self._make_crew_runtime()
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": "hello", "from": "hxi_profile"},
+            target_agent_id=agent.id,
+        )
+        await agent.handle_intent(intent)
+
+        rt.episodic_memory.store.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_act_store_skips_captain_dm(self):
+        """Act-store skips direct_message from captain (dedup with shell)."""
+        rt = self._make_crew_runtime()
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": "report", "from": "captain"},
+            target_agent_id=agent.id,
+        )
+        await agent.handle_intent(intent)
+
+        rt.episodic_memory.store.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_act_store_failure_doesnt_block(self):
+        """Act-store failure doesn't block response."""
+        rt = self._make_crew_runtime(store_side_effect=RuntimeError("ChromaDB down"))
+        llm = MockLLMClient()
+
+        class AnalyzeAgent(CognitiveAgent):
+            agent_type = "analyzer"
+            _handled_intents = {"analyze"}
+            instructions = "You analyze things."
+            intent_descriptors = [
+                IntentDescriptor(name="analyze", params={}, description="Analyze", tier="domain")
+            ]
+
+        agent = AnalyzeAgent(llm_client=llm, runtime=rt)
+        intent = IntentMessage(intent="analyze", params={"text": "check"})
+        result = await agent.handle_intent(intent)
+
+        assert isinstance(result, IntentResult)
+        assert result.success is True
+
+
+class TestBuildUserMessageMemories:
+    """AD-430c: _build_user_message renders memory context."""
+
+    def test_direct_message_includes_memories(self):
+        """Direct message _build_user_message includes memory context."""
+        agent = SampleCogAgent()
+        obs = {
+            "intent": "direct_message",
+            "params": {"text": "Status report"},
+            "recent_memories": [
+                {"input": "Asked about power grid", "reflection": "Captain asked about power grid status."},
+                {"input": "Reviewed EPS", "reflection": "EPS conduits nominal."},
+            ],
+        }
+        msg = agent._build_user_message(obs)
+        assert "Your recent memories" in msg
+        assert "Captain asked about power grid status." in msg
+        assert "EPS conduits nominal." in msg
+        assert "Captain says: Status report" in msg
+
+    def test_ward_room_notification_includes_memories(self):
+        """Ward room notification _build_user_message includes memory context."""
+        agent = SampleCogAgent()
+        obs = {
+            "intent": "ward_room_notification",
+            "params": {
+                "channel_name": "Engineering",
+                "author_callsign": "LaForge",
+                "title": "EPS Report",
+                "author_id": "laforge-1",
+            },
+            "context": "Previous discussion here...",
+            "recent_memories": [
+                {"input": "Prior EPS review", "reflection": "Reviewed EPS conduits last shift."},
+            ],
+        }
+        msg = agent._build_user_message(obs)
+        assert "Your relevant memories" in msg
+        assert "Reviewed EPS conduits last shift." in msg
+        assert "[Ward Room — #Engineering]" in msg
+
+
+# ---------------------------------------------------------------------------
+# BF-027: Memory recall threshold fallback + mock gap
+# ---------------------------------------------------------------------------
+
+
+class TestMockEpisodicMemoryAgentMethods:
+    """BF-027: MockEpisodicMemory recall_for_agent and recent_for_agent."""
+
+    @pytest.mark.asyncio
+    async def test_recall_for_agent_filters_by_agent_id(self):
+        """Test 1: recall_for_agent only returns episodes for the target agent."""
+        from probos.cognitive.episodic_mock import MockEpisodicMemory
+        from probos.types import Episode
+
+        mem = MockEpisodicMemory()
+        await mem.store(Episode(user_input="task alpha", agent_ids=["agent-A"], reflection="did alpha"))
+        await mem.store(Episode(user_input="task beta", agent_ids=["agent-A"], reflection="did beta"))
+        await mem.store(Episode(user_input="task gamma", agent_ids=["agent-B"], reflection="did gamma"))
+
+        results = await mem.recall_for_agent("agent-A", "task", k=5)
+        assert len(results) == 2
+        for ep in results:
+            assert "agent-A" in ep.agent_ids
+
+    @pytest.mark.asyncio
+    async def test_recent_for_agent_returns_most_recent(self):
+        """Test 2: recent_for_agent returns most recent episodes by insertion order."""
+        from probos.cognitive.episodic_mock import MockEpisodicMemory
+        from probos.types import Episode
+
+        mem = MockEpisodicMemory()
+        for i in range(5):
+            await mem.store(Episode(
+                user_input=f"episode-{i}",
+                agent_ids=["agent-A"],
+                timestamp=float(i),
+            ))
+
+        results = await mem.recent_for_agent("agent-A", k=2)
+        assert len(results) == 2
+        # Most recent first
+        assert results[0].user_input == "episode-4"
+        assert results[1].user_input == "episode-3"
+
+    @pytest.mark.asyncio
+    async def test_recent_for_agent_filters_by_agent_id(self):
+        """Test 3: recent_for_agent only returns episodes for the target agent."""
+        from probos.cognitive.episodic_mock import MockEpisodicMemory
+        from probos.types import Episode
+
+        mem = MockEpisodicMemory()
+        await mem.store(Episode(user_input="ep-A1", agent_ids=["agent-A"]))
+        await mem.store(Episode(user_input="ep-B1", agent_ids=["agent-B"]))
+        await mem.store(Episode(user_input="ep-A2", agent_ids=["agent-A"]))
+
+        results = await mem.recent_for_agent("agent-A", k=5)
+        assert len(results) == 2
+        for ep in results:
+            assert "agent-A" in ep.agent_ids
+
+
+class TestMemoryRecallFallback:
+    """BF-027: Recall fallback to recent_for_agent when semantic recall returns empty."""
+
+    def _make_crew_runtime_with_fallback(self, *, recall_result=None, recent_result=None):
+        """Create mock runtime with both recall_for_agent and recent_for_agent."""
+        rt = MagicMock()
+        rt._is_crew_agent.return_value = True
+        rt.callsign_registry.get_callsign.return_value = "Wesley"
+        rt.episodic_memory = MagicMock()
+        rt.episodic_memory.recall_for_agent = AsyncMock(return_value=recall_result or [])
+        rt.episodic_memory.recent_for_agent = AsyncMock(return_value=recent_result or [])
+        rt.episodic_memory.store = AsyncMock()
+        return rt
+
+    @pytest.mark.asyncio
+    async def test_fallback_fires_when_semantic_recall_empty(self):
+        """Test 4: Fallback to recent_for_agent fires when recall_for_agent returns []."""
+        ep1 = MagicMock()
+        ep1.user_input = "Recent action 1"
+        ep1.reflection = "Did something recently."
+        ep2 = MagicMock()
+        ep2.user_input = "Recent action 2"
+        ep2.reflection = "Did another thing."
+
+        rt = self._make_crew_runtime_with_fallback(
+            recall_result=[],
+            recent_result=[ep1, ep2],
+        )
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": "What have you been doing?", "from": "test"},
+            target_agent_id=agent.id,
+        )
+        result = await agent.handle_intent(intent)
+
+        rt.episodic_memory.recent_for_agent.assert_called_once()
+        assert result.success is True
+        # Verify memories were injected
+        prompt = llm.last_request.prompt
+        assert "Your recent memories" in prompt
+        assert "Did something recently." in prompt
+
+    @pytest.mark.asyncio
+    async def test_fallback_does_not_fire_when_semantic_returns_results(self):
+        """Test 5: recent_for_agent NOT called when recall_for_agent returns results."""
+        ep = MagicMock()
+        ep.user_input = "Semantic match"
+        ep.reflection = "Found via semantics."
+
+        rt = self._make_crew_runtime_with_fallback(recall_result=[ep])
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": "Tell me about systems", "from": "test"},
+            target_agent_id=agent.id,
+        )
+        await agent.handle_intent(intent)
+
+        rt.episodic_memory.recent_for_agent.assert_not_called()

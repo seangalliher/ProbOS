@@ -244,10 +244,17 @@ class CognitiveAgent(BaseAgent):
 
         # Cognitive lifecycle — LLM-guided reasoning
         observation = await self.perceive(intent)
+
+        # AD-430c (Pillar 4): Enrich observation with relevant episodic memories
+        observation = await self._recall_relevant_memories(intent, observation)
+
         decision = await self.decide(observation)
         decision["intent"] = intent.intent  # AD-398: propagate intent name to act()
         result = await self.act(decision)
         report = await self.report(result)
+
+        # AD-430c (Pillar 5): Store action as episodic memory for crew agents
+        await self._store_action_episode(intent, observation, report)
 
         success = report.get("success", False)
         self.update_confidence(success)
@@ -310,6 +317,18 @@ class CognitiveAgent(BaseAgent):
         # AD-397: direct_message — conversational context for 1:1 sessions
         if intent_name == "direct_message":
             parts: list[str] = []
+
+            # AD-430c: Episodic memory context
+            memories = observation.get("recent_memories", [])
+            if memories:
+                parts.append("Your recent memories (relevant past experiences):")
+                for m in memories:
+                    if m.get("reflection"):
+                        parts.append(f"  - {m['reflection']}")
+                    elif m.get("input"):
+                        parts.append(f"  - {m['input']}")
+                parts.append("")
+
             session_history = params.get("session_history", [])
             if session_history:
                 parts.append("Previous conversation:")
@@ -331,6 +350,18 @@ class CognitiveAgent(BaseAgent):
             wr_parts: list[str] = []
             wr_parts.append(f"[Ward Room — #{channel_name}]")
             wr_parts.append(f"Thread: {title}")
+
+            # AD-430c: Episodic memory context
+            memories = observation.get("recent_memories", [])
+            if memories:
+                wr_parts.append("")
+                wr_parts.append("Your relevant memories:")
+                for m in memories:
+                    if m.get("reflection"):
+                        wr_parts.append(f"  - {m['reflection']}")
+                    elif m.get("input"):
+                        wr_parts.append(f"  - {m['input']}")
+
             if context:
                 wr_parts.append(f"\nConversation so far:\n{context}")
             # AD-407d: Distinguish Captain vs crew member posts
@@ -422,6 +453,120 @@ class CognitiveAgent(BaseAgent):
         if observation.get("fetched_content"):
             parts.append(f"Fetched content:\n{observation['fetched_content']}")
         return "\n".join(parts)
+
+    async def _recall_relevant_memories(self, intent: IntentMessage, observation: dict) -> dict:
+        """AD-430c: Inject relevant episodic memories into observation for decide().
+
+        Only fires for crew agents on conversational intents. Proactive think
+        already gets memory context via _gather_context() — skip to avoid duplication.
+        """
+        # Skip proactive_think — already has memory context from proactive loop
+        if intent.intent == "proactive_think":
+            return observation
+
+        # Guard: need runtime + episodic memory + crew check
+        if not self._runtime:
+            return observation
+        if not hasattr(self._runtime, 'episodic_memory') or not self._runtime.episodic_memory:
+            return observation
+        if not hasattr(self._runtime, '_is_crew_agent') or not self._runtime._is_crew_agent(self):
+            return observation
+
+        try:
+            # Build a semantic query from the intent content
+            params = observation.get("params", {})
+            if intent.intent == "direct_message":
+                query = params.get("text", "")[:200]
+            elif intent.intent == "ward_room_notification":
+                query = f"{params.get('title', '')} {params.get('text', '')}".strip()[:200]
+            else:
+                query = intent.context[:200] if intent.context else intent.intent
+
+            if not query:
+                return observation
+
+            episodes = await self._runtime.episodic_memory.recall_for_agent(
+                self.id, query, k=3
+            )
+
+            # BF-027: Fallback to recent episodes when semantic recall returns nothing
+            if not episodes and hasattr(self._runtime.episodic_memory, 'recent_for_agent'):
+                episodes = await self._runtime.episodic_memory.recent_for_agent(
+                    self.id, k=3
+                )
+
+            if episodes:
+                observation["recent_memories"] = [
+                    {
+                        "input": ep.user_input[:200] if ep.user_input else "",
+                        "reflection": ep.reflection[:200] if ep.reflection else "",
+                    }
+                    for ep in episodes
+                ]
+        except Exception:
+            pass  # Non-critical — agent proceeds without memory context
+
+        return observation
+
+    async def _store_action_episode(self, intent: IntentMessage, observation: dict, report: dict) -> None:
+        """AD-430c: Universal post-action episode storage for crew agents.
+
+        This is the safety net — ensures every crew agent action produces a memory
+        record. Callers that already store episodes (proactive loop, Ward Room
+        service, HXI API) produce sovereign-shard episodes through their own paths,
+        but this hook captures any actions that would otherwise be missed.
+
+        Deduplication: proactive_think is skipped (AD-430a stores in proactive.py).
+        ward_room_notification is skipped (AD-430a stores in ward_room.py).
+        direct_message from hxi_profile is skipped (AD-430b stores in api.py).
+        direct_message from captain (shell /hail) is skipped (shell.py stores).
+        """
+        # Skip intents that already have dedicated episode storage
+        if intent.intent == "proactive_think":
+            return
+        if intent.intent == "ward_room_notification":
+            return
+
+        params = observation.get("params", {})
+        source = params.get("from", "")
+        if intent.intent == "direct_message" and source in ("hxi_profile", "captain"):
+            return
+
+        # Guard: need runtime + episodic memory + crew check
+        if not self._runtime:
+            return
+        if not hasattr(self._runtime, 'episodic_memory') or not self._runtime.episodic_memory:
+            return
+        if not hasattr(self._runtime, '_is_crew_agent') or not self._runtime._is_crew_agent(self):
+            return
+
+        try:
+            import time as _time
+            from probos.types import Episode
+
+            result_text = str(report.get("result", ""))[:500]
+            callsign = ""
+            if hasattr(self._runtime, 'callsign_registry'):
+                callsign = self._runtime.callsign_registry.get_callsign(self.agent_type) or ""
+
+            query_text = params.get("text", intent.context or intent.intent)
+
+            episode = Episode(
+                user_input=f"[Action: {intent.intent}] {callsign or self.agent_type}: {str(query_text)[:200]}",
+                timestamp=_time.time(),
+                agent_ids=[self.id],
+                outcomes=[{
+                    "intent": intent.intent,
+                    "success": report.get("success", False),
+                    "response": result_text,
+                    "agent_type": self.agent_type,
+                    "source": source or "intent_bus",
+                }],
+                reflection=f"{callsign or self.agent_type} handled {intent.intent}: {result_text[:100]}",
+            )
+            await self._runtime.episodic_memory.store(episode)
+        except Exception:
+            pass  # Non-critical — never block the action
 
     def _resolve_tier(self) -> str:
         """Determine which LLM tier to use.  Default: 'standard'.

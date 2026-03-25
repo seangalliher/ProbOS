@@ -85,6 +85,31 @@ class MockEpisodicMemory:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [ep for _, ep in scored[:k]]
 
+    async def recall_for_agent(self, agent_id: str, query: str, k: int = 5) -> list[Episode]:
+        """BF-027: Agent-scoped recall with keyword matching."""
+        query_tokens = _tokenize(query)
+        scored: list[tuple[float, Episode]] = []
+        for ep in self._episodes:
+            if agent_id not in ep.agent_ids:
+                continue
+            if not query_tokens:
+                scored.append((0.0, ep))
+                continue
+            ep_tokens = _tokenize(ep.user_input)
+            if not ep_tokens:
+                continue
+            overlap = len(query_tokens & ep_tokens)
+            score = overlap / max(len(query_tokens), len(ep_tokens))
+            scored.append((score, ep))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [ep for _, ep in scored[:k]]
+
+    async def recent_for_agent(self, agent_id: str, k: int = 5) -> list[Episode]:
+        """BF-027: Most recent episodes for a specific agent."""
+        agent_eps = [ep for ep in self._episodes if agent_id in ep.agent_ids]
+        return list(reversed(agent_eps[-k:]))
+
     async def recall_by_intent(self, intent_type: str, k: int = 5) -> list[Episode]:
         results: list[Episode] = []
         for ep in reversed(self._episodes):  # most recent first

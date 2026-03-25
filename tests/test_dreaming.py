@@ -864,9 +864,9 @@ class TestDreamingIntegration:
                 f.write_text(f"content {i}")
                 await rt.process_natural_language(f"read the file at {f}")
 
-            # Confirm episodes exist
-            episodes = await mem.recent(k=10)
-            assert len(episodes) == 3
+            # Confirm episodes exist (AD-430c act-store hook may add extras)
+            episodes = await mem.recent(k=20)
+            assert len(episodes) >= 3
 
             # Record weights before dream
             weights_before = dict(rt.hebbian_router.all_weights_typed())
@@ -875,7 +875,7 @@ class TestDreamingIntegration:
             report = await rt.dream_scheduler.force_dream()
 
             # Verify report is meaningful
-            assert report.episodes_replayed == 3
+            assert report.episodes_replayed >= 3
             assert report.duration_ms >= 0
 
             # Verify the scheduler stored the report
