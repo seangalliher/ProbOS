@@ -14,7 +14,7 @@ beforeEach(() => {
 describe('AgentProfilePanel store (AD-406)', () => {
   it('openAgentProfile sets activeProfileAgent and clears pinnedAgent', () => {
     const mockAgent = {
-      id: 'a1', agentType: 'scout', callsign: 'Wesley', pool: 'scout',
+      id: 'a1', agentType: 'scout', callsign: 'Wesley', displayName: 'Scout', pool: 'scout',
       state: 'active' as const, confidence: 0.8, trust: 0.7,
       tier: 'domain' as const, position: [0, 0, 0] as [number, number, number],
     };

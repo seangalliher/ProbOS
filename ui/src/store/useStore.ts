@@ -636,6 +636,7 @@ export const useStore = create<HXIState>((set, get) => ({
             id: a.id,
             agentType: a.agent_type,
             callsign: a.callsign || '',  // BF-013
+            displayName: a.display_name || '',
             pool: a.pool,
             state: a.state as Agent['state'],
             confidence: a.confidence,
@@ -746,6 +747,7 @@ export const useStore = create<HXIState>((set, get) => ({
               id: d.agent_id,
               agentType,
               callsign: '',
+              displayName: '',
               pool: d.pool,
               state: d.state as Agent['state'],
               confidence: d.confidence,

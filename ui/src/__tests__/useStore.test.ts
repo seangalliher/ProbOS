@@ -291,7 +291,7 @@ describe('useStore', () => {
   describe('computeLayout clustering (AD-294)', () => {
     function makeAgent(id: string, pool: string, tier: Agent['tier'] = 'domain'): Agent {
       return {
-        id, agentType: pool, callsign: '', pool, state: 'active',
+        id, agentType: pool, callsign: '', displayName: '', pool, state: 'active',
         confidence: 0.8, trust: 0.5, tier, position: [0, 0, 0],
       };
     }
@@ -455,12 +455,12 @@ describe('poolCenter computation (AD-329)', () => {
   it('computes correct center for agents in same pool', () => {
     const agents = new Map<string, Agent>();
     agents.set('a1', {
-      id: 'a1', agentType: 'alpha', callsign: '', pool: 'science',
+      id: 'a1', agentType: 'alpha', callsign: '', displayName: '', pool: 'science',
       state: 'active', confidence: 0.8, trust: 0.7, tier: 'domain',
       position: [1, 2, 3],
     });
     agents.set('a2', {
-      id: 'a2', agentType: 'beta', callsign: '', pool: 'science',
+      id: 'a2', agentType: 'beta', callsign: '', displayName: '', pool: 'science',
       state: 'active', confidence: 0.8, trust: 0.7, tier: 'domain',
       position: [3, 4, 5],
     });
@@ -493,7 +493,7 @@ describe('connection filtering (AD-329)', () => {
   it('filters connections requiring missing agents', () => {
     const agents = new Map<string, Agent>();
     agents.set('a1', {
-      id: 'a1', agentType: 'alpha', callsign: '', pool: 'science',
+      id: 'a1', agentType: 'alpha', callsign: '', displayName: '', pool: 'science',
       state: 'active', confidence: 0.8, trust: 0.7, tier: 'domain',
       position: [0, 0, 0],
     });
@@ -521,7 +521,7 @@ describe('connection filtering (AD-329)', () => {
 describe('AgentTooltip state (AD-329)', () => {
   it('hoveredAgent and tooltipPos update together', () => {
     const agent: Agent = {
-      id: 'test1', agentType: 'test', callsign: '', pool: 'science',
+      id: 'test1', agentType: 'test', callsign: '', displayName: '', pool: 'science',
       state: 'active', confidence: 0.9, trust: 0.8, tier: 'domain',
       position: [0, 0, 0],
     };
@@ -538,7 +538,7 @@ describe('AgentTooltip state (AD-329)', () => {
 
   it('pinnedAgent persists after hover clears', () => {
     const agent: Agent = {
-      id: 'pin1', agentType: 'pinned', callsign: '', pool: 'eng',
+      id: 'pin1', agentType: 'pinned', callsign: '', displayName: '', pool: 'eng',
       state: 'active', confidence: 0.9, trust: 0.8, tier: 'domain',
       position: [0, 0, 0],
     };

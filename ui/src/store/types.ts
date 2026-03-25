@@ -4,6 +4,7 @@ export interface Agent {
   id: string;
   agentType: string;
   callsign: string;  // BF-013
+  displayName: string;  // crew role from profile YAML
   pool: string;
   state: 'spawning' | 'active' | 'degraded' | 'recycling';
   confidence: number;

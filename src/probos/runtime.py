@@ -418,10 +418,13 @@ class ProbOSRuntime:
         agents = []
         for agent in self.registry.all():
             trust_score = self.trust_network.get_score(agent.id)
+            # Look up display_name from crew profile registry
+            profile = self.callsign_registry._type_to_profile.get(agent.agent_type, {})
             agents.append({
                 "id": agent.id,
                 "agent_type": agent.agent_type,
                 "callsign": agent.callsign,  # BF-013
+                "display_name": profile.get("display_name", ""),
                 "pool": agent.pool,
                 "state": agent.state.value if hasattr(agent.state, "value") else str(agent.state),
                 "confidence": agent.confidence,
