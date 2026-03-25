@@ -82,6 +82,7 @@ class CognitiveAgent(BaseAgent):
                 "intent": intent.intent,
                 "params": intent.params,
                 "context": intent.context,
+                "intent_id": intent.id,  # AD-432: Preserve for journal traceability
             }
         # Dict fallback (for compatibility with BaseAgent contract)
         return {
@@ -118,6 +119,7 @@ class CognitiveAgent(BaseAgent):
                             agent_id=self.id,
                             agent_type=self.agent_type,
                             intent=observation.get("intent", ""),
+                            intent_id=observation.get("intent_id", ""),
                             cached=True,
                         )
                     except Exception:
@@ -232,6 +234,8 @@ class CognitiveAgent(BaseAgent):
                     request_id=request.id,
                     prompt_hash=_prompt_hash,
                     response_length=len(response.content),
+                    intent_id=observation.get("intent_id", ""),
+                    response_hash=hashlib.md5(response.content[:500].encode()).hexdigest()[:12],
                 )
             except Exception:
                 pass  # Non-critical — never block agent cognition

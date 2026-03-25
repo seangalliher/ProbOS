@@ -1273,12 +1273,15 @@ def create_app(runtime: Any) -> FastAPI:
         return await runtime.cognitive_journal.get_stats()
 
     @app.get("/api/agent/{agent_id}/journal")
-    async def agent_journal(agent_id: str, limit: int = 20) -> dict[str, Any]:
+    async def agent_journal(
+        agent_id: str, limit: int = 20,
+        since: float | None = None, until: float | None = None,
+    ) -> dict[str, Any]:
         """AD-431: Agent reasoning chain from Cognitive Journal."""
         if not runtime.cognitive_journal:
             return {"entries": []}
         entries = await runtime.cognitive_journal.get_reasoning_chain(
-            agent_id, limit=min(limit, 100)
+            agent_id, limit=min(limit, 100), since=since, until=until,
         )
         return {"agent_id": agent_id, "entries": entries}
 
@@ -1288,6 +1291,36 @@ def create_app(runtime: Any) -> FastAPI:
         if not runtime.cognitive_journal:
             return {"total_tokens": 0, "total_calls": 0}
         return await runtime.cognitive_journal.get_token_usage(agent_id)
+
+    @app.get("/api/journal/tokens/by")
+    async def journal_token_usage_by(
+        group_by: str = "model", agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        """AD-432: Token usage grouped by model, tier, agent, or intent."""
+        if not runtime.cognitive_journal:
+            return {"groups": []}
+        groups = await runtime.cognitive_journal.get_token_usage_by(
+            group_by=group_by, agent_id=agent_id,
+        )
+        return {"group_by": group_by, "groups": groups}
+
+    @app.get("/api/journal/decisions")
+    async def journal_decision_points(
+        agent_id: str | None = None,
+        min_latency_ms: float | None = None,
+        failures_only: bool = False,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """AD-432: Notable decision points — high-latency or failed LLM calls."""
+        if not runtime.cognitive_journal:
+            return {"entries": []}
+        entries = await runtime.cognitive_journal.get_decision_points(
+            agent_id=agent_id,
+            min_latency_ms=min_latency_ms,
+            failures_only=failures_only,
+            limit=min(limit, 100),
+        )
+        return {"entries": entries}
 
     # --- Ward Room (AD-407) ---
 

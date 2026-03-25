@@ -31,12 +31,16 @@ CREATE TABLE IF NOT EXISTS journal (
     cached           INTEGER NOT NULL DEFAULT 0,
     request_id       TEXT NOT NULL DEFAULT '',
     prompt_hash      TEXT NOT NULL DEFAULT '',
-    response_length  INTEGER NOT NULL DEFAULT 0
+    response_length  INTEGER NOT NULL DEFAULT 0,
+    intent_id        TEXT NOT NULL DEFAULT '',
+    dag_node_id      TEXT NOT NULL DEFAULT '',
+    response_hash    TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_journal_agent ON journal(agent_id);
 CREATE INDEX IF NOT EXISTS idx_journal_timestamp ON journal(timestamp);
 CREATE INDEX IF NOT EXISTS idx_journal_intent ON journal(intent);
+CREATE INDEX IF NOT EXISTS idx_journal_intent_id ON journal(intent_id);
 """
 
 
@@ -56,12 +60,32 @@ class CognitiveJournal:
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = __import__("aiosqlite").Row
         await self._db.executescript(_SCHEMA)
+        # AD-432: Schema migration — add columns if missing
+        for col, typedef in [
+            ("intent_id", "TEXT NOT NULL DEFAULT ''"),
+            ("dag_node_id", "TEXT NOT NULL DEFAULT ''"),
+            ("response_hash", "TEXT NOT NULL DEFAULT ''"),
+        ]:
+            try:
+                await self._db.execute(f"ALTER TABLE journal ADD COLUMN {col} {typedef}")
+            except Exception:
+                pass  # Column already exists
         await self._db.commit()
 
     async def stop(self) -> None:
         if self._db:
             await self._db.close()
             self._db = None
+
+    async def wipe(self) -> None:
+        """Delete all journal entries. Used by probos reset."""
+        if not self._db:
+            return
+        try:
+            await self._db.execute("DELETE FROM journal")
+            await self._db.commit()
+        except Exception:
+            logger.debug("Journal wipe failed", exc_info=True)
 
     async def record(
         self,
@@ -82,6 +106,9 @@ class CognitiveJournal:
         request_id: str = "",
         prompt_hash: str = "",
         response_length: int = 0,
+        intent_id: str = "",
+        dag_node_id: str = "",
+        response_hash: str = "",
     ) -> None:
         """Append a journal entry. Fire-and-forget — never raises."""
         if not self._db:
@@ -92,14 +119,16 @@ class CognitiveJournal:
                    (id, timestamp, agent_id, agent_type, tier, model,
                     prompt_tokens, completion_tokens, total_tokens,
                     latency_ms, intent, success, cached, request_id,
-                    prompt_hash, response_length)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    prompt_hash, response_length,
+                    intent_id, dag_node_id, response_hash)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry_id, timestamp, agent_id, agent_type, tier, model,
                     prompt_tokens, completion_tokens, total_tokens,
                     latency_ms, intent, 1 if success else 0,
                     1 if cached else 0, request_id,
                     prompt_hash, response_length,
+                    intent_id, dag_node_id, response_hash,
                 ),
             )
             await self._db.commit()
@@ -107,18 +136,33 @@ class CognitiveJournal:
             logger.debug("Journal record failed", exc_info=True)
 
     async def get_reasoning_chain(
-        self, agent_id: str, *, limit: int = 20
+        self, agent_id: str, *, limit: int = 20,
+        since: float | None = None, until: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Return recent journal entries for an agent, most recent first."""
+        """Return recent journal entries for an agent, most recent first.
+
+        Args:
+            agent_id: Agent to query.
+            limit: Max entries to return.
+            since: Unix timestamp — only entries after this time.
+            until: Unix timestamp — only entries before this time.
+        """
         if not self._db:
             return []
         try:
+            clauses = ["agent_id = ?"]
+            params: list[Any] = [agent_id]
+            if since is not None:
+                clauses.append("timestamp >= ?")
+                params.append(since)
+            if until is not None:
+                clauses.append("timestamp <= ?")
+                params.append(until)
+            where = " AND ".join(clauses)
+            params.append(limit)
             cursor = await self._db.execute(
-                """SELECT * FROM journal
-                   WHERE agent_id = ?
-                   ORDER BY timestamp DESC
-                   LIMIT ?""",
-                (agent_id, limit),
+                f"SELECT * FROM journal WHERE {where} ORDER BY timestamp DESC LIMIT ?",
+                params,
             )
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
@@ -165,6 +209,92 @@ class CognitiveJournal:
         except Exception:
             logger.debug("Journal token query failed", exc_info=True)
             return {"total_tokens": 0, "total_calls": 0}
+
+    async def get_token_usage_by(
+        self, group_by: str = "model", agent_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Token usage grouped by a column (model, tier, agent_id, intent).
+
+        Returns a list of dicts with the group key plus token/call stats.
+        """
+        if not self._db:
+            return []
+        # Whitelist allowed group columns to prevent SQL injection
+        allowed = {"model", "tier", "agent_id", "agent_type", "intent"}
+        if group_by not in allowed:
+            return []
+        try:
+            where = "WHERE cached = 0"
+            params: list[Any] = []
+            if agent_id:
+                where += " AND agent_id = ?"
+                params.append(agent_id)
+            cursor = await self._db.execute(
+                f"""SELECT {group_by} as group_key,
+                           COUNT(*) as calls,
+                           SUM(total_tokens) as tokens,
+                           SUM(prompt_tokens) as prompt_tok,
+                           SUM(completion_tokens) as comp_tok,
+                           AVG(latency_ms) as avg_latency
+                    FROM journal {where}
+                    GROUP BY {group_by}
+                    ORDER BY tokens DESC""",
+                params,
+            )
+            rows = await cursor.fetchall()
+            return [
+                {
+                    group_by: row["group_key"],
+                    "total_calls": row["calls"] or 0,
+                    "total_tokens": row["tokens"] or 0,
+                    "prompt_tokens": row["prompt_tok"] or 0,
+                    "completion_tokens": row["comp_tok"] or 0,
+                    "avg_latency_ms": round(row["avg_latency"] or 0, 1),
+                }
+                for row in rows
+            ]
+        except Exception:
+            logger.debug("Journal grouped query failed", exc_info=True)
+            return []
+
+    async def get_decision_points(
+        self,
+        agent_id: str | None = None,
+        *,
+        min_latency_ms: float | None = None,
+        failures_only: bool = False,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Find notable decision points — high-latency or failed LLM calls.
+
+        Useful for diagnosing slow agents or finding patterns in failures.
+        """
+        if not self._db:
+            return []
+        try:
+            clauses: list[str] = []
+            params: list[Any] = []
+            if agent_id:
+                clauses.append("agent_id = ?")
+                params.append(agent_id)
+            if min_latency_ms is not None:
+                clauses.append("latency_ms >= ?")
+                params.append(min_latency_ms)
+            if failures_only:
+                clauses.append("success = 0")
+            where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+            params.append(limit)
+            cursor = await self._db.execute(
+                f"""SELECT * FROM journal {where}
+                    ORDER BY latency_ms DESC
+                    LIMIT ?""",
+                params,
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception:
+            logger.debug("Journal decision points query failed", exc_info=True)
+            return []
 
     async def get_stats(self) -> dict[str, Any]:
         """Overall journal statistics."""

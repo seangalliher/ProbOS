@@ -1,4 +1,4 @@
-"""Tests for Cognitive Journal (AD-431)."""
+"""Tests for Cognitive Journal (AD-431, AD-432)."""
 
 from __future__ import annotations
 
@@ -292,3 +292,260 @@ class TestResetWipesJournal:
         if journal_db.is_file():
             journal_db.unlink()
         assert not journal_db.exists()
+
+
+# ===========================================================================
+# AD-432: Cognitive Journal Expansion tests
+# ===========================================================================
+
+class TestSchemaMigration:
+    """AD-432 Test 1: Schema migration adds new columns idempotently."""
+
+    @pytest.mark.asyncio
+    async def test_migration_idempotent(self, tmp_path):
+        db = str(tmp_path / "journal.db")
+        journal = CognitiveJournal(db_path=db)
+        await journal.start()
+        await journal.stop()
+
+        # Re-create with same DB — migration runs again, no error
+        journal2 = CognitiveJournal(db_path=db)
+        await journal2.start()
+        try:
+            await _record(journal2, intent_id="abc123", dag_node_id="node-1",
+                          response_hash="deadbeef")
+            entries = await journal2.get_reasoning_chain("agent-A")
+            assert len(entries) == 1
+            assert entries[0]["intent_id"] == "abc123"
+            assert entries[0]["dag_node_id"] == "node-1"
+            assert entries[0]["response_hash"] == "deadbeef"
+        finally:
+            await journal2.stop()
+
+
+class TestNewColumns:
+    """AD-432 Test 2: record() stores intent_id, dag_node_id, response_hash."""
+
+    @pytest.mark.asyncio
+    async def test_record_new_fields(self, tmp_path):
+        journal = CognitiveJournal(db_path=str(tmp_path / "journal.db"))
+        await journal.start()
+        try:
+            await _record(journal, intent_id="abc123", dag_node_id="node-1",
+                          response_hash="deadbeef")
+            entries = await journal.get_reasoning_chain("agent-A")
+            assert entries[0]["intent_id"] == "abc123"
+            assert entries[0]["dag_node_id"] == "node-1"
+            assert entries[0]["response_hash"] == "deadbeef"
+        finally:
+            await journal.stop()
+
+
+class TestReasoningChainTimeRange:
+    """AD-432 Tests 3-5: get_reasoning_chain with since/until filters."""
+
+    @pytest.mark.asyncio
+    async def test_since_filter(self, tmp_path):
+        journal = CognitiveJournal(db_path=str(tmp_path / "journal.db"))
+        await journal.start()
+        try:
+            await _record(journal, timestamp=100.0)
+            await _record(journal, timestamp=200.0)
+            await _record(journal, timestamp=300.0)
+            entries = await journal.get_reasoning_chain("agent-A", since=150.0)
+            assert len(entries) == 2
+            assert all(e["timestamp"] >= 150.0 for e in entries)
+        finally:
+            await journal.stop()
+
+    @pytest.mark.asyncio
+    async def test_until_filter(self, tmp_path):
+        journal = CognitiveJournal(db_path=str(tmp_path / "journal.db"))
+        await journal.start()
+        try:
+            await _record(journal, timestamp=100.0)
+            await _record(journal, timestamp=200.0)
+            await _record(journal, timestamp=300.0)
+            entries = await journal.get_reasoning_chain("agent-A", until=250.0)
+            assert len(entries) == 2
+            assert all(e["timestamp"] <= 250.0 for e in entries)
+        finally:
+            await journal.stop()
+
+    @pytest.mark.asyncio
+    async def test_since_and_until(self, tmp_path):
+        journal = CognitiveJournal(db_path=str(tmp_path / "journal.db"))
+        await journal.start()
+        try:
+            await _record(journal, timestamp=100.0)
+            await _record(journal, timestamp=200.0)
+            await _record(journal, timestamp=300.0)
+            entries = await journal.get_reasoning_chain(
+                "agent-A", since=150.0, until=250.0,
+            )
+            assert len(entries) == 1
+            assert entries[0]["timestamp"] == 200.0
+        finally:
+            await journal.stop()
+
+
+class TestTokenUsageBy:
+    """AD-432 Tests 6-9: get_token_usage_by grouped queries."""
+
+    @pytest.mark.asyncio
+    async def test_group_by_model(self, tmp_path):
+        journal = CognitiveJournal(db_path=str(tmp_path / "journal.db"))
+        await journal.start()
+        try:
+            await _record(journal, model="opus", total_tokens=100)
+            await _record(journal, model="opus", total_tokens=200)
+            await _record(journal, model="haiku", total_tokens=50)
+            groups = await journal.get_token_usage_by(group_by="model")
+            assert len(groups) == 2
+            opus = next(g for g in groups if g["model"] == "opus")
+            haiku = next(g for g in groups if g["model"] == "haiku")
+            assert opus["total_calls"] == 2
+            assert haiku["total_calls"] == 1
+        finally:
+            await journal.stop()
+
+    @pytest.mark.asyncio
+    async def test_group_by_tier(self, tmp_path):
+        journal = CognitiveJournal(db_path=str(tmp_path / "journal.db"))
+        await journal.start()
+        try:
+            await _record(journal, tier="standard", total_tokens=100)
+            await _record(journal, tier="fast", total_tokens=50)
+            await _record(journal, tier="fast", total_tokens=75)
+            groups = await journal.get_token_usage_by(group_by="tier")
+            assert len(groups) == 2
+            standard = next(g for g in groups if g["tier"] == "standard")
+            fast = next(g for g in groups if g["tier"] == "fast")
+            assert standard["total_calls"] == 1
+            assert fast["total_calls"] == 2
+        finally:
+            await journal.stop()
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_group_by(self, tmp_path):
+        journal = CognitiveJournal(db_path=str(tmp_path / "journal.db"))
+        await journal.start()
+        try:
+            result = await journal.get_token_usage_by(group_by="DROP TABLE")
+            assert result == []
+        finally:
+            await journal.stop()
+
+    @pytest.mark.asyncio
+    async def test_group_by_with_agent_filter(self, tmp_path):
+        journal = CognitiveJournal(db_path=str(tmp_path / "journal.db"))
+        await journal.start()
+        try:
+            await _record(journal, agent_id="agent-1", model="opus", total_tokens=100)
+            await _record(journal, agent_id="agent-1", model="haiku", total_tokens=50)
+            await _record(journal, agent_id="agent-2", model="opus", total_tokens=200)
+            groups = await journal.get_token_usage_by(
+                group_by="model", agent_id="agent-1",
+            )
+            # Only agent-1's entries
+            total_calls = sum(g["total_calls"] for g in groups)
+            assert total_calls == 2
+        finally:
+            await journal.stop()
+
+
+class TestDecisionPoints:
+    """AD-432 Tests 10-12: get_decision_points queries."""
+
+    @pytest.mark.asyncio
+    async def test_high_latency(self, tmp_path):
+        journal = CognitiveJournal(db_path=str(tmp_path / "journal.db"))
+        await journal.start()
+        try:
+            await _record(journal, latency_ms=100)
+            await _record(journal, latency_ms=500)
+            await _record(journal, latency_ms=1000)
+            entries = await journal.get_decision_points(min_latency_ms=400)
+            assert len(entries) == 2
+            # Ordered by latency DESC
+            assert entries[0]["latency_ms"] >= entries[1]["latency_ms"]
+        finally:
+            await journal.stop()
+
+    @pytest.mark.asyncio
+    async def test_failures_only(self, tmp_path):
+        journal = CognitiveJournal(db_path=str(tmp_path / "journal.db"))
+        await journal.start()
+        try:
+            await _record(journal, success=True, latency_ms=100)
+            await _record(journal, success=True, latency_ms=200)
+            await _record(journal, success=False, latency_ms=300)
+            entries = await journal.get_decision_points(failures_only=True)
+            assert len(entries) == 1
+            assert entries[0]["success"] == 0
+        finally:
+            await journal.stop()
+
+    @pytest.mark.asyncio
+    async def test_agent_id_filter(self, tmp_path):
+        journal = CognitiveJournal(db_path=str(tmp_path / "journal.db"))
+        await journal.start()
+        try:
+            await _record(journal, agent_id="agent-1", latency_ms=100)
+            await _record(journal, agent_id="agent-2", latency_ms=200)
+            entries = await journal.get_decision_points(
+                agent_id="agent-1", min_latency_ms=0,
+            )
+            assert len(entries) == 1
+            assert entries[0]["agent_id"] == "agent-1"
+        finally:
+            await journal.stop()
+
+
+class TestJournalWipe:
+    """AD-432 Test 13: wipe() deletes all entries."""
+
+    @pytest.mark.asyncio
+    async def test_wipe_clears_all(self, tmp_path):
+        journal = CognitiveJournal(db_path=str(tmp_path / "journal.db"))
+        await journal.start()
+        try:
+            await _record(journal)
+            await _record(journal)
+            await _record(journal)
+            stats = await journal.get_stats()
+            assert stats["total_entries"] == 3
+
+            await journal.wipe()
+
+            stats = await journal.get_stats()
+            assert stats["total_entries"] == 0
+        finally:
+            await journal.stop()
+
+
+class TestPerceiveIntentId:
+    """AD-432 Tests 14-15: perceive() intent_id plumbing."""
+
+    @pytest.fixture(autouse=True)
+    def clear_caches(self):
+        _DECISION_CACHES.clear()
+        _CACHE_HITS.clear()
+        _CACHE_MISSES.clear()
+
+    @pytest.mark.asyncio
+    async def test_perceive_includes_intent_id(self):
+        """Test 14: perceive() includes intent_id from IntentMessage."""
+        from probos.types import IntentMessage
+        agent = _TestAgent(llm_client=MockLLMClient(), runtime=MagicMock())
+        msg = IntentMessage(intent="test", params={"q": "hello"}, context="ctx")
+        obs = await agent.perceive(msg)
+        assert "intent_id" in obs
+        assert obs["intent_id"] == msg.id
+
+    @pytest.mark.asyncio
+    async def test_perceive_dict_no_intent_id(self):
+        """Test 15: perceive() dict fallback does NOT add intent_id."""
+        agent = _TestAgent(llm_client=MockLLMClient(), runtime=MagicMock())
+        obs = await agent.perceive({"intent": "test", "params": {}, "context": ""})
+        assert "intent_id" not in obs
