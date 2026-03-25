@@ -140,11 +140,9 @@ export function AgentProfilePanel() {
           <span style={{ fontWeight: 600, fontSize: 14 }}>
             {displayName}
           </span>
-          {callsign && (
-            <span style={{ color: '#8888a0', fontSize: 12 }}>
-              ({agent.agentType})
-            </span>
-          )}
+          <span style={{ color: '#8888a0', fontSize: 12, textTransform: 'capitalize' }}>
+            {department || agent.pool}
+          </span>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           <button
