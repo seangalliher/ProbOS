@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-433 COMPLETE (Selective Encoding Gate — biologically-inspired memory filtering). AD-432 COMPLETE (Cognitive Journal Expansion — traceability + query depth). AD-431 COMPLETE (Cognitive Journal MVP). BF-029/030 CLOSED. AD-430 COMPLETE (Agent Experiential Memory — all 5 pillars). BF-020–030 all closed. 3302 pytest + 118 vitest = 3420 total tests.
+## Current Status: AD-428 COMPLETE. BF-032 CLOSED (proactive observation self-reference loop — self-post filter + similarity gate + prompt instruction). AD-426 COMPLETE. AD-434 DESIGNED. AD-418 COMPLETE. BF-020–032 all closed. 3369 pytest + 118 vitest = 3487 total tests.
 
 ---
 

@@ -47,6 +47,7 @@ class PersistentTask:
     created_by: str = "captain"
     webhook_name: str | None = None
     enabled: bool = True
+    agent_hint: str | None = None     # AD-418: preferred agent_type for routing bias
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +73,8 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     max_runs INTEGER,
     created_by TEXT NOT NULL DEFAULT 'captain',
     webhook_name TEXT,
-    enabled INTEGER NOT NULL DEFAULT 1
+    enabled INTEGER NOT NULL DEFAULT 1,
+    agent_hint TEXT
 );
 """
 
@@ -120,6 +122,13 @@ class PersistentTaskStore:
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
             await self._db.commit()
+
+            # AD-418: Migrate agent_hint column
+            try:
+                await self._db.execute("ALTER TABLE scheduled_tasks ADD COLUMN agent_hint TEXT")
+                await self._db.commit()
+            except Exception:
+                pass  # Column already exists
 
         # Scan for stale DAG checkpoints and emit events
         await self._scan_stale_checkpoints()
@@ -171,6 +180,7 @@ class PersistentTaskStore:
         max_runs: int | None = None,
         created_by: str = "captain",
         webhook_name: str | None = None,
+        agent_hint: str | None = None,    # AD-418
     ) -> PersistentTask:
         """Create and persist a new scheduled task."""
         if schedule_type not in _VALID_SCHEDULE_TYPES:
@@ -202,6 +212,7 @@ class PersistentTaskStore:
             max_runs=max_runs,
             created_by=created_by,
             webhook_name=webhook_name,
+            agent_hint=agent_hint,
         )
 
         if self._db:
@@ -210,14 +221,14 @@ class PersistentTaskStore:
                    (id, name, intent_text, created_at, schedule_type,
                     execute_at, interval_seconds, cron_expr, channel_id,
                     status, next_run_at, run_count, max_runs, created_by,
-                    webhook_name, enabled)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    webhook_name, enabled, agent_hint)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     task.id, task.name, task.intent_text, task.created_at,
                     task.schedule_type, task.execute_at, task.interval_seconds,
                     task.cron_expr, task.channel_id, task.status,
                     task.next_run_at, task.run_count, task.max_runs,
-                    task.created_by, task.webhook_name, 1,
+                    task.created_by, task.webhook_name, 1, task.agent_hint,
                 ),
             )
             await self._db.commit()
@@ -412,6 +423,7 @@ class PersistentTaskStore:
             result = await self._process_fn(
                 task.intent_text,
                 channel_id=task.channel_id,
+                agent_hint=task.agent_hint,   # AD-418
             )
             result_json = json.dumps(result, default=str)[:2000]
         except Exception as e:
@@ -553,6 +565,7 @@ class PersistentTaskStore:
             "created_by": task.created_by,
             "webhook_name": task.webhook_name,
             "enabled": task.enabled,
+            "agent_hint": task.agent_hint,
         }
 
     @staticmethod
@@ -577,4 +590,5 @@ class PersistentTaskStore:
             created_by=row["created_by"],
             webhook_name=row["webhook_name"],
             enabled=bool(row["enabled"]),
+            agent_hint=row["agent_hint"] if "agent_hint" in row.keys() else None,
         )

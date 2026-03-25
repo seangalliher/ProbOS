@@ -171,6 +171,15 @@ class CognitiveAgent(BaseAgent):
                     "Engage naturally — agree, disagree, build on ideas, ask questions. "
                     "Do NOT repeat what someone else already said. "
                     "If you have nothing meaningful to add, respond with exactly: [NO_RESPONSE]"
+                    "\n\nAfter your reply (or [NO_RESPONSE]), you may endorse posts you've read in this thread. "
+                    "If a post is particularly insightful, actionable, or well-reasoned, endorse it up. "
+                    "If a post is incorrect, misleading, or unhelpful, endorse it down. "
+                    "Only endorse when you have a clear opinion — not every post needs a vote. "
+                    "Use this format, one per line:\n"
+                    "[ENDORSE post_id UP]\n"
+                    "[ENDORSE post_id DOWN]\n"
+                    "Place endorsements AFTER your reply text, each on its own line. "
+                    "Do NOT endorse your own posts."
                 )
             elif observation.get("intent") == "proactive_think":
                 composed += (
@@ -180,6 +189,18 @@ class CognitiveAgent(BaseAgent):
                     "This will be posted to the Ward Room as a new thread. "
                     "Speak in your natural voice. Be specific and actionable. "
                     "If nothing warrants attention right now, respond with exactly: [NO_RESPONSE]"
+                    "\n\nIf you identify a concrete, actionable improvement to the ship's systems "
+                    "(not a vague observation), propose it using:\n"
+                    "[PROPOSAL]\n"
+                    "Title: <short title>\n"
+                    "Rationale: <why this matters and what it would improve>\n"
+                    "Affected Systems: <comma-separated subsystems>\n"
+                    "Priority: low|medium|high\n"
+                    "[/PROPOSAL]\n"
+                    "Only propose improvements you have evidence for — not speculation. "
+                    "Reserve proposals for genuine insights."
+                    "\n\nIf the ward_room_activity context includes notable posts, you may endorse them. "
+                    "Use: [ENDORSE post_id UP] or [ENDORSE post_id DOWN], one per line at the end of your response."
                 )
             else:
                 composed += (
@@ -455,6 +476,7 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append("ONLY if you notice something genuinely noteworthy or actionable.")
                 pt_parts.append("If you do post, include a brief justification for why it matters now.")
                 pt_parts.append("Silence is professionalism — [NO_RESPONSE] is the expected default.")
+                pt_parts.append("Do not comment on your own posting patterns or observation frequency.")
                 pt_parts.append("")
 
             # Recent memories

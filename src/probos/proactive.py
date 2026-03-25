@@ -258,6 +258,20 @@ class ProactiveCognitiveLoop:
                     logger.debug("Failed to store no-response episode for %s", agent.agent_type, exc_info=True)
             return
 
+        # BF-032: Skip if too similar to agent's recent posts
+        if await self._is_similar_to_recent_posts(agent, response_text):
+            logger.debug(
+                "BF-032: Suppressed similar proactive post from %s",
+                agent.agent_type,
+            )
+            # Still record duty execution if applicable
+            if duty and self._duty_tracker:
+                self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+            return
+
+        # AD-412: Check for structured improvement proposals
+        await self._extract_and_post_proposal(agent, response_text)
+
         # Post to Ward Room — find agent's department channel
         await self._post_to_ward_room(agent, response_text)
         self._last_proactive[agent.id] = time.monotonic()
@@ -398,6 +412,14 @@ class ProactiveCognitiveLoop:
                 from probos.cognitive.standing_orders import get_department
                 dept = get_department(agent.agent_type)
 
+                # BF-032: Build self-ID set for filtering own posts
+                callsign = ""
+                if hasattr(rt, 'callsign_registry'):
+                    callsign = rt.callsign_registry.get_callsign(agent.agent_type)
+                self_ids = {agent.id, agent.agent_type}
+                if callsign:
+                    self_ids.add(callsign)
+
                 if dept:
                     channels = await rt.ward_room.list_channels()
                     dept_channel = None
@@ -422,8 +444,11 @@ class ProactiveCognitiveLoop:
                                     "type": a["type"],
                                     "author": a["author"],
                                     "body": a.get("title", a.get("body", ""))[:150],
+                                    "net_score": a.get("net_score", 0),       # AD-426
+                                    "post_id": a.get("post_id", a.get("id", "")),  # AD-426
                                 }
                                 for a in activity
+                                if (a.get("author_id", "") or a.get("author", "")) not in self_ids  # BF-032
                             ]
                             # AD-425: Mark channel as seen after consuming activity
                             try:
@@ -450,8 +475,11 @@ class ProactiveCognitiveLoop:
                                     "author": item.get("author", "unknown"),
                                     "body": item.get("body", "")[:150],
                                     "channel": "All Hands",
+                                    "net_score": item.get("net_score", 0),       # AD-426
+                                    "post_id": item.get("post_id", item.get("id", "")),  # AD-426
                                 }
                                 for item in all_hands_filtered[:3]
+                                if (item.get("author_id", "") or item.get("author", "")) not in self_ids  # BF-032
                             ])
                             # AD-425: Mark All Hands as seen
                             try:
@@ -462,6 +490,122 @@ class ProactiveCognitiveLoop:
                 logger.debug("Ward Room context fetch failed for %s", agent.id, exc_info=True)
 
         return context
+
+    async def _is_similar_to_recent_posts(self, agent: Any, text: str, threshold: float = 0.5) -> bool:
+        """BF-032: Check if proposed post is too similar to agent's recent Ward Room posts.
+
+        Uses Jaccard similarity on word sets. Returns True if any recent post
+        exceeds the similarity threshold.
+        """
+        rt = self._runtime
+        if not rt or not hasattr(rt, 'ward_room') or not rt.ward_room:
+            return False
+
+        try:
+            from probos.cognitive.standing_orders import get_department
+            dept = get_department(agent.agent_type)
+            channels = await rt.ward_room.list_channels()
+            agent_posts: list[str] = []
+
+            for ch in channels:
+                try:
+                    activity = await rt.ward_room.get_recent_activity(
+                        ch.id, limit=10, since=None,
+                    )
+                    for a in activity:
+                        author = a.get("author_id", "") or a.get("author", "")
+                        if author == agent.id:
+                            body = a.get("body", "")
+                            if body:
+                                agent_posts.append(body)
+                except Exception:
+                    continue
+
+            if not agent_posts:
+                return False
+
+            # Jaccard similarity on word sets
+            new_words = set(text.lower().split())
+            for post in agent_posts[:3]:  # Check last 3 posts
+                old_words = set(post.lower().split())
+                if not new_words or not old_words:
+                    continue
+                intersection = new_words & old_words
+                union = new_words | old_words
+                similarity = len(intersection) / len(union) if union else 0.0
+                if similarity >= threshold:
+                    return True
+
+            return False
+        except Exception:
+            logger.debug("Similarity check failed for %s", agent.id, exc_info=True)
+            return False
+
+    async def _extract_and_post_proposal(self, agent: Any, text: str) -> None:
+        """AD-412: Extract [PROPOSAL] blocks and submit as improvement proposals."""
+        import re
+        pattern = r'\[PROPOSAL\]\s*\n(.*?)\n\[/PROPOSAL\]'
+        match = re.search(pattern, text, re.DOTALL)
+        if not match:
+            return
+
+        block = match.group(1)
+
+        # Parse structured fields
+        title = ""
+        rationale = ""
+        affected: list[str] = []
+        priority = "medium"
+
+        for line in block.split('\n'):
+            line = line.strip()
+            if line.lower().startswith("title:"):
+                title = line[6:].strip()
+            elif line.lower().startswith("affected systems:"):
+                raw = line[17:].strip()
+                affected = [s.strip() for s in raw.split(",") if s.strip()]
+            elif line.lower().startswith("priority:"):
+                p = line[9:].strip().lower()
+                if p in ("low", "medium", "high"):
+                    priority = p
+
+        # Rationale may span multiple lines — capture everything after "Rationale:"
+        # that isn't another field header
+        in_rationale = False
+        rationale_lines: list[str] = []
+        for line in block.split('\n'):
+            stripped = line.strip()
+            if stripped.lower().startswith("rationale:"):
+                rest = stripped[10:].strip()
+                if rest:
+                    rationale_lines.append(rest)
+                in_rationale = True
+            elif in_rationale:
+                if any(stripped.lower().startswith(f) for f in ("title:", "affected systems:", "priority:")):
+                    in_rationale = False
+                else:
+                    rationale_lines.append(stripped)
+        rationale = "\n".join(rationale_lines).strip()
+
+        if not title or not rationale:
+            return  # Incomplete proposal — skip silently
+
+        rt = self._runtime
+        try:
+            from probos.types import IntentMessage
+            intent = IntentMessage(
+                intent="propose_improvement",
+                params={
+                    "title": title,
+                    "rationale": rationale,
+                    "affected_systems": affected,
+                    "priority_suggestion": priority,
+                },
+                context=f"Proactive proposal from {getattr(agent, 'agent_type', 'unknown')}",
+            )
+            await rt._handle_propose_improvement(intent, agent)
+        except Exception:
+            logger.debug("Failed to post improvement proposal from %s", getattr(agent, 'agent_type', 'unknown'), exc_info=True)
 
     async def _post_to_ward_room(self, agent: Any, text: str) -> None:
         """Create a Ward Room thread with the agent's proactive observation."""

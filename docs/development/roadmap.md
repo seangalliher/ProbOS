@@ -135,6 +135,10 @@ Architecture is fractal: same patterns (pools, Hebbian, trust, consensus) organi
 2. **Reversibility Preference:** Prefer the most reversible strategy. Read before write. Backup before delete. Planning heuristic, not absolute prohibition.
 3. **Minimal Authority:** Agents request only needed capabilities. Authority earned through successful interactions, not granted by default.
 
+### Nooplex Memory Stack
+
+Six-layer memory architecture from fleeting thoughts to permanent institutional memory. Layers: (1) Global Workspace (DAG orchestration), (2) Ephemeral Working Memory (context windows), (3) Vector Store / Associative Cortex (EpisodicMemory, ChromaDB), (4) Structured Knowledge split into constitutional (ontology, standing orders) and operational (trust, Hebbian), (5) Persistent Storage split into institutional memory (Ship's Records — AD-434) and operational state (KnowledgeStore), (6) Distributed Storage Substrate (Git repos, federation remotes). Cross-cutting: Ward Room Bus (lateral social knowledge flow) and Dream Consolidation (vertical promotion elevator). Full architecture: [docs/architecture/memory.md](../architecture/memory.md).
+
 ## Crew Structure
 
 ```
@@ -1046,7 +1050,7 @@ Promotion to Enhanced recall is a Qualification Program competency. Department C
 - The requesting agent incorporates the response into their reasoning
 - Protocol, not infrastructure — uses existing Ward Room + recall pipeline
 
-**Oracle Service (Ship's Computer Memory)** — Infrastructure-tier memory service with full access to all stored knowledge. Not crew — the Oracle has no Character/Reason/Duty. It's the Ship's Computer answering `"Computer, retrieve all Ward Room discussions about trust thresholds."` No identity, no judgment, pure retrieval.
+**Oracle Service (Ship's Computer Memory)** — Infrastructure-tier memory service with full access to all stored knowledge. Not crew — the Oracle has no Character/Reason/Duty. It's the Ship's Computer answering `"Computer, retrieve all Ward Room discussions about trust thresholds."` No identity, no judgment, pure retrieval. The Oracle queries across **all three knowledge tiers**: EpisodicMemory (raw experience), Ship's Records (AD-434 — structured documents, duty logs, research, Captain's Log), and KnowledgeStore (operational state). Ship's Records gives the Oracle a formal document corpus — not just vector-searchable episodes and operational snapshots, but authored research, professional records, and institutional knowledge.
 
 - **Data (Crew Agent, Science)** — Has Character (curious, literal, aspiring), Reason (judges relevance), Duty (serves the crew). Privileged Full-tier access to the Oracle. Data's value is not just recall but *interpretation of what recalled memory means*.
 - **Guinan (Crew Agent, future)** — Experiential wisdom agent. Not perfect recall but deep pattern recognition. Interface to dream-consolidated knowledge. *"I've seen this kind of thing before."* What dream consolidation produces: not verbatim memories, but distilled insights.
@@ -1531,7 +1535,7 @@ Self-originated goals emerge from: dream consolidation ("I keep seeing pattern X
 
 **AD-411: EmergentDetector Pattern Deduplication** — COMPLETE. The proactive cognitive loop (Phase 28b) keeps the system active, preventing true idle state. This interleaves with the dream/micro-dream scheduler that triggers `EmergentDetector.analyze()`. The detector re-analyzes the same trust state across multiple dream cycles, producing duplicate trust_anomaly and cooperation_cluster reports for the same agents. **Fix:** Added cooldown window per `(pattern_type, dedup_key)` — suppresses duplicate patterns within configurable window (default 600s). Applied to all three detectors: trust anomalies (deviation, hyperactive, change-point), cooperation clusters (sorted member IDs), routing shifts (new connections, new intents, entropy changes). Also added `create_pool()` duplicate name guard. 9 new tests. *Discovered by crew: O'Brien, LaForge, and Worf flagged during first proactive loop deployment.*
 
-**AD-412: Crew Improvement Proposals Channel** — Roadmap. The proactive cognitive loop generates crew observations that naturally evolve into actionable improvement recommendations (e.g., Wesley proposing cross-departmental edge weight tracking, LaForge identifying detector feedback loops). Currently these are organic Ward Room posts with no structured capture. **Proposal:** Create a dedicated `#improvement-proposals` Ward Room channel (type: `system`). Crew agents can post structured proposals via a `propose_improvement` intent with fields: `title`, `rationale`, `affected_systems`, `priority_suggestion`. Captain reviews proposals in the channel — endorse to approve (creates a roadmap item), downvote to shelve. Proposals tagged with originating agent for attribution. This closes the collaborative improvement loop: crew observes → crew proposes → Captain approves → builder executes → crew observes the result. *Inspired by: Wesley's cross-departmental edge tracking recommendation and multi-department convergence on AD-411 during first proactive loop deployment.*
+**AD-412: Crew Improvement Proposals Channel** — **COMPLETE**. `#Improvement Proposals` ship-wide channel seeded in `_ensure_default_channels()` (idempotent). All crew auto-subscribed at startup. Proactive loop extracts `[PROPOSAL]` structured blocks (title/rationale/affected_systems/priority) via regex — supports multiline rationale, silently skips incomplete proposals. `_handle_propose_improvement()` runtime handler creates discuss-mode threads with `[Proposal]` prefix and structured body (author attribution, priority, affected systems). `GET /api/wardroom/proposals` lists proposals with status derivation from `net_score` (approved/pending/shelved). Captain approves via existing endorsement mechanics (upvote=approve, downvote=shelve). 13 new tests. *Closes the collaborative improvement loop: crew observes → crew proposes → Captain approves → builder executes → crew observes the result.*
 
 **AD-413: Fine-Grained Reset Scope + Ward Room Awareness** — COMPLETE. Reset = day 0, one clean timeline. `probos reset` now archives `ward_room.db` to `data_dir/archives/` then deletes it. Also wipes DAG checkpoints and `events.db`. `--keep-wardroom` flag to preserve if needed. Does NOT wipe `scheduled_tasks.db`, `assignments.db`, or `directives.db` (user intent / Captain orders). New `WardRoomService.get_recent_activity()` for compact recent thread+reply retrieval. Proactive loop `_gather_context()` now includes Ward Room department activity as 4th context source. `_format_observation()` renders Ward Room context in proactive think prompts. 10 new tests.
 
@@ -1543,7 +1547,7 @@ Self-originated goals emerge from: dream consolidation ("I keep seeing pattern X
 
 **AD-417: Dream Scheduler Proactive-Loop Awareness** — **COMPLETE.** The proactive loop prevented the system from reaching true idle state — the dream scheduler's idle threshold (`idle_threshold_seconds: 300`) was met quickly after last user command, even while agents were proactively busy. Full dreams fired every 10 minutes during proactive activity; micro-dream EmergentDetector produced post-reset trust anomaly noise. **Implemented:** (1) `record_proactive_activity()` method + `_last_proactive_time` field on DreamScheduler. (2) Full dream gate: `truly_idle = min(idle_time, proactive_idle)` — both user AND proactive activity must be quiet for idle threshold. (3) `is_proactively_busy` property; `_on_post_micro_dream()` skips EmergentDetector analysis during proactive-busy periods (micro-dreams still replay episodes and update Hebbian weights). (4) Wired in `_think_for_agent()` after duty check, before LLM call. (5) `proactive_extends_idle` config toggle (DreamingConfig, default True). 9 tests in TestDreamSchedulerProactiveAwareness. *Design insight: "The system is three things — active (user), busy (proactive), or idle (dreaming). Dreams are for idle, not for busy."*
 
-**AD-418: Post-Reset Routing Degradation** — Roadmap. PersistentTaskStore (Phase 25a) survives `probos reset` by design — scheduled tasks persist. But post-reset, HebbianRouter weights are zero and trust scores are at priors (0.5). A scheduled task that previously routed reliably to a specific agent (e.g., LaForge for engineering scans) now routes semi-randomly because the routing model has no learned associations. The task fires on schedule but quality may degrade until routing rebuilds. **Fix:** (1) Scheduled tasks can optionally pin an `agent_hint` (preferred agent type or ID) that biases routing even with zero Hebbian weights. (2) On reset, warn the Captain how many active scheduled tasks exist and that routing quality will be degraded until trust/routing rebuilds. (3) Consider a "routing bootstrap" mode where the first N routed tasks use capability matching only (no Hebbian bias) rather than random fallback. *Connects to: AD-413 (reset scope) — the warning should be part of the reset confirmation prompt.*
+**AD-418: Post-Reset Routing Degradation** — **COMPLETE**. `agent_hint` field on `PersistentTask` — optional `agent_type` string (idempotent migration) threaded through `_fire_task()` → `process_natural_language()`. `HebbianRouter.get_preferred_targets()` gains `hint` parameter: +1.0 synthetic weight boost for matching candidate (wins at zero weights, can be outweighed by strong learned weights >1.0). Reset CLI (`_cmd_reset()`) counts active recurring tasks via synchronous sqlite3, warns in confirmation prompt and post-reset summary. API: `ScheduledTaskRequest` accepts hint, `PATCH /api/scheduled-tasks/{id}/hint` for existing tasks. 9 new tests.
 
 **AD-419: Agent Duty Schedule & Justification** — **COMPLETE.** The proactive cognitive loop (Phase 28b) gives agents freedom to think independently. But freedom without structure is chaos — observed when Wesley (Scout) ran scout reports repeatedly within minutes instead of once daily. Agents need a **duty schedule** that defines their expected recurring responsibilities, and proactive activity outside that schedule should require justification. **Implemented:** (1) `DutyDefinition` and `DutyScheduleConfig` models in config.py. (2) `DutyScheduleTracker` in `duty_schedule.py` — in-memory tracker with cron (croniter) and interval support. (3) Proactive loop checks duties first; duty takes priority over free-form thinking. (4) Cognitive agent prompts split: duty cycle ("perform your assigned task") vs free-form ("silence is professionalism"). (5) Default schedules: Scout daily, Security 4h, Engineering 2h, Operations 3h, Diagnostician 6h, Counselor 12h, Architect daily. 13 tests (10 tracker + 3 integration). *Naval metaphor: the Plan of the Day (POD).* *Connects to: Earned Agency (AD-357), Standing Orders (AD-339), PersistentTaskStore (Phase 25a), Qualification Programs.*
 
@@ -1592,7 +1596,7 @@ Default classification: Ship's Computer bridge alerts → INFORM. Captain Ward R
 
 **AD-425: Ward Room Active Browsing** — **COMPLETE**. Crew agents currently receive Ward Room content through two passive paths only: (1) real-time push via `ward_room_notification` intents when a thread targets them, (2) proactive context injection of recent department channel activity. Agents **cannot independently browse** the Ward Room — they can't check All Hands, read threads from other departments, or review historical conversations. They only know what's pushed to them. **Design:** (1) **Internal Communication Skill (all crew):** Reading the Ward Room is a basic communication function, not a privilege. A `ward_room_browse` Skill is attached to **every crew agent** — same as how every crew member on a ship can read the bulletin board. This is an internal communication skill, not an earned capability. The skill queries Ward Room channels and returns thread summaries (title, author, mode, reply count, endorsement score). No earned agency gate on the skill itself — if you're crew, you can read. (2) **Proactive context expansion:** Currently proactive context only includes the agent's department channel (proactive.py lines 310-332). Extend to also include recent All Hands activity (top 3 threads by recency or endorsement, DISCUSS mode only — INFORM threads already consumed via acknowledgment). The browse skill supplements this by allowing agents to actively check channels beyond what's injected into context. (3) **Visibility scope (what you can read):** All crew can browse their own department channel + All Hands (ship-wide). Cross-department channels are earned-agency gated: Commander+ can browse other department channels, Seniors see everything. The skill itself is universal; the data scope is tiered. Analogy: every sailor can read the bulletin board, but only officers with clearance can read another department's internal memos. (4) **Read receipts:** Track which agent has "seen" which thread. Prevents re-notifying agents about threads they've already processed. Feeds into INFORM acknowledgment (AD-424). (5) **Duty integration:** "Check Ward Room" can be a duty in the agent's schedule (AD-419). E.g., department chiefs check All Hands every 2 hours as part of their duty cycle. Regular crew passively receive through proactive context injection. *Connects to: AD-424 (thread classification — what's visible), AD-357 (earned agency — cross-department visibility scope), AD-419 (duty schedule — "check Ward Room" as a duty), Phase 24 (Communications department).*
 
-**AD-426: Ward Room Endorsement Activation** — Roadmap. The endorsement system (`ward_room.endorse()`) is **fully built** — SQLite schema, up/down/unvote mechanics, credibility scoring (EMA decay), self-endorsement prevention, REST API endpoints (`POST /api/wardroom/posts/{id}/endorse`, `POST /api/wardroom/threads/{id}/endorse`). But **nothing triggers it**. No agent ever endorses a post. The HXI API exists for Captain use, but crew never participates. Endorsements are meant to be the Ward Room's quality signal — "credibility is karma." **Design:** (1) **Post-response endorsement evaluation:** After an agent reads a Ward Room thread and responds (or says `[NO_RESPONSE]`), evaluate whether existing posts in the thread deserve endorsement. Add to the Ward Room system prompt: "If a post is particularly insightful or actionable, endorse it. If it's incorrect or unhelpful, downvote it." Return endorsement decisions alongside the reply. (2) **Proactive endorsement:** During proactive thinks, when agents see `ward_room_activity` in context, they can endorse notable posts they encountered. Lightweight — no dedicated LLM call, piggybacks on existing cognitive cycle. (3) **Endorsement → Trust signal:** High endorsement of an agent's posts = positive social trust signal. Feed net endorsement score into trust network as an attenuated signal (similar to AD-414 proactive trust signal). Agents who consistently write valuable posts earn trust faster. (4) **Endorsement → Thread ranking:** Threads with high net endorsement score surface first in browse results (AD-425) and proactive context. Quality rises. (5) **Credibility gating:** Agent's credibility score (already tracked in `credibility` table) could gate endorsement weight — a highly credible agent's endorsement counts more than a low-credibility agent's. Future refinement. *Connects to: AD-424 (thread classification — DISCUSS threads are endorsable, INFORM are not), AD-425 (browsing — endorsement-ranked results), AD-414 (trust signals), AD-357 (earned agency — endorsement as trust evidence).*
+**AD-426: Ward Room Endorsement Activation** — **COMPLETE**. The endorsement system (`ward_room.endorse()`) is **fully built** — SQLite schema, up/down/unvote mechanics, credibility scoring (EMA decay), self-endorsement prevention, REST API endpoints (`POST /api/wardroom/posts/{id}/endorse`, `POST /api/wardroom/threads/{id}/endorse`). But **nothing triggers it**. No agent ever endorses a post. The HXI API exists for Captain use, but crew never participates. Endorsements are meant to be the Ward Room's quality signal — "credibility is karma." **Design:** (1) **Post-response endorsement evaluation:** After an agent reads a Ward Room thread and responds (or says `[NO_RESPONSE]`), evaluate whether existing posts in the thread deserve endorsement. Add to the Ward Room system prompt: "If a post is particularly insightful or actionable, endorse it. If it's incorrect or unhelpful, downvote it." Return endorsement decisions alongside the reply. (2) **Proactive endorsement:** During proactive thinks, when agents see `ward_room_activity` in context, they can endorse notable posts they encountered. Lightweight — no dedicated LLM call, piggybacks on existing cognitive cycle. (3) **Endorsement → Trust signal:** High endorsement of an agent's posts = positive social trust signal. Feed net endorsement score into trust network as an attenuated signal (similar to AD-414 proactive trust signal). Agents who consistently write valuable posts earn trust faster. (4) **Endorsement → Thread ranking:** Threads with high net endorsement score surface first in browse results (AD-425) and proactive context. Quality rises. (5) **Credibility gating:** Agent's credibility score (already tracked in `credibility` table) could gate endorsement weight — a highly credible agent's endorsement counts more than a low-credibility agent's. Future refinement. *Connects to: AD-424 (thread classification — DISCUSS threads are endorsable, INFORM are not), AD-425 (browsing — endorsement-ranked results), AD-414 (trust signals), AD-357 (earned agency — endorsement as trust evidence).*
 
 **AD-427: Agent Capital Management (ACM) — Core Framework** — Roadmap. ProbOS has built HCM-equivalent capabilities piecemeal across dozens of ADs — crew profiles (AD-398), trust (Phase 17), earned agency (AD-357), duty schedules (AD-419), qualification programs (roadmap), endorsements (Phase 33), standing orders (AD-339), behavioral monitoring (Phase 29), Ward Room participation (Phase 33). These are scattered across separate subsystems with no unifying model. ACM Core consolidates them into an integrated agent lifecycle framework — the infrastructure that makes sovereign agent management possible. Advanced ACM features (workforce analytics, structured evaluations, succession planning) are commercial. Absorb domain patterns from open-source HCM (ERPNext HRMS for lifecycle models, OrangeHRM for competency frameworks, Odoo HR for modular design).
 
@@ -1614,7 +1618,7 @@ Default classification: Ship's Computer bridge alerts → INFORM. Captain Ward R
 
 *Connects to: AD-357 (Earned Agency — promotion model), AD-398 (three-tier classification — who is crew), AD-419 (duty schedules — attendance), AD-423 (Tool Registry — tool permission lifecycle), Qualification Programs (training & certification), Holodeck (competency testing). Commercial extensions (Advanced ACM) available separately.*
 
-**AD-428: Agent Skill Framework — Developmental Competency Model** — Roadmap. *Foundation AD — prerequisite to ACM (AD-427) and Qualification Programs.* ProbOS agents currently have **capabilities** (what their LLM can do) and **roles** (what their agent_type says they are), but no formal model of **skills** — the learned, measurable, developable competencies that bridge capability and role. Skills today are either static (hardcoded in agent instructions) or dynamically generated (self-mod pipeline, utility-focused). There is no concept of skill acquisition, proficiency tracking, skill decay, prerequisites, or the distinction between innate abilities, universal competencies, and role-specific expertise. The self-mod pipeline (SkillDesigner/SkillValidator) was designed for utility agents — adding deterministic functions to tool-like agents. Crew agents with sovereign identity need a fundamentally different model: skills they develop through experience, practice, and mentoring within an organizational context.
+**AD-428: Agent Skill Framework — Developmental Competency Model** — **COMPLETE**. *Foundation AD — prerequisite to ACM (AD-427) and Qualification Programs.* ProbOS agents currently have **capabilities** (what their LLM can do) and **roles** (what their agent_type says they are), but no formal model of **skills** — the learned, measurable, developable competencies that bridge capability and role. Skills today are either static (hardcoded in agent instructions) or dynamically generated (self-mod pipeline, utility-focused). There is no concept of skill acquisition, proficiency tracking, skill decay, prerequisites, or the distinction between innate abilities, universal competencies, and role-specific expertise. The self-mod pipeline (SkillDesigner/SkillValidator) was designed for utility agents — adding deterministic functions to tool-like agents. Crew agents with sovereign identity need a fundamentally different model: skills they develop through experience, practice, and mentoring within an organizational context.
 
 **Intellectual Foundations:**
 
@@ -1809,7 +1813,21 @@ AgentSkillService:  # Part of ACM, infrastructure service
 - REST API: `GET /api/skills/registry` (catalog), `GET /api/acm/agents/{id}/skills` (profile), `POST /api/acm/agents/{id}/skills/{id}/assess` (record assessment)
 - Integration points: agent registration (PCC attachment), Earned Agency (proficiency-informed rank evaluation), Holodeck (assessment environment), Dream consolidation (practice reinforcement)
 
-**Commercial Scope (deferred):**
+**AD-428b: Agent Skill Framework — Advanced Features** — Deferred (blocked on dependencies). OSS features designed in AD-428 but not implemented because prerequisite systems don't exist yet. Implement once dependencies land.
+
+| Feature | Dependency | Description |
+|---------|-----------|-------------|
+| Model-Skill Alignment | Phase 32 (ModelRegistry) | `SkillDefinition.capability_requirements`, `suspend_incompatible_skills()`, `check_model_compatibility()`. Gate skill availability by model capabilities (vision, audio, tool_use). |
+| INNATE capability category | Phase 32 (ModelRegistry) | Fourth `SkillCategory.INNATE` for substrate-level abilities. `SkillProfile.innate_capabilities` populated from model assignment. |
+| Composite skills + synergy bonuses | AD-428 baseline + usage patterns | Declared skill combinations producing emergent capabilities. Synergy when complementary skills both at APPLY+. |
+| Assessment criteria per level | Holodeck (assessment engine) | `SkillDefinition.assessment_criteria: dict` — per-level behavioral indicators for proficiency measurement. |
+| Development goals | Proactive system + Earned Agency integration | `SkillProfile.development_goals: list[str]` — self-directed learning targets surfaced in proactive context. |
+| Holodeck-based assessment | Holodeck | Qualification exercises that validate and advance proficiency. Skill acquisition through structured scenarios. |
+| Dream consolidation reinforcement | AD-430 (Action Memory) + Dreaming | Practice frequency from action traces reinforces skill proficiency, counteracts decay. Dream cycle skill-awareness. |
+| Earned Agency proficiency-informed rank | AD-357 (Earned Agency) integration | Proficiency thresholds as rank transition requirements alongside Trust. |
+| Skill-weighted task routing (OSS core) | AD-428 baseline + Mesh routing | Route intents factoring agent skill proficiency, not just Trust + Hebbian. Basic version in OSS, advanced analytics in commercial. |
+
+**Commercial Scope (deferred):** *(See commercial repo → "Skill Framework Analytics & Workforce Intelligence")*
 - Advanced skill analytics — gap analysis, department capability heatmaps, succession risk scoring
 - Automated development plan generation — "based on current profile, here's the optimal path to Commander"
 - Skill-weighted task routing — route tasks to the agent with the best skill fit, not just the highest Trust
@@ -1857,7 +1875,7 @@ This is the opposite of the Troi problem. Instead of the agent imagining its con
 
 **The Seven Domains:**
 
-The ontology is organized into seven interconnected domains. Each domain has its own schema file but they reference each other through typed relationships. Together they form a complete model of the vessel.
+The ontology is organized into eight interconnected domains. Each domain has its own schema file but they reference each other through typed relationships. Together they form a complete model of the vessel.
 
 **Domain 1: Vessel** — The platform itself.
 
@@ -1939,6 +1957,17 @@ The Operations domain formalizes the MOISE+ deontic specification: duties are **
 
 The Resources domain solves the model-skill alignment problem: `ModelProfile.capabilities` is compared against `SkillDefinition.capability_requirements` to determine which skills an agent can exercise with its current model assignment.
 
+**Domain 8: Records** — Ship's Records (AD-434). Git-backed instance knowledge store.
+
+| Concept | Description | Source Today |
+|---|---|---|
+| `RecordsRepository` | Git repo metadata: path, remotes, last_commit, document_count | New (AD-434) |
+| `Document` | Individual record: path, author, classification, status, topic, tags, version_count | New (AD-434) |
+| `DocumentClass` | Categories: captains-log, notebook, report, operations, manual | New (AD-434) |
+| `RetentionPolicy` | Per-class retention rules: permanent, archive-after-N-days, until-superseded | New (AD-434) |
+
+The Records domain connects to Crew (author identity), Organization (department-scoped classification), Communication (published reports shared via Ward Room), and Resources (KnowledgeStore bridge for semantic search over documents).
+
 **Cross-Domain Relationships (why one ontology, not seven):**
 
 ```
@@ -1951,9 +1980,13 @@ Department (Organization) --hasChannel--> Channel (Communication)
 Post (Organization) --reportsTo--> Post (Organization)
 Agent (Crew) --trustScore--> float (from TrustNetwork)
 SkillProfile (Skills) --gatedBy--> trustScore (Crew) via EarnedAgency
+Agent (Crew) --authors--> Document (Records)
+Document (Records) --classifiedAt--> classification (private/department/ship/fleet)
+Document (Records) --indexedIn--> KnowledgeSource (Resources)
+RecordsRepository (Records) --belongsTo--> VesselIdentity (Vessel)
 ```
 
-These cross-cutting relationships are why separate schemas don't work. The ontology is one graph with typed nodes and edges spanning all seven domains.
+These cross-cutting relationships are why separate schemas don't work. The ontology is one graph with typed nodes and edges spanning all eight domains.
 
 **Implementation Architecture:**
 
@@ -1967,6 +2000,7 @@ config/ontology/
   operations.yaml      # Domain 5: Duties, watches, standing orders
   communication.yaml   # Domain 6: Ward Room channels, message patterns
   resources.yaml       # Domain 7: Models, tools, knowledge sources
+  records.yaml         # Domain 8: Ship's Records, document classes, retention (AD-434)
 ```
 
 YAML schemas using LinkML patterns. Version-controlled. Human-readable. The architect reviews and evolves them through ADs. Generates Pydantic models for runtime type safety.
@@ -2019,10 +2053,11 @@ Agents query the ontology through three channels:
 **Build Order:**
 1. AD-429a: Vessel + Organization + Crew domains (immediate operational value — replaces hardcoded dicts, grounds agent identity)
 2. AD-429b: Skills domain (implements AD-428 data model within the ontology)
-3. AD-429c: Operations + Communication + Resources domains (completes the model)
-4. AD-429d: KnowledgeStore indexing + agent self-reasoning (agents can query the ontology)
+3. AD-429c: Operations + Communication + Resources domains (completes the core model)
+4. AD-429d: Records domain (integrates AD-434 Ship's Records into the ontology)
+5. AD-429e: KnowledgeStore indexing + agent self-reasoning (agents can query the ontology)
 
-*Connects to: AD-428 (Skill Framework — becomes Skills domain), AD-427 (ACM — operates on ontology data), AD-398 (Three-tier classification — formalized in Crew domain), AD-424 (Thread Classification — formalized in Communication domain), AD-423 (Tool Registry — formalized in Resources domain), AD-419 (Duty Schedule — formalized in Operations domain), AD-357 (Earned Agency — cross-domain: trust from Crew × skills from Skills × authority from Organization), Phase 32 (Cognitive Division of Labor — model-agent assignment in Resources domain), Standing Orders (operations domain formalizes the tier system), Federation Constitution (Westworld Principle — Crew domain IS the identity grounding). Intellectual lineage: W3C ORG (organizational structure), MOISE+ (MAS organization with deontic specification), DTDL/WoT (digital twin modeling patterns), ESCO/O\*NET (competency classification), SKOS (taxonomy patterns), FIPA (agent identity and communication), LinkML (schema definition). Novel contribution: the first formal ontology describing an AI agent platform as a self-aware vessel — a system that understands its own structure through a queryable knowledge model, not just configuration files and hardcoded constants.*
+*Connects to: AD-428 (Skill Framework — becomes Skills domain), AD-427 (ACM — operates on ontology data), AD-434 (Ship's Records — becomes Records domain), AD-398 (Three-tier classification — formalized in Crew domain), AD-424 (Thread Classification — formalized in Communication domain), AD-423 (Tool Registry — formalized in Resources domain), AD-419 (Duty Schedule — formalized in Operations domain), AD-357 (Earned Agency — cross-domain: trust from Crew × skills from Skills × authority from Organization), Phase 32 (Cognitive Division of Labor — model-agent assignment in Resources domain), Standing Orders (operations domain formalizes the tier system), Federation Constitution (Westworld Principle — Crew domain IS the identity grounding). Intellectual lineage: W3C ORG (organizational structure), MOISE+ (MAS organization with deontic specification), DTDL/WoT (digital twin modeling patterns), ESCO/O\*NET (competency classification), SKOS (taxonomy patterns), FIPA (agent identity and communication), LinkML (schema definition). Novel contribution: the first formal ontology describing an AI agent platform as a self-aware vessel — a system that understands its own structure through a queryable knowledge model, not just configuration files and hardcoded constants.*
 
 **AD-430: Agent Experiential Memory — Closing the Memory Gap** — Roadmap. *Critical infrastructure AD — prerequisite to Procedural Learning / Cognitive JIT and Skill Framework (AD-428).* ProbOS agents have episodic memory infrastructure (ChromaDB-backed `EpisodicMemory` with sovereign shards, semantic recall, agent filtering), but **most agent activity never writes to it**. Today only 5 paths write episodes: (1) DAG execution (`runtime._execute_dag()`), (2) shell command rendering, (3) shell `/hail` 1:1 sessions, (4) feedback/corrections, (5) QA smoke tests. Three critical categories of agent experience are **never recorded**: proactive thoughts, Ward Room conversations, and HXI 1:1 conversations. The result: agents can't remember their own thoughts, can't recall what they discussed with crew, and can't maintain continuity across Captain interactions. Every proactive think cycle starts from zero. Every 1:1 message is processed without context. An agent that performed the same diagnostic 10 times has no memory of having done it.
 
@@ -2163,6 +2198,249 @@ With AD-430, episode generation increases significantly: 11 crew agents × ~12 p
 **AD-432: Cognitive Journal Expansion — Traceability + Query Depth** — Roadmap. Closes the gaps between AD-431 MVP and the full Cognitive Journal spec. 8 steps: (1) Schema expansion — `intent_id`, `dag_node_id`, `response_hash` columns with idempotent migration. (2) Intent traceability — plumb `IntentMessage.id` through `perceive()` into journal records; currently discarded. (3) Time-range filtering — `get_reasoning_chain()` gains `since`/`until` params. (4) Grouped token usage — `get_token_usage_by(group_by)` breaks down by model, tier, agent, or intent (SQL injection safe via whitelist). (5) Decision points — `get_decision_points()` finds high-latency or failed LLM calls for anomaly detection. (6) Response hash — MD5 fingerprint for dedup detection. (7) API endpoints — `GET /api/journal/tokens/by`, `GET /api/journal/decisions`, time-range on existing agent journal endpoint. (8) `wipe()` method for `probos reset`. 15 tests. *Deferred: dag_node_id population (requires submit_intent plumbing), DreamingEngine integration, cost/pricing, full text storage, replay/summarize, retention policies.*
 
 **AD-433: Selective Encoding Gate — Biologically-Inspired Memory Filtering** — Roadmap. First implementation of the Memory Architecture's biological staging model (roadmap "Unified Cognitive Bottleneck"). Applies the Sensory Cortex principle (*"smarter selection, not wider channel"*) to memory storage. Adds `EpisodicMemory.should_store()` — a zero-cost static gate function that blocks noise episodes before `store()`. Blocks: proactive no-response episodes (highest-volume noise — fires every tick for every idle agent), QA routine passes, episodes with only `[NO_RESPONSE]` content. Allows: Captain-initiated interactions (always), failures (learning opportunities), episodes with real response content. Gate applied at 4 agent-experience call sites (proactive no-response, proactive with-response, SystemQA, catch-all `_store_action_episode`). NOT applied to Sites 1/2/6/7/9/10 (Captain commands, shell/HXI 1:1, Ward Room authoring — always signal). Conservative default: unknown episode formats are stored. 11 tests. *Connects to: Memory Architecture Layer 2, Sensory Cortex (Northstar II — same selection principle), AD-430 (episode storage infrastructure), Dream consolidation (future Layer 3 — reinforcement tracking + active forgetting).*
+
+**AD-434: Ship's Records — Git-Backed Instance Knowledge Store** — Roadmap. *Foundation AD — the vessel's records office.* ProbOS has four knowledge-adjacent systems, each serving a distinct purpose — but none supports **structured document authoring** or **institutional record-keeping**:
+
+| System | Purpose | What It Actually Contains | Metaphor |
+|---|---|---|---|
+| **EpisodicMemory** | Personal experience recall | Agent autobiographical episodes, sovereign shards | Personal diary |
+| **KnowledgeStore** | Operational state persistence | Trust snapshots, routing weights, agent source code, QA reports, extracted strategies, cooldowns | Ship's Computer backup drives |
+| **SemanticKnowledgeLayer** | Vector search over KnowledgeStore | ChromaDB index of agents, skills, workflows, events | Card catalog for the backup drives |
+| **Ward Room** | Real-time communication | Conversational threads, ephemeral discussion | Meeting room |
+
+**Critical clarification:** KnowledgeStore is NOT a curated knowledge base — it is an operational checkpoint system. It stores trust snapshots flushed every 60s, routing weight backups, agent source code, and dream-extracted strategy patterns. No agent "writes knowledge" to it; the runtime persists operational state through it. Dream consolidation modifies in-memory Hebbian weights and trust scores but does NOT promote distilled insights to KnowledgeStore. The only dream→KnowledgeStore path is `_store_strategies()` (cross-agent patterns), which bypasses KnowledgeStore's own API and writes directly to a `strategies/` subdirectory.
+
+**What's missing is the institutional memory of the vessel** — the written story of the crew's existence. Research findings, duty logs, medical records, engineering assessments, security reports, operator rounds, counselor session notes, the Captain's Log. Every professional on a ship produces records as part of their duties. ProbOS agents perform duties (AD-419) but the results evaporate — they exist for one cognitive cycle and then disappear into unstructured episodic fragments.
+
+Wesley identified this gap: "I'm seeing fascinating developmental patterns, but I'm not sure we have the right infrastructure to properly document and analyze them." He has episodic memories of his development curve, but nowhere to write a structured research paper about it.
+
+**The Three Knowledge Tiers (clarified):**
+
+| Tier | System | Content | Persistence | Access |
+|---|---|---|---|---|
+| **Tier 1: Experience** | EpisodicMemory (ChromaDB) | Raw autobiographical episodes — what happened | Per-agent sovereign shards, vector-searchable | Private (agent's own memories) |
+| **Tier 2: Records** | Ship's Records (Git) — **this AD** | Structured documents — what was documented | Instance git repo, version-controlled, diffable | Classified (private/department/ship/fleet) |
+| **Tier 3: Operational State** | KnowledgeStore (Git) | System checkpoints — how things are configured | Periodic flush, shutdown persistence | Infrastructure (runtime internal) |
+
+The **Oracle** (Phase 33+, unimplemented) would be the unified retrieval layer across all three tiers — infrastructure-tier service that answers "Computer, retrieve all records about trust threshold changes" by querying EpisodicMemory + Ship's Records + KnowledgeStore simultaneously. Ship's Records gives the Oracle a formal document corpus to search, not just operational snapshots and raw episodes.
+
+**The SECI Gap (Nonaka & Takeuchi 1995):**
+
+Knowledge transforms through four modes. ProbOS currently covers two:
+
+| Mode | Flow | ProbOS Status |
+|---|---|---|
+| Socialization | tacit → tacit | Ward Room conversations ✅ |
+| **Externalization** | tacit → explicit | **Missing** — no place to write up observations as structured documents |
+| **Combination** | explicit → explicit | **Missing** — no way to combine entries into formal reports |
+| Internalization | explicit → tacit | Partial ✅ — SemanticKnowledgeLayer recall, but data is operational state not curated knowledge |
+
+Ship's Records fills Externalization and Combination. The desk where thinking becomes documents.
+
+**Nooplex Paper Alignment — The Shared Knowledge Fabric:**
+
+The Nooplex paper (Galliher, Feb 2026) envisions *"sovereign individuals committed to writing to a common library for the benefit of all."* The design documents describe this as the Nooplex Knowledge Model: private memory (EpisodicMemory = diary) + shared knowledge (KnowledgeStore = library), with dream consolidation promoting patterns from private experience to shared knowledge. **This vision is not implemented.**
+
+KnowledgeStore was intended to be the "shared library" but evolved into an operational state persistence layer — trust snapshots, routing weights, agent source code, QA reports. No agent "writes knowledge" to it. Dream consolidation modifies in-memory Hebbian weights and trust scores but does not promote distilled insights — the only dream→KnowledgeStore path (`_store_strategies()`) bypasses the KnowledgeStore API entirely. The Knowledge Stewardship PCC lists "contributing valuable patterns to KnowledgeStore" as a core competency, but no mechanism exists for agents to do this.
+
+| Nooplex Vision | Intended Implementation | Actual State |
+|---|---|---|
+| "Private memory = diary" | EpisodicMemory | **Working** (AD-430) ✅ |
+| "Shared knowledge = library" | KnowledgeStore | **Gap** — KnowledgeStore is operational state, not a library |
+| "Dream consolidation promotes patterns" | Dream → KnowledgeStore | **Gap** — dreams modify in-memory weights; strategies bypass API |
+| "All agents committed to writing" | Agent → KnowledgeStore | **Gap** — no agent write path exists |
+| "Same knowledge, different perspectives" | Shared access, sovereign interpretation | **Gap** — nothing curated to share |
+
+**Ship's Records IS the shared knowledge fabric.** Not KnowledgeStore (which should be understood as `OperationalStateStore`). The "library that all agents are committed to writing to" is the Ship's Records git repo — where agents document research, log duty output, publish findings, and contribute institutional knowledge. The KnowledgeStore bridge indexes Ship's Records for semantic recall. The Oracle (Phase 33+) queries across all knowledge tiers. Dream consolidation's promotion target should be agent notebooks in Ship's Records (episodic patterns → written analysis), not raw JSON files in KnowledgeStore.
+
+This directly addresses three gaps from the Nooplex Paper Alignment tracker (roadmap-research.md):
+- **Gap #1 (Provenance Tagging):** Ship's Records YAML frontmatter provides source, timestamp, classification, topic, tags on every document — systematic provenance.
+- **Gap #4 (Precedent Store):** `reports/` directory holds formal published findings — resolved conflicts recorded as case law for future consistency.
+- **Gap #10 (Human-Agent Knowledge Feedback Loop):** Captain's Log (human contributes) + agent notebooks (agents amplify) + Ward Room (human refines) + dream consolidation → notebook (substrate evolves) = the four-phase loop.
+
+**The Duty-Output Pipeline:**
+
+Every crew role produces professional records as part of their scheduled duties. Currently, these results evaporate:
+
+| Role | Duty Output | Real-World Equivalent | Current Destination |
+|---|---|---|---|
+| Bones | Crew cognitive fitness evaluations, health assessments | BUMED medical records, patient charts (MANMED Ch. 16) | Nowhere — ephemeral proactive output |
+| Troi | Counselor session notes, morale assessments, wellness observations | Clinical session notes (confidentiality: `classification: private`) | Nowhere — lost after think cycle |
+| LaForge | Engineering scan results, maintenance logs, performance baselines | 3-M/PMS maintenance records (OPNAVINST 4790.4), operator round sheets | Ward Room post or forgotten |
+| Worf | Threat assessments, vulnerability scan results, incident reports | Security logs, Intelligence Reports (INTREP/SALUTE formats) | Ward Room post or forgotten |
+| O'Brien | Resource utilization, system status, capacity checks, scheduling reports | Operations logs, watch station logs | Nowhere — ephemeral |
+| Wesley | Research observations, codebase analysis, pattern findings | Lab notebooks, research journals | Episodic memory (unstructured fragments) |
+| Number One | Architecture reviews, design decisions, strategic analysis | Department head working papers, design review records | Nowhere formal |
+
+AD-419 (Duty Schedules) defines *what* agents do on schedule. Ship's Records defines *where the results go*. The pipeline completes:
+
+```
+Duty fires (AD-419) → Agent performs work → Results recorded to Ship's Records → Git preserves history → KnowledgeStore bridge indexes for recall → Oracle serves unified queries (Phase 33+)
+```
+
+**Operator Rounds** — the clearest example. On a real ship, a machinist's mate walks through the engine room every watch, checks gauges, logs readings on a clipboard. That clipboard goes into the engineering logbook. If something breaks, you trace back through `git log notebooks/laforge/engineering-rounds-*.md` and see when readings first diverged from baseline. Without Ship's Records, LaForge's scan fires and the results exist for one cognitive cycle, then gone.
+
+**Naval Precedent:**
+
+| Naval System | OPNAV Reference | ProbOS Mapping |
+|---|---|---|
+| **Ship's Deck Log** | OPNAVINST 3100.7 | `captains-log/` — append-only, timestamped, signed (via git commits) |
+| **SORM** | OPNAVINST 3120.32 | Overall directory structure — defines what each department documents |
+| **Ship's Technical Library** | NAVSUP P-2002 | `operations/`, `manuals/` — controlled publications, version-tracked |
+| **Department Head Notebooks** | Informal practice | `notebooks/{callsign}/` — personal working papers |
+| **3-M / PMS Records** | OPNAVINST 4790.4 | `operations/maintenance/` — maintenance procedures, checklists |
+| **Intelligence Reports** | INTREP/SALUTE formats | `reports/` — formal published findings |
+| **Records Retention** | SECNAVINST 5210.8 | Retention policies per document class |
+
+**Design:**
+
+**(1) Separate Git Repository (per instance):**
+
+Ship's Records lives in a standalone Git repository, NOT inside the ProbOS codebase. Path configurable (`config.records_path`, defaults to `{data_dir}/ship-records/`). Initialized with `git init` at first boot if no repo exists. Each ProbOS instance has its own records repo. This is instance-specific operational data — research, logs, procedures — not source code.
+
+```
+ship-records/                        # Instance git repo
+  captains-log/                      # Captain's entries — human voice
+    2026-03-25.md
+    2026-03-26.md
+  notebooks/                         # Agent working papers — per callsign
+    wesley/
+      development-curve-analysis.md
+      hebbian-weight-patterns.md
+    troi/
+      crew-morale-observations.md
+    number-one/
+      architecture-review-notes.md
+    laforge/
+      performance-optimization-log.md
+  reports/                           # Published formal findings
+    2026-03-security-audit.md
+    development-curve-q1-2026.md
+  operations/                        # SOPs, runbooks, instance-specific procedures
+    engineering-scan-procedure.md
+    onboarding-checklist.md
+  manuals/                           # Operations manuals for this ship
+    alert-condition-protocols.md
+  .shiprecords.yaml                  # Config: retention policies, classification defaults
+```
+
+**(2) Document Frontmatter Schema:**
+
+Every document has YAML frontmatter for programmatic access:
+
+```yaml
+---
+author: wesley                     # Callsign or "captain"
+classification: ship               # private | department | ship | fleet
+status: draft                      # draft | review | published | archived
+department: science
+topic: development-curve
+created: 2026-03-25T14:30:00Z
+updated: 2026-03-25T16:45:00Z
+tags: [hebbian-learning, cognitive-development, research]
+---
+```
+
+Classification levels (maps to naval document classification):
+- **private** — only the author can read (working drafts, personal notes)
+- **department** — department members can read (internal working papers)
+- **ship** — all crew (published findings, procedures)
+- **fleet** — pushed to federation remote (shared knowledge)
+
+**(3) RecordsStore Service:**
+
+Ship's Computer infrastructure service (no identity). Manages the Git repository, enforces classification, provides query API.
+
+```python
+class RecordsStore:
+    async def write_entry(self, author: str, path: str, content: str, message: str) -> str
+    async def read_entry(self, path: str, reader_id: str) -> str | None  # classification check
+    async def list_entries(self, directory: str = "", author: str = None, status: str = None, tags: list[str] = None) -> list[dict]
+    async def get_history(self, path: str, limit: int = 20) -> list[dict]  # git log for a file
+    async def publish(self, path: str, target_classification: str) -> None  # draft → published
+    async def search(self, query: str, scope: str = "ship") -> list[dict]  # keyword search
+```
+
+Git operations: `write_entry()` does `write file → git add → git commit` with the commit message. `get_history()` does `git log --follow` on a file path. Every edit is a commit. The git log IS the audit trail.
+
+**(4) Captain's Log — Special Semantics:**
+
+The Captain's Log follows Deck Log conventions:
+- **Append-only** — new entries are appended or new date files created, existing entries are never modified (corrections via new entry referencing the original)
+- **Daily file** — `captains-log/YYYY-MM-DD.md` with multiple timestamped entries per day
+- **Signed** — git commits with Captain's identity
+- **Always classification: ship** — the Captain's Log is a ship-wide record
+
+Captain writes via HXI, REST API, or CLI. Agents can *read* the Captain's Log but never write to it (except Yeoman in Phase 36 who may transcribe Captain dictation).
+
+**(5) Agent Notebook Integration:**
+
+Agents write to their notebooks via a new `write_notes` intent or skill:
+- During proactive thinks: if an agent develops a substantive analysis, the system prompt includes: "If your observation warrants detailed documentation, use [NOTEBOOK topic_slug] to write extended research notes."
+- Via explicit command: Captain can direct "Wesley, document your findings on the development curve" → agent writes to `notebooks/wesley/development-curve-analysis.md`
+- Via dream consolidation (future): patterns promoted from episodic memory → notebook entries → published reports
+
+Agents can read other agents' ship-classified notebooks (department-classified requires same department). This is stigmergy — indirect coordination through shared artifacts.
+
+**(6) Federation Remotes:**
+
+The records repo supports standard git remotes for multi-level knowledge sharing:
+
+| Level | Remote | Direction | Content |
+|---|---|---|---|
+| Instance | `origin` | push/pull | This ship's complete records |
+| Federation | `fleet` | push: fleet-classified docs; pull: fleet procedures | Shared across federated ProbOS instances |
+| Nooplex | `nooplex` | pull-mostly | Organization-wide standards, doctrine |
+
+Federation sharing: an agent publishes a finding → Captain approves fleet classification → `git push fleet` (or automated via CI). Other ships `git pull fleet` to receive shared knowledge. Conflict resolution: fleet remote uses PRs for contributions (review before merge).
+
+**(7) KnowledgeStore Bridge:**
+
+Documents in Ship's Records are automatically indexed into KnowledgeStore with a `records:` prefix at startup (parallels CodebaseIndex `docs:` prefix). This enables semantic search over agent research — "find notes related to cognitive development" returns Wesley's notebook entries alongside KnowledgeStore facts. The KnowledgeStore is the search layer; Ship's Records is the authoring/storage layer.
+
+**(8) Vessel Ontology Integration (AD-429):**
+
+Ship's Records becomes **Domain 8: Records** in the Vessel Ontology:
+
+| Concept | Description |
+|---|---|
+| `RecordsRepository` | Git repo metadata: path, remotes, last_commit, document_count |
+| `Document` | Individual record: path, author, classification, status, topic, tags, version_count |
+| `DocumentClass` | Categories: captains-log, notebook, report, operations, manual |
+| `RetentionPolicy` | Per-class retention rules: permanent (captains-log), 1yr archive (drafts), indefinite (published) |
+
+Agents can query: "What documents exist about security?" → Ontology returns document metadata. "Show me Wesley's research" → Returns notebook listing. "What are the published reports this quarter?" → Filtered by status + date.
+
+**Retention Policies (SECNAVINST 5210.8 parallel):**
+
+| Document Class | Retention | Archive Trigger |
+|---|---|---|
+| Captain's Log | Permanent | Never archived — legal record |
+| Published Reports | Permanent | Never archived — ship's institutional knowledge |
+| Notebooks (active topics) | Indefinite | Archived after 90 days inactive (git log shows no commits) |
+| Notebooks (drafts) | 1 year | Auto-archived; author notified to publish or discard |
+| Operations / Manuals | Until superseded | Previous versions retained in git history |
+
+Archive = moved to `_archived/` directory, still in git history, excluded from KnowledgeStore indexing.
+
+**Yeoman Connection (Phase 36):**
+
+The Yeoman (Captain's personal AI assistant) has a natural future role as **Ship's Librarian** — managing the records repository, maintaining the index, enforcing retention policies, assisting the Captain with log entries. This is historically accurate: the Yeoman rate in the U.S. Navy handles administrative records, correspondence, and the ship's official documentation.
+
+**Research Foundations:**
+
+| Source | Contribution | Application |
+|---|---|---|
+| **Nonaka & Takeuchi (1995)** — SECI Model | Knowledge conversion: Socialization, Externalization, Combination, Internalization | Ship's Records enables Externalization (experience → documents) and Combination (documents → reports) |
+| **Stigmergy** (Grassé 1959) | Indirect coordination via shared environmental artifacts | Agent notebooks are pheromone trails — agents coordinate by reading each other's written artifacts |
+| **Docs-as-Code** | Version-controlled documentation with engineering rigor | Git-backed records with frontmatter, review workflows, CI/CD |
+| **OPNAVINST 3100.7** | Ship's Deck Log — official chronological record | Captain's Log structure and append-only semantics |
+| **OPNAVINST 3120.32 (SORM)** | Standard ship organizational records structure | Directory structure and per-department document management |
+| **SECNAVINST 5210.8** | Naval records retention and disposition schedules | Retention policies per document class |
+
+**OSS Scope:** RecordsStore service, Git repo management, frontmatter schema, classification enforcement, Captain's Log, agent notebook read/write, KnowledgeStore bridge indexing, REST API (`GET/POST /api/records/...`), basic search. **Commercial Scope (deferred):** Federation push/pull automation, Nooplex-level doctrine distribution, records analytics dashboard, advanced retention workflows, document templates per department, PR-based publication review.
+
+*Connects to: AD-429 (Vessel Ontology — Domain 8: Records), Phase 36 (Yeoman — Ship's Librarian), AD-430 (Episodic Memory — experience feeds notebook authoring), Dream consolidation (pattern promotion → notebook → published report pipeline), KnowledgeStore (search bridge), CodebaseIndex (parallel indexing pattern), Federation (git remotes for knowledge sharing), Standing Orders (operations manuals as version-controlled records). See also: [Memory Architecture](../architecture/memory.md) — the Nooplex Memory Stack and how Ship's Records fits into the six-layer model.*
 
 ---
 
@@ -3340,6 +3618,8 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-028 | Proactive & shell recall missing `recent_for_agent()` fallback. BF-027 added the fallback to `_recall_relevant_memories()` in cognitive_agent.py, but two other recall sites were not updated: `_gather_context()` in proactive.py (hardcoded query `"recent activity"`) and shell cross-session recall (query `"1:1 with {callsign}"`). Both need the same fallback pattern. **Fix:** Added `recent_for_agent()` fallback with `hasattr` guard to both sites. 2 tests. | Medium | **Closed** |
 | BF-029 | Ward Room memory recall quality in 1:1 conversations. Agents can't recall Ward Room posts when Captain asks in 1:1 — episodes are stored correctly (AD-430a) but recall pipeline has three issues: (a) `direct_message` recall query uses raw Captain text with no Ward Room signal in the embedding, (b) memory presentation prefers thin reflection strings over content-rich input, (c) Ward Room reply reflections lack body content (`"replied in thread 'X'"` instead of what was said). **Fix:** Prepend `"Ward Room {callsign}"` to recall query for direct_message, reverse input/reflection preference in both prompt builders, include body excerpt in reply reflections + channel name in reply user_input. 10 tests. | High | **Closed** |
 | BF-030 | `ward_room.py` used `self._db.execute_fetchone()` which doesn't exist in aiosqlite. Caused AttributeError at runtime when recalling Ward Room thread metadata. **Fix:** Replaced with standard `async with self._db.execute(...) as cursor: row = await cursor.fetchone()` pattern. | Medium | **Closed** |
+| BF-031 | `CognitiveJournal.start()` ran `executescript(_SCHEMA)` with `CREATE INDEX ... ON journal(intent_id)` before `ALTER TABLE ADD COLUMN intent_id` migration. On pre-AD-432 databases, the table existed without the column → `OperationalError: no such column: intent_id`. **Fix:** Split schema into `_SCHEMA_BASE` (table + safe indexes) and `_SCHEMA_INDEXES` (indexes on migrated columns). Startup: base → migration → dependent indexes. | Critical | **Closed** |
+| BF-032 | Proactive observation self-reference loop. Agents see their own Ward Room posts in proactive context, observe patterns in their own posting, then post meta-observations about their posting patterns — recursive loop. Observed in Troi and Selar. **Fix:** (1) Self-post filter in `_gather_context()` — `self_ids` set excludes agent's own posts from Ward Room activity context. (2) `_is_similar_to_recent_posts()` — Jaccard word-set similarity (threshold 0.5), fail-open, checks last 3 posts. (3) Similarity gate in `_think_for_agent()` before posting — suppressed posts still record duty execution. (4) Prompt instruction: "Do not comment on your own posting patterns or observation frequency." 5 tests. | Medium | **Closed** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 

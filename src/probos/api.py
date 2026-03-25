@@ -226,6 +226,18 @@ class SubscribeRequest(BaseModel):
     action: str = "subscribe"  # "subscribe" | "unsubscribe"
 
 
+# Skill Framework models (AD-428)
+
+class SkillAssessmentRequest(BaseModel):
+    skill_id: str
+    new_level: int             # ProficiencyLevel value (1-7)
+    source: str = "assessment"
+    notes: str = ""
+
+class SkillCommissionRequest(BaseModel):
+    agent_type: str
+
+
 # Assignment models (AD-408)
 
 class CreateAssignmentRequest(BaseModel):
@@ -251,6 +263,7 @@ class ScheduledTaskRequest(BaseModel):
     max_runs: int | None = None
     created_by: str = "captain"
     webhook_name: str | None = None
+    agent_hint: str | None = None            # AD-418
 
 
 def create_app(runtime: Any) -> FastAPI:
@@ -1463,12 +1476,13 @@ def create_app(runtime: Any) -> FastAPI:
         thread_mode: str | None = None,
         limit: int = 20,
         since: float = 0.0,
+        sort: str = "recent",      # AD-426: "recent" or "top"
     ):
         """Browse Ward Room threads across channels."""
         if not runtime.ward_room:
             return {"threads": []}
         if channel_id:
-            threads = await runtime.ward_room.list_threads(channel_id, limit=limit)
+            threads = await runtime.ward_room.list_threads(channel_id, limit=limit, sort=sort)
             # Apply optional filters
             if thread_mode:
                 threads = [t for t in threads if t.thread_mode == thread_mode]
@@ -1477,6 +1491,7 @@ def create_app(runtime: Any) -> FastAPI:
         elif agent_id:
             threads = await runtime.ward_room.browse_threads(
                 agent_id, thread_mode=thread_mode, limit=limit, since=since,
+                sort=sort,
             )
         else:
             # Captain view — browse all channels
@@ -1485,6 +1500,7 @@ def create_app(runtime: Any) -> FastAPI:
             threads = await runtime.ward_room.browse_threads(
                 "_anonymous", channels=all_ch_ids,
                 thread_mode=thread_mode, limit=limit, since=since,
+                sort=sort,
             )
         return {"threads": [vars(t) for t in threads]}
 
@@ -1495,6 +1511,49 @@ def create_app(runtime: Any) -> FastAPI:
             raise HTTPException(503, "Ward Room not available")
         await runtime.ward_room.update_last_seen(agent_id, channel_id)
         return {"status": "ok"}
+
+    @app.get("/api/wardroom/proposals")
+    async def list_improvement_proposals(
+        status: str | None = None, limit: int = 20,
+    ) -> dict[str, Any]:
+        """AD-412: List improvement proposals from the #Improvement Proposals channel."""
+        if not runtime.ward_room:
+            return {"proposals": []}
+
+        # Find the Improvement Proposals channel
+        channels = await runtime.ward_room.list_channels()
+        proposals_ch = None
+        for ch in channels:
+            if ch.name == "Improvement Proposals":
+                proposals_ch = ch
+                break
+
+        if not proposals_ch:
+            return {"proposals": []}
+
+        threads = await runtime.ward_room.list_threads(
+            proposals_ch.id, limit=min(limit, 100),
+        )
+
+        proposals = []
+        for t in threads:
+            proposal = {
+                "thread_id": t.id,
+                "title": t.title,
+                "body": t.body,
+                "author": t.author_callsign or t.author_id,
+                "created_at": t.created_at,
+                "net_score": t.net_score,
+                "reply_count": t.reply_count,
+                "status": "approved" if t.net_score > 0 else "shelved" if t.net_score < 0 else "pending",
+            }
+            proposals.append(proposal)
+
+        # Optional status filter
+        if status:
+            proposals = [p for p in proposals if p["status"] == status]
+
+        return {"channel_id": proposals_ch.id, "proposals": proposals}
 
     # AD-416: Ward Room stats & manual prune
     @app.get("/api/ward-room/stats")
@@ -1532,6 +1591,82 @@ def create_app(runtime: Any) -> FastAPI:
         # Don't expose internal pruned_thread_ids list
         result.pop("pruned_thread_ids", None)
         return result
+
+    # --- Skill Framework (AD-428) ---
+
+    @app.get("/api/skills/registry")
+    async def skills_registry(
+        category: str | None = None, domain: str | None = None,
+    ) -> dict[str, Any]:
+        """List all skill definitions in the registry."""
+        if not runtime.skill_registry:
+            return {"skills": []}
+        from probos.skill_framework import SkillCategory
+        cat = SkillCategory(category) if category else None
+        skills = runtime.skill_registry.list_skills(category=cat, domain=domain)
+        return {"skills": [
+            {
+                "skill_id": s.skill_id,
+                "name": s.name,
+                "category": s.category.value,
+                "description": s.description,
+                "domain": s.domain,
+                "prerequisites": s.prerequisites,
+                "decay_rate_days": s.decay_rate_days,
+                "origin": s.origin,
+            }
+            for s in skills
+        ]}
+
+    @app.get("/api/skills/agents/{agent_id}/profile")
+    async def skill_profile(agent_id: str) -> dict[str, Any]:
+        """Get the full skill profile for an agent."""
+        if not runtime.skill_service:
+            return {"agent_id": agent_id, "pccs": [], "role_skills": [], "acquired_skills": [], "depth": 0, "breadth": 0}
+        profile = await runtime.skill_service.get_profile(agent_id)
+        return profile.to_dict()
+
+    @app.post("/api/skills/agents/{agent_id}/commission")
+    async def skill_commission(agent_id: str, req: SkillCommissionRequest) -> dict[str, Any]:
+        """Commission an agent with initial PCC + role skills."""
+        if not runtime.skill_service:
+            raise HTTPException(503, "Skill service not available")
+        profile = await runtime.skill_service.commission_agent(agent_id, req.agent_type)
+        return profile.to_dict()
+
+    @app.post("/api/skills/agents/{agent_id}/assess")
+    async def skill_assess(agent_id: str, req: SkillAssessmentRequest) -> dict[str, Any]:
+        """Record a skill assessment (update proficiency)."""
+        if not runtime.skill_service:
+            raise HTTPException(503, "Skill service not available")
+        from probos.skill_framework import ProficiencyLevel
+        try:
+            level = ProficiencyLevel(req.new_level)
+        except ValueError:
+            raise HTTPException(400, f"Invalid proficiency level: {req.new_level}")
+        record = await runtime.skill_service.update_proficiency(
+            agent_id, req.skill_id, level, source=req.source, notes=req.notes,
+        )
+        if not record:
+            raise HTTPException(404, f"Agent {agent_id} does not have skill {req.skill_id}")
+        return record.to_dict()
+
+    @app.post("/api/skills/agents/{agent_id}/exercise")
+    async def skill_exercise(agent_id: str, skill_id: str) -> dict[str, Any]:
+        """Record that an agent exercised a skill."""
+        if not runtime.skill_service:
+            raise HTTPException(503, "Skill service not available")
+        record = await runtime.skill_service.record_exercise(agent_id, skill_id)
+        if not record:
+            raise HTTPException(404, f"Agent {agent_id} does not have skill {skill_id}")
+        return record.to_dict()
+
+    @app.get("/api/skills/agents/{agent_id}/prerequisites/{skill_id}")
+    async def skill_prerequisites(agent_id: str, skill_id: str) -> dict[str, Any]:
+        """Check if an agent meets prerequisites for a skill."""
+        if not runtime.skill_service:
+            return {"met": True, "missing": []}
+        return await runtime.skill_service.check_prerequisites(agent_id, skill_id)
 
     # --- Assignments (AD-408) ---
 
@@ -1634,6 +1769,7 @@ def create_app(runtime: Any) -> FastAPI:
                 max_runs=req.max_runs,
                 created_by=req.created_by,
                 webhook_name=req.webhook_name,
+                agent_hint=req.agent_hint,    # AD-418
             )
             return runtime.persistent_task_store._task_to_dict(task)
         except ValueError as e:
@@ -1658,6 +1794,29 @@ def create_app(runtime: Any) -> FastAPI:
         if not cancelled:
             return JSONResponse(status_code=404, content={"error": "Task not found or already cancelled"})
         return {"cancelled": True, "task_id": task_id}
+
+    class UpdateAgentHintRequest(BaseModel):
+        agent_hint: str | None = None
+
+    @app.patch("/api/scheduled-tasks/{task_id}/hint")
+    async def update_task_agent_hint(
+        task_id: str, req: UpdateAgentHintRequest,
+    ) -> dict[str, Any]:
+        """AD-418: Update a scheduled task's agent_hint for routing bias."""
+        if not runtime.persistent_task_store:
+            return JSONResponse(status_code=503, content={"error": "Persistent task store not enabled"})
+        task = await runtime.persistent_task_store.get_task(task_id)
+        if not task:
+            return JSONResponse(status_code=404, content={"error": "Task not found"})
+        # Direct DB update
+        async with runtime.persistent_task_store._db.execute(
+            "UPDATE scheduled_tasks SET agent_hint = ? WHERE id = ?",
+            (req.agent_hint, task_id),
+        ) as _:
+            pass
+        await runtime.persistent_task_store._db.commit()
+        updated = await runtime.persistent_task_store.get_task(task_id)
+        return runtime.persistent_task_store._task_to_dict(updated)
 
     @app.post("/api/scheduled-tasks/webhook/{webhook_name}")
     async def trigger_webhook(webhook_name: str) -> dict[str, Any]:

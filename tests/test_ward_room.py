@@ -1224,3 +1224,436 @@ class TestWardRoomEpisodicMemory:
         assert thread.title == "Test observation"
 
         await svc.stop()
+
+
+# ---------------------------------------------------------------------------
+# AD-412: Improvement Proposals channel tests
+# ---------------------------------------------------------------------------
+
+class TestImprovementProposals:
+    """AD-412: Improvement Proposals channel seeding and thread creation."""
+
+    async def test_improvement_proposals_channel_seeded(self, ward_room):
+        """After start(), 'Improvement Proposals' ship channel exists."""
+        channels = await ward_room.list_channels()
+        names = {c.name for c in channels}
+        assert "Improvement Proposals" in names
+        # Verify it's a ship channel
+        ip_ch = next(c for c in channels if c.name == "Improvement Proposals")
+        assert ip_ch.channel_type == "ship"
+
+    async def test_improvement_proposals_idempotent(self, ward_room):
+        """Restarting doesn't duplicate the Improvement Proposals channel."""
+        # stop and restart the service — same DB
+        db_path = ward_room.db_path
+        emit = ward_room._emit_event
+        await ward_room.stop()
+
+        svc2 = WardRoomService(db_path=db_path, emit_event=emit)
+        await svc2.start()
+
+        channels = await svc2.list_channels()
+        ip_channels = [c for c in channels if c.name == "Improvement Proposals"]
+        assert len(ip_channels) == 1
+        await svc2.stop()
+
+    async def test_create_proposal_thread(self, ward_room):
+        """Creating a thread in the Improvement Proposals channel works."""
+        channels = await ward_room.list_channels()
+        ip_ch = next(c for c in channels if c.name == "Improvement Proposals")
+
+        thread = await ward_room.create_thread(
+            channel_id=ip_ch.id,
+            author_id="eng-agent-001",
+            title="[Proposal] Optimize codebase indexing",
+            body=(
+                "**Proposed by:** LaForge\n"
+                "**Priority:** high\n"
+                "**Affected Systems:** CodebaseIndex, KnowledgeStore\n\n"
+                "**Rationale:**\nIndexing is slow on large repos."
+            ),
+            author_callsign="LaForge",
+            thread_mode="discuss",
+        )
+        assert thread.title == "[Proposal] Optimize codebase indexing"
+        assert thread.thread_mode == "discuss"
+
+        # Verify thread appears in listing
+        threads = await ward_room.list_threads(ip_ch.id)
+        assert any(t.id == thread.id for t in threads)
+
+
+# ---------------------------------------------------------------------------
+# AD-426: Endorsement Activation
+# ---------------------------------------------------------------------------
+
+
+class TestEndorsementActivation:
+    """AD-426: Ward Room Endorsement Activation."""
+
+    # ------ Test 1: _extract_endorsements parses UP endorsement ------
+    def test_extract_endorsements_up(self):
+        from probos.runtime import ProbOSRuntime
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        text = "Great discussion!\n[ENDORSE abc123 UP]"
+        cleaned, endorsements = rt._extract_endorsements(text)
+        assert cleaned == "Great discussion!"
+        assert len(endorsements) == 1
+        assert endorsements[0] == {"post_id": "abc123", "direction": "up"}
+
+    # ------ Test 2: _extract_endorsements parses multiple endorsements ------
+    def test_extract_endorsements_multiple(self):
+        from probos.runtime import ProbOSRuntime
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        text = "My reply here.\n[ENDORSE post1 UP]\n[ENDORSE post2 DOWN]\n[ENDORSE post3 UP]"
+        cleaned, endorsements = rt._extract_endorsements(text)
+        assert "My reply here" in cleaned
+        assert len(endorsements) == 3
+        assert endorsements[1]["direction"] == "down"
+
+    # ------ Test 3: _extract_endorsements with no endorsements ------
+    def test_extract_endorsements_none(self):
+        from probos.runtime import ProbOSRuntime
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        text = "Just a normal reply, no endorsements."
+        cleaned, endorsements = rt._extract_endorsements(text)
+        assert cleaned == text
+        assert endorsements == []
+
+    # ------ Test 4: _extract_endorsements from [NO_RESPONSE] with endorsement ------
+    def test_extract_endorsements_no_response(self):
+        from probos.runtime import ProbOSRuntime
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        text = "[NO_RESPONSE]\n[ENDORSE xyz789 UP]"
+        cleaned, endorsements = rt._extract_endorsements(text)
+        assert len(endorsements) == 1
+        assert endorsements[0]["post_id"] == "xyz789"
+
+    # ------ Test 5: _process_endorsements calls ward_room.endorse() ------
+    @pytest.mark.asyncio
+    async def test_process_endorsements_calls_endorse(self, ward_room):
+        """Process endorsements updates post net_score via ward_room.endorse()."""
+        from probos.runtime import ProbOSRuntime
+
+        # Create channel, thread, post
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="troi", title="Test", body="Content",
+            author_callsign="Troi",
+        )
+        post = await ward_room.create_post(
+            thread_id=thread.id, author_id="troi", body="Insightful post",
+            author_callsign="Troi",
+        )
+
+        # Create runtime-like object
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        rt.ward_room = ward_room
+        rt.trust_network = None
+
+        await rt._process_endorsements(
+            [{"post_id": post.id, "direction": "up"}], agent_id="worf",
+        )
+
+        # Verify net_score increased
+        post_detail = await ward_room.get_post(post.id)
+        assert post_detail["net_score"] == 1
+
+    # ------ Test 6: _process_endorsements bridges to trust ------
+    @pytest.mark.asyncio
+    async def test_process_endorsements_trust_bridge(self, ward_room):
+        """Endorsement creates a trust signal for the post author."""
+        from probos.consensus.trust import TrustNetwork
+        from probos.runtime import ProbOSRuntime
+
+        trust = TrustNetwork()
+        await trust.start()
+
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="troi", title="Test", body="Content",
+            author_callsign="Troi",
+        )
+        post = await ward_room.create_post(
+            thread_id=thread.id, author_id="troi", body="Solid analysis",
+            author_callsign="Troi",
+        )
+
+        initial_score = trust.get_or_create("troi").score
+
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        rt.ward_room = ward_room
+        rt.trust_network = trust
+
+        await rt._process_endorsements(
+            [{"post_id": post.id, "direction": "up"}], agent_id="worf",
+        )
+
+        assert trust.get_or_create("troi").score > initial_score
+
+    # ------ Test 7: _process_endorsements skips self-endorsement gracefully ------
+    @pytest.mark.asyncio
+    async def test_process_endorsements_self_endorse_skipped(self, ward_room):
+        """Self-endorsement caught silently, net_score unchanged."""
+        from probos.runtime import ProbOSRuntime
+
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="worf", title="Test", body="Content",
+            author_callsign="Worf",
+        )
+        post = await ward_room.create_post(
+            thread_id=thread.id, author_id="worf", body="My own post",
+            author_callsign="Worf",
+        )
+
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        rt.ward_room = ward_room
+        rt.trust_network = None
+
+        # Should not raise
+        await rt._process_endorsements(
+            [{"post_id": post.id, "direction": "up"}], agent_id="worf",
+        )
+
+        # net_score should still be 0
+        post_detail = await ward_room.get_post(post.id)
+        assert post_detail["net_score"] == 0
+
+    # ------ Test 8: endorsement trust signal weight is 0.05 ------
+    @pytest.mark.asyncio
+    async def test_endorsement_trust_weight(self, ward_room):
+        """Trust signal uses weight=0.05."""
+        from probos.consensus.trust import TrustNetwork
+        from probos.runtime import ProbOSRuntime
+
+        trust = TrustNetwork()
+        await trust.start()
+
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="troi", title="Test", body="Content",
+            author_callsign="Troi",
+        )
+        post = await ward_room.create_post(
+            thread_id=thread.id, author_id="troi", body="Analysis",
+            author_callsign="Troi",
+        )
+
+        initial_alpha = trust.get_or_create("troi").alpha
+
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        rt.ward_room = ward_room
+        rt.trust_network = trust
+
+        await rt._process_endorsements(
+            [{"post_id": post.id, "direction": "up"}], agent_id="worf",
+        )
+
+        assert trust.get_or_create("troi").alpha == pytest.approx(initial_alpha + 0.05)
+
+    # ------ Test 9: get_recent_activity includes net_score and post_id ------
+    @pytest.mark.asyncio
+    async def test_recent_activity_includes_score_and_id(self, ward_room):
+        """get_recent_activity returns net_score and post_id fields."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="troi", title="Test", body="Content",
+            author_callsign="Troi",
+        )
+        post = await ward_room.create_post(
+            thread_id=thread.id, author_id="riker", body="Nice post",
+            author_callsign="Riker",
+        )
+
+        # Endorse the post UP twice (different voters)
+        await ward_room.endorse(post.id, "post", "data", "up")
+        await ward_room.endorse(post.id, "post", "troi", "up")
+
+        activity = await ward_room.get_recent_activity(
+            ch.id, since=0.0, limit=10,
+        )
+        assert len(activity) >= 1
+        # Check both threads and replies have the new fields
+        for item in activity:
+            assert "net_score" in item
+            assert "post_id" in item
+
+    # ------ Test 10: browse_threads sort="top" orders by net_score ------
+    @pytest.mark.asyncio
+    async def test_browse_threads_sort_top(self, ward_room):
+        """sort='top' returns threads ordered by net_score descending."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+
+        # Create threads A, B, C
+        thread_a = await ward_room.create_thread(
+            channel_id=ch.id, author_id="troi", title="Thread A", body="A",
+            author_callsign="Troi",
+        )
+        thread_b = await ward_room.create_thread(
+            channel_id=ch.id, author_id="riker", title="Thread B", body="B",
+            author_callsign="Riker",
+        )
+        thread_c = await ward_room.create_thread(
+            channel_id=ch.id, author_id="data", title="Thread C", body="C",
+            author_callsign="Data",
+        )
+
+        # Endorse thread A up 3 times (thread endorsements)
+        await ward_room.endorse(thread_a.id, "thread", "worf", "up")
+        await ward_room.endorse(thread_a.id, "thread", "data", "up")
+        await ward_room.endorse(thread_a.id, "thread", "riker", "up")
+
+        # Endorse thread C up 1 time
+        await ward_room.endorse(thread_c.id, "thread", "worf", "up")
+
+        # Browse with sort=top - need agent subscription first
+        await ward_room.subscribe("tester", ch.id)
+        result = await ward_room.browse_threads(
+            "tester", channels=[ch.id], sort="top",
+        )
+
+        # Thread A (net_score=3) should be first, then C (1), then B (0)
+        assert len(result) >= 3
+        assert result[0].id == thread_a.id
+        assert result[1].id == thread_c.id
+        assert result[2].id == thread_b.id
+
+    # ------ Test 11: browse_threads sort="recent" preserves default order ------
+    @pytest.mark.asyncio
+    async def test_browse_threads_sort_recent(self, ward_room):
+        """sort='recent' keeps default last_activity order."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+
+        thread_a = await ward_room.create_thread(
+            channel_id=ch.id, author_id="troi", title="First", body="A",
+            author_callsign="Troi",
+        )
+        thread_b = await ward_room.create_thread(
+            channel_id=ch.id, author_id="riker", title="Second", body="B",
+            author_callsign="Riker",
+        )
+
+        # Endorse thread A heavily — doesn't affect sort=recent
+        await ward_room.endorse(thread_a.id, "thread", "worf", "up")
+        await ward_room.endorse(thread_a.id, "thread", "data", "up")
+
+        await ward_room.subscribe("tester", ch.id)
+        result = await ward_room.browse_threads(
+            "tester", channels=[ch.id], sort="recent",
+        )
+
+        # Most recent (thread B) should be first with sort=recent
+        assert len(result) >= 2
+        assert result[0].id == thread_b.id
+
+    # ------ Test 12: get_post returns post details with author_id ------
+    @pytest.mark.asyncio
+    async def test_get_post_returns_details(self, ward_room):
+        """get_post returns post dict with required fields."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="bones", title="Medical", body="Report",
+            author_callsign="Bones",
+        )
+        post = await ward_room.create_post(
+            thread_id=thread.id, author_id="bones", body="Patient update",
+            author_callsign="Bones",
+        )
+
+        result = await ward_room.get_post(post.id)
+        assert result is not None
+        assert result["author_id"] == "bones"
+        assert result["net_score"] == 0
+        assert "Patient update" in result["body"]
+
+    # ------ Test 13: get_post returns None for nonexistent post ------
+    @pytest.mark.asyncio
+    async def test_get_post_nonexistent(self, ward_room):
+        """get_post returns None for missing post."""
+        result = await ward_room.get_post("nonexistent_id")
+        assert result is None
+
+    # ------ Test 14: endorsement prompt appears in ward_room_notification compose ------
+    @pytest.mark.asyncio
+    async def test_endorsement_prompt_in_ward_room_notification(self):
+        """The [ENDORSE] instruction is in the ward_room_notification prompt."""
+        from unittest.mock import AsyncMock
+
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+        from probos.types import LLMResponse
+
+        # Create a minimal subclass to bypass instructions validation
+        class _TestAgent(CognitiveAgent):
+            instructions = "Test agent instructions."
+            agent_type = "science"
+
+        captured_prompts = []
+        mock_llm = AsyncMock()
+        async def capture_complete(request):
+            captured_prompts.append(request.system_prompt)
+            return LLMResponse(content="[NO_RESPONSE]", tier="standard", model="test")
+        mock_llm.complete = capture_complete
+
+        agent = _TestAgent(id="test-agent-001", llm_client=mock_llm)
+
+        observation = {
+            "intent": "ward_room_notification",
+            "params": {
+                "channel_name": "All Hands",
+                "author_callsign": "Captain",
+                "title": "Test thread",
+                "text": "Test message",
+                "thread_id": "t-123",
+                "posts": [],
+            },
+        }
+        await agent.decide(observation)
+
+        assert len(captured_prompts) == 1
+        prompt = captured_prompts[0]
+        assert "[ENDORSE" in prompt
+        assert "Do NOT endorse your own posts" in prompt
+
+    # ------ Test 15: endorsement prompt appears in proactive_think compose ------
+    @pytest.mark.asyncio
+    async def test_endorsement_prompt_in_proactive_think(self):
+        """The [ENDORSE] instruction is in the proactive_think prompt."""
+        from unittest.mock import AsyncMock
+
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+        from probos.types import LLMResponse
+
+        class _TestAgent(CognitiveAgent):
+            instructions = "Test agent instructions."
+            agent_type = "science"
+
+        captured_prompts = []
+        mock_llm = AsyncMock()
+        async def capture_complete(request):
+            captured_prompts.append(request.system_prompt)
+            return LLMResponse(content="[NO_RESPONSE]", tier="standard", model="test")
+        mock_llm.complete = capture_complete
+
+        agent = _TestAgent(id="test-agent-002", llm_client=mock_llm)
+
+        observation = {
+            "intent": "proactive_think",
+            "params": {
+                "context": {"ship_status": "nominal"},
+                "text": "Nothing to report.",
+            },
+        }
+        await agent.decide(observation)
+
+        assert len(captured_prompts) == 1
+        prompt = captured_prompts[0]
+        assert "[ENDORSE" in prompt

@@ -1159,3 +1159,436 @@ class TestCooldownPersistence:
 
         cooldown_file = tmp_path / "proactive" / "cooldowns.json"
         assert not cooldown_file.is_file()
+
+
+# ---------------------------------------------------------------------------
+# AD-412: Proposal extraction tests
+# ---------------------------------------------------------------------------
+
+class TestProposalExtraction:
+    """AD-412: _extract_and_post_proposal parsing and posting."""
+
+    @pytest.mark.asyncio
+    async def test_extract_proposal_valid(self):
+        """Valid [PROPOSAL] block is parsed and posted."""
+        loop = ProactiveCognitiveLoop()
+        rt = MagicMock()
+        rt._handle_propose_improvement = AsyncMock(return_value={"success": True})
+        loop.set_runtime(rt)
+
+        agent = MagicMock()
+        agent.agent_type = "engineering_officer"
+        agent.id = "eng-001"
+
+        text = (
+            "I noticed something interesting.\n"
+            "[PROPOSAL]\n"
+            "Title: Optimize query caching\n"
+            "Rationale: Repeated queries are not cached, wasting tokens\n"
+            "Affected Systems: KnowledgeStore, CognitiveJournal\n"
+            "Priority: high\n"
+            "[/PROPOSAL]\n"
+            "That's my observation."
+        )
+
+        await loop._extract_and_post_proposal(agent, text)
+
+        rt._handle_propose_improvement.assert_called_once()
+        call_args = rt._handle_propose_improvement.call_args
+        intent = call_args[0][0]
+        assert intent.params["title"] == "Optimize query caching"
+        assert intent.params["rationale"] == "Repeated queries are not cached, wasting tokens"
+        assert intent.params["affected_systems"] == ["KnowledgeStore", "CognitiveJournal"]
+        assert intent.params["priority_suggestion"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_extract_proposal_no_block(self):
+        """Text without [PROPOSAL] block is ignored."""
+        loop = ProactiveCognitiveLoop()
+        rt = MagicMock()
+        rt._handle_propose_improvement = AsyncMock()
+        loop.set_runtime(rt)
+
+        agent = MagicMock()
+        await loop._extract_and_post_proposal(agent, "Just a regular observation.")
+
+        rt._handle_propose_improvement.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_extract_proposal_missing_title(self):
+        """Incomplete proposal (no title) is silently skipped."""
+        loop = ProactiveCognitiveLoop()
+        rt = MagicMock()
+        rt._handle_propose_improvement = AsyncMock()
+        loop.set_runtime(rt)
+
+        agent = MagicMock()
+        text = (
+            "[PROPOSAL]\n"
+            "Rationale: Something is broken\n"
+            "Affected Systems: Ward Room\n"
+            "Priority: low\n"
+            "[/PROPOSAL]"
+        )
+
+        await loop._extract_and_post_proposal(agent, text)
+        rt._handle_propose_improvement.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_extract_proposal_missing_rationale(self):
+        """Incomplete proposal (no rationale) is silently skipped."""
+        loop = ProactiveCognitiveLoop()
+        rt = MagicMock()
+        rt._handle_propose_improvement = AsyncMock()
+        loop.set_runtime(rt)
+
+        agent = MagicMock()
+        text = (
+            "[PROPOSAL]\n"
+            "Title: Fix something\n"
+            "Affected Systems: Ward Room\n"
+            "Priority: medium\n"
+            "[/PROPOSAL]"
+        )
+
+        await loop._extract_and_post_proposal(agent, text)
+        rt._handle_propose_improvement.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_extract_proposal_multiline_rationale(self):
+        """Multiline rationale is captured correctly."""
+        loop = ProactiveCognitiveLoop()
+        rt = MagicMock()
+        rt._handle_propose_improvement = AsyncMock(return_value={"success": True})
+        loop.set_runtime(rt)
+
+        agent = MagicMock()
+        agent.agent_type = "science_officer"
+        agent.id = "sci-001"
+
+        text = (
+            "[PROPOSAL]\n"
+            "Title: Improve dream consolidation\n"
+            "Rationale: Dream cycles currently discard low-weight memories\n"
+            "that could still be useful for pattern detection. We should\n"
+            "apply a minimum threshold instead of a hard cutoff.\n"
+            "Affected Systems: EpisodicMemory, DreamEngine\n"
+            "Priority: medium\n"
+            "[/PROPOSAL]"
+        )
+
+        await loop._extract_and_post_proposal(agent, text)
+
+        rt._handle_propose_improvement.assert_called_once()
+        intent = rt._handle_propose_improvement.call_args[0][0]
+        assert "low-weight memories" in intent.params["rationale"]
+        assert "minimum threshold" in intent.params["rationale"]
+
+
+# ---------------------------------------------------------------------------
+# AD-412: Runtime _handle_propose_improvement tests
+# ---------------------------------------------------------------------------
+
+class TestHandleProposeImprovement:
+    """AD-412: Runtime handler for improvement proposals."""
+
+    @pytest.mark.asyncio
+    async def test_handle_propose_improvement_success(self, tmp_path):
+        """Successful proposal creates a thread in Improvement Proposals channel."""
+        from probos.ward_room import WardRoomService
+
+        events = []
+        wr = WardRoomService(
+            db_path=str(tmp_path / "wr.db"),
+            emit_event=lambda t, d: events.append((t, d)),
+        )
+        await wr.start()
+
+        # Build a minimal runtime mock with real Ward Room
+        rt = MagicMock()
+        rt.ward_room = wr
+        rt.callsign_registry = MagicMock()
+        rt.callsign_registry.get_callsign = MagicMock(return_value="LaForge")
+
+        # Import and bind the real method
+        from probos.runtime import ProbOSRuntime
+        handler = ProbOSRuntime._handle_propose_improvement.__get__(rt, type(rt))
+
+        agent = MagicMock()
+        agent.agent_type = "engineering_officer"
+        agent.id = "eng-001"
+
+        intent = MagicMock()
+        intent.params = {
+            "title": "Upgrade EPS conduits",
+            "rationale": "Power distribution is unbalanced",
+            "affected_systems": ["EPS", "Runtime"],
+            "priority_suggestion": "high",
+        }
+
+        result = await handler(intent, agent)
+        assert result["success"] is True
+        assert result["channel"] == "Improvement Proposals"
+        assert result["title"] == "Upgrade EPS conduits"
+
+        # Verify thread was actually created
+        channels = await wr.list_channels()
+        ip_ch = next(c for c in channels if c.name == "Improvement Proposals")
+        threads = await wr.list_threads(ip_ch.id)
+        assert len(threads) == 1
+        assert threads[0].title == "[Proposal] Upgrade EPS conduits"
+        assert "LaForge" in threads[0].body
+
+        await wr.stop()
+
+    @pytest.mark.asyncio
+    async def test_handle_propose_improvement_no_rationale(self):
+        """Missing rationale returns error."""
+        from probos.runtime import ProbOSRuntime
+
+        rt = MagicMock()
+        rt.ward_room = MagicMock()
+        handler = ProbOSRuntime._handle_propose_improvement.__get__(rt, type(rt))
+
+        intent = MagicMock()
+        intent.params = {"title": "Something", "rationale": "", "affected_systems": []}
+        agent = MagicMock()
+
+        result = await handler(intent, agent)
+        assert result["success"] is False
+        assert "rationale" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_handle_propose_improvement_no_ward_room(self):
+        """Returns error when Ward Room is unavailable."""
+        from probos.runtime import ProbOSRuntime
+
+        rt = MagicMock()
+        rt.ward_room = None
+        handler = ProbOSRuntime._handle_propose_improvement.__get__(rt, type(rt))
+
+        intent = MagicMock()
+        intent.params = {"title": "X", "rationale": "Y", "affected_systems": []}
+        agent = MagicMock()
+
+        result = await handler(intent, agent)
+        assert result["success"] is False
+
+
+# ---------------------------------------------------------------------------
+# AD-412: API proposals endpoint tests
+# ---------------------------------------------------------------------------
+
+class TestProposalsAPI:
+    """AD-412: /api/wardroom/proposals endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_proposals_empty_by_default(self, tmp_path):
+        """No proposals returns empty list."""
+        from probos.ward_room import WardRoomService
+
+        wr = WardRoomService(
+            db_path=str(tmp_path / "wr.db"),
+            emit_event=lambda t, d: None,
+        )
+        await wr.start()
+
+        # Simulate what the API does
+        channels = await wr.list_channels()
+        ip_ch = next(c for c in channels if c.name == "Improvement Proposals")
+        threads = await wr.list_threads(ip_ch.id)
+        assert len(threads) == 0
+
+        await wr.stop()
+
+    @pytest.mark.asyncio
+    async def test_proposals_status_filtering(self, tmp_path):
+        """Proposals are classified by net_score: approved/pending/shelved."""
+        from probos.ward_room import WardRoomService
+
+        wr = WardRoomService(
+            db_path=str(tmp_path / "wr.db"),
+            emit_event=lambda t, d: None,
+        )
+        await wr.start()
+
+        channels = await wr.list_channels()
+        ip_ch = next(c for c in channels if c.name == "Improvement Proposals")
+
+        # Create 3 threads — one will be approved, one pending, one shelved
+        t1 = await wr.create_thread(ip_ch.id, "a1", "[Proposal] Approved", "Good idea", thread_mode="discuss")
+        t2 = await wr.create_thread(ip_ch.id, "a2", "[Proposal] Pending", "Needs review", thread_mode="discuss")
+        t3 = await wr.create_thread(ip_ch.id, "a3", "[Proposal] Shelved", "Bad idea", thread_mode="discuss")
+
+        # Endorse t1 (approved: net_score > 0)
+        await wr.endorse(t1.id, "thread", "captain", "up")
+        # Downvote t3 (shelved: net_score < 0)
+        await wr.endorse(t3.id, "thread", "captain", "down")
+        # t2 stays at 0 (pending)
+
+        threads = await wr.list_threads(ip_ch.id)
+
+        # Replicate API status logic
+        proposals = []
+        for t in threads:
+            status = "approved" if t.net_score > 0 else "shelved" if t.net_score < 0 else "pending"
+            proposals.append({"thread_id": t.id, "title": t.title, "status": status})
+
+        approved = [p for p in proposals if p["status"] == "approved"]
+        pending = [p for p in proposals if p["status"] == "pending"]
+        shelved = [p for p in proposals if p["status"] == "shelved"]
+
+        assert len(approved) == 1
+        assert "Approved" in approved[0]["title"]
+        assert len(pending) == 1
+        assert "Pending" in pending[0]["title"]
+        assert len(shelved) == 1
+        assert "Shelved" in shelved[0]["title"]
+
+        await wr.stop()
+
+
+# ---------------------------------------------------------------------------
+# BF-032: Proactive Observation Self-Reference Loop
+# ---------------------------------------------------------------------------
+
+
+class TestSelfPostFiltering:
+    """BF-032: Self-posts filtered from Ward Room context."""
+
+    @pytest.mark.asyncio
+    async def test_self_posts_filtered_from_context(self):
+        """Ward Room context excludes posts authored by the current agent."""
+        loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
+        loop._cooldown = 300
+        loop._agent_cooldowns = {}
+
+        rt = MagicMock()
+        rt.episodic_memory = None
+        rt.bridge_alerts = None
+        rt.event_log = None
+        rt.callsign_registry = MagicMock()
+        rt.callsign_registry.get_callsign = MagicMock(return_value="LaForge")
+
+        dept_ch = MagicMock()
+        dept_ch.channel_type = "department"
+        dept_ch.department = "engineering"
+        dept_ch.id = "ch-eng"
+
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[dept_ch])
+        rt.ward_room.get_recent_activity = AsyncMock(return_value=[
+            {"type": "thread", "author": "Scotty", "body": "EPS check done", "created_at": 1.0},
+            {"type": "thread", "author": "eng-1", "body": "My own observation", "created_at": 2.0},
+            {"type": "thread", "author": "Worf", "body": "Security sweep clear", "created_at": 3.0},
+        ])
+        rt.ward_room.update_last_seen = AsyncMock()
+        loop._runtime = rt
+
+        agent = MagicMock()
+        agent.id = "eng-1"
+        agent.agent_type = "engineering_officer"
+
+        context = await loop._gather_context(agent, trust_score=0.7)
+        assert "ward_room_activity" in context
+        # Only Scotty and Worf — eng-1's own post filtered out
+        assert len(context["ward_room_activity"]) == 2
+        authors = [a["author"] for a in context["ward_room_activity"]]
+        assert "eng-1" not in authors
+
+
+class TestSimilarPostSuppression:
+    """BF-032: Content similarity check before posting."""
+
+    @pytest.mark.asyncio
+    async def test_similar_post_suppressed(self):
+        """Post with high word overlap is detected as similar."""
+        loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
+
+        rt = MagicMock()
+        ch = MagicMock()
+        ch.id = "ch1"
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[ch])
+        rt.ward_room.get_recent_activity = AsyncMock(return_value=[
+            {"author_id": "scout-1", "author": "scout-1", "body": "I observe startup patterns in pool creation."},
+        ])
+        loop._runtime = rt
+
+        agent = MagicMock()
+        agent.id = "scout-1"
+        agent.agent_type = "scout"
+
+        result = await loop._is_similar_to_recent_posts(
+            agent, "I observe startup patterns in agent pool creation"
+        )
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_different_post_allowed(self):
+        """Post with low word overlap is not flagged."""
+        loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
+
+        rt = MagicMock()
+        ch = MagicMock()
+        ch.id = "ch1"
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[ch])
+        rt.ward_room.get_recent_activity = AsyncMock(return_value=[
+            {"author_id": "scout-1", "author": "scout-1", "body": "I observe startup patterns in pool creation."},
+        ])
+        loop._runtime = rt
+
+        agent = MagicMock()
+        agent.id = "scout-1"
+        agent.agent_type = "scout"
+
+        result = await loop._is_similar_to_recent_posts(
+            agent, "Security vulnerability detected in input validation."
+        )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_empty_history_allows_posting(self):
+        """No recent posts means nothing to compare — allow posting."""
+        loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
+
+        rt = MagicMock()
+        ch = MagicMock()
+        ch.id = "ch1"
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[ch])
+        rt.ward_room.get_recent_activity = AsyncMock(return_value=[])
+        loop._runtime = rt
+
+        agent = MagicMock()
+        agent.id = "scout-1"
+        agent.agent_type = "scout"
+
+        result = await loop._is_similar_to_recent_posts(agent, "Any observation text")
+        assert result is False
+
+
+class TestMetaObservationPrompt:
+    """BF-032: Meta-observation instruction in proactive prompt."""
+
+    def test_meta_observation_instruction_present(self):
+        """Free-form think prompt includes instruction not to self-reference."""
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+
+        agent = CognitiveAgent.__new__(CognitiveAgent)
+        agent._agent_type = "scout"
+        agent._id = "scout-1"
+
+        # Build user message for proactive think with no duty
+        observation = {
+            "intent": "proactive_think",
+            "params": {
+                "context_parts": {},
+                "trust_score": 0.7,
+                "agency_level": "Lieutenant",
+                "duty": None,
+            },
+        }
+        msg = agent._build_user_message(observation)
+        assert "Do not comment on your own posting patterns" in msg

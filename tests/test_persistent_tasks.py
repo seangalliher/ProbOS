@@ -223,6 +223,7 @@ class TestTaskExecution:
         mock_process_fn.assert_awaited_once_with(
             "Channel task",
             channel_id="test-channel",
+            agent_hint=None,
         )
 
     @pytest.mark.asyncio
@@ -489,3 +490,107 @@ class TestSnapshot:
         # snapshot() is a regular method, not async
         result = store.snapshot()
         assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# AD-418: Agent hint tests
+# ---------------------------------------------------------------------------
+
+class TestAgentHint:
+    """AD-418: agent_hint field on PersistentTask."""
+
+    @pytest.mark.asyncio
+    async def test_agent_hint_stored_and_retrieved(self, store):
+        """agent_hint is persisted and retrievable."""
+        task = await store.create_task(
+            intent_text="scan engineering systems",
+            agent_hint="engineering_officer",
+        )
+        fetched = await store.get_task(task.id)
+        assert fetched.agent_hint == "engineering_officer"
+
+    @pytest.mark.asyncio
+    async def test_agent_hint_defaults_to_none(self, store):
+        """agent_hint defaults to None when not provided."""
+        task = await store.create_task(intent_text="general query")
+        assert task.agent_hint is None
+
+    @pytest.mark.asyncio
+    async def test_agent_hint_survives_db_restart(self, tmp_db, mock_emit, mock_process_fn):
+        """agent_hint persists across stop/start cycles."""
+        s1 = PersistentTaskStore(
+            db_path=tmp_db, emit_event=mock_emit,
+            process_fn=mock_process_fn, tick_interval=100,
+        )
+        await s1.start()
+        task = await s1.create_task(
+            intent_text="security sweep",
+            agent_hint="security_officer",
+        )
+        task_id = task.id
+        await s1.stop()
+
+        s2 = PersistentTaskStore(
+            db_path=tmp_db, emit_event=mock_emit,
+            process_fn=mock_process_fn, tick_interval=100,
+        )
+        await s2.start()
+        tasks = await s2.list_tasks()
+        found = [t for t in tasks if t.id == task_id]
+        assert len(found) == 1
+        assert found[0].agent_hint == "security_officer"
+        await s2.stop()
+
+    @pytest.mark.asyncio
+    async def test_agent_hint_in_task_to_dict(self, store):
+        """_task_to_dict includes agent_hint."""
+        task = await store.create_task(
+            intent_text="scout around",
+            agent_hint="scout",
+        )
+        d = store._task_to_dict(task)
+        assert d["agent_hint"] == "scout"
+
+    @pytest.mark.asyncio
+    async def test_fire_task_passes_agent_hint(self, tmp_db, mock_emit):
+        """_fire_task passes agent_hint to process_fn."""
+        captured_kwargs = {}
+
+        async def capture_fn(text, **kwargs):
+            captured_kwargs.update(kwargs)
+            return {"success": True}
+
+        s = PersistentTaskStore(
+            db_path=tmp_db, emit_event=mock_emit,
+            process_fn=capture_fn, tick_interval=100,
+        )
+        await s.start()
+        task = await s.create_task(
+            intent_text="engineering diagnostic",
+            agent_hint="engineering_officer",
+        )
+        # Manually fire the task
+        await s._fire_task(task)
+        assert captured_kwargs.get("agent_hint") == "engineering_officer"
+        await s.stop()
+
+    @pytest.mark.asyncio
+    async def test_idempotent_migration(self, tmp_db, mock_emit, mock_process_fn):
+        """Double start doesn't fail on ALTER TABLE."""
+        s = PersistentTaskStore(
+            db_path=tmp_db, emit_event=mock_emit,
+            process_fn=mock_process_fn, tick_interval=100,
+        )
+        await s.start()
+        await s.stop()
+
+        # Start again — migration should be idempotent
+        s2 = PersistentTaskStore(
+            db_path=tmp_db, emit_event=mock_emit,
+            process_fn=mock_process_fn, tick_interval=100,
+        )
+        await s2.start()
+        # No error = success
+        task = await s2.create_task(intent_text="test", agent_hint="scout")
+        assert task.agent_hint == "scout"
+        await s2.stop()

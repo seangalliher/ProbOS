@@ -14,7 +14,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA = """
+_SCHEMA_BASE = """
 CREATE TABLE IF NOT EXISTS journal (
     id          TEXT PRIMARY KEY,
     timestamp   REAL NOT NULL,
@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS journal (
 CREATE INDEX IF NOT EXISTS idx_journal_agent ON journal(agent_id);
 CREATE INDEX IF NOT EXISTS idx_journal_timestamp ON journal(timestamp);
 CREATE INDEX IF NOT EXISTS idx_journal_intent ON journal(intent);
+"""
+
+_SCHEMA_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_journal_intent_id ON journal(intent_id);
 """
 
@@ -59,8 +62,9 @@ class CognitiveJournal:
         db_dir.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = __import__("aiosqlite").Row
-        await self._db.executescript(_SCHEMA)
-        # AD-432: Schema migration — add columns if missing
+        # AD-432: Migrate columns BEFORE full schema (indexes reference them)
+        # Create base table first (without AD-432 columns for pre-existing DBs)
+        await self._db.executescript(_SCHEMA_BASE)
         for col, typedef in [
             ("intent_id", "TEXT NOT NULL DEFAULT ''"),
             ("dag_node_id", "TEXT NOT NULL DEFAULT ''"),
@@ -71,6 +75,8 @@ class CognitiveJournal:
             except Exception:
                 pass  # Column already exists
         await self._db.commit()
+        # Now create indexes that depend on migrated columns
+        await self._db.executescript(_SCHEMA_INDEXES)
 
     async def stop(self) -> None:
         if self._db:

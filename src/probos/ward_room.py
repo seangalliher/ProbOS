@@ -557,6 +557,15 @@ class WardRoomService:
                      f"{dept_name} department channel"),
                 )
 
+        # AD-412: Crew Improvement Proposals channel
+        if "Improvement Proposals" not in existing:
+            await self._db.execute(
+                "INSERT INTO channels (id, name, channel_type, department, created_by, created_at, description) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "Improvement Proposals", "ship", "", system_id, now,
+                 "Structured crew improvement proposals — endorse to approve, downvote to shelve"),
+            )
+
         await self._db.commit()
 
     async def list_channels(self, agent_id: str | None = None) -> list[WardRoomChannel]:
@@ -668,6 +677,7 @@ class WardRoomService:
         thread_mode: str | None = None,
         limit: int = 10,
         since: float = 0.0,
+        sort: str = "recent",  # AD-426: "recent" (default) or "top"
     ) -> list[WardRoomThread]:
         """Browse threads across one or more channels (AD-425).
 
@@ -712,7 +722,9 @@ class WardRoomService:
             sql += " AND thread_mode = ?"
             params.append(thread_mode)
 
-        sql += " ORDER BY last_activity DESC LIMIT ?"
+        # AD-426: Sort by net_score or last_activity
+        order_clause = "net_score DESC, last_activity DESC" if sort == "top" else "last_activity DESC"
+        sql += f" ORDER BY {order_clause} LIMIT ?"
         params.append(limit)
 
         threads: list[WardRoomThread] = []
@@ -744,7 +756,7 @@ class WardRoomService:
 
         # Recent threads
         async with self._db.execute(
-            "SELECT author_callsign, title, body, created_at, thread_mode "
+            "SELECT id, author_callsign, title, body, created_at, thread_mode, net_score "
             "FROM threads WHERE channel_id = ? AND created_at > ? "
             "ORDER BY created_at DESC LIMIT ?",
             (channel_id, since, limit),
@@ -752,16 +764,18 @@ class WardRoomService:
             async for row in cursor:
                 items.append({
                     "type": "thread",
-                    "author": row[0] or "unknown",
-                    "title": row[1][:100],
-                    "body": row[2][:200],
-                    "created_at": row[3],
-                    "thread_mode": row[4],
+                    "author": row[1] or "unknown",
+                    "title": row[2][:100],
+                    "body": row[3][:200],
+                    "created_at": row[4],
+                    "thread_mode": row[5],
+                    "net_score": row[6],       # AD-426
+                    "post_id": row[0],         # AD-426: thread id for endorsement ref
                 })
 
         # Recent replies in threads from this channel
         async with self._db.execute(
-            "SELECT p.author_callsign, p.body, p.created_at "
+            "SELECT p.id, p.author_callsign, p.body, p.created_at, p.net_score "
             "FROM posts p JOIN threads t ON p.thread_id = t.id "
             "WHERE t.channel_id = ? AND p.created_at > ? AND p.deleted = 0 "
             "ORDER BY p.created_at DESC LIMIT ?",
@@ -770,9 +784,11 @@ class WardRoomService:
             async for row in cursor:
                 items.append({
                     "type": "reply",
-                    "author": row[0] or "unknown",
-                    "body": row[1][:200],
-                    "created_at": row[2],
+                    "author": row[1] or "unknown",
+                    "body": row[2][:200],
+                    "created_at": row[3],
+                    "net_score": row[4],       # AD-426
+                    "post_id": row[0],         # AD-426
                 })
 
         # Sort by time, most recent first, cap total
@@ -1061,6 +1077,28 @@ class WardRoomService:
             except Exception:
                 pass  # Non-critical
         return post
+
+    async def get_post(self, post_id: str) -> dict[str, Any] | None:
+        """Return a single post by ID, or None if not found.  AD-426."""
+        if not self._db:
+            return None
+        async with self._db.execute(
+            "SELECT id, thread_id, author_id, body, created_at, net_score, author_callsign "
+            "FROM posts WHERE id = ?",
+            (post_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0],
+                "thread_id": row[1],
+                "author_id": row[2],
+                "body": row[3],
+                "created_at": row[4],
+                "net_score": row[5],
+                "author_callsign": row[6],
+            }
 
     async def edit_post(self, post_id: str, author_id: str, new_body: str) -> WardRoomPost:
         """Edit own post. Only original author can edit."""

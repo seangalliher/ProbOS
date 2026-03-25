@@ -140,6 +140,7 @@ class HebbianRouter:
         source: AgentID,
         candidates: list[AgentID],
         rel_type: str | None = None,
+        hint: str | None = None,           # AD-418
     ) -> list[AgentID]:
         """Rank candidates by their connection weight from source (descending)."""
         if rel_type is not None:
@@ -152,6 +153,13 @@ class HebbianRouter:
                 (c, self._compat_weights.get((source, c), 0.0))
                 for c in candidates
             ]
+
+        # AD-418: Boost hinted agent so it wins when all weights are zero
+        if hint:
+            for i, (agent_id, score) in enumerate(scored):
+                if hint in agent_id:
+                    scored[i] = (agent_id, score + 1.0)
+
         scored.sort(key=lambda x: x[1], reverse=True)
         return [c for c, _ in scored]
 

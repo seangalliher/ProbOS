@@ -97,12 +97,31 @@ class DiscordAdapter(ChannelAdapter):
         logger.info("Discord adapter started")
 
     async def _run_with_error_handling(self) -> None:
-        """Wrapper that catches bot crashes without taking down the runtime."""
-        try:
-            await self._bot.start(self.discord_config.token)
-        except Exception as e:
-            logger.error("Discord bot crashed: %s", e, exc_info=True)
-            self._started = False
+        """Wrapper that retries on rate limits and catches crashes."""
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                await self._bot.start(self.discord_config.token)
+                return  # Clean shutdown
+            except Exception as e:
+                is_rate_limit = "429" in str(e) or "rate limit" in str(e).lower()
+                if is_rate_limit and attempt < max_retries - 1:
+                    delay = 2 ** (attempt + 2)  # 4, 8, 16, 32s
+                    logger.warning(
+                        "Discord login rate limited (attempt %d/%d), retrying in %ds",
+                        attempt + 1, max_retries, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    # discord.py needs a fresh client after a failed login
+                    import discord
+                    intents = discord.Intents.default()
+                    intents.message_content = True
+                    self._bot = discord.Client(intents=intents)
+                    self._setup_event_handlers()
+                else:
+                    logger.error("Discord bot crashed: %s", e, exc_info=True)
+                    self._started = False
+                    return
 
     async def stop(self) -> None:
         """Close the Discord connection.

@@ -532,12 +532,38 @@ def _cmd_reset(args: argparse.Namespace) -> None:
     if not repo_path.is_dir() and data_dir_knowledge.is_dir():
         repo_path = data_dir_knowledge
 
+    # AD-418: Check for active scheduled tasks that survive reset
+    scheduled_db = data_dir / "scheduled_tasks.db"
+    active_task_count = 0
+    if scheduled_db.is_file():
+        import sqlite3
+        try:
+            conn = sqlite3.connect(str(scheduled_db))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT COUNT(*) as cnt FROM scheduled_tasks "
+                "WHERE enabled = 1 AND status = 'pending' AND schedule_type != 'once'"
+            )
+            row = cursor.fetchone()
+            active_task_count = row["cnt"] if row else 0
+            conn.close()
+        except Exception:
+            pass  # DB may not exist or have wrong schema
+
     if not args.yes:
+        task_warning = ""
+        if active_task_count > 0:
+            task_warning = (
+                f"\n⚠  {active_task_count} active scheduled task(s) will continue to fire "
+                "post-reset with degraded routing (Hebbian weights wiped). "
+                "Consider adding agent_hint to critical tasks or disabling them first.\n"
+            )
         answer = input(
             "This will permanently delete all learned state "
             "(designed agents, trust, routing weights, episodes, workflows, QA reports, "
-            "Ward Room history, event log, cognitive journal, DAG checkpoints). "
-            "Continue? [y/N]: "
+            "Ward Room history, event log, cognitive journal, DAG checkpoints)."
+            f"{task_warning}"
+            "\nContinue? [y/N]: "
         ).strip().lower()
         if answer != "y":
             console.print("[dim]Aborted.[/dim]")
@@ -633,6 +659,11 @@ def _cmd_reset(args: argparse.Namespace) -> None:
     )
     if wardroom_cleared:
         console.print(f"  Ward Room archived to: {archive_path}")
+    if active_task_count > 0:
+        console.print(
+            f"  [yellow]⚠ {active_task_count} scheduled task(s) active — "
+            "routing may be degraded until Hebbian weights rebuild.[/yellow]"
+        )
 
 
 def main() -> None:

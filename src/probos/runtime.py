@@ -234,6 +234,10 @@ class ProbOSRuntime:
         # --- Cognitive Journal (AD-431) ---
         self.cognitive_journal: Any = None
 
+        # --- Skill Framework (AD-428) ---
+        self.skill_registry: Any = None
+        self.skill_service: Any = None
+
         # --- Pool scaling ---
         self.pool_scaler: PoolScaler | None = None
 
@@ -487,6 +491,7 @@ class ProbOSRuntime:
             "unread_count": self.notification_queue.unread_count(),
             "scheduled_tasks": self.persistent_task_store.snapshot() if self.persistent_task_store else [],
             "ward_room_stats": getattr(self.ward_room, '_last_stats', None) if self.ward_room else None,
+            "skill_framework": self.skill_registry is not None,  # AD-428
         }
 
     def _directive_summary(self) -> dict[str, int]:
@@ -1232,10 +1237,13 @@ class ProbOSRuntime:
             from probos.cognitive.standing_orders import get_department
             wr_channels = await self.ward_room.list_channels()
             all_hands_id = None
+            proposals_ch_id = None  # AD-412
             dept_channel_map: dict[str, str] = {}  # dept_name -> channel_id
             for ch in wr_channels:
-                if ch.channel_type == "ship":
+                if ch.name == "All Hands":
                     all_hands_id = ch.id
+                elif ch.name == "Improvement Proposals":
+                    proposals_ch_id = ch.id  # AD-412
                 elif ch.channel_type == "department" and ch.department:
                     dept_channel_map[ch.department] = ch.id
 
@@ -1247,6 +1255,9 @@ class ProbOSRuntime:
                     await self.ward_room.subscribe(agent.id, dept_channel_map[dept])
                 if all_hands_id:
                     await self.ward_room.subscribe(agent.id, all_hands_id)
+                # AD-412: Subscribe all crew to Improvement Proposals
+                if proposals_ch_id:
+                    await self.ward_room.subscribe(agent.id, proposals_ch_id)
 
             # AD-416: Start Ward Room pruning loop
             archive_dir = self._data_dir / "ward_room_archive"
@@ -1281,6 +1292,16 @@ class ProbOSRuntime:
             )
             await self.cognitive_journal.start()
             logger.info("cognitive-journal started")
+
+        # --- Skill Framework (AD-428) ---
+        from probos.skill_framework import SkillRegistry, AgentSkillService
+        skills_db = str(self._data_dir / "skills.db")
+        self.skill_registry = SkillRegistry(db_path=skills_db)
+        self.skill_service = AgentSkillService(db_path=skills_db, registry=self.skill_registry)
+        await self.skill_registry.start()
+        await self.skill_registry.register_builtins()
+        await self.skill_service.start()
+        logger.info("skill-framework started")
 
         # --- Proactive Cognitive Loop (Phase 28b) ---
         if self.config.proactive_cognitive.enabled and self.ward_room:
@@ -1384,6 +1405,14 @@ class ProbOSRuntime:
         if self.cognitive_journal:
             await self.cognitive_journal.stop()
             self.cognitive_journal = None
+
+        # Stop Skill Framework (AD-428)
+        if self.skill_service:
+            await self.skill_service.stop()
+            self.skill_service = None
+        if self.skill_registry:
+            await self.skill_registry.stop()
+            self.skill_registry = None
 
         # Stop Assignment Service (AD-408)
         if self.assignment_service:
@@ -1956,6 +1985,8 @@ class ProbOSRuntime:
         on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
         auto_selfmod: bool = True,
         conversation_history: list[tuple[str, str]] | None = None,
+        channel_id: str | None = None,           # AD-418: accept from _fire_task
+        agent_hint: str | None = None,            # AD-418: routing bias
     ) -> dict[str, Any]:
         """Process a natural language request through the full cognitive pipeline.
 
@@ -1966,6 +1997,9 @@ class ProbOSRuntime:
         decompose_start, decompose_complete, node_start, node_complete, node_failed.
         """
         t_start = time.monotonic()
+
+        # AD-418: Store hint for this request (used by HebbianRouter)
+        self._current_agent_hint = agent_hint
 
         # Reset feedback state for new execution (AD-219)
         self._last_feedback_applied = False
@@ -2288,6 +2322,9 @@ class ProbOSRuntime:
         # Store execution result for introspection (AD-219: include DAG for feedback)
         execution_result["dag"] = dag
         self._last_execution = execution_result
+
+        # AD-418: Clear hint after processing
+        self._current_agent_hint = None
 
         return execution_result
 
@@ -3092,8 +3129,13 @@ class ProbOSRuntime:
                 # Layer 5: [NO_RESPONSE] filtering
                 if result and result.result:
                     response_text = str(result.result).strip()
-                    if response_text and response_text != "[NO_RESPONSE]":
-                        # Get agent's callsign for attribution
+                    # AD-426: Extract endorsements before filtering
+                    response_text, endorsements = self._extract_endorsements(response_text)
+                    if endorsements:
+                        await self._process_endorsements(
+                            endorsements, agent_id=agent_id
+                        )
+                    if response_text and response_text != "[NO_RESPONSE]":                        # Get agent's callsign for attribution
                         agent = self.registry.get(agent_id)
                         agent_callsign = ""
                         if agent and hasattr(self, 'callsign_registry'):
@@ -3231,6 +3273,129 @@ class ProbOSRuntime:
         #    piling onto every agent post in "All Hands".
 
         return target_ids
+
+    async def _handle_propose_improvement(
+        self, intent: Any, agent: Any,
+    ) -> dict[str, Any]:
+        """AD-412: Handle a crew improvement proposal — post to #Improvement Proposals."""
+        if not self.ward_room:
+            return {"success": False, "error": "Ward Room not available"}
+
+        params = intent.params if hasattr(intent, "params") else intent.get("params", {})
+        title = params.get("title", "Untitled Proposal")
+        rationale = params.get("rationale", "")
+        affected_systems = params.get("affected_systems", [])
+        priority = params.get("priority_suggestion", "medium")
+
+        # Validate required fields
+        if not rationale:
+            return {"success": False, "error": "Proposal requires a rationale"}
+
+        # Find #Improvement Proposals channel
+        channels = await self.ward_room.list_channels()
+        proposals_ch = None
+        for ch in channels:
+            if ch.name == "Improvement Proposals":
+                proposals_ch = ch
+                break
+
+        if not proposals_ch:
+            return {"success": False, "error": "Improvement Proposals channel not found"}
+
+        # Get callsign for attribution
+        callsign = ""
+        if hasattr(self, "callsign_registry"):
+            callsign = self.callsign_registry.get_callsign(
+                getattr(agent, "agent_type", "unknown")
+            )
+
+        # Format structured proposal body
+        systems_str = ", ".join(affected_systems) if affected_systems else "Not specified"
+        body = (
+            f"**Proposed by:** {callsign or getattr(agent, 'agent_type', 'unknown')}\n"
+            f"**Priority:** {priority}\n"
+            f"**Affected Systems:** {systems_str}\n\n"
+            f"**Rationale:**\n{rationale}"
+        )
+
+        # Create thread in proposals channel (DISCUSS mode — Captain can endorse/downvote)
+        thread = await self.ward_room.create_thread(
+            channel_id=proposals_ch.id,
+            author_id=agent.id if hasattr(agent, "id") else "unknown",
+            title=f"[Proposal] {title}",
+            body=body,
+            author_callsign=callsign,
+            thread_mode="discuss",
+        )
+
+        return {
+            "success": True,
+            "thread_id": thread.id,
+            "channel": "Improvement Proposals",
+            "title": title,
+        }
+
+    # ------------------------------------------------------------------
+    # AD-426: Endorsement extraction and processing
+    # ------------------------------------------------------------------
+
+    def _extract_endorsements(self, text: str) -> tuple[str, list[dict]]:
+        """Extract [ENDORSE post_id UP/DOWN] blocks from agent response text.
+
+        Returns (cleaned_text, endorsements_list).
+        """
+        import re
+        endorsements = []
+        pattern = re.compile(r'\[ENDORSE\s+(\S+)\s+(UP|DOWN)\]', re.IGNORECASE)
+        for match in pattern.finditer(text):
+            endorsements.append({
+                "post_id": match.group(1),
+                "direction": match.group(2).lower(),
+            })
+        cleaned = pattern.sub('', text).strip()
+        return cleaned, endorsements
+
+    async def _process_endorsements(
+        self, endorsements: list[dict], agent_id: str,
+    ) -> None:
+        """AD-426: Execute endorsement decisions and emit trust signals."""
+        if not self.ward_room:
+            return
+
+        for e in endorsements:
+            post_id = e["post_id"]
+            direction = e["direction"]  # "up" or "down"
+            try:
+                result = await self.ward_room.endorse(
+                    target_id=post_id,
+                    target_type="post",
+                    voter_id=agent_id,
+                    direction=direction,
+                )
+                net_score = result.get("net_score", 0)
+
+                # AD-426 Pillar 3: Bridge endorsement to trust signal
+                post_detail = await self.ward_room.get_post(post_id)
+                if post_detail and self.trust_network:
+                    author_id = post_detail.get("author_id", "")
+                    if author_id and author_id != "captain":
+                        success = (direction == "up")
+                        self.trust_network.record_outcome(
+                            agent_id=author_id,
+                            success=success,
+                            weight=0.05,  # Light signal — social endorsement
+                            intent_type="ward_room_endorsement",
+                            verifier_id=agent_id,
+                        )
+                        logger.debug(
+                            "AD-426: Trust signal for %s from endorsement by %s (%s, net=%d)",
+                            author_id, agent_id, direction, net_score,
+                        )
+            except ValueError as exc:
+                # Self-endorsement, post not found, etc.
+                logger.debug("AD-426: Endorsement skipped for %s: %s", post_id, exc)
+            except Exception:
+                logger.debug("AD-426: Endorsement failed for %s", post_id, exc_info=True)
 
     # Core crew eligible for Ward Room participation.
     # Infrastructure agents (vitals_monitor, red_team, system_qa, introspect,
