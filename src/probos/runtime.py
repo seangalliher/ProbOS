@@ -483,6 +483,7 @@ class ProbOSRuntime:
             "notifications": self.notification_queue.snapshot(),
             "unread_count": self.notification_queue.unread_count(),
             "scheduled_tasks": self.persistent_task_store.snapshot() if self.persistent_task_store else [],
+            "ward_room_stats": getattr(self.ward_room, '_last_stats', None) if self.ward_room else None,
         }
 
     def _directive_summary(self) -> dict[str, int]:
@@ -1219,6 +1220,7 @@ class ProbOSRuntime:
             self.ward_room = WardRoomService(
                 db_path=str(self._data_dir / "ward_room.db"),
                 emit_event=_ward_room_emit,
+                episodic_memory=self.episodic_memory,  # AD-430a
             )
             await self.ward_room.start()
             logger.info("ward-room started")
@@ -1242,6 +1244,10 @@ class ProbOSRuntime:
                     await self.ward_room.subscribe(agent.id, dept_channel_map[dept])
                 if all_hands_id:
                     await self.ward_room.subscribe(agent.id, all_hands_id)
+
+            # AD-416: Start Ward Room pruning loop
+            archive_dir = self._data_dir / "ward_room_archive"
+            await self.ward_room.start_prune_loop(self.config.ward_room, archive_dir)
 
         # --- Assignment Service (AD-408) ---
         if self.config.assignments.enabled:
@@ -1348,6 +1354,7 @@ class ProbOSRuntime:
 
         # Stop Ward Room (AD-407)
         if self.ward_room:
+            await self.ward_room.stop_prune_loop()
             await self.ward_room.stop()
             self.ward_room = None
 
@@ -2891,6 +2898,13 @@ class ProbOSRuntime:
         if not self.ward_room:
             return
 
+        # AD-416: Clean up tracking dicts when threads are pruned
+        if event_type == "ward_room_pruned":
+            pruned_ids = set(data.get("pruned_thread_ids", []))
+            if pruned_ids:
+                self._cleanup_ward_room_tracking(pruned_ids)
+            return
+
         # Only route new threads and new posts (not endorsements, mod actions)
         if event_type not in ("ward_room_thread_created", "ward_room_post_created"):
             return
@@ -3207,6 +3221,19 @@ class ProbOSRuntime:
         if not hasattr(agent, 'agent_type'):
             return False
         return agent.agent_type in self._WARD_ROOM_CREW
+
+    def _cleanup_ward_room_tracking(self, pruned_thread_ids: set[str]) -> None:
+        """Remove in-memory tracking entries for pruned threads (AD-416)."""
+        for tid in pruned_thread_ids:
+            self._ward_room_thread_rounds.pop(tid, None)
+            keys_to_remove = [k for k in self._ward_room_round_participants
+                              if k.startswith(f"{tid}:")]
+            for k in keys_to_remove:
+                del self._ward_room_round_participants[k]
+            keys_to_remove = [k for k in self._ward_room_agent_thread_responses
+                              if k.startswith(f"{tid}:")]
+            for k in keys_to_remove:
+                del self._ward_room_agent_thread_responses[k]
 
     async def recall_similar(self, query: str, k: int = 5) -> list[Episode]:
         """Recall similar past episodes from episodic memory."""

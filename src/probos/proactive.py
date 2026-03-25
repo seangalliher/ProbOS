@@ -203,6 +203,29 @@ class ProactiveCognitiveLoop:
                         weight=no_response_weight,
                         intent_type="proactive_no_response",
                     )
+            # AD-430a: Store no-response as episodic memory (prevents redundant re-analysis)
+            if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
+                try:
+                    from probos.types import Episode
+                    callsign = ""
+                    if hasattr(rt, 'callsign_registry'):
+                        callsign = rt.callsign_registry.get_callsign(agent.agent_type)
+                    episode = Episode(
+                        user_input=f"[Proactive thought — no response] {callsign or agent.agent_type}: reviewed context, nothing to report",
+                        timestamp=time.time(),
+                        agent_ids=[agent.id],
+                        outcomes=[{
+                            "intent": "proactive_think",
+                            "success": True,
+                            "response": "[NO_RESPONSE]",
+                            "duty_id": duty.duty_id if duty else None,
+                            "agent_type": agent.agent_type,
+                        }],
+                        reflection=f"{callsign or agent.agent_type} reviewed context but had nothing to report.",
+                    )
+                    await rt.episodic_memory.store(episode)
+                except Exception:
+                    logger.debug("Failed to store no-response episode for %s", agent.agent_type, exc_info=True)
             return
 
         # Post to Ward Room — find agent's department channel
@@ -237,6 +260,31 @@ class ProactiveCognitiveLoop:
         # Record duty execution after successful post
         if duty and self._duty_tracker:
             self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+
+        # AD-430a: Store proactive thought as episodic memory
+        if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
+            try:
+                from probos.types import Episode
+                callsign = ""
+                if hasattr(rt, 'callsign_registry'):
+                    callsign = rt.callsign_registry.get_callsign(agent.agent_type)
+                thought_summary = response_text[:200]
+                episode = Episode(
+                    user_input=f"[Proactive thought] {callsign or agent.agent_type}: {thought_summary}",
+                    timestamp=time.time(),
+                    agent_ids=[agent.id],
+                    outcomes=[{
+                        "intent": "proactive_think",
+                        "success": True,
+                        "response": response_text[:500],
+                        "duty_id": duty.duty_id if duty else None,
+                        "agent_type": agent.agent_type,
+                    }],
+                    reflection=f"{callsign or agent.agent_type} observed: {thought_summary}",
+                )
+                await rt.episodic_memory.store(episode)
+            except Exception:
+                logger.debug("Failed to store proactive thought episode for %s", agent.agent_type, exc_info=True)
 
         if self._on_event:
             self._on_event({

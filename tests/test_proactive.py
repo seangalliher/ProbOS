@@ -894,3 +894,102 @@ class TestProactiveExceptionConfidence:
         agent1.update_confidence.assert_called_once_with(False)
         # Agent2 still got called (loop continued)
         agent2.handle_intent.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# AD-430a: Proactive thought → episodic memory
+# ---------------------------------------------------------------------------
+
+
+class TestProactiveEpisodicMemory:
+    """AD-430a: Proactive thoughts stored as episodic memory."""
+
+    @pytest.mark.asyncio
+    async def test_successful_think_stores_episode(self):
+        """Successful proactive thought stores an episode with correct fields."""
+        from probos.types import Episode
+
+        agent = _make_mock_agent(agent_type="scout", agent_id="scout-1")
+        agent.handle_intent.return_value = IntentResult(
+            intent_id="x", agent_id="scout-1", success=True,
+            result="EPS conduits nominal. No anomalies detected.",
+        )
+        rt = _make_mock_runtime(agents=[agent])
+        rt.episodic_memory = MagicMock()
+        rt.episodic_memory.store = AsyncMock()
+        rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
+
+        loop = ProactiveCognitiveLoop()
+        loop.set_runtime(rt)
+        await loop._run_cycle()
+
+        rt.episodic_memory.store.assert_called_once()
+        episode = rt.episodic_memory.store.call_args[0][0]
+        assert "[Proactive thought]" in episode.user_input
+        assert episode.agent_ids == ["scout-1"]
+        assert episode.outcomes[0]["intent"] == "proactive_think"
+        assert episode.outcomes[0]["success"] is True
+        assert "EPS conduits" in episode.outcomes[0]["response"]
+
+    @pytest.mark.asyncio
+    async def test_no_response_stores_episode(self):
+        """No-response proactive thought stores a '[no response]' episode."""
+        agent = _make_mock_agent(agent_type="scout", agent_id="scout-1")
+        agent.handle_intent.return_value = IntentResult(
+            intent_id="x", agent_id="scout-1", success=True,
+            result="[NO_RESPONSE]",
+        )
+        rt = _make_mock_runtime(agents=[agent])
+        rt.episodic_memory = MagicMock()
+        rt.episodic_memory.store = AsyncMock()
+        rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
+
+        loop = ProactiveCognitiveLoop()
+        loop.set_runtime(rt)
+        await loop._run_cycle()
+
+        rt.episodic_memory.store.assert_called_once()
+        episode = rt.episodic_memory.store.call_args[0][0]
+        assert "[Proactive thought \u2014 no response]" in episode.user_input
+        assert episode.agent_ids == ["scout-1"]
+        assert episode.outcomes[0]["response"] == "[NO_RESPONSE]"
+
+    @pytest.mark.asyncio
+    async def test_no_episodic_memory_no_crash(self):
+        """Without episodic_memory, proactive think completes without error."""
+        agent = _make_mock_agent(agent_type="scout", agent_id="scout-1")
+        agent.handle_intent.return_value = IntentResult(
+            intent_id="x", agent_id="scout-1", success=True,
+            result="Something interesting.",
+        )
+        rt = _make_mock_runtime(agents=[agent])
+        rt.episodic_memory = None
+
+        loop = ProactiveCognitiveLoop()
+        loop.set_runtime(rt)
+        await loop._run_cycle()
+
+        # No crash — that's the assertion
+        rt.ward_room.create_thread.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_episode_store_failure_does_not_block(self):
+        """Episodic memory store() failure doesn't block the proactive loop."""
+        agent = _make_mock_agent(agent_type="scout", agent_id="scout-1")
+        agent.handle_intent.return_value = IntentResult(
+            intent_id="x", agent_id="scout-1", success=True,
+            result="Something noteworthy happened.",
+        )
+        rt = _make_mock_runtime(agents=[agent])
+        rt.episodic_memory = MagicMock()
+        rt.episodic_memory.store = AsyncMock(side_effect=RuntimeError("ChromaDB down"))
+        rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
+
+        loop = ProactiveCognitiveLoop()
+        loop.set_runtime(rt)
+        await loop._run_cycle()
+
+        # Ward Room post still created despite episode store failure
+        rt.ward_room.create_thread.assert_called_once()
+        # Cooldown still recorded
+        assert "scout-1" in loop._last_proactive

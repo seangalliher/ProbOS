@@ -1384,6 +1384,43 @@ def create_app(runtime: Any) -> FastAPI:
         await runtime.ward_room.update_last_seen(agent_id, channel_id)
         return {"status": "ok"}
 
+    # AD-416: Ward Room stats & manual prune
+    @app.get("/api/ward-room/stats")
+    async def ward_room_stats():
+        if not runtime.ward_room:
+            return JSONResponse({"error": "Ward Room not enabled"}, status_code=503)
+        stats = await runtime.ward_room.get_stats()
+        config = runtime.config.ward_room
+        pruneable = await runtime.ward_room.count_pruneable(
+            config.retention_days, config.retention_days_endorsed, config.retention_days_captain,
+        )
+        stats["pruneable_threads"] = pruneable
+        stats["retention_days"] = config.retention_days
+        stats["retention_days_endorsed"] = config.retention_days_endorsed
+        return stats
+
+    @app.post("/api/ward-room/prune")
+    async def ward_room_prune():
+        if not runtime.ward_room:
+            return JSONResponse({"error": "Ward Room not enabled"}, status_code=503)
+        config = runtime.config.ward_room
+        archive_path = None
+        if config.archive_enabled:
+            archive_dir = runtime._data_dir / "ward_room_archive"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            from datetime import datetime
+            month = datetime.now().strftime("%Y-%m")
+            archive_path = str(archive_dir / f"ward_room_archive_{month}.jsonl")
+        result = await runtime.ward_room.prune_old_threads(
+            retention_days=config.retention_days,
+            retention_days_endorsed=config.retention_days_endorsed,
+            retention_days_captain=config.retention_days_captain,
+            archive_path=archive_path,
+        )
+        # Don't expose internal pruned_thread_ids list
+        result.pop("pruned_thread_ids", None)
+        return result
+
     # --- Assignments (AD-408) ---
 
     @app.get("/api/assignments")

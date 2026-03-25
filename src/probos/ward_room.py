@@ -204,10 +204,11 @@ _MENTION_PATTERN = re.compile(r'@(\w+)')
 class WardRoomService:
     """Ship's Computer communication fabric — Reddit-style threaded discussions."""
 
-    def __init__(self, db_path: str | None = None, emit_event: Any = None):
+    def __init__(self, db_path: str | None = None, emit_event: Any = None, episodic_memory: Any = None):
         self.db_path = db_path
         self._db: aiosqlite.Connection | None = None
         self._emit_event = emit_event  # Callback for WebSocket broadcasting
+        self._episodic_memory = episodic_memory  # AD-430a: For storing conversation episodes
         self._channel_cache: list[dict[str, Any]] = []  # Sync cache for state_snapshot
 
     async def start(self) -> None:
@@ -234,6 +235,258 @@ class WardRoomService:
         if self._db:
             await self._db.close()
             self._db = None
+
+    # ------------------------------------------------------------------
+    # Pruning & Archival (AD-416)
+    # ------------------------------------------------------------------
+
+    async def prune_old_threads(
+        self,
+        retention_days: int = 7,
+        retention_days_endorsed: int = 30,
+        retention_days_captain: int = 0,
+        archive_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Prune old threads, optionally archiving to JSONL first.
+
+        Returns summary dict with counts.
+        """
+        if not self._db:
+            return {"threads_pruned": 0, "posts_pruned": 0, "endorsements_pruned": 0,
+                    "archived_to": None}
+
+        now = time.time()
+        regular_cutoff = now - (retention_days * 86400)
+        endorsed_cutoff = now - (retention_days_endorsed * 86400)
+
+        # Find candidate threads (unpinned, older than regular cutoff)
+        candidates: list[dict[str, Any]] = []
+        async with self._db.execute(
+            "SELECT id, channel_id, author_id, title, body, created_at, last_activity, "
+            "pinned, locked, thread_mode, max_responders, reply_count, net_score, "
+            "author_callsign, channel_name "
+            "FROM threads WHERE pinned = 0 AND last_activity < ?",
+            (regular_cutoff,),
+        ) as cursor:
+            async for row in cursor:
+                candidates.append({
+                    "id": row[0], "channel_id": row[1], "author_id": row[2],
+                    "title": row[3], "body": row[4], "created_at": row[5],
+                    "last_activity": row[6], "pinned": bool(row[7]), "locked": bool(row[8]),
+                    "thread_mode": row[9], "max_responders": row[10],
+                    "reply_count": row[11], "net_score": row[12],
+                    "author_callsign": row[13], "channel_name": row[14],
+                })
+
+        # Filter: apply endorsed and captain retention
+        pruneable: list[dict[str, Any]] = []
+        for t in candidates:
+            # Endorsed threads get extended retention
+            if t["net_score"] > 0 and t["last_activity"] >= endorsed_cutoff:
+                continue
+            # Captain posts with indefinite retention
+            if t["author_id"] == "captain" and retention_days_captain == 0:
+                continue
+            pruneable.append(t)
+
+        if not pruneable:
+            return {"threads_pruned": 0, "posts_pruned": 0, "endorsements_pruned": 0,
+                    "archived_to": None}
+
+        thread_ids = [t["id"] for t in pruneable]
+
+        # Collect posts for archive
+        post_map: dict[str, list[dict]] = {tid: [] for tid in thread_ids}
+        placeholders = ", ".join("?" for _ in thread_ids)
+        async with self._db.execute(
+            f"SELECT id, thread_id, author_id, author_callsign, body, created_at, net_score "
+            f"FROM posts WHERE thread_id IN ({placeholders})",
+            thread_ids,
+        ) as cursor:
+            async for row in cursor:
+                post_map[row[1]].append({
+                    "id": row[0], "author_id": row[2], "author_callsign": row[3],
+                    "body": row[4], "created_at": row[5], "net_score": row[6],
+                })
+
+        # Collect post IDs for endorsement cleanup
+        all_post_ids: list[str] = []
+        for posts in post_map.values():
+            all_post_ids.extend(p["id"] for p in posts)
+
+        # Archive to JSONL if requested
+        if archive_path:
+            import os
+            os.makedirs(os.path.dirname(archive_path) if os.path.dirname(archive_path) else ".", exist_ok=True)
+            with open(archive_path, "a", encoding="utf-8") as f:
+                for t in pruneable:
+                    record = {
+                        "thread_id": t["id"],
+                        "channel_id": t["channel_id"],
+                        "author_id": t["author_id"],
+                        "author_callsign": t["author_callsign"],
+                        "title": t["title"],
+                        "body": t["body"],
+                        "created_at": t["created_at"],
+                        "last_activity": t["last_activity"],
+                        "thread_mode": t["thread_mode"],
+                        "net_score": t["net_score"],
+                        "reply_count": t["reply_count"],
+                        "posts": post_map.get(t["id"], []),
+                        "pruned_at": now,
+                    }
+                    f.write(json.dumps(record) + "\n")
+
+        # Delete in FK-safe order
+        target_ids = thread_ids + all_post_ids
+        if target_ids:
+            t_placeholders = ", ".join("?" for _ in target_ids)
+            endorsement_cursor = await self._db.execute(
+                f"SELECT COUNT(*) FROM endorsements WHERE target_id IN ({t_placeholders})",
+                target_ids,
+            )
+            endorsement_count = (await endorsement_cursor.fetchone())[0]
+            await endorsement_cursor.close()
+            await self._db.execute(
+                f"DELETE FROM endorsements WHERE target_id IN ({t_placeholders})",
+                target_ids,
+            )
+        else:
+            endorsement_count = 0
+
+        p_placeholders = ", ".join("?" for _ in thread_ids)
+        post_cursor = await self._db.execute(
+            f"SELECT COUNT(*) FROM posts WHERE thread_id IN ({p_placeholders})",
+            thread_ids,
+        )
+        post_count = (await post_cursor.fetchone())[0]
+        await post_cursor.close()
+        await self._db.execute(
+            f"DELETE FROM posts WHERE thread_id IN ({p_placeholders})",
+            thread_ids,
+        )
+        await self._db.execute(
+            f"DELETE FROM threads WHERE id IN ({p_placeholders})",
+            thread_ids,
+        )
+        await self._db.commit()
+
+        summary = {
+            "threads_pruned": len(thread_ids),
+            "posts_pruned": post_count,
+            "endorsements_pruned": endorsement_count,
+            "archived_to": archive_path,
+            "pruned_thread_ids": thread_ids,
+        }
+        self._emit("ward_room_pruned", summary)
+
+        # Update cached stats
+        self._last_stats = await self._build_stats()
+
+        return summary
+
+    async def get_stats(self) -> dict[str, Any]:
+        """Return basic Ward Room stats for monitoring."""
+        if hasattr(self, '_last_stats') and self._last_stats:
+            return dict(self._last_stats)
+        return await self._build_stats()
+
+    async def _build_stats(self) -> dict[str, Any]:
+        """Build stats from DB."""
+        if not self._db:
+            return {"total_threads": 0, "total_posts": 0, "total_endorsements": 0,
+                    "oldest_thread_at": None, "db_size_bytes": 0}
+
+        import os
+        stats: dict[str, Any] = {}
+
+        async with self._db.execute("SELECT COUNT(*) FROM threads") as cur:
+            stats["total_threads"] = (await cur.fetchone())[0]
+        async with self._db.execute("SELECT COUNT(*) FROM posts") as cur:
+            stats["total_posts"] = (await cur.fetchone())[0]
+        async with self._db.execute("SELECT COUNT(*) FROM endorsements") as cur:
+            stats["total_endorsements"] = (await cur.fetchone())[0]
+        async with self._db.execute("SELECT MIN(created_at) FROM threads") as cur:
+            row = await cur.fetchone()
+            stats["oldest_thread_at"] = row[0] if row and row[0] else None
+        stats["db_size_bytes"] = os.path.getsize(self.db_path) if self.db_path else 0
+
+        self._last_stats = stats
+        return stats
+
+    async def count_pruneable(
+        self,
+        retention_days: int = 7,
+        retention_days_endorsed: int = 30,
+        retention_days_captain: int = 0,
+    ) -> int:
+        """Dry-run count of pruneable threads."""
+        if not self._db:
+            return 0
+
+        now = time.time()
+        regular_cutoff = now - (retention_days * 86400)
+        endorsed_cutoff = now - (retention_days_endorsed * 86400)
+
+        count = 0
+        async with self._db.execute(
+            "SELECT author_id, last_activity, net_score "
+            "FROM threads WHERE pinned = 0 AND last_activity < ?",
+            (regular_cutoff,),
+        ) as cursor:
+            async for row in cursor:
+                if row[2] > 0 and row[1] >= endorsed_cutoff:
+                    continue
+                if row[0] == "captain" and retention_days_captain == 0:
+                    continue
+                count += 1
+        return count
+
+    async def start_prune_loop(self, config: Any, archive_dir: Any) -> None:
+        """Start background pruning task (AD-416)."""
+        import asyncio
+        self._prune_config = config
+        self._archive_dir = archive_dir
+        self._prune_task = asyncio.create_task(self._prune_loop())
+
+    async def _prune_loop(self) -> None:
+        """Periodic pruning of old threads."""
+        import asyncio
+        from datetime import datetime
+        while True:
+            await asyncio.sleep(self._prune_config.prune_interval_seconds)
+            try:
+                archive_path = None
+                if self._prune_config.archive_enabled:
+                    from pathlib import Path
+                    Path(self._archive_dir).mkdir(parents=True, exist_ok=True)
+                    month = datetime.now().strftime("%Y-%m")
+                    archive_path = str(Path(self._archive_dir) / f"ward_room_archive_{month}.jsonl")
+                result = await self.prune_old_threads(
+                    retention_days=self._prune_config.retention_days,
+                    retention_days_endorsed=self._prune_config.retention_days_endorsed,
+                    retention_days_captain=self._prune_config.retention_days_captain,
+                    archive_path=archive_path,
+                )
+                if result["threads_pruned"] > 0:
+                    logger.info(
+                        "Ward Room pruned: %d threads, %d posts archived to %s",
+                        result["threads_pruned"], result["posts_pruned"],
+                        result.get("archived_to", "none"),
+                    )
+            except Exception:
+                logger.warning("Ward Room prune failed", exc_info=True)
+
+    async def stop_prune_loop(self) -> None:
+        """Cancel the prune task."""
+        import asyncio
+        if hasattr(self, '_prune_task') and self._prune_task:
+            self._prune_task.cancel()
+            try:
+                await self._prune_task
+            except asyncio.CancelledError:
+                pass
+            self._prune_task = None
 
     # ------------------------------------------------------------------
     # Event emission
@@ -582,6 +835,34 @@ class WardRoomService:
             "thread_mode": thread_mode,
             "mentions": self._extract_mentions(body),
         })
+        # AD-430a: Store thread creation as authoring agent's episodic memory
+        if self._episodic_memory and author_id:
+            try:
+                import time as _time
+                from probos.types import Episode
+                channel_name = ""
+                for ch in self._channel_cache:
+                    if ch.get("id") == channel_id:
+                        channel_name = ch.get("name", "")
+                        break
+                episode = Episode(
+                    user_input=f"[Ward Room] {channel_name} — {author_callsign or author_id}: {title}",
+                    timestamp=_time.time(),
+                    agent_ids=[author_id],
+                    outcomes=[{
+                        "intent": "ward_room_post",
+                        "success": True,
+                        "channel": channel_name,
+                        "thread_title": title,
+                        "thread_id": thread.id,
+                        "is_reply": False,
+                        "thread_mode": thread_mode,
+                    }],
+                    reflection=f"{author_callsign or author_id} posted to {channel_name}: {title[:100]}",
+                )
+                await self._episodic_memory.store(episode)
+            except Exception:
+                pass  # Non-critical — don't block Ward Room operations
         return thread
 
     async def update_thread(
@@ -743,6 +1024,37 @@ class WardRoomService:
             "author_callsign": author_callsign,
             "mentions": self._extract_mentions(body),
         })
+        # AD-430a: Store reply as authoring agent's episodic memory
+        if self._episodic_memory and author_id:
+            try:
+                import time as _time
+                from probos.types import Episode
+                # Get thread title for context
+                thread_title = ""
+                try:
+                    row = await self._db.execute_fetchone(
+                        "SELECT title, channel_id FROM threads WHERE id = ?", (thread_id,)
+                    )
+                    if row:
+                        thread_title = row[0] or ""
+                except Exception:
+                    pass
+                episode = Episode(
+                    user_input=f"[Ward Room reply] {author_callsign or author_id}: {body[:200]}",
+                    timestamp=_time.time(),
+                    agent_ids=[author_id],
+                    outcomes=[{
+                        "intent": "ward_room_post",
+                        "success": True,
+                        "thread_title": thread_title,
+                        "thread_id": thread_id,
+                        "is_reply": True,
+                    }],
+                    reflection=f"{author_callsign or author_id} replied in thread '{thread_title[:80]}'.",
+                )
+                await self._episodic_memory.store(episode)
+            except Exception:
+                pass  # Non-critical
         return post
 
     async def edit_post(self, post_id: str, author_id: str, new_body: str) -> WardRoomPost:

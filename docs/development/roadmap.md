@@ -1446,7 +1446,7 @@ Self-originated goals emerge from: dream consolidation ("I keep seeing pattern X
 
 **AD-415: Proactive Cooldown Persistence** — Roadmap. When the Captain adjusts an agent's proactive think interval via the HXI Health tab slider (60s–1800s), the value is stored in-memory on the `ProactiveCognitiveLoop` object. After a restart, all custom cooldowns reset to the 300s default. The Captain's tuning is lost. **Fix:** Persist per-agent cooldowns to either: (a) KnowledgeStore (`knowledge/proactive/cooldowns.json`), which means they reset on `probos reset` (appropriate — reset = fresh start); or (b) a lightweight SQLite table or JSON file in `data_dir`, which survives reset. Option (a) is preferred — if you reset the crew's memory, resetting their duty tempo is consistent. The `PUT /api/agent/{id}/proactive-cooldown` endpoint should write-through to storage, and `ProactiveCognitiveLoop.start()` should restore saved cooldowns.
 
-**AD-416: Ward Room Archival & Pruning** — Roadmap. The proactive loop generates a Ward Room post every time an agent thinks successfully. With ~8 crew agents thinking every ~5 minutes, that's ~96 posts/hour, ~2,300 posts/day. `ward_room.db` grows unbounded — no archival, no pruning, no retention policy. Over weeks of operation this becomes a performance and storage problem. **Fix:** (1) Add a configurable retention window (default: 7 days for regular posts, 30 days for endorsed/flagged posts, indefinite for Captain posts). (2) Pruned posts are archived to a compressed JSON file (`data_dir/ward_room_archive/YYYY-MM.jsonl.gz`) before deletion — the ship's log is never truly lost, just moved to cold storage. (3) Add `ward_room.retention_days` and `ward_room.archive_enabled` to config. (4) Pruning runs on a daily schedule (via PersistentTaskStore or dream scheduler). Naval metaphor: the active deck log covers the current patrol; completed logs are bound and shelved in the ship's library.
+**AD-416: Ward Room Archival & Pruning** — **COMPLETE**. The proactive loop generates a Ward Room post every time an agent thinks successfully. With ~8 crew agents thinking every ~5 minutes, that's ~96 posts/hour, ~2,300 posts/day. `ward_room.db` grows unbounded — no archival, no pruning, no retention policy. **Implemented:** (1) 5 new WardRoomConfig fields: `retention_days` (7), `retention_days_endorsed` (30), `retention_days_captain` (0=indefinite), `archive_enabled` (True), `prune_interval_seconds` (86400). (2) `prune_old_threads()` — selective deletion with JSONL archival, respecting pinned/endorsed/captain retention tiers. Cascading deletes (thread → posts → endorsements). (3) `get_stats()` (thread/post/endorsement counts + DB size) and `count_pruneable()` (dry-run count). (4) `start_prune_loop()`/`stop_prune_loop()` — background asyncio task with monthly JSONL rotation. (5) Runtime: prune loop starts after Ward Room init, stops before shutdown. `_cleanup_ward_room_tracking()` clears stale in-memory dicts on `ward_room_pruned` event. `ward_room_stats` added to `build_state_snapshot()`. (6) REST API: `GET /api/ward-room/stats`, `POST /api/ward-room/prune` (manual Captain trigger). 14 new tests in TestWardRoomPruning. 3196 pytest + 118 vitest = 3314 total.
 
 **AD-417: Dream Scheduler Proactive-Loop Awareness** — **COMPLETE.** The proactive loop prevented the system from reaching true idle state — the dream scheduler's idle threshold (`idle_threshold_seconds: 300`) was met quickly after last user command, even while agents were proactively busy. Full dreams fired every 10 minutes during proactive activity; micro-dream EmergentDetector produced post-reset trust anomaly noise. **Implemented:** (1) `record_proactive_activity()` method + `_last_proactive_time` field on DreamScheduler. (2) Full dream gate: `truly_idle = min(idle_time, proactive_idle)` — both user AND proactive activity must be quiet for idle threshold. (3) `is_proactively_busy` property; `_on_post_micro_dream()` skips EmergentDetector analysis during proactive-busy periods (micro-dreams still replay episodes and update Hebbian weights). (4) Wired in `_think_for_agent()` after duty check, before LLM call. (5) `proactive_extends_idle` config toggle (DreamingConfig, default True). 9 tests in TestDreamSchedulerProactiveAwareness. *Design insight: "The system is three things — active (user), busy (proactive), or idle (dreaming). Dreams are for idle, not for busy."*
 
@@ -1930,6 +1930,138 @@ Agents query the ontology through three channels:
 4. AD-429d: KnowledgeStore indexing + agent self-reasoning (agents can query the ontology)
 
 *Connects to: AD-428 (Skill Framework — becomes Skills domain), AD-427 (ACM — operates on ontology data), AD-398 (Three-tier classification — formalized in Crew domain), AD-424 (Thread Classification — formalized in Communication domain), AD-423 (Tool Registry — formalized in Resources domain), AD-419 (Duty Schedule — formalized in Operations domain), AD-357 (Earned Agency — cross-domain: trust from Crew × skills from Skills × authority from Organization), Phase 32 (Cognitive Division of Labor — model-agent assignment in Resources domain), Standing Orders (operations domain formalizes the tier system), Federation Constitution (Westworld Principle — Crew domain IS the identity grounding). Intellectual lineage: W3C ORG (organizational structure), MOISE+ (MAS organization with deontic specification), DTDL/WoT (digital twin modeling patterns), ESCO/O\*NET (competency classification), SKOS (taxonomy patterns), FIPA (agent identity and communication), LinkML (schema definition). Novel contribution: the first formal ontology describing an AI agent platform as a self-aware vessel — a system that understands its own structure through a queryable knowledge model, not just configuration files and hardcoded constants.*
+
+**AD-430: Agent Experiential Memory — Closing the Memory Gap** — Roadmap. *Critical infrastructure AD — prerequisite to Procedural Learning / Cognitive JIT and Skill Framework (AD-428).* ProbOS agents have episodic memory infrastructure (ChromaDB-backed `EpisodicMemory` with sovereign shards, semantic recall, agent filtering), but **most agent activity never writes to it**. Today only 5 paths write episodes: (1) DAG execution (`runtime._execute_dag()`), (2) shell command rendering, (3) shell `/hail` 1:1 sessions, (4) feedback/corrections, (5) QA smoke tests. Three critical categories of agent experience are **never recorded**: proactive thoughts, Ward Room conversations, and HXI 1:1 conversations. The result: agents can't remember their own thoughts, can't recall what they discussed with crew, and can't maintain continuity across Captain interactions. Every proactive think cycle starts from zero. Every 1:1 message is processed without context. An agent that performed the same diagnostic 10 times has no memory of having done it.
+
+*"I create memories as I perform actions. The agents should work the same way."*
+
+This is the foundational gap preventing agent development. Without experiential memory: no Procedural Learning (can't crystallize patterns you don't remember), no meaningful skill acquisition (can't demonstrate growth without evidence), no genuine Ward Room participation (can't recall what was discussed), no multi-turn relationships (every Captain interaction is a first meeting). AD-430 closes this gap by making memory recording automatic and pervasive — every agent action produces an episodic record, and agents consult their memories before acting.
+
+**The Five Pillars:**
+
+**(1) Proactive Think Episodes** — When an agent thinks proactively (`proactive_think` intent), the thought and its outcome become an episode. Currently `proactive.py._think_for_agent()` gathers context (including episodic recall), sends the intent, posts the result to Ward Room, but never stores an episode. This means the next proactive cycle recalls... nothing from the last one. **Design:** After a successful proactive think, store an episode:
+```python
+Episode(
+    user_input=f"[Proactive thought] {agent_callsign}: {thought_summary}",
+    agent_ids=[agent.id],
+    outcomes=[{
+        "intent": "proactive_think",
+        "success": True,
+        "response": result_text,
+        "context_summary": context_parts[:200],
+        "posted_to_ward_room": bool(ward_room_thread_id),
+    }],
+    reflection=f"{agent_callsign} observed: {thought_summary[:100]}",
+)
+```
+Store even on failure/`[NO_RESPONSE]` — "I thought about it and had nothing to say" is still a memory. Prevents redundant re-analysis of the same stimuli.
+
+**(2) Ward Room Conversation Episodes** — When an agent creates a thread or replies to one, that conversation becomes an episode. Currently `ward_room.py` persists threads/posts to SQLite but never touches episodic memory. The Ward Room is the primary social learning channel, yet agents have no personal memory of participating. **Design:** Hook into the Ward Room event emission points (`_emit("ward_room_thread_created", ...)` and `_emit("ward_room_post_created", ...)`). After an agent creates a thread or post, store an episode for the **authoring agent**:
+```python
+Episode(
+    user_input=f"[Ward Room] {channel_name} — {callsign}: {body[:200]}",
+    agent_ids=[author_id],
+    outcomes=[{
+        "intent": "ward_room_post",
+        "success": True,
+        "channel": channel_name,
+        "thread_title": thread_title,
+        "thread_id": thread_id,
+        "is_reply": bool(parent_id),
+    }],
+    reflection=f"{callsign} posted to {channel_name}: {body[:100]}",
+)
+```
+Only the **authoring agent** gets the episode (sovereign memory). Reading a thread is not a memory; contributing to one is. This respects the Nooplex Knowledge Model: "Private memory = diary. The Ward Room post itself is in the shared library (SQLite). The memory of having written it is personal."
+
+**(3) HXI 1:1 Conversation Episodes + History Passing** — Two sub-problems:
+
+**(3a) Episode storage:** The HXI `direct_message` path (`api.py` line 431) fires an `IntentMessage` and returns the response, but never stores an episode. The shell `/hail` path does store episodes (shell.py line 1528). Fix: after the API receives a response from `intent_bus.send()`, store an episode matching the shell pattern:
+```python
+Episode(
+    user_input=f"[1:1 with {callsign}] Captain: {message_text}",
+    agent_ids=[agent_id],
+    outcomes=[{
+        "intent": "direct_message",
+        "success": True,
+        "response": response_text,
+        "session_type": "1:1",
+        "source": "hxi",
+        "callsign": callsign,
+    }],
+    reflection=f"Captain had a 1:1 conversation with {callsign}.",
+)
+```
+
+**(3b) Conversation history passing:** Currently the HXI sends each `@callsign message` as an independent `IntentMessage` with only `params.text`. The agent has zero context of prior exchanges. The HXI **does** maintain `conversationHistory` per agent client-side — it just never sends it back. **Design:** Extend the `IntentMessage` params to include recent conversation history. The API extracts the last N exchanges from the HXI request and passes them as `params.history`:
+```python
+intent = IntentMessage(
+    intent="direct_message",
+    params={
+        "text": message_text,
+        "from": "hxi",
+        "session": False,
+        "history": [  # Last 5 exchanges from HXI
+            {"role": "user", "text": "previous message"},
+            {"role": "assistant", "text": "previous response"},
+        ],
+    },
+    target_agent_id=agent_id,
+)
+```
+The agent's `_build_user_message()` (in `cognitive_agent.py` or domain overrides) includes history in the LLM prompt, giving the agent conversational context. This mirrors how the shell `/hail` sessions work (`session_history`) but through the HXI API path. **Important:** History passing is a supplement, not a replacement, for episodic memory. History gives immediate context ("what did we just discuss?"). Episodic recall gives long-term context ("what has this agent discussed with the Captain across all sessions?"). Both are needed.
+
+**(4) Memory-Aware Decision Making** — Currently `cognitive_agent.decide()` goes straight from observation to LLM call with no memory consultation. The proactive loop is the ONLY path that injects episodic context (via `_gather_context()`). For `direct_message` and `ward_room_notification` intents, the agent operates with zero memory context. **Design:** Add a `_recall_relevant_memories()` step to the cognitive lifecycle, called between `perceive()` and `decide()`:
+```python
+async def handle_intent(self, intent):
+    observation = await self.perceive(intent)
+    # NEW: Enrich observation with relevant memories
+    memories = await self._recall_relevant_memories(observation)
+    if memories:
+        observation["episodic_context"] = memories
+    decision = await self.decide(observation)
+    ...
+```
+The `_recall_relevant_memories()` method: (a) extracts a query from the observation (the user's message for direct_message, the thread content for ward_room_notification), (b) calls `episodic_memory.recall_for_agent(self.id, query, k=3)`, (c) formats results as a concise context block. For `proactive_think`, memory recall already happens in `_gather_context()` — no change needed. The method is a no-op if `episodic_memory` is not available. **Budget:** Max 3 recalled episodes, max 200 chars per episode summary — keeps context lean. The LLM prompt includes a `## Recent Memories` section when memories are present.
+
+**(5) Act-Store Lifecycle Hook** — A generic post-act episode storage hook in `handle_intent()` itself, ensuring that ANY agent action produces a memory record without requiring every caller to implement storage:
+```python
+async def handle_intent(self, intent):
+    observation = await self.perceive(intent)
+    memories = await self._recall_relevant_memories(observation)
+    if memories:
+        observation["episodic_context"] = memories
+    decision = await self.decide(observation)
+    decision["intent"] = intent.intent
+    result = await self.act(decision)
+    report = await self.report(result)
+    # NEW: Store episode for this action
+    await self._store_action_episode(intent, decision, result)
+    return report
+```
+The `_store_action_episode()` method creates an Episode from the intent, decision, and result. **Only crew agents (Tier 3)** store episodes — infrastructure and utility agents don't have sovereign memory. Guard: `if not hasattr(self, 'episodic_memory') or not self.episodic_memory: return`. This is the universal safety net — even if specific callers (proactive loop, Ward Room, API) don't store episodes explicitly, the lifecycle hook captures the action. **Deduplication:** If the caller already stored an episode (shell `/hail`, explicit Pillar 1-3 storage), the lifecycle hook skips via a flag (`intent._episode_stored = True`).
+
+**Connection to Procedural Learning / Cognitive JIT (Phase 32):**
+
+AD-430 is the **prerequisite infrastructure** for Procedural Learning. The pipeline:
+
+1. **AD-430 (this):** Agents record every action as an episode → EpisodicMemory fills with operational history
+2. **Dream consolidation (existing):** Replays episodes, extracts patterns, strengthens Hebbian weights → identifies repeatable action patterns
+3. **Cognitive JIT (Phase 32, unnumbered):** When dream consolidation identifies a pattern that has succeeded N times with the same preconditions, it crystallizes into a deterministic procedure in KnowledgeStore → `decide()` checks procedural memory BEFORE invoking LLM → zero-token replay of known patterns
+4. **AD-428 (Skill Framework):** Crystallized procedures map to proficiency progression → agent demonstrably improves at specific skills → Level 3→4 transition (Competent → Enable)
+
+Without AD-430, dream consolidation has almost nothing to process (only DAG episodes). Cognitive JIT has no action history to crystallize. Skill progression has no evidence of practice. The entire developmental pipeline is bottlenecked on the memory gap.
+
+**Episode Volume Management:**
+
+With AD-430, episode generation increases significantly: 11 crew agents × ~12 proactive thinks/hour = ~132 thought episodes/hour, plus Ward Room posts, plus HXI interactions. At this rate, the 100K max_episodes won't be hit for weeks. But combined with AD-416 (Ward Room Archival), memory pruning becomes relevant. **Design:** EpisodicMemory already has LRU eviction (oldest-first when over max). No change needed now. Future: dream consolidation should promote high-value episode patterns to KnowledgeStore before eviction, preserving learned patterns while discarding raw episodes. This is already part of the Procedural Learning design.
+
+**Build Order:**
+1. AD-430a: Proactive think episodes + Ward Room conversation episodes (write paths — Pillars 1-2) — **COMPLETE.** 8 new tests (4 proactive, 4 ward room). 3204 pytest + 118 vitest = 3322 total.
+2. AD-430b: HXI 1:1 history passing + episode storage (Pillar 3 — requires UI + API changes)
+3. AD-430c: Memory-aware decision making + act-store lifecycle hook (Pillars 4-5 — the recall + universal storage)
+
+*Connects to: Procedural Learning / Cognitive JIT (Phase 32 — requires action history to crystallize), AD-428 (Skill Framework — requires evidence of practice for proficiency), AD-416 (Ward Room Archival — memory growth management), AD-425 (Ward Room Browsing — related context gathering), Dream consolidation (existing — episode replay and pattern extraction), Nooplex Knowledge Model (private diary vs. shared library). The Episode dataclass is infrastructure; what agents DO with their memories defines their growth.*
 
 ---
 

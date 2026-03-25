@@ -275,6 +275,12 @@ class WardRoomConfig(BaseModel):
     agent_cooldown_seconds: float = 45  # AD-407d: cooldown for agent-triggered responses
     max_agent_responses_per_thread: int = 3  # BF-016b: per-agent cap per thread (prevents explosion)
     default_discuss_responder_cap: int = 3  # AD-424: Default max_responders for DISCUSS threads
+    # AD-416: Retention & archival
+    retention_days: int = 7                    # Regular posts older than this are pruned
+    retention_days_endorsed: int = 30          # Posts with net_score > 0 retained longer
+    retention_days_captain: int = 0            # 0 = indefinite retention for Captain posts
+    archive_enabled: bool = True               # Write pruned posts to JSONL archive before deletion
+    prune_interval_seconds: float = 86400.0    # How often to run pruning (default: daily)
 
 
 class AssignmentConfig(BaseModel):

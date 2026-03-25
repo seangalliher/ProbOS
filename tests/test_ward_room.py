@@ -1,5 +1,8 @@
 """Tests for WardRoomService (AD-407a)."""
 
+import json
+import time
+
 import pytest
 import pytest_asyncio
 
@@ -751,4 +754,374 @@ CREATE TABLE IF NOT EXISTS mod_actions (
         )
         assert thread.thread_mode == "discuss"
         assert thread.max_responders == 0
+        await svc.stop()
+
+
+# ---------------------------------------------------------------------------
+# Ward Room Pruning tests (AD-416)
+# ---------------------------------------------------------------------------
+
+class TestWardRoomPruning:
+
+    async def _age_thread(self, wr, thread_id: str, days_old: float):
+        """Set a thread's timestamps to be N days old."""
+        old_ts = time.time() - (days_old * 86400)
+        await wr._db.execute(
+            "UPDATE threads SET created_at = ?, last_activity = ? WHERE id = ?",
+            (old_ts, old_ts, thread_id),
+        )
+        await wr._db.commit()
+
+    @pytest.mark.asyncio
+    async def test_prune_old_thread(self, ward_room):
+        """Thread older than retention_days is deleted."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(ch.id, "agent-1", "Old Thread", "body")
+        await self._age_thread(ward_room, thread.id, days_old=10)
+
+        result = await ward_room.prune_old_threads(retention_days=7)
+        assert result["threads_pruned"] == 1
+
+        # Thread is gone
+        detail = await ward_room.get_thread(thread.id)
+        assert detail is None
+
+    @pytest.mark.asyncio
+    async def test_prune_preserves_recent(self, ward_room):
+        """Thread within retention_days survives."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(ch.id, "agent-1", "Recent", "body")
+        # Default timestamps are now — well within 7 days
+
+        result = await ward_room.prune_old_threads(retention_days=7)
+        assert result["threads_pruned"] == 0
+
+        detail = await ward_room.get_thread(thread.id)
+        assert detail is not None
+
+    @pytest.mark.asyncio
+    async def test_prune_preserves_endorsed(self, ward_room):
+        """Thread with net_score > 0 uses endorsed retention window."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(ch.id, "agent-1", "Good Thread", "body")
+        await self._age_thread(ward_room, thread.id, days_old=10)
+
+        # Upvote the thread (sets net_score > 0)
+        await ward_room._db.execute(
+            "UPDATE threads SET net_score = 3 WHERE id = ?", (thread.id,),
+        )
+        await ward_room._db.commit()
+
+        # 10 days old, but net_score > 0 and endorsed retention = 30 days → survives
+        result = await ward_room.prune_old_threads(
+            retention_days=7, retention_days_endorsed=30,
+        )
+        assert result["threads_pruned"] == 0
+
+    @pytest.mark.asyncio
+    async def test_prune_preserves_pinned(self, ward_room):
+        """Pinned threads are never pruned."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(ch.id, "agent-1", "Pinned", "body")
+        await self._age_thread(ward_room, thread.id, days_old=100)
+
+        # Pin the thread
+        await ward_room.update_thread(thread.id, pinned=True)
+
+        result = await ward_room.prune_old_threads(retention_days=7)
+        assert result["threads_pruned"] == 0
+
+    @pytest.mark.asyncio
+    async def test_prune_preserves_captain(self, ward_room):
+        """Captain-authored threads survive with retention_days_captain=0."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(ch.id, "captain", "Captain Post", "body")
+        await self._age_thread(ward_room, thread.id, days_old=100)
+
+        result = await ward_room.prune_old_threads(
+            retention_days=7, retention_days_captain=0,
+        )
+        assert result["threads_pruned"] == 0
+
+    @pytest.mark.asyncio
+    async def test_prune_cascades_posts(self, ward_room):
+        """Posts belonging to pruned threads are deleted."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(ch.id, "agent-1", "Old", "body")
+        await ward_room.create_post(thread.id, "agent-2", "Reply 1")
+        await ward_room.create_post(thread.id, "agent-3", "Reply 2")
+        await self._age_thread(ward_room, thread.id, days_old=10)
+
+        result = await ward_room.prune_old_threads(retention_days=7)
+        assert result["threads_pruned"] == 1
+        assert result["posts_pruned"] == 2
+
+    @pytest.mark.asyncio
+    async def test_prune_cascades_endorsements(self, ward_room):
+        """Endorsements on pruned threads/posts are deleted."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(ch.id, "agent-1", "Old", "body")
+        post = await ward_room.create_post(thread.id, "agent-2", "Reply")
+        # Add endorsements
+        await ward_room.endorse(post.id, "post", "agent-3", "up")
+        await self._age_thread(ward_room, thread.id, days_old=10)
+
+        result = await ward_room.prune_old_threads(retention_days=7)
+        assert result["endorsements_pruned"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_prune_archives_to_jsonl(self, ward_room, tmp_path):
+        """Pruned threads are written to JSONL file with correct format."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            ch.id, "agent-1", "Archive Me", "body text",
+            author_callsign="LaForge",
+        )
+        await ward_room.create_post(thread.id, "agent-2", "Reply",
+                                    author_callsign="Worf")
+        await self._age_thread(ward_room, thread.id, days_old=10)
+
+        archive_path = str(tmp_path / "archive.jsonl")
+        await ward_room.prune_old_threads(retention_days=7, archive_path=archive_path)
+
+        with open(archive_path) as f:
+            lines = f.readlines()
+        assert len(lines) == 1
+        record = json.loads(lines[0])
+        assert record["thread_id"] == thread.id
+        assert record["title"] == "Archive Me"
+        assert record["author_callsign"] == "LaForge"
+        assert len(record["posts"]) == 1
+        assert record["posts"][0]["author_callsign"] == "Worf"
+        assert "pruned_at" in record
+
+    @pytest.mark.asyncio
+    async def test_prune_archive_appends(self, ward_room, tmp_path):
+        """Multiple prune runs append to same file."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        archive_path = str(tmp_path / "archive.jsonl")
+
+        # First prune run
+        t1 = await ward_room.create_thread(ch.id, "agent-1", "Thread 1", "body")
+        await self._age_thread(ward_room, t1.id, days_old=10)
+        await ward_room.prune_old_threads(retention_days=7, archive_path=archive_path)
+
+        # Second prune run
+        t2 = await ward_room.create_thread(ch.id, "agent-1", "Thread 2", "body")
+        await self._age_thread(ward_room, t2.id, days_old=10)
+        await ward_room.prune_old_threads(retention_days=7, archive_path=archive_path)
+
+        with open(archive_path) as f:
+            lines = f.readlines()
+        assert len(lines) == 2
+
+    @pytest.mark.asyncio
+    async def test_prune_no_archive(self, ward_room):
+        """When archive_path is None, no file is written."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(ch.id, "agent-1", "No Archive", "body")
+        await self._age_thread(ward_room, thread.id, days_old=10)
+
+        result = await ward_room.prune_old_threads(
+            retention_days=7, archive_path=None,
+        )
+        assert result["threads_pruned"] == 1
+        assert result["archived_to"] is None
+
+    @pytest.mark.asyncio
+    async def test_count_pruneable(self, ward_room):
+        """Dry-run count matches actual prune count."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        # Create 3 old threads + 1 recent
+        for i in range(3):
+            t = await ward_room.create_thread(ch.id, "agent-1", f"Old {i}", "body")
+            await self._age_thread(ward_room, t.id, days_old=10)
+        await ward_room.create_thread(ch.id, "agent-1", "Recent", "body")
+
+        count = await ward_room.count_pruneable(retention_days=7)
+        assert count == 3
+
+        result = await ward_room.prune_old_threads(retention_days=7)
+        assert result["threads_pruned"] == count
+
+    @pytest.mark.asyncio
+    async def test_get_stats(self, ward_room):
+        """Returns correct counts and oldest_thread_at."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        t1 = await ward_room.create_thread(ch.id, "agent-1", "First", "body")
+        await ward_room.create_thread(ch.id, "agent-1", "Second", "body")
+        await ward_room.create_post(t1.id, "agent-2", "Reply")
+
+        stats = await ward_room.get_stats()
+        assert stats["total_threads"] == 2
+        assert stats["total_posts"] == 1
+        assert stats["oldest_thread_at"] is not None
+        assert stats["db_size_bytes"] > 0
+
+    @pytest.mark.asyncio
+    async def test_prune_returns_summary(self, ward_room):
+        """Return dict has correct keys and counts."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(ch.id, "agent-1", "Summary", "body")
+        await ward_room.create_post(thread.id, "agent-2", "Reply")
+        await self._age_thread(ward_room, thread.id, days_old=10)
+
+        result = await ward_room.prune_old_threads(retention_days=7)
+        assert "threads_pruned" in result
+        assert "posts_pruned" in result
+        assert "endorsements_pruned" in result
+        assert "archived_to" in result
+        assert result["threads_pruned"] == 1
+        assert result["posts_pruned"] == 1
+
+    @pytest.mark.asyncio
+    async def test_prune_emits_event(self, ward_room):
+        """ward_room_pruned event emitted with summary."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(ch.id, "agent-1", "Event", "body")
+        await self._age_thread(ward_room, thread.id, days_old=10)
+
+        ward_room._captured_events.clear()
+        await ward_room.prune_old_threads(retention_days=7)
+
+        evt = next(
+            (e for e in ward_room._captured_events
+             if e["type"] == "ward_room_pruned"),
+            None,
+        )
+        assert evt is not None
+        assert evt["data"]["threads_pruned"] == 1
+
+
+# ---------------------------------------------------------------------------
+# AD-430a: Ward Room → episodic memory
+# ---------------------------------------------------------------------------
+
+
+class TestWardRoomEpisodicMemory:
+    """AD-430a: Ward Room posts stored as episodic memory."""
+
+    @pytest.mark.asyncio
+    async def test_thread_creation_stores_episode(self, tmp_path):
+        """Thread creation stores an episode for the authoring agent."""
+        from unittest.mock import AsyncMock
+
+        mock_mem = AsyncMock()
+
+        svc = WardRoomService(
+            db_path=str(tmp_path / "wr.db"),
+            episodic_memory=mock_mem,
+        )
+        await svc.start()
+
+        channels = await svc.list_channels()
+        ch = channels[0]
+        thread = await svc.create_thread(
+            ch.id, "agent-1", "Test observation", "Body text",
+            author_callsign="Number One",
+        )
+
+        mock_mem.store.assert_called_once()
+        episode = mock_mem.store.call_args[0][0]
+        assert "[Ward Room]" in episode.user_input
+        assert episode.agent_ids == ["agent-1"]
+        assert episode.outcomes[0]["intent"] == "ward_room_post"
+        assert episode.outcomes[0]["is_reply"] is False
+        assert episode.outcomes[0]["thread_id"] == thread.id
+
+        await svc.stop()
+
+    @pytest.mark.asyncio
+    async def test_post_reply_stores_episode(self, tmp_path):
+        """Reply post stores an episode for the replying agent."""
+        from unittest.mock import AsyncMock
+
+        mock_mem = AsyncMock()
+
+        svc = WardRoomService(
+            db_path=str(tmp_path / "wr.db"),
+            episodic_memory=mock_mem,
+        )
+        await svc.start()
+
+        channels = await svc.list_channels()
+        ch = channels[0]
+        thread = await svc.create_thread(
+            ch.id, "agent-1", "Discussion topic", "Let's discuss",
+            author_callsign="Number One",
+        )
+        mock_mem.store.reset_mock()
+
+        post = await svc.create_post(
+            thread.id, "agent-2", "I agree with the assessment.",
+            author_callsign="LaForge",
+        )
+
+        mock_mem.store.assert_called_once()
+        episode = mock_mem.store.call_args[0][0]
+        assert "[Ward Room reply]" in episode.user_input
+        assert episode.outcomes[0]["is_reply"] is True
+
+        await svc.stop()
+
+    @pytest.mark.asyncio
+    async def test_no_episodic_memory_no_crash(self, tmp_path):
+        """Without episodic_memory, thread/post creation works fine."""
+        svc = WardRoomService(
+            db_path=str(tmp_path / "wr.db"),
+            episodic_memory=None,
+        )
+        await svc.start()
+
+        channels = await svc.list_channels()
+        ch = channels[0]
+        thread = await svc.create_thread(
+            ch.id, "agent-1", "Test", "Body",
+        )
+        assert thread is not None
+        post = await svc.create_post(
+            thread.id, "agent-2", "Reply body",
+        )
+        assert post is not None
+
+        await svc.stop()
+
+    @pytest.mark.asyncio
+    async def test_episode_store_failure_does_not_block_thread(self, tmp_path):
+        """Episodic memory failure doesn't block thread creation."""
+        from unittest.mock import AsyncMock
+
+        mock_mem = AsyncMock()
+        mock_mem.store = AsyncMock(side_effect=RuntimeError("ChromaDB down"))
+
+        svc = WardRoomService(
+            db_path=str(tmp_path / "wr.db"),
+            episodic_memory=mock_mem,
+        )
+        await svc.start()
+
+        channels = await svc.list_channels()
+        ch = channels[0]
+        thread = await svc.create_thread(
+            ch.id, "agent-1", "Test observation", "Important body",
+            author_callsign="Number One",
+        )
+        # Thread still created despite episode store failure
+        assert thread is not None
+        assert thread.title == "Test observation"
+
         await svc.stop()
