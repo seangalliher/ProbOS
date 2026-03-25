@@ -274,6 +274,7 @@ class WardRoomConfig(BaseModel):
     max_agent_rounds: int = 3           # AD-407d: max consecutive agent-only rounds per thread
     agent_cooldown_seconds: float = 45  # AD-407d: cooldown for agent-triggered responses
     max_agent_responses_per_thread: int = 3  # BF-016b: per-agent cap per thread (prevents explosion)
+    default_discuss_responder_cap: int = 3  # AD-424: Default max_responders for DISCUSS threads
 
 
 class AssignmentConfig(BaseModel):

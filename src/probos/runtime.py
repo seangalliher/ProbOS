@@ -1220,6 +1220,26 @@ class ProbOSRuntime:
             await self.ward_room.start()
             logger.info("ward-room started")
 
+            # AD-425: Auto-subscribe crew agents to their department + All Hands channels
+            from probos.cognitive.standing_orders import get_department
+            wr_channels = await self.ward_room.list_channels()
+            all_hands_id = None
+            dept_channel_map: dict[str, str] = {}  # dept_name -> channel_id
+            for ch in wr_channels:
+                if ch.channel_type == "ship":
+                    all_hands_id = ch.id
+                elif ch.channel_type == "department" and ch.department:
+                    dept_channel_map[ch.department] = ch.id
+
+            for agent in self.registry.all():
+                if not self._is_crew_agent(agent):
+                    continue
+                dept = get_department(agent.agent_type)
+                if dept and dept in dept_channel_map:
+                    await self.ward_room.subscribe(agent.id, dept_channel_map[dept])
+                if all_hands_id:
+                    await self.ward_room.subscribe(agent.id, all_hands_id)
+
         # --- Assignment Service (AD-408) ---
         if self.config.assignments.enabled:
             from probos.assignment import AssignmentService
@@ -2830,6 +2850,7 @@ class ProbOSRuntime:
                 title=f"[{alert.severity.value.upper()}] {alert.title}",
                 body=alert.detail,
                 author_callsign="Ship's Computer",
+                thread_mode="inform",   # AD-424: Bridge alerts are informational
             )
         except Exception as e:
             logger.warning("Bridge alert WR post failed: %s", e)
@@ -2899,6 +2920,7 @@ class ProbOSRuntime:
 
         # --- Get channel info ---
         channel_id = data.get("channel_id", "")
+        thread_detail = None
         if event_type == "ward_room_post_created":
             # Posts don't include channel_id — look up the thread
             if thread_id:
@@ -2907,6 +2929,15 @@ class ProbOSRuntime:
                     channel_id = thread_detail["thread"].get("channel_id", "")
 
         if not channel_id:
+            return
+
+        # AD-424: Determine thread mode
+        thread_mode = data.get("thread_mode", "discuss")
+        if thread_detail and "thread" in thread_detail:
+            thread_mode = thread_detail["thread"].get("thread_mode", "discuss")
+
+        # AD-424: INFORM threads — no agent notification at all
+        if thread_mode == "inform":
             return
 
         # Find the channel to determine routing scope
@@ -2922,6 +2953,7 @@ class ProbOSRuntime:
                 channel=channel,
                 author_id=author_id,
                 mentions=data.get("mentions", []),
+                thread_mode=thread_mode,
             )
         else:
             # Agent posts: narrow targeting — @mentions + department peers only
@@ -2934,11 +2966,19 @@ class ProbOSRuntime:
         if not target_agent_ids:
             return
 
+        # AD-424: Apply responder cap for DISCUSS threads
+        thread_max_responders = data.get("max_responders", 0)
+        if thread_detail and "thread" in thread_detail:
+            thread_max_responders = thread_detail["thread"].get("max_responders", 0)
+        if thread_mode == "discuss" and thread_max_responders > 0:
+            target_agent_ids = target_agent_ids[:thread_max_responders]
+
         # --- Build thread context ---
         title = data.get("title", "")
         thread_context = ""
         if thread_id:
-            thread_detail = await self.ward_room.get_thread(thread_id)
+            if not thread_detail:
+                thread_detail = await self.ward_room.get_thread(thread_id)
             if thread_detail:
                 thread_obj = thread_detail.get("thread", {})
                 posts = thread_detail.get("posts", [])
@@ -3039,6 +3079,7 @@ class ProbOSRuntime:
         channel: Any,
         author_id: str,
         mentions: list[str] | None = None,
+        thread_mode: str = "discuss",  # AD-424
     ) -> list[str]:
         """Determine which crew agents should be notified about a Ward Room event."""
         target_ids: list[str] = []
@@ -3065,12 +3106,15 @@ class ProbOSRuntime:
                         and hasattr(agent, 'handle_intent')
                         and self._is_crew_agent(agent)):
                     # AD-357: Earned Agency trust-tier gating
+                    # AD-424: DISCUSS threads on ship-wide treat as same-department
+                    # for earned agency purposes — the Captain opened discussion.
+                    effective_same_dept = (thread_mode == "discuss")
                     if self.config.earned_agency.enabled:
                         from probos.earned_agency import can_respond_ambient
                         from probos.crew_profile import Rank
                         _agent_rank = Rank.from_trust(self.trust_network.get_score(agent.id))
                         if not can_respond_ambient(_agent_rank, is_captain_post=True,
-                                                   same_department=False):
+                                                   same_department=effective_same_dept):
                             continue
                     target_ids.append(agent.id)
 

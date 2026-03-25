@@ -634,3 +634,152 @@ def _make_channel(channel_id: str, channel_type: str, department: str = ""):
     ch.department = department
     ch.name = f"Channel-{channel_id}"
     return ch
+
+
+# ---------------------------------------------------------------------------
+# Thread Mode Routing (AD-424)
+# ---------------------------------------------------------------------------
+
+class TestThreadModeRouting:
+
+    @pytest.mark.asyncio
+    async def test_inform_thread_no_agent_notification(self):
+        """INFORM threads skip agent notification entirely."""
+        runtime = _make_mock_runtime()
+        runtime.ward_room.list_channels = AsyncMock(return_value=[
+            _make_channel("ch1", "ship"),
+        ])
+        runtime.ward_room.get_thread = AsyncMock(return_value={
+            "thread": {"title": "Alert", "body": "Status", "channel_id": "ch1",
+                       "thread_mode": "inform", "max_responders": 0},
+            "posts": [],
+        })
+        agent = _make_agent("agent-1", "architect")
+        runtime.registry.all.return_value = [agent]
+
+        data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
+                "thread_mode": "inform"}
+        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        runtime.intent_bus.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_discuss_thread_notifies_agents(self):
+        """DISCUSS threads DO notify agents."""
+        runtime = _make_mock_runtime()
+        runtime.ward_room.list_channels = AsyncMock(return_value=[
+            _make_channel("ch1", "ship"),
+        ])
+        runtime.ward_room.get_thread = AsyncMock(return_value={
+            "thread": {"title": "Discussion", "body": "Thoughts?", "channel_id": "ch1",
+                       "thread_mode": "discuss", "max_responders": 0},
+            "posts": [],
+        })
+        agent = _make_agent("agent-1", "architect")
+        runtime.registry.all.return_value = [agent]
+        runtime.callsign_registry.get_callsign.return_value = "Number One"
+        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
+            intent_id="x", agent_id="agent-1", success=True, result="[NO_RESPONSE]",
+        ))
+
+        data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
+                "thread_mode": "discuss"}
+        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        runtime.intent_bus.send.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_discuss_ship_wide_lieutenant_can_respond(self):
+        """BF-022: DISCUSS threads on ship-wide let Lieutenants respond."""
+        runtime = _make_mock_runtime()
+        runtime.config.earned_agency.enabled = True
+        runtime.trust_network = MagicMock()
+        runtime.trust_network.get_score.return_value = 0.5  # Lieutenant
+
+        channel = _make_channel("ch1", "ship")
+        agent = _make_agent("agent-1", "architect")
+        runtime.registry.all.return_value = [agent]
+
+        targets = runtime._find_ward_room_targets(
+            channel=channel, author_id="captain",
+            mentions=None, thread_mode="discuss",
+        )
+        assert "agent-1" in targets
+
+    @pytest.mark.asyncio
+    async def test_action_thread_only_mentions(self):
+        """ACTION threads only notify @mentioned agents."""
+        runtime = _make_mock_runtime()
+        runtime.ward_room.list_channels = AsyncMock(return_value=[
+            _make_channel("ch1", "ship"),
+        ])
+        runtime.ward_room.get_thread = AsyncMock(return_value={
+            "thread": {"title": "Order", "body": "Do it", "channel_id": "ch1",
+                       "thread_mode": "action", "max_responders": 0},
+            "posts": [],
+        })
+        a1 = _make_agent("agent-1", "architect")
+        a2 = _make_agent("agent-2", "security_officer")
+        a3 = _make_agent("agent-3", "counselor")
+        runtime.registry.all.return_value = [a1, a2, a3]
+        runtime.registry.get.return_value = a1
+        runtime.callsign_registry.resolve.side_effect = lambda c: (
+            {"agent_id": "agent-1"} if c == "numberone" else None
+        )
+        runtime.callsign_registry.get_callsign.return_value = "Number One"
+        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
+            intent_id="x", agent_id="agent-1", success=True, result="Aye",
+        ))
+
+        data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
+                "thread_mode": "action", "mentions": ["numberone"]}
+        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        # Only agent-1 (mentioned) should get notified
+        assert runtime.intent_bus.send.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_discuss_responder_cap_applied(self):
+        """DISCUSS thread max_responders caps number of agents notified."""
+        runtime = _make_mock_runtime()
+        runtime.ward_room.list_channels = AsyncMock(return_value=[
+            _make_channel("ch1", "ship"),
+        ])
+        runtime.ward_room.get_thread = AsyncMock(return_value={
+            "thread": {"title": "Capped", "body": "body", "channel_id": "ch1",
+                       "thread_mode": "discuss", "max_responders": 2},
+            "posts": [],
+        })
+        # 5 agents
+        agents = [_make_agent(f"agent-{i}", "architect") for i in range(5)]
+        runtime.registry.all.return_value = agents
+        runtime.callsign_registry.get_callsign.return_value = "Crew"
+        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
+            intent_id="x", agent_id="agent-0", success=True, result="[NO_RESPONSE]",
+        ))
+
+        data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
+                "thread_mode": "discuss", "max_responders": 2}
+        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        assert runtime.intent_bus.send.call_count <= 2
+
+    @pytest.mark.asyncio
+    async def test_inform_not_passed_to_targets(self):
+        """INFORM threads short-circuit before _find_ward_room_targets."""
+        runtime = _make_mock_runtime()
+        # Patch _find_ward_room_targets to track if called
+        import types
+        original = runtime._find_ward_room_targets
+        call_tracker = {"called": False}
+
+        def tracking_targets(self, *a, **kw):
+            call_tracker["called"] = True
+            return original(*a, **kw)
+
+        runtime._find_ward_room_targets = types.MethodType(tracking_targets, runtime)
+
+        runtime.ward_room.list_channels = AsyncMock(return_value=[
+            _make_channel("ch1", "ship"),
+        ])
+
+        data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
+                "thread_mode": "inform"}
+        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        assert not call_tracker["called"]

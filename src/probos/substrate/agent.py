@@ -117,9 +117,20 @@ class BaseAgent(ABC):
 
         # If confidence drops too low, mark degraded
         if self.confidence < 0.2:
-            self.state = AgentState.DEGRADED
-            logger.warning(
-                "Agent degraded: type=%s id=%s confidence=%.3f",
+            if self.state != AgentState.DEGRADED:
+                self.state = AgentState.DEGRADED
+                logger.warning(
+                    "Agent degraded: type=%s id=%s confidence=%.3f",
+                    self.agent_type,
+                    self.id[:8],
+                    self.confidence,
+                )
+        # BF-023: Recovery path — if confidence climbs back above threshold,
+        # restore to ACTIVE. Without this, degraded agents stay dead forever.
+        elif self.state == AgentState.DEGRADED:
+            self.state = AgentState.ACTIVE
+            logger.info(
+                "Agent recovered: type=%s id=%s confidence=%.3f",
                 self.agent_type,
                 self.id[:8],
                 self.confidence,

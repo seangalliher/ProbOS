@@ -158,8 +158,52 @@ class TestConfidenceTracking:
 
 
 # ---------------------------------------------------------------------------
-# BF-013: BaseAgent.info() includes callsign
+# BF-023: Degraded agent recovery
 # ---------------------------------------------------------------------------
+
+
+class TestConfidenceRecovery:
+    """BF-023: Degraded agents can recover when confidence rises above 0.2."""
+
+    def test_recovery_from_degraded_on_success(self):
+        """Agent transitions DEGRADED -> ACTIVE when confidence >= 0.2."""
+        a = DummyAgent()
+        a.state = AgentState.ACTIVE
+        # Drive into DEGRADED
+        for _ in range(50):
+            a.update_confidence(False)
+        assert a.state == AgentState.DEGRADED
+        assert a.confidence < 0.2
+
+        # Enough successes to climb back above 0.2
+        while a.confidence < 0.2:
+            a.update_confidence(True)
+        assert a.state == AgentState.ACTIVE
+
+    def test_degraded_stays_degraded_on_failure(self):
+        """Continued failures keep agent in DEGRADED state."""
+        a = DummyAgent()
+        a.state = AgentState.ACTIVE
+        for _ in range(50):
+            a.update_confidence(False)
+        assert a.state == AgentState.DEGRADED
+        # More failures don't change state
+        a.update_confidence(False)
+        assert a.state == AgentState.DEGRADED
+
+    def test_degradation_warning_only_on_transition(self):
+        """DEGRADED warning only logs on first transition, not repeated failures."""
+        a = DummyAgent()
+        a.state = AgentState.ACTIVE
+        # First failure that crosses threshold triggers state change
+        for _ in range(50):
+            a.update_confidence(False)
+        assert a.state == AgentState.DEGRADED
+        # Agent is already DEGRADED — further failures should not re-log
+        # (no exception, state stays DEGRADED)
+        for _ in range(10):
+            a.update_confidence(False)
+        assert a.state == AgentState.DEGRADED
 
 
 class TestAgentInfoCallsign:

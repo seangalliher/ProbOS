@@ -200,6 +200,15 @@ class CreateThreadRequest(BaseModel):
     title: str
     body: str
     author_callsign: str = ""
+    thread_mode: str = "discuss"      # AD-424
+    max_responders: int = 0           # AD-424
+
+class UpdateThreadRequest(BaseModel):
+    """AD-424: Captain thread management."""
+    locked: bool | None = None
+    thread_mode: str | None = None     # "inform" | "discuss" | "action"
+    max_responders: int | None = None
+    pinned: bool | None = None
 
 class CreatePostRequest(BaseModel):
     author_id: str
@@ -1239,6 +1248,8 @@ def create_app(runtime: Any) -> FastAPI:
                 channel_id=channel_id, author_id=req.author_id,
                 title=req.title, body=req.body,
                 author_callsign=req.author_callsign,
+                thread_mode=req.thread_mode,
+                max_responders=req.max_responders,
             )
             return vars(thread)
         except ValueError as e:
@@ -1252,6 +1263,19 @@ def create_app(runtime: Any) -> FastAPI:
         if not result:
             raise HTTPException(404, "Thread not found")
         return result
+
+    @app.patch("/api/wardroom/threads/{thread_id}")
+    async def wardroom_update_thread(thread_id: str, req: UpdateThreadRequest):
+        """AD-424: Update thread properties (Captain-level)."""
+        if not runtime.ward_room:
+            raise HTTPException(503, "Ward Room not available")
+        updates = req.model_dump(exclude_none=True)
+        if not updates:
+            raise HTTPException(400, "No updates provided")
+        thread = await runtime.ward_room.update_thread(thread_id, **updates)
+        if not thread:
+            raise HTTPException(404, "Thread not found")
+        return vars(thread)
 
     @app.post("/api/wardroom/threads/{thread_id}/posts")
     async def wardroom_create_post(thread_id: str, req: CreatePostRequest):
@@ -1318,6 +1342,47 @@ def create_app(runtime: Any) -> FastAPI:
             return {"unread": {}}
         counts = await runtime.ward_room.get_unread_counts(agent_id)
         return {"unread": counts}
+
+    # AD-425: Activity feed — cross-channel browsing
+    @app.get("/api/wardroom/activity")
+    async def wardroom_activity_feed(
+        agent_id: str | None = None,
+        channel_id: str | None = None,
+        thread_mode: str | None = None,
+        limit: int = 20,
+        since: float = 0.0,
+    ):
+        """Browse Ward Room threads across channels."""
+        if not runtime.ward_room:
+            return {"threads": []}
+        if channel_id:
+            threads = await runtime.ward_room.list_threads(channel_id, limit=limit)
+            # Apply optional filters
+            if thread_mode:
+                threads = [t for t in threads if t.thread_mode == thread_mode]
+            if since > 0:
+                threads = [t for t in threads if t.last_activity > since]
+        elif agent_id:
+            threads = await runtime.ward_room.browse_threads(
+                agent_id, thread_mode=thread_mode, limit=limit, since=since,
+            )
+        else:
+            # Captain view — browse all channels
+            all_channels = await runtime.ward_room.list_channels()
+            all_ch_ids = [c.id for c in all_channels]
+            threads = await runtime.ward_room.browse_threads(
+                "_anonymous", channels=all_ch_ids,
+                thread_mode=thread_mode, limit=limit, since=since,
+            )
+        return {"threads": [vars(t) for t in threads]}
+
+    @app.put("/api/wardroom/channels/{channel_id}/seen")
+    async def wardroom_mark_seen(channel_id: str, agent_id: str):
+        """Mark all threads in a channel as seen for an agent."""
+        if not runtime.ward_room:
+            raise HTTPException(503, "Ward Room not available")
+        await runtime.ward_room.update_last_seen(agent_id, channel_id)
+        return {"status": "ok"}
 
     # --- Assignments (AD-408) ---
 

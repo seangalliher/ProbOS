@@ -47,6 +47,8 @@ class WardRoomThread:
     last_activity: float
     pinned: bool = False
     locked: bool = False
+    thread_mode: str = "discuss"  # AD-424: "inform" | "discuss" | "action"
+    max_responders: int = 0       # AD-424: 0 = unlimited, >0 = cap
     reply_count: int = 0
     net_score: int = 0
     # ViewMeta denormalization (Aether pattern)
@@ -125,6 +127,8 @@ CREATE TABLE IF NOT EXISTS threads (
     last_activity REAL NOT NULL,
     pinned INTEGER NOT NULL DEFAULT 0,
     locked INTEGER NOT NULL DEFAULT 0,
+    thread_mode TEXT NOT NULL DEFAULT 'discuss',
+    max_responders INTEGER NOT NULL DEFAULT 0,
     reply_count INTEGER NOT NULL DEFAULT 0,
     net_score INTEGER NOT NULL DEFAULT 0,
     author_callsign TEXT NOT NULL DEFAULT '',
@@ -212,6 +216,16 @@ class WardRoomService:
             self._db = await aiosqlite.connect(self.db_path)
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
+            await self._db.commit()
+            # AD-424: Schema migration — add thread_mode and max_responders if missing
+            try:
+                await self._db.execute("ALTER TABLE threads ADD COLUMN thread_mode TEXT NOT NULL DEFAULT 'discuss'")
+            except Exception:
+                pass  # Column already exists
+            try:
+                await self._db.execute("ALTER TABLE threads ADD COLUMN max_responders INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass  # Column already exists
             await self._db.commit()
         await self._ensure_default_channels()
         await self._refresh_channel_cache()
@@ -376,7 +390,8 @@ class WardRoomService:
         order_col = "net_score" if sort == "top" else "last_activity"
         sql = (
             "SELECT id, channel_id, author_id, title, body, created_at, last_activity, "
-            "pinned, locked, reply_count, net_score, author_callsign, channel_name "
+            "pinned, locked, thread_mode, max_responders, reply_count, net_score, "
+            "author_callsign, channel_name "
             f"FROM threads WHERE channel_id = ? ORDER BY pinned DESC, {order_col} DESC "
             "LIMIT ? OFFSET ?"
         )
@@ -387,8 +402,76 @@ class WardRoomService:
                     id=row[0], channel_id=row[1], author_id=row[2],
                     title=row[3], body=row[4], created_at=row[5],
                     last_activity=row[6], pinned=bool(row[7]), locked=bool(row[8]),
-                    reply_count=row[9], net_score=row[10],
-                    author_callsign=row[11], channel_name=row[12],
+                    thread_mode=row[9], max_responders=row[10],
+                    reply_count=row[11], net_score=row[12],
+                    author_callsign=row[13], channel_name=row[14],
+                ))
+        return threads
+
+    async def browse_threads(
+        self,
+        agent_id: str,
+        channels: list[str] | None = None,
+        thread_mode: str | None = None,
+        limit: int = 10,
+        since: float = 0.0,
+    ) -> list[WardRoomThread]:
+        """Browse threads across one or more channels (AD-425).
+
+        Args:
+            agent_id: The browsing agent (for channel scoping via memberships).
+            channels: Channel IDs to browse. None = all subscribed channels.
+            thread_mode: Filter by thread mode ("discuss", "inform", "action"). None = all.
+            limit: Max threads to return.
+            since: Only threads with last_activity after this epoch timestamp.
+
+        Returns:
+            List of WardRoomThread sorted by last_activity descending.
+        """
+        if not self._db:
+            return []
+
+        # Resolve channel list
+        if channels is None:
+            channel_ids: list[str] = []
+            async with self._db.execute(
+                "SELECT channel_id FROM memberships WHERE agent_id = ?",
+                (agent_id,),
+            ) as cursor:
+                async for row in cursor:
+                    channel_ids.append(row[0])
+            if not channel_ids:
+                return []
+        else:
+            channel_ids = channels
+
+        # Build query
+        placeholders = ", ".join("?" for _ in channel_ids)
+        sql = (
+            "SELECT id, channel_id, author_id, title, body, created_at, last_activity, "
+            "pinned, locked, thread_mode, max_responders, reply_count, net_score, "
+            "author_callsign, channel_name "
+            f"FROM threads WHERE channel_id IN ({placeholders}) AND last_activity > ?"
+        )
+        params: list[Any] = list(channel_ids) + [since]
+
+        if thread_mode:
+            sql += " AND thread_mode = ?"
+            params.append(thread_mode)
+
+        sql += " ORDER BY last_activity DESC LIMIT ?"
+        params.append(limit)
+
+        threads: list[WardRoomThread] = []
+        async with self._db.execute(sql, params) as cursor:
+            async for row in cursor:
+                threads.append(WardRoomThread(
+                    id=row[0], channel_id=row[1], author_id=row[2],
+                    title=row[3], body=row[4], created_at=row[5],
+                    last_activity=row[6], pinned=bool(row[7]), locked=bool(row[8]),
+                    thread_mode=row[9], max_responders=row[10],
+                    reply_count=row[11], net_score=row[12],
+                    author_callsign=row[13], channel_name=row[14],
                 ))
         return threads
 
@@ -408,7 +491,7 @@ class WardRoomService:
 
         # Recent threads
         async with self._db.execute(
-            "SELECT author_callsign, title, body, created_at "
+            "SELECT author_callsign, title, body, created_at, thread_mode "
             "FROM threads WHERE channel_id = ? AND created_at > ? "
             "ORDER BY created_at DESC LIMIT ?",
             (channel_id, since, limit),
@@ -420,6 +503,7 @@ class WardRoomService:
                     "title": row[1][:100],
                     "body": row[2][:200],
                     "created_at": row[3],
+                    "thread_mode": row[4],
                 })
 
         # Recent replies in threads from this channel
@@ -445,6 +529,8 @@ class WardRoomService:
     async def create_thread(
         self, channel_id: str, author_id: str, title: str, body: str,
         author_callsign: str = "",
+        thread_mode: str = "discuss",      # AD-424
+        max_responders: int = 0,           # AD-424
     ) -> WardRoomThread:
         """Create thread in channel."""
         if not self._db:
@@ -467,13 +553,16 @@ class WardRoomService:
             id=str(uuid.uuid4()), channel_id=channel_id, author_id=author_id,
             title=title, body=body, created_at=now, last_activity=now,
             author_callsign=author_callsign, channel_name=channel.name,
+            thread_mode=thread_mode, max_responders=max_responders,
         )
         await self._db.execute(
             "INSERT INTO threads (id, channel_id, author_id, title, body, created_at, "
-            "last_activity, author_callsign, channel_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "last_activity, author_callsign, channel_name, thread_mode, max_responders) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (thread.id, thread.channel_id, thread.author_id, thread.title,
              thread.body, thread.created_at, thread.last_activity,
-             thread.author_callsign, thread.channel_name),
+             thread.author_callsign, thread.channel_name,
+             thread.thread_mode, thread.max_responders),
         )
 
         # Update credibility
@@ -490,7 +579,52 @@ class WardRoomService:
             "author_id": author_id,
             "title": title,
             "author_callsign": author_callsign,
+            "thread_mode": thread_mode,
             "mentions": self._extract_mentions(body),
+        })
+        return thread
+
+    async def update_thread(
+        self, thread_id: str, **updates: Any,
+    ) -> WardRoomThread | None:
+        """Update thread fields (AD-424). Captain-level operation.
+
+        Supported fields: locked, thread_mode, max_responders, pinned.
+        """
+        if not self._db:
+            return None
+        allowed = {"locked", "thread_mode", "max_responders", "pinned"}
+        filtered = {k: v for k, v in updates.items() if k in allowed}
+        if not filtered:
+            return None
+
+        sets = ", ".join(f"{k} = ?" for k in filtered)
+        vals = list(filtered.values())
+        vals.append(thread_id)
+        await self._db.execute(f"UPDATE threads SET {sets} WHERE id = ?", vals)
+        await self._db.commit()
+
+        # Re-fetch thread via list query to get a WardRoomThread object
+        async with self._db.execute(
+            "SELECT id, channel_id, author_id, title, body, created_at, last_activity, "
+            "pinned, locked, thread_mode, max_responders, reply_count, net_score, "
+            "author_callsign, channel_name FROM threads WHERE id = ?", (thread_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            thread = WardRoomThread(
+                id=row[0], channel_id=row[1], author_id=row[2],
+                title=row[3], body=row[4], created_at=row[5],
+                last_activity=row[6], pinned=bool(row[7]), locked=bool(row[8]),
+                thread_mode=row[9], max_responders=row[10],
+                reply_count=row[11], net_score=row[12],
+                author_callsign=row[13], channel_name=row[14],
+            )
+
+        self._emit("ward_room_thread_updated", {
+            "thread_id": thread_id,
+            "updates": filtered,
         })
         return thread
 
@@ -502,7 +636,8 @@ class WardRoomService:
         # Fetch thread
         async with self._db.execute(
             "SELECT id, channel_id, author_id, title, body, created_at, last_activity, "
-            "pinned, locked, reply_count, net_score, author_callsign, channel_name "
+            "pinned, locked, thread_mode, max_responders, reply_count, net_score, "
+            "author_callsign, channel_name "
             "FROM threads WHERE id = ?", (thread_id,)
         ) as cursor:
             row = await cursor.fetchone()
@@ -512,8 +647,9 @@ class WardRoomService:
                 "id": row[0], "channel_id": row[1], "author_id": row[2],
                 "title": row[3], "body": row[4], "created_at": row[5],
                 "last_activity": row[6], "pinned": bool(row[7]), "locked": bool(row[8]),
-                "reply_count": row[9], "net_score": row[10],
-                "author_callsign": row[11], "channel_name": row[12],
+                "thread_mode": row[9], "max_responders": row[10],
+                "reply_count": row[11], "net_score": row[12],
+                "author_callsign": row[13], "channel_name": row[14],
             }
 
         # Fetch all posts for thread

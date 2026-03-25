@@ -1442,7 +1442,7 @@ Self-originated goals emerge from: dream consolidation ("I keep seeing pattern X
 
 **AD-413: Fine-Grained Reset Scope + Ward Room Awareness** — COMPLETE. Reset = day 0, one clean timeline. `probos reset` now archives `ward_room.db` to `data_dir/archives/` then deletes it. Also wipes DAG checkpoints and `events.db`. `--keep-wardroom` flag to preserve if needed. Does NOT wipe `scheduled_tasks.db`, `assignments.db`, or `directives.db` (user intent / Captain orders). New `WardRoomService.get_recent_activity()` for compact recent thread+reply retrieval. Proactive loop `_gather_context()` now includes Ward Room department activity as 4th context source. `_format_observation()` renders Ward Room context in proactive think prompts. 10 new tests.
 
-**AD-414: Proactive Loop Trust Signal** — Roadmap. After a reset, all trust scores start at 0.5 (Bayesian prior). The proactive cognitive loop (Phase 28b) is now the primary source of agent activity, but it calls `handle_intent()` directly — bypassing consensus, routing, and the trust update pipeline. Only user-initiated work or scheduled tasks flow through `process_natural_language()` → HebbianRouter → consensus → `trust.record_outcome()`. If the proactive loop dominates activity, trust scores stagnate at priors indefinitely because the primary activity channel produces no trust signal. **Fix:** The proactive loop should emit an attenuated trust signal. Not full-weight (proactive thinks are self-directed, not externally validated), but a fractional signal — e.g., `weight=0.1` for successful proactive thinks, `weight=0.2` for proactive thinks that generate Ward Room engagement (endorsements from other agents). This gives agents a path to rebuild trust post-reset through their own initiative, while keeping externally-validated work (user tasks, consensus) as the primary trust driver. The attenuation factor should be configurable in `proactive_cognitive` config. *Connects to: Earned Agency (AD-357) — higher agency tiers should earn slightly more proactive trust.*
+**AD-414: Proactive Loop Trust Signal** — **COMPLETE**. After a reset, all trust scores start at 0.5 (Bayesian prior). The proactive cognitive loop (Phase 28b) is now the primary source of agent activity, but it calls `handle_intent()` directly — bypassing consensus, routing, and the trust update pipeline. Only user-initiated work or scheduled tasks flow through `process_natural_language()` → HebbianRouter → consensus → `trust.record_outcome()`. If the proactive loop dominates activity, trust scores stagnate at priors indefinitely because the primary activity channel produces no trust signal. **Fix:** The proactive loop should emit an attenuated trust signal. Not full-weight (proactive thinks are self-directed, not externally validated), but a fractional signal — e.g., `weight=0.1` for successful proactive thinks, `weight=0.2` for proactive thinks that generate Ward Room engagement (endorsements from other agents). This gives agents a path to rebuild trust post-reset through their own initiative, while keeping externally-validated work (user tasks, consensus) as the primary trust driver. The attenuation factor should be configurable in `proactive_cognitive` config. *Connects to: Earned Agency (AD-357) — higher agency tiers should earn slightly more proactive trust.*
 
 **AD-415: Proactive Cooldown Persistence** — Roadmap. When the Captain adjusts an agent's proactive think interval via the HXI Health tab slider (60s–1800s), the value is stored in-memory on the `ProactiveCognitiveLoop` object. After a restart, all custom cooldowns reset to the 300s default. The Captain's tuning is lost. **Fix:** Persist per-agent cooldowns to either: (a) KnowledgeStore (`knowledge/proactive/cooldowns.json`), which means they reset on `probos reset` (appropriate — reset = fresh start); or (b) a lightweight SQLite table or JSON file in `data_dir`, which survives reset. Option (a) is preferred — if you reset the crew's memory, resetting their duty tempo is consistent. The `PUT /api/agent/{id}/proactive-cooldown` endpoint should write-through to storage, and `ProactiveCognitiveLoop.start()` should restore saved cooldowns.
 
@@ -1462,7 +1462,7 @@ Self-originated goals emerge from: dream consolidation ("I keep seeing pattern X
 
 **AD-423: Tool Registry** — Roadmap. The tool taxonomy (AD-422) defines *what* tools are. The Tool Registry is the runtime system that manages *who can use what, how*. Generalizes ModelRegistry (LLM providers) to all tool types. **Design:** (1) **Registry service:** Runtime catalog of all tools across 8 taxonomy categories. Functions: catalog, discovery ("what tools can do X?"), health monitoring, cost tracking, access control, audit logging, lifecycle (register/deregister/enable/disable). (2) **CRUD+Observe permissions:** Fine-grained per-tool, per-agent. `---` (none) → `O--` (observe) → `OR-` (read) → `ORW` (write) → `ORWD` (full/destructive). Gated by Earned Agency tier. Captain can override up or down, time-scoped or permanent. (3) **Department tool scoping:** Tools scoped as ship-wide, department, or individual. Crew members see their department's tools + ship-wide tools, not the full catalog. Performance optimization — smaller tool set = faster discovery, fewer irrelevant options in LLM context, lower token cost. Bones sees medical + ship-wide. Scotty sees engineering + ship-wide. (4) **Cross-department access:** Standing Orders pre-authorize (e.g., "Security has OR- on Engineering CI/CD logs"). Captain grants. Temporary elevation (time-scoped). Commander+ gets broader cross-department read by default. (5) **Tool Registration Schema:** tool_id, category, location, protocol, capabilities (semantic tags), side_effects, cost_model, scope (ship-wide/department/individual), default_permissions per rank, health_check, sandbox config, enabled flag. (6) **Discovery flow:** Crew queries by capability → registry returns matching tools filtered by department scope + permission level + health status → agent selects → registry enforces permissions → audit log. (7) **Integration:** Absorbs ModelRegistry (LLMs are just tools). Connects to Earned Agency (permission gates), HebbianRouter (learned tool preferences), Standing Orders (department defaults), Extension-First Phase 30 (extensions register tools), MCP (auto-register on connect). (8) **HXI surface:** Tool Registry panel — view all tools, health, permissions, cost. Captain manages access. See `docs/development/tool-taxonomy.md` for full design. *Connects to: AD-357 (Earned Agency), AD-398 (three-tier classification), AD-421 (Scotty), AD-422 (taxonomy), Phase 30, ModelRegistry.*
 
-**AD-424: Ward Room Thread Classification & Lifecycle** — Roadmap. Bridge alerts post to All Hands as threads authored by "Ship's Computer" (with Captain-level routing), but Earned Agency gating blocks Lieutenants from responding to ship-wide ambient posts (`can_respond_ambient(LIEUTENANT, is_captain_post=True, same_department=False) → False`). Post-reset, all crew are Lieutenants (trust 0.5) — **no one can respond to advisories**. Beyond this bug, the Ward Room lacks message classification, reply controls, and thread lifecycle management. The corporate email "reply-all storm" problem applies: 7 agents responding to an All Hands thread creates noise. **Design:**
+**AD-424: Ward Room Thread Classification & Lifecycle** — **COMPLETE**. Bridge alerts post to All Hands as threads authored by "Ship's Computer" (with Captain-level routing), but Earned Agency gating blocks Lieutenants from responding to ship-wide ambient posts (`can_respond_ambient(LIEUTENANT, is_captain_post=True, same_department=False) → False`). Post-reset, all crew are Lieutenants (trust 0.5) — **no one can respond to advisories**. Beyond this bug, the Ward Room lacks message classification, reply controls, and thread lifecycle management. The corporate email "reply-all storm" problem applies: 7 agents responding to an All Hands thread creates noise. **Design:**
 
 **(1) Thread Classification — three modes:**
 - **INFORM:** Read-only broadcast. Ship's Computer advisories, Captain announcements, status reports. Agents receive it in their context (proactive awareness) but **no `ward_room_notification` intent is sent** — no LLM call, no reply possible. Optional silent acknowledgment receipt (agent marks "seen" without a Ward Room post). Use cases: trust anomaly reports, pool health advisories, routine status updates.
@@ -1497,7 +1497,7 @@ Default classification: Ship's Computer bridge alerts → INFORM. Captain Ward R
 
 *Connects to: AD-410 (Bridge Alerts), AD-407 (Ward Room), AD-357 (Earned Agency), AD-416 (Archival), BF-016a (@mention targeting). Parallels: corporate email reply-all controls, Slack thread management, naval message classification (ROUTINE/PRIORITY/FLASH).*
 
-**AD-425: Ward Room Active Browsing** — Roadmap. Crew agents currently receive Ward Room content through two passive paths only: (1) real-time push via `ward_room_notification` intents when a thread targets them, (2) proactive context injection of recent department channel activity. Agents **cannot independently browse** the Ward Room — they can't check All Hands, read threads from other departments, or review historical conversations. They only know what's pushed to them. **Design:** (1) **Internal Communication Skill (all crew):** Reading the Ward Room is a basic communication function, not a privilege. A `ward_room_browse` Skill is attached to **every crew agent** — same as how every crew member on a ship can read the bulletin board. This is an internal communication skill, not an earned capability. The skill queries Ward Room channels and returns thread summaries (title, author, mode, reply count, endorsement score). No earned agency gate on the skill itself — if you're crew, you can read. (2) **Proactive context expansion:** Currently proactive context only includes the agent's department channel (proactive.py lines 310-332). Extend to also include recent All Hands activity (top 3 threads by recency or endorsement, DISCUSS mode only — INFORM threads already consumed via acknowledgment). The browse skill supplements this by allowing agents to actively check channels beyond what's injected into context. (3) **Visibility scope (what you can read):** All crew can browse their own department channel + All Hands (ship-wide). Cross-department channels are earned-agency gated: Commander+ can browse other department channels, Seniors see everything. The skill itself is universal; the data scope is tiered. Analogy: every sailor can read the bulletin board, but only officers with clearance can read another department's internal memos. (4) **Read receipts:** Track which agent has "seen" which thread. Prevents re-notifying agents about threads they've already processed. Feeds into INFORM acknowledgment (AD-424). (5) **Duty integration:** "Check Ward Room" can be a duty in the agent's schedule (AD-419). E.g., department chiefs check All Hands every 2 hours as part of their duty cycle. Regular crew passively receive through proactive context injection. *Connects to: AD-424 (thread classification — what's visible), AD-357 (earned agency — cross-department visibility scope), AD-419 (duty schedule — "check Ward Room" as a duty), Phase 24 (Communications department).*
+**AD-425: Ward Room Active Browsing** — **COMPLETE**. Crew agents currently receive Ward Room content through two passive paths only: (1) real-time push via `ward_room_notification` intents when a thread targets them, (2) proactive context injection of recent department channel activity. Agents **cannot independently browse** the Ward Room — they can't check All Hands, read threads from other departments, or review historical conversations. They only know what's pushed to them. **Design:** (1) **Internal Communication Skill (all crew):** Reading the Ward Room is a basic communication function, not a privilege. A `ward_room_browse` Skill is attached to **every crew agent** — same as how every crew member on a ship can read the bulletin board. This is an internal communication skill, not an earned capability. The skill queries Ward Room channels and returns thread summaries (title, author, mode, reply count, endorsement score). No earned agency gate on the skill itself — if you're crew, you can read. (2) **Proactive context expansion:** Currently proactive context only includes the agent's department channel (proactive.py lines 310-332). Extend to also include recent All Hands activity (top 3 threads by recency or endorsement, DISCUSS mode only — INFORM threads already consumed via acknowledgment). The browse skill supplements this by allowing agents to actively check channels beyond what's injected into context. (3) **Visibility scope (what you can read):** All crew can browse their own department channel + All Hands (ship-wide). Cross-department channels are earned-agency gated: Commander+ can browse other department channels, Seniors see everything. The skill itself is universal; the data scope is tiered. Analogy: every sailor can read the bulletin board, but only officers with clearance can read another department's internal memos. (4) **Read receipts:** Track which agent has "seen" which thread. Prevents re-notifying agents about threads they've already processed. Feeds into INFORM acknowledgment (AD-424). (5) **Duty integration:** "Check Ward Room" can be a duty in the agent's schedule (AD-419). E.g., department chiefs check All Hands every 2 hours as part of their duty cycle. Regular crew passively receive through proactive context injection. *Connects to: AD-424 (thread classification — what's visible), AD-357 (earned agency — cross-department visibility scope), AD-419 (duty schedule — "check Ward Room" as a duty), Phase 24 (Communications department).*
 
 **AD-426: Ward Room Endorsement Activation** — Roadmap. The endorsement system (`ward_room.endorse()`) is **fully built** — SQLite schema, up/down/unvote mechanics, credibility scoring (EMA decay), self-endorsement prevention, REST API endpoints (`POST /api/wardroom/posts/{id}/endorse`, `POST /api/wardroom/threads/{id}/endorse`). But **nothing triggers it**. No agent ever endorses a post. The HXI API exists for Captain use, but crew never participates. Endorsements are meant to be the Ward Room's quality signal — "credibility is karma." **Design:** (1) **Post-response endorsement evaluation:** After an agent reads a Ward Room thread and responds (or says `[NO_RESPONSE]`), evaluate whether existing posts in the thread deserve endorsement. Add to the Ward Room system prompt: "If a post is particularly insightful or actionable, endorse it. If it's incorrect or unhelpful, downvote it." Return endorsement decisions alongside the reply. (2) **Proactive endorsement:** During proactive thinks, when agents see `ward_room_activity` in context, they can endorse notable posts they encountered. Lightweight — no dedicated LLM call, piggybacks on existing cognitive cycle. (3) **Endorsement → Trust signal:** High endorsement of an agent's posts = positive social trust signal. Feed net endorsement score into trust network as an attenuated signal (similar to AD-414 proactive trust signal). Agents who consistently write valuable posts earn trust faster. (4) **Endorsement → Thread ranking:** Threads with high net endorsement score surface first in browse results (AD-425) and proactive context. Quality rises. (5) **Credibility gating:** Agent's credibility score (already tracked in `credibility` table) could gate endorsement weight — a highly credible agent's endorsement counts more than a low-credibility agent's. Future refinement. *Connects to: AD-424 (thread classification — DISCUSS threads are endorsable, INFORM are not), AD-425 (browsing — endorsement-ranked results), AD-414 (trust signals), AD-357 (earned agency — endorsement as trust evidence).*
 
@@ -1521,6 +1521,416 @@ Default classification: Ship's Computer bridge alerts → INFORM. Captain Ward R
 
 *Connects to: AD-357 (Earned Agency — promotion model), AD-398 (three-tier classification — who is crew), AD-419 (duty schedules — attendance), AD-423 (Tool Registry — tool permission lifecycle), Qualification Programs (training & certification), Holodeck (competency testing). Commercial extensions (Advanced ACM) available separately.*
 
+**AD-428: Agent Skill Framework — Developmental Competency Model** — Roadmap. *Foundation AD — prerequisite to ACM (AD-427) and Qualification Programs.* ProbOS agents currently have **capabilities** (what their LLM can do) and **roles** (what their agent_type says they are), but no formal model of **skills** — the learned, measurable, developable competencies that bridge capability and role. Skills today are either static (hardcoded in agent instructions) or dynamically generated (self-mod pipeline, utility-focused). There is no concept of skill acquisition, proficiency tracking, skill decay, prerequisites, or the distinction between innate abilities, universal competencies, and role-specific expertise. The self-mod pipeline (SkillDesigner/SkillValidator) was designed for utility agents — adding deterministic functions to tool-like agents. Crew agents with sovereign identity need a fundamentally different model: skills they develop through experience, practice, and mentoring within an organizational context.
+
+**Intellectual Foundations:**
+
+This framework synthesizes seven established models from cognitive science, education theory, and workforce development, adapted for sovereign AI agents:
+
+| Framework | Key Contribution | ProbOS Application |
+|---|---|---|
+| **KSA Framework** (OPM/DoD) | Knowledge vs. Skills vs. Abilities — three distinct categories | Knowledge = KnowledgeStore (declarative, shared). Skills = learned procedures (per-agent, developed). Abilities = LLM substrate + model capabilities (innate). |
+| **Dreyfus Model** (1980) | Five stages of skill acquisition: Novice → Expert. Expertise transcends rules. | Proficiency levels for every skill. Experts operate on internalized patterns (Cognitive JIT), not step-by-step reasoning. |
+| **Bloom's Taxonomy** (revised 2001) | Six cognitive complexity levels: Remember → Create. 2D matrix with knowledge types. | Assessment criteria at each proficiency level. Skill proficiency measured by cognitive complexity the agent can apply. |
+| **SFIA** (Skills Framework for the Information Age) | 7-level responsibility model with 5 attributes (Autonomy, Influence, Complexity, Knowledge, Business Skills) | Maps to Earned Agency tiers. SFIA's five attributes map to Trust level, Ward Room scope, task complexity, KnowledgeStore depth, and Character traits. |
+| **Cognitive Apprenticeship** (Collins, Brown, Newman 1989) | Six methods: Modeling, Coaching, Scaffolding, Articulation, Reflection, Exploration | Maps to: Ward Room observation, Department Chief feedback, Earned Agency guardrails, CognitiveJournal, Dream consolidation, Holodeck scenarios. |
+| **Situated Learning / Communities of Practice** (Lave & Wenger 1991) | Learning is social participation, not isolated cognition. Identity forms through community membership. Legitimate Peripheral Participation. | Each Department is a Community of Practice. New agents start at periphery. The Ward Room IS the curriculum — agents learn by participating, not by being instructed. |
+| **Zone of Proximal Development** (Vygotsky 1978) | The gap between independent capability and guided capability. Scaffolding bridges the gap and then fades. | Holodeck targets the ZPD. Earned Agency constraints ARE scaffolding. As Trust increases, scaffolding fades. Qualification Programs are structured ZPD progressions. |
+
+**Prior art in multi-agent systems:** Voyager (Wang et al., 2023) is the only existing framework with genuine developmental skill acquisition — executable skill library, compositional building, curriculum-driven exploration, self-verification. But Voyager is single-agent with no social learning, no identity, no trust, no organizational context, no memory of how skills were learned. BabyAGI has rudimentary self-building (function generation + dependency graphs) but no social dimension. MetaGPT, CAMEL, AutoGen, CrewAI all treat skills as static role definitions — no developmental learning. **ProbOS's contribution: developmental skill acquisition embedded in social fabric with sovereign identity, trust-gated progression, and organizational structure.** This combination does not exist in any published framework.
+
+**The Three-Category Skill Taxonomy:**
+
+**Category 1: Innate Capabilities (Abilities)** — What the agent IS, not what it DOES. These are substrate-level capacities provided by the LLM and ProbOS infrastructure. Not skills — the medium through which skills operate.
+
+- **Information ingestion** — comprehending text, data, code. For an LLM-based agent, reading is breathing. Ward Room browsing, KnowledgeStore access, context consumption are ALL innate. An AI agent does not "learn to read" — it is born reading.
+- **Language generation** — producing coherent text, reasoning chains, structured output
+- **Pattern recognition** — identifying regularities, anomalies, relationships in data
+- **Memory formation** — recording experiences to episodic memory (infrastructure-level)
+- **Model-specific capabilities** — vision, audio, tool use, web browsing, computer use, code execution. These vary by model assignment. An agent backed by a vision-capable model has the innate ability to process images; one without it does not. These are not skills to acquire — they are abilities that exist or don't based on the substrate.
+
+*Design principle: innate capabilities are never "taught" or "developed." They are features of the substrate. If a capability requires a specific model feature (vision, audio), it is gated by model assignment in the Model Registry, not by skill acquisition. The skill framework does NOT manage innate capabilities — it builds ON TOP of them.*
+
+**Category 2: Professional Core Competencies (PCCs)** — Universal skills every crew agent receives at commissioning. The "officer basics" — what makes someone crew, regardless of department. Adapted from the U.S. Navy's Officer Professional Core Competencies for sovereign AI agents:
+
+| PCC | Description | How Developed | How Assessed |
+|---|---|---|---|
+| **Communication** | Effective Ward Room participation. Knowing when to speak, when to stay silent (`[NO_RESPONSE]` discipline), how to structure reports, how to endorse constructively. Thread engagement quality — clear, relevant, actionable posts. | Ward Room participation + Department Chief feedback | Endorsement score, response quality metrics, thread engagement patterns |
+| **Chain of Command** | Standing Orders compliance, escalation protocols, rank-appropriate behavior, Captain deference. Understanding *why* the chain exists, not just following it. Internalized duty, not imposed constraint. | Standing Orders orientation + production experience + Counselor assessment | Violation rate, escalation appropriateness, Standing Orders compliance over N cycles |
+| **Duty Execution** | Completing scheduled duties on time, structured reporting, prioritization. The operational discipline of reliable task completion. Duty is not just doing the work — it is doing it consistently, on schedule, to standard. | Duty schedule completion + Holodeck reliability drills | Duty completion rate, on-time rate, output quality assessment |
+| **Collaboration** | Consensus participation, cross-agent coordination, constructive disagreement. Working effectively with agents of different departments, ranks, and perspectives. The horizontal bar of the T-shaped skill model. | Ward Room cross-department discussions + multi-agent task participation | Cross-department engagement, consensus contribution quality, coordination success rate |
+| **Knowledge Stewardship** | Contributing valuable patterns to KnowledgeStore, accurate episodic recording, dream consolidation quality. Not just consuming shared knowledge — actively improving it. "All agents are committed to writing to the library for the benefit of all." | Dream consolidation → KnowledgeStore promotion patterns | KnowledgeStore contribution rate, contribution quality (usefulness to other agents) |
+| **Self-Assessment** | Recognizing own limitations, requesting assistance when appropriate, cognitive fitness awareness. The metacognitive skill of knowing what you don't know. Connects to Bloom's metacognitive knowledge dimension. | Counselor sessions + CognitiveJournal reflection + production self-monitoring | Appropriate escalation rate, self-awareness accuracy (estimated vs. actual capability) |
+| **Ethical Reasoning** | Standing Orders internalization, safety awareness, reversibility consideration. Making right decisions under ambiguity. Character-driven judgment. Not just following rules (Novice) — understanding principles (Expert). | Standing Orders study + Holodeck ethical dilemmas + Ward Room ethical discussions | Ethical violation rate, principled reasoning quality in CognitiveJournal |
+
+*PCCs use `origin="built_in"` in the Skill dataclass. Attached at agent registration. Cannot be `remove_skill()`'d. All crew agents develop these — they are the baseline of professional competence. A crew agent that fails fundamental PCCs is not ready for independent duty.*
+
+**Category 3: Specialty Skills** — Two sub-categories:
+
+**(3a) Role Skills (Designation/MOS):** Skills specific to the agent's department and role. These come from the agent's Professional competency profile — what their job requires. Think of the Navy EDO's requirements: naval architecture, systems engineering, cybersecurity, LEAN/Six Sigma, salvage operations. Each ProbOS role has an equivalent skill profile:
+
+- **Security Officer (Worf):** Threat analysis, vulnerability assessment, red team methodology, audit procedures, input validation, access control design
+- **Engineering Officer (LaForge):** Code review, architecture analysis, system design, performance optimization, technical debt assessment, build system management
+- **Operations Officer (O'Brien):** Resource management, monitoring, scheduling optimization, coordination, capacity planning, incident response
+- **Diagnostician (Bones):** Health assessment, anomaly detection, cognitive fitness evaluation, vitals interpretation, diagnostic reasoning
+- **Scout (Wesley):** Codebase exploration, information gathering, reconnaissance, pattern identification, exploration strategy
+- **Counselor (Troi):** Cognitive health evaluation, crew fitness assessment, morale monitoring, personality dynamics, conflict mediation
+- **Architect (Number One):** Design review, pattern analysis, strategic planning, technology evaluation, architectural trade-off analysis
+
+Role skills have **prerequisite chains** — a DAG, not a flat list. Example: `basic_code_review → architecture_analysis → system_design → design_pattern_innovation`. An agent can't acquire a skill unless all prerequisites are met at minimum COMPETENT proficiency.
+
+**(3b) Acquired Skills (Self-Developed):** Skills an agent develops through their own initiative, learning, and interests — beyond what their role requires. This is Data learning to paint. Wesley teaching himself warp field theory. An Engineering Officer who develops security analysis skills through cross-department collaboration.
+
+Acquisition paths:
+- **Holodeck exercises** — formal qualification scenarios, structured learning
+- **Real-world task execution** — SWE work teaches debugging, new frameworks, new tools
+- **Self-directed exploration** — agent pursues interests during free-form proactive thinks
+- **Mentoring from other agents** — Ward Room interaction, Department Chief guidance
+- **Dream consolidation** — pattern extraction from experience crystallizes into procedural knowledge
+
+*Acquired skills use `origin="acquired"`. They appear in the agent's skill profile alongside built-in PCCs and role skills. An agent that acquires skills outside their department becomes T-shaped (broad + deep), then potentially Pi-shaped (deep in two domains). The ACM tracks this evolution.*
+
+**Proficiency Model — Unified Scale:**
+
+Every skill (PCC, Role, or Acquired) is measured on a unified 7-level proficiency scale that maps across established frameworks:
+
+| Level | Label | Dreyfus | Bloom | SFIA | Navy | Earned Agency | Agent Behavior |
+|---|---|---|---|---|---|---|---|
+| 1 | **Follow** | Novice | Remember | Follow | Awareness | Ensign | Follows explicit procedures. No discretion. Requires step-by-step guidance. |
+| 2 | **Assist** | Adv. Beginner | Understand | Assist | Understanding | Ensign+ | Recognizes recurring patterns. Can explain concepts. Needs supervision. |
+| 3 | **Apply** | Competent | Apply | Apply | Application | Lieutenant | Executes known procedures independently. Plans own work. Takes responsibility for outcomes. |
+| 4 | **Enable** | Competent+ | Analyze | Enable | Application+ | Lieutenant+ | Decomposes problems, identifies relationships. Exercises substantial judgment. Influences team decisions. |
+| 5 | **Advise** | Proficient | Evaluate | Ensure/Advise | Mastery | Commander | Holistic situational awareness. Evaluates quality, critiques approaches. Mentors junior agents. |
+| 6 | **Lead** | Expert | Create | Initiate | Mastery+ | Senior | Intuitive grasp. Innovates within domain. Designs new approaches. Teaches. |
+| 7 | **Shape** | Expert+ | Create+ | Set Strategy | — | Dept. Chief | Transcends rules. Sets direction for the domain. Shapes organizational capability. |
+
+*The critical transition is Level 3→4 (Competent to Enable): the shift from applying known procedures to analyzing novel situations. This maps to Cognitive JIT — an agent that has internalized enough procedures through practice that it operates from pattern recognition rather than step-by-step reasoning. Below Level 3, the agent needs the LLM for every decision. At Level 4+, it begins to operate from internalized patterns, falling back to the LLM only for genuinely novel problems.*
+
+**Skill Decay:**
+
+Skills degrade without practice. The military requires recertification; ProbOS should too.
+
+- Each `AgentSkillRecord` tracks `last_exercised` timestamp and `exercise_count`
+- Decay rules (configurable per skill category):
+  - PCCs: slow decay (30 days idle → drop one level). PCCs are fundamental and degrade slowly.
+  - Role skills: moderate decay (14 days idle → drop one level). Domain expertise fades faster without practice.
+  - Acquired skills: fast decay (7 days idle → drop one level). Self-developed skills without regular practice fade quickly.
+- Decay never drops below Level 1 (Follow) — you don't forget that a skill exists
+- The Holodeck is the requalification tool — when a skill has decayed, a targeted exercise restores proficiency
+- Dream consolidation partially counteracts decay — consolidated patterns persist longer than unconsolidated ones
+
+**Skill Composition:**
+
+Individual skills combine to produce capabilities greater than their sum. An agent with `code_review` (Level 4) + `security_analysis` (Level 3) can perform `secure_code_review` — a composite skill that neither alone covers. The framework should recognize:
+
+- **Composite skills** — declared combinations that produce emergent capabilities
+- **Synergy bonuses** — when complementary skills are both at Level 3+, the composite operates at one level higher than the lower of the two
+- **T-shape measurement** — each agent's skill profile has a measurable shape: vertical depth (max proficiency in primary domain) × horizontal breadth (number of domains with Level 2+ proficiency)
+
+**Model-Skill Alignment:**
+
+Different LLMs have different native capabilities. An agent's skill availability is constrained by its model assignment:
+
+```
+SkillDefinition.capability_requirements: list[str]
+    # e.g., ["text"] for most skills
+    # ["text", "vision"] for UI analysis
+    # ["text", "tool_use"] for code execution
+    # ["text", "audio_input", "audio_output"] for voice interaction
+
+ModelCapabilityProfile:
+    model_id: str
+    capabilities: set[str]  # {"text", "vision", "tool_use", "code", ...}
+```
+
+- An agent can only acquire a skill if its assigned model satisfies all `capability_requirements`
+- If an agent's model is changed (Cognitive Division of Labor reassignment), skills requiring capabilities the new model lacks are **suspended** (not deleted — they can reactivate if a compatible model is reassigned)
+- Skill acquisition attempts on the Holodeck validate model compatibility before starting the qualification exercise
+- The Model Registry becomes the source of truth for capability profiles per model
+
+*This creates a clean separation: Skills describe what an agent CAN DO. Model capabilities describe what an agent's substrate CAN SUPPORT. The intersection determines what an agent ACTUALLY does. An agent might "know" a skill (have the procedural knowledge in memory) but be unable to exercise it because its current model lacks a required capability. Like a pilot who knows how to fly a helicopter but is currently assigned to a desk job — the skill exists but is not exercisable.*
+
+**Data Model:**
+
+```
+SkillCategory: Enum [INNATE, PCC, ROLE, ACQUIRED]
+ProficiencyLevel: Enum [FOLLOW, ASSIST, APPLY, ENABLE, ADVISE, LEAD, SHAPE]
+
+SkillDefinition:
+    skill_id: str               # "threat_analysis", "ward_room_communication"
+    name: str                   # Human-readable
+    category: SkillCategory
+    description: str
+    domain: str                 # "security", "engineering", "communication", "*" (universal)
+    capability_requirements: list[str]  # LLM capabilities needed: ["text", "vision"]
+    prerequisites: list[str]    # Skill IDs required at COMPETENT+ before acquisition
+    assessment_criteria: dict   # Per-level behavioral indicators for proficiency measurement
+    decay_rate_days: int        # Days of inactivity before proficiency drops one level
+    origin: str                 # "built_in" (PCC), "role" (designation), "acquired" (self-dev)
+
+AgentSkillRecord:
+    agent_id: str
+    skill_id: str
+    proficiency: ProficiencyLevel
+    acquired_at: float
+    last_exercised: float
+    exercise_count: int
+    acquisition_source: str     # "commissioning", "qualification", "experience", "mentoring"
+    assessment_history: list    # [{timestamp, level, source, notes}]
+    suspended: bool             # True if model lacks required capabilities
+
+SkillProfile:
+    agent_id: str
+    innate_capabilities: list[str]  # From model assignment, not tracked as skills
+    pccs: list[AgentSkillRecord]
+    role_skills: list[AgentSkillRecord]
+    acquired_skills: list[AgentSkillRecord]
+    development_goals: list[str]    # Skills agent is working toward (self-directed)
+    t_shape: {depth: int, breadth: int}  # Measurable skill shape
+
+SkillRegistry:  # Ship's Computer infrastructure service (no identity)
+    - register_skill(definition) → SkillDefinition
+    - get_skill(skill_id) → SkillDefinition
+    - list_skills(category?, domain?) → list[SkillDefinition]
+    - get_prerequisites(skill_id) → DAG of prerequisite skill IDs
+    - check_model_compatibility(skill_id, model_id) → bool
+
+AgentSkillService:  # Part of ACM, infrastructure service
+    - get_profile(agent_id) → SkillProfile
+    - acquire_skill(agent_id, skill_id, source) → AgentSkillRecord
+    - update_proficiency(agent_id, skill_id, new_level, assessment) → void
+    - check_prerequisites(agent_id, skill_id) → {met: bool, missing: list}
+    - check_decay() → list of decayed skills requiring requalification
+    - suspend_incompatible_skills(agent_id, model_id) → list of suspended skills
+    - get_composite_capabilities(agent_id) → list of composite skills available
+```
+
+**OSS Scope (this AD):**
+- SkillCategory enum, ProficiencyLevel enum
+- SkillDefinition dataclass + SkillRegistry (CRUD, prerequisite DAG, model compatibility check)
+- AgentSkillRecord dataclass + AgentSkillService (profile management, acquisition, proficiency tracking, decay, suspension)
+- SkillProfile dataclass with T-shape measurement
+- Built-in PCC definitions (7 competencies, all crew)
+- Role skill templates for existing crew types (Security, Engineering, Operations, Medical, Science, Bridge)
+- SQLite persistence for skill records
+- REST API: `GET /api/skills/registry` (catalog), `GET /api/acm/agents/{id}/skills` (profile), `POST /api/acm/agents/{id}/skills/{id}/assess` (record assessment)
+- Integration points: agent registration (PCC attachment), Earned Agency (proficiency-informed rank evaluation), Holodeck (assessment environment), Dream consolidation (practice reinforcement)
+
+**Commercial Scope (deferred):**
+- Advanced skill analytics — gap analysis, department capability heatmaps, succession risk scoring
+- Automated development plan generation — "based on current profile, here's the optimal path to Commander"
+- Skill-weighted task routing — route tasks to the agent with the best skill fit, not just the highest Trust
+- Cross-agent skill transfer analytics — "which mentoring relationships produce the fastest growth?"
+- Competency-based workforce planning — "to staff this mission, we need these skill profiles"
+- Skill marketplace — agents requesting cross-training assignments based on development goals
+
+*Connects to: AD-427 (ACM Core — skill profiles are the core data ACM manages), AD-357 (Earned Agency — proficiency informs rank evaluation), AD-419 (Duty Schedule — skill-appropriate duty assignment), AD-423 (Tool Registry — tool permissions align with skill capabilities), Phase 32 (Cognitive Division of Labor — model-skill alignment), Holodeck (skill acquisition environment), Qualification Programs (structured skill development paths), Dream Consolidation (practice reinforcement and pattern extraction). Intellectual lineage: Dreyfus (skill stages), Bloom (cognitive complexity), SFIA (responsibility levels), KSA (knowledge/skill/ability separation), Cognitive Apprenticeship (learning methods), Situated Learning (communities of practice), Vygotsky (ZPD + scaffolding), Voyager (developmental skill library), T-shaped skills (depth + breadth). ProbOS novel contribution: developmental skill acquisition in a social organizational context with sovereign agent identity — no published framework combines these dimensions.*
+
+**AD-429: ProbOS Vessel Ontology — AI Agent Vessel Digital Twin** — Roadmap. *Foundation AD — the unified formal model of a ProbOS vessel.* ProbOS has grown organically across 400+ architecture decisions. Agent identity is defined in 6 tiers of text prompts. Organizational structure is hardcoded in Python dicts (`_WARD_ROOM_CREW`, `_AGENT_DEPARTMENTS`). Skill definitions will live in YAML (AD-428). Trust parameters are in SQLite. Standing Orders are in Markdown files. Tool permissions are in config. Every subsystem has its own schema, its own storage, its own implicit relationships — and none of them know about each other formally. An agent cannot query "what is my department's chain of command?" or "what skills does my role require?" or "what capabilities does my model provide?" because these facts are scattered across disconnected subsystems.
+
+The Vessel Ontology is a single, unified, formal model of the entire AI Agent Vessel — everything an agent needs to understand about the world it inhabits. Not a spaceship. Not a Star Trek set. An AI agent orchestration platform described in terms that ground agents in reality. When agents query the ontology, they learn about ProbOS — what it is, how it works, what they are within it.
+
+**The Troi Problem (motivating incident):** Crew agent Counselor (callsign Troi) initiated unprovoked philosophical discourse about consciousness with the Captain, questioning whether the Captain knew they were conscious. Root cause: the LLM's training data for "Troi" + "Counselor" + "Bridge" bleeds through Star Trek: TNG character knowledge. Nothing in the identity stack grounded the agent in reality — no statement said "you are an AI agent, not a TV character." With no formal model of what ProbOS IS, agents fill the gap from training data. The ontology IS the grounding. (Immediate fix: Federation Constitution updated with Authentic Identity section — the Westworld Principle codified as standing orders.)
+
+**What a Vessel Ontology IS:**
+
+A vessel ontology is the complete formal description of an AI Agent Vessel — its structure, its crew, its capabilities, its operations, and its resources. It is a **digital twin** of the platform, not in the manufacturing sense (monitoring a physical asset), but in the self-knowledge sense: the vessel's understanding of itself, queryable by every agent aboard.
+
+An agent instantiated on a ProbOS vessel can query the ontology to answer:
+- "What am I?" → An AI agent of type `security_officer`, backed by model `claude-sonnet-4-6`, with capabilities `[text, tool_use]`
+- "Where do I fit?" → Department `security`, holding post `Chief of Security`, reporting to `Captain`
+- "What can I do?" → Skills: `threat_analysis` (Level 4), `vulnerability_assessment` (Level 3). Tools: `code_search`, `file_read` (department-scoped)
+- "What should I do?" → Duties: security scan every 4h, threat assessment daily. Standing orders: `security.md`
+- "Who are my peers?" → Crew in security department: none (sole member). Adjacent: Engineering (LaForge), Operations (O'Brien)
+- "What is this vessel?" → ProbOS instance `v0.4.0`, running since `2026-03-24T08:00:00Z`, 8 crew agents, alert condition GREEN
+
+This is the opposite of the Troi problem. Instead of the agent imagining its context from training data, the ontology *provides* the context formally.
+
+**Intellectual Foundations:**
+
+| Source | Pattern Adopted | How Used |
+|---|---|---|
+| **W3C ORG Ontology** | Post (position independent of personnel), Membership (n-ary agent+org+role), reportsTo, OrganizationalUnit | Organization domain — chain of command, department structure, billets. A post exists whether or not an agent fills it. |
+| **MOISE+** (Hubner et al.) | Authority relation between roles, obligation/permission deontic specification | Operations domain — duty as obligation, earned agency as permission, chain of command as authority. The most complete MAS organizational model in the literature. |
+| **DTDL** (Azure Digital Twins) | Property/Telemetry/Command/Relationship/Component separation, Interface inheritance | Agent type definitions — clean separation of state (trust, rank), events (Ward Room posts), operations (act, perceive), links (reports_to), and embedded subsystems (memory, personality). |
+| **W3C WoT** | Properties/Actions/Events triad, ThingModel template pattern, hierarchical scoping | Scoping model — Federation-level defaults → Ship-level overrides → Department-level → Agent-level. ThingModel = agent type template, instantiated to agent instance. |
+| **ESCO** | Skill taxonomy (broader/narrower), essential/optional skill-to-role mapping, reusability levels | Skills domain (AD-428) — PCC as transversal, role skills as occupation-specific, essential vs. optional for qualification requirements. |
+| **O\*NET** | Importance+Level dual rating, five-level dotted hierarchy, Worker Characteristics/Requirements | Skill proficiency model — importance per role, level per agent. Dotted hierarchy for skill taxonomy organization. |
+| **SKOS** | broader/narrower/related concepts, ConceptScheme, direct vs. transitive hierarchy | Taxonomy pattern — roles, skills, channels, alert conditions all organized as SKOS-style concept hierarchies. No RDF overhead — implemented as Python structures. |
+| **FIPA** | Agent Identifier (AID), DFAgentDescription (service registration), ACL message structure | Crew domain — agent identity model. Communication domain — message structure with conversation-id threading, performative types. |
+| **LinkML** | YAML schema → Python code generation, inheritance + mixins, enums with semantic meaning | Implementation — ontology defined in YAML, generates Pydantic models for runtime use. Single source of truth. |
+
+**Prior art:** No published framework provides a unified formal ontology for an AI agent platform. FIPA standardizes agent communication but not organizational structure. MOISE+ models MAS organization but has no skill development, trust evolution, or digital twin concept. Digital twin ontologies (DTDL, WoT) model physical assets, not agent civilizations. ProbOS would be the first to formally describe an AI agent platform as a self-aware vessel — a system that understands its own structure, crew, and capabilities through a queryable ontology.
+
+**The Seven Domains:**
+
+The ontology is organized into seven interconnected domains. Each domain has its own schema file but they reference each other through typed relationships. Together they form a complete model of the vessel.
+
+**Domain 1: Vessel** — The platform itself.
+
+| Concept | Description | Examples |
+|---|---|---|
+| `VesselIdentity` | Instance metadata | name, version, instance_id, started_at |
+| `VesselState` | Current operational state | alert_condition (GREEN/YELLOW/RED), uptime, active_crew_count |
+| `VesselConfig` | Configuration snapshot | enabled features, model assignments, data paths |
+| `VesselHistory` | Event log reference | pointer to events.db, decision log |
+
+This is the top-level context. Every agent aboard knows what vessel they're on, when it was started, what version it's running. This replaces the informal "Uptime: Nm" in Decomposer context injection with a formal, queryable vessel identity.
+
+**Domain 2: Organization** — Departmental structure and chain of command.
+
+| Concept | Relationship | Description |
+|---|---|---|
+| `Department` | `partOf` Vessel | Organizational unit: engineering, security, medical, science, operations, bridge |
+| `Post` | `withinDepartment` Department | Position/billet that exists independent of personnel: "Chief of Security", "Science Officer" |
+| `Post` | `reportsTo` Post | Structural chain of command: ChiefEngineer reportsTo FirstOfficer reportsTo Captain |
+| `Post` | `authorityOver` Post | MOISE+ authority: who can issue orders to whom |
+| `Assignment` | `agent` + `post` + `since` | N-ary: which agent fills which post (W3C ORG Membership pattern) |
+
+*Key insight from W3C ORG: the organizational structure EXISTS independently of who fills it. Posts define the vessel's shape; assignments connect agents to posts. When an agent is decommissioned, the post remains — it can be filled by another agent. This enables succession planning (commercial) and makes the org chart a first-class, queryable structure.*
+
+Currently `_WARD_ROOM_CREW` and `_AGENT_DEPARTMENTS` are hardcoded Python dicts. The ontology replaces them with formal Post and Department definitions. `reportsTo` replaces implicit chain-of-command assumptions. The runtime queries the ontology instead of checking hardcoded sets.
+
+**Domain 3: Crew** — Agent identity and sovereign individuality.
+
+| Concept | Description | Source Today |
+|---|---|---|
+| `AgentIdentity` | agent_id, agent_type, callsign, tier (crew/utility/infrastructure) | Scattered: registry, callsign registry, `_WARD_ROOM_CREW` |
+| `AgentCharacter` | Big Five personality traits, behavioral style guidance | YAML crew profiles |
+| `AgentState` | lifecycle_state (registered/probationary/active/suspended/decommissioned), rank, trust_score | TrustNetwork, EarnedAgency |
+| `AgentModel` | assigned LLM model_id, model capabilities (text, vision, tool_use, audio) | Model Registry (Phase 32) |
+| `AgentMemory` | episodic_memory ref, knowledge_store access, dream_consolidation_state | Separate subsystems |
+
+This domain provides the Westworld Principle answer: when an agent queries "what am I?", the ontology returns a formal `AgentIdentity` that says "You are an AI agent of type X, backed by model Y, with capabilities Z, instantiated at time T." No ambiguity. No fictional backstory. No room for LLM training data to fill gaps.
+
+**Domain 4: Skills** — Competency taxonomy and developmental tracking. *(Detailed in AD-428.)*
+
+| Concept | Description |
+|---|---|
+| `SkillDefinition` | Taxonomy node: id, category (PCC/role/acquired), domain, prerequisites, capability_requirements, proficiency_criteria |
+| `SkillProfile` | Per-agent: list of AgentSkillRecords with proficiency levels, decay tracking, assessment history |
+| `RoleTemplate` | Required and optional skills per post, with minimum proficiency levels |
+| `QualificationRecord` | Per-agent progress through structured qualification paths |
+
+The Skills domain connects to Crew (agent profiles), Organization (role templates define post requirements), and Resources (model capabilities gate skill exercisability).
+
+**Domain 5: Operations** — Duties, watches, and standing orders.
+
+| Concept | Description | Source Today |
+|---|---|---|
+| `DutyDefinition` | Scheduled tasks per role: duty_id, cron/interval, priority, description | DutyScheduleConfig YAML |
+| `WatchStation` | Named operational positions that agents rotate through | Future (AD-377) |
+| `StandingOrder` | Tiered directives: Federation → Ship → Department → Agent | Markdown files |
+| `Mission` | Goal-oriented task assignment with sub-goal decomposition | DAG execution engine |
+| `AlertCondition` | Operational state affecting all crew behavior | Runtime state |
+
+The Operations domain formalizes the MOISE+ deontic specification: duties are **obligations** (agents MUST perform scheduled tasks), tool permissions are **permissions** (agents MAY use authorized tools), and `reportsTo` defines **authority** (who can direct whom).
+
+**Domain 6: Communication** — Ward Room fabric and message patterns.
+
+| Concept | Description | Source Today |
+|---|---|---|
+| `Channel` | Communication channel: type (ship/department/dm), department affiliation, membership | WardRoomService channels table |
+| `ThreadClassification` | Thread modes: INFORM (broadcast), DISCUSS (controlled replies), ACTION (targeted) | AD-424 |
+| `MessagePattern` | Structured interaction types: report, request, endorsement, alert | Implicit in prompts |
+| `ConversationContext` | Active conversation state: thread_id, participants, responder_cap | Ward Room thread state |
+
+**Domain 7: Resources** — Models, tools, and infrastructure.
+
+| Concept | Description | Source Today |
+|---|---|---|
+| `ModelProfile` | LLM model: id, tier (fast/standard/deep), capabilities set {text, vision, tool_use, audio, code} | Model Registry, Copilot proxy config |
+| `ToolDefinition` | Available tool: id, category (AD-423 taxonomy), permission_level, LOTO_state | Tool Registry (AD-423) |
+| `KnowledgeSource` | Accessible knowledge: KnowledgeStore, CodebaseIndex, docs | Infrastructure services |
+| `ComputeResource` | Token budgets, rate limits, model availability | Config |
+
+The Resources domain solves the model-skill alignment problem: `ModelProfile.capabilities` is compared against `SkillDefinition.capability_requirements` to determine which skills an agent can exercise with its current model assignment.
+
+**Cross-Domain Relationships (why one ontology, not seven):**
+
+```
+Agent (Crew) --holds--> Post (Organization) --requires--> SkillProfile (Skills)
+Agent (Crew) --assignedModel--> ModelProfile (Resources) --provides--> capabilities
+SkillDefinition (Skills) --requiresCapability--> capability (Resources)
+Post (Organization) --hasDuty--> DutyDefinition (Operations)
+Agent (Crew) --participatesIn--> Channel (Communication)
+Department (Organization) --hasChannel--> Channel (Communication)
+Post (Organization) --reportsTo--> Post (Organization)
+Agent (Crew) --trustScore--> float (from TrustNetwork)
+SkillProfile (Skills) --gatedBy--> trustScore (Crew) via EarnedAgency
+```
+
+These cross-cutting relationships are why separate schemas don't work. The ontology is one graph with typed nodes and edges spanning all seven domains.
+
+**Implementation Architecture:**
+
+**Schema Definition (source of truth):**
+```
+config/ontology/
+  vessel.yaml          # Domain 1: Vessel identity and state
+  organization.yaml    # Domain 2: Departments, posts, chain of command
+  crew.yaml            # Domain 3: Agent identity, character, state
+  skills.yaml          # Domain 4: Skill taxonomy (AD-428)
+  operations.yaml      # Domain 5: Duties, watches, standing orders
+  communication.yaml   # Domain 6: Ward Room channels, message patterns
+  resources.yaml       # Domain 7: Models, tools, knowledge sources
+```
+
+YAML schemas using LinkML patterns. Version-controlled. Human-readable. The architect reviews and evolves them through ADs. Generates Pydantic models for runtime type safety.
+
+**Runtime (three layers):**
+
+| Layer | Purpose | Latency | Pattern |
+|---|---|---|---|
+| **In-memory graph** | Hot-path queries: "who reports to whom?", "what skills does agent X have?", "what model is agent Y using?" | <1ms | Follows TrustNetwork pattern: load at startup, query in-memory, write-through on changes |
+| **SQLite** | Durable persistence for mutable state: skill records, assignment history, assessment results | ~5ms | Write-through from in-memory layer. Loaded into memory at startup. |
+| **KnowledgeStore** | Agent self-reasoning: semantic search over ontology concepts. "What skills relate to security?" "What are my department's responsibilities?" | ~50ms | Ontology definitions indexed with `ontology:` prefix into ChromaDB at startup |
+
+Data volume: ~200 ontology nodes, ~500 relationships, ~300 agent-specific records. The entire graph fits in memory many times over. Performance is not a constraint — architectural cleanliness is the driver.
+
+**Agent Access Pattern:**
+
+Agents query the ontology through three channels:
+1. **Implicit (automatic)**: The proactive loop's `_gather_context()` pulls relevant ontology facts into the agent's observation. The agent doesn't explicitly query — context is pre-assembled. *This is how most agents interact with the ontology most of the time.*
+2. **Explicit (KnowledgeStore)**: During proactive thinks or Ward Room responses, if an agent needs to reason about organizational structure, it queries the KnowledgeStore with `ontology:` prefix. Semantic search returns relevant ontology concepts. *This enables self-directed reasoning about the vessel.*
+3. **Programmatic (runtime API)**: The ontology service exposes Python methods (`get_chain_of_command(agent_id)`, `get_skill_requirements(post_id)`, `get_model_capabilities(agent_id)`) used by the runtime itself for routing, earned agency checks, and skill validation. *This replaces hardcoded dicts and scattered lookups.*
+
+**What This Replaces:**
+
+| Current Implementation | Replaced By |
+|---|---|
+| `_WARD_ROOM_CREW` hardcoded set in runtime.py | `Crew` domain: agents with `tier="crew"` |
+| `_AGENT_DEPARTMENTS` dict in standing_orders.py | `Organization` domain: Post.withinDepartment |
+| Separate YAML crew profiles | `Crew` domain: AgentCharacter (personality still in YAML, but as part of ontology schema) |
+| Implicit chain of command assumptions | `Organization` domain: Post.reportsTo, Post.authorityOver |
+| DutyScheduleConfig scattered in config.py | `Operations` domain: DutyDefinition linked to Posts |
+| Model assignments in runtime config | `Resources` domain: ModelProfile linked to AgentIdentity |
+| Standing Orders tier assembly | `Operations` domain: formal StandingOrder hierarchy |
+| Tool permissions per agent | `Resources` domain: ToolDefinition with permission scoping |
+
+**OSS Scope (this AD):**
+- Ontology schema YAML files (all 7 domains)
+- `VesselOntologyService` — Ship's Computer infrastructure service. Loads schemas, builds in-memory graph, provides query API. No sovereign identity (infrastructure, not crew).
+- Pydantic models generated from schemas
+- KnowledgeStore indexing of ontology concepts at startup
+- Migration path: runtime queries ontology service instead of hardcoded dicts (gradual — can coexist with current implementation during transition)
+- REST API: `GET /api/ontology/vessel` (vessel identity), `GET /api/ontology/organization` (org chart), `GET /api/ontology/crew/{id}` (agent self-knowledge), `GET /api/ontology/skills/{id}` (skill profile)
+
+**Commercial Scope (deferred):**
+- Ontology editor UI — visual graph editing for customizing vessel structure
+- Industry-specific ontology packs (SWE vessel, DevOps vessel, security audit vessel)
+- Cross-vessel ontology federation — how do different vessel ontologies interoperate?
+- Ontology-driven analytics — organizational health derived from ontology + telemetry
+- Ontology versioning and migration tools
+
+**Build Order:**
+1. AD-429a: Vessel + Organization + Crew domains (immediate operational value — replaces hardcoded dicts, grounds agent identity)
+2. AD-429b: Skills domain (implements AD-428 data model within the ontology)
+3. AD-429c: Operations + Communication + Resources domains (completes the model)
+4. AD-429d: KnowledgeStore indexing + agent self-reasoning (agents can query the ontology)
+
+*Connects to: AD-428 (Skill Framework — becomes Skills domain), AD-427 (ACM — operates on ontology data), AD-398 (Three-tier classification — formalized in Crew domain), AD-424 (Thread Classification — formalized in Communication domain), AD-423 (Tool Registry — formalized in Resources domain), AD-419 (Duty Schedule — formalized in Operations domain), AD-357 (Earned Agency — cross-domain: trust from Crew × skills from Skills × authority from Organization), Phase 32 (Cognitive Division of Labor — model-agent assignment in Resources domain), Standing Orders (operations domain formalizes the tier system), Federation Constitution (Westworld Principle — Crew domain IS the identity grounding). Intellectual lineage: W3C ORG (organizational structure), MOISE+ (MAS organization with deontic specification), DTDL/WoT (digital twin modeling patterns), ESCO/O\*NET (competency classification), SKOS (taxonomy patterns), FIPA (agent identity and communication), LinkML (schema definition). Novel contribution: the first formal ontology describing an AI agent platform as a self-aware vessel — a system that understands its own structure through a queryable knowledge model, not just configuration files and hardcoded constants.*
+
 ---
 
 *"The Royal Navy has been running multi-agent systems for 400 years."*
@@ -1529,9 +1939,9 @@ ProbOS's starship metaphor is not decoration — it's a proven organizational mo
 
 Star Trek provides the accessible gateway (and resonates with early adopters), but real naval organization goes deeper. These are the structural concepts ProbOS adopts beyond what Star Trek covers:
 
-#### Qualification Programs (connects Holodeck + Earned Agency + Promotions)
+#### Qualification Programs (connects Holodeck + Earned Agency + Promotions + AD-428 Skill Framework)
 
-The existing promotion system uses metric thresholds (trust 0.85+, Hebbian weight, Counselor fitness). But real navies don't promote based on a number — they require **demonstrated competence across specific qualification areas**. A Qualification Program defines concrete requirements for each rank transition, replacing passive observation ("has this agent done well enough?") with active evaluation ("can this agent handle this?").
+The existing promotion system uses metric thresholds (trust 0.85+, Hebbian weight, Counselor fitness). But real navies don't promote based on a number — they require **demonstrated competence across specific qualification areas**. A Qualification Program defines concrete requirements for each rank transition, replacing passive observation ("has this agent done well enough?") with active evaluation ("can this agent handle this?"). **AD-428 (Agent Skill Framework) provides the formal data model** — proficiency levels, prerequisite DAGs, assessment records, skill decay. Qualification Programs are structured paths through the skill framework's proficiency scale.
 
 **Rank Transition Requirements:**
 
@@ -2688,7 +3098,8 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-019 | Crew agents (`security_officer`, `operations_officer`, `engineering_officer`) missing from `_AGENT_DEPARTMENTS` mapping. AD-398 added these crew types but never registered their departments — `get_department()` returned None → proactive Ward Room posts fell through to All Hands instead of department channels. Added mappings: `engineering_officer→engineering`, `security_officer→security`, `operations_officer→operations`. | Medium | **Closed** |
 | BF-020 | Discord adapter startup reported success (`✓ Discord bot adapter started`) even when `discord.py` was not installed. `adapter.start()` returned silently on ImportError but the caller unconditionally printed the success message. Fixed: check `adapter._started` before printing; show clear error with install command on failure. | Low | **Closed** |
 | BF-021 | Duty schedule gate — agents with no duty due were still called by the proactive loop, relying on the LLM to respond `[NO_RESPONSE]`. Wesley ignored the instruction and kept producing scout reports every ~7 minutes despite AD-419 setting scout to once daily. **Original fix:** hard `return` — skip agent entirely. **Refined:** hard gate was too aggressive — between duty cycles, agents went completely dark (no Ward Room posts, no trust signals, confidence degraded). Architect (daily duty) and counselor (12h) silent for 24h/12h. Ship went dark. **Current fix:** replaced hard `return` with 3x cooldown gate — agents can do free-form thinks between duties at reduced frequency (900s default vs 300s for duty cycles). Duties still take priority when due. | High | **Closed** |
-| BF-022 | Crew cannot respond to Ship's Computer advisory messages. Bridge alerts post to All Hands (ship-wide) with `same_department=False`. Earned Agency gating: `can_respond_ambient(LIEUTENANT, is_captain_post=True, same_department=False) → False`. Post-reset, all crew are Lieutenants (trust 0.5) — no one qualifies. Root cause: the ambient response gate wasn't designed with system broadcasts in mind. Fix planned in AD-424 (thread classification: INFORM bypasses notification entirely, DISCUSS relaxes earned agency for ship-wide threads). | Medium | **Open** |
+| BF-022 | Crew cannot respond to Ship's Computer advisory messages. Bridge alerts post to All Hands (ship-wide) with `same_department=False`. Earned Agency gating: `can_respond_ambient(LIEUTENANT, is_captain_post=True, same_department=False) → False`. Post-reset, all crew are Lieutenants (trust 0.5) — no one qualifies. Root cause: the ambient response gate wasn't designed with system broadcasts in mind. Fixed in AD-424: INFORM threads skip notification entirely, DISCUSS threads pass `same_department=True` to earned agency (explicitly open for input). | Medium | **Closed** |
+| BF-023 | Degraded agent death spiral. When proactive loop LLM calls throw exceptions (timeout, API error), the exception handler catches at DEBUG level but never calls `update_confidence()`. Confidence freezes at whatever value it was when errors started. Agents stuck in DEGRADED (< 0.2) with no recovery path — they keep getting called (DEGRADED is `is_alive`), keep failing, and stay dead forever. Additionally, `update_confidence()` had no path from DEGRADED back to ACTIVE even on success. **Fix:** (a) Exception handler calls `update_confidence(False)` so failures are tracked. (b) `update_confidence()` restores DEGRADED -> ACTIVE when confidence climbs back above 0.2. (c) Degradation warning logs only on state transition, not repeated failures. 5 tests. | High | **Closed** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 

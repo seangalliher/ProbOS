@@ -148,3 +148,119 @@ def test_thread_not_found(client):
     """GET nonexistent thread returns 404."""
     resp = client.get("/api/wardroom/threads/nonexistent-id")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Thread management (AD-424)
+# ---------------------------------------------------------------------------
+
+def test_patch_thread_lock(client):
+    """PATCH locks a thread."""
+    channels = client.get("/api/wardroom/channels").json()["channels"]
+    ch_id = channels[0]["id"]
+    thread = client.post(f"/api/wardroom/channels/{ch_id}/threads", json={
+        "author_id": "a1", "title": "T", "body": "B",
+    }).json()
+
+    resp = client.patch(f"/api/wardroom/threads/{thread['id']}", json={
+        "locked": True,
+    })
+    assert resp.status_code == 200
+    assert resp.json()["locked"] is True
+
+
+def test_patch_thread_reclassify(client):
+    """PATCH reclassifies inform → discuss."""
+    channels = client.get("/api/wardroom/channels").json()["channels"]
+    ch_id = channels[0]["id"]
+    thread = client.post(f"/api/wardroom/channels/{ch_id}/threads", json={
+        "author_id": "a1", "title": "Advisory", "body": "Status",
+        "thread_mode": "inform",
+    }).json()
+    assert thread["thread_mode"] == "inform"
+
+    resp = client.patch(f"/api/wardroom/threads/{thread['id']}", json={
+        "thread_mode": "discuss",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["thread_mode"] == "discuss"
+
+    # GET also shows updated mode
+    detail = client.get(f"/api/wardroom/threads/{thread['id']}").json()
+    assert detail["thread"]["thread_mode"] == "discuss"
+
+
+def test_patch_thread_not_found(client):
+    """PATCH nonexistent thread returns 404."""
+    resp = client.patch("/api/wardroom/threads/nonexistent-id", json={
+        "locked": True,
+    })
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Activity feed & mark-seen (AD-425)
+# ---------------------------------------------------------------------------
+
+def test_activity_feed_returns_threads(client):
+    """GET /api/wardroom/activity returns threads from multiple channels."""
+    channels = client.get("/api/wardroom/channels").json()["channels"]
+    ch1_id = channels[0]["id"]
+    ch2_id = channels[1]["id"] if len(channels) > 1 else ch1_id
+    client.post(f"/api/wardroom/channels/{ch1_id}/threads", json={
+        "author_id": "a1", "title": "T1", "body": "B1",
+    })
+    client.post(f"/api/wardroom/channels/{ch2_id}/threads", json={
+        "author_id": "a1", "title": "T2", "body": "B2",
+    })
+    resp = client.get("/api/wardroom/activity")
+    assert resp.status_code == 200
+    threads = resp.json()["threads"]
+    assert len(threads) >= 2
+
+
+def test_activity_feed_mode_filter(client):
+    """?thread_mode=discuss filters correctly."""
+    channels = client.get("/api/wardroom/channels").json()["channels"]
+    ch_id = channels[0]["id"]
+    client.post(f"/api/wardroom/channels/{ch_id}/threads", json={
+        "author_id": "a1", "title": "Info", "body": "B",
+        "thread_mode": "inform",
+    })
+    client.post(f"/api/wardroom/channels/{ch_id}/threads", json={
+        "author_id": "a1", "title": "Talk", "body": "B",
+        "thread_mode": "discuss",
+    })
+    resp = client.get("/api/wardroom/activity", params={
+        "channel_id": ch_id, "thread_mode": "discuss",
+    })
+    threads = resp.json()["threads"]
+    assert all(t["thread_mode"] == "discuss" for t in threads)
+    assert any(t["title"] == "Talk" for t in threads)
+
+
+def test_activity_feed_agent_scoped(client):
+    """?agent_id=a1 returns only threads from subscribed channels."""
+    channels = client.get("/api/wardroom/channels").json()["channels"]
+    ch_id = channels[0]["id"]
+    # Subscribe agent
+    client.post(f"/api/wardroom/channels/{ch_id}/subscribe", json={
+        "agent_id": "a1",
+    })
+    client.post(f"/api/wardroom/channels/{ch_id}/threads", json={
+        "author_id": "a1", "title": "Subscribed", "body": "B",
+    })
+    resp = client.get("/api/wardroom/activity", params={"agent_id": "a1"})
+    threads = resp.json()["threads"]
+    assert any(t["title"] == "Subscribed" for t in threads)
+
+
+def test_mark_channel_seen(client):
+    """PUT /api/wardroom/channels/{id}/seen returns 200."""
+    channels = client.get("/api/wardroom/channels").json()["channels"]
+    ch_id = channels[0]["id"]
+    resp = client.put(f"/api/wardroom/channels/{ch_id}/seen", params={
+        "agent_id": "a1",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"

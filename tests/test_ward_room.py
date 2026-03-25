@@ -437,3 +437,318 @@ class TestWardRoomRecentActivity:
         result = await svc.get_recent_activity("fake", since=0.0)
         assert result == []
         await svc.stop()
+
+    @pytest.mark.asyncio
+    async def test_recent_activity_includes_thread_mode(self, wr):
+        """AD-425: get_recent_activity() includes thread_mode for threads."""
+        channels = await wr.list_channels()
+        ch = channels[0]
+        await wr.create_thread(ch.id, "agent1", "Discuss Thread", "body",
+                               author_callsign="LaForge", thread_mode="discuss")
+        activity = await wr.get_recent_activity(ch.id, since=0.0, limit=10)
+        thread_items = [a for a in activity if a["type"] == "thread"]
+        assert len(thread_items) >= 1
+        assert thread_items[0]["thread_mode"] == "discuss"
+
+
+# ---------------------------------------------------------------------------
+# Browse Threads tests (AD-425)
+# ---------------------------------------------------------------------------
+
+class TestBrowseThreads:
+
+    @pytest.mark.asyncio
+    async def test_browse_all_subscribed_channels(self, ward_room):
+        """Agent subscribed to 2 channels, browse with channels=None returns threads from both."""
+        channels = await ward_room.list_channels()
+        # Find All Hands (ship) and first department channel
+        all_hands = next(c for c in channels if c.channel_type == "ship")
+        dept = next(c for c in channels if c.channel_type == "department")
+
+        # Subscribe agent to both
+        await ward_room.subscribe("agent-1", all_hands.id)
+        await ward_room.subscribe("agent-1", dept.id)
+
+        # Create threads in both channels
+        await ward_room.create_thread(all_hands.id, "captain", "All Hands Thread", "body")
+        await ward_room.create_thread(dept.id, "captain", "Dept Thread", "body")
+
+        threads = await ward_room.browse_threads("agent-1")
+        assert len(threads) == 2
+        titles = {t.title for t in threads}
+        assert "All Hands Thread" in titles
+        assert "Dept Thread" in titles
+
+    @pytest.mark.asyncio
+    async def test_browse_specific_channel(self, ward_room):
+        """Pass explicit channels list, only get threads from specified channel."""
+        channels = await ward_room.list_channels()
+        all_hands = next(c for c in channels if c.channel_type == "ship")
+        dept = next(c for c in channels if c.channel_type == "department")
+
+        await ward_room.create_thread(all_hands.id, "captain", "AH Thread", "body")
+        await ward_room.create_thread(dept.id, "captain", "Dept Thread", "body")
+
+        threads = await ward_room.browse_threads("agent-1", channels=[dept.id])
+        assert len(threads) == 1
+        assert threads[0].title == "Dept Thread"
+
+    @pytest.mark.asyncio
+    async def test_browse_thread_mode_filter(self, ward_room):
+        """Filter by thread_mode returns only matching threads."""
+        channels = await ward_room.list_channels()
+        ch = next(c for c in channels if c.channel_type == "ship")
+        await ward_room.subscribe("agent-1", ch.id)
+
+        await ward_room.create_thread(ch.id, "captain", "Info", "status",
+                                      thread_mode="inform")
+        await ward_room.create_thread(ch.id, "captain", "Talk", "discuss",
+                                      thread_mode="discuss")
+
+        threads = await ward_room.browse_threads(
+            "agent-1", thread_mode="discuss",
+        )
+        assert len(threads) == 1
+        assert threads[0].title == "Talk"
+
+    @pytest.mark.asyncio
+    async def test_browse_since_filter(self, ward_room):
+        """since parameter filters correctly."""
+        import time
+        channels = await ward_room.list_channels()
+        ch = next(c for c in channels if c.channel_type == "ship")
+        await ward_room.subscribe("agent-1", ch.id)
+
+        await ward_room.create_thread(ch.id, "captain", "Old", "body")
+        future = time.time() + 100
+        threads = await ward_room.browse_threads("agent-1", since=future)
+        assert len(threads) == 0
+
+    @pytest.mark.asyncio
+    async def test_browse_limit(self, ward_room):
+        """limit caps the number of returned threads."""
+        channels = await ward_room.list_channels()
+        ch = next(c for c in channels if c.channel_type == "ship")
+        await ward_room.subscribe("agent-1", ch.id)
+
+        for i in range(5):
+            await ward_room.create_thread(ch.id, "captain", f"Thread {i}", "body")
+
+        threads = await ward_room.browse_threads("agent-1", limit=3)
+        assert len(threads) == 3
+
+    @pytest.mark.asyncio
+    async def test_browse_empty_result(self, ward_room):
+        """No matching threads returns empty list."""
+        # Agent not subscribed to anything
+        threads = await ward_room.browse_threads("nobody")
+        assert threads == []
+
+
+# ---------------------------------------------------------------------------
+# Thread Classification tests (AD-424)
+# ---------------------------------------------------------------------------
+
+class TestThreadClassification:
+
+    @pytest.mark.asyncio
+    async def test_create_thread_default_mode(self, ward_room):
+        """Thread defaults to discuss mode with no responder cap."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="captain",
+            title="Default", body="Testing defaults",
+        )
+        assert thread.thread_mode == "discuss"
+        assert thread.max_responders == 0
+
+    @pytest.mark.asyncio
+    async def test_create_thread_inform_mode(self, ward_room):
+        """Thread can be created with inform mode and persists."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="captain",
+            title="Advisory", body="Status update",
+            thread_mode="inform",
+        )
+        assert thread.thread_mode == "inform"
+        # Persist through get_thread
+        detail = await ward_room.get_thread(thread.id)
+        assert detail["thread"]["thread_mode"] == "inform"
+
+    @pytest.mark.asyncio
+    async def test_create_thread_action_mode(self, ward_room):
+        """Thread can be created with action mode."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="captain",
+            title="Order", body="Do the thing",
+            thread_mode="action",
+        )
+        assert thread.thread_mode == "action"
+
+    @pytest.mark.asyncio
+    async def test_create_thread_with_responder_cap(self, ward_room):
+        """Thread can specify max_responders."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="captain",
+            title="Discussion", body="Topic",
+            thread_mode="discuss", max_responders=3,
+        )
+        assert thread.max_responders == 3
+
+    @pytest.mark.asyncio
+    async def test_update_thread_lock(self, ward_room):
+        """update_thread can lock a thread."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="captain",
+            title="Lock Test", body="body",
+        )
+        updated = await ward_room.update_thread(thread.id, locked=True)
+        assert updated is not None
+        assert updated.locked is True
+        # Verify persists
+        detail = await ward_room.get_thread(thread.id)
+        assert detail["thread"]["locked"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_thread_reclassify(self, ward_room):
+        """update_thread can reclassify inform → discuss."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="captain",
+            title="Advisory", body="status",
+            thread_mode="inform",
+        )
+        updated = await ward_room.update_thread(thread.id, thread_mode="discuss")
+        assert updated is not None
+        assert updated.thread_mode == "discuss"
+
+    @pytest.mark.asyncio
+    async def test_update_thread_responder_cap(self, ward_room):
+        """update_thread can adjust max_responders."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="captain",
+            title="Cap Test", body="body",
+        )
+        updated = await ward_room.update_thread(thread.id, max_responders=5)
+        assert updated is not None
+        assert updated.max_responders == 5
+
+    @pytest.mark.asyncio
+    async def test_update_thread_emits_event(self, ward_room):
+        """update_thread emits ward_room_thread_updated event."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        thread = await ward_room.create_thread(
+            channel_id=ch.id, author_id="captain",
+            title="Event Test", body="body",
+        )
+        ward_room._captured_events.clear()
+        await ward_room.update_thread(thread.id, locked=True)
+        evt = next(
+            (e for e in ward_room._captured_events
+             if e["type"] == "ward_room_thread_updated"),
+            None,
+        )
+        assert evt is not None
+        assert evt["data"]["thread_id"] == thread.id
+        assert evt["data"]["updates"]["locked"] is True
+
+    @pytest.mark.asyncio
+    async def test_thread_mode_in_event(self, ward_room):
+        """Thread created event includes thread_mode."""
+        channels = await ward_room.list_channels()
+        ch = channels[0]
+        ward_room._captured_events.clear()
+        await ward_room.create_thread(
+            channel_id=ch.id, author_id="captain",
+            title="Mode Event", body="body",
+            thread_mode="inform",
+        )
+        evt = next(
+            (e for e in ward_room._captured_events
+             if e["type"] == "ward_room_thread_created"),
+            None,
+        )
+        assert evt is not None
+        assert evt["data"]["thread_mode"] == "inform"
+
+    @pytest.mark.asyncio
+    async def test_schema_migration(self, tmp_path):
+        """Existing DB without new columns gets migrated on start()."""
+        import aiosqlite
+        db_path = str(tmp_path / "old.db")
+        # Create old schema WITHOUT thread_mode/max_responders columns
+        # but with all other tables matching current _SCHEMA
+        old_schema = """
+CREATE TABLE IF NOT EXISTS channels (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, channel_type TEXT NOT NULL,
+    department TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL,
+    created_at REAL NOT NULL, archived INTEGER NOT NULL DEFAULT 0,
+    description TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS threads (
+    id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, author_id TEXT NOT NULL,
+    title TEXT NOT NULL, body TEXT NOT NULL, created_at REAL NOT NULL,
+    last_activity REAL NOT NULL, pinned INTEGER NOT NULL DEFAULT 0,
+    locked INTEGER NOT NULL DEFAULT 0,
+    reply_count INTEGER NOT NULL DEFAULT 0, net_score INTEGER NOT NULL DEFAULT 0,
+    author_callsign TEXT NOT NULL DEFAULT '', channel_name TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS posts (
+    id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, parent_id TEXT,
+    author_id TEXT NOT NULL, body TEXT NOT NULL, created_at REAL NOT NULL,
+    edited_at REAL, deleted INTEGER NOT NULL DEFAULT 0,
+    delete_reason TEXT NOT NULL DEFAULT '', deleted_by TEXT NOT NULL DEFAULT '',
+    net_score INTEGER NOT NULL DEFAULT 0, author_callsign TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS endorsements (
+    id TEXT PRIMARY KEY, target_id TEXT NOT NULL, target_type TEXT NOT NULL,
+    voter_id TEXT NOT NULL, direction TEXT NOT NULL, created_at REAL NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_endorsement_unique
+    ON endorsements(target_id, voter_id);
+CREATE TABLE IF NOT EXISTS memberships (
+    agent_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+    subscribed_at REAL NOT NULL, last_seen REAL NOT NULL DEFAULT 0.0,
+    notify INTEGER NOT NULL DEFAULT 1, role TEXT NOT NULL DEFAULT 'member',
+    PRIMARY KEY (agent_id, channel_id)
+);
+CREATE TABLE IF NOT EXISTS credibility (
+    agent_id TEXT PRIMARY KEY, total_posts INTEGER NOT NULL DEFAULT 0,
+    total_endorsements INTEGER NOT NULL DEFAULT 0,
+    credibility_score REAL NOT NULL DEFAULT 0.5,
+    restrictions TEXT NOT NULL DEFAULT '[]'
+);
+CREATE TABLE IF NOT EXISTS mod_actions (
+    id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, target_id TEXT NOT NULL,
+    target_type TEXT NOT NULL, action TEXT NOT NULL, reason TEXT NOT NULL,
+    moderator_id TEXT NOT NULL, created_at REAL NOT NULL
+);
+"""
+        async with aiosqlite.connect(db_path) as db:
+            await db.executescript(old_schema)
+
+        # Start service on old DB — migration should add columns
+        svc = WardRoomService(db_path=db_path)
+        await svc.start()
+        channels = await svc.list_channels()
+        ch = channels[0]
+        thread = await svc.create_thread(
+            channel_id=ch.id, author_id="captain",
+            title="Post-migration", body="works",
+        )
+        assert thread.thread_mode == "discuss"
+        assert thread.max_responders == 0
+        await svc.stop()

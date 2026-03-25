@@ -129,8 +129,14 @@ class ProactiveCognitiveLoop:
             try:
                 await self._think_for_agent(agent, rank, trust_score)
             except Exception:
+                # BF-023: Track the failure so confidence reflects reality.
+                # Without this, LLM exceptions leave confidence frozen and
+                # agents stay permanently degraded with no recovery path.
+                agent.update_confidence(False)
                 logger.debug(
-                    "Proactive think failed for %s (fail-open)", agent.agent_type,
+                    "Proactive think failed for %s (fail-open, confidence=%.3f)",
+                    agent.agent_type,
+                    agent.confidence,
                     exc_info=True,
                 )
 
@@ -312,15 +318,18 @@ class ProactiveCognitiveLoop:
                 if dept:
                     channels = await rt.ward_room.list_channels()
                     dept_channel = None
+                    all_hands_ch = None
                     for ch in channels:
                         if ch.channel_type == "department" and ch.department == dept:
                             dept_channel = ch
-                            break
+                        elif ch.channel_type == "ship":
+                            all_hands_ch = ch
+
+                    # Look back one cooldown window (what happened since last think)
+                    cooldown = self._agent_cooldowns.get(agent.id, self._default_cooldown)
+                    since = time.time() - cooldown
 
                     if dept_channel:
-                        # Look back one cooldown window (what happened since last think)
-                        cooldown = self._agent_cooldowns.get(agent.id, self._default_cooldown)
-                        since = time.time() - cooldown
                         activity = await rt.ward_room.get_recent_activity(
                             dept_channel.id, since=since, limit=5
                         )
@@ -333,6 +342,39 @@ class ProactiveCognitiveLoop:
                                 }
                                 for a in activity
                             ]
+                            # AD-425: Mark channel as seen after consuming activity
+                            try:
+                                await rt.ward_room.update_last_seen(agent.id, dept_channel.id)
+                            except Exception:
+                                pass  # Non-critical
+
+                    # AD-425: Also include recent All Hands activity (ship-wide)
+                    if all_hands_ch and (not dept_channel or all_hands_ch.id != dept_channel.id):
+                        all_hands_activity = await rt.ward_room.get_recent_activity(
+                            all_hands_ch.id, since=since, limit=3
+                        )
+                        # Filter: only DISCUSS threads (INFORM already consumed, ACTION is targeted)
+                        all_hands_filtered = [
+                            a for a in all_hands_activity
+                            if a.get("thread_mode") != "inform"
+                        ]
+                        if all_hands_filtered:
+                            if "ward_room_activity" not in context:
+                                context["ward_room_activity"] = []
+                            context["ward_room_activity"].extend([
+                                {
+                                    "type": item["type"],
+                                    "author": item.get("author", "unknown"),
+                                    "body": item.get("body", "")[:150],
+                                    "channel": "All Hands",
+                                }
+                                for item in all_hands_filtered[:3]
+                            ])
+                            # AD-425: Mark All Hands as seen
+                            try:
+                                await rt.ward_room.update_last_seen(agent.id, all_hands_ch.id)
+                            except Exception:
+                                pass  # Non-critical
             except Exception:
                 logger.debug("Ward Room context fetch failed for %s", agent.id, exc_info=True)
 

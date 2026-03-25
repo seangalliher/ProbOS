@@ -1270,6 +1270,11 @@ export const useStore = create<HXIState>((set, get) => ({
         get().refreshWardRoomUnread();
         break;
       }
+      case 'ward_room_thread_updated': {
+        // AD-424: Thread was reclassified, locked, or responder cap changed
+        get().refreshWardRoomThreads();
+        break;
+      }
 
       // Assignment events (AD-408) — log only, canvas integration is Phase 2
       case 'assignment_created':

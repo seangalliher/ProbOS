@@ -637,6 +637,80 @@ class TestProactiveWardRoomContext:
         assert len(context["ward_room_activity"]) == 1
         assert context["ward_room_activity"][0]["author"] == "LaForge"
 
+    @pytest.mark.asyncio
+    async def test_ward_room_context_marks_seen(self):
+        """AD-425: After _gather_context(), update_last_seen is called for dept channel."""
+        loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
+        loop._cooldown = 300
+        loop._agent_cooldowns = {}
+
+        rt = MagicMock()
+        rt.episodic_memory = None
+        rt.bridge_alerts = None
+        rt.event_log = None
+
+        dept_ch = MagicMock()
+        dept_ch.channel_type = "department"
+        dept_ch.department = "engineering"
+        dept_ch.id = "ch-eng"
+
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[dept_ch])
+        rt.ward_room.get_recent_activity = AsyncMock(return_value=[
+            {"type": "thread", "author": "LaForge", "title": "Check", "body": "ok", "created_at": 1.0},
+        ])
+        rt.ward_room.update_last_seen = AsyncMock()
+
+        loop._runtime = rt
+
+        agent = MagicMock()
+        agent.id = "eng-1"
+        agent.agent_type = "builder"
+
+        await loop._gather_context(agent, trust_score=0.7)
+        rt.ward_room.update_last_seen.assert_any_call("eng-1", "ch-eng")
+
+    @pytest.mark.asyncio
+    async def test_all_hands_context_marks_seen(self):
+        """AD-425: After _gather_context(), update_last_seen is called for All Hands channel."""
+        loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
+        loop._cooldown = 300
+        loop._agent_cooldowns = {}
+
+        rt = MagicMock()
+        rt.episodic_memory = None
+        rt.bridge_alerts = None
+        rt.event_log = None
+
+        dept_ch = MagicMock()
+        dept_ch.channel_type = "department"
+        dept_ch.department = "engineering"
+        dept_ch.id = "ch-eng"
+
+        all_hands = MagicMock()
+        all_hands.channel_type = "ship"
+        all_hands.department = ""
+        all_hands.id = "ch-allhands"
+
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[dept_ch, all_hands])
+        # Dept returns nothing, All Hands returns activity
+        rt.ward_room.get_recent_activity = AsyncMock(side_effect=lambda ch_id, **kw: [
+            {"type": "thread", "author": "Captain", "title": "Briefing", "body": "msg",
+             "created_at": 1.0, "thread_mode": "discuss"},
+        ] if ch_id == "ch-allhands" else [])
+        rt.ward_room.update_last_seen = AsyncMock()
+
+        loop._runtime = rt
+
+        agent = MagicMock()
+        agent.id = "eng-1"
+        agent.agent_type = "builder"
+
+        context = await loop._gather_context(agent, trust_score=0.7)
+        assert "ward_room_activity" in context
+        rt.ward_room.update_last_seen.assert_any_call("eng-1", "ch-allhands")
+
 
 class TestProactiveTrustSignal:
     """Tests for AD-414: Proactive loop trust signal emission."""
@@ -771,3 +845,52 @@ class TestProactiveTrustSignal:
         await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
 
         rt.trust_network.record_outcome.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# BF-023: Exception handler tracks confidence
+# ---------------------------------------------------------------------------
+
+
+class TestProactiveExceptionConfidence:
+    """BF-023: LLM failures in proactive loop update agent confidence."""
+
+    @pytest.mark.asyncio
+    async def test_exception_updates_confidence(self):
+        """When _think_for_agent raises, update_confidence(False) is called."""
+        agent = _make_mock_agent()
+        agent.confidence = 0.5
+        agent.handle_intent = AsyncMock(side_effect=RuntimeError("LLM timeout"))
+        agent.update_confidence = MagicMock()
+        rt = _make_mock_runtime(agents=[agent])
+
+        loop = ProactiveCognitiveLoop()
+        loop.set_runtime(rt)
+        await loop._run_cycle()
+
+        agent.update_confidence.assert_called_once_with(False)
+
+    @pytest.mark.asyncio
+    async def test_exception_does_not_crash_loop(self):
+        """Exception is caught -- loop continues to next agent."""
+        agent1 = _make_mock_agent(agent_type="architect", agent_id="a1")
+        agent1.handle_intent = AsyncMock(side_effect=RuntimeError("LLM timeout"))
+        agent1.update_confidence = MagicMock()
+
+        agent2 = _make_mock_agent(agent_type="scout", agent_id="a2")
+        agent2.handle_intent = AsyncMock(return_value=IntentResult(
+            intent_id="x", agent_id="a2", success=True,
+            result="All clear.",
+        ))
+        agent2.update_confidence = MagicMock()
+
+        rt = _make_mock_runtime(agents=[agent1, agent2])
+
+        loop = ProactiveCognitiveLoop()
+        loop.set_runtime(rt)
+        await loop._run_cycle()
+
+        # Agent1 failed, confidence updated
+        agent1.update_confidence.assert_called_once_with(False)
+        # Agent2 still got called (loop continued)
+        agent2.handle_intent.assert_called_once()
