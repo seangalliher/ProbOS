@@ -241,7 +241,7 @@ Recipe: NEW API ENDPOINT
         obs = await super().perceive(intent)
 
         # Skip domain enrichment for conversational intents
-        if obs.get("intent") in ("direct_message", "ward_room_notification"):
+        if obs.get("intent") in ("direct_message", "ward_room_notification", "proactive_think"):
             return obs
 
         params = obs.get("params", {})
@@ -551,7 +551,7 @@ Recipe: NEW API ENDPOINT
         """Format the feature request and codebase context into an LLM prompt."""
         # Delegate to parent for conversational intents
         intent_name = observation.get("intent", "unknown")
-        if intent_name in ("direct_message", "ward_room_notification"):
+        if intent_name in ("direct_message", "ward_room_notification", "proactive_think"):
             return super()._build_user_message(observation)
 
         params = observation.get("params", {})
@@ -573,8 +573,8 @@ Recipe: NEW API ENDPOINT
 
     async def act(self, decision: dict) -> dict:
         """Parse LLM output into an ArchitectProposal."""
-        # AD-398: pass through conversational responses for 1:1 and ward room
-        if decision.get("intent") in ("direct_message", "ward_room_notification"):
+        # AD-398/BF-024: pass through conversational responses for 1:1, ward room, and proactive
+        if decision.get("intent") in ("direct_message", "ward_room_notification", "proactive_think"):
             return {"success": True, "result": decision.get("llm_output", "")}
         if decision.get("action") == "error":
             return {"success": False, "error": decision.get("reason")}

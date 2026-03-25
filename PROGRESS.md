@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: BF-023 (Degraded Agent Death Spiral) CLOSED. AD-425, AD-424, AD-417, AD-419, AD-414, AD-413, AD-411 COMPLETE. Phase 25a, 28b COMPLETE. BF-020, BF-021, BF-022, BF-023 closed. AD-412, AD-415, AD-416, AD-418 on roadmap. AD-426–429 designed. 3172 pytest + 118 vitest = 3290 total tests.
+## Current Status: BF-024 (Proactive Think Guard) CLOSED. Domain agents (Builder, Architect, Counselor, Scout) no longer degrade on proactive think cycles. BF-020–024 all closed. AD-425, AD-424, AD-417, AD-419, AD-414, AD-413, AD-411 COMPLETE. Phase 25a, 28b COMPLETE. AD-412, AD-415, AD-416, AD-418 on roadmap. AD-426–429 designed. 3172 pytest + 118 vitest = 3290 total tests.
 
 ---
 
