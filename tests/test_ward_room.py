@@ -1079,6 +1079,105 @@ class TestWardRoomEpisodicMemory:
         await svc.stop()
 
     @pytest.mark.asyncio
+    async def test_reply_reflection_includes_body_excerpt(self, tmp_path):
+        """BF-029 Test 6: Reply reflection contains body excerpt, not just thread title."""
+        from unittest.mock import AsyncMock
+
+        mock_mem = AsyncMock()
+
+        svc = WardRoomService(
+            db_path=str(tmp_path / "wr.db"),
+            episodic_memory=mock_mem,
+        )
+        await svc.start()
+
+        channels = await svc.list_channels()
+        ch = channels[0]
+        thread = await svc.create_thread(
+            ch.id, "agent-1", "Trust Review", "Opening topic",
+            author_callsign="Number One",
+        )
+        mock_mem.store.reset_mock()
+
+        await svc.create_post(
+            thread.id, "agent-2",
+            "I've noticed increased trust variance across departments",
+            author_callsign="Counselor",
+        )
+
+        mock_mem.store.assert_called_once()
+        episode = mock_mem.store.call_args[0][0]
+        assert "trust variance" in episode.reflection
+        # Should not be just "replied in thread 'Trust Review'." — must have body content
+        assert ":" in episode.reflection  # colon separates thread title from body
+
+        await svc.stop()
+
+    @pytest.mark.asyncio
+    async def test_reply_episode_includes_channel_name(self, tmp_path):
+        """BF-029 Test 7: Reply episode user_input includes channel name."""
+        from unittest.mock import AsyncMock
+
+        mock_mem = AsyncMock()
+
+        svc = WardRoomService(
+            db_path=str(tmp_path / "wr.db"),
+            episodic_memory=mock_mem,
+        )
+        await svc.start()
+
+        channels = await svc.list_channels()
+        ch = channels[0]  # "All Hands" default
+        thread = await svc.create_thread(
+            ch.id, "agent-1", "Topic", "Content",
+            author_callsign="Number One",
+        )
+        mock_mem.store.reset_mock()
+
+        await svc.create_post(
+            thread.id, "agent-2", "My reply content",
+            author_callsign="LaForge",
+        )
+
+        episode = mock_mem.store.call_args[0][0]
+        assert episode.user_input.startswith("[Ward Room reply] All Hands")
+        assert "LaForge" in episode.user_input
+
+        await svc.stop()
+
+    @pytest.mark.asyncio
+    async def test_reply_episode_outcomes_include_channel(self, tmp_path):
+        """BF-029 Test 8: Reply episode outcomes dict has 'channel' key."""
+        from unittest.mock import AsyncMock
+
+        mock_mem = AsyncMock()
+
+        svc = WardRoomService(
+            db_path=str(tmp_path / "wr.db"),
+            episodic_memory=mock_mem,
+        )
+        await svc.start()
+
+        channels = await svc.list_channels()
+        ch = channels[0]
+        thread = await svc.create_thread(
+            ch.id, "agent-1", "Topic", "Content",
+            author_callsign="Number One",
+        )
+        mock_mem.store.reset_mock()
+
+        await svc.create_post(
+            thread.id, "agent-2", "Reply text",
+            author_callsign="Bones",
+        )
+
+        episode = mock_mem.store.call_args[0][0]
+        assert "channel" in episode.outcomes[0]
+        assert episode.outcomes[0]["channel"]  # non-empty
+
+        await svc.stop()
+
+    @pytest.mark.asyncio
     async def test_no_episodic_memory_no_crash(self, tmp_path):
         """Without episodic_memory, thread/post creation works fine."""
         svc = WardRoomService(

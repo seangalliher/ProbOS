@@ -536,7 +536,7 @@ def _cmd_reset(args: argparse.Namespace) -> None:
         answer = input(
             "This will permanently delete all learned state "
             "(designed agents, trust, routing weights, episodes, workflows, QA reports, "
-            "Ward Room history, event log, DAG checkpoints). "
+            "Ward Room history, event log, cognitive journal, DAG checkpoints). "
             "Continue? [y/N]: "
         ).strip().lower()
         if answer != "y":
@@ -599,6 +599,13 @@ def _cmd_reset(args: argparse.Namespace) -> None:
         events_db.unlink()
         events_cleared = True
 
+    # Clear Cognitive Journal (AD-431)
+    journal_cleared = False
+    journal_db = data_dir / "cognitive_journal.db"
+    if journal_db.is_file():
+        journal_db.unlink()
+        journal_cleared = True
+
     # Git commit if repo is git-initialized
     if (repo_path / ".git").is_dir():
         try:
@@ -619,9 +626,10 @@ def _cmd_reset(args: argparse.Namespace) -> None:
     wardroom_msg = " Ward Room archived and wiped." if wardroom_cleared else ""
     checkpoint_msg = " DAG checkpoints cleared." if checkpoints_cleared else ""
     events_msg = " Event log cleared." if events_cleared else ""
+    journal_msg = " Cognitive journal cleared." if journal_cleared else ""
     console.print(
         f"[bold green]Reset complete.[/bold green] Cleared: {summary}."
-        f"{chroma_msg}{hebbian_msg}{wardroom_msg}{checkpoint_msg}{events_msg}"
+        f"{chroma_msg}{hebbian_msg}{wardroom_msg}{checkpoint_msg}{events_msg}{journal_msg}"
     )
     if wardroom_cleared:
         console.print(f"  Ward Room archived to: {archive_path}")

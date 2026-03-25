@@ -342,6 +342,9 @@ class ProactiveCognitiveLoop:
                 episodes = await rt.episodic_memory.recall_for_agent(
                     agent.id, "recent activity", k=5
                 )
+                # BF-028: Fallback to recent episodes when semantic recall misses
+                if not episodes and hasattr(rt.episodic_memory, 'recent_for_agent'):
+                    episodes = await rt.episodic_memory.recent_for_agent(agent.id, k=5)
                 if episodes:
                     context["recent_memories"] = [
                         {

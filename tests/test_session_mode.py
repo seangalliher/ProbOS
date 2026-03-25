@@ -195,6 +195,29 @@ class TestSessionHistory:
         assert shell._session_history[0]["role"] == "system"
         assert "previous conversation" in shell._session_history[0]["text"]
 
+    @pytest.mark.asyncio
+    async def test_session_recall_fallback_to_recent(self):
+        """BF-028: When recall_for_agent returns [], falls back to recent_for_agent."""
+        from probos.types import Episode
+
+        shell, runtime = _make_shell()
+        past_episode = Episode(
+            user_input="[1:1 with Wesley] Captain: status report",
+            timestamp=2000.0,
+            agent_ids=["scout-123"],
+        )
+        mock_memory = MagicMock()
+        mock_memory.recall_for_agent = AsyncMock(return_value=[])  # semantic miss
+        mock_memory.recent_for_agent = AsyncMock(return_value=[past_episode])
+        runtime.episodic_memory = mock_memory
+
+        await shell.execute_command("@wesley")
+        # Fallback should have fired
+        mock_memory.recent_for_agent.assert_called_once_with("scout-123", k=3)
+        assert len(shell._session_history) >= 1
+        assert shell._session_history[0]["role"] == "system"
+        assert "previous conversation" in shell._session_history[0]["text"]
+
 
 class TestPromptChanges:
     """Test prompt reflects session mode."""

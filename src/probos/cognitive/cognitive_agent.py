@@ -68,6 +68,13 @@ class CognitiveAgent(BaseAgent):
         """Attach a StrategyAdvisor for cross-agent knowledge transfer (AD-384)."""
         self._strategy_advisor = advisor
 
+    @property
+    def _cognitive_journal(self):
+        """AD-431: Access journal via runtime (Ship's Computer service)."""
+        if self._runtime and hasattr(self._runtime, 'cognitive_journal'):
+            return self._runtime.cognitive_journal
+        return None
+
     async def perceive(self, intent: Any) -> dict:
         """Package the intent as an observation for the LLM."""
         if isinstance(intent, IntentMessage):
@@ -101,6 +108,20 @@ class CognitiveAgent(BaseAgent):
             if time.monotonic() - created_at < ttl:
                 _CACHE_HITS[self.agent_type] = _CACHE_HITS.get(self.agent_type, 0) + 1
                 logger.debug("Decision cache hit for %s (key=%s)", self.agent_type, cache_key[:8])
+                # AD-431: Journal cache hits too (for token accounting accuracy)
+                if self._cognitive_journal:
+                    try:
+                        import uuid as _uuid
+                        await self._cognitive_journal.record(
+                            entry_id=_uuid.uuid4().hex,
+                            timestamp=time.time(),
+                            agent_id=self.id,
+                            agent_type=self.agent_type,
+                            intent=observation.get("intent", ""),
+                            cached=True,
+                        )
+                    except Exception:
+                        pass
                 return {**decision, "cached": True}
             else:
                 del cache[cache_key]
@@ -178,13 +199,42 @@ class CognitiveAgent(BaseAgent):
             system_prompt=composed,
             tier=self._resolve_tier(),
         )
+
+        # AD-431: Time the LLM call for journal
+        _t0 = time.monotonic()
         response = await self._llm_client.complete(request)
+        _latency_ms = (time.monotonic() - _t0) * 1000
 
         decision = {
             "action": "execute",
             "llm_output": response.content,
             "tier_used": response.tier,
         }
+
+        # AD-431: Record to Cognitive Journal (fire-and-forget)
+        if self._cognitive_journal:
+            try:
+                _prompt_hash = hashlib.md5(user_message[:500].encode()).hexdigest()[:12]
+                await self._cognitive_journal.record(
+                    entry_id=request.id,
+                    timestamp=time.time(),
+                    agent_id=self.id,
+                    agent_type=self.agent_type,
+                    tier=response.tier,
+                    model=response.model,
+                    prompt_tokens=response.prompt_tokens,
+                    completion_tokens=response.completion_tokens,
+                    total_tokens=response.tokens_used,
+                    latency_ms=_latency_ms,
+                    intent=observation.get("intent", ""),
+                    success=response.error is None,
+                    cached=False,
+                    request_id=request.id,
+                    prompt_hash=_prompt_hash,
+                    response_length=len(response.content),
+                )
+            except Exception:
+                pass  # Non-critical — never block agent cognition
 
         # Record strategy outcomes (AD-384)
         if applied_strategy_ids and self._strategy_advisor:
@@ -323,10 +373,11 @@ class CognitiveAgent(BaseAgent):
             if memories:
                 parts.append("Your recent memories (relevant past experiences):")
                 for m in memories:
-                    if m.get("reflection"):
-                        parts.append(f"  - {m['reflection']}")
-                    elif m.get("input"):
+                    # BF-029: Prefer input (content-rich) over reflection (often thin)
+                    if m.get("input"):
                         parts.append(f"  - {m['input']}")
+                    elif m.get("reflection"):
+                        parts.append(f"  - {m['reflection']}")
                 parts.append("")
 
             session_history = params.get("session_history", [])
@@ -357,10 +408,11 @@ class CognitiveAgent(BaseAgent):
                 wr_parts.append("")
                 wr_parts.append("Your relevant memories:")
                 for m in memories:
-                    if m.get("reflection"):
-                        wr_parts.append(f"  - {m['reflection']}")
-                    elif m.get("input"):
+                    # BF-029: Prefer input (content-rich) over reflection (often thin)
+                    if m.get("input"):
                         wr_parts.append(f"  - {m['input']}")
+                    elif m.get("reflection"):
+                        wr_parts.append(f"  - {m['reflection']}")
 
             if context:
                 wr_parts.append(f"\nConversation so far:\n{context}")
@@ -476,7 +528,14 @@ class CognitiveAgent(BaseAgent):
             # Build a semantic query from the intent content
             params = observation.get("params", {})
             if intent.intent == "direct_message":
-                query = params.get("text", "")[:200]
+                # BF-029: Prepend agent context so the embedding is biased
+                # toward the agent's own experiences (Ward Room posts, proactive
+                # thoughts, etc.) rather than just matching the Captain's phrasing.
+                callsign = ""
+                if self._runtime and hasattr(self._runtime, 'callsign_registry'):
+                    callsign = self._runtime.callsign_registry.get_callsign(self.agent_type) or ""
+                captain_text = params.get("text", "")[:150]
+                query = f"Ward Room {callsign} {captain_text}".strip()[:200]
             elif intent.intent == "ward_room_notification":
                 query = f"{params.get('title', '')} {params.get('text', '')}".strip()[:200]
             else:

@@ -231,6 +231,9 @@ class ProbOSRuntime:
         # --- Persistent Task Store (Phase 25a) ---
         self.persistent_task_store: Any = None  # PersistentTaskStore | None
 
+        # --- Cognitive Journal (AD-431) ---
+        self.cognitive_journal: Any = None
+
         # --- Pool scaling ---
         self.pool_scaler: PoolScaler | None = None
 
@@ -1270,6 +1273,15 @@ class ProbOSRuntime:
             )
             logger.info("bridge-alerts started")
 
+        # --- Cognitive Journal (AD-431) ---
+        if self.config.cognitive_journal.enabled:
+            from probos.cognitive.journal import CognitiveJournal
+            self.cognitive_journal = CognitiveJournal(
+                db_path=str(self._data_dir / "cognitive_journal.db"),
+            )
+            await self.cognitive_journal.start()
+            logger.info("cognitive-journal started")
+
         # --- Proactive Cognitive Loop (Phase 28b) ---
         if self.config.proactive_cognitive.enabled and self.ward_room:
             from probos.proactive import ProactiveCognitiveLoop
@@ -1367,6 +1379,11 @@ class ProbOSRuntime:
             await self.ward_room.stop_prune_loop()
             await self.ward_room.stop()
             self.ward_room = None
+
+        # Stop Cognitive Journal (AD-431)
+        if self.cognitive_journal:
+            await self.cognitive_journal.stop()
+            self.cognitive_journal = None
 
         # Stop Assignment Service (AD-408)
         if self.assignment_service:

@@ -368,6 +368,11 @@ class MedicalConfig(BaseModel):
     scheduled_diagnosis_interval: float = 300.0
 
 
+class CognitiveJournalConfig(BaseModel):
+    """Cognitive Journal — append-only LLM reasoning trace store (AD-431)."""
+    enabled: bool = True
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
@@ -400,6 +405,7 @@ class SystemConfig(BaseModel):
     persistent_tasks: PersistentTasksConfig = PersistentTasksConfig()
     channels: ChannelsConfig = ChannelsConfig()
     medical: MedicalConfig = MedicalConfig()
+    cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

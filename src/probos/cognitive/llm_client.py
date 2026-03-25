@@ -342,13 +342,18 @@ class OpenAICompatibleClient(BaseLLMClient):
             logger.debug("content empty, falling back to reasoning field")
             content = message["reasoning"]
 
-        tokens_used = data.get("usage", {}).get("total_tokens", 0)
+        usage = data.get("usage", {})
+        tokens_used = usage.get("total_tokens", 0)
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
 
         return LLMResponse(
             content=content,
             model=model,
             tier=request.tier or self.default_tier,
             tokens_used=tokens_used,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
             cached=False,
             request_id=request.id,
         )
@@ -391,15 +396,17 @@ class OpenAICompatibleClient(BaseLLMClient):
         message = data.get("message", {})
         content = message.get("content") or ""
 
-        tokens_used = (
-            data.get("prompt_eval_count", 0) + data.get("eval_count", 0)
-        )
+        prompt_tokens = data.get("prompt_eval_count", 0)
+        completion_tokens = data.get("eval_count", 0)
+        tokens_used = prompt_tokens + completion_tokens
 
         return LLMResponse(
             content=content,
             model=model,
             tier=request.tier or self.default_tier,
             tokens_used=tokens_used,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
             cached=False,
             request_id=request.id,
         )

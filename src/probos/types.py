@@ -204,6 +204,8 @@ class LLMResponse:
     model: str = ""
     tier: str = "standard"
     tokens_used: int = 0
+    prompt_tokens: int = 0       # AD-431: separate prompt token count
+    completion_tokens: int = 0   # AD-431: separate completion token count
     cached: bool = False
     error: str | None = None
     request_id: str = ""

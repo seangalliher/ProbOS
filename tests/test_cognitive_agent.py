@@ -499,7 +499,8 @@ class TestMemoryRecall:
         # Verify _build_user_message got the memories (check LLM call content)
         prompt = llm.last_request.prompt
         assert "Your recent memories" in prompt
-        assert "Captain asked about status" in prompt
+        # BF-029: input is now preferred over reflection
+        assert "[1:1 with Wesley] Captain: status?" in prompt
 
     @pytest.mark.asyncio
     async def test_memory_recall_skips_proactive_think(self):
@@ -709,8 +710,9 @@ class TestBuildUserMessageMemories:
         }
         msg = agent._build_user_message(obs)
         assert "Your recent memories" in msg
-        assert "Captain asked about power grid status." in msg
-        assert "EPS conduits nominal." in msg
+        # BF-029: input is now preferred over reflection
+        assert "Asked about power grid" in msg
+        assert "Reviewed EPS" in msg
         assert "Captain says: Status report" in msg
 
     def test_ward_room_notification_includes_memories(self):
@@ -731,7 +733,8 @@ class TestBuildUserMessageMemories:
         }
         msg = agent._build_user_message(obs)
         assert "Your relevant memories" in msg
-        assert "Reviewed EPS conduits last shift." in msg
+        # BF-029: input is now preferred over reflection
+        assert "Prior EPS review" in msg
         assert "[Ward Room — #Engineering]" in msg
 
 
@@ -839,7 +842,8 @@ class TestMemoryRecallFallback:
         # Verify memories were injected
         prompt = llm.last_request.prompt
         assert "Your recent memories" in prompt
-        assert "Did something recently." in prompt
+        # BF-029: input is now preferred over reflection
+        assert "Recent action 1" in prompt
 
     @pytest.mark.asyncio
     async def test_fallback_does_not_fire_when_semantic_returns_results(self):
@@ -860,3 +864,209 @@ class TestMemoryRecallFallback:
         await agent.handle_intent(intent)
 
         rt.episodic_memory.recent_for_agent.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# BF-029: Ward Room recall quality
+# ---------------------------------------------------------------------------
+
+
+class TestRecallQueryEnrichment:
+    """BF-029: Tests 1-2 — recall query enrichment with Ward Room + callsign."""
+
+    def _make_crew_runtime(self, *, callsign=None, has_registry=True, recall_result=None, recent_result=None):
+        rt = MagicMock()
+        rt._is_crew_agent.return_value = True
+        rt.episodic_memory = MagicMock()
+        rt.episodic_memory.recall_for_agent = AsyncMock(return_value=recall_result or [])
+        rt.episodic_memory.recent_for_agent = AsyncMock(return_value=recent_result or [])
+        rt.episodic_memory.store = AsyncMock()
+        if has_registry:
+            rt.callsign_registry = MagicMock()
+            rt.callsign_registry.get_callsign.return_value = callsign or ""
+        else:
+            del rt.callsign_registry  # ensure hasattr returns False
+        return rt
+
+    @pytest.mark.asyncio
+    async def test_recall_query_includes_ward_room_and_callsign(self):
+        """Test 1: direct_message recall query starts with 'Ward Room Counselor'."""
+        rt = self._make_crew_runtime(callsign="Counselor")
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": "What did you post?", "from": "captain"},
+            target_agent_id=agent.id,
+        )
+        obs = await agent.perceive(intent)
+        obs = await agent._recall_relevant_memories(intent, obs)
+
+        # Verify the query passed to recall_for_agent
+        call_args = rt.episodic_memory.recall_for_agent.call_args
+        query = call_args[0][1]  # second positional arg
+        assert query.startswith("Ward Room Counselor")
+        assert "What did you post?" in query
+
+    @pytest.mark.asyncio
+    async def test_recall_query_works_without_callsign_registry(self):
+        """Test 2: recall works without callsign_registry (no crash)."""
+        rt = self._make_crew_runtime(has_registry=False)
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": "Any updates?", "from": "captain"},
+            target_agent_id=agent.id,
+        )
+        obs = await agent.perceive(intent)
+        obs = await agent._recall_relevant_memories(intent, obs)
+
+        rt.episodic_memory.recall_for_agent.assert_called_once()
+        call_args = rt.episodic_memory.recall_for_agent.call_args
+        query = call_args[0][1]
+        assert query.startswith("Ward Room")
+
+
+class TestMemoryPresentationPreference:
+    """BF-029: Tests 3-5 — input preferred over reflection in prompt."""
+
+    def test_dm_prefers_input_over_reflection(self):
+        """Test 3: direct_message prompt shows input, not reflection."""
+        agent = SampleCogAgent()
+        obs = {
+            "intent": "direct_message",
+            "params": {"text": "What have you been doing?"},
+            "recent_memories": [
+                {
+                    "input": "[Ward Room reply] Counselor: Trust variance noted",
+                    "reflection": "Counselor replied in thread 'Status Update'.",
+                },
+            ],
+        }
+        msg = agent._build_user_message(obs)
+        assert "[Ward Room reply] Counselor: Trust variance noted" in msg
+        assert "replied in thread" not in msg
+
+    def test_dm_falls_back_to_reflection_when_input_empty(self):
+        """Test 4: Falls back to reflection when input is empty."""
+        agent = SampleCogAgent()
+        obs = {
+            "intent": "direct_message",
+            "params": {"text": "Status?"},
+            "recent_memories": [
+                {"input": "", "reflection": "Counselor observed something."},
+            ],
+        }
+        msg = agent._build_user_message(obs)
+        assert "Counselor observed something." in msg
+
+    def test_wr_notification_also_prefers_input(self):
+        """Test 5: ward_room_notification prompt also prefers input."""
+        agent = SampleCogAgent()
+        obs = {
+            "intent": "ward_room_notification",
+            "params": {
+                "channel_name": "Engineering",
+                "author_callsign": "LaForge",
+                "title": "EPS Report",
+                "author_id": "laforge-1",
+            },
+            "context": "",
+            "recent_memories": [
+                {
+                    "input": "[Ward Room reply] Counselor: previous EPS insight",
+                    "reflection": "Counselor replied in thread 'EPS'.",
+                },
+            ],
+        }
+        msg = agent._build_user_message(obs)
+        assert "previous EPS insight" in msg
+        assert "replied in thread" not in msg
+
+
+class TestEndToEndWardRoomRecall:
+    """BF-029: Tests 9-10 — integration tests."""
+
+    @pytest.mark.asyncio
+    async def test_ward_room_episode_recalled_in_dm(self):
+        """Test 9: MockEpisodicMemory returns Ward Room episodes in 1:1 recall."""
+        from probos.cognitive.episodic_mock import MockEpisodicMemory
+        from probos.types import Episode
+
+        mem = MockEpisodicMemory()
+        ep = Episode(
+            user_input="[Ward Room reply] All Hands — Counselor: I've noticed increased trust variance",
+            agent_ids=["counselor-1"],
+            reflection="Counselor replied in thread 'Trust Review': I've noticed increased trust variance",
+        )
+        await mem.store(ep)
+
+        rt = MagicMock()
+        rt._is_crew_agent.return_value = True
+        rt.episodic_memory = mem
+        rt.callsign_registry = MagicMock()
+        rt.callsign_registry.get_callsign.return_value = "Counselor"
+
+        llm = MockLLMClient()
+
+        class TestCounselor(CognitiveAgent):
+            agent_type = "counselor"
+            _handled_intents = {"direct_message"}
+            instructions = "You are Counselor."
+            intent_descriptors = [
+                IntentDescriptor(name="direct_message", params={}, description="DM", tier="domain")
+            ]
+
+        agent = TestCounselor(llm_client=llm, runtime=rt)
+        # Override id to match the stored episode
+        agent.id = "counselor-1"
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": "What have you posted in the Ward Room?", "from": "captain"},
+            target_agent_id="counselor-1",
+        )
+        obs = await agent.perceive(intent)
+        obs = await agent._recall_relevant_memories(intent, obs)
+
+        assert "recent_memories" in obs
+        assert len(obs["recent_memories"]) >= 1
+        found = any("trust variance" in m.get("input", "") for m in obs["recent_memories"])
+        assert found, f"Expected Ward Room episode in memories, got: {obs['recent_memories']}"
+
+    @pytest.mark.asyncio
+    async def test_fallback_still_works_with_enriched_query(self):
+        """Test 10: Fallback fires even when enriched query also misses."""
+        ep1 = MagicMock()
+        ep1.user_input = "Fallback episode"
+        ep1.reflection = "Fallback reflection."
+        ep2 = MagicMock()
+        ep2.user_input = "Another fallback"
+        ep2.reflection = "Another reflection."
+
+        rt = MagicMock()
+        rt._is_crew_agent.return_value = True
+        rt.callsign_registry = MagicMock()
+        rt.callsign_registry.get_callsign.return_value = "Bones"
+        rt.episodic_memory = MagicMock()
+        rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
+        rt.episodic_memory.recent_for_agent = AsyncMock(return_value=[ep1, ep2])
+        rt.episodic_memory.store = AsyncMock()
+
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, runtime=rt)
+
+        intent = IntentMessage(
+            intent="direct_message",
+            params={"text": "Tell me about your Ward Room posts", "from": "captain"},
+            target_agent_id=agent.id,
+        )
+        obs = await agent.perceive(intent)
+        obs = await agent._recall_relevant_memories(intent, obs)
+
+        rt.episodic_memory.recent_for_agent.assert_called_once()
+        assert "recent_memories" in obs
+        assert len(obs["recent_memories"]) == 2

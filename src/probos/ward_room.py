@@ -1029,28 +1029,33 @@ class WardRoomService:
             try:
                 import time as _time
                 from probos.types import Episode
-                # Get thread title for context
+                # Get thread title and channel for context
                 thread_title = ""
+                channel_name = ""
                 try:
-                    row = await self._db.execute_fetchone(
-                        "SELECT title, channel_id FROM threads WHERE id = ?", (thread_id,)
-                    )
+                    async with self._db.execute(
+                        "SELECT t.title, c.name FROM threads t LEFT JOIN channels c ON t.channel_id = c.id WHERE t.id = ?",
+                        (thread_id,)
+                    ) as cursor:
+                        row = await cursor.fetchone()
                     if row:
                         thread_title = row[0] or ""
+                        channel_name = row[1] or ""
                 except Exception:
                     pass
                 episode = Episode(
-                    user_input=f"[Ward Room reply] {author_callsign or author_id}: {body[:200]}",
+                    user_input=f"[Ward Room reply] {channel_name} — {author_callsign or author_id}: {body[:200]}",
                     timestamp=_time.time(),
                     agent_ids=[author_id],
                     outcomes=[{
                         "intent": "ward_room_post",
                         "success": True,
+                        "channel": channel_name,
                         "thread_title": thread_title,
                         "thread_id": thread_id,
                         "is_reply": True,
                     }],
-                    reflection=f"{author_callsign or author_id} replied in thread '{thread_title[:80]}'.",
+                    reflection=f"{author_callsign or author_id} replied in thread '{thread_title[:60]}': {body[:120]}",
                 )
                 await self._episodic_memory.store(episode)
             except Exception:

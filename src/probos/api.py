@@ -1249,6 +1249,11 @@ def create_app(runtime: Any) -> FastAPI:
                 episodes = await runtime.episodic_memory.recall_for_agent(
                     agent_id, "1:1 conversation with Captain", k=3
                 )
+                # BF-028: Fallback to recent episodes when semantic recall misses
+                if not episodes and hasattr(runtime.episodic_memory, 'recent_for_agent'):
+                    episodes = await runtime.episodic_memory.recent_for_agent(
+                        agent_id, k=3
+                    )
                 for ep in episodes:
                     memories.append({
                         "role": "system",
@@ -1257,6 +1262,32 @@ def create_app(runtime: Any) -> FastAPI:
             except Exception:
                 pass
         return {"memories": memories}
+
+    # --- Cognitive Journal (AD-431) ---
+
+    @app.get("/api/journal/stats")
+    async def journal_stats() -> dict[str, Any]:
+        """AD-431: Cognitive Journal statistics."""
+        if not runtime.cognitive_journal:
+            return {"total_entries": 0}
+        return await runtime.cognitive_journal.get_stats()
+
+    @app.get("/api/agent/{agent_id}/journal")
+    async def agent_journal(agent_id: str, limit: int = 20) -> dict[str, Any]:
+        """AD-431: Agent reasoning chain from Cognitive Journal."""
+        if not runtime.cognitive_journal:
+            return {"entries": []}
+        entries = await runtime.cognitive_journal.get_reasoning_chain(
+            agent_id, limit=min(limit, 100)
+        )
+        return {"agent_id": agent_id, "entries": entries}
+
+    @app.get("/api/journal/tokens")
+    async def journal_token_usage(agent_id: str | None = None) -> dict[str, Any]:
+        """AD-431: Token usage summary (ship-wide or per-agent)."""
+        if not runtime.cognitive_journal:
+            return {"total_tokens": 0, "total_calls": 0}
+        return await runtime.cognitive_journal.get_token_usage(agent_id)
 
     # --- Ward Room (AD-407) ---
 

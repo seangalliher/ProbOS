@@ -381,6 +381,28 @@ class TestProactiveContextGathering:
 
         assert context == {}
 
+    @pytest.mark.asyncio
+    async def test_gather_context_fallback_to_recent_for_agent(self):
+        """BF-028: _gather_context falls back to recent_for_agent when semantic recall empty."""
+        from probos.types import Episode
+
+        agent = _make_mock_agent()
+        rt = _make_mock_runtime(agents=[agent])
+        rt.episodic_memory.recall_for_agent.return_value = []  # semantic recall empty
+
+        ep1 = Episode(user_input="recent task 1", reflection="Did task 1.")
+        ep2 = Episode(user_input="recent task 2", reflection="Did task 2.")
+        rt.episodic_memory.recent_for_agent = AsyncMock(return_value=[ep1, ep2])
+
+        loop = ProactiveCognitiveLoop()
+        loop.set_runtime(rt)
+        context = await loop._gather_context(agent, 0.7)
+
+        rt.episodic_memory.recent_for_agent.assert_called_once_with(agent.id, k=5)
+        assert "recent_memories" in context
+        assert len(context["recent_memories"]) == 2
+        assert context["recent_memories"][0]["reflection"] == "Did task 1."
+
 
 class TestProactiveConfig:
     """ProactiveCognitiveConfig defaults."""

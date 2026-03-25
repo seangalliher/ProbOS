@@ -974,6 +974,99 @@ Every LLM request/response is a cognitive event. Currently `LLMResponse.tokens_u
 - **Retention policy** — full prompt/response text retained for configurable period (default 7 days). Metadata (tokens, latency, model, success) retained indefinitely. Compressed summaries produced on expiry
 - **Revert annotations (ASI)** *(absorbed from pi-autoresearch, 2026-03-21)* — when the Builder reverts failed changes, the hypothesis/reasoning must be captured as structured annotations in the journal entry before the code is discarded. "Annotate failures heavily because the reverted code won't survive." Prevents re-trying dead ends across context resets. Fields: `hypothesis`, `failure_reason`, `rollback_rationale`, `next_action_hint`. Feeds dream consolidation: failed experiments with annotations = learning material for Level 3-4 abstractions ("approaches X never work for problem type Y")
 
+**Memory Architecture — Biological Memory Model**
+
+*"The brain doesn't remember everything — it remembers what matters. And when it can't, it asks someone who does."*
+
+ProbOS faces the same memory bottleneck as the perception pipeline: the LLM context window is a narrow conscious channel. Whether information arrives from perception (external input) or memory (internal recall), it all competes for the same context budget. The Sensory Cortex (Northstar II) applies the 10-bit bottleneck principle to perception — what gets *into* the context. The Memory Architecture applies the same principle to memory — what gets *stored*, *consolidated*, and *recalled*.
+
+The Salience Filter (`Trust × Hebbian × Novelty × Task priority`) governs both what gets perceived AND what gets remembered AND what gets recalled. One cognitive bottleneck, three applications:
+
+```
+                    UNIFIED COGNITIVE BOTTLENECK
+
+  External Input              Salience Filter              Working Memory (LLM)
+  ┌──────────────┐      ┌──────────────────────┐      ┌──────────────────────┐
+  │ Source files  │──┐   │                      │      │                      │
+  │ Logs/errors   │  │   │  Trust × Hebbian ×   │      │  Focused context     │
+  │ Telemetry     │  ├──→│  Novelty × Task ×    │──────│  (fits in window)    │
+  │ Fed state     │  │   │  Importance          │      │                      │
+  │ Ward Room     │──┘   │                      │      │  Perception + Memory │
+  └──────────────┘       │     SAME FILTER      │      │  share the budget    │
+                         │                      │      │                      │
+  Internal Memory        │                      │      └──────────────────────┘
+  ┌──────────────┐       │                      │
+  │ Episodes     │──┐    │                      │
+  │ Knowledge    │  ├───→│                      │
+  │ Dreams       │──┘    │                      │
+  └──────────────┘       └──────────────────────┘
+```
+
+**Biological Memory Staging** — Human memory has stages with biological selection pressure at each transition. Not everything perceived becomes a memory, and not every memory becomes permanent knowledge. ProbOS should work the same way:
+
+| Stage | Brain Analog | ProbOS Mapping | Duration | Transition Mechanism |
+|-------|-------------|----------------|----------|---------------------|
+| **Working Memory** | Prefrontal cortex, 7±2 chunks | LLM context window (current conversation) | Seconds | Auto — context window is working memory |
+| **Sensory Buffer** | Iconic/echoic memory | `recent_for_agent()` — timestamp-sorted recent activity | Minutes | Auto — recent episodes available by recency |
+| **Short-term Memory** | Hippocampus | ChromaDB vector store — EpisodicMemory | Hours-days | Selective Encoding Gate (not everything gets stored) |
+| **Long-term Memory** | Neocortex | KnowledgeStore — distilled facts, patterns, wisdom | Permanent | Dream Consolidation (replay + reinforcement → promotion) |
+
+**Selective Encoding Gate** — The brain doesn't store every sensory experience. Not every agent action merits an episode. A heuristic importance gate before `store()` prevents vector store pollution:
+
+- **Captain-initiated** → always store (command interactions are important)
+- **Non-trivial result** → store (agent produced meaningful output, not `[NO_RESPONSE]`)
+- **First-time intent** → store (novel experiences are more memorable)
+- **Trust change** → store (experiences that change relationships are significant)
+- **Failure** → store (failures are learning opportunities)
+- **Routine, no output, no novelty** → skip
+
+This directly connects to the Sensory Cortex's selection principle: *"The solution isn't a wider channel — it's smarter selection."* Applied to perception, it means compress inputs. Applied to memory, it means don't store noise.
+
+**Active Forgetting** — Forgetting is a feature, not a bug. Unreinforced memories degrade recall quality by polluting the vector space with noise. Memory decay should be an active mechanism:
+
+- Episodes that are never recalled lose activation over successive dream cycles
+- Low-activation episodes below a threshold are pruned during dreaming
+- High-activation episodes (frequently recalled, recently reinforced) are promoted to long-term via dream consolidation
+- Parallels ACT-R's base-level activation: `activation = ln(Σ t_j^(-d))` where `t_j` is time since each access and `d` is decay rate
+
+**Variable Recall Capability** — Not all agents need the same memory capability. Memory recall tiers map naturally to Earned Agency:
+
+| Tier | Method | Who | Token Cost |
+|------|--------|-----|-----------|
+| **Basic** | Vector similarity only | All crew | 0 |
+| **Enhanced** | Vector + keyword augmented query construction | Officers (trust 0.7+) | 0 |
+| **Full** | LLM-augmented query translation (MemoryProcessor) | Department Chiefs + Bridge | Tokens per recall |
+
+Promotion to Enhanced recall is a Qualification Program competency. Department Chiefs earn Full recall. The MemoryProcessor is a *capability tier*, not a universal service — preserving the token budget for agents that actually need deep recall.
+
+**Social Memory — "Does anyone remember?"** — When an agent can't recall something, it can ask other crew members. This is how ship crews work: the Officer of the Deck asks the Quartermaster, who keeps the logs. The Ward Room already provides the mechanism — a new message type for memory queries:
+
+- Agent posts memory query on department channel: *"Does anyone recall the Captain's guidance on trust thresholds?"*
+- Another agent whose sovereign memory contains a match responds
+- The requesting agent incorporates the response into their reasoning
+- Protocol, not infrastructure — uses existing Ward Room + recall pipeline
+
+**Oracle Service (Ship's Computer Memory)** — Infrastructure-tier memory service with full access to all stored knowledge. Not crew — the Oracle has no Character/Reason/Duty. It's the Ship's Computer answering `"Computer, retrieve all Ward Room discussions about trust thresholds."` No identity, no judgment, pure retrieval.
+
+- **Data (Crew Agent, Science)** — Has Character (curious, literal, aspiring), Reason (judges relevance), Duty (serves the crew). Privileged Full-tier access to the Oracle. Data's value is not just recall but *interpretation of what recalled memory means*.
+- **Guinan (Crew Agent, future)** — Experiential wisdom agent. Not perfect recall but deep pattern recognition. Interface to dream-consolidated knowledge. *"I've seen this kind of thing before."* What dream consolidation produces: not verbatim memories, but distilled insights.
+
+**Optimized Memory Representation** — AI agents don't need to remember in English. Memories should be stored in a format optimized for AI retrieval, translated to natural language only for human interaction:
+
+- **Structured metadata + NL gist** (near-term) — Episodes store structured fields (`agent_id, intent, participants, channel, outcome, timestamp`) alongside a short NL summary. Structured fields enable exact-match filtering; NL summary enables semantic search. ProbOS is close to this with the Episode dataclass — extend it.
+- **Concept graphs** (future) — Instead of `"Counselor discussed trust variance in All Hands"`, store: `{subject: "counselor", action: "discussed", topic: "trust_variance", location: "all_hands", entities: ["trust_network", "departments"]}`. Retrieval = graph traversal + vector similarity on concept nodes.
+- **Retrieval as pointers** (future) — Store gists with pointers: `"Discussed trust variance in All Hands [thread_id=abc123]"`. On recall, follow the pointer to get full context from the Ward Room archive. Humans store gists with pointers to details, not verbatim transcripts.
+- **HXI readability preserved** — The Cockpit View Principle requires that memory state be inspectable by the Captain. Opaque formats are acceptable only if a human-readable view can be generated on demand.
+
+**Research lineage:** Generative Agents (Park et al., Stanford 2023) — memory stream with `recency × importance × relevance` scoring and reflection. MemGPT (Packer et al., 2023) — virtual context management with LLM-managed memory paging. ACT-R (Anderson, Carnegie Mellon) — activation-based retrieval: `base_level(recency + frequency) + spreading_activation(contextual similarity)`. Complementary Learning Systems (McClelland et al., 1995) — hippocampus (episodic, fast-learning) and neocortex (semantic, slow-learning) with sleep consolidation as the bridge. ProbOS's EpisodicMemory + KnowledgeStore + DreamingEngine already maps to this dual-system model. Atkinson-Shiffrin (1968) — sensory → short-term → long-term memory staging. Levels of Processing (Craik & Lockhart, 1972) — deeper processing → stronger encoding.
+
+**Implementation layers:**
+
+1. **BF-029** (now) — Fix recall plumbing: query enrichment, memory presentation, reflection content
+2. **AD-433** (near-term) — Selective Encoding Gate: importance heuristic before `store()`, skip noise, reduce vector store pollution
+3. **Phase 32** — Memory staging with reinforcement tracking + active forgetting in dream cycles
+4. **Phase 33+** — Oracle service, LLM-augmented Full-tier recall, social memory protocol, concept graphs
+
 **Ship's Telemetry — Internal Performance Instrumentation**
 
 *"All systems reporting nominal, Captain."*
@@ -2064,6 +2157,12 @@ With AD-430, episode generation increases significantly: 11 crew agents × ~12 p
 **AD-430 COMPLETE — all 5 pillars delivered.** Memory gap closed.
 
 *Connects to: Procedural Learning / Cognitive JIT (Phase 32 — requires action history to crystallize), AD-428 (Skill Framework — requires evidence of practice for proficiency), AD-416 (Ward Room Archival — memory growth management), AD-425 (Ward Room Browsing — related context gathering), Dream consolidation (existing — episode replay and pattern extraction), Nooplex Knowledge Model (private diary vs. shared library). The Episode dataclass is infrastructure; what agents DO with their memories defines their growth.*
+
+**AD-431: Cognitive Journal — Agent Reasoning Trace Service** — **COMPLETE**. Append-only SQLite store (`cognitive_journal.db`) recording every LLM call: `timestamp, agent_id, agent_type, tier, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, intent, success, cached, request_id, prompt_hash, response_length`. Ship's Computer infrastructure service (no identity). Single instrumentation point in `decide()` — wraps `llm_client.complete()` with `time.monotonic()` timing, fire-and-forget journal record. Cache hits also recorded (cached=True). `LLMResponse` gained `prompt_tokens` + `completion_tokens` fields; OpenAI and Ollama paths extract separate counts. Query API: `get_reasoning_chain(agent_id, limit)`, `get_token_usage(agent_id)`, `get_stats()`. REST endpoints: `GET /api/journal/stats`, `GET /api/agent/{id}/journal`, `GET /api/journal/tokens`. Does NOT store full prompt/response text (metadata only). Does NOT depend on Ship's Telemetry. Wiped on `probos reset`. 13 new tests. 3266 pytest + 118 vitest = 3384 total. *Connects to: Procedural Learning (Phase 32 — journal traces for pattern crystallization), Dream consolidation (future — journal-assisted hindsight replay), Qualification Programs (future — reasoning quality assessment), AD-430 (episodic memory — what happened vs. how they thought).*
+
+**AD-432: Cognitive Journal Expansion — Traceability + Query Depth** — Roadmap. Closes the gaps between AD-431 MVP and the full Cognitive Journal spec. 8 steps: (1) Schema expansion — `intent_id`, `dag_node_id`, `response_hash` columns with idempotent migration. (2) Intent traceability — plumb `IntentMessage.id` through `perceive()` into journal records; currently discarded. (3) Time-range filtering — `get_reasoning_chain()` gains `since`/`until` params. (4) Grouped token usage — `get_token_usage_by(group_by)` breaks down by model, tier, agent, or intent (SQL injection safe via whitelist). (5) Decision points — `get_decision_points()` finds high-latency or failed LLM calls for anomaly detection. (6) Response hash — MD5 fingerprint for dedup detection. (7) API endpoints — `GET /api/journal/tokens/by`, `GET /api/journal/decisions`, time-range on existing agent journal endpoint. (8) `wipe()` method for `probos reset`. 15 tests. *Deferred: dag_node_id population (requires submit_intent plumbing), DreamingEngine integration, cost/pricing, full text storage, replay/summarize, retention policies.*
+
+**AD-433: Selective Encoding Gate — Biologically-Inspired Memory Filtering** — Roadmap. First implementation of the Memory Architecture's biological staging model (roadmap "Unified Cognitive Bottleneck"). Applies the Sensory Cortex principle (*"smarter selection, not wider channel"*) to memory storage. Adds `EpisodicMemory.should_store()` — a zero-cost static gate function that blocks noise episodes before `store()`. Blocks: proactive no-response episodes (highest-volume noise — fires every tick for every idle agent), QA routine passes, episodes with only `[NO_RESPONSE]` content. Allows: Captain-initiated interactions (always), failures (learning opportunities), episodes with real response content. Gate applied at 4 agent-experience call sites (proactive no-response, proactive with-response, SystemQA, catch-all `_store_action_episode`). NOT applied to Sites 1/2/6/7/9/10 (Captain commands, shell/HXI 1:1, Ward Room authoring — always signal). Conservative default: unknown episode formats are stored. 11 tests. *Connects to: Memory Architecture Layer 2, Sensory Cortex (Northstar II — same selection principle), AD-430 (episode storage infrastructure), Dream consolidation (future Layer 3 — reinforcement tracking + active forgetting).*
 
 ---
 
@@ -3237,7 +3336,9 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-024 | Crew agents with domain-specific `perceive()/act()` overrides (Builder, Architect, Counselor, Scout) degrade on every proactive think cycle. Their intent guards only listed `direct_message` and `ward_room_notification` — when `proactive_think` arrives, it falls through to domain pipelines (build specs, design proposals, assessments) which fail because proactive thoughts aren't domain requests. Each failure triggers BF-023's confidence decay, degrading all four agents within minutes. **Fix:** Added `proactive_think` to intent guard tuples in `perceive()`, `_build_user_message()`, and `act()` across all four agent classes (builder.py, architect.py, counselor.py, scout.py). Proactive thoughts now delegate to the base `CognitiveAgent` implementation which handles them correctly. | Critical | **Closed** |
 | BF-025 | CI-only failure: `test_no_duty_allows_freeform_think` passes locally but fails on GitHub Actions. The free-form think cooldown gate uses `time.monotonic() - last < idle_cooldown` where `last` defaults to `0.0`. On a fresh CI runner VM with low uptime, `time.monotonic()` can be < 900s (3x cooldown), so the gate incorrectly blocks the first-ever think. Locally, uptime is hours/days so `time.monotonic()` is always large enough. **Fix:** Added `last > 0` guard — first-ever proactive think for an agent always passes the cooldown check. | Medium | **Closed** |
 | BF-026 | TypeScript build failure: `display_name` property was added to the Python state snapshot (wiring crew profile display names to HXI) but never added to the `StateSnapshot` TypeScript interface in `ui/src/store/types.ts`. TSC fails with `Property 'display_name' does not exist on type`. **Fix:** Added `display_name: string` to `StateSnapshot.agents` interface. | Low | **Closed** |
-| BF-027 | Agent memory recall ineffective — agents can't recall Ward Room posts or past 1:1 conversations despite episodes being stored correctly. Three issues: (a) `recall_for_agent()` uses 0.7 cosine similarity threshold which is too strict for conversational queries ("What have you been thinking about?" vs `[Proactive thought] Counselor: observed trust variance...`). (b) No fallback when semantic recall returns empty — agent gets zero memory context. (c) `MockEpisodicMemory` missing `recall_for_agent()` — tests silently skip recall via `except Exception: pass`. **Fix:** (a) Lower agent-scoped recall threshold to 0.3 (sovereign shard filter prevents cross-agent leakage). (b) Add `recent_for_agent()` timestamp-based fallback when semantic recall returns nothing. (c) Add `recall_for_agent()` and `recent_for_agent()` to MockEpisodicMemory. | High | **Open** |
+| BF-027 | Agent memory recall ineffective — agents can't recall Ward Room posts or past 1:1 conversations despite episodes being stored correctly. Three issues: (a) `recall_for_agent()` uses 0.7 cosine similarity threshold which is too strict for conversational queries ("What have you been thinking about?" vs `[Proactive thought] Counselor: observed trust variance...`). (b) No fallback when semantic recall returns empty — agent gets zero memory context. (c) `MockEpisodicMemory` missing `recall_for_agent()` — tests silently skip recall via `except Exception: pass`. **Fix:** (a) Lower agent-scoped recall threshold to 0.3 (sovereign shard filter prevents cross-agent leakage). (b) Add `recent_for_agent()` timestamp-based fallback when semantic recall returns nothing. (c) Add `recall_for_agent()` and `recent_for_agent()` to MockEpisodicMemory. | High | **Closed** |
+| BF-028 | Proactive & shell recall missing `recent_for_agent()` fallback. BF-027 added the fallback to `_recall_relevant_memories()` in cognitive_agent.py, but two other recall sites were not updated: `_gather_context()` in proactive.py (hardcoded query `"recent activity"`) and shell cross-session recall (query `"1:1 with {callsign}"`). Both need the same fallback pattern. **Fix:** Added `recent_for_agent()` fallback with `hasattr` guard to both sites. 2 tests. | Medium | **Closed** |
+| BF-029 | Ward Room memory recall quality in 1:1 conversations. Agents can't recall Ward Room posts when Captain asks in 1:1 — episodes are stored correctly (AD-430a) but recall pipeline has three issues: (a) `direct_message` recall query uses raw Captain text with no Ward Room signal in the embedding, (b) memory presentation prefers thin reflection strings over content-rich input, (c) Ward Room reply reflections lack body content (`"replied in thread 'X'"` instead of what was said). **Fix:** Prepend `"Ward Room {callsign}"` to recall query for direct_message, reverse input/reflection preference in both prompt builders, include body excerpt in reply reflections + channel name in reply user_input. 10 tests. | High | Open |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 

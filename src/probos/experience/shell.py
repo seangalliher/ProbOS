@@ -1469,6 +1469,11 @@ class ProbOSShell:
                     query=f"1:1 with {resolved['callsign']}",
                     k=3,
                 )
+                # BF-028: Fallback to recent episodes when semantic recall misses
+                if not past and hasattr(self.runtime.episodic_memory, 'recent_for_agent'):
+                    past = await self.runtime.episodic_memory.recent_for_agent(
+                        resolved["agent_id"], k=3
+                    )
                 for ep in past:
                     self._session_history.append({
                         "role": "system",
