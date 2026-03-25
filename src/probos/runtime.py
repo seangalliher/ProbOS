@@ -3189,12 +3189,14 @@ class ProbOSRuntime:
         return target_ids
 
     # Core crew eligible for Ward Room participation.
-    # Medical sub-crew (surgeon, pharmacist, pathologist), infrastructure agents
-    # (vitals_monitor, red_team, system_qa), and utility agents are excluded.
+    # Infrastructure agents (vitals_monitor, red_team, system_qa, introspect,
+    # emergent_detector) and utility agents are excluded.
     _WARD_ROOM_CREW = {
         "architect", "scout", "counselor",
         "security_officer", "operations_officer", "engineering_officer",
-        "diagnostician",  # Bones — CMO participates, medical sub-crew does not
+        "diagnostician",  # Bones — CMO / Medical Chief
+        "surgeon", "pathologist", "pharmacist",  # Medical crew
+        "builder",  # Scotty — SWE officer, uses build pipeline as tool
     }
 
     def _is_crew_agent(self, agent: Any) -> bool:
