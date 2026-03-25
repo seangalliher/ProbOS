@@ -53,8 +53,8 @@ class SurgeonAgent(CognitiveAgent):
 
     async def act(self, decision: dict[str, Any]) -> dict[str, Any]:
         """Execute the remediation action via runtime."""
-        # AD-398: pass through conversational responses for 1:1 sessions
-        if decision.get("intent") == "direct_message":
+        # AD-398/BF-024: pass through conversational responses for 1:1, ward room, and proactive
+        if decision.get("intent") in ("direct_message", "ward_room_notification", "proactive_think"):
             return {"success": True, "result": decision.get("llm_output", "")}
         if decision.get("action") == "error":
             return {"success": False, "error": decision.get("reason")}

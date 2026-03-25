@@ -67,6 +67,108 @@ class TestDirectMessagePassthrough:
 
 
 # ---------------------------------------------------------------------------
+# 1b. BF-024: Passthrough for ward_room_notification and proactive_think
+# ---------------------------------------------------------------------------
+
+class TestConversationalPassthrough:
+    """BF-024: act() passthrough for ward_room_notification and proactive_think."""
+
+    @pytest.mark.asyncio
+    async def test_scout_ward_room_notification(self):
+        from probos.cognitive.scout import ScoutAgent
+        agent = ScoutAgent(runtime=None)
+        decision = {"intent": "ward_room_notification", "llm_output": "Acknowledged."}
+        result = await agent.act(decision)
+        assert result["success"] is True
+        assert result["result"] == "Acknowledged."
+
+    @pytest.mark.asyncio
+    async def test_scout_proactive_think(self):
+        from probos.cognitive.scout import ScoutAgent
+        agent = ScoutAgent(runtime=None)
+        decision = {"intent": "proactive_think", "llm_output": "Sector scan complete."}
+        result = await agent.act(decision)
+        assert result["success"] is True
+        assert result["result"] == "Sector scan complete."
+
+    @pytest.mark.asyncio
+    async def test_builder_ward_room_notification(self):
+        from unittest.mock import patch
+        with patch("probos.cognitive.builder._should_use_visiting_builder", return_value=False):
+            from probos.cognitive.builder import BuilderAgent
+            agent = BuilderAgent(agent_id="builder-wr-0", llm_client=MagicMock(), runtime=MagicMock())
+            decision = {"intent": "ward_room_notification", "llm_output": "Noted, Captain."}
+            result = await agent.act(decision)
+            assert result["success"] is True
+            assert result["result"] == "Noted, Captain."
+
+    @pytest.mark.asyncio
+    async def test_builder_proactive_think(self):
+        from unittest.mock import patch
+        with patch("probos.cognitive.builder._should_use_visiting_builder", return_value=False):
+            from probos.cognitive.builder import BuilderAgent
+            agent = BuilderAgent(agent_id="builder-pt-0", llm_client=MagicMock(), runtime=MagicMock())
+            decision = {"intent": "proactive_think", "llm_output": "Build pipeline nominal."}
+            result = await agent.act(decision)
+            assert result["success"] is True
+            assert result["result"] == "Build pipeline nominal."
+
+    @pytest.mark.asyncio
+    async def test_architect_ward_room_notification(self):
+        from probos.cognitive.architect import ArchitectAgent
+        agent = ArchitectAgent(agent_id="arch-wr-0", llm_client=MagicMock())
+        decision = {"intent": "ward_room_notification", "llm_output": "Design reviewed."}
+        result = await agent.act(decision)
+        assert result["success"] is True
+        assert result["result"] == "Design reviewed."
+
+    @pytest.mark.asyncio
+    async def test_architect_proactive_think(self):
+        from probos.cognitive.architect import ArchitectAgent
+        agent = ArchitectAgent(agent_id="arch-pt-0", llm_client=MagicMock())
+        decision = {"intent": "proactive_think", "llm_output": "Architecture stable."}
+        result = await agent.act(decision)
+        assert result["success"] is True
+        assert result["result"] == "Architecture stable."
+
+    @pytest.mark.asyncio
+    async def test_surgeon_ward_room_notification(self):
+        from probos.agents.medical.surgeon import SurgeonAgent
+        agent = SurgeonAgent(llm_client=MagicMock(), runtime=MagicMock())
+        decision = {"intent": "ward_room_notification", "llm_output": "Ready for surgery."}
+        result = await agent.act(decision)
+        assert result["success"] is True
+        assert result["result"] == "Ready for surgery."
+
+    @pytest.mark.asyncio
+    async def test_surgeon_proactive_think(self):
+        from probos.agents.medical.surgeon import SurgeonAgent
+        agent = SurgeonAgent(llm_client=MagicMock(), runtime=MagicMock())
+        decision = {"intent": "proactive_think", "llm_output": "All patients stable."}
+        result = await agent.act(decision)
+        assert result["success"] is True
+        assert result["result"] == "All patients stable."
+
+    @pytest.mark.asyncio
+    async def test_counselor_ward_room_notification(self):
+        from probos.cognitive.counselor import CounselorAgent
+        agent = CounselorAgent(llm_client=MagicMock())
+        decision = {"intent": "ward_room_notification", "llm_output": "Crew morale noted."}
+        result = await agent.act(decision)
+        assert result["success"] is True
+        assert result["result"] == "Crew morale noted."
+
+    @pytest.mark.asyncio
+    async def test_counselor_proactive_think(self):
+        from probos.cognitive.counselor import CounselorAgent
+        agent = CounselorAgent(llm_client=MagicMock())
+        decision = {"intent": "proactive_think", "llm_output": "No concerns."}
+        result = await agent.act(decision)
+        assert result["success"] is True
+        assert result["result"] == "No concerns."
+
+
+# ---------------------------------------------------------------------------
 # 2. Crew profile removal — infrastructure agents no longer have callsigns
 # ---------------------------------------------------------------------------
 
