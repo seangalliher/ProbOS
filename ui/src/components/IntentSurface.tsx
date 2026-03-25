@@ -321,7 +321,7 @@ export function IntentSurface() {
 
   /* ── approve architect proposal → forward to builder ── */
   const approveDesign = useCallback(async (proposal: ArchitectProposalView) => {
-    addChatMessage('system', `Forwarding "${proposal.title}" to Builder...`);
+    addChatMessage('system', `Forwarding "${proposal.title}" to Scotty...`);
     try {
       await fetch('/api/design/approve', {
         method: 'POST',
