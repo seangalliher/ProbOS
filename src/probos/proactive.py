@@ -202,6 +202,7 @@ class ProactiveCognitiveLoop:
                 "context_parts": context_parts,
                 "trust_score": round(trust_score, 4),
                 "agency_level": agency_from_rank(rank).value,
+                "rank": rank.value,  # AD-437: for action space awareness
                 "agent_type": agent.agent_type,
                 "duty": {
                     "duty_id": duty.duty_id,
@@ -268,6 +269,13 @@ class ProactiveCognitiveLoop:
             if duty and self._duty_tracker:
                 self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
             return
+
+        # AD-437: Extract and process structured actions from proactive response
+        cleaned_text, actions_taken = await self._extract_and_execute_actions(
+            agent, response_text
+        )
+        if cleaned_text != response_text:
+            response_text = cleaned_text
 
         # AD-412: Check for structured improvement proposals
         await self._extract_and_post_proposal(agent, response_text)
@@ -455,6 +463,7 @@ class ProactiveCognitiveLoop:
                                     "body": a.get("title", a.get("body", ""))[:150],
                                     "net_score": a.get("net_score", 0),       # AD-426
                                     "post_id": a.get("post_id", a.get("id", "")),  # AD-426
+                                    "thread_id": a.get("thread_id", ""),  # AD-437
                                 }
                                 for a in activity
                                 if (a.get("author_id", "") or a.get("author", "")) not in self_ids  # BF-032
@@ -486,6 +495,7 @@ class ProactiveCognitiveLoop:
                                     "channel": "All Hands",
                                     "net_score": item.get("net_score", 0),       # AD-426
                                     "post_id": item.get("post_id", item.get("id", "")),  # AD-426
+                                    "thread_id": item.get("thread_id", ""),  # AD-437
                                 }
                                 for item in all_hands_filtered[:3]
                                 if (item.get("author_id", "") or item.get("author", "")) not in self_ids  # BF-032
@@ -662,3 +672,121 @@ class ProactiveCognitiveLoop:
             body=text,
             author_callsign=callsign or agent.agent_type,
         )
+
+    async def _extract_and_execute_actions(
+        self, agent: Any, text: str,
+    ) -> tuple[str, list[dict]]:
+        """AD-437: Extract structured actions from proactive response and execute them.
+
+        Currently supports:
+        - [ENDORSE post_id UP/DOWN] — endorse a Ward Room post
+        - [REPLY thread_id] ... [/REPLY] — reply to an existing thread
+
+        Actions are gated by Earned Agency tier:
+        - Ensign: no actions (can't think proactively anyway)
+        - Lieutenant: endorse only
+        - Commander+: endorse + reply
+
+        Returns (cleaned_text, actions_executed).
+        """
+        rt = self._runtime
+        if not rt or not rt.ward_room:
+            return text, []
+
+        # Determine agent's action permissions
+        trust_score = rt.trust_network.get_score(agent.id)
+        rank = Rank.from_trust(trust_score)
+        actions_executed: list[dict] = []
+
+        # --- Endorsements (Lieutenant+) ---
+        if rank.value != Rank.ENSIGN.value:
+            cleaned, endorsements = rt._extract_endorsements(text)
+            if endorsements:
+                await rt._process_endorsements(endorsements, agent.id)
+                actions_executed.extend(
+                    {"type": "endorse", "target": e["post_id"], "direction": e["direction"]}
+                    for e in endorsements
+                )
+                text = cleaned
+
+                # AD-428: Record exercise of Communication PCC
+                if hasattr(rt, 'skill_service') and rt.skill_service:
+                    try:
+                        rt.skill_service.record_exercise(agent.id, "communication")
+                    except Exception:
+                        pass  # best-effort
+
+        # --- Replies (Commander+) ---
+        if rank in (Rank.COMMANDER, Rank.SENIOR):
+            text, reply_actions = await self._extract_and_execute_replies(
+                agent, text
+            )
+            actions_executed.extend(reply_actions)
+
+        return text, actions_executed
+
+    async def _extract_and_execute_replies(
+        self, agent: Any, text: str,
+    ) -> tuple[str, list[dict]]:
+        """AD-437: Extract [REPLY thread_id]...[/REPLY] blocks and post as replies.
+
+        Allows Commander+ agents to reply to existing threads instead of
+        always creating new threads for every observation.
+        """
+        import re
+        rt = self._runtime
+        actions: list[dict] = []
+
+        pattern = re.compile(
+            r'\[REPLY\s+(\S+)\]\s*\n(.*?)\n\[/REPLY\]',
+            re.DOTALL | re.IGNORECASE,
+        )
+
+        for match in pattern.finditer(text):
+            thread_id = match.group(1)
+            reply_body = match.group(2).strip()
+            if not reply_body:
+                continue
+
+            try:
+                # Verify thread exists
+                thread = await rt.ward_room.get_thread(thread_id)
+                if not thread:
+                    logger.debug("AD-437: Reply target thread %s not found", thread_id)
+                    continue
+
+                # Check thread isn't locked
+                thread_data = thread.get("thread", thread)
+                if thread_data.get("locked"):
+                    logger.debug("AD-437: Reply target thread %s is locked", thread_id)
+                    continue
+
+                # Get callsign
+                callsign = ""
+                if hasattr(rt, 'callsign_registry'):
+                    callsign = rt.callsign_registry.get_callsign(agent.agent_type)
+
+                await rt.ward_room.create_post(
+                    thread_id=thread_id,
+                    author_id=agent.id,
+                    body=reply_body,
+                    author_callsign=callsign or agent.agent_type,
+                )
+                actions.append({
+                    "type": "reply",
+                    "thread_id": thread_id,
+                    "length": len(reply_body),
+                })
+                logger.debug(
+                    "AD-437: %s replied to thread %s (%d chars)",
+                    agent.agent_type, thread_id, len(reply_body),
+                )
+            except Exception:
+                logger.debug(
+                    "AD-437: Reply to thread %s failed for %s",
+                    thread_id, agent.agent_type, exc_info=True,
+                )
+
+        # Strip all [REPLY]...[/REPLY] blocks from text
+        cleaned = pattern.sub('', text).strip()
+        return cleaned, actions

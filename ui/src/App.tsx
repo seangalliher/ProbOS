@@ -5,6 +5,7 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { useStore } from './store/useStore';
 import { CognitiveCanvas } from './components/CognitiveCanvas';
 import { FullKanban } from './components/bridge/FullKanban';
+import { FullSystem } from './components/bridge/FullSystem';
 import { GlassLayer } from './components/GlassLayer';
 import { IntentSurface } from './components/IntentSurface';
 import { DecisionSurface } from './components/DecisionSurface';
@@ -83,7 +84,7 @@ export default function App() {
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      {mainViewer === 'canvas' ? <CognitiveCanvas /> : <FullKanban />}
+      {mainViewer === 'canvas' ? <CognitiveCanvas /> : mainViewer === 'kanban' ? <FullKanban /> : <FullSystem />}
       <GlassLayer />
       <IntentSurface />
       <DecisionSurface />

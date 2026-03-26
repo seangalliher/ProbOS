@@ -208,7 +208,7 @@ export interface HXIState {
   buildQueue: BuildQueueItem[] | null;
   missionControlTasks: MissionControlTask[] | null;
   bridgeOpen: boolean;
-  mainViewer: 'canvas' | 'kanban';
+  mainViewer: 'canvas' | 'kanban' | 'system';
   agentTasks: AgentTaskView[] | null;
   expandedGlassTask: string | null;
   notifications: NotificationView[] | null;

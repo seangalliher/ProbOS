@@ -114,6 +114,10 @@ def _make_mock_runtime(agents=None, trust_scores=None, ward_room=True):
     rt.event_log = MagicMock()
     rt.event_log.query = AsyncMock(return_value=[])
 
+    # AD-437: Endorsement extraction (default: no endorsements found)
+    rt._extract_endorsements = MagicMock(side_effect=lambda text: (text, []))
+    rt._process_endorsements = AsyncMock()
+
     return rt
 
 
@@ -759,6 +763,11 @@ class TestProactiveTrustSignal:
         rt.ward_room.get_recent_activity = AsyncMock(return_value=[])
         rt.trust_network = MagicMock()
         rt.trust_network.record_outcome = MagicMock(return_value=0.55)
+        rt.trust_network.get_score = MagicMock(return_value=0.55)
+        # AD-437: Endorsement extraction (default: no endorsements found)
+        rt._extract_endorsements = MagicMock(side_effect=lambda text: (text, []))
+        rt._process_endorsements = AsyncMock()
+        rt.is_cold_start = False
         loop._runtime = rt
         loop._duty_tracker = None
 

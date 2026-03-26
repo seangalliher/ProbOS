@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-436 COMPLETE (HXI Bridge System Panel + Orbital Notification Redesign). AD-437 build prompt ready. BF-034 CLOSED. BF-020–034 all closed. 3415 pytest + 118 vitest = 3533 total tests.
+## Current Status: AD-437 COMPLETE (Ward Room Action Space). AD-436 COMPLETE. BF-034 CLOSED. BF-020–034 all closed. 3430 pytest + 118 vitest = 3548 total tests.
 
 ---
 

@@ -2599,6 +2599,25 @@ Phase 25 mentions "browser automation" in two words. Users expect a personal AI 
 - **Integration** — BrowseAgent registers `browse_web`, `screenshot_page`, `fill_form` intents. Tool Layer (Phase 25b) exposes as `browser` tool for any agent to use
 - **Perception pipeline** — browser output feeds through VisualPerception (Phase 2, Sensory Cortex) for screenshot-to-semantic compression
 
+**HXI Holographic Glass Panels (VR-Ready)**
+
+Design inspiration: Rudy Vessup's holographic glass UI production design for *Star Trek Into Darkness* (Paramount). The transparent layered panels with spatial depth, entity position badges (callsign pills), bio-feedback crew readouts, and ALERT indicators map directly to ProbOS's Bridge interface concepts.
+
+The Bridge view currently uses flat full-screen panels (Canvas, Kanban, System). The next evolution is a **wraparound holographic glass layout** — translucent glass panels curving around the user's viewpoint, each hosting a different station. The codebase already uses `GlassLayer` for 2D HUD overlays; Glass Panels extend this to spatially-positioned holographic station displays. Same frosted glass aesthetic (`backdrop-filter: blur()`), but arranged in a cockpit arc.
+
+**Design language (from Into Darkness reference):**
+- Thin rule borders, monospace labels with station codes (PCAP SYS-MONITOR, BFC-5)
+- Entity badges: rounded pill shapes with callsign, position ID, and status dots (maps to agent orb labels)
+- Crew biometric panels: full-body scan with categorical status toggles (maps to agent profile view — trust, confidence, rank, skills, memory)
+- Tactical/spatial view: ship schematic with trajectory lines and labeled positions (maps to cognitive mesh with Hebbian routing visualization)
+- ALERT badges: red with hazard stripes, timestamp, position data (maps to Bridge Alerts with alert condition level)
+- Color hierarchy: cyan=standard data, blue=entity identification, red=alert/threat, amber=warning
+
+- **2D implementation** — CSS `perspective(1200px)` container with `rotateY(±15deg)` on flanking panels. Left panel (Ward Room/Comms), center panel (Canvas/3D cognitive mesh), right panel (System/Diagnostics). Subtle lighting gradient on edges to sell the depth
+- **Panel stations** — each panel is a view mode: Canvas (3D orb mesh), System (services + threads + shutdown), Ward Room (thread reader), Kanban (mission control), Crew (agent profiles/status). Captain selects active panel per slot
+- **VR translation** — maps directly to WebXR spatial panels. Three `XRQuadLayer` objects positioned on a 2.5m radius arc at ±30deg. Same React components render inside each panel. Three.js scene (Canvas) renders as the center stereo view. Touch controllers select panels
+- **Why this matters** — every other AI agent dashboard is a flat web page. A spatial Bridge interface communicates the starship metaphor physically. The 2D version provides the UX benefits (peripheral awareness, station switching) without requiring headset hardware. VR becomes a presentation layer upgrade, not a rewrite
+
 ---
 
 ### Captain's Yeoman — Personal AI Assistant (Phase 36)
@@ -3601,7 +3620,7 @@ Items identified during development that aren't urgent but would improve code qu
 
 Access point: Bridge view in HXI. Cockpit View Principle: the Captain needs direct manual control over all system operations from the HXI.
 
-**AD-437: Ward Room Action Space — Structured Agent Actions** — Build prompt ready. Agents can currently only *post text* to the Ward Room during proactive thoughts. The Ward Room has a rich action API (endorse, upvote, downvote, reply, create threads, set thread modes) but agents can't invoke it — they express intent in text (`[ENDORSE O'Brien's proposal]`) without executing the actual mechanism. Knowledge without skill. **Bug found during research:** `[ENDORSE]` tags in proactive responses are posted raw — `proactive.py` never calls `_extract_endorsements()` (only wired in Ward Room notification path). **Fix:** (1) Wire endorsement extraction into proactive loop via `_extract_and_execute_actions()`. (2) Add `[REPLY thread_id]...[/REPLY]` structured action for Commander+ agents. (3) `can_perform_action(rank, action)` in `earned_agency.py` with tiered gating: Lieutenant=endorse, Commander=endorse+reply, Senior=all. (4) Include `thread_id` in Ward Room activity context. (5) Rank-aware action space prompt. (6) Communication PCC exercise on endorsements (AD-428).
+**AD-437: Ward Room Action Space — Structured Agent Actions** *(done)* — Agents can now execute structured actions during proactive thoughts, not just post text. `_extract_and_execute_actions()` wires endorsement extraction + `[REPLY thread_id]...[/REPLY]` into proactive loop. `can_perform_action(rank, action)` in `earned_agency.py` gates by Earned Agency tier: Lieutenant=endorse, Commander=endorse+reply, Senior=all. Thread IDs included in Ward Room activity context. Rank-aware action space prompt. Communication PCC exercise on successful endorsements (AD-428 integration). 15 new tests.
 
 This AD gives agents a **structured action space** beyond text generation. During proactive think, agents receive available actions (based on Earned Agency tier + skill proficiency) and return structured responses with both text and action invocations. Ward Room participation becomes a *practiced skill* — the Communication PCC (AD-428) measures it, Earned Agency (AD-357) gates it, and the Tool Registry (AD-423) registers the available actions.
 

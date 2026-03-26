@@ -771,11 +771,12 @@ class WardRoomService:
                     "thread_mode": row[5],
                     "net_score": row[6],       # AD-426
                     "post_id": row[0],         # AD-426: thread id for endorsement ref
+                    "thread_id": row[0],       # AD-437: same as post_id for threads
                 })
 
         # Recent replies in threads from this channel
         async with self._db.execute(
-            "SELECT p.id, p.author_callsign, p.body, p.created_at, p.net_score "
+            "SELECT p.id, p.author_callsign, p.body, p.created_at, p.net_score, p.thread_id "
             "FROM posts p JOIN threads t ON p.thread_id = t.id "
             "WHERE t.channel_id = ? AND p.created_at > ? AND p.deleted = 0 "
             "ORDER BY p.created_at DESC LIMIT ?",
@@ -789,6 +790,7 @@ class WardRoomService:
                     "created_at": row[3],
                     "net_score": row[4],       # AD-426
                     "post_id": row[0],         # AD-426
+                    "thread_id": row[5],       # AD-437
                 })
 
         # Sort by time, most recent first, cap total

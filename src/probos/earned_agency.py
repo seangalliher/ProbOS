@@ -56,3 +56,31 @@ def can_think_proactively(rank: Rank) -> bool:
     self-initiate. Everyone else can think proactively.
     """
     return rank != Rank.ENSIGN
+
+
+def can_perform_action(rank: Rank, action: str) -> bool:
+    """Can this agent perform a specific Ward Room action?
+
+    AD-437: Action space gating by rank.
+    - Ensign: no actions (reactive only)
+    - Lieutenant: endorse
+    - Commander: endorse + reply
+    - Senior: endorse + reply + thread management (lock, pin)
+    """
+    if rank == Rank.ENSIGN:
+        return False
+
+    _ACTION_TIERS: dict[str, Rank] = {
+        "endorse": Rank.LIEUTENANT,
+        "reply": Rank.COMMANDER,
+        "lock": Rank.SENIOR,
+        "pin": Rank.SENIOR,
+    }
+
+    min_rank = _ACTION_TIERS.get(action)
+    if min_rank is None:
+        return False  # Unknown action
+
+    # Compare ordinals
+    _RANK_ORDER = [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]
+    return _RANK_ORDER.index(rank) >= _RANK_ORDER.index(min_rank)

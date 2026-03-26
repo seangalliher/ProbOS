@@ -199,8 +199,25 @@ class CognitiveAgent(BaseAgent):
                     "[/PROPOSAL]\n"
                     "Only propose improvements you have evidence for — not speculation. "
                     "Reserve proposals for genuine insights."
-                    "\n\nIf the ward_room_activity context includes notable posts, you may endorse them. "
-                    "Use: [ENDORSE post_id UP] or [ENDORSE post_id DOWN], one per line at the end of your response."
+                    "\n\n## Available Actions\n"
+                    "Beyond posting observations, you can take structured actions on Ward Room content. "
+                    "Place action tags AFTER your observation text, each on its own line.\n\n"
+                    "**Endorse posts** — signal agreement or disagreement with a post:\n"
+                    "[ENDORSE post_id UP]\n"
+                    "[ENDORSE post_id DOWN]\n"
+                    "Only endorse when you have a clear, justified opinion. Do NOT endorse your own posts.\n\n"
+                    "**Reply to threads** — contribute to an existing discussion instead of starting a new one:\n"
+                    "[REPLY thread_id]\n"
+                    "Your reply text here (2-3 sentences).\n"
+                    "[/REPLY]\n"
+                    "Reply when you have something to ADD to an existing conversation. "
+                    "Do not reply just to agree — use endorsement for that. "
+                    "Replies require Commander rank or higher.\n\n"
+                    "**When to act vs. observe:**\n"
+                    "- See a good post? → [ENDORSE post_id UP] (not a reply saying 'good point')\n"
+                    "- Have a concrete addition? → [REPLY thread_id] with your contribution\n"
+                    "- See something new? → Write an observation (new thread)\n"
+                    "- Nothing noteworthy? → [NO_RESPONSE]"
                 )
             else:
                 composed += (
@@ -463,14 +480,14 @@ class CognitiveAgent(BaseAgent):
             if duty:
                 # AD-419: Duty cycle — agent has a scheduled task
                 pt_parts.append(f"[Duty Cycle: {duty.get('description', duty.get('duty_id', 'unknown'))}]")
-                pt_parts.append(f"Your trust: {trust_score} | Agency: {agency_level}")
+                pt_parts.append(f"Your trust: {trust_score} | Agency: {agency_level} | Rank: {params.get('rank', 'unknown')}")
                 pt_parts.append("")
                 pt_parts.append("This is a scheduled duty. Perform your assigned task and report your findings.")
                 pt_parts.append("")
             else:
                 # Free-form think — no duty due, requires justification
                 pt_parts.append("[Proactive Review — No Scheduled Duty]")
-                pt_parts.append(f"Your trust: {trust_score} | Agency: {agency_level}")
+                pt_parts.append(f"Your trust: {trust_score} | Agency: {agency_level} | Rank: {params.get('rank', 'unknown')}")
                 pt_parts.append("")
                 pt_parts.append("You have no scheduled duty at this time. You may share an observation")
                 pt_parts.append("ONLY if you notice something genuinely noteworthy or actionable.")
@@ -521,7 +538,14 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append("Recent Ward Room discussion in your department:")
                 for a in wr_activity:
                     prefix = "[thread]" if a.get("type") == "thread" else "[reply]"
-                    pt_parts.append(f"  - {prefix} {a.get('author', '?')}: {a.get('body', '?')}")
+                    ids = ""
+                    if a.get("thread_id"):
+                        ids += f" thread:{a['thread_id'][:8]}"
+                    if a.get("post_id"):
+                        ids += f" post:{a['post_id'][:8]}"
+                    score = a.get("net_score", 0)
+                    score_str = f" [+{score}]" if score > 0 else f" [{score}]" if score < 0 else ""
+                    pt_parts.append(f"  - {prefix}{ids}{score_str} {a.get('author', '?')}: {a.get('body', '?')}")
                 pt_parts.append("")
 
             if duty:

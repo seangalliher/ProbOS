@@ -161,7 +161,8 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
         {/* SYSTEM (AD-436) */}
-        <BridgeSection title="System" count={0} defaultOpen={false} accentColor="#70a0d0">
+        <BridgeSection title="System" count={0} defaultOpen={false} accentColor="#70a0d0"
+          onExpand={() => useStore.setState({ mainViewer: 'system' })}>
           <BridgeSystem />
         </BridgeSection>
 
