@@ -183,7 +183,7 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
           },
           // Tier 1: AMBER (conversation)
           {
-            active: hasConv,
+            active: !!hasConv,
             dots: hasConv ? 2 : 0,
             r: AMBER_R, g: AMBER_G, b: AMBER_B,
             orbitRadius: baseSize * 1.6,

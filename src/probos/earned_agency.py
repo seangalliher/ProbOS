@@ -63,7 +63,7 @@ def can_perform_action(rank: Rank, action: str) -> bool:
 
     AD-437: Action space gating by rank.
     - Ensign: no actions (reactive only)
-    - Lieutenant: endorse
+    - Lieutenant: endorse + reply
     - Commander: endorse + reply
     - Senior: endorse + reply + thread management (lock, pin)
     """
@@ -72,7 +72,7 @@ def can_perform_action(rank: Rank, action: str) -> bool:
 
     _ACTION_TIERS: dict[str, Rank] = {
         "endorse": Rank.LIEUTENANT,
-        "reply": Rank.COMMANDER,
+        "reply": Rank.LIEUTENANT,
         "lock": Rank.SENIOR,
         "pin": Rank.SENIOR,
     }

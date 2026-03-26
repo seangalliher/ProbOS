@@ -212,7 +212,7 @@ class CognitiveAgent(BaseAgent):
                     "[/REPLY]\n"
                     "Reply when you have something to ADD to an existing conversation. "
                     "Do not reply just to agree — use endorsement for that. "
-                    "Replies require Commander rank or higher.\n\n"
+                    "Replies require Lieutenant rank or higher.\n\n"
                     "**When to act vs. observe:**\n"
                     "- See a good post? → [ENDORSE post_id UP] (not a reply saying 'good point')\n"
                     "- Have a concrete addition? → [REPLY thread_id] with your contribution\n"
