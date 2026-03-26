@@ -275,6 +275,26 @@ class EpisodicMemory:
 
         return episodes
 
+    async def count_for_agent(self, agent_id: str) -> int:
+        """Return the total number of episodes for a specific agent."""
+        if not self._collection:
+            return 0
+        if self._collection.count() == 0:
+            return 0
+        result = self._collection.get(include=["metadatas"])
+        if not result or not result["metadatas"]:
+            return 0
+        count = 0
+        for metadata in result["metadatas"]:
+            agent_ids_json = metadata.get("agent_ids_json", "[]")
+            try:
+                agent_ids = json.loads(agent_ids_json)
+            except (json.JSONDecodeError, TypeError):
+                agent_ids = []
+            if agent_id in agent_ids:
+                count += 1
+        return count
+
     async def recent_for_agent(self, agent_id: str, k: int = 5) -> list[Episode]:
         """BF-027: Return the k most recent episodes for a specific agent.
 
@@ -377,6 +397,27 @@ class EpisodicMemory:
             self._metadata_to_episode(doc_id, document, metadata)
             for doc_id, metadata, document in paired[:k]
         ]
+
+    async def count_for_agent(self, agent_id: str) -> int:
+        """BF-033: Return the total episode count for a specific agent."""
+        if not self._collection:
+            return 0
+        count = self._collection.count()
+        if count == 0:
+            return 0
+        result = self._collection.get(include=["metadatas"])
+        if not result or not result["metadatas"]:
+            return 0
+        total = 0
+        for metadata in result["metadatas"]:
+            agent_ids_json = metadata.get("agent_ids_json", "[]")
+            try:
+                agent_ids = json.loads(agent_ids_json)
+            except (json.JSONDecodeError, TypeError):
+                agent_ids = []
+            if agent_id in agent_ids:
+                total += 1
+        return total
 
     async def get_stats(self) -> dict[str, Any]:
         """Total episodes, intent distribution, average success rate, most-used agents."""

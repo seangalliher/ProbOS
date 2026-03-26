@@ -132,6 +132,9 @@ class EmergentDetector:
         self._pattern_cooldown_seconds: float = 600.0  # 10 minutes default
         self._last_pattern_fired: dict[tuple[str, str], float] = {}  # (pattern_type, dedup_key) → monotonic timestamp
 
+        # BF-034: Cold-start suppression — suppress trust anomalies for N seconds after reset
+        self._suppress_trust_until: float = 0.0
+
     def set_live_agents(self, agent_ids: set[str]) -> None:
         """Update the set of live agent IDs from the runtime pool registry."""
         self._live_agent_ids = agent_ids
@@ -139,6 +142,15 @@ class EmergentDetector:
     def set_pattern_cooldown(self, seconds: float) -> None:
         """Set the deduplication cooldown window (seconds)."""
         self._pattern_cooldown_seconds = max(0, seconds)
+
+    def set_cold_start_suppression(self, duration_seconds: float) -> None:
+        """Suppress trust anomaly detection for *duration_seconds* after a cold start.
+
+        Cooperation clusters and routing shifts still fire — those are useful
+        even post-reset. Only trust anomalies are suppressed since baseline
+        trust (0.5) is expected, not anomalous.
+        """
+        self._suppress_trust_until = time.monotonic() + duration_seconds
 
     def _is_duplicate_pattern(self, pattern_type: str, dedup_key: str) -> bool:
         """Check if this pattern was already reported within the cooldown window.
@@ -370,6 +382,10 @@ class EmergentDetector:
         """Detect agents whose trust deviates significantly from the population."""
         now = time.monotonic()
         patterns: list[EmergentPattern] = []
+
+        # BF-034: Suppress during cold-start period
+        if time.monotonic() < self._suppress_trust_until:
+            return patterns
 
         raw = self._trust.raw_scores()
         if len(raw) < 2:

@@ -479,6 +479,12 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append("Do not comment on your own posting patterns or observation frequency.")
                 pt_parts.append("")
 
+            # BF-034: Cold-start system note
+            system_note = context_parts.get("system_note")
+            if system_note:
+                pt_parts.append(system_note)
+                pt_parts.append("")
+
             # Recent memories
             memories = context_parts.get("recent_memories", [])
             if memories:
@@ -488,6 +494,9 @@ class CognitiveAgent(BaseAgent):
                         pt_parts.append(f"  - {m['reflection']}")
                     elif m.get("input"):
                         pt_parts.append(f"  - Handled: {m['input']}")
+                pt_parts.append("")
+            else:
+                pt_parts.append("You have no stored episodic memories yet. Do not reference or invent past experiences you do not have.")
                 pt_parts.append("")
 
             # Recent alerts

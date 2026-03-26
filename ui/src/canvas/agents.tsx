@@ -11,6 +11,17 @@ const _tempColor = new THREE.Color();
 const _ringObj = new THREE.Object3D();
 const _ringColor = new THREE.Color();
 
+// AD-436: Orbital notification electron math
+const _electronEulers = [
+  new THREE.Euler(0.35, 0, 0),           // Tier 0 (RED): 20° tilt
+  new THREE.Euler(1.05, 0.52, 0),        // Tier 1 (AMBER): 60° + 30° tilt
+  new THREE.Euler(-0.52, 1.05, 0),       // Tier 2 (CYAN): -30° + 60° tilt
+];
+const _orbitQuat = new THREE.Quaternion();
+const _orbitVec = new THREE.Vector3();
+
+const GOLDEN_ANGLE = 2.399963; // 137.5° in radians — prevents visual clustering
+
 interface AgentNodesProps {
   onPointerMove?: (e: ThreeEvent<PointerEvent>) => void;
   onPointerOut?: () => void;
@@ -39,12 +50,8 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
 
   // Ring colors (amber, initial)
   const ringColors = useMemo(() => {
-    const arr = new Float32Array(Math.max(count, 1) * 3);
-    for (let i = 0; i < count; i++) {
-      arr[i * 3] = 0.94;
-      arr[i * 3 + 1] = 0.69;
-      arr[i * 3 + 2] = 0.38;
-    }
+    const arr = new Float32Array(Math.max(count * 6, 1) * 3);
+    // Initialize all to zero (hidden electrons start black)
     return arr;
   }, [count]);
 
@@ -66,7 +73,7 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
     // Initialize rings as invisible
     const ring = ringRef.current;
     if (ring) {
-      for (let i = 0; i < count; i++) {
+      for (let i = 0; i < count * 6; i++) {
         _ringObj.scale.setScalar(0);
         _ringObj.updateMatrix();
         ring.setMatrixAt(i, _ringObj.matrix);
@@ -146,11 +153,9 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
 
       mesh.setColorAt(i, _tempColor);
 
-      // Priority ring indicator (AD-406): red > amber > cyan > hidden
-      // Ring consolidates all agent-to-Captain visual cues:
-      //   Red:  error/action_required notifications, requires_action tasks
-      //   Amber: active conversation, minimized chat (unread or not)
-      //   Cyan: informational notifications
+      // AD-436: Orbital electron notification dots
+      // For each agent, populate up to 6 electron instances (2 per tier, 3 tiers)
+      // Instance index = agentIndex * 6 + tierIndex * 2 + dotIndex
       if (ring && connected) {
         const conv = agentConversations.get(agent.id);
         const isProfileOpen = activeProfileAgent === agent.id;
@@ -158,49 +163,91 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
         const hasConv = isProfileOpen || conv?.minimized;
         const hasInfo = agentInfoNotifs.has(agent.id);
 
-        if (hasError || hasConv || hasInfo) {
-          const ringSize = baseSize * 0.7;
-          const tiltAngle = 0.6 + Math.sin(t * 0.3 + i) * 0.2; // gentle wobble
+        // Determine active tiers and their params
+        const tiers: Array<{
+          active: boolean;
+          dots: number;
+          r: number; g: number; b: number;
+          orbitRadius: number;
+          speed: number;
+          pulse: boolean;
+        }> = [
+          // Tier 0: RED (error/action)
+          {
+            active: hasError,
+            dots: hasError ? 2 : 0,
+            r: RED_R, g: RED_G, b: RED_B,
+            orbitRadius: baseSize * 1.3,
+            speed: 3,  // 3 rev/s
+            pulse: true,
+          },
+          // Tier 1: AMBER (conversation)
+          {
+            active: hasConv,
+            dots: hasConv ? 2 : 0,
+            r: AMBER_R, g: AMBER_G, b: AMBER_B,
+            orbitRadius: baseSize * 1.6,
+            speed: (conv?.minimized && conv.unreadCount > 0) ? 3 : 0.5,
+            pulse: false,
+          },
+          // Tier 2: CYAN (info)
+          {
+            active: hasInfo,
+            dots: hasInfo ? 2 : 0,
+            r: CYAN_R, g: CYAN_G, b: CYAN_B,
+            orbitRadius: baseSize * 1.9,
+            speed: 0.5,
+            pulse: false,
+          },
+        ];
 
-          // Determine ring color and spin speed by priority
-          let rR: number, rG: number, rB: number;
-          let spinSpeed: number;
+        for (let tier = 0; tier < 3; tier++) {
+          const cfg = tiers[tier];
+          for (let dot = 0; dot < 2; dot++) {
+            const instanceIdx = i * 6 + tier * 2 + dot;
 
-          if (hasError) {
-            // Red — fast spin (3 rev/s), pulsing brightness
-            const pulse = 0.7 + 0.3 * Math.sin(t * 6 * Math.PI);
-            rR = RED_R * pulse; rG = RED_G * pulse; rB = RED_B * pulse;
-            spinSpeed = 6 * Math.PI;
-          } else if (hasConv) {
-            const hasUnread = conv?.minimized && conv.unreadCount > 0;
-            if (hasUnread) {
-              // Amber — fast spin (3 rev/s), bright
-              rR = AMBER_R; rG = AMBER_G; rB = AMBER_B;
-              spinSpeed = 6 * Math.PI;
+            if (cfg.active && dot < cfg.dots) {
+              // Phase offset: golden angle per agent + 180° between dots
+              const phase = i * GOLDEN_ANGLE + dot * Math.PI;
+              const angle = t * cfg.speed * 2 * Math.PI + phase;
+
+              // Circular orbit in XZ plane
+              _orbitVec.set(
+                Math.cos(angle) * cfg.orbitRadius,
+                0,
+                Math.sin(angle) * cfg.orbitRadius,
+              );
+
+              // Apply tier-specific tilt
+              _orbitQuat.setFromEuler(_electronEulers[tier]);
+              _orbitVec.applyQuaternion(_orbitQuat);
+
+              // Translate to agent world position
+              _ringObj.position.set(
+                agent.position[0] + _orbitVec.x,
+                agent.position[1] + _orbitVec.y,
+                agent.position[2] + _orbitVec.z,
+              );
+
+              // Electron scale — pulse for RED tier
+              const electronScale = cfg.pulse
+                ? 0.12 + 0.06 * Math.sin(t * 8)
+                : 0.15;
+              _ringObj.scale.setScalar(electronScale);
+              _ringObj.updateMatrix();
+              ring.setMatrixAt(instanceIdx, _ringObj.matrix);
+
+              // Dim amber when no unread
+              const dimFactor = (tier === 1 && !(conv?.minimized && conv.unreadCount > 0)) ? 0.6 : 1.0;
+              _ringColor.setRGB(cfg.r * dimFactor, cfg.g * dimFactor, cfg.b * dimFactor);
+              ring.setColorAt(instanceIdx, _ringColor);
             } else {
-              // Amber — steady spin (0.5 rev/s), dim
-              rR = AMBER_R * 0.6; rG = AMBER_G * 0.6; rB = AMBER_B * 0.6;
-              spinSpeed = Math.PI;
+              // Hide: scale to 0
+              _ringObj.scale.setScalar(0);
+              _ringObj.updateMatrix();
+              ring.setMatrixAt(instanceIdx, _ringObj.matrix);
             }
-          } else {
-            // Cyan — steady spin (0.5 rev/s)
-            rR = CYAN_R; rG = CYAN_G; rB = CYAN_B;
-            spinSpeed = Math.PI;
           }
-
-          _ringObj.position.set(...agent.position);
-          _ringObj.rotation.set(tiltAngle, t * spinSpeed, 0);
-          _ringObj.scale.setScalar(ringSize);
-          _ringObj.updateMatrix();
-          ring.setMatrixAt(i, _ringObj.matrix);
-
-          _ringColor.setRGB(rR, rG, rB);
-          ring.setColorAt(i, _ringColor);
-        } else {
-          // Hide ring — scale to 0
-          _ringObj.scale.setScalar(0);
-          _ringObj.updateMatrix();
-          ring.setMatrixAt(i, _ringObj.matrix);
         }
       }
     });
@@ -238,18 +285,18 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
           args={[colors, 3]}
         />
       </instancedMesh>
-      {/* Priority ring indicators: red (error/action) > amber (chat) > cyan (info) */}
+      {/* Orbital electron notification dots (AD-436) */}
       <instancedMesh
-        key={`rings-${count}`}
+        key={`electrons-${count}`}
         ref={ringRef}
-        args={[undefined, undefined, count]}
+        args={[undefined, undefined, count * 6]}
         raycast={() => null}
       >
-        <torusGeometry args={[1, 0.04, 8, 32]} />
+        <sphereGeometry args={[1, 8, 8]} />
         <meshBasicMaterial
           toneMapped={false}
           transparent
-          opacity={0.8}
+          opacity={0.9}
         />
         <instancedBufferAttribute
           attach="instanceColor"

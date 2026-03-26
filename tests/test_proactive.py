@@ -73,6 +73,9 @@ def _make_mock_runtime(agents=None, trust_scores=None, ward_room=True):
     """Create a mock runtime with agents and services."""
     rt = MagicMock()
 
+    # BF-034: Default to non-cold-start
+    rt.is_cold_start = False
+
     if agents is None:
         agents = [_make_mock_agent()]
     rt.registry.all.return_value = agents

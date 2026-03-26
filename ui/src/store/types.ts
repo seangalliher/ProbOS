@@ -419,3 +419,10 @@ export interface ScheduledTaskView {
   webhook_name: string | null;
   enabled: boolean;
 }
+
+// Service status (AD-436)
+
+export interface ServiceStatus {
+  name: string;
+  status: 'online' | 'offline' | 'degraded';
+}

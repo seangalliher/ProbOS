@@ -354,6 +354,15 @@ class ProactiveCognitiveLoop:
         rt = self._runtime
         context: dict[str, Any] = {}
 
+        # BF-034: Cold-start context note for agents
+        if hasattr(rt, 'is_cold_start') and rt.is_cold_start:
+            context["system_note"] = (
+                "SYSTEM NOTE: This is a fresh start after a system reset. "
+                "All trust scores are at baseline (0.5). This is normal initialization, "
+                "not a demotion. Build trust through demonstrated competence. "
+                "You have no prior episodic memories — do not reference or invent past experiences."
+            )
+
         # 1. Recent episodic memories (sovereign — only this agent's experiences)
         if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
             try:
@@ -366,8 +375,8 @@ class ProactiveCognitiveLoop:
                 if episodes:
                     context["recent_memories"] = [
                         {
-                            "input": ep.user_input[:200] if ep.user_input else "",
-                            "reflection": ep.reflection[:200] if ep.reflection else "",
+                            "input": (ep.user_input[:500] + " [trimmed]") if ep.user_input and len(ep.user_input) > 500 else (ep.user_input or ""),
+                            "reflection": (ep.reflection[:500] + " [trimmed]") if ep.reflection and len(ep.reflection) > 500 else (ep.reflection or ""),
                         }
                         for ep in episodes
                     ]

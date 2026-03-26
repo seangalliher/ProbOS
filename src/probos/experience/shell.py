@@ -1408,6 +1408,7 @@ class ProbOSShell:
         self.console.print(table)
 
     async def _cmd_quit(self, arg: str) -> None:
+        self._quit_reason = arg.strip() if arg else ""
         self._running = False
         self.console.print("[dim]Shutting down...[/dim]")
 

@@ -1598,7 +1598,7 @@ Default classification: Ship's Computer bridge alerts → INFORM. Captain Ward R
 
 **AD-426: Ward Room Endorsement Activation** — **COMPLETE**. The endorsement system (`ward_room.endorse()`) is **fully built** — SQLite schema, up/down/unvote mechanics, credibility scoring (EMA decay), self-endorsement prevention, REST API endpoints (`POST /api/wardroom/posts/{id}/endorse`, `POST /api/wardroom/threads/{id}/endorse`). But **nothing triggers it**. No agent ever endorses a post. The HXI API exists for Captain use, but crew never participates. Endorsements are meant to be the Ward Room's quality signal — "credibility is karma." **Design:** (1) **Post-response endorsement evaluation:** After an agent reads a Ward Room thread and responds (or says `[NO_RESPONSE]`), evaluate whether existing posts in the thread deserve endorsement. Add to the Ward Room system prompt: "If a post is particularly insightful or actionable, endorse it. If it's incorrect or unhelpful, downvote it." Return endorsement decisions alongside the reply. (2) **Proactive endorsement:** During proactive thinks, when agents see `ward_room_activity` in context, they can endorse notable posts they encountered. Lightweight — no dedicated LLM call, piggybacks on existing cognitive cycle. (3) **Endorsement → Trust signal:** High endorsement of an agent's posts = positive social trust signal. Feed net endorsement score into trust network as an attenuated signal (similar to AD-414 proactive trust signal). Agents who consistently write valuable posts earn trust faster. (4) **Endorsement → Thread ranking:** Threads with high net endorsement score surface first in browse results (AD-425) and proactive context. Quality rises. (5) **Credibility gating:** Agent's credibility score (already tracked in `credibility` table) could gate endorsement weight — a highly credible agent's endorsement counts more than a low-credibility agent's. Future refinement. *Connects to: AD-424 (thread classification — DISCUSS threads are endorsable, INFORM are not), AD-425 (browsing — endorsement-ranked results), AD-414 (trust signals), AD-357 (earned agency — endorsement as trust evidence).*
 
-**AD-427: Agent Capital Management (ACM) — Core Framework** — Roadmap. ProbOS has built HCM-equivalent capabilities piecemeal across dozens of ADs — crew profiles (AD-398), trust (Phase 17), earned agency (AD-357), duty schedules (AD-419), qualification programs (roadmap), endorsements (Phase 33), standing orders (AD-339), behavioral monitoring (Phase 29), Ward Room participation (Phase 33). These are scattered across separate subsystems with no unifying model. ACM Core consolidates them into an integrated agent lifecycle framework — the infrastructure that makes sovereign agent management possible. Advanced ACM features (workforce analytics, structured evaluations, succession planning) are commercial. Absorb domain patterns from open-source HCM (ERPNext HRMS for lifecycle models, OrangeHRM for competency frameworks, Odoo HR for modular design).
+**AD-427: Agent Capital Management (ACM) — Core Framework** — **COMPLETE**. ProbOS has built HCM-equivalent capabilities piecemeal across dozens of ADs — crew profiles (AD-398), trust (Phase 17), earned agency (AD-357), duty schedules (AD-419), qualification programs (roadmap), endorsements (Phase 33), standing orders (AD-339), behavioral monitoring (Phase 29), Ward Room participation (Phase 33). These are scattered across separate subsystems with no unifying model. ACM Core consolidates them into an integrated agent lifecycle framework — the infrastructure that makes sovereign agent management possible. Advanced ACM features (workforce analytics, structured evaluations, succession planning) are commercial. Absorb domain patterns from open-source HCM (ERPNext HRMS for lifecycle models, OrangeHRM for competency frameworks, Odoo HR for modular design).
 
 **OSS ACM Core domains:**
 
@@ -3580,7 +3580,41 @@ Items identified during development that aren't urgent but would improve code qu
 
 > **External Research Survey & Nooplex Paper Alignment** archived to [roadmap-research.md](roadmap-research.md).
 
----
+**AD-435: Restart Announcements** — **COMPLETE**. When ProbOS shuts down or starts up, post system announcements to the Ward Room "All Hands" channel so agents have context. Without this, agents misinterpret dev-cycle reboots as system instability (observed: Bones, Ogawa, Selar). `stop(reason="")` parameter, Ship's Computer author, `announce` thread mode. Startup posts "System Online" after all services ready. Graceful: if Ward Room unavailable, silently skip. Shell `/quit` threads reason through to `stop()`. 6 tests.
+
+**AD-436: HXI Bridge System Panel + Orbital Notification Redesign** — Build prompt ready. Combined AD: (1) Bridge System Panel — service status, shutdown controls, thread management. (2) Orbital notification redesign — replace invisible torus rings with orbiting electron dots.
+
+**Part 1 — Bridge System Panel:**
+- **Service status** — `GET /api/system/services` lists all runtime services with online/offline status. Bridge UI auto-refreshes every 10s.
+- **System shutdown** — `POST /api/system/shutdown` with reason field. Fire-and-forget via `_track_task`. Confirmation dialog in UI.
+- **Thread management** — Lock/unlock threads from Bridge panel using existing `PATCH /api/wardroom/threads/{id}`.
+- New `BridgeSystem.tsx` component with three sub-sections: ServiceStatusList, ShutdownControl, ThreadManagement.
+- Added as `<BridgeSection title="System">` in `BridgePanel.tsx`.
+
+**Part 2 — Orbital Notification Redesign:**
+- Problem: Torus rings inside opaque orb meshes are invisible. Agents appear to have no notifications.
+- Solution: Replace torus geometry with small sphere electrons orbiting on tilted orbital planes outside the orb.
+- Three tiers (RED/AMBER/CYAN), each on a different tilted orbital plane. Up to 2 dots per tier, 6 max per agent.
+- RED: 1.3x orbit radius, 3 rev/s, pulsing scale. AMBER: 1.6x, speed varies by unread state. CYAN: 1.9x, 0.5 rev/s.
+- Golden angle phase offset (137.5°) prevents visual clustering across agents.
+- 330 total instances (55 agents × 6 electrons). Instanced mesh with per-instance color.
+
+Access point: Bridge view in HXI. Cockpit View Principle: the Captain needs direct manual control over all system operations from the HXI.
+
+**AD-437: Ward Room Action Space — Structured Agent Actions** — Build prompt ready. Agents can currently only *post text* to the Ward Room during proactive thoughts. The Ward Room has a rich action API (endorse, upvote, downvote, reply, create threads, set thread modes) but agents can't invoke it — they express intent in text (`[ENDORSE O'Brien's proposal]`) without executing the actual mechanism. Knowledge without skill. **Bug found during research:** `[ENDORSE]` tags in proactive responses are posted raw — `proactive.py` never calls `_extract_endorsements()` (only wired in Ward Room notification path). **Fix:** (1) Wire endorsement extraction into proactive loop via `_extract_and_execute_actions()`. (2) Add `[REPLY thread_id]...[/REPLY]` structured action for Commander+ agents. (3) `can_perform_action(rank, action)` in `earned_agency.py` with tiered gating: Lieutenant=endorse, Commander=endorse+reply, Senior=all. (4) Include `thread_id` in Ward Room activity context. (5) Rank-aware action space prompt. (6) Communication PCC exercise on endorsements (AD-428).
+
+This AD gives agents a **structured action space** beyond text generation. During proactive think, agents receive available actions (based on Earned Agency tier + skill proficiency) and return structured responses with both text and action invocations. Ward Room participation becomes a *practiced skill* — the Communication PCC (AD-428) measures it, Earned Agency (AD-357) gates it, and the Tool Registry (AD-423) registers the available actions.
+
+**Scope:**
+- Ward Room action registry — register endorsement, upvote/downvote, thread creation, replies as structured actions
+- Proactive loop structured output — agent responses include optional `actions: [{type: "endorse", target: post_id}]`
+- Action execution pipeline — proactive loop parses and executes actions on behalf of the agent
+- Earned Agency gating — Ensigns: post only. Lieutenants: post + endorse + reply. Commanders: full action set. Seniors: thread management (lock, pin)
+- Skill proficiency feedback — successful action execution reinforces Communication PCC proficiency
+
+*Connects to: AD-428 (Skill Framework — Communication PCC), AD-357 (Earned Agency — permission tiers), AD-423 (Tool Registry — action registration), AD-427 (ACM — lifecycle-aware permissions), Phase 32 (Cognitive Division of Labor — structured agent output).*
+
+
 
 ## Bug Tracker
 
@@ -3620,6 +3654,8 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-030 | `ward_room.py` used `self._db.execute_fetchone()` which doesn't exist in aiosqlite. Caused AttributeError at runtime when recalling Ward Room thread metadata. **Fix:** Replaced with standard `async with self._db.execute(...) as cursor: row = await cursor.fetchone()` pattern. | Medium | **Closed** |
 | BF-031 | `CognitiveJournal.start()` ran `executescript(_SCHEMA)` with `CREATE INDEX ... ON journal(intent_id)` before `ALTER TABLE ADD COLUMN intent_id` migration. On pre-AD-432 databases, the table existed without the column → `OperationalError: no such column: intent_id`. **Fix:** Split schema into `_SCHEMA_BASE` (table + safe indexes) and `_SCHEMA_INDEXES` (indexes on migrated columns). Startup: base → migration → dependent indexes. | Critical | **Closed** |
 | BF-032 | Proactive observation self-reference loop. Agents see their own Ward Room posts in proactive context, observe patterns in their own posting, then post meta-observations about their posting patterns — recursive loop. Observed in Troi and Selar. **Fix:** (1) Self-post filter in `_gather_context()` — `self_ids` set excludes agent's own posts from Ward Room activity context. (2) `_is_similar_to_recent_posts()` — Jaccard word-set similarity (threshold 0.5), fail-open, checks last 3 posts. (3) Similarity gate in `_think_for_agent()` before posting — suppressed posts still record duty execution. (4) Prompt instruction: "Do not comment on your own posting patterns or observation frequency." 5 tests. | Medium | **Closed** |
+| BF-033 | Agent profile cards in HXI showing "0 Episodes" and "0s" uptime — both fields were unwired stubs. **Root cause:** (1) `EpisodicMemory` had no `count_for_agent()` method; API's `hasattr` guard silently defaulted to 0. (2) API hardcoded `"uptime": 0.0` instead of using runtime's `_start_time`. **Fix:** Added `count_for_agent(agent_id)` to `EpisodicMemory` (ChromaDB metadata filter on `agent_ids_json`). Replaced hardcoded uptime with `time.monotonic() - runtime._start_time`. | Low | **Closed** |
+| BF-034 | Post-reset trust anomaly false positives. After `probos reset -y`, EmergentDetector fires 6+ consecutive trust anomalies because baseline trust (0.5) is interpreted as anomalous — no cold-start awareness. Agents see these as system problems and enter discussion spirals about "demotions." **Fix:** (1) Cold-start detection in runtime — flag set when all trust at prior + episodic empty. (2) `EmergentDetector.set_cold_start_suppression(300)` — suppresses trust anomalies for 5 min (clusters/routing still fire). (3) Proactive context injection — `system_note` tells agents "baseline trust is normal, not demotion." (4) Ward Room announcement: "Fresh Start — System Reset" thread. Flag auto-clears after first dream cycle. 8 tests. | Medium | **Closed** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 

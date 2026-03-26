@@ -238,6 +238,12 @@ class ProbOSRuntime:
         self.skill_registry: Any = None
         self.skill_service: Any = None
 
+        # --- Agent Capital Management (AD-427) ---
+        self.acm: Any = None
+
+        # BF-034: Cold-start flag — True when booting with empty state (post-reset)
+        self._cold_start: bool = False
+
         # --- Pool scaling ---
         self.pool_scaler: PoolScaler | None = None
 
@@ -417,6 +423,11 @@ class ProbOSRuntime:
             }
         })
 
+    @property
+    def is_cold_start(self) -> bool:
+        """True during first cycle after a clean reset (no prior state)."""
+        return self._cold_start
+
     def build_state_snapshot(self) -> dict[str, Any]:
         """Build a full state snapshot for HXI clients (AD-254)."""
         from probos.earned_agency import agency_from_rank
@@ -492,6 +503,7 @@ class ProbOSRuntime:
             "scheduled_tasks": self.persistent_task_store.snapshot() if self.persistent_task_store else [],
             "ward_room_stats": getattr(self.ward_room, '_last_stats', None) if self.ward_room else None,
             "skill_framework": self.skill_registry is not None,  # AD-428
+            "acm": self.acm is not None,  # AD-427
         }
 
     def _directive_summary(self) -> dict[str, int]:
@@ -1081,6 +1093,49 @@ class ProbOSRuntime:
         # Provide live agent roster so detector filters out defunct agents
         self._refresh_emergent_detector_roster()
 
+        # BF-034: Detect cold start (post-reset boot with empty state)
+        if self._knowledge_store and self._emergent_detector:
+            trust_records = self.trust_network.raw_scores()
+            all_at_prior = all(
+                abs(r["alpha"] - self.config.consensus.trust_prior_alpha) < 0.01
+                and abs(r["beta"] - self.config.consensus.trust_prior_beta) < 0.01
+                for r in trust_records.values()
+            ) if trust_records else True
+            episodes_empty = not self.episodic_memory
+            if all_at_prior and episodes_empty:
+                self._cold_start = True
+                self._emergent_detector.set_cold_start_suppression(300)  # 5 minutes
+                logger.info("BF-034: Cold start detected — suppressing trust anomalies for 5 minutes")
+
+        # BF-034: Announce fresh start to crew
+        if self._cold_start and self.ward_room:
+            async def _announce_cold_start():
+                try:
+                    channels = await self.ward_room.list_channels()
+                    all_hands = next((c for c in channels if c.channel_type == "ship"), None)
+                    if all_hands:
+                        await self.ward_room.create_thread(
+                            channel_id=all_hands.id,
+                            author_id="system",
+                            title="Fresh Start — System Reset",
+                            body=(
+                                "This instance has been reset. All trust scores are at baseline (0.5) — "
+                                "this is normal initialization, not a demotion. Trust will be rebuilt "
+                                "through demonstrated competence. Episodic memory has been cleared. "
+                                "Previous experiences are not available."
+                            ),
+                            author_callsign="Ship's Computer",
+                            thread_mode="announce",
+                            max_responders=0,
+                        )
+                except Exception:
+                    pass  # best-effort
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_announce_cold_start())
+            except RuntimeError:
+                pass
+
         # Wire post-dream analysis callback (AD-237)
         if self.dream_scheduler:
             self.dream_scheduler._post_dream_fn = self._on_post_dream
@@ -1303,6 +1358,12 @@ class ProbOSRuntime:
         await self.skill_service.start()
         logger.info("skill-framework started")
 
+        # --- Agent Capital Management (AD-427) ---
+        from probos.acm import AgentCapitalService
+        self.acm = AgentCapitalService(data_dir=self._data_dir)
+        await self.acm.start()
+        logger.info("acm started")
+
         # --- Proactive Cognitive Loop (Phase 28b) ---
         if self.config.proactive_cognitive.enabled and self.ward_room:
             from probos.proactive import ProactiveCognitiveLoop
@@ -1334,7 +1395,27 @@ class ProbOSRuntime:
             len(self._red_team_agents),
         )
 
-    async def stop(self) -> None:
+        # AD-435: Announce startup to Ward Room
+        if self.ward_room:
+            try:
+                async with self.ward_room._db.execute(
+                    "SELECT id FROM channels WHERE name = 'All Hands' LIMIT 1"
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        await self.ward_room.create_thread(
+                            channel_id=row[0],
+                            author_id="system",
+                            title="System Online",
+                            body="ProbOS startup complete. All systems operational.",
+                            author_callsign="Ship's Computer",
+                            thread_mode="announce",
+                            max_responders=0,
+                        )
+            except Exception:
+                pass  # best-effort
+
+    async def stop(self, reason: str = "") -> None:
         """Graceful shutdown of all pools, mesh services, and persistence."""
         if not self._started:
             return
@@ -1345,9 +1426,41 @@ class ProbOSRuntime:
         except (asyncio.CancelledError, Exception):
             pass  # event log may be unavailable during shutdown
 
+        # AD-435: Announce shutdown to Ward Room
+        if self.ward_room and self.ward_room._db:
+            try:
+                async with self.ward_room._db.execute(
+                    "SELECT id FROM channels WHERE name = 'All Hands' LIMIT 1"
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        msg = "System shutdown initiated."
+                        if reason:
+                            msg += f" Reason: {reason}"
+                        await self.ward_room.create_thread(
+                            channel_id=row[0],
+                            author_id="system",
+                            title="System Restart",
+                            body=msg,
+                            author_callsign="Ship's Computer",
+                            thread_mode="announce",
+                            max_responders=0,
+                        )
+            except Exception:
+                pass  # best-effort, don't block shutdown
+
+        # AD-435: Grace period for in-flight DB writes to complete
+        logger.info("Shutdown grace period (5s)...")
+        await asyncio.sleep(5)
+
         # Cancel periodic flush
         if hasattr(self, '_flush_task'):
             self._flush_task.cancel()
+
+        # Stop ACM (AD-427)
+        if self.acm:
+            await self.acm.stop()
+            self.acm = None
 
         # Stop SIF (AD-370)
         if self.sif:
@@ -3450,6 +3563,11 @@ class ProbOSRuntime:
 
     def _on_post_dream(self, dream_report: Any) -> None:
         """Post-dream callback: run emergent detection and log patterns (AD-237)."""
+        # BF-034: Clear cold-start flag after first dream cycle
+        if self._cold_start:
+            self._cold_start = False
+            logger.info("BF-034: Cold start period ended — normal detection resumed")
+
         # Emit system_mode event for HXI (AD-254) — dream cycle ended
         self._emit_event("system_mode", {"mode": "idle", "previous": "dreaming"})
 
@@ -3753,6 +3871,22 @@ class ProbOSRuntime:
             agent_type=agent.agent_type,
             pool=agent.pool,
         )
+
+        # AD-427: ACM onboarding for crew agents
+        if self.acm and self._is_crew_agent(agent):
+            try:
+                state = await self.acm.get_lifecycle_state(agent.id)
+                if state.value == "registered":
+                    from probos.cognitive.standing_orders import get_department
+                    department = get_department(agent.agent_type) or "operations"
+                    await self.acm.onboard(
+                        agent_id=agent.id,
+                        agent_type=agent.agent_type,
+                        pool=agent.pool,
+                        department=department,
+                    )
+            except Exception as e:
+                logger.debug("ACM onboard skipped for %s: %s", agent.id, e)
 
     def _collect_intent_descriptors(self) -> list[IntentDescriptor]:
         """Collect unique intent descriptors from all registered agent templates.

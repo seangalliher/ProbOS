@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-428 COMPLETE. BF-032 CLOSED (proactive observation self-reference loop — self-post filter + similarity gate + prompt instruction). AD-426 COMPLETE. AD-434 DESIGNED. AD-418 COMPLETE. BF-020–032 all closed. 3369 pytest + 118 vitest = 3487 total tests.
+## Current Status: AD-436 COMPLETE (HXI Bridge System Panel + Orbital Notification Redesign). AD-437 build prompt ready. BF-034 CLOSED. BF-020–034 all closed. 3415 pytest + 118 vitest = 3533 total tests.
 
 ---
 

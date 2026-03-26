@@ -221,6 +221,9 @@ class EndorseRequest(BaseModel):
     voter_id: str
     direction: str  # "up" | "down" | "unvote"
 
+class ShutdownRequest(BaseModel):
+    reason: str = ""
+
 class SubscribeRequest(BaseModel):
     agent_id: str
     action: str = "subscribe"  # "subscribe" | "unsubscribe"
@@ -362,6 +365,40 @@ def create_app(runtime: Any) -> FastAPI:
             "pending_designs": len(_pending_designs),
             "tasks": tasks,
         }
+
+    @app.get("/api/system/services")
+    async def system_services() -> dict[str, Any]:
+        """AD-436: Service status for Bridge System panel."""
+        services = []
+        checks = [
+            ("Ward Room", runtime.ward_room),
+            ("Episodic Memory", runtime.episodic_memory),
+            ("Trust Network", runtime.trust_network),
+            ("Knowledge Store", getattr(runtime, '_knowledge_store', None)),
+            ("Cognitive Journal", getattr(runtime, 'cognitive_journal', None)),
+            ("Codebase Index", getattr(runtime, 'codebase_index', None)),
+            ("Skill Framework", getattr(runtime, 'skill_registry', None)),
+            ("Skill Service", getattr(runtime, 'skill_service', None)),
+            ("ACM", getattr(runtime, 'acm', None)),
+            ("Hebbian Router", getattr(runtime, 'hebbian_router', None)),
+            ("Intent Bus", getattr(runtime, 'intent_bus', None)),
+        ]
+        for name, svc in checks:
+            if svc is None:
+                status = "offline"
+            else:
+                status = "online"
+            services.append({"name": name, "status": status})
+        return {"services": services}
+
+    @app.post("/api/system/shutdown")
+    async def system_shutdown(req: ShutdownRequest) -> dict[str, Any]:
+        """AD-436: Initiate system shutdown from HXI Bridge."""
+        async def _do_shutdown():
+            await asyncio.sleep(1)  # Let response return first
+            await runtime.stop(reason=req.reason)
+        _track_task(_do_shutdown(), name="system-shutdown")
+        return {"status": "shutting_down", "reason": req.reason}
 
     @app.post("/api/chat")
     async def chat(req: ChatRequest) -> dict[str, Any]:
@@ -1169,7 +1206,7 @@ def create_app(runtime: Any) -> FastAPI:
             "pool": agent.pool,
             "hebbianConnections": hebbian_connections,
             "memoryCount": memory_count,
-            "uptime": 0.0,
+            "uptime": round(time.monotonic() - runtime._start_time, 1),
             "isCrew": is_crew,
             "proactiveCooldown": runtime.proactive_loop.get_agent_cooldown(agent.id) if is_crew and hasattr(runtime, 'proactive_loop') and runtime.proactive_loop else None,
         }
@@ -1667,6 +1704,90 @@ def create_app(runtime: Any) -> FastAPI:
         if not runtime.skill_service:
             return {"met": True, "missing": []}
         return await runtime.skill_service.check_prerequisites(agent_id, skill_id)
+
+    # --- Agent Capital Management (AD-427) ---
+
+    @app.get("/api/acm/agents/{agent_id}/profile")
+    async def get_acm_profile(agent_id: str) -> dict[str, Any]:
+        """AD-427: Consolidated agent profile from ACM."""
+        if not runtime.acm:
+            return {"error": "ACM not available"}
+        return await runtime.acm.get_consolidated_profile(agent_id, runtime)
+
+    @app.get("/api/acm/agents/{agent_id}/lifecycle")
+    async def get_acm_lifecycle(agent_id: str) -> dict[str, Any]:
+        """AD-427: Agent lifecycle state and transition history."""
+        if not runtime.acm:
+            return {"error": "ACM not available"}
+        state = await runtime.acm.get_lifecycle_state(agent_id)
+        history = await runtime.acm.get_transition_history(agent_id)
+        return {
+            "agent_id": agent_id,
+            "current_state": state.value,
+            "transitions": [
+                {
+                    "from_state": t.from_state,
+                    "to_state": t.to_state,
+                    "reason": t.reason,
+                    "initiated_by": t.initiated_by,
+                    "timestamp": t.timestamp,
+                }
+                for t in history
+            ],
+        }
+
+    @app.post("/api/acm/agents/{agent_id}/decommission")
+    async def decommission_agent(agent_id: str, req: dict) -> dict[str, Any]:
+        """AD-427: Decommission an agent."""
+        if not runtime.acm:
+            return {"error": "ACM not available"}
+        reason = req.get("reason", "Decommissioned by Captain")
+        try:
+            t = await runtime.acm.decommission(agent_id, reason=reason, initiated_by="captain")
+            return {"status": "decommissioned", "transition": {
+                "from_state": t.from_state, "to_state": t.to_state,
+                "reason": t.reason, "timestamp": t.timestamp,
+            }}
+        except ValueError as e:
+            return {"error": str(e)}
+
+    @app.post("/api/acm/agents/{agent_id}/suspend")
+    async def suspend_agent(agent_id: str, req: dict) -> dict[str, Any]:
+        """AD-427: Suspend an agent (Captain order)."""
+        if not runtime.acm:
+            return {"error": "ACM not available"}
+        from probos.acm import LifecycleState
+        reason = req.get("reason", "Suspended by Captain")
+        try:
+            t = await runtime.acm.transition(
+                agent_id, LifecycleState.SUSPENDED,
+                reason=reason, initiated_by="captain",
+            )
+            return {"status": "suspended", "transition": {
+                "from_state": t.from_state, "to_state": t.to_state,
+                "reason": t.reason, "timestamp": t.timestamp,
+            }}
+        except ValueError as e:
+            return {"error": str(e)}
+
+    @app.post("/api/acm/agents/{agent_id}/reinstate")
+    async def reinstate_agent(agent_id: str, req: dict) -> dict[str, Any]:
+        """AD-427: Reinstate a suspended agent."""
+        if not runtime.acm:
+            return {"error": "ACM not available"}
+        from probos.acm import LifecycleState
+        reason = req.get("reason", "Reinstated by Captain")
+        try:
+            t = await runtime.acm.transition(
+                agent_id, LifecycleState.ACTIVE,
+                reason=reason, initiated_by="captain",
+            )
+            return {"status": "active", "transition": {
+                "from_state": t.from_state, "to_state": t.to_state,
+                "reason": t.reason, "timestamp": t.timestamp,
+            }}
+        except ValueError as e:
+            return {"error": str(e)}
 
     # --- Assignments (AD-408) ---
 

@@ -5,6 +5,7 @@ import { useStore } from '../store/useStore';
 import { TaskCard } from './bridge/BridgeCards';
 import { NotificationCard } from './bridge/BridgeNotifications';
 import { BridgeKanban } from './bridge/BridgeKanban';
+import { BridgeSystem } from './bridge/BridgeSystem';
 
 /* ── Collapsible Section ── */
 function BridgeSection({
@@ -159,6 +160,11 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
 
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+        {/* SYSTEM (AD-436) */}
+        <BridgeSection title="System" count={0} defaultOpen={false} accentColor="#70a0d0">
+          <BridgeSystem />
+        </BridgeSection>
+
         {/* ATTENTION */}
         {attentionCount > 0 && (
           <BridgeSection title="Attention" count={attentionCount} defaultOpen={true} accentColor="#f0b060">
