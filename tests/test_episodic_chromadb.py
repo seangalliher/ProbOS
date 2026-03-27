@@ -198,3 +198,191 @@ class TestEpisodicMemoryChromaDB:
         assert await mem.recent(k=10) == []
         stats = await mem.get_stats()
         assert stats["total"] == 0
+
+
+# ---------------------------------------------------------------------------
+# BF-039: Rate Limiting & Content Deduplication
+# ---------------------------------------------------------------------------
+
+
+class TestEpisodicRateLimiting:
+    """BF-039: Per-agent episode rate limiting."""
+
+    @pytest.fixture
+    async def mem(self, tmp_path):
+        from probos.cognitive.episodic import EpisodicMemory
+        db = tmp_path / "rl.db"
+        m = EpisodicMemory(db_path=str(db), max_episodes=1000, relevance_threshold=0.3)
+        await m.start()
+        yield m
+        await m.stop()
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_blocks_excess_episodes(self, mem):
+        """Store MAX+1 episodes for the same agent — last one rejected."""
+        for i in range(mem.MAX_EPISODES_PER_HOUR):
+            ep = _make_episode(f"rl-{i}", f"task number {i} unique content", ts=time.time())
+            await mem.store(ep)
+
+        # One more should be rate-limited
+        excess = _make_episode("rl-excess", "one too many tasks", ts=time.time())
+        await mem.store(excess)
+
+        recent = await mem.recent(k=100)
+        ids = {r.id for r in recent}
+        assert "rl-excess" not in ids
+        assert len(recent) == mem.MAX_EPISODES_PER_HOUR
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_allows_different_agents(self, mem):
+        """Store MAX episodes for agent A, then one for agent B — B accepted."""
+        for i in range(mem.MAX_EPISODES_PER_HOUR):
+            ep = Episode(
+                id=f"a-{i}", user_input=f"agent A task {i}", timestamp=time.time(),
+                agent_ids=["agent_a"], outcomes=[{"intent": "test", "success": True}],
+            )
+            await mem.store(ep)
+
+        ep_b = Episode(
+            id="b-0", user_input="agent B task", timestamp=time.time(),
+            agent_ids=["agent_b"], outcomes=[{"intent": "test", "success": True}],
+        )
+        await mem.store(ep_b)
+
+        recent = await mem.recent(k=100)
+        ids = {r.id for r in recent}
+        assert "b-0" in ids
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_allows_after_window(self, tmp_path):
+        """Episodes with old timestamps don't count against the rate limit."""
+        from probos.cognitive.episodic import EpisodicMemory
+        db = tmp_path / "rl_window.db"
+        m = EpisodicMemory(db_path=str(db), max_episodes=1000, relevance_threshold=0.3)
+        await m.start()
+        try:
+            old_ts = time.time() - 7200  # 2 hours ago
+            for i in range(m.MAX_EPISODES_PER_HOUR):
+                ep = _make_episode(f"old-{i}", f"old task {i}", ts=old_ts)
+                await m.store(ep)
+
+            new_ep = _make_episode("new-0", "new task just now", ts=time.time())
+            await m.store(new_ep)
+
+            recent = await m.recent(k=100)
+            ids = {r.id for r in recent}
+            assert "new-0" in ids
+        finally:
+            await m.stop()
+
+
+class TestEpisodicContentDedup:
+    """BF-039: Content similarity deduplication."""
+
+    @pytest.fixture
+    async def mem(self, tmp_path):
+        from probos.cognitive.episodic import EpisodicMemory
+        db = tmp_path / "dedup.db"
+        m = EpisodicMemory(db_path=str(db), max_episodes=1000, relevance_threshold=0.3)
+        await m.start()
+        yield m
+        await m.stop()
+
+    @pytest.mark.asyncio
+    async def test_content_similarity_dedup(self, mem):
+        """Near-identical episode for same agent within window is rejected."""
+        ep1 = Episode(
+            id="dup-1",
+            user_input="the quick brown fox jumps over the lazy dog in the park near home",
+            timestamp=time.time(), agent_ids=["agent_a"],
+            outcomes=[{"intent": "test", "success": True}],
+        )
+        await mem.store(ep1)
+
+        # Nearly identical text — only 1 word different out of many (>0.9 Jaccard)
+        ep2 = Episode(
+            id="dup-2",
+            user_input="the quick brown fox jumps over the lazy cat in the park near home",
+            timestamp=time.time(), agent_ids=["agent_a"],
+            outcomes=[{"intent": "test", "success": True}],
+        )
+        await mem.store(ep2)
+
+        recent = await mem.recent(k=10)
+        ids = {r.id for r in recent}
+        assert "dup-1" in ids
+        assert "dup-2" not in ids
+
+    @pytest.mark.asyncio
+    async def test_content_similarity_allows_different_content(self, mem):
+        """Substantially different episode is accepted."""
+        ep1 = Episode(
+            id="diff-1", user_input="the quick brown fox jumps over the lazy dog",
+            timestamp=time.time(), agent_ids=["agent_a"],
+            outcomes=[{"intent": "test", "success": True}],
+        )
+        await mem.store(ep1)
+
+        ep2 = Episode(
+            id="diff-2", user_input="deploy kubernetes cluster to production environment",
+            timestamp=time.time(), agent_ids=["agent_a"],
+            outcomes=[{"intent": "deploy", "success": True}],
+        )
+        await mem.store(ep2)
+
+        recent = await mem.recent(k=10)
+        ids = {r.id for r in recent}
+        assert "diff-1" in ids
+        assert "diff-2" in ids
+
+    @pytest.mark.asyncio
+    async def test_content_similarity_allows_different_agent(self, mem):
+        """Identical text for different agent is accepted."""
+        text = "the quick brown fox jumps over the lazy dog"
+        ep1 = Episode(
+            id="agent-a", user_input=text,
+            timestamp=time.time(), agent_ids=["agent_a"],
+            outcomes=[{"intent": "test", "success": True}],
+        )
+        await mem.store(ep1)
+
+        ep2 = Episode(
+            id="agent-b", user_input=text,
+            timestamp=time.time(), agent_ids=["agent_b"],
+            outcomes=[{"intent": "test", "success": True}],
+        )
+        await mem.store(ep2)
+
+        recent = await mem.recent(k=10)
+        ids = {r.id for r in recent}
+        assert "agent-a" in ids
+        assert "agent-b" in ids
+
+
+class TestCountForAgentDedup:
+    """BF-039: Verify count_for_agent works after duplicate removal."""
+
+    @pytest.fixture
+    async def mem(self, tmp_path):
+        from probos.cognitive.episodic import EpisodicMemory
+        db = tmp_path / "count.db"
+        m = EpisodicMemory(db_path=str(db), max_episodes=1000, relevance_threshold=0.3)
+        await m.start()
+        yield m
+        await m.stop()
+
+    @pytest.mark.asyncio
+    async def test_count_for_agent_single_definition(self, mem):
+        """count_for_agent works correctly after dedup removal."""
+        for i in range(3):
+            ep = Episode(
+                id=f"cnt-{i}", user_input=f"task {i} for counting", timestamp=time.time(),
+                agent_ids=["counter_agent"], outcomes=[{"intent": "test", "success": True}],
+            )
+            await mem.store(ep)
+
+        count = await mem.count_for_agent("counter_agent")
+        assert count == 3
+
+        # Different agent has 0
+        assert await mem.count_for_agent("other_agent") == 0

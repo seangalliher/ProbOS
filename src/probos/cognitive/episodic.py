@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 class EpisodicMemory:
     """ChromaDB-backed episodic memory with semantic similarity recall."""
 
+    # BF-039: Throttling & deduplication constants
+    MAX_EPISODES_PER_HOUR = 20  # per agent, rolling window
+    SIMILARITY_WINDOW_MINUTES = 30
+    SIMILARITY_THRESHOLD = 0.8  # Jaccard word-level
+
     def __init__(
         self,
         db_path: str | Path,
@@ -122,6 +127,18 @@ class EpisodicMemory:
         if text.startswith("[1:1 with"):
             return True
 
+        # Always store Ward Room posts (intentional social communication)
+        # BF-039: WR episodes now pass through this gate; they should store
+        # unless the content is explicitly filtered below (e.g. SystemQA noise)
+        if "[Ward Room]" in text or "[Ward Room reply]" in text:
+            # Still filter SystemQA noise posted to Ward Room
+            if "[SystemQA]" in text:
+                for o in outcomes:
+                    if isinstance(o, dict) and not o.get("success", True):
+                        return True
+                return False
+            return True
+
         # Always store failures (learning opportunities)
         for o in outcomes:
             if isinstance(o, dict) and not o.get("success", True):
@@ -157,6 +174,16 @@ class EpisodicMemory:
         if not self._collection:
             return
 
+        # BF-039: Per-agent rate limit
+        if self._is_rate_limited(episode):
+            logger.debug("Episode rate-limited for agent %s", episode.agent_ids)
+            return
+
+        # BF-039: Content similarity dedup
+        if self._is_duplicate_content(episode):
+            logger.debug("Episode deduplicated (similar content) for agent %s", episode.agent_ids)
+            return
+
         metadata = self._episode_to_metadata(episode)
 
         self._collection.upsert(
@@ -184,6 +211,51 @@ class EpisodicMemory:
                 ids_to_delete = [p[0] for p in paired[:excess]]
                 if ids_to_delete:
                     self._collection.delete(ids=ids_to_delete)
+
+    def _is_rate_limited(self, episode: Episode) -> bool:
+        """BF-039: Check if agent has exceeded episode rate limit in the last hour."""
+        if not episode.agent_ids:
+            return False
+        agent_id = episode.agent_ids[0]
+        one_hour_ago = time.time() - 3600
+        try:
+            recent = self._collection.get(
+                where={"timestamp": {"$gte": one_hour_ago}},
+                include=["metadatas"],
+            )
+        except Exception:
+            return False
+        count = 0
+        for meta in (recent.get("metadatas") or []):
+            if agent_id in meta.get("agent_ids_json", "[]"):
+                count += 1
+        return count >= self.MAX_EPISODES_PER_HOUR
+
+    def _is_duplicate_content(self, episode: Episode) -> bool:
+        """BF-039: Check if a very similar episode was stored recently for same agent."""
+        if not episode.agent_ids or not episode.user_input:
+            return False
+        agent_id = episode.agent_ids[0]
+        window_start = time.time() - (self.SIMILARITY_WINDOW_MINUTES * 60)
+        try:
+            recent = self._collection.get(
+                where={"timestamp": {"$gte": window_start}},
+                include=["metadatas", "documents"],
+            )
+        except Exception:
+            return False
+        episode_words = set(episode.user_input.lower().split())
+        for i, meta in enumerate(recent.get("metadatas") or []):
+            if agent_id not in meta.get("agent_ids_json", "[]"):
+                continue
+            doc = (recent.get("documents") or [None])[i]
+            if not doc:
+                continue
+            existing_words = set(doc.lower().split())
+            union = episode_words | existing_words
+            if union and len(episode_words & existing_words) / len(union) >= self.SIMILARITY_THRESHOLD:
+                return True
+        return False
 
     # ---- recall ---------------------------------------------------
 
@@ -274,26 +346,6 @@ class EpisodicMemory:
                 break
 
         return episodes
-
-    async def count_for_agent(self, agent_id: str) -> int:
-        """Return the total number of episodes for a specific agent."""
-        if not self._collection:
-            return 0
-        if self._collection.count() == 0:
-            return 0
-        result = self._collection.get(include=["metadatas"])
-        if not result or not result["metadatas"]:
-            return 0
-        count = 0
-        for metadata in result["metadatas"]:
-            agent_ids_json = metadata.get("agent_ids_json", "[]")
-            try:
-                agent_ids = json.loads(agent_ids_json)
-            except (json.JSONDecodeError, TypeError):
-                agent_ids = []
-            if agent_id in agent_ids:
-                count += 1
-        return count
 
     async def recent_for_agent(self, agent_id: str, k: int = 5) -> list[Episode]:
         """BF-027: Return the k most recent episodes for a specific agent.

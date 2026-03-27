@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-444–452 PLANNED — Absorbed patterns from ERP Company Designer + Nooplex POC validator analysis (knowledge confidence, decision queue, compensation, phase gates, security intercept, MCP bridge, ERP Ship Class, validation framework hardening, agent tier licensing). OSS: AD-444–448, AD-451. Commercial: AD-449–450, AD-452. BF-040 COMPLETE — Identity System Hardening (13 findings, all resolved: 1 critical, 3 high, 5 medium, 4 low). AD-441/441b/441c COMPLETE — Full identity system (DIDs, birth certificates, ship commissioning, asset tags). AD-429a-d COMPLETE — Ship Ontology. BF-020–040 all closed. 3569 pytest + 118 vitest = 3687 total tests.
+## Current Status: BF-044 CLOSED — Hebbian source key fixed: `source=msg.id` (UUID, never reinforces) → `source=intent` (intent name, accumulates). Both `submit_intent()` and `submit_intent_with_consensus()` patched. Also fixed AD-442 proactive activation check (`get_trust` → `get_score`, MagicMock-safe threshold). 4 new tests in `test_hebbian_source_key.py`. 3565 passed, 0 failed (parallel, -m "not slow"). All commissioning gate items complete (BF-039 + AD-434 + AD-442 + BF-043 + BF-044).
 
 ---
 
@@ -49,9 +49,10 @@ See [roadmap.md](docs/development/roadmap.md#design-principles) for full design 
 - **Platform:** Windows 11 Pro (10.0.26200)
 - **Python:** 3.12.13 (installed via uv)
 - **Toolchain:** uv 0.10.9
-- **Key deps:** pydantic 2.12.5, pyyaml 6.0.3, aiosqlite 0.22.1, httpx 0.28+, rich 13.0+, chromadb 1.5.4, pytest 9.0.2, pytest-asyncio 1.3.0
+- **Key deps:** pydantic 2.12.5, pyyaml 6.0.3, aiosqlite 0.22.1, httpx 0.28+, rich 13.0+, chromadb 1.5.4, pytest 9.0.2, pytest-asyncio 1.3.0, pytest-xdist 3.8.0, pytest-timeout 2.4.0
 - **LLM endpoints:** Fast tier: Ollama at `http://127.0.0.1:11434/v1`, Standard/Deep tier: VS Code Copilot proxy at `http://127.0.0.1:8080/v1`
 - **LLM models:** fast=qwen3.5:35b (local Ollama), standard=claude-sonnet-4.6 (Copilot proxy), deep=claude-opus-4.6 (Copilot proxy)
-- **Run tests:** `uv run pytest tests/ -v`
+- **Run tests:** `uv run pytest tests/ -v` (sequential) or `uv run pytest -n auto` (parallel, 13x faster)
+- **Run fast tests:** `uv run pytest -n auto -m "not slow"` (skip 65 sleep-heavy tests)
 - **Run demo:** `uv run python demo.py`
 - **Run interactive:** `uv run python -m probos`

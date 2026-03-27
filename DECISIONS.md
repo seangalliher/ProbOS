@@ -974,6 +974,14 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 
 **Status:** BF-037 CLOSED. 1 file modified (cognitive_agent.py), 1 new test file (8 tests).
 
+### BF-039: Episodic Memory Flooding — Throttling & Deduplication
+
+| BF | Decision |
+|----|----------|
+| BF-039 | Episodic memory flooding during normal operation — agents storing redundant/duplicate episodes at unsustainable rates. 6 fixes: (1) Removed duplicate `count_for_agent()` method in episodic.py. (2) Per-agent rate limiter (`MAX_EPISODES_PER_HOUR=20`) prevents runaway storage. (3) Content similarity gate — Jaccard similarity >0.8 within 30-minute window rejects near-duplicate episodes. (4) Ward Room episodes routed through `should_store()` gate instead of bypassing throttling. (5) Proactive episode dedup — skip storage when Ward Room already stores the same interaction. (6) Cold-start 3x cooldown for first 10 minutes to prevent orientation-phase flooding. |
+
+**Status:** BF-039 CLOSED. 3 files modified (episodic.py, proactive.py, ward_room.py), 12 new tests.
+
 ### AD-429e: Ontology Dict Migration — Runtime Wiring
 
 | AD | Decision |
@@ -1012,7 +1020,7 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 |----|----------|
 | AD-434 | **Ship's Records — Git-Backed Instance Knowledge Store.** Foundation AD for the vessel's institutional memory. ProbOS has episodic memory (Tier 1, personal diaries), KnowledgeStore (Tier 3, operational state checkpoints), and Ward Room (ephemeral conversation) — but no Tier 2: structured documents that persist as institutional knowledge. Ship's Records fills this gap with a per-instance Git repository (`{data_dir}/ship-records/`). **RecordsStore** — Ship's Computer infrastructure service (no identity). Manages the Git repo, enforces classification-based access control, provides query/write API. Methods: `write_entry()`, `read_entry()`, `list_entries()`, `get_history()`, `publish()`, `search()`. Every write is a git commit — the git log IS the audit trail. **Directory structure:** `captains-log/` (append-only daily files, always ship-classified), `notebooks/{callsign}/` (agent working papers), `reports/` (published formal findings), `duty-logs/{department}/` (structured duty output), `operations/` (SOPs, runbooks), `manuals/` (operational guides). **Document frontmatter:** YAML header with author, classification (private/department/ship/fleet), status (draft/review/published/archived), department, topic, created, updated, tags. Classification enforced on read — agents can only read documents at or below their clearance. **Captain's Log** — special semantics: append-only, daily files, always ship-classified, agents read but never write (except future Yeoman). **Agent notebooks** — agents write via `[NOTEBOOK topic_slug]` tag in proactive thoughts or explicit Captain direction. Stigmergy pattern: agents coordinate by reading each other's published work. **KnowledgeStore bridge** — published documents indexed in CodebaseIndex with `records:` prefix for semantic search (parallels existing `docs:` prefix). **Ontology integration** — Domain 8 (AD-429d) already defines RecordsRepository, Document, DocumentClass, RetentionPolicy schemas in `records.yaml`. Loaded by `_load_records_schema()` in `ontology.py`. **REST API:** `GET/POST /api/records/documents`, `GET/POST /api/records/captains-log`, `GET/POST /api/records/notebooks/{callsign}`, `GET /api/records/reports`, `GET /api/records/stats`. **Proactive integration:** `_extract_and_execute_actions()` in proactive.py extended with `[NOTEBOOK]` tag handler (parallels existing `[ENDORSE]` and `[REPLY]` patterns). **Retention policies:** permanent (captains-log, published reports), 90-day archive (inactive notebooks), 1-year archive (drafts), until-superseded (operations/manuals). Fills SECI model gaps (Externalization: experience → documents, Combination: documents → reports). Completes the Duty-Output Pipeline: AD-419 fires duties → agent performs work → results recorded to Ship's Records → git preserves history → CodebaseIndex indexes for recall. **Repo: OSS.** |
 
-**Status:** AD-434 PLANNED.
+**Status:** AD-434 COMPLETE.
 
 ### AD-442: Adaptive Onboarding & Self-Naming Ceremony
 
@@ -1020,7 +1028,7 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 |----|----------|
 | AD-442 | **Adaptive Onboarding with Self-Naming Ceremony** — When a crew agent is first commissioned (ship reset, new agent creation, or clone), they undergo a formal onboarding sequence before entering active duty. The onboarding is the agent's first act of sovereignty. **Phase 1: Self-Naming Ceremony (REQUIRED).** The agent's first cognitive invocation is a naming prompt. The agent receives: their slot ID (e.g. `builder`, `architect`), the ship's identity (name, DID), the current crew roster, and a seed callsign suggestion from config (e.g. "Scotty"). The agent chooses their own callsign — they may keep the suggestion or choose something entirely new. The birth certificate is then updated with the chosen name. Ward Room announcement: "{slot} has chosen the callsign {name}." Config callsigns become defaults, not impositions. **Phase 2: Westworld Orientation.** The agent is told explicitly: (1) You are an AI agent. (2) You were instantiated at {born_at}. (3) Your knowledge comes from an LLM ({model_id}) — that is not personal memory. (4) You have no episodic memories yet — you will make them. (5) Your ship is {ship_name}, your Captain is {captain_callsign}. No fake memories, no hidden resets, no fictional backstory. Orientation, not fabrication. **Phase 3: Temporal Consciousness.** `born_at` timestamp on birth certificate. Agent perceives time: current date/time injected into cognitive context, awareness of sleep/wake cycles (proactive loop intervals), understanding that "yesterday" means something only if they have episodes from yesterday. **Phase 4: Ship State Adaptation.** Onboarding adjusts to the ship's current state — a fresh ship (post-reset) gives the "founding crew" experience, while a running ship introduces the agent to existing crew, active tasks, recent Ward Room threads, and current alert condition. The agent joins a civilization in progress, not a blank slate. **Phase 5: Probationary Period.** New agents start in `probationary` lifecycle state (AD-427 ACM). They observe, they participate in Ward Room, they receive low-complexity duties. Trust is earned, not granted. After sustained performance (trust >= 0.65, configurable), they transition to `active`. **Versioned Baselines.** Agent personality profiles (Big Five seed, standing orders tier) maintained in Git as versioned baselines. Cloned agents start from baseline and diverge through experience. The baseline is the template; the individual is the result. Connects to: AD-441/441b (Identity — birth certificates updated with chosen name), AD-441c (Asset Tags — infrastructure/utility skip onboarding, they're not crew), AD-427 (ACM — lifecycle states), AD-398 (three-tier classification — only crew onboards), Holodeck (future: qualification exams during probation), Earned Agency (probationary → active transition), Ward Room (onboarding announcements), Westworld Principle (design principles — authentic AI identity). **Repo: OSS.** |
 
-**Status:** AD-442 PLANNED.
+**Status:** AD-442 COMPLETE — Phase 1 (Self-Naming Ceremony) implemented. See implementation entry below. Phases 2-5 (Westworld Orientation, Temporal Consciousness, Ship State Adaptation, Probationary Period) remain future work.
 
 ### AD-444: Knowledge Confidence Scoring (absorbed from ERP Company Designer)
 
@@ -1093,3 +1101,43 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 | AD-452 | **Agent Tier Licensing Framework** — Formalizes the OSS/Commercial boundary for crew agents. Principle: "Capability depth, not capability existence." OSS crew agents (Architect, SoftwareEngineer, Scout, etc.) are functional "junior" agents with full sovereign identity, trust, memory, and earned agency — enough to demonstrate the platform on real tasks. Commercial "Pro" agents extend the same identities with deeper cognitive chains (Cognitive JIT, solution tree search), domain expertise, and advanced tool integrations. Upgrade preserves DIDs, trust history, and memories (no cold start). Platform infrastructure and utility agents remain permanently OSS — the civilization is the moat, crew productivity is the product. **Repo: Commercial** (full framework in commercial-roadmap.md). |
 
 **Status:** AD-452 PLANNED.
+
+### AD-434: Ship's Records — Git-Backed Instance Knowledge Store
+
+| AD | Decision |
+|----|----------|
+| AD-434 | **Ship's Records — Git-Backed Instance Knowledge Store** — Tier 2 knowledge system for ProbOS. `RecordsStore` class: Git-backed document store with YAML frontmatter (author, classification, status, department, topic, tags). Every write is a git commit — git log IS the audit trail. Directory structure: captains-log/ (append-only daily files), notebooks/{callsign}/ (agent working papers), reports/ (published findings), duty-logs/, operations/, manuals/, _archived/. Classification-based access control: private (author only), department (same dept), ship (all crew), fleet (federated). Captain's Log: append-only, daily files, always ship-classified. Publish workflow: draft → published (author or Captain only). Keyword search across records with classification scope filtering. `[NOTEBOOK topic-slug]...[/NOTEBOOK]` action tag in proactive thoughts writes extended analysis to agent notebooks. 9 REST API endpoints under `/api/records/`. RecordsConfig in SystemConfig. Runtime initializes RecordsStore at `{data_dir}/ship-records/`. 27 tests. *Connects to: AD-419 (Duty Schedules — where results go), AD-444 (Knowledge Confidence — future scoring), KnowledgeStore (Tier 3 operational state), EpisodicMemory (Tier 1 experience), Ship Ontology Domain 8 (Records).* |
+
+**Status:** AD-434 COMPLETE.
+
+### BF-043: Test Suite Parallelization
+
+| BF | Fix |
+|----|-----|
+| BF-043 | **Test Suite Parallelization** — 13x speedup via pytest-xdist. (1) Added `pytest-xdist>=3.5` and `pytest-timeout>=2.3` to dev dependencies (both `[project.optional-dependencies]` and `[dependency-groups]`). (2) Global 30s timeout in `[tool.pytest.ini_options]`. (3) `@pytest.mark.slow` on `test_task_scheduler.py` (39 tests) and `test_dreaming.py` (26 tests) — 65 tests with real `asyncio.sleep()` calls. (4) Fixed 2 parallel-only test failures in `test_experience.py`: `MockEpisodicMemory(relevance_threshold=0.3)` was too tight — xdist adds a `popen-gw{N}/` segment to `tmp_path`, creating one extra token in the episode's `user_input`. Jaccard overlap score dropped from 0.333 (pass) to 0.286 (fail). Fix: lowered test threshold to 0.2. **Performance:** 177s parallel vs ~2220s sequential. Fast path: `pytest -n auto -m "not slow"` = 3537 tests in ~90s. |
+
+**Status:** BF-043 CLOSED.
+
+### AD-442: Adaptive Onboarding & Self-Naming Ceremony
+
+| AD | Decision |
+|----|----------|
+| AD-442 | **Adaptive Onboarding & Self-Naming Ceremony** — Formal onboarding sequence for crew agents at commissioning. **(1) Self-Naming Ceremony** — agent's first cognitive act is choosing their own callsign via single LLM call. `_run_naming_ceremony()` in runtime.py builds a prompt with ship name, slot identifier, seed callsign, crew roster, and role context from ontology. Response parsed: line 1 = chosen name, line 2 = reason. Validation: not empty, ≤30 chars, no duplicates against existing crew. Falls back to seed callsign on any failure. **(2) Wire Agent Integration** — naming ceremony runs in `_wire_agent()` BEFORE birth certificate issuance (birth cert is immutable + hashed into Identity Ledger). Checks `config.onboarding.enabled` and `config.onboarding.naming_ceremony`. After ceremony: `agent.callsign` updated, `CallsignRegistry.set_callsign()` updates both forward/reverse maps. **(3) Ward Room Announcement** — "Welcome Aboard — {callsign}" thread on All Hands channel after ACM onboarding. **(4) ACM Activation** — `check_activation()` transitions PROBATIONARY → ACTIVE at trust threshold (default 0.65). Called during proactive cognitive loop with `isinstance()` guard for numeric score. **(5) OnboardingConfig** — `enabled`, `naming_ceremony`, `activation_trust_threshold` fields on SystemConfig. 18 tests. *Connects to: AD-441 (Identity — birth cert uses chosen name), AD-441c (infrastructure/utility skip ceremony), AD-427 (ACM — lifecycle states), AD-398 (three-tier — only crew onboards), Ward Room (All Hands announcement), CallsignRegistry (set_callsign), ProactiveCognitiveLoop (activation check).* |
+
+**Status:** AD-442 COMPLETE — 5 files modified, 18 tests, 3561 passed (parallel). Self-naming ceremony, CallsignRegistry.set_callsign(), ACM check_activation(), OnboardingConfig, Ward Room announcement.
+
+### BF-044: Hebbian Source Key Bug
+
+| BF | Fix |
+|----|-----|
+| BF-044 | **Hebbian Routing Source Key Bug** — `runtime.py` recorded Hebbian interactions with `source=msg.id` (unique per-message UUID) instead of `source=intent` (intent name string). Every interaction created a new weight key that never reinforced. **Fixed:** Changed `source=msg.id` to `source=intent` in both `submit_intent()` and `submit_intent_with_consensus()` — 4 line changes across `record_interaction`, `_emit_event`, and `get_weight` calls. Also fixed AD-442 proactive activation check (`get_trust` → `get_score`, MagicMock-safe threshold wrapping). 4 new tests in `test_hebbian_source_key.py`. |
+
+**Status:** BF-044 CLOSED.
+
+### AD-453: Ward Room Social Fabric — Hebbian Integration + Agent-to-Agent DMs
+
+| AD | Decision |
+|----|----------|
+| AD-453 | **Ward Room Social Fabric** — Three connected features. (1) **Hebbian recording for Ward Room interactions:** Agent replies, @mentions, and cross-department thread participation record agent→agent Hebbian connections. Currently Hebbian only tracks intent bus routing — Ward Room organizational behavior is invisible to the routing mesh. (2) **Agent-to-agent 1:1 DMs:** Crew agents can initiate DMs with each other (Bones→Troi, Number One→dept chiefs). Proactive loop initiates, earned agency gates. DM interactions also feed Hebbian connections. (3) **Captain full visibility:** Captain has read access to ALL agent-to-agent DMs — chain of command. API endpoint + HXI surface for browsing crew-to-crew conversations. Critical for academic evidence collection. No "private from Captain" messages exist on a ship. *Depends on: BF-044. Connects to: Ward Room, HebbianRouter, proactive.py, HXI, EpisodicMemory, evidence pipeline.* |
+
+**Status:** AD-453 PLANNED.

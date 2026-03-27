@@ -248,6 +248,23 @@ class AgentCapitalService:
             reason=reason, initiated_by=initiated_by,
         )
 
+    async def check_activation(self, agent_id: str, trust_score: float, threshold: float = 0.65) -> bool:
+        """Check if a probationary agent should be activated based on trust.
+
+        Returns True if transition occurred (AD-442).
+        """
+        state = await self.get_lifecycle_state(agent_id)
+        if state != LifecycleState.PROBATIONARY:
+            return False
+        if trust_score >= threshold:
+            await self.transition(
+                agent_id,
+                LifecycleState.ACTIVE,
+                reason=f"Trust {trust_score:.2f} >= threshold {threshold:.2f} — probationary period complete",
+            )
+            return True
+        return False
+
     # ── Consolidated profile ────────────────────────────────────────
 
     async def get_consolidated_profile(

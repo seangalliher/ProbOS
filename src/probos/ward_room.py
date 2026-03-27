@@ -882,7 +882,10 @@ class WardRoomService:
                     }],
                     reflection=f"{author_callsign or author_id} posted to {channel_name}: {title[:100]}",
                 )
-                await self._episodic_memory.store(episode)
+                # BF-039: Route through should_store() selective encoding gate
+                from probos.cognitive.episodic import EpisodicMemory
+                if EpisodicMemory.should_store(episode):
+                    await self._episodic_memory.store(episode)
             except Exception:
                 pass  # Non-critical — don't block Ward Room operations
         return thread
@@ -1079,7 +1082,10 @@ class WardRoomService:
                     }],
                     reflection=f"{author_callsign or author_id} replied in thread '{thread_title[:60]}': {body[:120]}",
                 )
-                await self._episodic_memory.store(episode)
+                # BF-039: Route through should_store() selective encoding gate
+                from probos.cognitive.episodic import EpisodicMemory
+                if EpisodicMemory.should_store(episode):
+                    await self._episodic_memory.store(episode)
             except Exception:
                 pass  # Non-critical
         return post

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any, Callable
 
@@ -29,6 +30,9 @@ class ProactiveCognitiveLoop:
     CancelledError propagation.
     """
 
+    # BF-039: Cold-start episode dampening — 3x cooldown for this window
+    COLD_START_WINDOW_SECONDS = 600  # 10 minutes
+
     def __init__(
         self,
         *,
@@ -44,6 +48,7 @@ class ProactiveCognitiveLoop:
         self._knowledge_store: Any = None  # AD-415: Set by runtime for persistence
         self._task: asyncio.Task | None = None
         self._runtime: Any = None  # Set via set_runtime()
+        self._started_at: float = time.monotonic()  # BF-039: cold-start reference
         self._config: Any = None   # Set via set_config()
         self._duty_tracker: DutyScheduleTracker | None = None
 
@@ -149,8 +154,25 @@ class ProactiveCognitiveLoop:
 
             # Cooldown: skip if agent posted proactively recently
             last = self._last_proactive.get(agent.id, 0.0)
-            if time.monotonic() - last < self.get_agent_cooldown(agent.id):
+            cooldown = self.get_agent_cooldown(agent.id)
+            # BF-039: Cold-start dampening — 3x cooldown for first N minutes
+            if time.monotonic() - self._started_at < self.COLD_START_WINDOW_SECONDS:
+                cooldown *= 3
+            if time.monotonic() - last < cooldown:
                 continue
+
+            # AD-442: Check probationary → active transition
+            if rt.acm and rt.trust_network:
+                try:
+                    _onb = getattr(getattr(rt, 'config', None), 'onboarding', None)
+                    _act_thresh = float(getattr(_onb, 'activation_trust_threshold', 0.65)) if _onb else 0.65
+                    _tscore = rt.trust_network.get_score(agent.id)
+                    if isinstance(_tscore, (int, float)) and _tscore >= _act_thresh:
+                        activated = await rt.acm.check_activation(agent.id, _tscore, _act_thresh)
+                        if activated:
+                            logger.info("AD-442: %s activated (trust=%.2f)", getattr(agent, 'callsign', agent.id), _tscore)
+                except Exception:
+                    pass  # Non-critical — best effort
 
             try:
                 await self._think_for_agent(agent, rank, trust_score)
@@ -314,7 +336,10 @@ class ProactiveCognitiveLoop:
             self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
 
         # AD-430a: Store proactive thought as episodic memory
-        if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
+        # BF-039: Skip if posted to Ward Room — WR creates its own episode,
+        # storing here too would be a duplicate.
+        wr_available = hasattr(rt, 'ward_room') and rt.ward_room
+        if not wr_available and hasattr(rt, 'episodic_memory') and rt.episodic_memory:
             try:
                 from probos.types import Episode
                 callsign = ""
@@ -751,6 +776,38 @@ class ProactiveCognitiveLoop:
                 agent, text
             )
             actions_executed.extend(reply_actions)
+
+        # --- Notebook writes (AD-434) ---
+        notebook_pattern = r'\[NOTEBOOK\s+([\w-]+)\](.*?)\[/NOTEBOOK\]'
+        notebook_matches = re.findall(notebook_pattern, text, re.DOTALL)
+        for topic_slug, notebook_content in notebook_matches:
+            notebook_content = notebook_content.strip()
+            if not notebook_content or not self._runtime._records_store:
+                continue
+            try:
+                callsign = agent.callsign if hasattr(agent, 'callsign') else agent.agent_type
+                department = ""
+                if self._runtime._ontology:
+                    dept = self._runtime._ontology.get_agent_department(agent.agent_type)
+                    if dept:
+                        department = dept.department_id if hasattr(dept, 'department_id') else str(dept)
+                await self._runtime._records_store.write_notebook(
+                    callsign=callsign,
+                    topic_slug=topic_slug,
+                    content=notebook_content,
+                    department=department,
+                    tags=[topic_slug],
+                )
+                actions_executed.append({
+                    "type": "notebook_write",
+                    "topic": topic_slug,
+                    "callsign": callsign,
+                })
+                logger.info("Notebook entry written: %s/%s", callsign, topic_slug)
+            except Exception as e:
+                logger.warning("Notebook write failed for %s: %s", topic_slug, e)
+            # Remove the tag from text so it doesn't appear in Ward Room post
+            text = text.replace(f"[NOTEBOOK {topic_slug}]{notebook_content}[/NOTEBOOK]", "").strip()
 
         return text, actions_executed
 

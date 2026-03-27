@@ -7,6 +7,8 @@ import time
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 from probos.cognitive.task_scheduler import ScheduledTask, TaskScheduler
 
 

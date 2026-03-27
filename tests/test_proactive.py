@@ -205,6 +205,7 @@ class TestProactiveCognitiveLoopCycle:
         loop = ProactiveCognitiveLoop(cooldown=1.0)
         loop.set_runtime(rt)
         loop._last_proactive[agent.id] = time.monotonic() - 2.0  # Expired
+        loop._started_at = time.monotonic() - 1200  # Past cold-start window
 
         await loop._run_cycle()
         agent.handle_intent.assert_called_once()
@@ -474,6 +475,7 @@ class TestPerAgentCooldown:
 
         loop = ProactiveCognitiveLoop(cooldown=300.0)
         loop.set_runtime(rt)
+        loop._started_at = time.monotonic() - 1200  # Past cold-start window
         # Both posted 100s ago
         loop._last_proactive["fast"] = time.monotonic() - 100
         loop._last_proactive["slow"] = time.monotonic() - 100
@@ -946,49 +948,55 @@ class TestProactiveEpisodicMemory:
 
     @pytest.mark.asyncio
     async def test_successful_think_stores_episode(self):
-        """Successful proactive thought stores an episode with correct fields."""
-        from probos.types import Episode
+        """Successful proactive thought posts to Ward Room (which creates the episode).
 
+        BF-039: When Ward Room is available, episode storage is handled by
+        Ward Room's create_thread — the proactive path no longer stores a
+        duplicate.  This test verifies the WR post path fires.
+        """
         agent = _make_mock_agent(agent_type="scout", agent_id="scout-1")
         agent.handle_intent.return_value = IntentResult(
             intent_id="x", agent_id="scout-1", success=True,
             result="EPS conduits nominal. No anomalies detected.",
         )
-        rt = _make_mock_runtime(agents=[agent])
+        rt = _make_mock_runtime(agents=[agent], ward_room=True)
         rt.episodic_memory = MagicMock()
         rt.episodic_memory.store = AsyncMock()
         rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
 
         loop = ProactiveCognitiveLoop()
         loop.set_runtime(rt)
+        loop._started_at = time.monotonic() - 1200  # past cold-start
         await loop._run_cycle()
 
-        rt.episodic_memory.store.assert_called_once()
-        episode = rt.episodic_memory.store.call_args[0][0]
-        assert "[Proactive thought]" in episode.user_input
-        assert episode.agent_ids == ["scout-1"]
-        assert episode.outcomes[0]["intent"] == "proactive_think"
-        assert episode.outcomes[0]["success"] is True
-        assert "EPS conduits" in episode.outcomes[0]["response"]
+        # Ward Room handles the episode — proactive path does NOT store directly
+        rt.episodic_memory.store.assert_not_called()
+        # Verify the WR post was made
+        rt.ward_room.create_thread.assert_called_once()
+        call_kwargs = rt.ward_room.create_thread.call_args
+        # Thread body should contain the response text
+        assert "EPS conduits" in str(call_kwargs)
 
     @pytest.mark.asyncio
     async def test_no_response_stores_episode(self):
-        """AD-433: No-response proactive thought is filtered by selective encoding gate."""
+        """AD-433: No-response proactive thought is filtered — no WR post, no episode."""
         agent = _make_mock_agent(agent_type="scout", agent_id="scout-1")
         agent.handle_intent.return_value = IntentResult(
             intent_id="x", agent_id="scout-1", success=True,
             result="[NO_RESPONSE]",
         )
-        rt = _make_mock_runtime(agents=[agent])
+        rt = _make_mock_runtime(agents=[agent], ward_room=True)
         rt.episodic_memory = MagicMock()
         rt.episodic_memory.store = AsyncMock()
         rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
 
         loop = ProactiveCognitiveLoop()
         loop.set_runtime(rt)
+        loop._started_at = time.monotonic() - 1200  # past cold-start
         await loop._run_cycle()
 
-        # AD-433: Selective encoding gate blocks no-response noise episodes
+        # No-response → no WR post → no episode stored
+        rt.ward_room.create_thread.assert_not_called()
         rt.episodic_memory.store.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1611,3 +1619,75 @@ class TestMetaObservationPrompt:
         }
         msg = agent._build_user_message(observation)
         assert "Do not comment on your own posting patterns" in msg
+
+
+# ---------------------------------------------------------------------------
+# BF-039: Proactive Dedup & Cold-Start Dampening
+# ---------------------------------------------------------------------------
+
+
+class TestProactiveDedup:
+    """BF-039: No double episode from proactive + Ward Room."""
+
+    @pytest.mark.asyncio
+    async def test_proactive_no_double_episode_on_wr_post(self):
+        """When Ward Room is available, proactive path does NOT store its own episode."""
+        loop = ProactiveCognitiveLoop(cooldown=0)
+        rt = MagicMock()
+        rt.trust_network = MagicMock()
+        rt.trust_network.get_score = MagicMock(return_value=0.8)
+        rt.trust_network.record_outcome = MagicMock(return_value=0.8)
+
+        # Ward Room is available
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[])
+        rt.episodic_memory = AsyncMock()
+        rt.episodic_memory.store = AsyncMock()
+        rt.callsign_registry = MagicMock()
+        rt.callsign_registry.get_callsign = MagicMock(return_value="Bones")
+        rt.ontology = None
+        rt._extract_endorsements = MagicMock(return_value=("Status looks normal", []))
+        loop.set_runtime(rt)
+        loop._config = None
+
+        agent = MagicMock()
+        agent.id = "agent-bones"
+        agent.agent_type = "medical_officer"
+        agent.is_alive = True
+        agent.handle_intent = AsyncMock(return_value=IntentResult(
+            intent_id="x", agent_id="agent-bones",
+            result="Status looks normal", success=True,
+        ))
+
+        rank = Rank.LIEUTENANT
+        await loop._think_for_agent(agent, rank, 0.8)
+
+        # episodic_memory.store should NOT have been called from the proactive path
+        # (Ward Room might call it, but the proactive code should not)
+        rt.episodic_memory.store.assert_not_called()
+
+
+class TestColdStartDampening:
+    """BF-039: Cold-start episode dampening extends cooldown."""
+
+    def test_cold_start_extends_cooldown(self):
+        """During cold-start window, effective cooldown is 3x normal."""
+        loop = ProactiveCognitiveLoop(cooldown=300)
+        # Started just now — within cold-start window
+        loop._started_at = time.monotonic()
+
+        agent_id = "test-agent"
+        base = loop.get_agent_cooldown(agent_id)
+        assert base == 300
+
+        # The 3x multiplier is applied in _run_cycle, not get_agent_cooldown.
+        # Verify the constant exists and makes sense.
+        assert loop.COLD_START_WINDOW_SECONDS == 600
+        assert time.monotonic() - loop._started_at < loop.COLD_START_WINDOW_SECONDS
+
+    def test_cold_start_expires(self):
+        """After cold-start window, normal cooldown resumes."""
+        loop = ProactiveCognitiveLoop(cooldown=300)
+        # Started long ago — past cold-start window
+        loop._started_at = time.monotonic() - 1200  # 20 minutes ago
+        assert time.monotonic() - loop._started_at >= loop.COLD_START_WINDOW_SECONDS

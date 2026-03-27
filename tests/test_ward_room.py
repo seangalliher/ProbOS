@@ -1657,3 +1657,65 @@ class TestEndorsementActivation:
         assert len(captured_prompts) == 1
         prompt = captured_prompts[0]
         assert "[ENDORSE" in prompt
+
+
+# ---------------------------------------------------------------------------
+# BF-039: Ward Room Episode should_store() Gating
+# ---------------------------------------------------------------------------
+
+
+class TestWardRoomEpisodeShouldStore:
+    """BF-039: Ward Room episodes pass through should_store() gate."""
+
+    @pytest.mark.asyncio
+    async def test_ward_room_episode_respects_should_store(self, tmp_path):
+        """Episode content that should_store() rejects is not stored."""
+        from unittest.mock import AsyncMock
+
+        mock_mem = AsyncMock()
+
+        svc = WardRoomService(
+            db_path=str(tmp_path / "wr.db"),
+            episodic_memory=mock_mem,
+        )
+        await svc.start()
+
+        channels = await svc.list_channels()
+        ch = channels[0]
+
+        # Create a thread that looks like a SystemQA pass — should_store returns False
+        await svc.create_thread(
+            ch.id, "agent-qa", "[SystemQA] routine check", "[SystemQA] all clear",
+            author_callsign="O'Brien",
+        )
+
+        # should_store rejects SystemQA passes, so store should not be called
+        mock_mem.store.assert_not_called()
+
+        await svc.stop()
+
+    @pytest.mark.asyncio
+    async def test_ward_room_episode_stores_when_should_store_passes(self, tmp_path):
+        """Episode content that passes should_store() is stored normally."""
+        from unittest.mock import AsyncMock
+
+        mock_mem = AsyncMock()
+
+        svc = WardRoomService(
+            db_path=str(tmp_path / "wr.db"),
+            episodic_memory=mock_mem,
+        )
+        await svc.start()
+
+        channels = await svc.list_channels()
+        ch = channels[0]
+
+        # Normal thread — should_store returns True
+        await svc.create_thread(
+            ch.id, "agent-1", "Engineering status update", "Warp core nominal",
+            author_callsign="LaForge",
+        )
+
+        mock_mem.store.assert_called_once()
+
+        await svc.stop()

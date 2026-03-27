@@ -5,6 +5,8 @@ import time
 from io import StringIO
 
 import pytest
+
+pytestmark = pytest.mark.slow
 from rich.console import Console
 
 from probos.cognitive.dreaming import DreamingEngine, DreamScheduler

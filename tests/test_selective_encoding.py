@@ -77,18 +77,17 @@ def test_gate_allows_no_outcomes_conservative():
     assert EpisodicMemory.should_store(episode) is True
 
 
-def test_gate_ward_room_no_response_not_stored():
-    """Ward Room episodes without response content are filtered by the gate.
+def test_gate_ward_room_stored():
+    """Ward Room episodes are intentional social communication and should be stored.
 
-    This is correct — Sites 9/10 (Ward Room) are NOT gated at the call site,
-    so this path never runs in production. The gate correctly identifies that
-    an episode with no response text has no content worth storing.
+    BF-039 added should_store() gate at Ward Room episode creation sites.
+    Ward Room posts represent deliberate crew communication — always store them.
     """
     episode = Episode(
         user_input="[Ward Room] All Hands — Counselor: Trust report",
         outcomes=[{"intent": "ward_room_post", "success": True}],
     )
-    assert EpisodicMemory.should_store(episode) is False
+    assert EpisodicMemory.should_store(episode) is True
 
 
 def test_mock_should_store_delegates():

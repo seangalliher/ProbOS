@@ -377,6 +377,15 @@ class CallsignRegistry:
         """Return {agent_type: display_callsign} for all registered callsigns."""
         return dict(self._type_to_callsign)
 
+    def set_callsign(self, agent_type: str, callsign: str) -> None:
+        """Update callsign mapping after naming ceremony (AD-442)."""
+        old = self._type_to_callsign.get(agent_type)
+        if old:
+            # Remove old reverse mapping
+            self._callsign_to_type.pop(old.lower(), None)
+        self._type_to_callsign[agent_type] = callsign
+        self._callsign_to_type[callsign.lower()] = agent_type
+
 
 def load_seed_profile(agent_type: str, profiles_dir: str = "") -> dict[str, Any]:
     """Load seed personality and identity from crew_profiles/ YAML.

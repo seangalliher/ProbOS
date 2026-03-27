@@ -15,7 +15,7 @@ from typing import Any
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -539,6 +539,107 @@ def create_app(runtime: Any) -> FastAPI:
             "retention_policies": [asdict(rp) for rp in ont.get_retention_policies()],
             "repository_structure": [asdict(d) for d in ont.get_repository_structure()],
         }
+
+    # ── Ship's Records API (AD-434) ────────────────────────────────
+
+    @app.get("/api/records/stats")
+    async def get_records_stats() -> Any:
+        """Get Ship's Records repository statistics."""
+        if not runtime._records_store:
+            return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+        return await runtime._records_store.get_stats()
+
+    @app.get("/api/records/documents")
+    async def list_records(
+        directory: str = "",
+        author: str = "",
+        status: str = "",
+        classification: str = "",
+    ) -> Any:
+        """List documents in Ship's Records."""
+        if not runtime._records_store:
+            return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+        entries = await runtime._records_store.list_entries(
+            directory=directory, author=author, status=status, classification=classification,
+        )
+        return {"documents": entries, "count": len(entries)}
+
+    @app.get("/api/records/documents/{path:path}")
+    async def read_record(path: str, reader: str = "captain") -> Any:
+        """Read a specific document from Ship's Records."""
+        if not runtime._records_store:
+            return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+        entry = await runtime._records_store.read_entry(path, reader_id=reader)
+        if entry is None:
+            return JSONResponse({"error": "Not found or access denied"}, status_code=404)
+        return entry
+
+    @app.post("/api/records/captains-log")
+    async def post_captains_log(request: Request) -> Any:
+        """Append a Captain's Log entry."""
+        if not runtime._records_store:
+            return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+        body = await request.json()
+        content = body.get("content", "")
+        if not content:
+            return JSONResponse({"error": "content required"}, status_code=400)
+        path = await runtime._records_store.append_captains_log(content, body.get("message", ""))
+        return {"path": path, "status": "appended"}
+
+    @app.get("/api/records/captains-log")
+    async def get_captains_log(limit: int = 7) -> Any:
+        """Get recent Captain's Log entries."""
+        if not runtime._records_store:
+            return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+        entries = await runtime._records_store.list_entries("captains-log")
+        entries.sort(key=lambda e: e.get("frontmatter", {}).get("created", ""), reverse=True)
+        return {"entries": entries[:limit]}
+
+    @app.get("/api/records/notebooks/{callsign}")
+    async def list_notebook(callsign: str) -> Any:
+        """List a crew member's notebook entries."""
+        if not runtime._records_store:
+            return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+        entries = await runtime._records_store.list_entries(f"notebooks/{callsign}")
+        return {"callsign": callsign, "entries": entries}
+
+    @app.post("/api/records/notebooks/{callsign}")
+    async def write_notebook_entry(callsign: str, request: Request) -> Any:
+        """Write to a crew member's notebook."""
+        if not runtime._records_store:
+            return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+        body = await request.json()
+        topic = body.get("topic", "untitled")
+        content = body.get("content", "")
+        if not content:
+            return JSONResponse({"error": "content required"}, status_code=400)
+        path = await runtime._records_store.write_notebook(
+            callsign=callsign,
+            topic_slug=topic,
+            content=content,
+            department=body.get("department", ""),
+            tags=body.get("tags", []),
+            classification=body.get("classification", "department"),
+        )
+        return {"path": path, "status": "written"}
+
+    @app.get("/api/records/search")
+    async def search_records(q: str = "", scope: str = "ship") -> Any:
+        """Search Ship's Records by keyword."""
+        if not runtime._records_store:
+            return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+        if not q:
+            return JSONResponse({"error": "query parameter 'q' required"}, status_code=400)
+        results = await runtime._records_store.search(q, scope=scope)
+        return {"query": q, "results": results, "count": len(results)}
+
+    @app.get("/api/records/history/{path:path}")
+    async def get_record_history(path: str, limit: int = 20) -> Any:
+        """Get git history for a specific record."""
+        if not runtime._records_store:
+            return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+        history = await runtime._records_store.get_history(path, limit=limit)
+        return {"path": path, "history": history}
 
     # ── Identity Endpoints (AD-441) ─────────────────────────────────
 

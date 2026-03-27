@@ -620,7 +620,7 @@ class TestEpisodicMemoryIntegration:
         from probos.cognitive.episodic_mock import MockEpisodicMemory
 
         llm = MockLLMClient()
-        mem = MockEpisodicMemory(relevance_threshold=0.3)
+        mem = MockEpisodicMemory(relevance_threshold=0.2)
         rt = ProbOSRuntime(
             data_dir=tmp_path / "data",
             llm_client=llm,
@@ -700,7 +700,7 @@ class TestShellEpisodicCommands:
         from probos.cognitive.episodic_mock import MockEpisodicMemory
 
         llm = MockLLMClient()
-        mem = MockEpisodicMemory(relevance_threshold=0.3)
+        mem = MockEpisodicMemory(relevance_threshold=0.2)
         rt = ProbOSRuntime(
             data_dir=tmp_path / "data",
             llm_client=llm,

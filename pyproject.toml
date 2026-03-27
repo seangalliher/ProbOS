@@ -37,6 +37,8 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=6.0",
+    "pytest-xdist>=3.5",
+    "pytest-timeout>=2.3",
 ]
 discord = [
     "discord.py>=2.0",
@@ -51,6 +53,8 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=6.0",
+    "pytest-xdist>=3.5",
+    "pytest-timeout>=2.3",
 ]
 
 [project.scripts]
@@ -62,6 +66,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+timeout = 30
+addopts = "-n auto"
 markers = [
     "live_llm: tests requiring live LLM backends (Ollama/Copilot proxy)",
+    "slow: tests with real wall-clock waits (deselect with -m 'not slow')",
 ]

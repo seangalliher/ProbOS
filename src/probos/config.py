@@ -261,6 +261,24 @@ class KnowledgeConfig(BaseModel):
     restore_on_boot: bool = True    # Warm boot from existing repo
 
 
+class RecordsConfig(BaseModel):
+    """Ship's Records configuration (AD-434)."""
+
+    enabled: bool = True
+    repo_path: str = ""  # Empty = {data_dir}/ship-records/
+    auto_commit: bool = True
+    commit_debounce_seconds: float = 5.0
+    max_episodes_per_hour: int = 20  # Rate limit for notebook writes
+
+
+class OnboardingConfig(BaseModel):
+    """AD-442: Onboarding ceremony configuration."""
+
+    enabled: bool = True
+    activation_trust_threshold: float = 0.65
+    naming_ceremony: bool = True  # If False, agents keep seed callsigns
+
+
 class UtilityAgentsConfig(BaseModel):
     """Utility agent suite configuration (AD-252)."""
 
@@ -396,6 +414,8 @@ class SystemConfig(BaseModel):
     self_mod: SelfModConfig = SelfModConfig()
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
+    records: RecordsConfig = RecordsConfig()
+    onboarding: OnboardingConfig = OnboardingConfig()
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()
     ward_room: WardRoomConfig = WardRoomConfig()
     assignments: AssignmentConfig = AssignmentConfig()

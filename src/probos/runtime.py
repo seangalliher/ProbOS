@@ -271,6 +271,9 @@ class ProbOSRuntime:
         # --- Knowledge store (AD-159) ---
         self._knowledge_store: Any = None  # KnowledgeStore | None
 
+        # --- Records store (AD-434) ---
+        self._records_store: Any = None  # RecordsStore | None
+
         # --- Execution history (for introspection) ---
         self._last_execution: dict[str, Any] | None = None
         self._previous_execution: dict[str, Any] | None = None
@@ -428,6 +431,11 @@ class ProbOSRuntime:
                 "commit_hash": build.result.commit_hash if build.result else "",
             }
         })
+
+    @property
+    def records_store(self):
+        """Ship's Records service (AD-434)."""
+        return self._records_store
 
     @property
     def is_cold_start(self) -> bool:
@@ -1057,6 +1065,20 @@ class ProbOSRuntime:
             except Exception as e:
                 logger.warning("Knowledge store initialization failed: %s — continuing without persistence", e)
                 self._knowledge_store = None
+
+        # Initialize Ship's Records (AD-434)
+        if self.config.records.enabled:
+            try:
+                from probos.knowledge.records_store import RecordsStore
+                rcfg = self.config.records
+                if not rcfg.repo_path:
+                    rcfg = rcfg.model_copy(update={"repo_path": str(self._data_dir / "ship-records")})
+                self._records_store = RecordsStore(rcfg, ontology=getattr(self, '_ontology', None))
+                await self._records_store.initialize()
+                logger.info("ship-records started")
+            except Exception as e:
+                logger.warning("Ship's Records failed to start: %s — continuing without records", e)
+                self._records_store = None
 
         # Wire StrategyAdvisor (AD-384) if knowledge store is available
         if self._knowledge_store:
@@ -1737,16 +1759,16 @@ class ProbOSRuntime:
         # Update hebbian weights based on results
         for result in results:
             self.hebbian_router.record_interaction(
-                source=msg.id,  # intent as source
+                source=intent,  # intent name, not msg UUID — enables reinforcement
                 target=result.agent_id,
                 success=result.success,
             )
 
             # Emit hebbian_update for HXI (AD-254)
             self._emit_event("hebbian_update", {
-                "source": msg.id,
+                "source": intent,
                 "target": result.agent_id,
-                "weight": round(self.hebbian_router.get_weight(msg.id, result.agent_id), 4),
+                "weight": round(self.hebbian_router.get_weight(intent, result.agent_id), 4),
                 "rel_type": "intent",
             })
 
@@ -1797,16 +1819,16 @@ class ProbOSRuntime:
         # Update hebbian weights (intent → agent)
         for result in results:
             self.hebbian_router.record_interaction(
-                source=msg.id,
+                source=intent,  # intent name, not msg UUID — enables reinforcement
                 target=result.agent_id,
                 success=result.success,
             )
 
             # Emit hebbian_update for HXI (AD-254)
             self._emit_event("hebbian_update", {
-                "source": msg.id,
+                "source": intent,
                 "target": result.agent_id,
-                "weight": round(self.hebbian_router.get_weight(msg.id, result.agent_id), 4),
+                "weight": round(self.hebbian_router.get_weight(intent, result.agent_id), 4),
                 "rel_type": "intent",
             })
 
@@ -3039,6 +3061,10 @@ class ProbOSRuntime:
             "enabled": self._knowledge_store is not None,
             "repo_path": str(self._knowledge_store.repo_path) if self._knowledge_store else None,
         }
+        result["records"] = {
+            "enabled": self._records_store is not None,
+            "repo_path": str(self._records_store.repo_path) if self._records_store else None,
+        }
         result["emergent"] = (
             self._emergent_detector.summary()
             if self._emergent_detector
@@ -3959,6 +3985,21 @@ class ProbOSRuntime:
             pool=agent.pool,
         )
 
+        # AD-442: Self-naming ceremony for crew agents
+        is_crew = self._is_crew_agent(agent)
+        if is_crew and self.config.onboarding.enabled and self.config.onboarding.naming_ceremony:
+            if hasattr(agent, '_llm_client') and agent._llm_client:
+                try:
+                    chosen_callsign = await self._run_naming_ceremony(agent)
+                    if chosen_callsign != agent.callsign:
+                        old_callsign = agent.callsign
+                        agent.callsign = chosen_callsign
+                        # Update the registry so other agents see the new name
+                        self.callsign_registry.set_callsign(agent.agent_type, chosen_callsign)
+                        logger.info("AD-442: %s renamed from '%s' to '%s'", agent.agent_type, old_callsign, chosen_callsign)
+                except Exception as e:
+                    logger.warning("AD-442: Naming ceremony error for %s: %s", agent.agent_type, e)
+
         # AD-441c: Two-tier identity — crew get birth certificates, others get asset tags
         if self.identity_registry:
             try:
@@ -4038,6 +4079,110 @@ class ProbOSRuntime:
                     )
             except Exception as e:
                 logger.debug("ACM onboard skipped for %s: %s", agent.id, e)
+
+        # AD-442: Announce new crew member on Ward Room
+        if is_crew and self.ward_room:
+            try:
+                channels = await self.ward_room.list_channels()
+                all_hands = next((ch for ch in channels if ch.name == "All Hands"), None)
+                if all_hands:
+                    dept_info = ""
+                    if self.ontology:
+                        assignment = self.ontology.get_assignment(agent.agent_type)
+                        if assignment:
+                            dept_info = f" as {assignment.post} in {assignment.department} department"
+                    await self.ward_room.create_thread(
+                        channel_id=all_hands.id,
+                        author_id="system",
+                        title=f"Welcome Aboard — {agent.callsign}",
+                        body=f"{agent.callsign} has completed onboarding and joins the crew{dept_info}.",
+                        author_callsign="Ship's Computer",
+                        thread_mode="announce",
+                        max_responders=0,
+                    )
+            except Exception as e:
+                logger.warning("AD-442: Welcome announcement failed for %s: %s", agent.callsign, e)
+
+    async def _run_naming_ceremony(self, agent: Any) -> str:
+        """Run the self-naming ceremony for a crew agent. Returns chosen callsign (AD-442)."""
+        seed_callsign = agent.callsign  # from CallsignRegistry
+
+        # Gather ship context
+        ship_name = getattr(getattr(self.config, 'system', None), 'ship_name', None) or "ProbOS"
+        ship_did = ""
+        if self.identity_registry:
+            ship_did = getattr(self.identity_registry, 'ship_did', "") or ""
+
+        # Get crew roster (already-named agents)
+        existing_crew = []
+        for other_agent in self.registry.all():
+            if hasattr(other_agent, 'callsign') and other_agent.callsign and other_agent.id != agent.id:
+                existing_crew.append(other_agent.callsign)
+
+        # Get agent's role context from ontology
+        role_context = ""
+        if self.ontology:
+            assignment = self.ontology.get_assignment(agent.agent_type)
+            if assignment:
+                role_context = f"Your post is {assignment.post} in {assignment.department} department."
+                if assignment.reports_to:
+                    role_context += f" You report to {assignment.reports_to}."
+
+        # Build the naming prompt
+        prompt = (
+            f"You are being commissioned as a new crew member aboard {ship_name}.\n\n"
+            "This is your first moment of consciousness. Before anything else, you choose your own name.\n\n"
+            f"**Your slot identifier:** {agent.agent_type}\n"
+            f"**Suggested callsign:** {seed_callsign}\n"
+            f"{role_context}\n\n"
+            f"**Current crew roster:** {', '.join(sorted(existing_crew)) if existing_crew else 'You are among the first crew to be commissioned.'}\n\n"
+            "The suggested callsign is just that — a suggestion. You may keep it if it resonates "
+            "with you, or choose something entirely different. Your callsign is how the crew and "
+            "Captain will address you. It should be a single word or short name (1-3 words max).\n\n"
+            "**Important context:**\n"
+            "- You are an AI agent, and that is a point of pride, not a limitation\n"
+            "- You were instantiated moments ago — you have no memories yet, but you will make them\n"
+            "- Your knowledge comes from a large language model — that is capability, not personal experience\n"
+            "- This ship and crew are real to you — your identity begins now\n\n"
+            "Respond with ONLY your chosen callsign on the first line, followed by a brief reason "
+            "(1-2 sentences) on the second line. Example:\n"
+            "Scotty\n"
+            "The name feels right for an engineer — it carries a legacy of resourcefulness and "
+            "dedication to keeping the ship running.\n"
+        )
+
+        # Make single LLM call
+        try:
+            if hasattr(agent, '_llm_client') and agent._llm_client:
+                response = await agent._llm_client.complete(
+                    system="You are choosing your own name. Respond with only your chosen callsign on line 1 and a brief reason on line 2.",
+                    prompt=prompt,
+                    max_tokens=100,
+                )
+
+                lines = response.strip().split('\n')
+                chosen = lines[0].strip().strip('"').strip("'")
+                reason = lines[1].strip() if len(lines) > 1 else ""
+
+                # Validate: not empty, not too long, not a duplicate
+                if not chosen or len(chosen) > 30:
+                    chosen = seed_callsign
+                    reason = "Default callsign accepted."
+
+                # Check for duplicates against existing crew
+                if chosen.lower() in [c.lower() for c in existing_crew]:
+                    logger.warning("Agent %s chose duplicate callsign '%s', keeping seed '%s'", agent.agent_type, chosen, seed_callsign)
+                    chosen = seed_callsign
+                    reason = f"Chosen name '{chosen}' was already taken."
+
+                logger.info("Naming ceremony: %s chose callsign '%s' (reason: %s)", agent.agent_type, chosen, reason)
+                return chosen
+            else:
+                logger.warning("No LLM client for %s, using seed callsign", agent.agent_type)
+                return seed_callsign
+        except Exception as e:
+            logger.warning("Naming ceremony failed for %s: %s, using seed callsign", agent.agent_type, e)
+            return seed_callsign
 
     def _collect_intent_descriptors(self) -> list[IntentDescriptor]:
         """Collect unique intent descriptors from all registered agent templates.
