@@ -242,7 +242,7 @@ class ProactiveCognitiveLoop:
                     episode = Episode(
                         user_input=f"[Proactive thought — no response] {callsign or agent.agent_type}: reviewed context, nothing to report",
                         timestamp=time.time(),
-                        agent_ids=[agent.id],
+                        agent_ids=[getattr(agent, 'sovereign_id', None) or agent.id],
                         outcomes=[{
                             "intent": "proactive_think",
                             "success": True,
@@ -324,7 +324,7 @@ class ProactiveCognitiveLoop:
                 episode = Episode(
                     user_input=f"[Proactive thought] {callsign or agent.agent_type}: {thought_summary}",
                     timestamp=time.time(),
-                    agent_ids=[agent.id],
+                    agent_ids=[getattr(agent, 'sovereign_id', None) or agent.id],
                     outcomes=[{
                         "intent": "proactive_think",
                         "success": True,
@@ -374,12 +374,13 @@ class ProactiveCognitiveLoop:
         # 1. Recent episodic memories (sovereign — only this agent's experiences)
         if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
             try:
+                _agent_mem_id = getattr(agent, 'sovereign_id', None) or agent.id  # AD-441
                 episodes = await rt.episodic_memory.recall_for_agent(
-                    agent.id, "recent activity", k=5
+                    _agent_mem_id, "recent activity", k=5
                 )
                 # BF-028: Fallback to recent episodes when semantic recall misses
                 if not episodes and hasattr(rt.episodic_memory, 'recent_for_agent'):
-                    episodes = await rt.episodic_memory.recent_for_agent(agent.id, k=5)
+                    episodes = await rt.episodic_memory.recent_for_agent(_agent_mem_id, k=5)
                 if episodes:
                     context["recent_memories"] = [
                         {
@@ -427,7 +428,9 @@ class ProactiveCognitiveLoop:
         if hasattr(rt, 'ward_room') and rt.ward_room:
             try:
                 from probos.cognitive.standing_orders import get_department
-                dept = get_department(agent.agent_type)
+                # AD-429e: Prefer ontology, fall back to legacy dict
+                ont = getattr(rt, 'ontology', None)
+                dept = (ont.get_agent_department(agent.agent_type) if ont else None) or get_department(agent.agent_type)
 
                 # BF-032: Build self-ID set for filtering own posts
                 callsign = ""
@@ -508,6 +511,28 @@ class ProactiveCognitiveLoop:
             except Exception:
                 logger.debug("Ward Room context fetch failed for %s", agent.id, exc_info=True)
 
+        # 5. Ontology context (AD-429a) — formal identity grounding
+        if hasattr(rt, 'ontology') and rt.ontology:
+            try:
+                crew_ctx = rt.ontology.get_crew_context(agent.agent_type)
+                if crew_ctx:
+                    context["ontology"] = crew_ctx
+            except Exception:
+                logger.debug("Ontology context fetch failed for %s", agent.id, exc_info=True)
+
+        # 6. Skill profile context (AD-429b)
+        if hasattr(rt, 'skill_service') and rt.skill_service:
+            try:
+                profile = await rt.skill_service.get_profile(agent.id)
+                if profile:
+                    skill_summary = []
+                    for record in profile.all_skills:
+                        skill_summary.append(f"{record.skill_id}: level {record.proficiency.value} ({record.proficiency.name})")
+                    if skill_summary:
+                        context["skill_profile"] = skill_summary
+            except Exception:
+                logger.debug("Skill profile fetch failed for %s", agent.id, exc_info=True)
+
         return context
 
     async def _is_similar_to_recent_posts(self, agent: Any, text: str, threshold: float = 0.5) -> bool:
@@ -522,7 +547,9 @@ class ProactiveCognitiveLoop:
 
         try:
             from probos.cognitive.standing_orders import get_department
-            dept = get_department(agent.agent_type)
+            # AD-429e: Prefer ontology, fall back to legacy dict
+            ont = getattr(rt, 'ontology', None)
+            dept = (ont.get_agent_department(agent.agent_type) if ont else None) or get_department(agent.agent_type)
             channels = await rt.ward_room.list_channels()
             agent_posts: list[str] = []
 
@@ -632,7 +659,9 @@ class ProactiveCognitiveLoop:
 
         # Find agent's department channel
         from probos.cognitive.standing_orders import get_department
-        dept = get_department(agent.agent_type)
+        # AD-429e: Prefer ontology, fall back to legacy dict
+        ont = getattr(rt, 'ontology', None)
+        dept = (ont.get_agent_department(agent.agent_type) if ont else None) or get_department(agent.agent_type)
 
         channels = await rt.ward_room.list_channels()
         target_channel = None

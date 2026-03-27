@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-437 COMPLETE (Ward Room Action Space). AD-436 COMPLETE. BF-034 CLOSED. BF-020–034 all closed. 3430 pytest + 118 vitest = 3548 total tests.
+## Current Status: AD-441 COMPLETE — Sovereign Agent Identity (W3C DIDs for ships + agents, birth certificates, Identity Ledger blockchain). Ship DID = `did:probos:{instance_id}`, Agent DID = `did:probos:{instance_id}:{agent_uuid}`. AD-429e COMPLETE. AD-437 COMPLETE. BF-020–037 all closed. 3560 pytest + 118 vitest = 3678 total tests.
 
 ---
 

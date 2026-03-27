@@ -66,6 +66,8 @@ def _make_mock_agent(agent_type="architect", agent_id="a1", alive=True):
     agent.is_alive = alive
     agent.handle_intent = AsyncMock()
     agent.callsign = agent_type.title()
+    agent.sovereign_id = ""  # AD-441: prevent MagicMock auto-truthy
+    agent.did = ""
     return agent
 
 
@@ -75,6 +77,7 @@ def _make_mock_runtime(agents=None, trust_scores=None, ward_room=True):
 
     # BF-034: Default to non-cold-start
     rt.is_cold_start = False
+    rt.ontology = None  # AD-429e: Explicit None so get_department uses legacy dict
 
     if agents is None:
         agents = [_make_mock_agent()]
@@ -381,6 +384,7 @@ class TestProactiveContextGathering:
         rt.episodic_memory = None
         rt.bridge_alerts = None
         rt.event_log = None
+        rt.ontology = None  # AD-429a
 
         loop = ProactiveCognitiveLoop()
         loop.set_runtime(rt)
@@ -643,6 +647,7 @@ class TestProactiveWardRoomContext:
         rt.episodic_memory = None
         rt.bridge_alerts = None
         rt.event_log = None
+        rt.ontology = None  # AD-429e: Explicit None so get_department uses legacy dict
 
         mock_channel = MagicMock()
         mock_channel.channel_type = "department"
@@ -677,6 +682,7 @@ class TestProactiveWardRoomContext:
         rt.episodic_memory = None
         rt.bridge_alerts = None
         rt.event_log = None
+        rt.ontology = None  # AD-429e
 
         dept_ch = MagicMock()
         dept_ch.channel_type = "department"
@@ -1479,6 +1485,7 @@ class TestSelfPostFiltering:
         rt.episodic_memory = None
         rt.bridge_alerts = None
         rt.event_log = None
+        rt.ontology = None  # AD-429e
         rt.callsign_registry = MagicMock()
         rt.callsign_registry.get_callsign = MagicMock(return_value="LaForge")
 

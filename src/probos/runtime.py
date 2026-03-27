@@ -241,6 +241,12 @@ class ProbOSRuntime:
         # --- Agent Capital Management (AD-427) ---
         self.acm: Any = None
 
+        # --- Vessel Ontology (AD-429a) ---
+        self.ontology: Any = None
+
+        # --- Sovereign Agent Identity (AD-441) ---
+        self.identity_registry: Any = None
+
         # BF-034: Cold-start flag — True when booting with empty state (post-reset)
         self._cold_start: bool = False
 
@@ -637,6 +643,12 @@ class ProbOSRuntime:
         await self.signal_manager.start()
         await self.gossip.start()
         await self.trust_network.start()
+
+        # --- Sovereign Agent Identity (AD-441) ---
+        from probos.identity import AgentIdentityRegistry
+        self.identity_registry = AgentIdentityRegistry(data_dir=self._data_dir)
+        await self.identity_registry.start()
+        logger.info("identity registry started")
 
         # Start default pools (Phase 14c: deterministic agent IDs)
         _builtin_pools = [
@@ -1305,7 +1317,9 @@ class ProbOSRuntime:
             for agent in self.registry.all():
                 if not self._is_crew_agent(agent):
                     continue
-                dept = get_department(agent.agent_type)
+                # AD-429e: Prefer ontology, fall back to legacy dict
+                _ont = getattr(self, 'ontology', None)
+                dept = (_ont.get_agent_department(agent.agent_type) if _ont else None) or get_department(agent.agent_type)
                 if dept and dept in dept_channel_map:
                     await self.ward_room.subscribe(agent.id, dept_channel_map[dept])
                 if all_hands_id:
@@ -1363,6 +1377,29 @@ class ProbOSRuntime:
         self.acm = AgentCapitalService(data_dir=self._data_dir)
         await self.acm.start()
         logger.info("acm started")
+
+        # AD-441: Wire identity registry to ACM
+        if self.acm and self.identity_registry:
+            self.acm.set_identity_registry(self.identity_registry)
+
+        # --- Vessel Ontology (AD-429a) ---
+        ontology_dir = Path(__file__).resolve().parent.parent.parent / "config" / "ontology"
+        if ontology_dir.exists():
+            from probos.ontology import VesselOntologyService
+            self.ontology = VesselOntologyService(ontology_dir, data_dir=self._data_dir)
+            await self.ontology.initialize()
+            # Wire all registered agents to their ontology posts
+            for agent in self.registry.all():
+                self.ontology.wire_agent(agent.agent_type, agent.id)
+            logger.info("ontology initialized")
+
+        # --- Wire ontology ↔ skill service (AD-429b) ---
+        if self.ontology and self.skill_service:
+            self.ontology.set_skill_service(self.skill_service)
+
+        # AD-429e: Wire ontology into WardRoom (constructed before ontology init)
+        if self.ontology and self.ward_room:
+            self.ward_room._ontology = self.ontology
 
         # --- Proactive Cognitive Loop (Phase 28b) ---
         if self.config.proactive_cognitive.enabled and self.ward_room:
@@ -1461,6 +1498,11 @@ class ProbOSRuntime:
         if self.acm:
             await self.acm.stop()
             self.acm = None
+
+        # Stop Identity Registry (AD-441)
+        if self.identity_registry:
+            await self.identity_registry.stop()
+            self.identity_registry = None
 
         # Stop SIF (AD-370)
         if self.sif:
@@ -3320,13 +3362,15 @@ class ProbOSRuntime:
         elif channel.channel_type == "department" and channel.department:
             # Department channel: notify agents in that department
             from probos.cognitive.standing_orders import get_department
+            _ont = getattr(self, 'ontology', None)  # AD-429e
             for agent in self.registry.all():
                 if (agent.is_alive
                         and agent.id != author_id
                         and agent.id not in target_ids
                         and hasattr(agent, 'handle_intent')
                         and self._is_crew_agent(agent)
-                        and get_department(agent.agent_type) == channel.department):
+                        # AD-429e: Prefer ontology, fall back to legacy dict
+                        and ((_ont.get_agent_department(agent.agent_type) if _ont else None) or get_department(agent.agent_type)) == channel.department):
                     # AD-357: Earned Agency trust-tier gating
                     if self.config.earned_agency.enabled:
                         from probos.earned_agency import can_respond_ambient
@@ -3364,13 +3408,15 @@ class ProbOSRuntime:
         # 2. Department channel: notify department peers
         if channel.channel_type == "department" and channel.department:
             from probos.cognitive.standing_orders import get_department
+            _ont = getattr(self, 'ontology', None)  # AD-429e
             for agent in self.registry.all():
                 if (agent.is_alive
                         and agent.id != author_id
                         and agent.id not in target_ids
                         and hasattr(agent, 'handle_intent')
                         and self._is_crew_agent(agent)
-                        and get_department(agent.agent_type) == channel.department):
+                        # AD-429e: Prefer ontology, fall back to legacy dict
+                        and ((_ont.get_agent_department(agent.agent_type) if _ont else None) or get_department(agent.agent_type)) == channel.department):
                     # AD-357: Earned Agency trust-tier gating
                     if self.config.earned_agency.enabled:
                         from probos.earned_agency import can_respond_ambient
@@ -3510,9 +3556,9 @@ class ProbOSRuntime:
             except Exception:
                 logger.debug("AD-426: Endorsement failed for %s", post_id, exc_info=True)
 
+    # Legacy fallback — remove when ontology is mandatory.
     # Core crew eligible for Ward Room participation.
-    # Infrastructure agents (vitals_monitor, red_team, system_qa, introspect,
-    # emergent_detector) and utility agents are excluded.
+    # Ontology equivalent: VesselOntologyService.get_crew_agent_types()
     _WARD_ROOM_CREW = {
         "architect", "scout", "counselor",
         "security_officer", "operations_officer", "engineering_officer",
@@ -3525,6 +3571,10 @@ class ProbOSRuntime:
         """Check if an agent is core crew eligible for Ward Room participation."""
         if not hasattr(agent, 'agent_type'):
             return False
+        # AD-429e: Prefer ontology, fall back to legacy set
+        ont = getattr(self, 'ontology', None)
+        if ont:
+            return agent.agent_type in ont.get_crew_agent_types()
         return agent.agent_type in self._WARD_ROOM_CREW
 
     def _cleanup_ward_room_tracking(self, pruned_thread_ids: set[str]) -> None:
@@ -3872,18 +3922,62 @@ class ProbOSRuntime:
             pool=agent.pool,
         )
 
+        # AD-441: Resolve or issue persistent sovereign identity
+        if self.identity_registry:
+            try:
+                instance_id = ""
+                vessel_name = "ProbOS"
+                if self.ontology:
+                    vi = self.ontology.get_vessel_identity()
+                    instance_id = vi.instance_id
+                    vessel_name = vi.name
+
+                # Get department and post for the birth certificate
+                dept = ""
+                post_id = ""
+                if self.ontology:
+                    dept = self.ontology.get_agent_department(agent.agent_type) or ""
+                    post = self.ontology.get_post_for_agent(agent.agent_type)
+                    post_id = post.id if post else ""
+                if not dept:
+                    from probos.cognitive.standing_orders import get_department as _get_dept
+                    dept = _get_dept(agent.agent_type) or "unassigned"
+
+                _callsign = getattr(agent, 'callsign', '') or agent.agent_type
+                baseline = self.config.system.version
+
+                cert = await self.identity_registry.resolve_or_issue(
+                    slot_id=agent.id,
+                    agent_type=agent.agent_type,
+                    callsign=_callsign,
+                    instance_id=instance_id,
+                    vessel_name=vessel_name,
+                    department=dept,
+                    post_id=post_id,
+                    baseline_version=baseline,
+                )
+
+                # Store the persistent UUID on the agent for all subsystem access
+                agent.sovereign_id = cert.agent_uuid
+                agent.did = cert.did
+            except Exception as e:
+                logger.debug("Identity resolution skipped for %s: %s", agent.id, e)
+
         # AD-427: ACM onboarding for crew agents
         if self.acm and self._is_crew_agent(agent):
             try:
                 state = await self.acm.get_lifecycle_state(agent.id)
                 if state.value == "registered":
                     from probos.cognitive.standing_orders import get_department
-                    department = get_department(agent.agent_type) or "operations"
+                    # AD-429e: Prefer ontology, fall back to legacy dict
+                    _ont = getattr(self, 'ontology', None)
+                    department = (_ont.get_agent_department(agent.agent_type) if _ont else None) or get_department(agent.agent_type) or "operations"
                     await self.acm.onboard(
                         agent_id=agent.id,
                         agent_type=agent.agent_type,
                         pool=agent.pool,
                         department=department,
+                        sovereign_id=getattr(agent, 'sovereign_id', ''),
                     )
             except Exception as e:
                 logger.debug("ACM onboard skipped for %s: %s", agent.id, e)

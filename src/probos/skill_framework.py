@@ -129,6 +129,29 @@ class SkillProfile:
         }
 
 
+@dataclass
+class QualificationRecord:
+    """Tracks an agent's progress through a qualification path (AD-429b)."""
+    agent_id: str
+    path_id: str  # e.g., "ensign_to_lieutenant"
+    started_at: float
+    completed_at: float | None = None
+    requirement_status: dict[str, bool] = field(default_factory=dict)
+
+    def is_complete(self) -> bool:
+        return all(self.requirement_status.values()) if self.requirement_status else False
+
+    def to_dict(self) -> dict:
+        return {
+            "agent_id": self.agent_id,
+            "path_id": self.path_id,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "is_complete": self.is_complete(),
+            "requirements": self.requirement_status,
+        }
+
+
 # ---------------------------------------------------------------------------
 # Built-in skill definitions
 # ---------------------------------------------------------------------------
@@ -267,6 +290,15 @@ CREATE INDEX IF NOT EXISTS idx_agent_skills_agent ON agent_skills(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_skills_skill ON agent_skills(skill_id);
 CREATE INDEX IF NOT EXISTS idx_skill_defs_category ON skill_definitions(category);
 CREATE INDEX IF NOT EXISTS idx_skill_defs_domain ON skill_definitions(domain);
+
+CREATE TABLE IF NOT EXISTS qualification_records (
+    agent_id TEXT NOT NULL,
+    path_id TEXT NOT NULL,
+    started_at REAL NOT NULL,
+    completed_at REAL,
+    requirement_status TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (agent_id, path_id)
+);
 """
 
 
@@ -626,5 +658,135 @@ class AgentSkillService:
              record.acquired_at, record.last_exercised, record.exercise_count,
              record.acquisition_source, int(record.suspended),
              json.dumps(record.assessment_history)),
+        )
+        await self._db.commit()
+
+    # -------------------------------------------------------------------
+    # Qualification tracking (AD-429b)
+    # -------------------------------------------------------------------
+
+    async def start_qualification(self, agent_id: str, path_id: str) -> QualificationRecord:
+        """Start tracking a qualification path for an agent."""
+        record = QualificationRecord(
+            agent_id=agent_id,
+            path_id=path_id,
+            started_at=time.time(),
+        )
+        await self._save_qualification_record(record)
+        return record
+
+    async def evaluate_qualification(
+        self, agent_id: str, path_id: str, ontology: Any
+    ) -> QualificationRecord | None:
+        """Evaluate an agent's current qualification status against path requirements."""
+        if not ontology:
+            return None
+        parts = path_id.split("_to_")
+        if len(parts) != 2:
+            return None
+        qual_path = ontology.get_qualification_path(parts[0], parts[1])
+        if not qual_path:
+            return None
+
+        profile = await self.get_profile(agent_id)
+
+        # Get role template for scope-based checks
+        assignment = ontology.get_assignment_for_agent_by_id(agent_id)
+        role_template = None
+        if assignment:
+            role_template = ontology.get_role_template(assignment.post_id)
+
+        status: dict[str, bool] = {}
+        for req in qual_path.requirements:
+            key = f"{req.type}_{req.scope}"
+            if req.scope == "all_pccs":
+                pcc_records = profile.pccs
+                if pcc_records:
+                    status[key] = all(
+                        r.proficiency.value >= req.min_proficiency for r in pcc_records
+                    )
+                else:
+                    status[key] = False
+            elif req.scope == "role_skills":
+                role_records = profile.role_skills
+                if req.min_count is not None:
+                    count = sum(1 for r in role_records if r.proficiency.value >= req.min_proficiency)
+                    status[key] = count >= req.min_count
+                else:
+                    status[key] = all(
+                        r.proficiency.value >= req.min_proficiency for r in role_records
+                    )
+            elif req.scope == "required_role_skills":
+                if role_template:
+                    required_ids = {s.skill_id for s in role_template.required_skills}
+                    required_records = [r for r in profile.role_skills if r.skill_id in required_ids]
+                    status[key] = all(
+                        r.proficiency.value >= req.min_proficiency for r in required_records
+                    ) if required_records else False
+                else:
+                    status[key] = False
+
+        # Get or create record
+        record = await self.get_qualification_record(agent_id, path_id)
+        if not record:
+            record = QualificationRecord(
+                agent_id=agent_id,
+                path_id=path_id,
+                started_at=time.time(),
+            )
+        record.requirement_status = status
+        if record.is_complete() and not record.completed_at:
+            record.completed_at = time.time()
+
+        await self._save_qualification_record(record)
+        return record
+
+    async def get_qualification_record(self, agent_id: str, path_id: str) -> QualificationRecord | None:
+        """Get a qualification record."""
+        if not self._db:
+            return None
+        async with self._db.execute(
+            "SELECT * FROM qualification_records WHERE agent_id = ? AND path_id = ?",
+            (agent_id, path_id),
+        ) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None
+            return QualificationRecord(
+                agent_id=row["agent_id"],
+                path_id=row["path_id"],
+                started_at=row["started_at"],
+                completed_at=row["completed_at"],
+                requirement_status=json.loads(row["requirement_status"] or "{}"),
+            )
+
+    async def get_all_qualification_records(self, agent_id: str) -> list[QualificationRecord]:
+        """Get all qualification records for an agent."""
+        if not self._db:
+            return []
+        records: list[QualificationRecord] = []
+        async with self._db.execute(
+            "SELECT * FROM qualification_records WHERE agent_id = ?", (agent_id,)
+        ) as cur:
+            async for row in cur:
+                records.append(QualificationRecord(
+                    agent_id=row["agent_id"],
+                    path_id=row["path_id"],
+                    started_at=row["started_at"],
+                    completed_at=row["completed_at"],
+                    requirement_status=json.loads(row["requirement_status"] or "{}"),
+                ))
+        return records
+
+    async def _save_qualification_record(self, record: QualificationRecord) -> None:
+        """Persist a qualification record to SQLite."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "INSERT OR REPLACE INTO qualification_records "
+            "(agent_id, path_id, started_at, completed_at, requirement_status) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (record.agent_id, record.path_id, record.started_at,
+             record.completed_at, json.dumps(record.requirement_status)),
         )
         await self._db.commit()

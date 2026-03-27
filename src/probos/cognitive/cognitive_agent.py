@@ -502,6 +502,30 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append(system_note)
                 pt_parts.append("")
 
+            # AD-429: Ontology identity grounding
+            ontology = context_parts.get("ontology")
+            if ontology:
+                identity = ontology.get("identity", {})
+                dept = ontology.get("department", {})
+                vessel = ontology.get("vessel", {})
+                pt_parts.append(f"You are {identity.get('callsign', '?')}, {identity.get('post', '?')} in {dept.get('name', '?')} department.")
+                if ontology.get("reports_to"):
+                    pt_parts.append(f"You report to {ontology['reports_to']}.")
+                if ontology.get("direct_reports"):
+                    pt_parts.append(f"Your direct reports: {', '.join(ontology['direct_reports'])}.")
+                if ontology.get("peers"):
+                    pt_parts.append(f"Department peers: {', '.join(ontology['peers'])}.")
+                if vessel:
+                    alert = vessel.get("alert_condition", "GREEN")
+                    pt_parts.append(f"Ship status: {vessel.get('name', 'ProbOS')} v{vessel.get('version', '?')} — Alert Condition {alert}.")
+                pt_parts.append("")
+
+            # AD-429b: Skill profile
+            skill_profile = context_parts.get("skill_profile")
+            if skill_profile:
+                pt_parts.append(f"Your skills: {', '.join(skill_profile)}.")
+                pt_parts.append("")
+
             # Recent memories
             memories = context_parts.get("recent_memories", [])
             if memories:
@@ -603,14 +627,15 @@ class CognitiveAgent(BaseAgent):
             if not query:
                 return observation
 
+            _mem_id = getattr(self, 'sovereign_id', None) or self.id  # AD-441
             episodes = await self._runtime.episodic_memory.recall_for_agent(
-                self.id, query, k=3
+                _mem_id, query, k=3
             )
 
             # BF-027: Fallback to recent episodes when semantic recall returns nothing
             if not episodes and hasattr(self._runtime.episodic_memory, 'recent_for_agent'):
                 episodes = await self._runtime.episodic_memory.recent_for_agent(
-                    self.id, k=3
+                    _mem_id, k=3
                 )
 
             if episodes:
@@ -672,7 +697,7 @@ class CognitiveAgent(BaseAgent):
             episode = Episode(
                 user_input=f"[Action: {intent.intent}] {callsign or self.agent_type}: {str(query_text)[:200]}",
                 timestamp=_time.time(),
-                agent_ids=[self.id],
+                agent_ids=[getattr(self, 'sovereign_id', None) or self.id],
                 outcomes=[{
                     "intent": intent.intent,
                     "success": report.get("success", False),

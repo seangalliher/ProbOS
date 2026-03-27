@@ -397,14 +397,28 @@ class EmergentDetector:
         variance = sum((s - mean) ** 2 for s in scores) / len(scores)
         std = math.sqrt(variance) if variance > 0 else 0.0
 
-        if std < 0.001:
-            # All trust scores nearly identical — skip deviation check
+        if std < 0.05:
+            # Population trust spread too narrow for sigma analysis to be meaningful.
+            # With 55 agents and normal early-session variance, small absolute
+            # differences produce enormous sigma values. Skip until the population
+            # has genuinely diverged.
             pass
         else:
             # Flag agents > 2 std from mean
             for agent_id, record in raw.items():
                 score = record["alpha"] / (record["alpha"] + record["beta"])
-                deviation = abs(score - mean) / std
+
+                # Skip agents with too few observations — trust hasn't stabilized
+                total_observations = record["alpha"] + record["beta"]
+                if total_observations < 8.0:  # prior is 4.0, so <8 means <4 actual observations
+                    continue
+
+                # Skip if absolute deviation is negligible regardless of sigma
+                abs_deviation = abs(score - mean)
+                if abs_deviation < 0.10:
+                    continue
+
+                deviation = abs_deviation / std
 
                 if deviation > 2.0:
                     direction = "high" if score > mean else "low"

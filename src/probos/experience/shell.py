@@ -1079,12 +1079,14 @@ class ProbOSShell:
         from probos.directive_store import DirectiveType
         from probos.crew_profile import Rank
         from probos.cognitive.standing_orders import get_department, clear_cache
+        # AD-429e: Prefer ontology, fall back to legacy dict
+        ont = getattr(self.runtime, 'ontology', None) if hasattr(self, 'runtime') else None
         directive, reason = store.create_directive(
             issuer_type="captain",
             issuer_department=None,
             issuer_rank=Rank.SENIOR,  # Captain has highest authority
             target_agent_type=target,
-            target_department=get_department(target),
+            target_department=(ont.get_agent_department(target) if ont else None) or get_department(target),
             directive_type=DirectiveType.CAPTAIN_ORDER,
             content=content,
             authority=1.0,
@@ -1092,7 +1094,7 @@ class ProbOSShell:
         )
         if directive:
             clear_cache()  # Invalidate composed instructions
-            dept = get_department(target)
+            dept = (ont.get_agent_department(target) if ont else None) or get_department(target)
             scope = f"{target}" + (f" ({dept})" if dept else "") + (" [all agents]" if target == "*" else "")
             self.console.print(f"\n[bold green]Captain's Order Issued[/bold green]")
             self.console.print(f"  [green]Target:[/green]    {scope}")
@@ -1106,7 +1108,7 @@ class ProbOSShell:
                 # Broadcast: each department chief confirms for their crew
                 dept_counts: dict[str, list[str]] = {}
                 for pool in self.runtime.pools.values():
-                    d = get_department(pool.agent_type)
+                    d = (ont.get_agent_department(pool.agent_type) if ont else None) or get_department(pool.agent_type)
                     if d:
                         count = len(pool.healthy_agents)
                         if count > 0:
@@ -1169,7 +1171,9 @@ class ProbOSShell:
         directives = store.all_directives(include_inactive=False)
         if arg:
             from probos.cognitive.standing_orders import get_department
-            dept = get_department(arg)
+            # AD-429e: Prefer ontology, fall back to legacy dict
+            ont = getattr(self.runtime, 'ontology', None) if hasattr(self, 'runtime') else None
+            dept = (ont.get_agent_department(arg) if ont else None) or get_department(arg)
             directives = [
                 d for d in directives
                 if d.target_agent_type in (arg, "*") and

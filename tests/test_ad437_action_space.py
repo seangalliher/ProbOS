@@ -21,8 +21,8 @@ class TestCanPerformAction:
     def test_lieutenant_can_endorse(self):
         assert can_perform_action(Rank.LIEUTENANT, "endorse") is True
 
-    def test_lieutenant_cannot_reply(self):
-        assert can_perform_action(Rank.LIEUTENANT, "reply") is False
+    def test_lieutenant_can_reply(self):
+        assert can_perform_action(Rank.LIEUTENANT, "reply") is True
 
     def test_commander_can_endorse(self):
         assert can_perform_action(Rank.COMMANDER, "endorse") is True

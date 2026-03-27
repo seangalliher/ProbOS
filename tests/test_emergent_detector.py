@@ -898,3 +898,120 @@ class TestPoolDuplicateGuard:
 
         result = await rt.create_pool("test_pool", "some_type")
         assert result is sentinel_pool
+
+
+# ===========================================================================
+# BF-036: Trust flooding fix
+# ===========================================================================
+
+
+class TestBF036TrustFloodingFix:
+    """BF-036: Verify guards against trust anomaly flooding after cold-start."""
+
+    def test_narrow_std_suppresses_sigma_check(self) -> None:
+        """Population with tiny std (<0.05) should produce no sigma anomalies."""
+        # 10 agents at 0.50, one at 0.55 — std ≈ 0.015
+        records: dict[str, dict] = {}
+        for i in range(10):
+            records[f"agent_{i}"] = {"alpha": 10.0, "beta": 10.0, "observations": 16.0}
+        records["slightly_high"] = {"alpha": 11.0, "beta": 9.0, "observations": 16.0}
+        d = _make_detector(trust_records=records)
+        patterns = d.detect_trust_anomalies()
+        sigma_patterns = [
+            p for p in patterns
+            if p.pattern_type == "trust_anomaly" and "σ" in p.description
+        ]
+        assert len(sigma_patterns) == 0
+
+    def test_wide_std_allows_sigma_check(self) -> None:
+        """With genuine population divergence, outliers ARE flagged."""
+        records: dict[str, dict] = {}
+        for i in range(7):
+            records[f"agent_{i}"] = {"alpha": 5.0, "beta": 5.0, "observations": 6.0}
+        # Outlier with high trust and sufficient observations
+        records["star"] = {"alpha": 18.0, "beta": 2.0, "observations": 16.0}
+        d = _make_detector(trust_records=records)
+        patterns = d.detect_trust_anomalies()
+        trust_patterns = [p for p in patterns if "star" in p.description]
+        assert len(trust_patterns) >= 1
+
+    def test_low_observations_suppresses_anomaly(self) -> None:
+        """Agent with <8 total (alpha+beta) should not be flagged even with high std."""
+        records: dict[str, dict] = {}
+        for i in range(7):
+            records[f"agent_{i}"] = {"alpha": 5.0, "beta": 5.0, "observations": 6.0}
+        # High trust but only 4.5 total observations (alpha+beta) — below threshold
+        records["new_agent"] = {"alpha": 2.5, "beta": 2.0, "observations": 0.5}
+        # Also add a genuine outlier so std > 0.05
+        records["outlier"] = {"alpha": 18.0, "beta": 2.0, "observations": 16.0}
+        d = _make_detector(trust_records=records)
+        patterns = d.detect_trust_anomalies()
+        new_agent_patterns = [p for p in patterns if "new_agen" in p.description]
+        assert len(new_agent_patterns) == 0
+
+    def test_sufficient_observations_allows_anomaly(self) -> None:
+        """Agent with >=8 total observations should be flagged if deviation is large."""
+        records: dict[str, dict] = {}
+        for i in range(7):
+            records[f"agent_{i}"] = {"alpha": 5.0, "beta": 5.0, "observations": 6.0}
+        # High trust and total=8.0 — meets threshold
+        records["veteran"] = {"alpha": 6.0, "beta": 2.0, "observations": 4.0}
+        # Need std > 0.05 and abs_deviation > 0.10 — add a low outlier too
+        records["low_out"] = {"alpha": 1.0, "beta": 19.0, "observations": 16.0}
+        d = _make_detector(trust_records=records)
+        patterns = d.detect_trust_anomalies()
+        # low_out (score ≈ 0.05) is the big anomaly — should fire
+        low_patterns = [p for p in patterns if "low_out" in p.description]
+        assert len(low_patterns) >= 1
+
+    def test_small_absolute_deviation_suppresses(self) -> None:
+        """Agent only 0.08 from mean should NOT fire even with std just above 0.05."""
+        # Craft population: mean ≈ 0.50, std ≈ 0.06
+        records: dict[str, dict] = {}
+        for i in range(8):
+            records[f"agent_{i}"] = {"alpha": 5.0, "beta": 5.0, "observations": 6.0}
+        # Push std above 0.05 with a low agent
+        records["low_agent"] = {"alpha": 2.0, "beta": 8.0, "observations": 6.0}
+        # Agent barely above mean — abs deviation < 0.10
+        records["near_mean"] = {"alpha": 6.0, "beta": 5.0, "observations": 6.0}
+        d = _make_detector(trust_records=records)
+        patterns = d.detect_trust_anomalies()
+        # Filter for sigma-based trust anomalies only (contain "σ" in description)
+        near_sigma = [
+            p for p in patterns
+            if "near_mea" in p.description and "σ" in p.description
+        ]
+        assert len(near_sigma) == 0
+
+    def test_large_absolute_deviation_fires(self) -> None:
+        """Agent 0.15+ from mean with sufficient observations and std fires."""
+        records: dict[str, dict] = {}
+        for i in range(7):
+            records[f"agent_{i}"] = {"alpha": 5.0, "beta": 5.0, "observations": 6.0}
+        # Outlier > 0.10 absolute from mean, total > 8, std should be > 0.05
+        records["outlier"] = {"alpha": 16.0, "beta": 2.0, "observations": 14.0}
+        d = _make_detector(trust_records=records)
+        patterns = d.detect_trust_anomalies()
+        outlier_patterns = [p for p in patterns if "outlier" in p.description]
+        assert len(outlier_patterns) >= 1
+
+    def test_cold_start_transition_no_flooding(self) -> None:
+        """Simulate post-cold-start: 20 agents at prior, a few with 1-3 successes. No flooding."""
+        records: dict[str, dict] = {}
+        for i in range(20):
+            records[f"agent_{i}"] = {"alpha": 2.0, "beta": 2.0, "observations": 0.0}
+        # A few agents got 1-3 successes (alpha incremented)
+        records["agent_0"]["alpha"] = 3.0  # score 0.6, total 5.0
+        records["agent_0"]["observations"] = 1.0
+        records["agent_1"]["alpha"] = 4.0  # score 0.67, total 6.0
+        records["agent_1"]["observations"] = 2.0
+        records["agent_2"]["alpha"] = 5.0  # score 0.71, total 7.0
+        records["agent_2"]["observations"] = 3.0
+        d = _make_detector(trust_records=records)
+        patterns = d.detect_trust_anomalies()
+        # All three guards collectively prevent any sigma anomalies
+        sigma_patterns = [
+            p for p in patterns
+            if p.pattern_type == "trust_anomaly" and "σ" in p.description
+        ]
+        assert len(sigma_patterns) == 0

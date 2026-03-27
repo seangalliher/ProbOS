@@ -32,6 +32,8 @@ class BaseAgent(ABC):
     def __init__(self, pool: str = "default", **kwargs: Any) -> None:
         self.id: AgentID = kwargs.pop("agent_id", None) or uuid.uuid4().hex
         self.pool = pool
+        self.sovereign_id: str = ""   # AD-441: Permanent UUID, set by identity registry
+        self.did: str = ""            # AD-441: W3C DID, set by identity registry
         self.confidence: float = self.initial_confidence
         self.trust_score: float = 0.5
         self.capabilities: list[CapabilityDescriptor] = list(self.default_capabilities)

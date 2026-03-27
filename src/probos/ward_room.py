@@ -204,11 +204,12 @@ _MENTION_PATTERN = re.compile(r'@(\w+)')
 class WardRoomService:
     """Ship's Computer communication fabric — Reddit-style threaded discussions."""
 
-    def __init__(self, db_path: str | None = None, emit_event: Any = None, episodic_memory: Any = None):
+    def __init__(self, db_path: str | None = None, emit_event: Any = None, episodic_memory: Any = None, ontology: Any = None):
         self.db_path = db_path
         self._db: aiosqlite.Connection | None = None
         self._emit_event = emit_event  # Callback for WebSocket broadcasting
         self._episodic_memory = episodic_memory  # AD-430a: For storing conversation episodes
+        self._ontology = ontology  # AD-429e: Vessel ontology for department queries
         self._channel_cache: list[dict[str, Any]] = []  # Sync cache for state_snapshot
 
     async def start(self) -> None:
@@ -525,8 +526,11 @@ class WardRoomService:
 
         from probos.cognitive.standing_orders import _AGENT_DEPARTMENTS
 
-        # Derive unique department set
-        departments = sorted(set(_AGENT_DEPARTMENTS.values()))
+        # AD-429e: Prefer ontology department list, fall back to legacy dict
+        if self._ontology:
+            departments = sorted(d.id for d in self._ontology.get_departments())
+        else:
+            departments = sorted(set(_AGENT_DEPARTMENTS.values()))
 
         # Check existing channel names
         existing: set[str] = set()

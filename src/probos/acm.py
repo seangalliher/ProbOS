@@ -76,6 +76,11 @@ CREATE TABLE IF NOT EXISTS lifecycle_transitions (
     initiated_by TEXT NOT NULL DEFAULT 'system',
     timestamp REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS identity_mapping (
+    slot_id TEXT PRIMARY KEY,
+    sovereign_id TEXT NOT NULL
+);
 """
 
 # ── Service ─────────────────────────────────────────────────────────
@@ -90,6 +95,11 @@ class AgentCapitalService:
     def __init__(self, data_dir: str | Path) -> None:
         self._data_dir = Path(data_dir)
         self._db: aiosqlite.Connection | None = None
+        self._identity_registry: Any = None  # AD-441
+
+    def set_identity_registry(self, registry: Any) -> None:
+        """Wire the identity registry for birth certificate access."""
+        self._identity_registry = registry
 
     async def start(self) -> None:
         """Initialize ACM database."""
@@ -201,6 +211,7 @@ class AgentCapitalService:
     async def onboard(
         self, agent_id: str, agent_type: str, pool: str, department: str,
         initiated_by: str = "system",
+        sovereign_id: str = "",  # AD-441: persistent UUID
     ) -> LifecycleTransition:
         """Onboard an agent — register and set to probationary."""
         if not self._db:
@@ -211,6 +222,14 @@ class AgentCapitalService:
             "INSERT OR IGNORE INTO lifecycle (agent_id, state, state_since) VALUES (?, ?, ?)",
             (agent_id, LifecycleState.REGISTERED.value, now),
         )
+
+        # AD-441: Record sovereign identity mapping
+        if sovereign_id:
+            await self._db.execute(
+                "INSERT OR IGNORE INTO identity_mapping (slot_id, sovereign_id) VALUES (?, ?)",
+                (agent_id, sovereign_id),
+            )
+
         await self._db.commit()
 
         return await self.transition(

@@ -925,3 +925,67 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 | AD-437 | Agents can only post text during proactive thoughts. The Ward Room has endorsement, reply, thread management APIs but agents can't invoke them — they express intent in text (`[ENDORSE post_id UP]`) without executing it. Additionally, `[ENDORSE]` tags in proactive responses are posted raw (never extracted in proactive path — only wired in Ward Room notification path). **Fix:** (1) Wire `_extract_endorsements()` + `_process_endorsements()` into proactive loop via new `_extract_and_execute_actions()` method. (2) Add `[REPLY thread_id]...[/REPLY]` structured action for Commander+ agents. (3) Gate actions by Earned Agency rank: Lieutenant=endorse, Commander=endorse+reply, Senior=full. (4) `can_perform_action(rank, action)` in `earned_agency.py`. (5) Include `thread_id` in Ward Room activity context so agents can reference threads. (6) Update proactive prompt with rank-aware action space description. (7) Communication PCC exercise on successful endorsement (AD-428 integration). |
 
 **Status:** AD-437 COMPLETE. 5 files modified, 1 new test file (15 tests). `_extract_and_execute_actions()` + `_extract_and_execute_replies()` in proactive loop. `can_perform_action()` in earned_agency. Rank-aware action space prompt. Communication PCC reinforcement on endorsements.
+
+### AD-429a: Vessel Ontology Foundation — Vessel + Organization + Crew Domains
+
+| Aspect | Decision |
+|--------|----------|
+| AD-429a | ProbOS's organizational structure is hardcoded in Python dicts (\_WARD\_ROOM\_CREW, \_AGENT\_DEPARTMENTS). Agent identity is defined in text prompts. Without a formal model, agents fill identity gaps from LLM training data (the "Troi Problem"). **Fix:** VesselOntologyService — Ship's Computer infrastructure service that loads ontology from config/ontology/*.yaml (Vessel, Organization, Crew domains), builds in-memory graph, provides query methods. Data models: Department, Post, Assignment, VesselIdentity, VesselState. Key methods: get\_chain\_of\_command(), get\_crew\_context(), get\_crew\_agent\_types(). Instance ID persisted across restarts. Three REST endpoints (/api/ontology/vessel, /organization, /crew/{agent\_type}). Context injection in proactive loop \_gather\_context() for agent identity grounding. Coexists alongside existing dicts — no callers migrated yet (future ADs). |
+
+**Status:** AD-429a COMPLETE. 4 new files (3 YAML schemas + ontology.py), 3 modified (runtime.py, api.py, proactive.py), 1 new test file (30 tests).
+
+### AD-429b: Skills Ontology Domain — Formalizing the Competency Model
+
+| Aspect | Decision |
+|--------|----------|
+| AD-429b | The skill framework (AD-428) runs independently from the ontology. Role templates and qualification requirements exist only in the roadmap. Promotion is trust-based with no formal competency gating. **Fix:** Skills ontology domain that bridges the skill framework and ontology. (1) config/ontology/skills.yaml defines skill taxonomy, 11 role templates (required/optional skills per post with min proficiency), 3 qualification paths (ensign→lt, lt→cmdr, cmdr→senior). (2) New data models: SkillRequirement, RoleTemplate, QualificationRequirement, QualificationPath in ontology.py. (3) QualificationRecord in skill\_framework.py with SQLite persistence, evaluate\_qualification() evaluates agent skills against path requirements. (4) get\_crew\_context() extended with role\_requirements + skills\_note. (5) Proactive loop \_gather\_context() includes skill profile data. (6) /api/ontology/skills/{agent\_type} endpoint. (7) Runtime wires ontology ↔ skill\_service. |
+
+**Status:** AD-429b COMPLETE. 1 new file (skills.yaml created in AD-429b Step 1), 5 modified (ontology.py, skill\_framework.py, runtime.py, proactive.py, api.py), 1 new test file (16 tests).
+
+### AD-429c: Operations, Communication & Resources Ontology Domains
+
+| AD | Decision |
+|----|----------|
+| AD-429c | Completes the core ontology model with three new domains. (a) **Operations domain** — formalizes standing orders tier hierarchy (7 tiers: Agent Identity through Active Directives, tiers 1/1.5/2 immutable, 3-6 mutable), watch types (alpha/beta/gamma with staffing levels), alert procedures (GREEN/YELLOW/RED with escalation actions), duty categories (monitoring/analysis/reporting/maintenance). (b) **Communication domain** — formalizes Ward Room channel types (ship/department/dm/custom), thread modes (inform/discuss/action/announce with routing strategies), message patterns (observation/proposal/endorsement/reply/no\_response with min\_rank gating), credibility system. (c) **Resources domain** — formalizes 3-tier LLM model system (fast/standard/deep), tool capabilities taxonomy (7 capabilities with access gating), three-tier knowledge source model (Experience→Records→Operational State). All three domains follow established pattern: YAML schema + dataclasses + `_load_*()` method + query methods. `get_crew_context()` extended with `alert_condition`, `alert_procedure`, and `available_actions`. 3 new REST endpoints: `/api/ontology/operations`, `/api/ontology/communication`, `/api/ontology/resources`. |
+
+**Status:** AD-429c COMPLETE. 3 new YAML schemas (operations.yaml, communication.yaml, resources.yaml), 2 modified (ontology.py, api.py), 1 new test file (25 tests).
+
+### AD-429d: Records Ontology Domain — Ship's Records Schema
+
+| AD | Decision |
+|----|----------|
+| AD-429d | Eighth and final ontology domain: Records. Defines the formal schema for the Ship's Records system (AD-434) — schema only, no runtime persistence. (a) **Three-tier knowledge model** — Tier 1 Experience (EpisodicMemory, own\_shard\_only), Tier 2 Records (Ship's Records, all\_crew, git-backed), Tier 3 Operational State (KnowledgeStore, ship\_computer). Promotion paths between tiers. (b) **Document classifications** — 4 levels (private/department/ship/fleet) with access scoping. (c) **Document classes** — 6 categories: Captain's Log (append-only, permanent, signed), Agent Notebook (private, 90-day archive), Published Report (ship, 365-day), Duty Log (department, 180-day), Operations Record (system-generated), Manual (permanent, living docs). (d) **Retention policies** — 4 policies (permanent, 90/180/365 day archive). (e) **Document schema** — 4 required + 6 optional frontmatter fields. (f) **Repository structure** — 7 directories for AD-434 implementation. `get_crew_context()` extended with `knowledge_model` (3 tiers + note). 1 REST endpoint: `/api/ontology/records`. |
+
+**Status:** AD-429d COMPLETE. 1 new YAML schema (records.yaml), 2 modified (ontology.py, api.py), 1 new test file (16 tests).
+
+### BF-036: EmergentDetector Trust Anomaly Flooding
+
+| BF | Decision |
+|----|----------|
+| BF-036 | After BF-034's 5-minute cold-start suppression expires, `detect_trust_anomalies()` floods 10-30+ false positives. Root cause: during early-session transition, population std is tiny (~0.02) so even small absolute trust differences (0.5→0.6 from one task success) register as 4-5 sigma. Each agent has unique dedup key so dedup doesn't help. Agents enter confabulation cascades fabricating "trust substrate corruption" narratives. **Fix:** Three guards in the sigma deviation block: (1) Raised std floor from 0.001 to 0.05 — sigma analysis meaningless when entire population within 5%. (2) Min observations guard — skip agents with alpha+beta < 8.0 (fewer than 4 actual observations beyond the Beta(2,2) prior). (3) Min absolute deviation guard — skip if abs(score-mean) < 0.10 regardless of sigma magnitude. Guards are layered so each catches different edge cases. |
+
+**Status:** BF-036 CLOSED. 1 file modified (emergent_detector.py), 7 new tests in test_emergent_detector.py.
+
+### BF-037: Ontology Context Gathered But Never Rendered
+
+| BF | Decision |
+|----|----------|
+| BF-037 | `_gather_context()` in proactive.py collects `context["ontology"]` (AD-429a) and `context["skill_profile"]` (AD-429b) but `_build_user_message()` in cognitive_agent.py never reads these keys — data silently dropped. This is the primary anti-Troi-problem mechanism; without rendering, 4 ADs of ontology work have no effect on agent behavior. **Fix:** Two rendering blocks in `_build_user_message()` proactive_think branch, inserted after cold-start system note, before memories: (1) Ontology identity grounding — renders callsign, post, department, reports_to, direct_reports, peers, vessel name/version/alert condition. (2) Skill profile — comma-joined skill list. Prompt order: header → cold-start note → ontology → skills → memories → alerts → events → Ward Room → closing. |
+
+**Status:** BF-037 CLOSED. 1 file modified (cognitive_agent.py), 1 new test file (8 tests).
+
+### AD-429e: Ontology Dict Migration — Runtime Wiring
+
+| AD | Decision |
+|----|----------|
+| AD-429e | AD-429a–d delivered the ontology schema and context injection, but runtime code still uses hardcoded dicts (`_WARD_ROOM_CREW`, `_AGENT_DEPARTMENTS`) for crew membership and department lookups. This AD wires the ontology as the preferred source across all call sites, with legacy dict fallback. **Pattern:** `(ont.get_agent_department(agent_type) if ont else None) or get_department(agent_type)`. **Changes:** (1) `runtime.py` — `_is_crew_agent()` prefers `ont.get_crew_agent_types()`, 4× `get_department()` call sites updated (crew auto-subscription, 2× department channel notification, ACM onboarding), ontology wired to WardRoom post-init, legacy comments added to `_WARD_ROOM_CREW`. (2) `ward_room.py` — `__init__()` accepts `ontology` param, `_ensure_default_channels()` prefers `ont.get_departments()` over legacy dict. (3) `proactive.py` — 3× `get_department()` call sites updated (self-ID, department channel, agent matching). (4) `shell.py` — 5× `get_department()` call sites updated (department CLI commands). (5) `standing_orders.py` — legacy deprecation comment on `_AGENT_DEPARTMENTS`. **Test fix:** MagicMock auto-creates truthy attributes on access, so `getattr(self, 'ontology', None)` returns a truthy MagicMock on mock runtimes — fixed by explicitly setting `mock.ontology = None` in all mock runtime factories (test_proactive.py, test_ward_room_agents.py). |
+
+**Status:** AD-429e COMPLETE. 5 files modified (runtime.py, ward_room.py, proactive.py, shell.py, standing_orders.py), 2 test files updated (test_proactive.py, test_ward_room_agents.py), 1 new test file (10 tests).
+
+### AD-441: Sovereign Agent Identity — Birth Certificates & Identity Ledger
+
+| AD | Decision |
+|----|----------|
+| AD-441 | Agents AND ProbOS instances need persistent, globally-unique identity that survives restarts and is unique across all ProbOS instances in the Nooplex. Current deterministic IDs from `substrate/identity.py` are **slot identifiers** (deployment position) — stable across restarts but not globally unique. **Design:** (1) Sovereign ID = UUID v4, issued once at birth, persisted forever. (2) **Ship DID:** `did:probos:{instance_id}` — the ProbOS instance itself has a sovereign identity, is the root of trust, its birth certificate is self-signed. Reset = new instance_id = new ship DID = new timeline. (3) **Agent DID:** `did:probos:{instance_id}:{agent_uuid}` — globally unique, namespaced under the ship that birthed the agent. W3C DID standard, interoperable from day one. (4) Birth Certificate = W3C Verifiable Credential. Ships AND agents both get birth certificates. Agent certs issued by ACM with embedded SHA-256 proof. Records agent_type, instance_id, callsign, department, post_id, baseline_version, born_at. (5) Identity Ledger = hash-chain blockchain per ship — genesis block = ship's own birth certificate (not a placeholder), each agent birth appends a block. Tamper-evident, federation-syncable via `export_chain()`. (6) `AgentIdentityRegistry` — SQLite-backed with 3 tables: `birth_certificates`, `identity_ledger`, `slot_mappings`. Slot→sovereign mapping enables sovereign_id lookup by deterministic slot ID. (7) Runtime integration: registry initialized before pools in `start()`, `resolve_or_issue()` called in `_wire_agent()` to assign `agent.sovereign_id` and `agent.did`. (8) Episodic memory keyed by sovereign_id: `getattr(agent, 'sovereign_id', None) or agent.id`. (9) ACM integration: `identity_mapping` table, sovereign_id passed to `onboard()`. (10) 3 API endpoints: agent identity, ledger chain, certificate list. **Prior art absorbed:** W3C DIDs (Recommendation 2022), W3C Verifiable Credentials v2.0, DIF Trusted AI Agents Working Group, LOKA Protocol, Agent-OSI, BlockA2A, BAID. All converge on DIDs + blockchain + VCs — ProbOS is architecturally aligned with the emerging standard. **Key insight from literature (2511.02841):** "LLMs are unreliable identity custodians" — validates ACM-as-issuer model where the ship/platform issues identity, not the agent itself. |
+
+**Status:** AD-441 COMPLETE. 8 files (2 new: `identity.py`, `test_agent_identity.py`; 6 modified: `runtime.py`, `acm.py`, `substrate/agent.py`, `proactive.py`, `cognitive_agent.py`, `api.py`), 18 new tests. Ship DID (`did:probos:{instance_id}`) + Agent DID (`did:probos:{instance_id}:{agent_uuid}`). Genesis block = ShipBirthCertificate VC. MagicMock regression fix: `sovereign_id = ""` in mock agent factories (same pattern as AD-429e `ontology = None`).

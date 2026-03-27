@@ -597,6 +597,7 @@ def _make_mock_runtime(ward_room=None):
     runtime.callsign_registry = MagicMock()
     runtime.callsign_registry.resolve.return_value = None
     runtime.callsign_registry.get_callsign.return_value = ""
+    runtime.ontology = None  # AD-429e: Explicit None so _is_crew_agent uses legacy set
 
     # Bind real methods so self.method() calls work on the mock
     import types
@@ -611,6 +612,16 @@ def _make_mock_runtime(ward_room=None):
     )
     runtime._is_crew_agent = types.MethodType(
         ProbOSRuntime._is_crew_agent, runtime,
+    )
+    # BF-038: Bind endorsement/cleanup methods used by _route_ward_room_event
+    runtime._extract_endorsements = types.MethodType(
+        ProbOSRuntime._extract_endorsements, runtime,
+    )
+    runtime._process_endorsements = types.MethodType(
+        ProbOSRuntime._process_endorsements, runtime,
+    )
+    runtime._cleanup_ward_room_tracking = types.MethodType(
+        ProbOSRuntime._cleanup_ward_room_tracking, runtime,
     )
     runtime._WARD_ROOM_CREW = ProbOSRuntime._WARD_ROOM_CREW
     return runtime

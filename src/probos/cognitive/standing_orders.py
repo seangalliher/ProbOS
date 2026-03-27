@@ -27,7 +27,9 @@ _directive_store: Any = None
 # Default location for standing orders
 _DEFAULT_ORDERS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "config" / "standing_orders"
 
+# Legacy fallback — remove when ontology is mandatory.
 # Department mapping: agent_type -> department name
+# Ontology equivalent: VesselOntologyService.get_agent_department()
 _AGENT_DEPARTMENTS: dict[str, str] = {
     # Engineering
     "builder": "engineering",
