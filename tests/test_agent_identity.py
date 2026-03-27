@@ -12,6 +12,7 @@ import pytest
 from probos.identity import (
     AgentBirthCertificate,
     AgentIdentityRegistry,
+    AssetTag,
     LedgerBlock,
     ShipBirthCertificate,
     generate_agent_uuid,
@@ -583,3 +584,121 @@ class TestShipCommissioning:
         assert vc["issuer"] == "did:probos:inst-1"
         assert "#key-1" in vc["proof"]["verificationMethod"]
         assert vc["proof"]["verificationMethod"] == "did:probos:inst-1#key-1"
+
+
+# ── Asset Tags ────────────────────────────────────────────────────
+
+
+class TestAssetTags:
+    """Asset tags for infrastructure and utility agents."""
+
+    @pytest.mark.asyncio
+    async def test_issue_asset_tag(self, tmp_path: Path) -> None:
+        """Asset tag is issued and cached."""
+        reg = AgentIdentityRegistry(data_dir=tmp_path)
+        await reg.start()
+
+        tag = await reg.issue_asset_tag(
+            asset_type="file_reader",
+            slot_id="file_reader_filesystem_0_abc123",
+            pool_name="filesystem",
+            tier="infrastructure",
+        )
+
+        assert tag.asset_uuid  # non-empty UUID
+        assert tag.asset_type == "file_reader"
+        assert tag.tier == "infrastructure"
+        assert tag.pool_name == "filesystem"
+
+        # Retrievable by slot
+        found = reg.get_asset_by_slot("file_reader_filesystem_0_abc123")
+        assert found is not None
+        assert found.asset_uuid == tag.asset_uuid
+
+        await reg.stop()
+
+    @pytest.mark.asyncio
+    async def test_asset_tag_not_on_ledger(self, tmp_path: Path) -> None:
+        """Asset tags do NOT create ledger entries."""
+        reg = AgentIdentityRegistry(data_dir=tmp_path)
+        await reg.start()
+
+        await reg.issue_asset_tag(
+            asset_type="shell_command",
+            slot_id="shell_command_shell_0_def456",
+            pool_name="shell",
+            tier="infrastructure",
+        )
+
+        chain = await reg.export_chain()
+        assert len(chain) == 0  # No ledger entries for asset tags
+
+        await reg.stop()
+
+    @pytest.mark.asyncio
+    async def test_resolve_or_issue_asset_tag_idempotent(self, tmp_path: Path) -> None:
+        """Calling resolve_or_issue twice returns same tag."""
+        reg = AgentIdentityRegistry(data_dir=tmp_path)
+        await reg.start()
+
+        tag1 = await reg.resolve_or_issue_asset_tag(
+            slot_id="heartbeat_0",
+            asset_type="system_heartbeat",
+            pool_name="system",
+        )
+        tag2 = await reg.resolve_or_issue_asset_tag(
+            slot_id="heartbeat_0",
+            asset_type="system_heartbeat",
+            pool_name="system",
+        )
+
+        assert tag1.asset_uuid == tag2.asset_uuid
+
+        await reg.stop()
+
+    @pytest.mark.asyncio
+    async def test_asset_tag_persists_across_restarts(self, tmp_path: Path) -> None:
+        """Asset tags persist in DB and reload on restart."""
+        reg1 = AgentIdentityRegistry(data_dir=tmp_path)
+        await reg1.start()
+        tag = await reg1.issue_asset_tag(
+            asset_type="http_fetch", slot_id="http_0",
+            pool_name="http", tier="infrastructure",
+        )
+        await reg1.stop()
+
+        reg2 = AgentIdentityRegistry(data_dir=tmp_path)
+        await reg2.start()
+        found = reg2.get_asset_by_slot("http_0")
+        assert found is not None
+        assert found.asset_uuid == tag.asset_uuid
+        await reg2.stop()
+
+    @pytest.mark.asyncio
+    async def test_asset_tag_to_dict_round_trip(self) -> None:
+        """AssetTag round-trips through to_dict/from_dict."""
+        tag = AssetTag(
+            asset_uuid="uuid-1", asset_type="shell_command",
+            slot_id="shell_0", installed_at=1700000000.0,
+            pool_name="shell", tier="infrastructure",
+        )
+        data = tag.to_dict()
+        restored = AssetTag.from_dict(data)
+        assert restored.asset_uuid == tag.asset_uuid
+        assert restored.tier == tag.tier
+
+    @pytest.mark.asyncio
+    async def test_get_all_asset_tags(self, tmp_path: Path) -> None:
+        """get_asset_tags() returns all issued tags."""
+        reg = AgentIdentityRegistry(data_dir=tmp_path)
+        await reg.start()
+
+        await reg.issue_asset_tag("type_a", "slot_a", "pool_a", "infrastructure")
+        await reg.issue_asset_tag("type_b", "slot_b", "pool_b", "utility")
+
+        tags = reg.get_asset_tags()
+        assert len(tags) == 2
+        types = {t.asset_type for t in tags}
+        assert types == {"type_a", "type_b"}
+
+        await reg.stop()

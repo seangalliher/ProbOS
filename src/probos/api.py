@@ -604,6 +604,18 @@ def create_app(runtime: Any) -> FastAPI:
             "birth_certificate": cert.to_verifiable_credential(),
         }
 
+    @app.get("/api/identity/assets")
+    async def list_asset_tags() -> Any:
+        """Return all asset tags for infrastructure and utility agents."""
+        if not runtime.identity_registry:
+            return JSONResponse({"error": "Identity registry not available"}, status_code=503)
+
+        tags = runtime.identity_registry.get_asset_tags()
+        return {
+            "count": len(tags),
+            "assets": [t.to_dict() for t in tags],
+        }
+
     @app.post("/api/chat")
     async def chat(req: ChatRequest) -> dict[str, Any]:
         text = req.message.strip()

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-441b COMPLETE — Ship Commissioning (ShipBirthCertificate W3C VC, self-signed root of trust, real genesis block). AD-441 COMPLETE — Sovereign Agent Identity (W3C DIDs, birth certificates, Identity Ledger). AD-429a-d COMPLETE — Ship Ontology (vessel, skills, ops/comms/resources, records). BF-020–038 all closed. 3566 pytest + 118 vitest = 3684 total tests.
+## Current Status: AD-441c COMPLETE — Asset Tags for Infrastructure/Utility + Boot Sequence Fix (two-tier identity, deferred crew certificates). AD-441b COMPLETE — Ship Commissioning (ShipBirthCertificate W3C VC, self-signed root of trust, real genesis block). AD-441 COMPLETE — Sovereign Agent Identity (W3C DIDs, birth certificates, Identity Ledger). AD-429a-d COMPLETE — Ship Ontology (vessel, skills, ops/comms/resources, records). BF-020–038 all closed. 3572 pytest + 118 vitest = 3690 total tests.
 
 ---
 

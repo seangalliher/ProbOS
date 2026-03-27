@@ -1403,6 +1403,33 @@ class ProbOSRuntime:
                 version=self.config.system.version,
             )
 
+            # AD-441c: Issue deferred crew birth certificates now that ship is commissioned
+            for agent in self.registry.all():
+                if self._is_crew_agent(agent) and not getattr(agent, 'did', ''):
+                    try:
+                        dept = self.ontology.get_agent_department(agent.agent_type) or ""
+                        post = self.ontology.get_post_for_agent(agent.agent_type)
+                        post_id = post.id if post else ""
+                        if not dept:
+                            from probos.cognitive.standing_orders import get_department as _get_dept
+                            dept = _get_dept(agent.agent_type) or "unassigned"
+
+                        _callsign = getattr(agent, 'callsign', '') or agent.agent_type
+                        cert = await self.identity_registry.resolve_or_issue(
+                            slot_id=agent.id,
+                            agent_type=agent.agent_type,
+                            callsign=_callsign,
+                            instance_id=vi.instance_id,
+                            vessel_name=vi.name,
+                            department=dept,
+                            post_id=post_id,
+                            baseline_version=self.config.system.version,
+                        )
+                        agent.sovereign_id = cert.agent_uuid
+                        agent.did = cert.did
+                    except Exception as e:
+                        logger.debug("Deferred identity skipped for %s: %s", agent.id, e)
+
         # --- Wire ontology ↔ skill service (AD-429b) ---
         if self.ontology and self.skill_service:
             self.ontology.set_skill_service(self.skill_service)
@@ -3932,44 +3959,64 @@ class ProbOSRuntime:
             pool=agent.pool,
         )
 
-        # AD-441: Resolve or issue persistent sovereign identity
+        # AD-441c: Two-tier identity — crew get birth certificates, others get asset tags
         if self.identity_registry:
             try:
-                instance_id = ""
-                vessel_name = "ProbOS"
-                if self.ontology:
-                    vi = self.ontology.get_vessel_identity()
-                    instance_id = vi.instance_id
-                    vessel_name = vi.name
+                if self._is_crew_agent(agent):
+                    # Sovereign identity — requires ship to be commissioned
+                    instance_id = ""
+                    vessel_name = "ProbOS"
+                    if self.ontology:
+                        vi = self.ontology.get_vessel_identity()
+                        instance_id = vi.instance_id
+                        vessel_name = vi.name
 
-                # Get department and post for the birth certificate
-                dept = ""
-                post_id = ""
-                if self.ontology:
-                    dept = self.ontology.get_agent_department(agent.agent_type) or ""
-                    post = self.ontology.get_post_for_agent(agent.agent_type)
-                    post_id = post.id if post else ""
-                if not dept:
-                    from probos.cognitive.standing_orders import get_department as _get_dept
-                    dept = _get_dept(agent.agent_type) or "unassigned"
+                    if not instance_id:
+                        # Ship not commissioned yet — defer identity until commissioning
+                        logger.debug("Identity deferred for crew agent %s — ship not yet commissioned", agent.id)
+                    else:
+                        dept = ""
+                        post_id = ""
+                        if self.ontology:
+                            dept = self.ontology.get_agent_department(agent.agent_type) or ""
+                            post = self.ontology.get_post_for_agent(agent.agent_type)
+                            post_id = post.id if post else ""
+                        if not dept:
+                            from probos.cognitive.standing_orders import get_department as _get_dept
+                            dept = _get_dept(agent.agent_type) or "unassigned"
 
-                _callsign = getattr(agent, 'callsign', '') or agent.agent_type
-                baseline = self.config.system.version
+                        _callsign = getattr(agent, 'callsign', '') or agent.agent_type
+                        baseline = self.config.system.version
 
-                cert = await self.identity_registry.resolve_or_issue(
-                    slot_id=agent.id,
-                    agent_type=agent.agent_type,
-                    callsign=_callsign,
-                    instance_id=instance_id,
-                    vessel_name=vessel_name,
-                    department=dept,
-                    post_id=post_id,
-                    baseline_version=baseline,
-                )
+                        cert = await self.identity_registry.resolve_or_issue(
+                            slot_id=agent.id,
+                            agent_type=agent.agent_type,
+                            callsign=_callsign,
+                            instance_id=instance_id,
+                            vessel_name=vessel_name,
+                            department=dept,
+                            post_id=post_id,
+                            baseline_version=baseline,
+                        )
+                        agent.sovereign_id = cert.agent_uuid
+                        agent.did = cert.did
+                else:
+                    # Asset identity — lightweight tracking, no DID needed
+                    pool_name = agent.pool or "unknown"
+                    # Determine tier
+                    _infra_pools = {"system", "filesystem", "filesystem_writers", "directory",
+                                   "search", "shell", "http", "introspect",
+                                   "medical_vitals", "red_team", "system_qa"}
+                    tier = "infrastructure" if pool_name in _infra_pools else "utility"
 
-                # Store the persistent UUID on the agent for all subsystem access
-                agent.sovereign_id = cert.agent_uuid
-                agent.did = cert.did
+                    tag = await self.identity_registry.resolve_or_issue_asset_tag(
+                        slot_id=agent.id,
+                        asset_type=agent.agent_type,
+                        pool_name=pool_name,
+                        tier=tier,
+                    )
+                    agent.sovereign_id = tag.asset_uuid  # tracking UUID, not sovereign
+                    agent.did = ""  # No DID for assets
             except Exception as e:
                 logger.debug("Identity resolution skipped for %s: %s", agent.id, e)
 

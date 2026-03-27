@@ -230,6 +230,40 @@ class ShipBirthCertificate:
 
 
 @dataclass
+class AssetTag:
+    """Lightweight identity for infrastructure and utility agents.
+
+    Like a serial number on equipment — tracks the asset for inventory
+    and management, but does not confer sovereign identity.
+    Not recorded on the Identity Ledger. No W3C VC ceremony.
+
+    'A microwave with a name tag isn't a person. But it still has a serial number.'
+    """
+    asset_uuid: str          # UUID v4 — permanent tracking ID
+    asset_type: str          # e.g., "file_reader", "shell_command"
+    slot_id: str             # Deterministic deployment slot
+    installed_at: float      # time.time() at first instantiation
+    pool_name: str           # Pool this asset belongs to
+    tier: str                # "infrastructure" or "utility"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for API/logging."""
+        return {
+            "asset_uuid": self.asset_uuid,
+            "asset_type": self.asset_type,
+            "slot_id": self.slot_id,
+            "installed_at": self.installed_at,
+            "pool_name": self.pool_name,
+            "tier": self.tier,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AssetTag:
+        """Reconstruct from a dict."""
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
 class LedgerBlock:
     """A single block in the Identity Ledger hash-chain."""
     index: int
@@ -286,9 +320,20 @@ CREATE TABLE IF NOT EXISTS slot_mappings (
     FOREIGN KEY (agent_uuid) REFERENCES birth_certificates(agent_uuid)
 );
 
+CREATE TABLE IF NOT EXISTS asset_tags (
+    asset_uuid TEXT PRIMARY KEY,
+    asset_type TEXT NOT NULL,
+    slot_id TEXT UNIQUE NOT NULL,
+    installed_at REAL NOT NULL,
+    pool_name TEXT NOT NULL,
+    tier TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_cert_agent_type ON birth_certificates(agent_type);
 CREATE INDEX IF NOT EXISTS idx_cert_did ON birth_certificates(did);
 CREATE INDEX IF NOT EXISTS idx_ledger_did ON identity_ledger(agent_did);
+CREATE INDEX IF NOT EXISTS idx_asset_type ON asset_tags(asset_type);
+CREATE INDEX IF NOT EXISTS idx_asset_slot ON asset_tags(slot_id);
 """
 
 
@@ -310,6 +355,7 @@ class AgentIdentityRegistry:
         self._uuid_cache: dict[str, AgentBirthCertificate] = {}  # agent_uuid -> cert
         self._slot_cache: dict[str, AgentBirthCertificate] = {}  # slot_id -> cert
         self._ship_certificate: ShipBirthCertificate | None = None
+        self._asset_cache: dict[str, AssetTag] = {}  # slot_id -> AssetTag
 
     async def start(self, instance_id: str = "", vessel_name: str = "ProbOS", version: str = "") -> None:
         """Initialize identity database and load existing certificates.
@@ -345,7 +391,20 @@ class AgentIdentityRegistry:
                     if cert:
                         self._slot_cache[row[0]] = cert
 
-            logger.info("Identity registry loaded %d certificates", len(self._uuid_cache))
+            # Load existing asset tags
+            async with self._db.execute(
+                "SELECT asset_uuid, asset_type, slot_id, installed_at, pool_name, tier "
+                "FROM asset_tags"
+            ) as cursor:
+                async for row in cursor:
+                    tag = AssetTag(
+                        asset_uuid=row[0], asset_type=row[1], slot_id=row[2],
+                        installed_at=row[3], pool_name=row[4], tier=row[5],
+                    )
+                    self._asset_cache[tag.slot_id] = tag
+
+            logger.info("Identity registry loaded %d certificates, %d asset tags",
+                        len(self._uuid_cache), len(self._asset_cache))
 
         # Load or create ship birth certificate (if instance_id provided)
         if instance_id and not self._ship_certificate:
@@ -459,6 +518,65 @@ class AgentIdentityRegistry:
     def get_by_agent_type(self, agent_type: str) -> list[AgentBirthCertificate]:
         """Return all certificates for a given agent_type."""
         return [c for c in self._uuid_cache.values() if c.agent_type == agent_type]
+
+    # ── Asset Tags ─────────────────────────────────────────────────
+
+    async def issue_asset_tag(
+        self,
+        asset_type: str,
+        slot_id: str,
+        pool_name: str,
+        tier: str = "infrastructure",
+    ) -> AssetTag:
+        """Issue an asset tag for an infrastructure or utility agent.
+
+        No Identity Ledger entry. No W3C VC. Just inventory tracking.
+        """
+        if not self._db:
+            raise RuntimeError("Identity registry not started")
+
+        tag = AssetTag(
+            asset_uuid=generate_agent_uuid(),
+            asset_type=asset_type,
+            slot_id=slot_id,
+            installed_at=time.time(),
+            pool_name=pool_name,
+            tier=tier,
+        )
+
+        await self._db.execute(
+            "INSERT INTO asset_tags "
+            "(asset_uuid, asset_type, slot_id, installed_at, pool_name, tier) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (tag.asset_uuid, tag.asset_type, tag.slot_id,
+             tag.installed_at, tag.pool_name, tag.tier),
+        )
+        await self._db.commit()
+        self._asset_cache[tag.slot_id] = tag
+
+        logger.info("Asset tag issued: %s (%s) — %s", tag.asset_type, tag.tier, tag.asset_uuid)
+        return tag
+
+    async def resolve_or_issue_asset_tag(
+        self,
+        slot_id: str,
+        asset_type: str,
+        pool_name: str,
+        tier: str = "infrastructure",
+    ) -> AssetTag:
+        """Resolve an existing asset tag for this slot, or issue a new one."""
+        existing = self._asset_cache.get(slot_id)
+        if existing:
+            return existing
+        return await self.issue_asset_tag(asset_type, slot_id, pool_name, tier)
+
+    def get_asset_tags(self) -> list[AssetTag]:
+        """Return all asset tags."""
+        return list(self._asset_cache.values())
+
+    def get_asset_by_slot(self, slot_id: str) -> AssetTag | None:
+        """Look up an asset tag by deployment slot ID."""
+        return self._asset_cache.get(slot_id)
 
     # ── Issuance ────────────────────────────────────────────────────
 

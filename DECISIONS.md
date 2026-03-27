@@ -997,3 +997,11 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 | AD-441b | ShipBirthCertificate W3C VC for the ship itself — self-signed, ship is its own root of trust. Genesis block carries real ship certificate hash and ship DID instead of placeholders. Ship certificate persists in DB — first boot commissions, subsequent boots load. Fixed agent VC issuer to use 3-part ship DID (`did:probos:{instance_id}`) not 4-part. `GET /api/identity/ship` endpoint exposes ship commissioning data. Commissioning timestamp = ship's `born_at` = start of timeline. |
 
 **Status:** AD-441b COMPLETE.
+
+### AD-441c: Asset Tags for Infrastructure/Utility + Boot Sequence Fix
+
+| AD | Decision |
+|----|----------|
+| AD-441c | Two-tier identity: crew agents get sovereign birth certificates (W3C VCs on Identity Ledger), infrastructure/utility agents get lightweight AssetTags (serial numbers, not sovereign identity). `AssetTag` dataclass with asset_uuid, asset_type, slot_id, tier (infrastructure/utility). Stored in `asset_tags` DB table, NOT on the Identity Ledger. Boot sequence fix: crew identity deferred when ship not yet commissioned, post-commissioning sweep issues deferred birth certificates. `_wire_agent` split: `_is_crew_agent()` determines path. `GET /api/identity/assets` endpoint. Principle: "A microwave with a name tag isn't a person. But it still has a serial number." |
+
+**Status:** AD-441c COMPLETE.
