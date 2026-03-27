@@ -1,0 +1,115 @@
+# Domain 7: Resources — models, tools, knowledge sources
+#
+# Formalizes existing systems:
+#   - CognitiveConfig (config.py) — 3-tier LLM model system
+#   - KnowledgeStore (knowledge/store.py) — operational state persistence
+#   - EpisodicMemory — agent experience store
+#   - AD-434 Ship's Records — formalized in AD-429d (Records domain)
+#
+# Note: ToolRegistry (AD-423) does not yet exist in code.
+# This schema defines the conceptual model for when it does.
+
+model_tiers:
+  - id: fast
+    name: "Fast"
+    description: "Quick, low-cost operations — routing, classification, simple generation"
+    default_model: "gpt-4o-mini"
+    use_cases: ["intent routing", "classification", "simple responses", "triage"]
+    cost: low
+    latency: low
+  - id: standard
+    name: "Standard"
+    description: "General-purpose operations — most agent reasoning"
+    default_model: "claude-sonnet-4"
+    use_cases: ["proactive thinks", "code review", "analysis", "Ward Room responses"]
+    cost: medium
+    latency: medium
+  - id: deep
+    name: "Deep"
+    description: "Complex reasoning — architecture decisions, deep analysis"
+    default_model: "claude-sonnet-4"
+    use_cases: ["architecture review", "complex debugging", "self-modification proposals", "dream consolidation"]
+    cost: high
+    latency: high
+
+# Model assignment — which tier each agent/function uses
+# Actual runtime config is in CognitiveConfig. This documents the design intent.
+model_assignments:
+  proactive_think: standard
+  duty_execution: standard
+  dream_consolidation: deep
+  intent_routing: fast
+  chat_response: standard
+  code_generation: deep
+  endorsement_extraction: fast
+
+# Tool capabilities — conceptual taxonomy
+# These are capabilities an agent can invoke, not a runtime registry.
+# AD-423 (Tool Registry) will implement the runtime version.
+tool_capabilities:
+  - id: codebase_query
+    name: "Codebase Query"
+    description: "Search and analyze the codebase via CodebaseIndex"
+    provider: ship_computer
+    available_to: all_crew
+  - id: ward_room_post
+    name: "Ward Room Post"
+    description: "Post to Ward Room channels"
+    provider: ward_room
+    available_to: all_crew
+    gated_by: earned_agency
+  - id: ward_room_endorse
+    name: "Ward Room Endorse"
+    description: "Endorse or oppose a Ward Room post"
+    provider: ward_room
+    available_to: lieutenant_plus
+    gated_by: earned_agency
+  - id: ward_room_reply
+    name: "Ward Room Reply"
+    description: "Reply to a specific Ward Room thread"
+    provider: ward_room
+    available_to: lieutenant_plus
+    gated_by: earned_agency
+  - id: self_modification
+    name: "Self-Modification Proposal"
+    description: "Propose changes to own standing orders via dream consolidation"
+    provider: dreaming_engine
+    available_to: all_crew
+    gated_by: trust_threshold
+  - id: knowledge_query
+    name: "Knowledge Query"
+    description: "Query the ship's knowledge store"
+    provider: ship_computer
+    available_to: all_crew
+  - id: episodic_recall
+    name: "Episodic Recall"
+    description: "Recall own episodic memories"
+    provider: ship_computer
+    available_to: all_crew
+    scope: own_shard_only
+
+# Knowledge source types
+knowledge_sources:
+  - id: episodic_memory
+    name: "Episodic Memory"
+    description: "Per-agent experience store — sovereign shard, private diary"
+    tier: 1
+    tier_name: "Experience"
+    storage: chromadb
+    access: own_shard_only
+  - id: ship_records
+    name: "Ship's Records"
+    description: "Git-backed instance knowledge — duty logs, notebooks, published reports"
+    tier: 2
+    tier_name: "Records"
+    storage: git
+    access: all_crew
+    note: "AD-434 — not yet implemented. Placeholder for AD-429d."
+  - id: knowledge_store
+    name: "Knowledge Store"
+    description: "Operational state persistence — trust snapshots, routing weights, agent source"
+    tier: 3
+    tier_name: "Operational State"
+    storage: git_repo
+    access: ship_computer
+    note: "Despite the name, this is NOT a shared knowledge library. It's infrastructure state."

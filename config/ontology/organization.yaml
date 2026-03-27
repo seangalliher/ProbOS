@@ -1,0 +1,154 @@
+# Domain 2: Organization — departments, posts, chain of command
+departments:
+  - id: bridge
+    name: "Bridge"
+    description: "Command and advisory staff"
+  - id: engineering
+    name: "Engineering"
+    description: "Systems development, maintenance, and optimization"
+  - id: science
+    name: "Science"
+    description: "Research, analysis, and exploration"
+  - id: medical
+    name: "Medical"
+    description: "Crew health, cognitive diagnostics, treatment"
+  - id: security
+    name: "Security"
+    description: "Threat detection, access control, system integrity"
+  - id: operations
+    name: "Operations"
+    description: "Operational readiness, resource management, logistics"
+
+posts:
+  # Bridge
+  - id: captain
+    title: "Captain"
+    department: bridge
+    reports_to: null  # Top of chain
+    authority_over: [first_officer, counselor]
+    tier: external  # Human, not agent
+  - id: first_officer
+    title: "First Officer"
+    department: bridge
+    reports_to: captain
+    authority_over: [chief_engineer, chief_science, chief_medical, chief_security, chief_operations]
+    tier: crew
+  - id: counselor
+    title: "Ship's Counselor"
+    department: bridge
+    reports_to: captain
+    authority_over: []
+    tier: crew
+
+  # Engineering
+  - id: chief_engineer
+    title: "Chief Engineer"
+    department: engineering
+    reports_to: first_officer
+    authority_over: [engineering_officer, builder_officer]
+    tier: crew
+  - id: engineering_officer
+    title: "Engineering Officer"
+    department: engineering
+    reports_to: chief_engineer
+    authority_over: []
+    tier: crew
+  - id: builder_officer
+    title: "Builder"
+    department: engineering
+    reports_to: chief_engineer
+    authority_over: []
+    tier: crew
+
+  # Science
+  - id: chief_science
+    title: "Chief Science Officer"
+    department: science
+    reports_to: first_officer
+    authority_over: [scout_officer]
+    tier: crew
+    note: "Number One is dual-hatted as First Officer and Chief Science Officer"
+  - id: scout_officer
+    title: "Scout"
+    department: science
+    reports_to: chief_science
+    authority_over: []
+    tier: crew
+
+  # Medical
+  - id: chief_medical
+    title: "Chief Medical Officer"
+    department: medical
+    reports_to: first_officer
+    authority_over: [surgeon_officer, pharmacist_officer, pathologist_officer]
+    tier: crew
+  - id: surgeon_officer
+    title: "Surgeon"
+    department: medical
+    reports_to: chief_medical
+    authority_over: []
+    tier: crew
+  - id: pharmacist_officer
+    title: "Pharmacist"
+    department: medical
+    reports_to: chief_medical
+    authority_over: []
+    tier: crew
+  - id: pathologist_officer
+    title: "Pathologist"
+    department: medical
+    reports_to: chief_medical
+    authority_over: []
+    tier: crew
+
+  # Security
+  - id: chief_security
+    title: "Chief of Security"
+    department: security
+    reports_to: first_officer
+    authority_over: []
+    tier: crew
+
+  # Operations
+  - id: chief_operations
+    title: "Chief of Operations"
+    department: operations
+    reports_to: first_officer
+    authority_over: []
+    tier: crew
+
+# Agent-to-post assignments (which agent_type fills which post)
+assignments:
+  - agent_type: architect
+    post_id: first_officer
+    callsign: "Number One"
+  - agent_type: counselor
+    post_id: counselor
+    callsign: "Troi"
+  - agent_type: engineering_officer
+    post_id: chief_engineer
+    callsign: "LaForge"
+  - agent_type: builder
+    post_id: builder_officer
+    callsign: "Scotty"
+  - agent_type: scout
+    post_id: scout_officer
+    callsign: "Wesley"
+  - agent_type: diagnostician
+    post_id: chief_medical
+    callsign: "Bones"
+  - agent_type: surgeon
+    post_id: surgeon_officer
+    callsign: "Pulaski"
+  - agent_type: pharmacist
+    post_id: pharmacist_officer
+    callsign: "Ogawa"
+  - agent_type: pathologist
+    post_id: pathologist_officer
+    callsign: "Selar"
+  - agent_type: security_officer
+    post_id: chief_security
+    callsign: "Worf"
+  - agent_type: operations_officer
+    post_id: chief_operations
+    callsign: "O'Brien"

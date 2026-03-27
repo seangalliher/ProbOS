@@ -1,0 +1,56 @@
+# Domain 3: Crew — agent identity schema
+#
+# This schema defines the STRUCTURE of crew identity.
+# Actual agent data is populated at runtime from:
+#   - crew_profiles/*.yaml (personality, callsign)
+#   - TrustNetwork (trust_score)
+#   - EarnedAgency (rank)
+#   - ACM (lifecycle_state)
+#   - ModelRegistry (model_id)
+
+agent_identity:
+  fields:
+    - name: agent_id
+      type: string
+      description: "Unique runtime identifier"
+    - name: agent_type
+      type: string
+      description: "Agent type key (e.g. 'security_officer')"
+    - name: callsign
+      type: string
+      description: "Human-readable name (e.g. 'Worf')"
+    - name: tier
+      type: enum
+      values: [crew, utility, infrastructure]
+      description: "AD-398 three-tier classification"
+
+agent_state:
+  fields:
+    - name: lifecycle_state
+      type: enum
+      values: [registered, probationary, active, suspended, decommissioned]
+      description: "ACM lifecycle state"
+    - name: rank
+      type: enum
+      values: [ensign, lieutenant, commander, senior_officer]
+      description: "Earned Agency rank from trust score"
+    - name: trust_score
+      type: float
+      description: "Current trust network score [0.0, 1.0]"
+    - name: confidence
+      type: float
+      description: "Agent confidence from recent outcomes"
+
+agent_character:
+  description: "Personality traits (Big Five) — seeded from crew_profiles/*.yaml, evolve over time"
+  fields:
+    - name: openness
+      type: float
+    - name: conscientiousness
+      type: float
+    - name: extraversion
+      type: float
+    - name: agreeableness
+      type: float
+    - name: neuroticism
+      type: float

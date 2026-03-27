@@ -1,0 +1,111 @@
+# Domain 5: Operations — duties, watches, standing orders, alert procedures
+#
+# Formalizes existing systems:
+#   - DutyScheduleConfig (config.py) — duty definitions per agent type
+#   - WatchManager (watch_rotation.py) — watch types, standing tasks, duty shifts
+#   - StandingOrders (standing_orders.py) — 6-tier instruction composition
+#   - VesselState.alert_condition (ontology vessel domain) — GREEN/YELLOW/RED
+
+standing_order_tiers:
+  - tier: 1
+    name: "Agent Identity"
+    source: "Agent class instructions"
+    scope: "individual"
+    mutable: false
+    description: "Hardcoded identity from the agent's Python class"
+  - tier: 1.5
+    name: "Crew Personality"
+    source: "config/standing_orders/crew_profiles/*.yaml"
+    scope: "individual"
+    mutable: false
+    description: "Big Five personality traits mapped to behavioral guidance (AD-393)"
+  - tier: 2
+    name: "Federation Constitution"
+    source: "config/standing_orders/federation.md"
+    scope: "universal"
+    mutable: false
+    description: "Immutable principles — Westworld Principle, Core Directives, Safety Budget"
+  - tier: 3
+    name: "Ship Standing Orders"
+    source: "config/standing_orders/ship.md"
+    scope: "ship"
+    mutable: true
+    description: "Instance-level conventions — import patterns, testing standards"
+  - tier: 4
+    name: "Department Protocols"
+    source: "config/standing_orders/{department}.md"
+    scope: "department"
+    mutable: true
+    description: "Department-specific standards — build pipeline (engineering), review checklists"
+  - tier: 5
+    name: "Agent Standing Orders"
+    source: "config/standing_orders/{agent_type}.md"
+    scope: "individual"
+    mutable: true
+    description: "Learned practices from dream consolidation, self-modification pipeline"
+  - tier: 6
+    name: "Active Directives"
+    source: "DirectiveStore (runtime)"
+    scope: "individual"
+    mutable: true
+    description: "Runtime directives from Captain or chain of command (AD-386)"
+
+watch_types:
+  - id: alpha
+    name: "Alpha Watch"
+    description: "Full operations — all crew active, all systems monitored"
+    staffing: full
+  - id: beta
+    name: "Beta Watch"
+    description: "Reduced operations — essential crew only, routine monitoring"
+    staffing: reduced
+  - id: gamma
+    name: "Gamma Watch"
+    description: "Maintenance/background — minimal crew, background tasks only"
+    staffing: minimal
+
+# Alert condition procedures — what changes operationally at each level
+alert_procedures:
+  GREEN:
+    description: "Normal operations"
+    watch_default: alpha
+    proactive_interval: normal
+    escalation_threshold: standard
+  YELLOW:
+    description: "Degraded state or heightened monitoring"
+    watch_default: alpha
+    proactive_interval: increased
+    escalation_threshold: lowered
+    actions:
+      - "Increase proactive think frequency"
+      - "Lower bridge alert threshold"
+      - "Enable additional monitoring agents"
+  RED:
+    description: "Critical emergency — all hands"
+    watch_default: alpha
+    proactive_interval: maximum
+    escalation_threshold: minimum
+    actions:
+      - "All crew active regardless of watch assignment"
+      - "Proactive thinks at maximum frequency"
+      - "All bridge alerts immediate"
+      - "Captain notified immediately"
+
+# Duty categories — taxonomy of duty types across departments
+duty_categories:
+  - id: monitoring
+    name: "Monitoring & Observation"
+    description: "Regular system health checks, status reports"
+    examples: ["systems_check", "crew_health_check", "security_audit", "ops_status"]
+  - id: analysis
+    name: "Analysis & Review"
+    description: "Deep analysis of patterns, code, proposals"
+    examples: ["architecture_review", "code_review", "wellness_review"]
+  - id: reporting
+    name: "Reporting & Communication"
+    description: "Status reports, recommendations, Ward Room posts"
+    examples: ["scout_report", "department_briefing"]
+  - id: maintenance
+    name: "Maintenance & Operations"
+    description: "Routine operational tasks, cleanup, optimization"
+    examples: ["build_pipeline", "index_refresh", "log_rotation"]

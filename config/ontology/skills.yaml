@@ -1,0 +1,263 @@
+# Domain 4: Skills — competency taxonomy and role requirements
+#
+# Skill definitions and agent skill records live in skill_framework.py (SQLite).
+# This schema defines the STRUCTURE and ROLE REQUIREMENTS.
+# The ontology service composes both for unified queries.
+
+skill_taxonomy:
+  categories:
+    - id: pcc
+      name: "Proficiency Competency Card"
+      description: "Universal competencies all crew must develop"
+    - id: role
+      name: "Role Skill"
+      description: "Competencies specific to a post/department"
+    - id: acquired
+      name: "Acquired Skill"
+      description: "Skills gained through experience or mentoring"
+
+  proficiency_scale:
+    - level: 1
+      name: "Follow"
+      description: "Can follow instructions under supervision"
+    - level: 2
+      name: "Assist"
+      description: "Can assist in performing the skill"
+    - level: 3
+      name: "Apply"
+      description: "Can apply the skill independently"
+    - level: 4
+      name: "Enable"
+      description: "Can enable others to apply the skill"
+    - level: 5
+      name: "Advise"
+      description: "Can advise on complex applications"
+    - level: 6
+      name: "Lead"
+      description: "Can lead skill development and innovation"
+    - level: 7
+      name: "Shape"
+      description: "Can shape the field and define best practices"
+
+# Role templates: what skills each post requires
+# Maps post_id (from organization.yaml) to skill requirements
+role_templates:
+  first_officer:
+    required:
+      - skill_id: chain_of_command
+        min_proficiency: 5  # Advise
+      - skill_id: communication
+        min_proficiency: 5
+      - skill_id: collaboration
+        min_proficiency: 4  # Enable
+      - skill_id: architecture_review
+        min_proficiency: 5
+      - skill_id: pattern_recognition
+        min_proficiency: 4
+    optional:
+      - skill_id: ethical_reasoning
+        min_proficiency: 3
+
+  counselor:
+    required:
+      - skill_id: communication
+        min_proficiency: 5
+      - skill_id: collaboration
+        min_proficiency: 5
+      - skill_id: self_assessment
+        min_proficiency: 4
+      - skill_id: wellness_assessment
+        min_proficiency: 4
+      - skill_id: personality_analysis
+        min_proficiency: 4
+      - skill_id: crew_counseling
+        min_proficiency: 4
+    optional:
+      - skill_id: ethical_reasoning
+        min_proficiency: 4
+
+  chief_engineer:
+    required:
+      - skill_id: chain_of_command
+        min_proficiency: 3
+      - skill_id: communication
+        min_proficiency: 3
+      - skill_id: systems_analysis
+        min_proficiency: 5
+      - skill_id: performance_optimization
+        min_proficiency: 4
+      - skill_id: architecture_implementation
+        min_proficiency: 4
+    optional:
+      - skill_id: duty_execution
+        min_proficiency: 3
+
+  builder_officer:
+    required:
+      - skill_id: chain_of_command
+        min_proficiency: 2
+      - skill_id: duty_execution
+        min_proficiency: 3
+      - skill_id: systems_analysis
+        min_proficiency: 3
+      - skill_id: performance_optimization
+        min_proficiency: 3
+      - skill_id: architecture_implementation
+        min_proficiency: 3
+    optional:
+      - skill_id: collaboration
+        min_proficiency: 2
+
+  scout_officer:
+    required:
+      - skill_id: communication
+        min_proficiency: 3
+      - skill_id: pattern_recognition
+        min_proficiency: 4
+      - skill_id: trend_analysis
+        min_proficiency: 4
+      - skill_id: codebase_exploration
+        min_proficiency: 4
+    optional:
+      - skill_id: knowledge_stewardship
+        min_proficiency: 3
+
+  chief_medical:
+    required:
+      - skill_id: chain_of_command
+        min_proficiency: 3
+      - skill_id: communication
+        min_proficiency: 4
+      - skill_id: diagnostic_analysis
+        min_proficiency: 5
+      - skill_id: health_monitoring
+        min_proficiency: 4
+      - skill_id: treatment_planning
+        min_proficiency: 4
+    optional:
+      - skill_id: self_assessment
+        min_proficiency: 3
+
+  surgeon_officer:
+    required:
+      - skill_id: duty_execution
+        min_proficiency: 3
+      - skill_id: diagnostic_analysis
+        min_proficiency: 4
+      - skill_id: health_monitoring
+        min_proficiency: 3
+      - skill_id: treatment_planning
+        min_proficiency: 4
+    optional:
+      - skill_id: collaboration
+        min_proficiency: 2
+
+  pharmacist_officer:
+    required:
+      - skill_id: duty_execution
+        min_proficiency: 3
+      - skill_id: diagnostic_analysis
+        min_proficiency: 3
+      - skill_id: health_monitoring
+        min_proficiency: 3
+      - skill_id: treatment_planning
+        min_proficiency: 3
+    optional:
+      - skill_id: knowledge_stewardship
+        min_proficiency: 2
+
+  pathologist_officer:
+    required:
+      - skill_id: duty_execution
+        min_proficiency: 3
+      - skill_id: diagnostic_analysis
+        min_proficiency: 4
+      - skill_id: health_monitoring
+        min_proficiency: 3
+      - skill_id: treatment_planning
+        min_proficiency: 3
+    optional:
+      - skill_id: self_assessment
+        min_proficiency: 2
+
+  chief_security:
+    required:
+      - skill_id: chain_of_command
+        min_proficiency: 3
+      - skill_id: communication
+        min_proficiency: 3
+      - skill_id: threat_assessment
+        min_proficiency: 5
+      - skill_id: access_control
+        min_proficiency: 4
+      - skill_id: vulnerability_analysis
+        min_proficiency: 4
+    optional:
+      - skill_id: ethical_reasoning
+        min_proficiency: 3
+
+  chief_operations:
+    required:
+      - skill_id: chain_of_command
+        min_proficiency: 3
+      - skill_id: communication
+        min_proficiency: 3
+      - skill_id: resource_management
+        min_proficiency: 5
+      - skill_id: workflow_optimization
+        min_proficiency: 4
+      - skill_id: system_monitoring
+        min_proficiency: 4
+    optional:
+      - skill_id: duty_execution
+        min_proficiency: 3
+
+# Qualification paths: structured requirements for rank transitions
+# These define what competencies must be demonstrated for promotion
+qualification_paths:
+  ensign_to_lieutenant:
+    description: "Basic crew qualification — demonstrate fundamental competency"
+    requirements:
+      - type: pcc_minimum
+        description: "All PCCs at ASSIST (level 2) or above"
+        min_proficiency: 2
+        scope: all_pccs
+      - type: role_minimum
+        description: "At least 2 role skills at APPLY (level 3)"
+        min_proficiency: 3
+        min_count: 2
+        scope: role_skills
+
+  lieutenant_to_commander:
+    description: "Senior crew qualification — demonstrate leadership and depth"
+    requirements:
+      - type: pcc_minimum
+        description: "All PCCs at APPLY (level 3) or above"
+        min_proficiency: 3
+        scope: all_pccs
+      - type: role_minimum
+        description: "All required role skills at APPLY (level 3)"
+        min_proficiency: 3
+        scope: required_role_skills
+      - type: role_depth
+        description: "At least 1 role skill at ENABLE (level 4)"
+        min_proficiency: 4
+        min_count: 1
+        scope: role_skills
+
+  commander_to_senior:
+    description: "Senior officer qualification — demonstrate mastery"
+    requirements:
+      - type: pcc_minimum
+        description: "All PCCs at ENABLE (level 4) or above"
+        min_proficiency: 4
+        scope: all_pccs
+      - type: role_minimum
+        description: "All required role skills at ENABLE (level 4)"
+        min_proficiency: 4
+        scope: required_role_skills
+      - type: role_depth
+        description: "At least 2 role skills at ADVISE (level 5)"
+        min_proficiency: 5
+        min_count: 2
+        scope: role_skills

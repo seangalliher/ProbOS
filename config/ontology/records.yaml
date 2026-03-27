@@ -1,0 +1,196 @@
+# Domain 8: Records — Ship's Records schema (AD-434 data model)
+#
+# Defines the formal structure for ProbOS's instance knowledge system.
+# The actual RecordsStore service is implemented in AD-434.
+# This schema provides the ontology so agents understand what records ARE
+# and how the three-tier knowledge model works.
+
+# Three-tier knowledge model
+# Connects to resources.yaml knowledge_sources (already defined)
+knowledge_tiers:
+  - tier: 1
+    name: "Experience"
+    store: "EpisodicMemory"
+    description: "Per-agent episodic memories — sovereign shard, private diary"
+    access: own_shard_only
+    persistence: chromadb
+    promotion_path: "Agents observe patterns in their experiences → write to Records (Tier 2)"
+  - tier: 2
+    name: "Records"
+    store: "Ship's Records"
+    description: "Git-backed instance knowledge — duty logs, notebooks, published reports"
+    access: all_crew
+    persistence: git
+    promotion_path: "Published records indexed in KnowledgeStore for semantic search"
+  - tier: 3
+    name: "Operational State"
+    store: "KnowledgeStore"
+    description: "Trust snapshots, routing weights, agent source code, workflow state"
+    access: ship_computer
+    persistence: git
+    promotion_path: null
+
+# Document classifications — access control levels
+classifications:
+  - id: private
+    name: "Private"
+    description: "Visible only to the authoring agent — personal notebook entries"
+    access_scope: author_only
+  - id: department
+    name: "Department"
+    description: "Visible to department members — department briefings, internal analysis"
+    access_scope: same_department
+  - id: ship
+    name: "Ship"
+    description: "Visible to all crew — published reports, duty logs, Captain's Log"
+    access_scope: all_crew
+  - id: fleet
+    name: "Fleet"
+    description: "Shared across federated instances — federation-level knowledge"
+    access_scope: federation
+
+# Document classes — categories of records
+document_classes:
+  - id: captains_log
+    name: "Captain's Log"
+    description: "Official ship record — append-only, daily entries, signed via git commit"
+    classification_default: ship
+    retention: permanent
+    format: "YYYY-MM-DD.md"
+    special_rules:
+      - "Append-only — entries cannot be edited after commit"
+      - "Daily file format — one markdown file per day"
+      - "Signed via git commit signature"
+      - "Legal record — permanent retention, never archived"
+  - id: notebook
+    name: "Agent Notebook"
+    description: "Personal agent workspace — observations, analysis, draft ideas"
+    classification_default: private
+    retention: archive_90_days
+    format: "free-form markdown"
+    special_rules:
+      - "Each agent has their own notebook directory"
+      - "Dream consolidation may promote patterns from notebook to published reports"
+      - "Private by default — agent can explicitly publish entries"
+  - id: report
+    name: "Published Report"
+    description: "Formal analysis or recommendation — reviewed and published for crew consumption"
+    classification_default: ship
+    retention: archive_365_days
+    format: "structured markdown with YAML frontmatter"
+    special_rules:
+      - "Requires explicit publish action"
+      - "Indexed in KnowledgeStore with records: prefix for semantic search"
+      - "Version-tracked — edit history preserved in git"
+  - id: duty_log
+    name: "Duty Log"
+    description: "Operational records — watch handoffs, incident reports, maintenance logs"
+    classification_default: department
+    retention: archive_180_days
+    format: "structured markdown"
+    special_rules:
+      - "One log per department per watch period"
+      - "Handoff summaries at watch transitions"
+  - id: operations
+    name: "Operations Record"
+    description: "System-generated operational data — deployment records, configuration changes"
+    classification_default: ship
+    retention: archive_365_days
+    format: "structured YAML/JSON"
+    special_rules:
+      - "Machine-generated, not agent-authored"
+      - "Provides ground truth for agent reasoning"
+  - id: manual
+    name: "Manual / Reference"
+    description: "Standing reference documentation — procedures, protocols, technical specs"
+    classification_default: ship
+    retention: permanent
+    format: "structured markdown"
+    special_rules:
+      - "Version-controlled — superseded versions archived, not deleted"
+      - "Living documents — updated as procedures evolve"
+
+# Retention policies
+retention_policies:
+  - id: permanent
+    name: "Permanent"
+    description: "Never archived or deleted — legal and historical record"
+    archive_after_days: null
+    delete_after_days: null
+    applies_to: ["captains_log", "manual"]
+  - id: archive_90_days
+    name: "Archive after 90 days"
+    description: "Moved to archive directory after 90 days of inactivity"
+    archive_after_days: 90
+    delete_after_days: null
+    applies_to: ["notebook"]
+  - id: archive_180_days
+    name: "Archive after 180 days"
+    description: "Moved to archive directory after 180 days"
+    archive_after_days: 180
+    delete_after_days: null
+    applies_to: ["duty_log"]
+  - id: archive_365_days
+    name: "Archive after 1 year"
+    description: "Moved to archive directory after 1 year"
+    archive_after_days: 365
+    delete_after_days: null
+    applies_to: ["report", "operations"]
+
+# Document frontmatter schema — defines the metadata fields for each record
+document_schema:
+  required_fields:
+    - name: author
+      type: string
+      description: "Agent callsign or 'Captain' or 'System'"
+    - name: classification
+      type: enum
+      values: [private, department, ship, fleet]
+      description: "Access control classification"
+    - name: document_class
+      type: enum
+      values: [captains_log, notebook, report, duty_log, operations, manual]
+      description: "Document category"
+    - name: created
+      type: datetime
+      description: "ISO 8601 creation timestamp"
+  optional_fields:
+    - name: status
+      type: enum
+      values: [draft, review, published, archived, superseded]
+      description: "Document lifecycle status"
+      default: draft
+    - name: department
+      type: string
+      description: "Authoring department (for department-classified docs)"
+    - name: topic
+      type: string
+      description: "Subject area or topic tag"
+    - name: tags
+      type: list
+      description: "Free-form tags for categorization"
+    - name: updated
+      type: datetime
+      description: "Last modification timestamp"
+    - name: supersedes
+      type: string
+      description: "Path to document this one supersedes"
+
+# Repository structure (AD-434 will implement this)
+repository_structure:
+  description: "Git-backed repository at {data_dir}/ship-records/"
+  directories:
+    - path: "captains-log/"
+      description: "Captain's Log entries — YYYY-MM-DD.md"
+    - path: "notebooks/{callsign}/"
+      description: "Per-agent notebook directories"
+    - path: "reports/"
+      description: "Published reports"
+    - path: "duty-logs/{department}/"
+      description: "Per-department duty logs"
+    - path: "operations/"
+      description: "System-generated operational records"
+    - path: "manuals/"
+      description: "Reference documentation"
+    - path: "archive/"
+      description: "Archived documents past retention period"

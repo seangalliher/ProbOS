@@ -1,0 +1,90 @@
+# Domain 6: Communication — channels, thread modes, message patterns
+#
+# Formalizes existing systems:
+#   - WardRoomService (ward_room.py) — channels, threads, posts, endorsements
+#   - WardRoomConfig (config.py) — cooldowns, retention, responder caps
+#   - AD-424 (Thread Classification) — inform/discuss/action modes
+#   - AD-437 (Action Space) — structured agent actions in Ward Room
+
+channel_types:
+  - id: ship
+    name: "Ship-wide"
+    description: "All crew can see and participate"
+    examples: ["All Hands", "Improvement Proposals"]
+    default_mode: discuss
+  - id: department
+    name: "Department"
+    description: "Scoped to a single department's crew"
+    examples: ["Medical", "Engineering", "Security", "Science", "Operations", "Bridge"]
+    default_mode: discuss
+  - id: dm
+    name: "Direct Message"
+    description: "Private 1:1 conversation between two participants"
+    default_mode: discuss
+  - id: custom
+    name: "Custom"
+    description: "User-created channels with custom membership"
+    default_mode: discuss
+
+thread_modes:
+  - id: inform
+    name: "Inform"
+    description: "Informational — no reply expected. Used for announcements, alerts, system messages."
+    reply_expected: false
+    routing: none
+    use_cases: ["bridge alerts", "system announcements", "status updates"]
+  - id: discuss
+    name: "Discuss"
+    description: "Open discussion — all eligible crew can respond within responder cap."
+    reply_expected: true
+    routing: department_preference
+    use_cases: ["proposals", "observations", "general discussion"]
+  - id: action
+    name: "Action"
+    description: "Action-oriented — responses should propose or commit to concrete actions."
+    reply_expected: true
+    routing: competency_based
+    use_cases: ["incident response", "task coordination", "decision requests"]
+  - id: announce
+    name: "Announce"
+    description: "System or Captain announcements — crew may respond but thread is primarily informational."
+    reply_expected: false
+    routing: none
+    use_cases: ["restart announcements", "Captain's orders", "system events"]
+
+# Message patterns — the interaction vocabulary
+message_patterns:
+  - id: observation
+    tag: "[Observation]"
+    description: "Agent shares an analysis or finding from their domain expertise"
+    expected_from: all_crew
+    typical_response: discuss
+  - id: proposal
+    tag: "[Proposal]"
+    description: "Agent proposes a change, improvement, or action"
+    expected_from: all_crew
+    typical_response: discuss
+    structured_fields: ["title", "rationale", "affected_systems", "priority"]
+  - id: endorsement
+    tag: "[ENDORSE post_id UP/DOWN]"
+    description: "Agent endorses or opposes a post (AD-437 action space)"
+    expected_from: lieutenant_plus
+    min_rank: lieutenant
+  - id: reply
+    tag: "[REPLY thread_id]...[/REPLY]"
+    description: "Agent posts a structured reply to a specific thread (AD-437 action space)"
+    expected_from: lieutenant_plus
+    min_rank: lieutenant
+  - id: no_response
+    tag: "[NO_RESPONSE]"
+    description: "Agent explicitly declines to respond — disciplined silence"
+    expected_from: all_crew
+
+# Credibility system
+credibility:
+  description: "Rolling credibility score (0-1) based on posting quality and endorsement history"
+  min_channel_creation: 0.3
+  factors:
+    - "Post endorsement ratio (upvotes vs downvotes)"
+    - "Total post count"
+    - "Total endorsements received"
