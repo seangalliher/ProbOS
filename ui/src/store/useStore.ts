@@ -235,6 +235,8 @@ export interface HXIState {
   wardRoomActiveThread: string | null;
   wardRoomThreadDetail: { thread: WardRoomThread; posts: WardRoomPost[] } | null;
   wardRoomUnread: Record<string, number>;
+  wardRoomView: 'channels' | 'dms';
+  wardRoomDmChannels: { channel: { id: string; name: string; description: string; created_at: number }; latest_thread: any; thread_count: number }[];
   // Assignments (AD-408)
   assignments: Assignment[];
   // Scheduled Tasks (Phase 25a)
@@ -283,6 +285,8 @@ export interface HXIState {
   closeWardRoomThread: () => void;
   refreshWardRoomThreads: () => void;
   refreshWardRoomUnread: () => void;
+  setWardRoomView: (view: 'channels' | 'dms') => void;
+  refreshWardRoomDmChannels: () => void;
   setShowIntro: (v: boolean) => void;
   setShowLegend: (v: boolean) => void;
   setShowHistory: (v: boolean) => void;
@@ -381,6 +385,8 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomActiveThread: null,
   wardRoomThreadDetail: null,
   wardRoomUnread: {},
+  wardRoomView: 'channels' as const,
+  wardRoomDmChannels: [],
   // Assignments (AD-408)
   assignments: [],
   // Scheduled Tasks (Phase 25a)
@@ -526,6 +532,16 @@ export const useStore = create<HXIState>((set, get) => ({
       if (resp.ok) {
         const data = await resp.json();
         set({ wardRoomUnread: data.unread || {} });
+      }
+    } catch { /* swallow */ }
+  },
+  setWardRoomView: (view: 'channels' | 'dms') => set({ wardRoomView: view }),
+  refreshWardRoomDmChannels: async () => {
+    try {
+      const resp = await fetch('/api/wardroom/dms');
+      if (resp.ok) {
+        const data = await resp.json();
+        set({ wardRoomDmChannels: data || [] });
       }
     } catch { /* swallow */ }
   },

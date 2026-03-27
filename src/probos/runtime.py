@@ -1318,6 +1318,7 @@ class ProbOSRuntime:
                 db_path=str(self._data_dir / "ward_room.db"),
                 emit_event=_ward_room_emit,
                 episodic_memory=self.episodic_memory,  # AD-430a
+                hebbian_router=self.hebbian_router,  # AD-453
             )
             await self.ward_room.start()
             logger.info("ward-room started")

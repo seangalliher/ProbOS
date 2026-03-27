@@ -777,6 +777,11 @@ class ProactiveCognitiveLoop:
             )
             actions_executed.extend(reply_actions)
 
+        # --- Direct Messages (Commander+) --- AD-453
+        if rank in (Rank.COMMANDER, Rank.SENIOR):
+            text, dm_actions = await self._extract_and_execute_dms(agent, text)
+            actions_executed.extend(dm_actions)
+
         # --- Notebook writes (AD-434) ---
         notebook_pattern = r'\[NOTEBOOK\s+([\w-]+)\](.*?)\[/NOTEBOOK\]'
         notebook_matches = re.findall(notebook_pattern, text, re.DOTALL)
@@ -874,5 +879,89 @@ class ProactiveCognitiveLoop:
                 )
 
         # Strip all [REPLY]...[/REPLY] blocks from text
+        cleaned = pattern.sub('', text).strip()
+        return cleaned, actions
+
+    async def _extract_and_execute_dms(
+        self, agent: Any, text: str,
+    ) -> tuple[str, list[dict]]:
+        """AD-453: Extract [DM @callsign]...[/DM] blocks and send as DMs."""
+        import re
+        rt = self._runtime
+        actions: list[dict] = []
+
+        pattern = re.compile(
+            r'\[DM\s+@?(\S+)\]\s*\n(.*?)\n\[/DM\]',
+            re.DOTALL | re.IGNORECASE,
+        )
+
+        for match in pattern.finditer(text):
+            target_callsign = match.group(1)
+            dm_body = match.group(2).strip()
+            if not dm_body:
+                continue
+
+            # Resolve callsign to agent_type
+            target_agent_type = None
+            if hasattr(rt, 'callsign_registry'):
+                target_agent_type = rt.callsign_registry.get_agent_type(target_callsign)
+            if not target_agent_type:
+                logger.debug("AD-453: DM target @%s not found in registry", target_callsign)
+                continue
+
+            # Don't DM yourself
+            if target_agent_type == agent.agent_type or target_agent_type == agent.id:
+                continue
+
+            # Resolve target's full agent ID
+            target_full_id = None
+            for a in rt._agents:
+                if a.agent_type == target_agent_type:
+                    target_full_id = a.id
+                    break
+            if not target_full_id:
+                continue
+
+            try:
+                sender_callsign = ""
+                if hasattr(rt, 'callsign_registry'):
+                    sender_callsign = rt.callsign_registry.get_callsign(agent.agent_type)
+
+                dm_channel = await rt.ward_room.get_or_create_dm_channel(
+                    agent.id, target_full_id,
+                    callsign_a=sender_callsign or agent.agent_type,
+                    callsign_b=target_callsign,
+                )
+
+                await rt.ward_room.create_thread(
+                    channel_id=dm_channel.id,
+                    author_id=agent.id,
+                    title=f"[DM to @{target_callsign}]",
+                    body=dm_body,
+                    author_callsign=sender_callsign or agent.agent_type,
+                )
+
+                actions.append({
+                    "type": "dm",
+                    "target_callsign": target_callsign,
+                    "target_agent_id": target_full_id,
+                })
+                logger.info("AD-453: %s sent DM to @%s", sender_callsign or agent.agent_type, target_callsign)
+
+                # Record Hebbian social connection
+                if hasattr(rt, 'hebbian_router') and rt.hebbian_router:
+                    from probos.mesh.routing import REL_SOCIAL
+                    rt.hebbian_router.record_interaction(
+                        source=agent.id, target=target_full_id,
+                        success=True, rel_type=REL_SOCIAL,
+                    )
+                    rt._emit_event("hebbian_update", {
+                        "source": agent.id, "target": target_full_id,
+                        "weight": round(rt.hebbian_router.get_weight(agent.id, target_full_id), 4),
+                        "rel_type": "social",
+                    })
+            except Exception as e:
+                logger.warning("AD-453: DM to @%s failed: %s", target_callsign, e)
+
         cleaned = pattern.sub('', text).strip()
         return cleaned, actions

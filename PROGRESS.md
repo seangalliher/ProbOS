@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: BF-044 CLOSED — Hebbian source key fixed: `source=msg.id` (UUID, never reinforces) → `source=intent` (intent name, accumulates). Both `submit_intent()` and `submit_intent_with_consensus()` patched. Also fixed AD-442 proactive activation check (`get_trust` → `get_score`, MagicMock-safe threshold). 4 new tests in `test_hebbian_source_key.py`. 3565 passed, 0 failed (parallel, -m "not slow"). All commissioning gate items complete (BF-039 + AD-434 + AD-442 + BF-043 + BF-044).
+## Current Status: AD-453 COMPLETE — Ward Room Social Fabric: Hebbian integration + agent-to-agent DMs + Captain visibility. (1) `REL_SOCIAL` Hebbian connections recorded on Ward Room replies and @mentions. (2) `[DM @callsign]...[/DM]` action tag in proactive loop with deterministic DM channels. (3) Two Captain API endpoints (`/api/wardroom/dms`, `/api/wardroom/dms/{id}/threads`) + HXI DM browser tab. 19 new tests (13 DM + 6 Hebbian social). 3584 passed, 0 failed (parallel, -m "not slow").
 
 ---
 

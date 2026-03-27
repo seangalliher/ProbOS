@@ -540,6 +540,42 @@ def create_app(runtime: Any) -> FastAPI:
             "repository_structure": [asdict(d) for d in ont.get_repository_structure()],
         }
 
+    # ── Ward Room DMs API (AD-453) ──────────────────────────────────
+
+    @app.get("/api/wardroom/dms")
+    async def list_dm_channels():
+        """List all DM channels with latest thread info. Captain oversight."""
+        if not runtime.ward_room:
+            return []
+        channels = await runtime.ward_room.list_channels()
+        dm_channels = [c for c in channels if c.channel_type == "dm"]
+        result = []
+        for ch in dm_channels:
+            threads = await runtime.ward_room.list_threads(ch.id, limit=1)
+            all_threads = await runtime.ward_room.list_threads(ch.id, limit=100)
+            result.append({
+                "channel": {
+                    "id": ch.id, "name": ch.name,
+                    "description": ch.description,
+                    "created_at": ch.created_at,
+                },
+                "latest_thread": threads[0] if threads else None,
+                "thread_count": len(all_threads),
+            })
+        return result
+
+    @app.get("/api/wardroom/dms/{channel_id}/threads")
+    async def list_dm_threads(channel_id: str):
+        """List all threads in a DM channel. Captain oversight."""
+        if not runtime.ward_room:
+            raise HTTPException(status_code=404, detail="Ward Room not available")
+        channels = await runtime.ward_room.list_channels()
+        dm_ch = next((c for c in channels if c.id == channel_id and c.channel_type == "dm"), None)
+        if not dm_ch:
+            raise HTTPException(status_code=404, detail="DM channel not found")
+        threads = await runtime.ward_room.list_threads(channel_id, limit=100)
+        return {"channel": dm_ch, "threads": threads}
+
     # ── Ship's Records API (AD-434) ────────────────────────────────
 
     @app.get("/api/records/stats")

@@ -204,12 +204,13 @@ _MENTION_PATTERN = re.compile(r'@(\w+)')
 class WardRoomService:
     """Ship's Computer communication fabric — Reddit-style threaded discussions."""
 
-    def __init__(self, db_path: str | None = None, emit_event: Any = None, episodic_memory: Any = None, ontology: Any = None):
+    def __init__(self, db_path: str | None = None, emit_event: Any = None, episodic_memory: Any = None, ontology: Any = None, hebbian_router: Any = None):
         self.db_path = db_path
         self._db: aiosqlite.Connection | None = None
         self._emit_event = emit_event  # Callback for WebSocket broadcasting
         self._episodic_memory = episodic_memory  # AD-430a: For storing conversation episodes
         self._ontology = ontology  # AD-429e: Vessel ontology for department queries
+        self._hebbian_router = hebbian_router  # AD-453: Hebbian social recording
         self._channel_cache: list[dict[str, Any]] = []  # Sync cache for state_snapshot
 
     async def start(self) -> None:
@@ -641,6 +642,52 @@ class WardRoomService:
                 department=row[3], created_by=row[4], created_at=row[5],
                 archived=bool(row[6]), description=row[7],
             )
+
+    async def get_or_create_dm_channel(
+        self, agent_a_id: str, agent_b_id: str,
+        callsign_a: str = "", callsign_b: str = "",
+    ) -> WardRoomChannel:
+        """AD-453: Get or create a DM channel between two agents. Deterministic naming."""
+        if not self._db:
+            raise ValueError("Ward Room not initialized")
+        sorted_ids = sorted([agent_a_id, agent_b_id])
+        channel_name = f"dm-{sorted_ids[0][:8]}-{sorted_ids[1][:8]}"
+
+        # Check if channel already exists
+        async with self._db.execute(
+            "SELECT id, name, channel_type, department, created_by, created_at, archived, description "
+            "FROM channels WHERE name = ? AND channel_type = 'dm'", (channel_name,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return WardRoomChannel(
+                    id=row[0], name=row[1], channel_type=row[2],
+                    department=row[3], created_by=row[4], created_at=row[5],
+                    archived=bool(row[6]), description=row[7],
+                )
+
+        # Create new DM channel (bypass credibility check for system-created DMs)
+        label_a = callsign_a or agent_a_id[:12]
+        label_b = callsign_b or agent_b_id[:12]
+        now = time.time()
+        channel = WardRoomChannel(
+            id=str(uuid.uuid4()), name=channel_name, channel_type="dm",
+            department="", created_by=agent_a_id, created_at=now,
+            description=f"DM: {label_a} \u2194 {label_b}",
+        )
+        await self._db.execute(
+            "INSERT INTO channels (id, name, channel_type, department, created_by, created_at, description) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (channel.id, channel.name, channel.channel_type,
+             channel.department, channel.created_by, channel.created_at, channel.description),
+        )
+        await self._db.commit()
+
+        # Subscribe both agents
+        await self.subscribe(agent_a_id, channel.id)
+        await self.subscribe(agent_b_id, channel.id)
+        await self._refresh_channel_cache()
+        return channel
 
     # ------------------------------------------------------------------
     # Thread operations
@@ -1088,6 +1135,43 @@ class WardRoomService:
                     await self._episodic_memory.store(episode)
             except Exception:
                 pass  # Non-critical
+
+        # AD-453: Record Hebbian social connections for replies
+        if self._hebbian_router and author_id:
+            try:
+                from probos.mesh.routing import REL_SOCIAL
+                # Get thread author for author→thread_author connection
+                async with self._db.execute(
+                    "SELECT author_id FROM threads WHERE id = ?", (thread_id,)
+                ) as cursor:
+                    trow = await cursor.fetchone()
+                if trow and trow[0] and trow[0] != author_id:
+                    self._hebbian_router.record_interaction(
+                        source=author_id, target=trow[0],
+                        success=True, rel_type=REL_SOCIAL,
+                    )
+                    self._emit("hebbian_update", {
+                        "source": author_id, "target": trow[0],
+                        "weight": round(self._hebbian_router.get_weight(author_id, trow[0]), 4),
+                        "rel_type": "social",
+                    })
+                # @mention connections
+                mentions = self._extract_mentions(body)
+                if mentions and hasattr(self, '_resolve_callsign_to_id'):
+                    for callsign in mentions:
+                        mid = self._resolve_callsign_to_id(callsign)
+                        if mid and mid != author_id:
+                            self._hebbian_router.record_interaction(
+                                source=author_id, target=mid,
+                                success=True, rel_type=REL_SOCIAL,
+                            )
+                            self._emit("hebbian_update", {
+                                "source": author_id, "target": mid,
+                                "weight": round(self._hebbian_router.get_weight(author_id, mid), 4),
+                                "rel_type": "social",
+                            })
+            except Exception:
+                pass  # Non-critical — Ward Room must never break for Hebbian
         return post
 
     async def get_post(self, post_id: str) -> dict[str, Any] | None:

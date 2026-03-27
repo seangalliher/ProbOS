@@ -73,6 +73,7 @@ def can_perform_action(rank: Rank, action: str) -> bool:
     _ACTION_TIERS: dict[str, Rank] = {
         "endorse": Rank.LIEUTENANT,
         "reply": Rank.LIEUTENANT,
+        "dm": Rank.COMMANDER,  # AD-453
         "lock": Rank.SENIOR,
         "pin": Rank.SENIOR,
     }

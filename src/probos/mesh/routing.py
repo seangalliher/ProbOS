@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS hebbian_weights (
 # Relationship types
 REL_INTENT = "intent"  # intent_id → agent_id (Phase 1 default)
 REL_AGENT = "agent"  # agent_id → agent_id (Phase 2 verification)
+REL_SOCIAL = "social"  # agent_id → agent_id (AD-453 Ward Room interactions)
 REL_BUILDER_VARIANT = "builder_variant"  # build_code → native|visiting (AD-353)
 REL_STRATEGY = "strategy"  # strategy_id → agent_type (AD-384)
 
