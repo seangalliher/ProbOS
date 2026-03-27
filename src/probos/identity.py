@@ -7,11 +7,18 @@ DID Method: did:probos:{instance_id}:{agent_uuid}
 Birth Certificate: W3C VC with AgentBirthCertificate type
 Identity Ledger: Append-only hash-chain (blockchain) of birth certificates
 
+Proof Type: Uses 'Sha256Hash2024' — a content integrity hash, not a
+cryptographic signature. This is intentional: ProbOS identity is self-sovereign
+within the instance, not designed for external VC verifier interop (yet).
+The hash proves immutability, not third-party authenticity.
+Future: Replace with Ed25519Signature2020 when federation requires it.
+
 'Every agent is born once. Their identity is permanent. Their record is immutable.'
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -37,6 +44,8 @@ def generate_did(instance_id: str, agent_uuid: str) -> str:
     Format: did:probos:{instance_id}:{agent_uuid}
     Globally unique across all ProbOS instances in the Nooplex.
     """
+    if not instance_id or not agent_uuid:
+        raise ValueError(f"DID generation requires non-empty instance_id and agent_uuid, got '{instance_id}', '{agent_uuid}'")
     return f"did:{DID_METHOD}:{instance_id}:{agent_uuid}"
 
 
@@ -47,6 +56,8 @@ def generate_ship_did(instance_id: str) -> str:
     The ship is the root of trust — its DID has no agent suffix.
     Reset = new instance_id = new ship DID = new timeline.
     """
+    if not instance_id:
+        raise ValueError("Ship DID generation requires non-empty instance_id")
     return f"did:{DID_METHOD}:{instance_id}"
 
 
@@ -66,6 +77,8 @@ def parse_did(did: str) -> dict[str, str] | None:
 
     Returns None if the DID is not a valid did:probos identifier.
     """
+    if not did or not isinstance(did, str):
+        return None
     parts = did.split(":")
     if len(parts) < 3 or parts[0] != "did" or parts[1] != DID_METHOD:
         return None
@@ -112,7 +125,13 @@ class AgentBirthCertificate:
     certificate_hash: str = ""  # SHA-256 of all fields above — computed at issuance
 
     def compute_hash(self) -> str:
-        """Compute the SHA-256 hash of this certificate's content fields."""
+        """Compute the SHA-256 hash of this certificate's content fields.
+
+        Note: birth_timestamp is a float. Python's json.dumps uses repr-style
+        float formatting which is consistent within a CPython major version.
+        For cross-platform federation hash verification, timestamps may need
+        to be normalized to fixed-precision strings in a future version.
+        """
         content = {
             "agent_uuid": self.agent_uuid,
             "did": self.did,
@@ -274,7 +293,13 @@ class LedgerBlock:
     block_hash: str = ""     # SHA-256(index + timestamp + cert_hash + agent_did + previous_hash)
 
     def compute_hash(self) -> str:
-        """Compute this block's hash from its contents."""
+        """Compute this block's hash from its contents.
+
+        Uses colon-delimited string format (vs JSON for certificates).
+        Both are deterministic within a Python version. The simpler format
+        is intentional — block hashes are internal chain integrity checks,
+        not externally verifiable credentials.
+        """
         content = f"{self.index}:{self.timestamp}:{self.certificate_hash}:{self.agent_did}:{self.previous_hash}"
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
@@ -334,6 +359,7 @@ CREATE INDEX IF NOT EXISTS idx_cert_did ON birth_certificates(did);
 CREATE INDEX IF NOT EXISTS idx_ledger_did ON identity_ledger(agent_did);
 CREATE INDEX IF NOT EXISTS idx_asset_type ON asset_tags(asset_type);
 CREATE INDEX IF NOT EXISTS idx_asset_slot ON asset_tags(slot_id);
+CREATE INDEX IF NOT EXISTS idx_slot_agent ON slot_mappings(agent_uuid);
 """
 
 
@@ -351,11 +377,11 @@ class AgentIdentityRegistry:
     def __init__(self, data_dir: Path) -> None:
         self._data_dir = data_dir
         self._db: aiosqlite.Connection | None = None
-        self._cache: dict[str, AgentBirthCertificate] = {}  # agent_type -> cert (for crew singletons)
         self._uuid_cache: dict[str, AgentBirthCertificate] = {}  # agent_uuid -> cert
         self._slot_cache: dict[str, AgentBirthCertificate] = {}  # slot_id -> cert
         self._ship_certificate: ShipBirthCertificate | None = None
         self._asset_cache: dict[str, AssetTag] = {}  # slot_id -> AssetTag
+        self._ledger_lock = asyncio.Lock()
 
     async def start(self, instance_id: str = "", vessel_name: str = "ProbOS", version: str = "") -> None:
         """Initialize identity database and load existing certificates.
@@ -368,10 +394,14 @@ class AgentIdentityRegistry:
             self._data_dir.mkdir(parents=True, exist_ok=True)
             db_path = self._data_dir / "identity.db"
             self._db = await aiosqlite.connect(str(db_path))
+            await self._db.execute("PRAGMA foreign_keys = ON")
             await self._db.executescript(_IDENTITY_SCHEMA)
             await self._db.commit()
 
             # Load existing certificates into cache
+            # Column order: agent_uuid(0), did(1), agent_type(2), callsign(3),
+            # instance_id(4), vessel_name(5), birth_timestamp(6), department(7),
+            # post_id(8), baseline_version(9), certificate_hash(10), certificate_vc_json(11)
             async with self._db.execute("SELECT * FROM birth_certificates") as cursor:
                 async for row in cursor:
                     cert = AgentBirthCertificate(
@@ -430,6 +460,8 @@ class AgentIdentityRegistry:
             return None
 
         # Check for existing ship certificate
+        # Column order: ship_did(0), instance_id(1), vessel_name(2),
+        # commissioned_at(3), version(4), certificate_hash(5)
         async with self._db.execute(
             "SELECT ship_did, instance_id, vessel_name, commissioned_at, "
             "version, certificate_hash FROM ship_birth_certificate LIMIT 1"
@@ -483,6 +515,10 @@ class AgentIdentityRegistry:
             (cert.ship_did, cert.instance_id, cert.vessel_name,
              cert.commissioned_at, cert.version, cert.certificate_hash, vc_json),
         )
+
+        # Create genesis block immediately — the ship's birth is block 0
+        self._ship_certificate = cert  # Set before genesis so it uses real ship data
+        await self._create_genesis_block()
 
         await self._db.commit()
 
@@ -599,6 +635,14 @@ class AgentIdentityRegistry:
         if not self._db:
             raise RuntimeError("Identity registry not started")
 
+        # Input validation — catch misuse before corrupting the ledger
+        if not agent_type:
+            raise ValueError("agent_type is required for birth certificate issuance")
+        if not instance_id:
+            raise ValueError("instance_id is required — ship must be commissioned before issuing birth certificates")
+        if not callsign:
+            raise ValueError("callsign is required for birth certificate issuance")
+
         # Generate sovereign identity
         agent_uuid = generate_agent_uuid()
         did = generate_did(instance_id, agent_uuid)
@@ -637,13 +681,21 @@ class AgentIdentityRegistry:
 
         # Map slot_id -> agent_uuid for restart persistence
         if slot_id:
+            # Check for existing mapping — warn if overwriting
+            existing = self._slot_cache.get(slot_id)
+            if existing:
+                logger.warning(
+                    "Slot %s already mapped to agent %s — overwriting with %s",
+                    slot_id, existing.agent_uuid, agent_uuid,
+                )
             await self._db.execute(
                 "INSERT OR REPLACE INTO slot_mappings (slot_id, agent_uuid) VALUES (?, ?)",
                 (slot_id, agent_uuid),
             )
 
-        # Append to Identity Ledger (blockchain)
-        await self._append_to_ledger(cert.certificate_hash, cert.did)
+        # Append to Identity Ledger (blockchain) — serialized to prevent index conflicts
+        async with self._ledger_lock:
+            await self._append_to_ledger(cert.certificate_hash, cert.did)
 
         await self._db.commit()
 
@@ -700,6 +752,7 @@ class AgentIdentityRegistry:
             raise RuntimeError("Identity registry not started")
 
         # Get the previous block
+        # Column order: block_index(0), block_hash(1)
         async with self._db.execute(
             "SELECT block_index, block_hash FROM identity_ledger "
             "ORDER BY block_index DESC LIMIT 1"
@@ -805,6 +858,12 @@ class AgentIdentityRegistry:
             if block.block_hash != expected_hash:
                 return False, f"Block {block.index}: hash mismatch"
 
+            # Verify genesis block has expected previous_hash
+            if i == 0:
+                expected_prev = "0" * 64
+                if block.previous_hash != expected_prev:
+                    return False, f"Genesis block: invalid previous_hash (expected all zeros)"
+
             # Verify chain linkage (skip genesis)
             if i > 0:
                 prev_block_hash = rows[i - 1][5]
@@ -842,7 +901,9 @@ class AgentIdentityRegistry:
                 })
 
         # Attach ship certificate to genesis block if available
-        if blocks and blocks[0]["agent_did"] != "ship" and self._ship_certificate:
+        # The LEFT JOIN on birth_certificates won't find the ship cert (different table)
+        # so we attach it explicitly when it exists
+        if blocks and self._ship_certificate and not blocks[0].get("credential"):
             blocks[0]["credential"] = self._ship_certificate.to_verifiable_credential()
 
         return blocks

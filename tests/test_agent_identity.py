@@ -500,9 +500,9 @@ class TestShipCommissioning:
         assert ship_cert.version == "0.5.0"
         assert ship_cert.certificate_hash  # non-empty hash
 
-        # Genesis block should carry ship's certificate hash and DID
+        # Genesis block should exist immediately (eager creation)
         chain = await registry.export_chain()
-        assert len(chain) == 0  # No blocks yet until first agent is issued
+        assert len(chain) == 1  # Genesis created at commissioning
 
         # Issue an agent — this triggers genesis + agent block
         cert = await registry.issue_birth_certificate(
@@ -540,29 +540,6 @@ class TestShipCommissioning:
         assert cert2.commissioned_at == ts1  # Same timestamp — not re-commissioned
         assert cert2.ship_did == cert1.ship_did
         await reg2.stop()
-
-    @pytest.mark.asyncio
-    async def test_genesis_block_backwards_compat_no_instance_id(self, tmp_path: Path) -> None:
-        """Without instance_id, genesis block falls back to placeholder values."""
-        registry = AgentIdentityRegistry(data_dir=tmp_path)
-        await registry.start()  # No instance_id — pre-commissioning mode
-
-        assert registry.get_ship_certificate() is None
-
-        # Issue an agent — genesis should use placeholder
-        cert = await registry.issue_birth_certificate(
-            agent_type="test", callsign="Test",
-            instance_id="", vessel_name="ProbOS",
-            department="test", post_id="test-post",
-            baseline_version="0.0.0",
-        )
-
-        chain = await registry.export_chain()
-        genesis = chain[0]
-        assert genesis["agent_did"] == "ship"  # placeholder
-        assert genesis["certificate_hash"] == "genesis"  # placeholder
-
-        await registry.stop()
 
     def test_agent_vc_issuer_uses_ship_did(self) -> None:
         """Agent birth certificate issuer field should be the ship DID, not ship:key."""
@@ -700,5 +677,98 @@ class TestAssetTags:
         assert len(tags) == 2
         types = {t.asset_type for t in tags}
         assert types == {"type_a", "type_b"}
+
+        await reg.stop()
+
+
+# ── Input Validation ──────────────────────────────────────────────
+
+
+class TestInputValidation:
+
+    def test_generate_did_rejects_empty_instance_id(self) -> None:
+        with pytest.raises(ValueError, match="instance_id"):
+            generate_did("", "uuid-123")
+
+    def test_generate_did_rejects_empty_agent_uuid(self) -> None:
+        with pytest.raises(ValueError, match="agent_uuid"):
+            generate_did("inst-1", "")
+
+    def test_generate_ship_did_rejects_empty(self) -> None:
+        with pytest.raises(ValueError, match="instance_id"):
+            generate_ship_did("")
+
+    def test_parse_did_returns_none_for_none(self) -> None:
+        assert parse_did(None) is None  # type: ignore[arg-type]
+
+    def test_parse_did_returns_none_for_empty(self) -> None:
+        assert parse_did("") is None
+
+    @pytest.mark.asyncio
+    async def test_issue_rejects_empty_instance_id(self, tmp_path: Path) -> None:
+        reg = AgentIdentityRegistry(data_dir=tmp_path)
+        await reg.start()
+        with pytest.raises(ValueError, match="instance_id"):
+            await reg.issue_birth_certificate(
+                agent_type="test", callsign="Test",
+                instance_id="", vessel_name="ProbOS",
+                department="test", post_id="test-post",
+                baseline_version="0.0.0",
+            )
+        await reg.stop()
+
+    @pytest.mark.asyncio
+    async def test_issue_rejects_empty_agent_type(self, tmp_path: Path) -> None:
+        reg = AgentIdentityRegistry(data_dir=tmp_path)
+        await reg.start()
+        with pytest.raises(ValueError, match="agent_type"):
+            await reg.issue_birth_certificate(
+                agent_type="", callsign="Test",
+                instance_id="inst-1", vessel_name="ProbOS",
+                department="test", post_id="test-post",
+                baseline_version="0.0.0",
+            )
+        await reg.stop()
+
+
+# ── Genesis Block Eager Creation ──────────────────────────────────
+
+
+class TestEagerGenesis:
+
+    @pytest.mark.asyncio
+    async def test_commissioning_creates_genesis_immediately(self, tmp_path: Path) -> None:
+        """Genesis block exists right after commissioning, before any agent is born."""
+        reg = AgentIdentityRegistry(data_dir=tmp_path)
+        await reg.start(instance_id="eager-id", vessel_name="USS Eager", version="0.5.0")
+
+        chain = await reg.export_chain()
+        assert len(chain) == 1  # Genesis exists immediately
+        assert chain[0]["agent_did"] == "did:probos:eager-id"
+        assert chain[0]["certificate_hash"] != "genesis"  # Real hash, not placeholder
+
+        await reg.stop()
+
+
+# ── Chain Verification Hardening ──────────────────────────────────
+
+
+class TestChainVerificationHardening:
+
+    @pytest.mark.asyncio
+    async def test_verify_rejects_tampered_genesis_previous_hash(self, tmp_path: Path) -> None:
+        """Tampered genesis previous_hash should fail verification."""
+        reg = AgentIdentityRegistry(data_dir=tmp_path)
+        await reg.start(instance_id="tamper-test", vessel_name="USS Tamper", version="0.5.0")
+
+        # Tamper with genesis previous_hash
+        await reg._db.execute(
+            "UPDATE identity_ledger SET previous_hash = 'tampered' WHERE block_index = 0"
+        )
+        await reg._db.commit()
+
+        valid, message = await reg.verify_chain()
+        assert not valid
+        assert "previous_hash" in message or "hash mismatch" in message
 
         await reg.stop()
