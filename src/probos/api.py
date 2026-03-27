@@ -586,6 +586,24 @@ def create_app(runtime: Any) -> FastAPI:
             "certificates": [c.to_verifiable_credential() for c in certs],
         }
 
+    @app.get("/api/identity/ship")
+    async def get_ship_identity() -> Any:
+        """Return the ship's birth certificate and commissioning data."""
+        if not runtime.identity_registry:
+            return JSONResponse({"error": "Identity registry not available"}, status_code=503)
+
+        cert = runtime.identity_registry.get_ship_certificate()
+        if not cert:
+            return JSONResponse({"error": "Ship not commissioned"}, status_code=404)
+
+        return {
+            "ship_did": cert.ship_did,
+            "instance_id": cert.instance_id,
+            "vessel_name": cert.vessel_name,
+            "commissioned_at": cert.commissioned_at,
+            "birth_certificate": cert.to_verifiable_credential(),
+        }
+
     @app.post("/api/chat")
     async def chat(req: ChatRequest) -> dict[str, Any]:
         text = req.message.strip()

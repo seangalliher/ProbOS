@@ -134,7 +134,7 @@ class AgentBirthCertificate:
         return {
             "@context": [VC_CONTEXT, PROBOS_CONTEXT],
             "type": ["VerifiableCredential", "AgentBirthCertificate"],
-            "issuer": f"did:{DID_METHOD}:{self.instance_id}:ship",
+            "issuer": generate_ship_did(self.instance_id),
             "validFrom": datetime.fromtimestamp(
                 self.birth_timestamp, tz=timezone.utc
             ).isoformat(),
@@ -155,13 +155,76 @@ class AgentBirthCertificate:
                 "created": datetime.fromtimestamp(
                     self.birth_timestamp, tz=timezone.utc
                 ).isoformat(),
-                "verificationMethod": f"did:{DID_METHOD}:{self.instance_id}:ship#key-1",
+                "verificationMethod": f"{generate_ship_did(self.instance_id)}#key-1",
                 "proofValue": self.certificate_hash,
             },
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentBirthCertificate:
+        """Reconstruct from a dict (e.g., loaded from DB)."""
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class ShipBirthCertificate:
+    """W3C Verifiable Credential — Ship Birth Certificate.
+
+    Issued once at commissioning. The ship's own identity document.
+    Self-signed: the ship is its own root of trust.
+    Reset = new instance_id = new ship = new certificate.
+    """
+    # Identity
+    ship_did: str              # did:probos:{instance_id}
+    instance_id: str           # UUID — the ship's permanent ID for this timeline
+    vessel_name: str           # e.g., "ProbOS"
+
+    # Commissioning
+    commissioned_at: float     # time.time() — the ship's birthday
+    version: str               # Software version at commissioning
+
+    # Proof
+    certificate_hash: str = "" # SHA-256 of content fields
+
+    def compute_hash(self) -> str:
+        """Compute the SHA-256 hash of this certificate's content fields."""
+        content = {
+            "ship_did": self.ship_did,
+            "instance_id": self.instance_id,
+            "vessel_name": self.vessel_name,
+            "commissioned_at": self.commissioned_at,
+            "version": self.version,
+        }
+        canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def to_verifiable_credential(self) -> dict[str, Any]:
+        """Serialize as a W3C Verifiable Credential JSON structure."""
+        from datetime import datetime, timezone
+        return {
+            "@context": [VC_CONTEXT, PROBOS_CONTEXT],
+            "type": ["VerifiableCredential", "ShipBirthCertificate"],
+            "issuer": self.ship_did,  # Self-signed — ship is its own root of trust
+            "validFrom": datetime.fromtimestamp(
+                self.commissioned_at, tz=timezone.utc
+            ).isoformat(),
+            "credentialSubject": {
+                "id": self.ship_did,
+                "vesselName": self.vessel_name,
+                "version": self.version,
+            },
+            "proof": {
+                "type": "Sha256Hash2024",
+                "created": datetime.fromtimestamp(
+                    self.commissioned_at, tz=timezone.utc
+                ).isoformat(),
+                "verificationMethod": f"{self.ship_did}#key-1",
+                "proofValue": self.certificate_hash,
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ShipBirthCertificate:
         """Reconstruct from a dict (e.g., loaded from DB)."""
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
@@ -207,6 +270,16 @@ CREATE TABLE IF NOT EXISTS identity_ledger (
     block_hash TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ship_birth_certificate (
+    ship_did TEXT PRIMARY KEY,
+    instance_id TEXT UNIQUE NOT NULL,
+    vessel_name TEXT NOT NULL,
+    commissioned_at REAL NOT NULL,
+    version TEXT NOT NULL,
+    certificate_hash TEXT NOT NULL,
+    certificate_vc_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS slot_mappings (
     slot_id TEXT PRIMARY KEY,
     agent_uuid TEXT NOT NULL,
@@ -236,42 +309,133 @@ class AgentIdentityRegistry:
         self._cache: dict[str, AgentBirthCertificate] = {}  # agent_type -> cert (for crew singletons)
         self._uuid_cache: dict[str, AgentBirthCertificate] = {}  # agent_uuid -> cert
         self._slot_cache: dict[str, AgentBirthCertificate] = {}  # slot_id -> cert
+        self._ship_certificate: ShipBirthCertificate | None = None
 
-    async def start(self) -> None:
-        """Initialize identity database and load existing certificates."""
-        self._data_dir.mkdir(parents=True, exist_ok=True)
-        db_path = self._data_dir / "identity.db"
-        self._db = await aiosqlite.connect(str(db_path))
-        await self._db.executescript(_IDENTITY_SCHEMA)
-        await self._db.commit()
+    async def start(self, instance_id: str = "", vessel_name: str = "ProbOS", version: str = "") -> None:
+        """Initialize identity database and load existing certificates.
 
-        # Load existing certificates into cache
-        async with self._db.execute("SELECT * FROM birth_certificates") as cursor:
-            async for row in cursor:
-                cert = AgentBirthCertificate(
-                    agent_uuid=row[0], did=row[1], agent_type=row[2],
-                    callsign=row[3], instance_id=row[4], vessel_name=row[5],
-                    birth_timestamp=row[6], department=row[7], post_id=row[8],
-                    baseline_version=row[9], certificate_hash=row[10],
-                )
-                self._uuid_cache[cert.agent_uuid] = cert
+        If instance_id is provided, also loads or creates the ship's birth
+        certificate. Can be called with instance_id later via commission_ship()
+        if the instance_id isn't available at first boot.
+        """
+        if not self._db:
+            self._data_dir.mkdir(parents=True, exist_ok=True)
+            db_path = self._data_dir / "identity.db"
+            self._db = await aiosqlite.connect(str(db_path))
+            await self._db.executescript(_IDENTITY_SCHEMA)
+            await self._db.commit()
 
-        # Load slot mappings
-        async with self._db.execute(
-            "SELECT slot_id, agent_uuid FROM slot_mappings"
-        ) as cursor:
-            async for row in cursor:
-                cert = self._uuid_cache.get(row[1])
-                if cert:
-                    self._slot_cache[row[0]] = cert
+            # Load existing certificates into cache
+            async with self._db.execute("SELECT * FROM birth_certificates") as cursor:
+                async for row in cursor:
+                    cert = AgentBirthCertificate(
+                        agent_uuid=row[0], did=row[1], agent_type=row[2],
+                        callsign=row[3], instance_id=row[4], vessel_name=row[5],
+                        birth_timestamp=row[6], department=row[7], post_id=row[8],
+                        baseline_version=row[9], certificate_hash=row[10],
+                    )
+                    self._uuid_cache[cert.agent_uuid] = cert
 
-        logger.info("Identity registry loaded %d certificates", len(self._uuid_cache))
+            # Load slot mappings
+            async with self._db.execute(
+                "SELECT slot_id, agent_uuid FROM slot_mappings"
+            ) as cursor:
+                async for row in cursor:
+                    cert = self._uuid_cache.get(row[1])
+                    if cert:
+                        self._slot_cache[row[0]] = cert
+
+            logger.info("Identity registry loaded %d certificates", len(self._uuid_cache))
+
+        # Load or create ship birth certificate (if instance_id provided)
+        if instance_id and not self._ship_certificate:
+            self._ship_certificate = await self._load_or_commission_ship(
+                instance_id, vessel_name, version
+            )
 
     async def stop(self) -> None:
         """Close identity database."""
         if self._db:
             await self._db.close()
             self._db = None
+
+    async def _load_or_commission_ship(
+        self, instance_id: str, vessel_name: str, version: str
+    ) -> ShipBirthCertificate | None:
+        """Load existing ship certificate or commission a new ship.
+
+        First boot: creates the ShipBirthCertificate and writes genesis block.
+        Subsequent boots: loads the existing certificate from DB.
+        """
+        if not self._db or not instance_id:
+            return None
+
+        # Check for existing ship certificate
+        async with self._db.execute(
+            "SELECT ship_did, instance_id, vessel_name, commissioned_at, "
+            "version, certificate_hash FROM ship_birth_certificate LIMIT 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+
+        if row:
+            cert = ShipBirthCertificate(
+                ship_did=row[0], instance_id=row[1], vessel_name=row[2],
+                commissioned_at=row[3], version=row[4], certificate_hash=row[5],
+            )
+            logger.info("Ship certificate loaded: %s (commissioned %.0f)", cert.ship_did, cert.commissioned_at)
+            return cert
+
+        # First boot — commission the ship
+        return await self._commission_ship(instance_id, vessel_name, version)
+
+    async def _commission_ship(
+        self, instance_id: str, vessel_name: str, version: str
+    ) -> ShipBirthCertificate:
+        """Commission a new ship — create ShipBirthCertificate and genesis block.
+
+        This is the founding act of a ProbOS timeline. The ship receives its DID,
+        its birth certificate is the first credential, and the genesis block
+        carries the ship's certificate hash as proof of origin.
+
+        'Every ship is born once. Every timeline begins with a commissioning.'
+        """
+        if not self._db:
+            raise RuntimeError("Identity registry not started")
+
+        ship_did = generate_ship_did(instance_id)
+        now = time.time()
+
+        cert = ShipBirthCertificate(
+            ship_did=ship_did,
+            instance_id=instance_id,
+            vessel_name=vessel_name,
+            commissioned_at=now,
+            version=version,
+        )
+        cert.certificate_hash = cert.compute_hash()
+
+        # Persist ship certificate
+        vc_json = json.dumps(cert.to_verifiable_credential(), sort_keys=True)
+        await self._db.execute(
+            "INSERT INTO ship_birth_certificate "
+            "(ship_did, instance_id, vessel_name, commissioned_at, version, "
+            "certificate_hash, certificate_vc_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (cert.ship_did, cert.instance_id, cert.vessel_name,
+             cert.commissioned_at, cert.version, cert.certificate_hash, vc_json),
+        )
+
+        await self._db.commit()
+
+        logger.info(
+            "SHIP COMMISSIONED: %s — DID %s — Timeline begins",
+            vessel_name, ship_did,
+        )
+        return cert
+
+    def get_ship_certificate(self) -> ShipBirthCertificate | None:
+        """Return the ship's birth certificate, if commissioned."""
+        return self._ship_certificate
 
     # ── Lookup ──────────────────────────────────────────────────────
 
@@ -454,17 +618,29 @@ class AgentIdentityRegistry:
         return block
 
     async def _create_genesis_block(self) -> LedgerBlock:
-        """Create the genesis block — the ship's own birth on the ledger."""
+        """Create the genesis block — the ship's commissioning on the ledger.
+
+        If a ShipBirthCertificate exists, the genesis block carries its hash
+        and the ship's DID. Otherwise falls back to placeholder values for
+        backwards compatibility with pre-commissioning databases.
+        """
         if not self._db:
             raise RuntimeError("Identity registry not started")
 
-        # Genesis block: index 0, no previous hash
+        # Use real ship identity if available
+        if self._ship_certificate:
+            cert_hash = self._ship_certificate.certificate_hash
+            agent_did = self._ship_certificate.ship_did
+        else:
+            cert_hash = "genesis"
+            agent_did = "ship"
+
         genesis = LedgerBlock(
             index=0,
-            timestamp=time.time(),
-            certificate_hash="genesis",
-            agent_did="ship",
-            previous_hash="0" * 64,  # 64 zero chars — no predecessor
+            timestamp=self._ship_certificate.commissioned_at if self._ship_certificate else time.time(),
+            certificate_hash=cert_hash,
+            agent_did=agent_did,
+            previous_hash="0" * 64,
         )
         genesis.block_hash = genesis.compute_hash()
 
@@ -546,5 +722,9 @@ class AgentIdentityRegistry:
                     "block_hash": row[5],
                     "credential": json.loads(row[6]) if row[6] else None,
                 })
+
+        # Attach ship certificate to genesis block if available
+        if blocks and blocks[0]["agent_did"] != "ship" and self._ship_certificate:
+            blocks[0]["credential"] = self._ship_certificate.to_verifiable_credential()
 
         return blocks

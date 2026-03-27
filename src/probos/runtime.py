@@ -1393,6 +1393,16 @@ class ProbOSRuntime:
                 self.ontology.wire_agent(agent.agent_type, agent.id)
             logger.info("ontology initialized")
 
+        # --- Ship Commissioning (AD-441b) ---
+        # Now that ontology is loaded, commission the ship's identity
+        if self.ontology and self.identity_registry:
+            vi = self.ontology.get_vessel_identity()
+            await self.identity_registry.start(
+                instance_id=vi.instance_id,
+                vessel_name=vi.name,
+                version=self.config.system.version,
+            )
+
         # --- Wire ontology ↔ skill service (AD-429b) ---
         if self.ontology and self.skill_service:
             self.ontology.set_skill_service(self.skill_service)

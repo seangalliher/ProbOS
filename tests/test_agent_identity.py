@@ -13,6 +13,7 @@ from probos.identity import (
     AgentBirthCertificate,
     AgentIdentityRegistry,
     LedgerBlock,
+    ShipBirthCertificate,
     generate_agent_uuid,
     generate_did,
     generate_ship_did,
@@ -431,3 +432,154 @@ class TestAgentIntegration:
             assert len(by_type) == 2
         finally:
             await registry.stop()
+
+
+# ── Ship Commissioning ──────────────────────────────────────────
+
+
+class TestShipCommissioning:
+    def test_ship_birth_certificate_creation(self) -> None:
+        """ShipBirthCertificate computes hash and produces valid VC."""
+        cert = ShipBirthCertificate(
+            ship_did=generate_ship_did("test-instance-id"),
+            instance_id="test-instance-id",
+            vessel_name="USS Test",
+            commissioned_at=1700000000.0,
+            version="0.5.0",
+        )
+        cert.certificate_hash = cert.compute_hash()
+
+        assert cert.certificate_hash  # non-empty
+        assert cert.ship_did == "did:probos:test-instance-id"
+
+        vc = cert.to_verifiable_credential()
+        assert "ShipBirthCertificate" in vc["type"]
+        assert vc["issuer"] == "did:probos:test-instance-id"  # Self-signed
+        assert vc["credentialSubject"]["id"] == "did:probos:test-instance-id"
+        assert vc["credentialSubject"]["vesselName"] == "USS Test"
+        assert vc["proof"]["proofValue"] == cert.certificate_hash
+
+    def test_ship_birth_certificate_from_dict(self) -> None:
+        """ShipBirthCertificate round-trips through from_dict."""
+        cert = ShipBirthCertificate(
+            ship_did="did:probos:abc123",
+            instance_id="abc123",
+            vessel_name="ProbOS",
+            commissioned_at=1700000000.0,
+            version="0.5.0",
+            certificate_hash="deadbeef",
+        )
+        data = {
+            "ship_did": cert.ship_did,
+            "instance_id": cert.instance_id,
+            "vessel_name": cert.vessel_name,
+            "commissioned_at": cert.commissioned_at,
+            "version": cert.version,
+            "certificate_hash": cert.certificate_hash,
+        }
+        restored = ShipBirthCertificate.from_dict(data)
+        assert restored.ship_did == cert.ship_did
+        assert restored.commissioned_at == cert.commissioned_at
+
+    @pytest.mark.asyncio
+    async def test_ship_commissioning_on_first_boot(self, tmp_path: Path) -> None:
+        """First boot commissions the ship — creates certificate and genesis block."""
+        registry = AgentIdentityRegistry(data_dir=tmp_path)
+        await registry.start(
+            instance_id="first-boot-id",
+            vessel_name="USS FirstBoot",
+            version="0.5.0",
+        )
+
+        # Ship certificate should exist
+        ship_cert = registry.get_ship_certificate()
+        assert ship_cert is not None
+        assert ship_cert.ship_did == "did:probos:first-boot-id"
+        assert ship_cert.vessel_name == "USS FirstBoot"
+        assert ship_cert.version == "0.5.0"
+        assert ship_cert.certificate_hash  # non-empty hash
+
+        # Genesis block should carry ship's certificate hash and DID
+        chain = await registry.export_chain()
+        assert len(chain) == 0  # No blocks yet until first agent is issued
+
+        # Issue an agent — this triggers genesis + agent block
+        cert = await registry.issue_birth_certificate(
+            agent_type="counselor", callsign="Troi",
+            instance_id="first-boot-id", vessel_name="USS FirstBoot",
+            department="medical", post_id="counselor-post",
+            baseline_version="0.5.0",
+        )
+
+        chain = await registry.export_chain()
+        assert len(chain) == 2  # genesis + agent
+
+        genesis = chain[0]
+        assert genesis["agent_did"] == "did:probos:first-boot-id"
+        assert genesis["certificate_hash"] == ship_cert.certificate_hash
+
+        await registry.stop()
+
+    @pytest.mark.asyncio
+    async def test_ship_certificate_persists_across_restarts(self, tmp_path: Path) -> None:
+        """Ship certificate persists — second boot loads, doesn't re-commission."""
+        # First boot — commission
+        reg1 = AgentIdentityRegistry(data_dir=tmp_path)
+        await reg1.start(instance_id="persist-id", vessel_name="USS Persist", version="0.5.0")
+        cert1 = reg1.get_ship_certificate()
+        assert cert1 is not None
+        ts1 = cert1.commissioned_at
+        await reg1.stop()
+
+        # Second boot — should load existing, not re-commission
+        reg2 = AgentIdentityRegistry(data_dir=tmp_path)
+        await reg2.start(instance_id="persist-id", vessel_name="USS Persist", version="0.5.1")
+        cert2 = reg2.get_ship_certificate()
+        assert cert2 is not None
+        assert cert2.commissioned_at == ts1  # Same timestamp — not re-commissioned
+        assert cert2.ship_did == cert1.ship_did
+        await reg2.stop()
+
+    @pytest.mark.asyncio
+    async def test_genesis_block_backwards_compat_no_instance_id(self, tmp_path: Path) -> None:
+        """Without instance_id, genesis block falls back to placeholder values."""
+        registry = AgentIdentityRegistry(data_dir=tmp_path)
+        await registry.start()  # No instance_id — pre-commissioning mode
+
+        assert registry.get_ship_certificate() is None
+
+        # Issue an agent — genesis should use placeholder
+        cert = await registry.issue_birth_certificate(
+            agent_type="test", callsign="Test",
+            instance_id="", vessel_name="ProbOS",
+            department="test", post_id="test-post",
+            baseline_version="0.0.0",
+        )
+
+        chain = await registry.export_chain()
+        genesis = chain[0]
+        assert genesis["agent_did"] == "ship"  # placeholder
+        assert genesis["certificate_hash"] == "genesis"  # placeholder
+
+        await registry.stop()
+
+    def test_agent_vc_issuer_uses_ship_did(self) -> None:
+        """Agent birth certificate issuer field should be the ship DID, not ship:key."""
+        cert = AgentBirthCertificate(
+            agent_uuid="uuid-123",
+            did="did:probos:inst-1:uuid-123",
+            agent_type="engineer",
+            callsign="LaForge",
+            instance_id="inst-1",
+            vessel_name="ProbOS",
+            birth_timestamp=1700000000.0,
+            department="engineering",
+            post_id="chief-engineer",
+            baseline_version="0.5.0",
+            certificate_hash="abc",
+        )
+        vc = cert.to_verifiable_credential()
+        # Issuer should be the 3-part ship DID, not 4-part with ":ship"
+        assert vc["issuer"] == "did:probos:inst-1"
+        assert "#key-1" in vc["proof"]["verificationMethod"]
+        assert vc["proof"]["verificationMethod"] == "did:probos:inst-1#key-1"
