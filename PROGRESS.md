@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-441c COMPLETE — Asset Tags for Infrastructure/Utility + Boot Sequence Fix (two-tier identity, deferred crew certificates). AD-441b COMPLETE — Ship Commissioning (ShipBirthCertificate W3C VC, self-signed root of trust, real genesis block). AD-441 COMPLETE — Sovereign Agent Identity (W3C DIDs, birth certificates, Identity Ledger). AD-429a-d COMPLETE — Ship Ontology (vessel, skills, ops/comms/resources, records). BF-020–038 all closed. 3572 pytest + 118 vitest = 3690 total tests.
+## Current Status: AD-444–452 PLANNED — Absorbed patterns from ERP Company Designer + Nooplex POC validator analysis (knowledge confidence, decision queue, compensation, phase gates, security intercept, MCP bridge, ERP Ship Class, validation framework hardening, agent tier licensing). OSS: AD-444–448, AD-451. Commercial: AD-449–450, AD-452. BF-040 COMPLETE — Identity System Hardening (13 findings, all resolved: 1 critical, 3 high, 5 medium, 4 low). AD-441/441b/441c COMPLETE — Full identity system (DIDs, birth certificates, ship commissioning, asset tags). AD-429a-d COMPLETE — Ship Ontology. BF-020–040 all closed. 3569 pytest + 118 vitest = 3687 total tests.
 
 ---
 

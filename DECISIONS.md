@@ -1005,3 +1005,75 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 | AD-441c | Two-tier identity: crew agents get sovereign birth certificates (W3C VCs on Identity Ledger), infrastructure/utility agents get lightweight AssetTags (serial numbers, not sovereign identity). `AssetTag` dataclass with asset_uuid, asset_type, slot_id, tier (infrastructure/utility). Stored in `asset_tags` DB table, NOT on the Identity Ledger. Boot sequence fix: crew identity deferred when ship not yet commissioned, post-commissioning sweep issues deferred birth certificates. `_wire_agent` split: `_is_crew_agent()` determines path. `GET /api/identity/assets` endpoint. Principle: "A microwave with a name tag isn't a person. But it still has a serial number." |
 
 **Status:** AD-441c COMPLETE.
+
+### AD-444: Knowledge Confidence Scoring (absorbed from ERP Company Designer)
+
+| AD | Decision |
+|----|----------|
+| AD-444 | **Knowledge Confidence Scoring** — Operational learnings stored in Ship's Records (AD-434) gain numerical confidence scores that evolve through use. New learnings start at 0.5 (neutral). Successful application confirms (+0.15, cap 1.0). Contradicted learnings penalized (-0.25, floor 0.0). Learnings below 0.1 auto-supersede (marked stale). Policy: >=0.8 auto-apply in agent context, 0.5-0.8 present with caveat, <0.5 suppress. Absorbed from production-validated pattern in Dynamics 365 ERP Company Designer (autonomous ERP configuration system, 35 actions across GL/AP/AR/Tax). ProbOS has trust scoring for *agents* (Bayesian Beta) but not for *knowledge*. This fills the gap — knowledge that proves reliable rises, knowledge that proves wrong fades. Connects to: AD-434 (Ship's Records — storage), Dream Consolidation (promotion from Tier 1 episodes → Tier 2 records with initial confidence), KnowledgeStore (Tier 3 operational state). **Repo: OSS.** |
+
+**Status:** AD-444 PLANNED.
+
+### AD-445: Decision Queue & Pause/Resume Semantics (absorbed from ERP Company Designer)
+
+| AD | Decision |
+|----|----------|
+| AD-445 | **Decision Queue with Structured Pause/Resume** — When an agent encounters ambiguity during autonomous execution, it creates a structured Decision Request (question, ranked options, priority, context) and pauses. The request enters a Decision Queue visible in HXI and Ward Room. Decision priority levels: Critical (0), High (1), Medium (2), Low (3). Configurable auto-resolve threshold — decisions below the threshold auto-resolve (selecting the safest option) without Captain intervention. Decisions above the threshold wait for human input (configurable timeout, default 24h). On resolution, the decision context is injected into the agent's next invocation (Context Carry-Forward pattern). Absorbed from the ERP Company Designer's human-in-the-loop decision system which autonomously configured 35 D365 actions, pausing only for genuine ambiguity. Maps to: Captain approval workflow, Earned Agency (higher-rank agents auto-resolve more decisions), Ward Room (decision announcements). **Repo: OSS.** |
+
+**Status:** AD-445 PLANNED.
+
+### AD-446: Compensation & Recovery Pattern (absorbed from ERP Company Designer)
+
+| AD | Decision |
+|----|----------|
+| AD-446 | **Compensation & Recovery for Multi-Step Agent Operations** — When an agent fails mid-execution of a multi-step workflow, the system enters a compensation phase: (1) Mark completed actions as "NeedsReview" (not automatically rolled back — partial progress may be valid). (2) Write a compensation log with error details, completed steps, and remaining steps. (3) Create a Decision Request (AD-445) for human resolution with options: retry from failure point, retry from beginning, manual intervention, abort. (4) No automatic rollback — ERP-lesson learned: partial configuration is often valid, and blind rollback can be worse than the failure. SHA-256 idempotency hashing (planId + payload) prevents duplicate execution on retry/replay. Absorbed from the ERP Company Designer's compensation pattern which safely handled failures across 21 specialized agents configuring interdependent D365 modules. Connects to: AD-405 (Checkpointing — resume from checkpoint), AD-345 (Build Failure Report — failure classification), AD-347 (Builder Escalation Hook). **Repo: OSS.** |
+
+**Status:** AD-446 PLANNED.
+
+### AD-447: Phase Gates for Pool Orchestration (absorbed from ERP Company Designer)
+
+| AD | Decision |
+|----|----------|
+| AD-447 | **Phase Gates for PoolGroup Orchestration** — Extend PoolGroup orchestration with formal phase gates — deterministic ordering where Phase N must complete + validate before Phase N+1 starts. A Phase defines: (1) Which pools/agents participate. (2) Dependency ordering within the phase (some agents run sequentially, others in parallel). (3) Completion criteria (all agents report success, or minimum success threshold). (4) Validation step (dedicated ValidatorAgent inspects actual outcomes before gate opens). (5) Cross-phase dependency declarations (Phase 2 agents can declare "requires GL from Phase 1"). Absorbed from the ERP Company Designer's 4-phase Cognitive Mesh execution model: Phase 1 Foundation (GL alone) → Phase 2 Domain Meshes (AP, AR, Tax in parallel) → Phase 3 Cross-Domain (Intercompany) → Phase 4 Final Validation. Maps to: PoolGroup orchestration, AD-438 (Ontology-Based Task Routing — dependency declarations), AD-419 (Duty Schedule — phase timing). **Repo: OSS.** |
+
+**Status:** AD-447 PLANNED.
+
+### AD-448: Wrapped Tool Executor & Security Intercept Layer (absorbed from ERP Company Designer)
+
+| AD | Decision |
+|----|----------|
+| AD-448 | **Wrapped Tool Executor — Security Intercept Layer** — Transparent interception of agent tool calls before they reach external systems. The tool executor wraps all outbound tool calls through a security/audit middleware: (1) Logging — every tool call recorded with agent DID, timestamp, tool name, arguments (sanitized), and result summary. Feeds audit trail. (2) Rate limiting — per-agent, per-tool call limits to prevent runaway agents. (3) Policy enforcement — Standing Orders can declare tool-level restrictions per rank/department. (4) Selective interception — certain tool calls handled locally (decisions, verifications, status reports) while others forwarded to external systems. Agent sees a unified tool interface. Absorbed from the ERP Company Designer's `baseAgent.ts` wrapped tool executor which transparently intercepted `request_decision`, `verify_configuration`, and `submit_dmf_package` while forwarding D365 operations to the MCP bridge. Connects to: AD-398 (Agent Classification — tool access tiers), Earned Agency (trust-gated tool access), SIF (Structural Integrity Field — security boundary). **Repo: OSS.** |
+
+**Status:** AD-448 PLANNED.
+
+### AD-449: MCP Bridge — External System Integration (absorbed from ERP Company Designer)
+
+| AD | Decision |
+|----|----------|
+| AD-449 | **MCP Bridge for External System Integration** — Session-managed bridge between ProbOS agent tool calls and external systems via Model Context Protocol (MCP 2025-03-26). Architecture: (1) `McpBridge` service manages MCP sessions (`Map<correlationId, McpSession>`). (2) JSON-RPC over Streamable HTTP for transport. (3) Initialize handshake per session (initialize request + notifications/initialized notification). (4) Tool routing: agent calls a tool → bridge determines if local or external → forwards to appropriate MCP server. (5) SSE response parsing for streaming tool results. (6) 60-second timeout per MCP call, configurable. This is how Nooplex agents interact with client infrastructure (ERPs, CRMs, databases, APIs) in commercial deployments. The bridge is the standardized integration layer — ProbOS agents don't need custom connectors for every external system, just an MCP server endpoint. Absorbed from the ERP Company Designer's MCP bridge (876 lines) which managed sessions between Claude-powered agents and Dynamics 365 F&SCM. Connects to: Phase 25 (Tool Layer), Extension Architecture (Phase 30 — MCP servers as extensions), AD-448 (Wrapped Tool Executor — intercept before forwarding). **Repo: Commercial** (bridge infrastructure is OSS-eligible, but pre-built MCP server packs for specific systems are commercial). |
+
+**Status:** AD-449 PLANNED.
+
+### AD-450: ERP Implementation Ship Class — Nooplex Reference Engagement (absorbed from ERP Company Designer)
+
+| AD | Decision |
+|----|----------|
+| AD-450 | **ERP Implementation Ship Class** — Reimplement the Dynamics 365 ERP Company Designer as a ProbOS Ship Class (commercial). 21 specialized agents (GL, AP, AR, Tax, Fixed Assets, Cash/Bank, Budgeting, Procurement, Inventory, Warehouse, Product Master, Sales Order, Production, Planning, Intercompany, Consolidation, HR, ConfigPlanning, Validator + cross-domain agents) become ProbOS crew members with sovereign identities (DIDs), trust scoring, episodic memory, and dream consolidation. The Durable Functions orchestrator is replaced by ProbOS Runtime with Phase Gates (AD-447). The Dataverse operational state maps to Ship's Records (AD-434) with Knowledge Confidence Scoring (AD-444). The human-in-the-loop decision system maps to Decision Queue (AD-445). The MCP bridge (AD-449) connects to D365 F&SCM. The three-tier knowledge system maps to ProbOS's Three Knowledge Tiers. **This is the first Nooplex professional services reference engagement** — proving that ProbOS agents can autonomously configure enterprise ERP systems. Before/after comparison: custom agent framework vs ProbOS platform demonstrates the platform value proposition. Ship Class: "Cargo Vessel" variant optimized for ERP implementation missions. Revenue model: fixed-price per D365 legal entity configuration + managed service for ongoing configuration changes. **Repo: Commercial.** |
+
+**Status:** AD-450 PLANNED.
+
+### AD-451: Validation Framework Hardening (absorbed from ERP Company Designer + Nooplex POC)
+
+| AD | Decision |
+|----|----------|
+| AD-451 | **Validation Framework Hardening** — Comprehensive upgrade to ProbOS's validation capabilities based on gap analysis against the ERP Company Designer (7-layer validation) and Nooplex POC (4-stage reconciliation). Five new validation capabilities: (1) **Two-Stage Outcome Verification** — RedTeamAgent gains a second verification pass: Stage 1 metadata scan (what agents claimed they did via structured output), Stage 2 outcome inspection (independent verification of actual system state). Currently RedTeam verifies claimed results for safety but not for correctness. (2) **Inline Per-Action Self-Verification** — Agents gain a self-check pattern: after each significant action, the agent verifies its own result before reporting success. Cheapest validation layer — the agent that did the work checks it. Configurable via Standing Orders per rank (Ensigns always self-verify, Commanders may skip for trusted operations). (3) **Reconciliation Escalation Protocol** — Four-stage escalation for validation disputes: confidence comparison (do validator and executor agree?), independent verification (second agent checks), structured argumentation (agents debate findings via Ward Room mini-consensus), human escalation (Decision Queue AD-445). Currently RedTeam is binary pass/fail — this adds graduated dispute resolution. (4) **Disposition Language Analysis** — Lightweight regex-based analysis of agent conversation output to detect verification quality. Catches agents that report structured success but whose natural language reveals uncertainty ("unable to", "skipped", "workaround"). Patterns: positive ("verified", "confirmed", "validated"), negative ("failed", "skipped", "unable"), uncertain ("might", "should work", "hopefully"). Feeds into trust scoring — agents with disposition/result mismatches get trust penalties. (5) **Continuous Validation** — SystemQA evolves from one-shot creation-time smoke tests to periodic re-validation. Configurable validation intervals per agent tier. Phase-gated validation (AD-447) triggers SystemQA after each phase gate, not just at birth. Health check results stored with timestamps for trend analysis. Connects to: RedTeamAgent (enhanced), SystemQAAgent (enhanced), AD-447 (Phase Gates — validator invocation at gates), AD-445 (Decision Queue — escalation target), AD-448 (Wrapped Tool Executor — self-verification hooks), TrustNetwork (disposition analysis feeds trust), HXI Bridge (health check trend dashboard). **Repo: OSS** (core validation framework). Domain-specific validation categories (e.g., ERP regulatory compliance checks) are extension points populated by commercial Ship Classes (AD-450). |
+
+**Status:** AD-451 PLANNED.
+
+### AD-452: Agent Tier Licensing Framework
+
+| AD | Decision |
+|----|----------|
+| AD-452 | **Agent Tier Licensing Framework** — Formalizes the OSS/Commercial boundary for crew agents. Principle: "Capability depth, not capability existence." OSS crew agents (Architect, SoftwareEngineer, Scout, etc.) are functional "junior" agents with full sovereign identity, trust, memory, and earned agency — enough to demonstrate the platform on real tasks. Commercial "Pro" agents extend the same identities with deeper cognitive chains (Cognitive JIT, solution tree search), domain expertise, and advanced tool integrations. Upgrade preserves DIDs, trust history, and memories (no cold start). Platform infrastructure and utility agents remain permanently OSS — the civilization is the moat, crew productivity is the product. **Repo: Commercial** (full framework in commercial-roadmap.md). |
+
+**Status:** AD-452 PLANNED.
