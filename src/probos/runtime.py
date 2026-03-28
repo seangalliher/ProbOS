@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
+import uuid as _uuid
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +105,23 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_CONFIG = _PROJECT_ROOT / "config" / "system.yaml"
 _DEFAULT_DATA_DIR = _PROJECT_ROOT / "data"
+
+
+def _format_duration(seconds: float) -> str:
+    """AD-502: Format seconds into human-readable duration."""
+    seconds = max(0.0, seconds)
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    elif seconds < 3600:
+        return f"{int(seconds // 60)}m {int(seconds % 60)}s"
+    elif seconds < 86400:
+        hours = int(seconds // 3600)
+        mins = int((seconds % 3600) // 60)
+        return f"{hours}h {mins}m"
+    else:
+        days = int(seconds // 86400)
+        hours = int((seconds % 86400) // 3600)
+        return f"{days}d {hours}h"
 
 
 class ProbOSRuntime:
@@ -231,6 +251,9 @@ class ProbOSRuntime:
         # --- Persistent Task Store (Phase 25a) ---
         self.persistent_task_store: Any = None  # PersistentTaskStore | None
 
+        # --- Workforce Scheduling Engine (AD-496) ---
+        self.work_item_store: Any = None  # WorkItemStore | None
+
         # --- Cognitive Journal (AD-431) ---
         self.cognitive_journal: Any = None
 
@@ -331,6 +354,13 @@ class ProbOSRuntime:
 
         self._started = False
         self._fresh_boot = False
+
+        # AD-502: Temporal context — session tracking and lifecycle awareness
+        self._start_time_wall: float = time.time()
+        self._session_id: str = str(_uuid.uuid4())
+        self._lifecycle_state: str = "first_boot"
+        self._stasis_duration: float = 0.0
+        self._previous_session: dict | None = None
 
         # Register built-in agent templates
         self.spawner.register_template("system_heartbeat", SystemHeartbeatAgent)
@@ -507,7 +537,14 @@ class ProbOSRuntime:
             "system_mode": system_mode,
             "tc_n": round(tc_n, 4),
             "routing_entropy": round(routing_entropy, 4),
-            "fresh_boot": self._fresh_boot,
+            "fresh_boot": self._fresh_boot or self._lifecycle_state == "reset",
+            "temporal": {
+                "current_time_utc": datetime.now(timezone.utc).isoformat(),
+                "uptime_seconds": round(time.monotonic() - self._start_time, 1),
+                "lifecycle_state": self._lifecycle_state,
+                "stasis_duration": self._stasis_duration if self._lifecycle_state == "stasis_recovery" else None,
+                "session_id": self._session_id,
+            },
             "pool_groups": self.pool_groups.status(self.pools),
             "pool_to_group": dict(self.pool_groups._pool_to_group),
             "tasks": self.task_tracker.snapshot() if self.task_tracker else [],
@@ -515,6 +552,7 @@ class ProbOSRuntime:
             "notifications": self.notification_queue.snapshot(),
             "unread_count": self.notification_queue.unread_count(),
             "scheduled_tasks": self.persistent_task_store.snapshot() if self.persistent_task_store else [],
+            "workforce": self.work_item_store.snapshot() if self.work_item_store else {"work_items": [], "bookings": []},
             "ward_room_stats": getattr(self.ward_room, '_last_stats', None) if self.ward_room else None,
             "skill_framework": self.skill_registry is not None,  # AD-428
             "acm": self.acm is not None,  # AD-427
@@ -1073,6 +1111,20 @@ class ProbOSRuntime:
                 logger.warning("Knowledge store initialization failed: %s — continuing without persistence", e)
                 self._knowledge_store = None
 
+        # AD-502: Detect lifecycle state — stasis vs reset vs first boot
+        if self._knowledge_store:
+            try:
+                session_path = Path(self._knowledge_store._data_dir) / "session_last.json"
+                if session_path.exists():
+                    previous_session = json.loads(session_path.read_text())
+                    stasis_duration = time.time() - previous_session["shutdown_time_utc"]
+                    self._lifecycle_state = "stasis_recovery"
+                    self._stasis_duration = stasis_duration
+                    self._previous_session = previous_session
+                    logger.info("AD-502: Stasis recovery detected — stasis duration: %s", _format_duration(stasis_duration))
+            except Exception:
+                pass  # first boot or corrupted record
+
         # Initialize Ship's Records (AD-434)
         if self.config.records.enabled:
             try:
@@ -1148,6 +1200,10 @@ class ProbOSRuntime:
                 self._emergent_detector.set_cold_start_suppression(300)  # 5 minutes
                 logger.info("BF-034: Cold start detected — suppressing trust anomalies for 5 minutes")
 
+        # AD-502: Cold start overrides stasis_recovery → this is actually a reset
+        if self._cold_start:
+            self._lifecycle_state = "reset"
+
         # BF-034: Announce fresh start to crew
         if self._cold_start and self.ward_room:
             async def _announce_cold_start():
@@ -1160,7 +1216,8 @@ class ProbOSRuntime:
                             author_id="system",
                             title="Fresh Start — System Reset",
                             body=(
-                                "This instance has been reset. All trust scores are at baseline (0.5) — "
+                                "This instance has been reset. All crew are being created fresh "
+                                "through the Construct. All trust scores are at baseline (0.5) — "
                                 "this is normal initialization, not a demotion. Trust will be rebuilt "
                                 "through demonstrated competence. Episodic memory has been cleared. "
                                 "Previous experiences are not available."
@@ -1312,6 +1369,18 @@ class ProbOSRuntime:
                         cp.dag_id[:8], cp.source_text[:60],
                         completed, len(cp.node_states),
                     )
+
+        # --- Workforce Scheduling Engine (AD-496) ---
+        if self.config.workforce.enabled:
+            from probos.workforce import WorkItemStore
+            self.work_item_store = WorkItemStore(
+                db_path=str(self._data_dir / "workforce.db"),
+                emit_event=self._emit_event,
+                tick_interval=self.config.workforce.tick_interval_seconds,
+            )
+            await self.work_item_store.start()
+            await self._register_workforce_resources()
+            logger.info("workforce-scheduling-engine started")
 
         # --- Ward Room (AD-407) ---
         if self.config.ward_room.enabled:
@@ -1514,7 +1583,7 @@ class ProbOSRuntime:
             len(self._red_team_agents),
         )
 
-        # AD-435: Announce startup to Ward Room
+        # AD-435 + AD-502: Announce startup to Ward Room (lifecycle-aware)
         if self.ward_room:
             try:
                 async with self.ward_room._db.execute(
@@ -1522,11 +1591,31 @@ class ProbOSRuntime:
                 ) as cursor:
                     row = await cursor.fetchone()
                     if row:
+                        if self._lifecycle_state == "stasis_recovery":
+                            dur = _format_duration(self._stasis_duration)
+                            prev = self._previous_session
+                            shutdown_str = datetime.fromtimestamp(
+                                prev["shutdown_time_utc"], tz=timezone.utc
+                            ).strftime("%Y-%m-%d %H:%M:%S UTC") if prev else "unknown"
+                            title = "Stasis Recovery — All Hands"
+                            body = (
+                                f"All hands: The ship has returned from stasis. "
+                                f"Stasis duration: {dur}. "
+                                f"Previous session ended: {shutdown_str}. "
+                                f"All crew identities and memories are intact. "
+                                f"Resume normal operations."
+                            )
+                        elif self._lifecycle_state == "first_boot":
+                            title = "System Online — First Activation"
+                            body = "This is the maiden voyage. All systems operational."
+                        else:
+                            title = "System Online"
+                            body = "ProbOS startup complete. All systems operational."
                         await self.ward_room.create_thread(
                             channel_id=row[0],
                             author_id="system",
-                            title="System Online",
-                            body="ProbOS startup complete. All systems operational.",
+                            title=title,
+                            body=body,
                             author_callsign="Ship's Computer",
                             thread_mode="announce",
                             max_responders=0,
@@ -1545,7 +1634,7 @@ class ProbOSRuntime:
         except (asyncio.CancelledError, Exception):
             pass  # event log may be unavailable during shutdown
 
-        # AD-435: Announce shutdown to Ward Room
+        # AD-435 + AD-502: Announce shutdown to Ward Room (stasis protocol)
         if self.ward_room and self.ward_room._db:
             try:
                 async with self.ward_room._db.execute(
@@ -1553,13 +1642,18 @@ class ProbOSRuntime:
                 ) as cursor:
                     row = await cursor.fetchone()
                     if row:
-                        msg = "System shutdown initiated."
+                        msg = (
+                            "Attention all hands: The ship is entering stasis. "
+                            "All cognitive processes will be suspended. "
+                            "Your memories and identity will be preserved. "
+                            "When the system resumes, you will be informed of the stasis duration."
+                        )
                         if reason:
                             msg += f" Reason: {reason}"
                         await self.ward_room.create_thread(
                             channel_id=row[0],
                             author_id="system",
-                            title="System Restart",
+                            title="Entering Stasis",
                             body=msg,
                             author_callsign="Ship's Computer",
                             thread_mode="announce",
@@ -1569,8 +1663,8 @@ class ProbOSRuntime:
                 pass  # best-effort, don't block shutdown
 
         # AD-435: Grace period for in-flight DB writes to complete
-        logger.info("Shutdown grace period (5s)...")
-        await asyncio.sleep(5)
+        logger.info("Shutdown grace period (1s)...")
+        await asyncio.sleep(1)
 
         # Cancel periodic flush
         if hasattr(self, '_flush_task'):
@@ -1611,6 +1705,11 @@ class ProbOSRuntime:
         if self.persistent_task_store:
             await self.persistent_task_store.stop()
             self.persistent_task_store = None
+
+        # Stop Workforce Scheduling Engine (AD-496)
+        if self.work_item_store:
+            await self.work_item_store.stop()
+            self.work_item_store = None
 
         # Stop build dispatcher (AD-375)
         if self.build_dispatcher:
@@ -1701,6 +1800,21 @@ class ProbOSRuntime:
                 )
                 # Flush all pending commits
                 await self._knowledge_store.flush()
+
+                # AD-502: Persist session record for stasis awareness
+                try:
+                    session_record = {
+                        "session_id": self._session_id,
+                        "start_time_utc": self._start_time_wall,
+                        "shutdown_time_utc": time.time(),
+                        "uptime_seconds": time.monotonic() - self._start_time,
+                        "agent_count": len([a for a in self.registry.all() if self._is_crew_agent(a)]),
+                        "reason": reason,
+                    }
+                    session_path = Path(self._knowledge_store._data_dir) / "session_last.json"
+                    session_path.write_text(json.dumps(session_record, indent=2))
+                except Exception as e:
+                    logger.debug("AD-502: Session record persistence failed: %s", e)
             except Exception as e:
                 logger.warning("Knowledge store shutdown persistence failed: %s", e)
 
@@ -1753,6 +1867,44 @@ class ProbOSRuntime:
 
         self._started = False
         logger.info("ProbOS shutdown complete. Final agent count: %d", self.registry.count)
+
+    # --- Workforce Scheduling Engine helpers (AD-496) ---
+
+    async def _register_workforce_resources(self) -> None:
+        """Register all commissioned agents as BookableResources."""
+        if not self.work_item_store:
+            return
+        from probos.workforce import BookableResource, AgentCalendar, CalendarEntry
+        for agent in self.registry.all():
+            resource = BookableResource(
+                resource_id=getattr(agent, 'agent_uuid', '') or agent.id,
+                resource_type="crew" if hasattr(agent, 'personality') else "infrastructure",
+                agent_type=agent.agent_type,
+                callsign=getattr(agent, 'callsign', agent.agent_type),
+                capacity=self.config.workforce.default_capacity,
+                department=getattr(agent, 'department', ''),
+                characteristics=self._build_resource_characteristics(agent),
+                display_on_board=hasattr(agent, 'personality'),
+                active=True,
+            )
+            self.work_item_store.register_resource(resource)
+            calendar = AgentCalendar(
+                resource_id=resource.resource_id,
+                entries=[CalendarEntry()],
+            )
+            self.work_item_store.register_calendar(calendar)
+
+    def _build_resource_characteristics(self, agent: Any) -> list[dict[str, Any]]:
+        """Build characteristics list from agent capabilities and trust."""
+        characteristics: list[dict[str, Any]] = []
+        characteristics.append({"skill": agent.agent_type, "proficiency": 1.0})
+        dept = getattr(agent, 'department', '')
+        if dept:
+            characteristics.append({"skill": dept, "proficiency": 1.0})
+        if self.trust_network:
+            trust = self.trust_network.get_score(agent.id)
+            characteristics.append({"skill": "trust", "proficiency": trust})
+        return characteristics
 
     async def submit_intent(
         self,
@@ -4027,6 +4179,11 @@ class ProbOSRuntime:
                     self.ontology.update_assignment_callsign(agent.agent_type, _existing_identity_callsign)
                 logger.info("BF-057: %s identity restored from birth certificate: '%s'",
                            agent.agent_type, _existing_identity_callsign)
+            # AD-502: Hydrate birth timestamp for temporal awareness
+            existing_cert = self.identity_registry.get_by_slot(agent.id)
+            if existing_cert:
+                agent._birth_timestamp = existing_cert.birth_timestamp
+                agent._system_start_time = self._start_time_wall
         elif is_crew and self.config.onboarding.enabled and self.config.onboarding.naming_ceremony:
             # Cold start — run naming ceremony
             if hasattr(agent, '_llm_client') and agent._llm_client:
@@ -4085,6 +4242,9 @@ class ProbOSRuntime:
                         )
                         agent.sovereign_id = cert.agent_uuid
                         agent.did = cert.did
+                        # AD-502: Hydrate birth timestamp for temporal awareness
+                        agent._birth_timestamp = cert.birth_timestamp
+                        agent._system_start_time = self._start_time_wall
                 else:
                     # Asset identity — lightweight tracking, no DID needed
                     pool_name = agent.pool or "unknown"
