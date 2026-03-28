@@ -129,6 +129,7 @@ class TestProactiveReplyExtraction:
 
         loop = ProactiveCognitiveLoop(interval=60)
         loop.set_runtime(runtime)
+        loop._resolve_thread_id = AsyncMock(return_value="thread-abc")
 
         agent = MagicMock()
         agent.id = "test-agent"
@@ -146,7 +147,7 @@ class TestProactiveReplyExtraction:
         assert "[REPLY" not in cleaned
         runtime.ward_room.create_post.assert_called_once()
         call_kwargs = runtime.ward_room.create_post.call_args
-        assert call_kwargs[1]["thread_id"] == "thread-abc" or call_kwargs[0][0] == "thread-abc"
+        assert call_kwargs[1]["thread_id"] == "thread-abc"
         assert len(actions) == 1
         assert actions[0]["type"] == "reply"
 
@@ -165,6 +166,7 @@ class TestProactiveReplyExtraction:
 
         loop = ProactiveCognitiveLoop(interval=60)
         loop.set_runtime(runtime)
+        loop._resolve_thread_id = AsyncMock(return_value="locked-thread")
 
         agent = MagicMock()
         agent.id = "test-agent"
@@ -177,17 +179,24 @@ class TestProactiveReplyExtraction:
         assert len(actions) == 0
 
     @pytest.mark.asyncio
-    async def test_lieutenant_cannot_reply(self):
-        """Lieutenants should not have reply actions processed."""
+    async def test_ensign_cannot_reply(self):
+        """Ensigns should not have reply actions processed (BF-061: gate is Lieutenant+)."""
         from probos.proactive import ProactiveCognitiveLoop
 
         runtime = MagicMock()
         runtime.ward_room = MagicMock()
         runtime.trust_network = MagicMock()
-        runtime.trust_network.get_score.return_value = 0.6  # Lieutenant
+        runtime.trust_network.get_score.return_value = 0.3  # Ensign
         runtime._extract_endorsements.return_value = ("text", [])
         runtime._process_endorsements = AsyncMock()
         runtime.is_cold_start = False
+        runtime._records_store = MagicMock()
+        runtime._records_store.write_notebook = AsyncMock()
+        runtime.ontology = None
+        runtime.callsign_registry = MagicMock()
+        runtime.callsign_registry.get_callsign.return_value = "TestAgent"
+        runtime.config = MagicMock()
+        runtime.config.communications = MagicMock(dm_min_rank="ensign")
 
         loop = ProactiveCognitiveLoop(interval=60)
         loop.set_runtime(runtime)
@@ -199,8 +208,7 @@ class TestProactiveReplyExtraction:
         text = "Observation.\n[REPLY thread-abc]\nReply text.\n[/REPLY]"
         cleaned, actions = await loop._extract_and_execute_actions(agent, text)
 
-        # Reply should NOT be extracted (Lieutenant can't reply)
-        # But it will remain in the text (harmless — gets posted as-is)
+        # Reply should NOT be extracted (Ensign can't reply — BF-061 lowered gate to Lieutenant+)
         assert not any(a["type"] == "reply" for a in actions)
 
 

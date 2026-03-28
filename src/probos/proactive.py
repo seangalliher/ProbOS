@@ -11,6 +11,7 @@ from typing import Any, Callable
 from probos.crew_profile import Rank
 from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import agency_from_rank, can_think_proactively
+from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.types import IntentMessage
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class ProactiveCognitiveLoop:
         self._started_at: float = time.monotonic()  # BF-039: cold-start reference
         self._config: Any = None   # Set via set_config()
         self._duty_tracker: DutyScheduleTracker | None = None
+        self._circuit_breaker = CognitiveCircuitBreaker()
 
     def set_runtime(self, runtime: Any) -> None:
         """Wire the runtime reference (provides registry, trust, WR, memory, etc.)."""
@@ -59,6 +61,11 @@ class ProactiveCognitiveLoop:
     def set_config(self, config: Any) -> None:
         """Store ProactiveCognitiveConfig for trust signal weights (AD-414)."""
         self._config = config
+
+    @property
+    def circuit_breaker(self) -> CognitiveCircuitBreaker:
+        """Expose circuit breaker for runtime wiring and API access."""
+        return self._circuit_breaker
 
     @property
     def _default_cooldown(self) -> float:
@@ -159,6 +166,17 @@ class ProactiveCognitiveLoop:
             if time.monotonic() - self._started_at < self.COLD_START_WINDOW_SECONDS:
                 cooldown *= 3
             if time.monotonic() - last < cooldown:
+                continue
+
+            # AD-488: Circuit breaker gate — skip agents in cognitive cooldown
+            if not self._circuit_breaker.should_allow_think(agent.id):
+                breaker_status = self._circuit_breaker.get_status(agent.id)
+                logger.debug(
+                    "AD-488: %s circuit breaker OPEN (trip #%d, cooldown %.0fs remaining)",
+                    getattr(agent, 'callsign', agent.agent_type),
+                    breaker_status['trip_count'],
+                    breaker_status['cooldown_seconds'] - (time.monotonic() - breaker_status['tripped_at']),
+                )
                 continue
 
             # AD-442: Check probationary → active transition
@@ -279,6 +297,8 @@ class ProactiveCognitiveLoop:
                         await rt.episodic_memory.store(episode)
                 except Exception:
                     logger.debug("Failed to store no-response episode for %s", agent.agent_type, exc_info=True)
+            # AD-488: Record no-response as event (rapid no-responses can also indicate loops)
+            self._circuit_breaker.record_event(agent.id, "no_response", "")
             return
 
         # BF-032: Skip if too similar to agent's recent posts
@@ -305,6 +325,35 @@ class ProactiveCognitiveLoop:
         # Post to Ward Room — find agent's department channel
         await self._post_to_ward_room(agent, response_text)
         self._last_proactive[agent.id] = time.monotonic()
+
+        # AD-488: Record cognitive event and check for rumination
+        self._circuit_breaker.record_event(
+            agent.id,
+            "proactive_think",
+            response_text[:500] if response_text else "",
+        )
+        # AD-488: Record Ward Room post as cognitive event
+        self._circuit_breaker.record_event(
+            agent.id,
+            "ward_room_post",
+            response_text[:500] if response_text else "",
+        )
+        if self._circuit_breaker.check_and_trip(agent.id):
+            # Breaker tripped — fire bridge alert for Counselor awareness
+            if self._on_event:
+                callsign = getattr(agent, 'callsign', agent.agent_type)
+                self._on_event({
+                    "type": "bridge_alert",
+                    "source": "circuit_breaker",
+                    "severity": "warning",
+                    "title": f"Circuit Breaker: {callsign}",
+                    "detail": (
+                        f"{callsign}'s cognitive circuit breaker has activated "
+                        f"(trip #{self._circuit_breaker.get_status(agent.id)['trip_count']}). "
+                        "Repetitive thought patterns detected. "
+                        "Forced cooldown applied — not punishment, health protection."
+                    ),
+                })
 
         # AD-414: Emit attenuated trust signal for successful proactive think
         if self._config:
@@ -558,6 +607,11 @@ class ProactiveCognitiveLoop:
             except Exception:
                 logger.debug("Skill profile fetch failed for %s", agent.id, exc_info=True)
 
+        # AD-488: Attention redirect after circuit breaker recovery
+        redirect = self._circuit_breaker.get_attention_redirect(agent.id)
+        if redirect:
+            context["circuit_breaker_redirect"] = redirect
+
         return context
 
     async def _is_similar_to_recent_posts(self, agent: Any, text: str, threshold: float = 0.5) -> bool:
@@ -597,7 +651,7 @@ class ProactiveCognitiveLoop:
 
             # Jaccard similarity on word sets
             new_words = set(text.lower().split())
-            for post in agent_posts[:3]:  # Check last 3 posts
+            for post in agent_posts[:10]:  # BF-062: Check last 10 posts (was 3)
                 old_words = set(post.lower().split())
                 if not new_words or not old_words:
                     continue
@@ -606,6 +660,16 @@ class ProactiveCognitiveLoop:
                 similarity = len(intersection) / len(union) if union else 0.0
                 if similarity >= threshold:
                     return True
+
+                # BF-062: Bigram similarity catches paraphrased near-duplicates
+                new_bigrams = set(zip(text.lower().split(), text.lower().split()[1:]))
+                old_bigrams = set(zip(post.lower().split(), post.lower().split()[1:]))
+                if new_bigrams and old_bigrams:
+                    bi_intersection = new_bigrams & old_bigrams
+                    bi_union = new_bigrams | old_bigrams
+                    bi_similarity = len(bi_intersection) / len(bi_union) if bi_union else 0.0
+                    if bi_similarity >= threshold:
+                        return True
 
             return False
         except Exception:
@@ -770,8 +834,8 @@ class ProactiveCognitiveLoop:
                     except Exception:
                         pass  # best-effort
 
-        # --- Replies (Commander+) ---
-        if rank in (Rank.COMMANDER, Rank.SENIOR):
+        # --- Replies (Lieutenant+) --- BF-061
+        if rank.value != Rank.ENSIGN.value:
             text, reply_actions = await self._extract_and_execute_replies(
                 agent, text
             )
@@ -817,25 +881,49 @@ class ProactiveCognitiveLoop:
                 logger.info("Notebook entry written: %s/%s", callsign, topic_slug)
             except Exception as e:
                 logger.warning("Notebook write failed for %s: %s", topic_slug, e)
-            # Remove the tag from text so it doesn't appear in Ward Room post
-            text = text.replace(f"[NOTEBOOK {topic_slug}]{notebook_content}[/NOTEBOOK]", "").strip()
+
+        # BF-060: Strip ALL notebook blocks from text using regex (not string replace)
+        # text.replace() failed because .strip() on captured content caused whitespace mismatch
+        text = re.sub(notebook_pattern, '', text, flags=re.DOTALL).strip()
 
         return text, actions_executed
+
+    async def _resolve_thread_id(self, thread_id: str) -> str | None:
+        """BF-061: Resolve a full or partial thread ID to an actual thread ID."""
+        rt = self._runtime
+        # Try exact match first
+        thread = await rt.ward_room.get_thread(thread_id)
+        if thread:
+            return thread_id
+        # Try prefix match on recent threads across channels
+        if len(thread_id) < 36:
+            channels = await rt.ward_room.list_channels()
+            for ch in channels:
+                try:
+                    activity = await rt.ward_room.get_recent_activity(ch.id, limit=20, since=None)
+                    for item in activity:
+                        tid = item.get("thread_id", "") or item.get("id", "")
+                        if tid and tid.startswith(thread_id):
+                            return tid
+                except Exception:
+                    continue
+        return None
 
     async def _extract_and_execute_replies(
         self, agent: Any, text: str,
     ) -> tuple[str, list[dict]]:
         """AD-437: Extract [REPLY thread_id]...[/REPLY] blocks and post as replies.
 
-        Allows Commander+ agents to reply to existing threads instead of
+        Allows Lieutenant+ agents to reply to existing threads instead of
         always creating new threads for every observation.
         """
         import re
         rt = self._runtime
         actions: list[dict] = []
 
+        # BF-061: More flexible pattern — optional thread: prefix, no mandatory newline
         pattern = re.compile(
-            r'\[REPLY\s+(\S+)\]\s*\n(.*?)\n\[/REPLY\]',
+            r'\[REPLY\s+(?:thread:?\s*)?(\S+)\]\s*(.*?)\s*\[/REPLY\]',
             re.DOTALL | re.IGNORECASE,
         )
 
@@ -846,11 +934,13 @@ class ProactiveCognitiveLoop:
                 continue
 
             try:
-                # Verify thread exists
-                thread = await rt.ward_room.get_thread(thread_id)
-                if not thread:
+                # BF-061: Resolve thread ID (may be partial or prefixed)
+                resolved_id = await self._resolve_thread_id(thread_id)
+                if not resolved_id:
                     logger.debug("AD-437: Reply target thread %s not found", thread_id)
                     continue
+                thread_id = resolved_id
+                thread = await rt.ward_room.get_thread(thread_id)
 
                 # Check thread isn't locked
                 thread_data = thread.get("thread", thread)

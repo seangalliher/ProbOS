@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.crew_profile import Rank
 from probos.earned_agency import can_think_proactively, agency_from_rank, AgencyLevel
 from probos.proactive import ProactiveCognitiveLoop
@@ -643,6 +644,7 @@ class TestProactiveWardRoomContext:
         loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
         loop._cooldown = 300
         loop._agent_cooldowns = {}
+        loop._circuit_breaker = CognitiveCircuitBreaker()
 
         # Mock runtime with ward_room
         rt = MagicMock()
@@ -679,6 +681,7 @@ class TestProactiveWardRoomContext:
         loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
         loop._cooldown = 300
         loop._agent_cooldowns = {}
+        loop._circuit_breaker = CognitiveCircuitBreaker()
 
         rt = MagicMock()
         rt.episodic_memory = None
@@ -713,6 +716,7 @@ class TestProactiveWardRoomContext:
         loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
         loop._cooldown = 300
         loop._agent_cooldowns = {}
+        loop._circuit_breaker = CognitiveCircuitBreaker()
 
         rt = MagicMock()
         rt.episodic_memory = None
@@ -1488,6 +1492,7 @@ class TestSelfPostFiltering:
         loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
         loop._cooldown = 300
         loop._agent_cooldowns = {}
+        loop._circuit_breaker = CognitiveCircuitBreaker()
 
         rt = MagicMock()
         rt.episodic_memory = None
@@ -1531,6 +1536,7 @@ class TestSimilarPostSuppression:
     async def test_similar_post_suppressed(self):
         """Post with high word overlap is detected as similar."""
         loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
+        loop._circuit_breaker = CognitiveCircuitBreaker()
 
         rt = MagicMock()
         ch = MagicMock()
@@ -1555,6 +1561,7 @@ class TestSimilarPostSuppression:
     async def test_different_post_allowed(self):
         """Post with low word overlap is not flagged."""
         loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
+        loop._circuit_breaker = CognitiveCircuitBreaker()
 
         rt = MagicMock()
         ch = MagicMock()
@@ -1579,6 +1586,7 @@ class TestSimilarPostSuppression:
     async def test_empty_history_allows_posting(self):
         """No recent posts means nothing to compare — allow posting."""
         loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
+        loop._circuit_breaker = CognitiveCircuitBreaker()
 
         rt = MagicMock()
         ch = MagicMock()

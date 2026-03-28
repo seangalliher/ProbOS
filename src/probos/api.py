@@ -391,6 +391,20 @@ def create_app(runtime: Any) -> FastAPI:
             services.append({"name": name, "status": status})
         return {"services": services}
 
+    @app.get("/api/system/circuit-breakers")
+    async def system_circuit_breakers() -> dict[str, Any]:
+        """AD-488: Circuit breaker status for all tracked agents."""
+        if not hasattr(runtime, 'proactive_loop') or not runtime.proactive_loop:
+            return {"breakers": []}
+        cb = runtime.proactive_loop.circuit_breaker
+        statuses = cb.get_all_statuses()
+        # Enrich with callsigns
+        for s in statuses:
+            agent = runtime.registry.get(s["agent_id"])
+            if agent:
+                s["callsign"] = getattr(agent, 'callsign', agent.agent_type)
+        return {"breakers": statuses}
+
     @app.post("/api/system/shutdown")
     async def system_shutdown(req: ShutdownRequest) -> dict[str, Any]:
         """AD-436: Initiate system shutdown from HXI Bridge."""
