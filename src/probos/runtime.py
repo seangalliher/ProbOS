@@ -1836,7 +1836,10 @@ class ProbOSRuntime:
         if self.dream_scheduler and self.episodic_memory:
             logger.info("Consolidating session memories...")
             try:
-                report = await self.dream_scheduler.engine.dream_cycle()
+                report = await asyncio.wait_for(
+                    self.dream_scheduler.engine.dream_cycle(),
+                    timeout=5.0,  # Don't let consolidation block shutdown
+                )
                 logger.info(
                     "Session consolidation complete: replayed=%d strengthened=%d pruned=%d",
                     report.episodes_replayed,
