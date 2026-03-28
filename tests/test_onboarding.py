@@ -394,7 +394,7 @@ class TestProactiveActivation:
         """Agent in PROBATIONARY with trust >= 0.65 → check_activation called."""
         from probos.proactive import ProactiveCognitiveLoop
 
-        loop = ProactiveCognitiveLoop(interval=60)
+        loop = ProactiveCognitiveLoop(interval=60, cooldown=0)
 
         rt = MagicMock()
         rt.ward_room = MagicMock()
@@ -421,10 +421,6 @@ class TestProactiveActivation:
         rt._extract_endorsements = MagicMock(return_value=[])
         loop._runtime = rt
         loop._started_at = 0  # Long ago, no cold start dampening
-        # Ensure cooldown check passes even on fresh CI runners where
-        # time.monotonic() may be < 60s since boot.
-        loop._last_proactive[agent.id] = 0.0
-        loop._cooldown = 0  # No cooldown gate for this test
 
         # Stub _think_for_agent to avoid full LLM path
         loop._think_for_agent = AsyncMock()

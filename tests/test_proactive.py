@@ -13,6 +13,13 @@ from probos.proactive import ProactiveCognitiveLoop
 from probos.types import IntentMessage, IntentResult
 
 
+def _make_loop(**kwargs) -> ProactiveCognitiveLoop:
+    """Create a loop with cooldown=0 by default so tests pass on fresh CI
+    runners where time.monotonic() may be < the default 300s cooldown."""
+    kwargs.setdefault("cooldown", 0)
+    return ProactiveCognitiveLoop(**kwargs)
+
+
 class TestCanThinkProactively:
     """can_think_proactively() — agency gating for proactive thought."""
 
@@ -34,7 +41,7 @@ class TestProactiveCognitiveLoopLifecycle:
 
     @pytest.mark.asyncio
     async def test_start_creates_task(self):
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(MagicMock())
         await loop.start()
         assert loop._task is not None
@@ -42,7 +49,7 @@ class TestProactiveCognitiveLoopLifecycle:
 
     @pytest.mark.asyncio
     async def test_stop_cancels_task(self):
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(MagicMock())
         await loop.start()
         await loop.stop()
@@ -50,7 +57,7 @@ class TestProactiveCognitiveLoopLifecycle:
 
     @pytest.mark.asyncio
     async def test_double_start_is_idempotent(self):
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(MagicMock())
         await loop.start()
         task1 = loop._task
@@ -134,7 +141,7 @@ class TestProactiveCognitiveLoopCycle:
         rt = _make_mock_runtime(agents=[agent])
         rt._is_crew_agent.return_value = False
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -145,7 +152,7 @@ class TestProactiveCognitiveLoopCycle:
         agent = _make_mock_agent(alive=False)
         rt = _make_mock_runtime(agents=[agent])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -157,7 +164,7 @@ class TestProactiveCognitiveLoopCycle:
         agent = _make_mock_agent()
         rt = _make_mock_runtime(agents=[agent], trust_scores={agent.id: 0.3})
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -172,7 +179,7 @@ class TestProactiveCognitiveLoopCycle:
         )
         rt = _make_mock_runtime(agents=[agent], trust_scores={agent.id: 0.55})
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -223,7 +230,7 @@ class TestProactiveNoResponse:
         )
         rt = _make_mock_runtime(agents=[agent])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -237,7 +244,7 @@ class TestProactiveNoResponse:
         )
         rt = _make_mock_runtime(agents=[agent])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -251,7 +258,7 @@ class TestProactiveNoResponse:
         )
         rt = _make_mock_runtime(agents=[agent])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -270,7 +277,7 @@ class TestProactiveWardRoomPosting:
         )
         rt = _make_mock_runtime(agents=[agent])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -289,7 +296,7 @@ class TestProactiveWardRoomPosting:
         )
         rt = _make_mock_runtime(agents=[agent])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
 
         with patch("probos.cognitive.standing_orders.get_department", return_value="science"):
@@ -307,7 +314,7 @@ class TestProactiveWardRoomPosting:
         )
         rt = _make_mock_runtime(agents=[agent])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -320,7 +327,7 @@ class TestProactiveWardRoomPosting:
         agent = _make_mock_agent()
         rt = _make_mock_runtime(agents=[agent], ward_room=False)
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -338,7 +345,7 @@ class TestProactiveContextGathering:
         ep = Episode(user_input="test task", reflection="Handled successfully")
         rt.episodic_memory.recall_for_agent.return_value = [ep]
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         context = await loop._gather_context(agent, 0.7)
 
@@ -356,7 +363,7 @@ class TestProactiveContextGathering:
         alert.source = "vitals_monitor"
         rt.bridge_alerts.get_recent_alerts.return_value = [alert]
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         context = await loop._gather_context(agent, 0.7)
 
@@ -371,7 +378,7 @@ class TestProactiveContextGathering:
             {"category": "system", "event": "started", "agent_type": ""},
         ]
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         context = await loop._gather_context(agent, 0.7)
 
@@ -388,11 +395,14 @@ class TestProactiveContextGathering:
         rt.event_log = None
         rt.ontology = None  # AD-429a
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         context = await loop._gather_context(agent, 0.7)
 
-        assert context == {}
+        # AD-502: temporal fields may be present; service-derived data should be absent
+        assert "recent_memories" not in context
+        assert "bridge_alerts" not in context
+        assert "recent_events" not in context
 
     @pytest.mark.asyncio
     async def test_gather_context_fallback_to_recent_for_agent(self):
@@ -407,7 +417,7 @@ class TestProactiveContextGathering:
         ep2 = Episode(user_input="recent task 2", reflection="Did task 2.")
         rt.episodic_memory.recent_for_agent = AsyncMock(return_value=[ep1, ep2])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         context = await loop._gather_context(agent, 0.7)
 
@@ -910,7 +920,7 @@ class TestProactiveExceptionConfidence:
         agent.update_confidence = MagicMock()
         rt = _make_mock_runtime(agents=[agent])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -932,7 +942,7 @@ class TestProactiveExceptionConfidence:
 
         rt = _make_mock_runtime(agents=[agent1, agent2])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -968,7 +978,7 @@ class TestProactiveEpisodicMemory:
         rt.episodic_memory.store = AsyncMock()
         rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         loop._started_at = time.monotonic() - 1200  # past cold-start
         await loop._run_cycle()
@@ -994,7 +1004,7 @@ class TestProactiveEpisodicMemory:
         rt.episodic_memory.store = AsyncMock()
         rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         loop._started_at = time.monotonic() - 1200  # past cold-start
         await loop._run_cycle()
@@ -1014,7 +1024,7 @@ class TestProactiveEpisodicMemory:
         rt = _make_mock_runtime(agents=[agent])
         rt.episodic_memory = None
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -1034,7 +1044,7 @@ class TestProactiveEpisodicMemory:
         rt.episodic_memory.store = AsyncMock(side_effect=RuntimeError("ChromaDB down"))
         rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
 
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         loop.set_runtime(rt)
         await loop._run_cycle()
 
@@ -1201,7 +1211,7 @@ class TestProposalExtraction:
     @pytest.mark.asyncio
     async def test_extract_proposal_valid(self):
         """Valid [PROPOSAL] block is parsed and posted."""
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         rt = MagicMock()
         rt._handle_propose_improvement = AsyncMock(return_value={"success": True})
         loop.set_runtime(rt)
@@ -1234,7 +1244,7 @@ class TestProposalExtraction:
     @pytest.mark.asyncio
     async def test_extract_proposal_no_block(self):
         """Text without [PROPOSAL] block is ignored."""
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         rt = MagicMock()
         rt._handle_propose_improvement = AsyncMock()
         loop.set_runtime(rt)
@@ -1247,7 +1257,7 @@ class TestProposalExtraction:
     @pytest.mark.asyncio
     async def test_extract_proposal_missing_title(self):
         """Incomplete proposal (no title) is silently skipped."""
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         rt = MagicMock()
         rt._handle_propose_improvement = AsyncMock()
         loop.set_runtime(rt)
@@ -1267,7 +1277,7 @@ class TestProposalExtraction:
     @pytest.mark.asyncio
     async def test_extract_proposal_missing_rationale(self):
         """Incomplete proposal (no rationale) is silently skipped."""
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         rt = MagicMock()
         rt._handle_propose_improvement = AsyncMock()
         loop.set_runtime(rt)
@@ -1287,7 +1297,7 @@ class TestProposalExtraction:
     @pytest.mark.asyncio
     async def test_extract_proposal_multiline_rationale(self):
         """Multiline rationale is captured correctly."""
-        loop = ProactiveCognitiveLoop()
+        loop = _make_loop()
         rt = MagicMock()
         rt._handle_propose_improvement = AsyncMock(return_value={"success": True})
         loop.set_runtime(rt)
