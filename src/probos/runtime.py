@@ -699,51 +699,58 @@ class ProbOSRuntime:
 
         # Engineering team — Builder Agent (AD-302)
         if self.config.utility_agents.enabled:
+            ids = generate_pool_ids("builder", "builder", 1)
             await self.create_pool(
                 "builder", "builder", target_size=1,
-                llm_client=self.llm_client, runtime=self,
+                agent_ids=ids, llm_client=self.llm_client, runtime=self,
             )
 
         # Science team — Architect Agent (AD-307)
         if self.config.utility_agents.enabled:
+            ids = generate_pool_ids("architect", "architect", 1)
             await self.create_pool(
                 "architect", "architect", target_size=1,
-                llm_client=self.llm_client, runtime=self,
+                agent_ids=ids, llm_client=self.llm_client, runtime=self,
             )
 
         # Science team — Scout Agent (AD-394)
         if self.config.utility_agents.enabled:
+            ids = generate_pool_ids("scout", "scout", 1)
             await self.create_pool(
                 "scout", "scout", target_size=1,
-                llm_client=self.llm_client, runtime=self,
+                agent_ids=ids, llm_client=self.llm_client, runtime=self,
             )
 
         # Bridge crew — Counselor (AD-398)
         if self.config.utility_agents.enabled:
+            ids = generate_pool_ids("counselor", "counselor", 1)
             await self.create_pool(
                 "counselor", "counselor", target_size=1,
-                llm_client=self.llm_client, runtime=self,
+                agent_ids=ids, llm_client=self.llm_client, runtime=self,
             )
 
         # Security team — Security Officer (AD-398)
         if self.config.utility_agents.enabled:
+            ids = generate_pool_ids("security_officer", "security_officer", 1)
             await self.create_pool(
                 "security_officer", "security_officer", target_size=1,
-                llm_client=self.llm_client, runtime=self,
+                agent_ids=ids, llm_client=self.llm_client, runtime=self,
             )
 
         # Operations team — Operations Officer (AD-398)
         if self.config.utility_agents.enabled:
+            ids = generate_pool_ids("operations_officer", "operations_officer", 1)
             await self.create_pool(
                 "operations_officer", "operations_officer", target_size=1,
-                llm_client=self.llm_client, runtime=self,
+                agent_ids=ids, llm_client=self.llm_client, runtime=self,
             )
 
         # Engineering team — Engineering Officer (AD-398)
         if self.config.utility_agents.enabled:
+            ids = generate_pool_ids("engineering_officer", "engineering_officer", 1)
             await self.create_pool(
                 "engineering_officer", "engineering_officer", target_size=1,
-                llm_client=self.llm_client, runtime=self,
+                agent_ids=ids, llm_client=self.llm_client, runtime=self,
             )
 
         # Build CodebaseIndex — ship's library, available to all agents (AD-297)

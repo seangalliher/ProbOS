@@ -1194,6 +1194,17 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 
 **Status:** BF-053/054/055 COMPLETE.
 
+### BF-058/059: Deterministic Crew IDs + Reset Identity Cleanup
+
+| BF | Decision |
+|----|----------|
+| BF-058 | **Deterministic crew IDs** — All 7 crew pools (builder, architect, scout, counselor, security_officer, operations_officer, engineering_officer) now use `agent_ids=generate_pool_ids(...)`, matching the medical agent pattern. Previously used random `uuid4()` IDs on every boot, making BF-057 cert lookup impossible. |
+| BF-059 | **Reset clears identity** — `_cmd_reset()` now deletes `identity.db` (birth certificates) and `ontology/instance_id` (ship DID). A reset = new ship, new crew, new identities. Without this, old certs survived reset and silently restored previous callsigns. |
+
+**Files modified:** `runtime.py`, `__main__.py`. **Tests:** `test_identity_deterministic.py` (8 new).
+
+**Status:** BF-058/059 COMPLETE.
+
 ### BF-057: Identity Persistence on Restart (CRITICAL — 2026-03-27)
 
 **Discovery:** Restart without reset caused all 11 crew agents to re-run naming ceremony and pick new names. Instance 3 crew (Curie, Pax, Keiko, Tesla, Reeves) became Cortex, Bones, Hatch, Geordi, Sentinel. Total identity loss.
@@ -1212,4 +1223,19 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 
 **Files modified:** `runtime.py`. **Tests:** `test_identity_persistence.py` (6 new).
 
-**Status:** BF-057 COMPLETE.
+**Status:** BF-057 COMPLETE. **Correction:** BF-057 logic is correct but requires BF-058 to function — see below.
+
+### BF-058 + BF-059: Deterministic Crew IDs + Reset Identity Cleanup (2026-03-27)
+
+**Discovery:** Sea trial (instance 4) showed naming ceremonies running for crew agents on every boot but NOT for medical agents. Root cause analysis:
+
+**BF-058 (Critical):** The 7 crew agent pools (builder, architect, scout, counselor, security_officer, operations_officer, engineering_officer) are created at `runtime.py` lines 700–747 **without** `agent_ids=`. This causes `BaseAgent.__init__` to fall through to `uuid.uuid4().hex`, generating a new random ID every boot. BF-057's cert lookup via `get_by_slot(agent.id)` always returns `None` because the slot ID changes. Medical agents work correctly because they use `generate_pool_ids()` (deterministic). Fix: add `agent_ids=generate_pool_ids(...)` to all 7 crew pool creation calls.
+
+**BF-059 (Medium):** `probos reset` clears trust, episodes, Hebbian, Ward Room, events, journal — but NOT `identity.db`. After reset, old birth certificates survive. Medical agents (deterministic IDs) silently match old certs and skip naming ceremony, keeping previous instance callsigns instead of getting fresh names. Fix: add identity.db + ontology/instance_id cleanup to `_cmd_reset()`.
+
+**Key insight:** BF-057 + BF-058 + BF-059 form a complete identity lifecycle:
+- BF-058: Stable IDs → certs persist correctly (prerequisite for BF-057)
+- BF-057: Cert lookup → restore identity on warm boot (restart without reset)
+- BF-059: Reset clears certs → fresh naming ceremony on cold boot (reset = new instance)
+
+**Files to modify:** `runtime.py`, `__main__.py`. **Tests:** `test_identity_deterministic.py` (8 new).

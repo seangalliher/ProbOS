@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: BF-057 COMPLETE — Identity Persistence on Restart (CRITICAL). Naming ceremony now checks identity registry for existing birth certificate before running. Warm boot: restores callsign from cert, syncs callsign_registry + ontology, skips LLM ceremony. Cold start: runs ceremony as before. Boot ordering verified correct (identity_registry.start() at line 658, agent spawn later). 1 file modified (runtime.py), 6 new tests.
+## Current Status: BF-058/059 COMPLETE — Deterministic Crew IDs + Reset Identity Cleanup: (1) BF-058 All 7 crew pools (builder, architect, scout, counselor, security_officer, operations_officer, engineering_officer) now use `generate_pool_ids()` for deterministic IDs — matches medical agent pattern. BF-057 cert lookup now works for crew agents. (2) BF-059 `probos reset` now clears identity.db and ontology/instance_id. New instance = new ship, new crew, new identities. 2 source files modified, 1 test file created (8 tests).
 
 ---
 

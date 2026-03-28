@@ -648,6 +648,21 @@ def _cmd_reset(args: argparse.Namespace) -> None:
         shutil.rmtree(records_dir, onerror=_force_remove_readonly)
         records_cleared = True
 
+    # Clear identity registry (AD-441, BF-059) — new instance = new ship, new crew
+    identity_cleared = False
+    identity_db = data_dir / "identity.db"
+    if identity_db.is_file():
+        identity_db.unlink()
+        identity_cleared = True
+
+    # Clear instance ID (BF-059) — new instance = new ship DID
+    instance_id_cleared = False
+    ontology_dir = data_dir / "ontology"
+    instance_id_file = ontology_dir / "instance_id"
+    if instance_id_file.is_file():
+        instance_id_file.unlink()
+        instance_id_cleared = True
+
     # Git commit if repo is git-initialized
     if (repo_path / ".git").is_dir():
         try:
@@ -670,9 +685,11 @@ def _cmd_reset(args: argparse.Namespace) -> None:
     events_msg = " Event log cleared." if events_cleared else ""
     journal_msg = " Cognitive journal cleared." if journal_cleared else ""
     records_msg = " Ship's Records wiped." if records_cleared else ""
+    identity_msg = " Identity registry cleared." if identity_cleared else ""
+    instance_id_msg = " Instance ID cleared (new ship DID on next boot)." if instance_id_cleared else ""
     console.print(
         f"[bold green]Reset complete.[/bold green] Cleared: {summary}."
-        f"{chroma_msg}{hebbian_msg}{wardroom_msg}{checkpoint_msg}{events_msg}{journal_msg}{records_msg}"
+        f"{chroma_msg}{hebbian_msg}{wardroom_msg}{checkpoint_msg}{events_msg}{journal_msg}{records_msg}{identity_msg}{instance_id_msg}"
     )
     if wardroom_cleared:
         console.print(f"  Ward Room archived to: {archive_path}")
