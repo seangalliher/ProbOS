@@ -54,6 +54,23 @@ class ProactiveCognitiveLoop:
         self._duty_tracker: DutyScheduleTracker | None = None
         self._circuit_breaker = CognitiveCircuitBreaker()
 
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        """AD-502: Format seconds into human-readable duration."""
+        seconds = max(0.0, seconds)
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        elif seconds < 3600:
+            return f"{int(seconds // 60)}m {int(seconds % 60)}s"
+        elif seconds < 86400:
+            hours = int(seconds // 3600)
+            mins = int((seconds % 3600) // 60)
+            return f"{hours}h {mins}m"
+        else:
+            days = int(seconds // 86400)
+            hours = int((seconds % 86400) // 3600)
+            return f"{days}d {hours}h"
+
     def set_runtime(self, runtime: Any) -> None:
         """Wire the runtime reference (provides registry, trust, WR, memory, etc.)."""
         self._runtime = runtime
@@ -235,6 +252,20 @@ class ProactiveCognitiveLoop:
         # AD-417: Record proactive activity for dream scheduler awareness
         if hasattr(self._runtime, 'dream_scheduler') and self._runtime.dream_scheduler:
             self._runtime.dream_scheduler.record_proactive_activity()
+
+        # AD-502: Inject post count for temporal awareness
+        try:
+            rt = self._runtime
+            if rt and hasattr(rt, 'ward_room') and rt.ward_room:
+                one_hour_ago = time.time() - 3600
+                cooldown_ts = rt._ward_room_cooldowns.get(agent.id, 0)
+                # Count as 1 if posted within the last hour, 0 otherwise
+                # This is a rough proxy — exact count would require WR query
+                agent._recent_post_count = 1 if cooldown_ts > one_hour_ago else 0
+            else:
+                agent._recent_post_count = 0
+        except Exception:
+            pass  # Non-critical
 
         intent = IntentMessage(
             intent="proactive_think",
@@ -436,6 +467,14 @@ class ProactiveCognitiveLoop:
         rt = self._runtime
         context: dict[str, Any] = {}
 
+        # AD-502: Temporal context for agent prompt
+        if hasattr(rt, '_start_time_wall'):
+            context["system_start_time"] = rt._start_time_wall
+        if hasattr(rt, '_lifecycle_state'):
+            context["lifecycle_state"] = rt._lifecycle_state
+        if hasattr(rt, '_stasis_duration'):
+            context["stasis_duration"] = rt._stasis_duration
+
         # BF-034: Cold-start context note for agents
         if hasattr(rt, 'is_cold_start') and rt.is_cold_start:
             context["system_note"] = (
@@ -456,10 +495,17 @@ class ProactiveCognitiveLoop:
                 if not episodes and hasattr(rt.episodic_memory, 'recent_for_agent'):
                     episodes = await rt.episodic_memory.recent_for_agent(_agent_mem_id, k=5)
                 if episodes:
+                    # AD-502: Include relative timestamps on recalled memories
+                    include_ts = True
+                    if hasattr(rt, 'config') and hasattr(rt.config, 'temporal'):
+                        include_ts = rt.config.temporal.include_episode_timestamps
+
                     context["recent_memories"] = [
                         {
                             "input": (ep.user_input[:500] + " [trimmed]") if ep.user_input and len(ep.user_input) > 500 else (ep.user_input or ""),
                             "reflection": (ep.reflection[:500] + " [trimmed]") if ep.reflection and len(ep.reflection) > 500 else (ep.reflection or ""),
+                            **({"age": self._format_duration(time.time() - ep.timestamp)}
+                               if include_ts and ep.timestamp > 0 else {}),
                         }
                         for ep in episodes
                     ]

@@ -1619,7 +1619,7 @@ def create_app(runtime: Any) -> FastAPI:
         # BF-017: Only crew agents get personality and proactive controls
         is_crew = runtime._is_crew_agent(agent)
 
-        return {
+        profile_data = {
             "id": agent.id,
             "sovereignId": getattr(agent, 'sovereign_id', ''),
             "did": getattr(agent, 'did', ''),
@@ -1643,6 +1643,20 @@ def create_app(runtime: Any) -> FastAPI:
             "isCrew": is_crew,
             "proactiveCooldown": runtime.proactive_loop.get_agent_cooldown(agent.id) if is_crew and hasattr(runtime, 'proactive_loop') and runtime.proactive_loop else None,
         }
+
+        # AD-497: Include workforce data
+        if runtime.work_item_store:
+            agent_uuid = getattr(agent, 'uuid', agent.id)
+            active_items = await runtime.work_item_store.list_work_items(
+                assigned_to=agent_uuid, status=None, limit=50,
+            )
+            profile_data["work_items"] = [wi.to_dict() for wi in active_items]
+            bookings = await runtime.work_item_store.list_bookings(
+                resource_id=agent_uuid, limit=20,
+            )
+            profile_data["bookings"] = [b.to_dict() for b in bookings]
+
+        return profile_data
 
     @app.put("/api/agent/{agent_id}/proactive-cooldown")
     async def set_agent_proactive_cooldown(agent_id: str, req: dict) -> dict[str, Any]:
@@ -2391,6 +2405,167 @@ def create_app(runtime: Any) -> FastAPI:
         if "error" in result:
             return JSONResponse(status_code=400, content=result)
         return result
+
+    # ── Workforce Scheduling Engine (AD-496) ──────────────────────────
+
+    @app.post("/api/work-items")
+    async def create_work_item(request: Request) -> dict[str, Any]:
+        """Create a new work item."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        body = await request.json()
+        item = await runtime.work_item_store.create_work_item(**body)
+        _broadcast_event({"type": "work_item_created", "data": {"work_item": item.to_dict()}})
+        return {"work_item": item.to_dict()}
+
+    @app.get("/api/work-items")
+    async def list_work_items(
+        status: str | None = None,
+        assigned_to: str | None = None,
+        work_type: str | None = None,
+        parent_id: str | None = None,
+        priority: int | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List work items with filters."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        items = await runtime.work_item_store.list_work_items(
+            status=status, assigned_to=assigned_to, work_type=work_type,
+            parent_id=parent_id, priority=priority, limit=limit, offset=offset,
+        )
+        return {"work_items": [i.to_dict() for i in items], "count": len(items)}
+
+    @app.get("/api/work-items/{work_item_id}")
+    async def get_work_item(work_item_id: str) -> dict[str, Any]:
+        """Get a work item by ID."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        item = await runtime.work_item_store.get_work_item(work_item_id)
+        if not item:
+            raise HTTPException(404, "Work item not found")
+        return {"work_item": item.to_dict()}
+
+    @app.patch("/api/work-items/{work_item_id}")
+    async def update_work_item(work_item_id: str, request: Request) -> dict[str, Any]:
+        """Update work item fields."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        body = await request.json()
+        item = await runtime.work_item_store.update_work_item(work_item_id, **body)
+        if not item:
+            raise HTTPException(404, "Work item not found")
+        _broadcast_event({"type": "work_item_updated", "data": {"work_item": item.to_dict()}})
+        return {"work_item": item.to_dict()}
+
+    @app.post("/api/work-items/{work_item_id}/transition")
+    async def transition_work_item(work_item_id: str, request: Request) -> dict[str, Any]:
+        """Transition work item status."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        body = await request.json()
+        item = await runtime.work_item_store.transition_work_item(
+            work_item_id, body["status"], source=body.get("source", "captain"),
+        )
+        if not item:
+            raise HTTPException(404, "Work item not found or invalid transition")
+        _broadcast_event({"type": "work_item_updated", "data": {"work_item": item.to_dict()}})
+        return {"work_item": item.to_dict()}
+
+    @app.post("/api/work-items/{work_item_id}/assign")
+    async def assign_work_item(work_item_id: str, request: Request) -> dict[str, Any]:
+        """Push assignment: assign work to a specific agent."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        body = await request.json()
+        booking = await runtime.work_item_store.assign_work_item(
+            work_item_id, body["resource_id"], source=body.get("source", "captain"),
+        )
+        if not booking:
+            raise HTTPException(400, "Assignment failed (ineligible or no capacity)")
+        # Re-fetch work item to get updated assigned_to
+        wi = await runtime.work_item_store.get_work_item(work_item_id)
+        _broadcast_event({"type": "work_item_assigned", "data": {"work_item": wi.to_dict() if wi else {}, "booking": booking.to_dict()}})
+        return {"booking": booking.to_dict()}
+
+    @app.post("/api/work-items/claim")
+    async def claim_work_item(request: Request) -> dict[str, Any]:
+        """Pull assignment: agent claims highest-priority eligible work."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        body = await request.json()
+        result = await runtime.work_item_store.claim_work_item(
+            body["resource_id"],
+            work_type=body.get("work_type"),
+            department=body.get("department"),
+        )
+        if not result:
+            raise HTTPException(404, "No eligible work items")
+        work_item, booking = result
+        _broadcast_event({"type": "work_item_assigned", "data": {"work_item": work_item.to_dict(), "booking": booking.to_dict()}})
+        return {"work_item": work_item.to_dict(), "booking": booking.to_dict()}
+
+    @app.delete("/api/work-items/{work_item_id}")
+    async def delete_work_item(work_item_id: str) -> dict[str, Any]:
+        """Delete a work item."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        deleted = await runtime.work_item_store.delete_work_item(work_item_id)
+        if not deleted:
+            raise HTTPException(404, "Work item not found")
+        _broadcast_event({"type": "work_item_deleted", "data": {"work_item_id": work_item_id}})
+        return {"deleted": True}
+
+    # -- Bookings --
+
+    @app.get("/api/bookings")
+    async def list_bookings(
+        resource_id: str | None = None,
+        work_item_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """List bookings with filters."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        bookings = await runtime.work_item_store.list_bookings(
+            resource_id=resource_id, work_item_id=work_item_id, status=status, limit=limit,
+        )
+        return {"bookings": [b.to_dict() for b in bookings], "count": len(bookings)}
+
+    @app.get("/api/bookings/{booking_id}/journal")
+    async def get_booking_journal(booking_id: str) -> dict[str, Any]:
+        """Get time/token segments for a booking."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        entries = await runtime.work_item_store.get_booking_journal(booking_id)
+        return {"journal": [e.to_dict() for e in entries]}
+
+    # -- Resources --
+
+    @app.get("/api/resources")
+    async def list_resources(
+        department: str | None = None,
+        resource_type: str | None = None,
+    ) -> dict[str, Any]:
+        """List bookable resources."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        resources = runtime.work_item_store.list_resources(
+            department=department, resource_type=resource_type,
+        )
+        return {"resources": [r.to_dict() for r in resources], "count": len(resources)}
+
+    @app.get("/api/resources/{resource_id}/availability")
+    async def get_resource_availability(resource_id: str) -> dict[str, Any]:
+        """Get resource availability (capacity minus active bookings)."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        availability = runtime.work_item_store.get_resource_availability(resource_id)
+        if not availability:
+            raise HTTPException(404, "Resource not found")
+        return availability
 
     async def _run_build(
         req: BuildRequest,

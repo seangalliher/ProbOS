@@ -356,6 +356,7 @@ async def _serve(
 
     if fresh:
         runtime._fresh_boot = True
+        runtime._lifecycle_state = "reset"  # AD-502: --fresh flag = explicit reset
 
     app = create_app(runtime)
 

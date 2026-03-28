@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from probos.substrate.agent import BaseAgent
@@ -482,6 +483,66 @@ class CognitiveAgent(BaseAgent):
             d for d in cls.intent_descriptors if d.name != intent_name
         ]
 
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        """AD-502: Format seconds into human-readable duration."""
+        seconds = max(0.0, seconds)
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        elif seconds < 3600:
+            return f"{int(seconds // 60)}m {int(seconds % 60)}s"
+        elif seconds < 86400:
+            hours = int(seconds // 3600)
+            mins = int((seconds % 3600) // 60)
+            return f"{hours}h {mins}m"
+        else:
+            days = int(seconds // 86400)
+            hours = int((seconds % 86400) // 3600)
+            return f"{days}d {hours}h"
+
+    def _build_temporal_context(self) -> str:
+        """AD-502: Build temporal awareness header for agent prompts."""
+        # Respect config if available
+        rt = getattr(self, '_runtime', None)
+        if rt and hasattr(rt, 'config') and hasattr(rt.config, 'temporal'):
+            if not rt.config.temporal.enabled:
+                return ""
+            tcfg = rt.config.temporal
+        else:
+            tcfg = None  # No config available — include everything
+
+        now = datetime.now(timezone.utc)
+        parts = [f"Current time: {now.strftime('%Y-%m-%d %H:%M:%S UTC')} ({now.strftime('%A')})"]
+
+        # Birth age
+        if (tcfg is None or tcfg.include_birth_time):
+            birth_ts = getattr(self, '_birth_timestamp', None)
+            if birth_ts:
+                birth_dt = datetime.fromtimestamp(birth_ts, tz=timezone.utc)
+                age = (now - birth_dt).total_seconds()
+                parts.append(f"Your birth: {birth_dt.strftime('%Y-%m-%d %H:%M:%S UTC')} (age: {self._format_duration(age)})")
+
+        # System uptime
+        if (tcfg is None or tcfg.include_system_uptime):
+            sys_start = getattr(self, '_system_start_time', None)
+            if sys_start:
+                uptime = time.time() - sys_start
+                parts.append(f"System uptime: {self._format_duration(uptime)}")
+
+        # Last action recency
+        if (tcfg is None or tcfg.include_last_action):
+            if hasattr(self, 'meta') and self.meta.last_active:
+                since_last = (now - self.meta.last_active).total_seconds()
+                parts.append(f"Your last action: {self._format_duration(since_last)} ago")
+
+        # Post count
+        if (tcfg is None or tcfg.include_post_count):
+            post_count = getattr(self, '_recent_post_count', None)
+            if post_count is not None:
+                parts.append(f"Your posts this hour: {post_count}")
+
+        return "\n".join(parts)
+
     def _build_user_message(self, observation: dict) -> str:
         """Build the user message from the observation dict.
         Override in subclasses for custom formatting."""
@@ -492,16 +553,26 @@ class CognitiveAgent(BaseAgent):
         if intent_name == "direct_message":
             parts: list[str] = []
 
+            # AD-502: Temporal awareness header
+            temporal_ctx = self._build_temporal_context()
+            if temporal_ctx:
+                parts.append("--- Temporal Awareness ---")
+                parts.append(temporal_ctx)
+                parts.append("---")
+                parts.append("")
+
             # AD-430c: Episodic memory context
             memories = observation.get("recent_memories", [])
             if memories:
                 parts.append("Your recent memories (relevant past experiences):")
                 for m in memories:
+                    # AD-502: Include age prefix if available
+                    age_prefix = f"[{m['age']} ago] " if m.get("age") else ""
                     # BF-029: Prefer input (content-rich) over reflection (often thin)
                     if m.get("input"):
-                        parts.append(f"  - {m['input']}")
+                        parts.append(f"  - {age_prefix}{m['input']}")
                     elif m.get("reflection"):
-                        parts.append(f"  - {m['reflection']}")
+                        parts.append(f"  - {age_prefix}{m['reflection']}")
                 parts.append("")
 
             session_history = params.get("session_history", [])
@@ -526,17 +597,27 @@ class CognitiveAgent(BaseAgent):
             wr_parts.append(f"[Ward Room — #{channel_name}]")
             wr_parts.append(f"Thread: {title}")
 
+            # AD-502: Temporal awareness header
+            temporal_ctx = self._build_temporal_context()
+            if temporal_ctx:
+                wr_parts.append("")
+                wr_parts.append("--- Temporal Awareness ---")
+                wr_parts.append(temporal_ctx)
+                wr_parts.append("---")
+
             # AD-430c: Episodic memory context
             memories = observation.get("recent_memories", [])
             if memories:
                 wr_parts.append("")
                 wr_parts.append("Your relevant memories:")
                 for m in memories:
+                    # AD-502: Include age prefix if available
+                    age_prefix = f"[{m['age']} ago] " if m.get("age") else ""
                     # BF-029: Prefer input (content-rich) over reflection (often thin)
                     if m.get("input"):
-                        wr_parts.append(f"  - {m['input']}")
+                        wr_parts.append(f"  - {age_prefix}{m['input']}")
                     elif m.get("reflection"):
-                        wr_parts.append(f"  - {m['reflection']}")
+                        wr_parts.append(f"  - {age_prefix}{m['reflection']}")
 
             if context:
                 wr_parts.append(f"\nConversation so far:\n{context}")
@@ -576,6 +657,14 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append("If you do post, include a brief justification for why it matters now.")
                 pt_parts.append("Silence is professionalism — [NO_RESPONSE] is the expected default.")
                 pt_parts.append("Do not comment on your own posting patterns or observation frequency.")
+                pt_parts.append("")
+
+            # AD-502: Temporal awareness header
+            temporal_ctx = self._build_temporal_context()
+            if temporal_ctx:
+                pt_parts.append("--- Temporal Awareness ---")
+                pt_parts.append(temporal_ctx)
+                pt_parts.append("---")
                 pt_parts.append("")
 
             # BF-034: Cold-start system note
@@ -721,10 +810,18 @@ class CognitiveAgent(BaseAgent):
                 )
 
             if episodes:
+                # AD-502: Include relative timestamps on recalled memories
+                rt = getattr(self, '_runtime', None)
+                include_ts = True
+                if rt and hasattr(rt, 'config') and hasattr(rt.config, 'temporal'):
+                    include_ts = rt.config.temporal.include_episode_timestamps
+
                 observation["recent_memories"] = [
                     {
                         "input": ep.user_input[:200] if ep.user_input else "",
                         "reflection": ep.reflection[:200] if ep.reflection else "",
+                        **({"age": self._format_duration(time.time() - ep.timestamp)}
+                           if include_ts and ep.timestamp > 0 else {}),
                     }
                     for ep in episodes
                 ]
