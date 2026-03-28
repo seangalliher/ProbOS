@@ -238,6 +238,11 @@ export interface StateSnapshot {
   fresh_boot?: boolean;
   pool_groups?: Record<string, PoolGroupInfo>;
   pool_to_group?: Record<string, string>;
+  workforce?: {
+    work_items: WorkItemView[];
+    bookings: BookingView[];
+    resources?: BookableResourceView[];
+  };
 }
 
 // Animation event types for the canvas
@@ -419,6 +424,63 @@ export interface ScheduledTaskView {
   webhook_name: string | null;
   enabled: boolean;
 }
+
+// AD-497: Workforce types (mirrors workforce.py to_dict() shapes)
+
+export interface WorkItemView {
+  id: string;
+  title: string;
+  description: string;
+  work_type: string;           // card | task | work_order | duty | incident
+  status: string;              // draft | open | scheduled | in_progress | review | done | failed | cancelled | blocked
+  priority: number;            // 1 (critical) - 5 (low)
+  parent_id: string | null;
+  depends_on: string[];
+  assigned_to: string | null;  // resource_id (= agent UUID)
+  created_by: string;
+  created_at: number;
+  updated_at: number;
+  due_at: number | null;
+  estimated_tokens: number;
+  actual_tokens: number;
+  trust_requirement: number;
+  required_capabilities: string[];
+  tags: string[];
+  metadata: Record<string, unknown>;
+  steps: Array<{ label: string; status: string }>;
+  verification: string | null;
+  schedule: string | null;
+  ttl_seconds: number | null;
+  template_id: string | null;
+}
+
+export interface BookingView {
+  id: string;
+  resource_id: string;
+  work_item_id: string;
+  requirement_id: string | null;
+  status: string;              // scheduled | active | on_break | completed | cancelled
+  start_time: number;
+  end_time: number | null;
+  actual_start: number | null;
+  actual_end: number | null;
+  total_tokens_consumed: number;
+}
+
+export interface BookableResourceView {
+  resource_id: string;
+  resource_type: string;       // crew | infrastructure | utility
+  agent_type: string;
+  callsign: string;
+  capacity: number;
+  calendar_id: string | null;
+  department: string;
+  characteristics: Array<{ name: string; value: string }>;
+  display_on_board: boolean;
+  active: boolean;
+}
+
+export type ScrumbanColumn = 'backlog' | 'ready' | 'in_progress' | 'review' | 'done';
 
 // Service status (AD-436)
 

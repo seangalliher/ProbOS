@@ -11,6 +11,7 @@ import type {
   WardRoomThread, WardRoomPost,  // AD-407c
   Assignment,  // AD-408
   ScheduledTaskView,  // Phase 25a
+  WorkItemView, BookingView, BookableResourceView,  // AD-497
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
@@ -208,8 +209,11 @@ export interface HXIState {
   buildQueue: BuildQueueItem[] | null;
   missionControlTasks: MissionControlTask[] | null;
   bridgeOpen: boolean;
-  mainViewer: 'canvas' | 'kanban' | 'system';
+  mainViewer: 'canvas' | 'kanban' | 'system' | 'work';
   agentTasks: AgentTaskView[] | null;
+  workItems: WorkItemView[] | null;
+  workBookings: BookingView[] | null;
+  bookableResources: BookableResourceView[] | null;
   expandedGlassTask: string | null;
   notifications: NotificationView[] | null;
   pendingRoutingPulse: { source: string; target: string } | null;
@@ -310,6 +314,10 @@ export interface HXIState {
   setAtmosphereIntensity: (v: number) => void;
   // Scheduled Tasks (Phase 25a)
   refreshScheduledTasks: () => Promise<void>;
+  // Workforce actions (AD-497)
+  moveWorkItem: (itemId: string, newStatus: string) => Promise<void>;
+  assignWorkItem: (itemId: string, resourceId: string) => Promise<void>;
+  createWorkItem: (item: { title: string; priority?: number; work_type?: string; assigned_to?: string; description?: string }) => Promise<void>;
 }
 
 /** Derive MissionControlTasks from BuildQueueItems (AD-322). */
@@ -368,6 +376,9 @@ export const useStore = create<HXIState>((set, get) => ({
   bridgeOpen: false,
   mainViewer: 'canvas' as const,
   agentTasks: null,
+  workItems: null,
+  workBookings: null,
+  bookableResources: null,
   expandedGlassTask: null,
   notifications: null,
   pendingRoutingPulse: null,
@@ -579,6 +590,42 @@ export const useStore = create<HXIState>((set, get) => ({
       set({ scheduledTasks: data.tasks || [] });
     } catch { /* fail silently */ }
   },
+  moveWorkItem: async (itemId: string, newStatus: string) => {
+    try {
+      const resp = await fetch(`/api/work-items/${itemId}/transition`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+    } catch (e) {
+      console.error('Failed to move work item:', e);
+    }
+  },
+  assignWorkItem: async (itemId: string, resourceId: string) => {
+    try {
+      const resp = await fetch(`/api/work-items/${itemId}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resource_id: resourceId }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+    } catch (e) {
+      console.error('Failed to assign work item:', e);
+    }
+  },
+  createWorkItem: async (item: { title: string; priority?: number; work_type?: string; assigned_to?: string; description?: string }) => {
+    try {
+      const resp = await fetch('/api/work-items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(item),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+    } catch (e) {
+      console.error('Failed to create work item:', e);
+    }
+  },
   setShowIntro: (v) => set({ showIntro: v }),
   setShowLegend: (v) => set({ showLegend: v }),
   setShowHistory: (v) => set({ showHistory: v }),
@@ -767,6 +814,15 @@ export const useStore = create<HXIState>((set, get) => ({
         // Hydrate scheduled tasks from snapshot (Phase 25a)
         if ((data as any).scheduled_tasks) {
           set({ scheduledTasks: (data as any).scheduled_tasks });
+        }
+        // Hydrate workforce from snapshot (AD-497)
+        if ((data as any).workforce) {
+          const wf = (data as any).workforce;
+          set({
+            workItems: wf.work_items?.length ? wf.work_items : null,
+            workBookings: wf.bookings?.length ? wf.bookings : null,
+            bookableResources: wf.resources?.length ? wf.resources : null,
+          });
         }
         break;
       }
@@ -1126,6 +1182,62 @@ export const useStore = create<HXIState>((set, get) => ({
           agentTasks: tasks.length > 0 ? tasks : null,
           missionControlTasks: mcTasks.length > 0 ? mcTasks : null,
         });
+        break;
+      }
+
+      // AD-497: Workforce events
+      case 'work_item_created':
+      case 'work_item_updated':
+      case 'work_item_assigned': {
+        const item = data.work_item as WorkItemView;
+        if (item) {
+          const current = get().workItems || [];
+          const idx = current.findIndex(w => w.id === item.id);
+          if (idx >= 0) {
+            const updated = [...current];
+            updated[idx] = item;
+            set({ workItems: updated });
+          } else {
+            set({ workItems: [...current, item] });
+          }
+        }
+        if (data.booking) {
+          const booking = data.booking as BookingView;
+          const cBookings = get().workBookings || [];
+          const bIdx = cBookings.findIndex(b => b.id === booking.id);
+          if (bIdx >= 0) {
+            const updated = [...cBookings];
+            updated[bIdx] = booking;
+            set({ workBookings: updated });
+          } else {
+            set({ workBookings: [...cBookings, booking] });
+          }
+        }
+        break;
+      }
+
+      case 'work_item_deleted': {
+        const deletedId = data.work_item_id as string;
+        if (deletedId) {
+          const current = get().workItems || [];
+          set({ workItems: current.filter(w => w.id !== deletedId) });
+        }
+        break;
+      }
+
+      case 'booking_status_changed': {
+        const booking = data.booking as BookingView;
+        if (booking) {
+          const current = get().workBookings || [];
+          const idx = current.findIndex(b => b.id === booking.id);
+          if (idx >= 0) {
+            const updated = [...current];
+            updated[idx] = booking;
+            set({ workBookings: updated });
+          } else {
+            set({ workBookings: [...current, booking] });
+          }
+        }
         break;
       }
 

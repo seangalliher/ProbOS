@@ -309,6 +309,21 @@ channels:
     mention_required: false         # Only respond when @mentioned
     scout_channel_id: 1485357000098582728  # #research channel for scout reports
 
+# --- Workforce Scheduling Engine (AD-496) ---
+workforce:
+  enabled: true
+  tick_interval_seconds: 10.0
+  default_capacity: 1
+
+# --- Temporal Context (AD-502) ---
+temporal:
+  enabled: true
+  include_birth_time: true
+  include_system_uptime: true
+  include_last_action: true
+  include_post_count: true
+  include_episode_timestamps: true
+
 # --- Medical Team (AD-290) ---
 medical:
   enabled: true

@@ -6,10 +6,11 @@ export function ViewSwitcher() {
   const mainViewer = useStore(s => s.mainViewer);
   if (mainViewer === 'canvas') return null;
 
-  const tabs: { key: 'canvas' | 'kanban' | 'system'; label: string }[] = [
+  const tabs: { key: 'canvas' | 'kanban' | 'system' | 'work'; label: string }[] = [
     { key: 'canvas', label: 'CANVAS' },
     { key: 'kanban', label: 'KANBAN' },
     { key: 'system', label: 'SYSTEM' },
+    { key: 'work', label: 'WORK' },
   ];
 
   return (
