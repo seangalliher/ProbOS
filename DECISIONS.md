@@ -1205,6 +1205,18 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 
 **Status:** BF-058/059 COMPLETE.
 
+### BF-060/061/062: Proactive Loop Quality (Wave 3)
+
+| BF | Decision |
+|----|----------|
+| BF-060 | **Notebook stripping fixed** — Replaced per-match `text.replace()` (broken by whitespace differences between `re.findall()` stripped content and original block) with `re.sub(notebook_pattern, '', text, flags=re.DOTALL)` after extraction loop. Notebook content still saved to Ship's Records; only Ward Room text is cleaned. |
+| BF-061 | **Reply pattern + rank gate** — (a) Flexible pattern `r'\[REPLY\s+(?:thread:?\s*)?(\S+)\]\s*(.*?)\s*\[/REPLY\]'` handles `thread:` prefix, same-line body, trailing whitespace. (b) `_resolve_thread_id()` method resolves partial UUIDs via prefix match across recent Ward Room activity. (c) Rank gate lowered from Commander+ to Lieutenant+ — fresh instances can now use cross-thread replies. |
+| BF-062 | **Similarity gate improved** — Window increased from 3 to 10 recent posts. Added bigram (2-word) Jaccard overlap as second check alongside existing word-level Jaccard (same 0.5 threshold). Catches more near-duplicate observations across proactive cycles. |
+
+**Files modified:** `proactive.py`. **Tests:** `test_proactive_quality.py` (11 new).
+
+**Status:** BF-060/061/062 COMPLETE.
+
 ### BF-057: Identity Persistence on Restart (CRITICAL — 2026-03-27)
 
 **Discovery:** Restart without reset caused all 11 crew agents to re-run naming ceremony and pick new names. Instance 3 crew (Curie, Pax, Keiko, Tesla, Reeves) became Cortex, Bones, Hatch, Geordi, Sentinel. Total identity loss.
@@ -1239,3 +1251,43 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 - BF-059: Reset clears certs → fresh naming ceremony on cold boot (reset = new instance)
 
 **Files to modify:** `runtime.py`, `__main__.py`. **Tests:** `test_identity_deterministic.py` (8 new).
+
+### AD-488: Cognitive Circuit Breaker — Metacognitive Loop Detection (2026-03-28)
+
+**Problem:** Agents get stuck in recursive metacognitive loops — thinking about what they were thinking, observing their own observations. Instance 5 sea trial: Pulse (Diagnostician) self-diagnosed "recursive metacognitive processing" and accumulated 837 episodes in 5 minutes. Medical agents consistently show episode flooding and recursive loops while Security does not — the problem is trait-dependent. Sage (Counselor) analyzed: "Medical agents are probably cycling through differential diagnoses... the perfectionist streak becomes a cognitive trap."
+
+**Existing guardrails** (rate limiters, similarity gates, cold-start dampening) are reactive symptom mitigation. None detect the underlying metacognitive loop or intervene cognitively.
+
+**Solution:** Standard circuit breaker pattern — `CognitiveCircuitBreaker` class monitors per-agent cognitive event patterns:
+
+- **Event Tracker:** In-memory ring buffer (50 events/agent) records proactive thinks, Ward Room posts, no-responses with timestamps and content fingerprints (word sets).
+- **Detection signals** (any one triggers trip):
+  1. **Velocity:** ≥8 events in 5-minute window (configurable)
+  2. **Similarity:** ≥50% of pairwise Jaccard overlaps above 0.6 threshold (content rumination)
+- **State machine:** CLOSED → OPEN (blocked, forced cooldown) → HALF_OPEN (probe one think) → CLOSED (recovery) or → OPEN (re-trip with escalated cooldown)
+- **Escalating cooldown:** base × 2^(trip_count-1), capped at 1 hour. First trip = 15 min, second = 30 min, third = 60 min.
+- **Recovery:** Attention redirect prompt injected into agent's next proactive context. Bridge alert fires for Counselor awareness.
+
+**Key design:** Circuit breaker is upstream of existing guardrails (not a replacement). In-memory only (no persistence needed — new timeline = clean slate). No-response events count toward velocity but not similarity (empty content fingerprint).
+
+**Not in scope (by design):** Correlation IDs (AD-492), Novelty Gate (AD-493, requires Holodeck), Trait-adaptive thresholds (AD-494), Counselor auto-assessment (AD-495).
+
+**Files:** `cognitive/circuit_breaker.py` (new), `proactive.py` (modified — import, init, gate, event recording, context redirect), `api.py` (modified — `/api/system/circuit-breakers` endpoint). **Tests:** `test_circuit_breaker.py` (18 new).
+
+### AD-496–498: Workforce Scheduling Engine
+
+| AD | Decision |
+|----|----------|
+| AD-496 | Workforce Scheduling Engine — Core Data Model. Universal Resource Scheduling for AI agents, modeled after D365 URS + US Navy 3-M/PMS. Research: D365 Field Service/Project Operations, Navy SKED/OMMS-NG/WQSB, Scrumban, 10+ open-source projects (Timefold, OR-Tools, PyJobShop, OCA Field Service, Cal.com). Seven core entities: (1) `WorkItem` — universal polymorphic work entity with configurable state machines, recursive containment for WBS, token budgets. Subsumes `AgentTask`, `PersistentTask`, `QueuedBuild` over time. (2) `BookableResource` — scheduling wrapper around agents with capacity, calendar, characteristics. (3) `ResourceRequirement` — demand side: required skills, min trust, time window, agent preferences. Auto-generated from WorkItem. (4) `Booking` — assignment link: resource + work item + time slot. Status: Scheduled → Active → On Break → Completed. (5) `BookingTimestamp` — append-only event-sourced status transitions. (6) `BookingJournal` — computed time/token segments from timestamps (Working/Break/Maintenance/Idle). (7) `AgentCalendar` — work hours, capacity per slot, maintenance windows. Foundation for watch sections. `WorkItemStore` (SQLite-backed). Assignment modes: Push (Captain assigns), Pull (agent claims from eligible queue), Offer (system offers to qualified agents). REST API: 12 endpoints. |
+| AD-497 | Work Tab & Scrumban Board — HXI Surface. Agent Profile Work Tab: create tasks, view active/completed/blocked work, daily schedule timeline, duty schedule integration (subsumes AD-420). Crew Scrumban Board: Kanban columns (Backlog/Ready/In Progress/Review/Done), WIP limits, drag-and-drop, swim lanes, quick create, pull assignment with capability matching, real-time WebSocket updates. Lightweight task management for OSS. Commercial AD-C-010 extends to full resource timeline with drag-and-drop scheduling. |
+| AD-498 | Work Type Registry & Templates. Configurable work type definitions with state machines: card (lightest), task, work_order, duty (recurring), incident (SLA-tracked). Each type defines: states, transitions, required fields, supports_children, auto_assign, verification_required. Work Item Templates: reusable patterns with title patterns, default steps, required capabilities, estimated tokens, min trust. Built-in catalog: Security Scan, Engineering Diagnostic, Code Review, Scout Report, Night Orders templates. `POST /api/work-items/from-template/{id}`. Night Orders (AD-471) and 3M (AD-477) use templates to create temporary WorkItems. |
+
+**Key design decisions:**
+- **Separation of Work from Scheduling:** WorkItem (what) → ResourceRequirement (match) → Booking (who/when). Any entity can be schedulable by generating a Requirement. Pattern from D365 URS.
+- **Pull-based default for AI agents:** Kanban's pull system maps naturally to agent orchestration — WIP limits = context constraints, classes of service = urgency routing, pull signals = agent readiness. Sprints are a poor fit (AI agents have elastic capacity, no recovery cadences).
+- **Progressive formalization:** Card → Task → Work Order. Simple work stays lightweight. Auto-escalation is Commercial (AD-C-014).
+- **Token budgets replace timesheets:** AI agent costing in tokens, not hours. BookingJournals track token consumption.
+- **Naval foundation:** 3-M PMS cards → Work Item Templates. Watch sections → AgentCalendar. WQSB → multi-role resource allocation. Operator rounds → recurring duty-type WorkItems.
+- **OSS/Commercial split:** OSS = engine + lightweight Scrumban. Commercial = advanced Schedule Board (AD-C-010), capacity planning (AD-C-011), Project WBS + PSA financials (AD-C-012), scheduling optimization (AD-C-013), auto-escalation (AD-C-014), Agent Capital Management integration (AD-C-015).
+
+**Status:** AD-496, AD-497, AD-498 — PLANNED.

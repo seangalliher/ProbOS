@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: BF-058/059 COMPLETE — Deterministic Crew IDs + Reset Identity Cleanup: (1) BF-058 All 7 crew pools (builder, architect, scout, counselor, security_officer, operations_officer, engineering_officer) now use `generate_pool_ids()` for deterministic IDs — matches medical agent pattern. BF-057 cert lookup now works for crew agents. (2) BF-059 `probos reset` now clears identity.db and ontology/instance_id. New instance = new ship, new crew, new identities. 2 source files modified, 1 test file created (8 tests).
+## Current Status: AD-496/497/498 PLANNED — Workforce Scheduling Engine: Universal Resource Scheduling for AI agents. Seven core entities (WorkItem, BookableResource, ResourceRequirement, Booking, BookingTimestamp, BookingJournal, AgentCalendar). Work Type Registry with configurable state machines (card/task/work_order/duty/incident). Scrumban Board HXI. Templates for common work patterns. Research complete: D365 URS, Navy 3-M/PMS, Scrumban, 10+ OSS projects. Commercial extensions: AD-C-010 through AD-C-015 (Schedule Board, Capacity Planning, Project WBS/PSA, Optimization, Auto-Escalation, ACM Integration).
 
 ---
 
