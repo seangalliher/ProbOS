@@ -479,9 +479,11 @@ class TestMemoryRecall:
         ep1 = MagicMock()
         ep1.user_input = "[1:1 with Wesley] Captain: status?"
         ep1.reflection = "Captain asked about status."
+        ep1.timestamp = 0
         ep2 = MagicMock()
         ep2.user_input = "[Proactive thought] checked systems"
         ep2.reflection = "Systems nominal."
+        ep2.timestamp = 0
 
         rt = self._make_crew_runtime(recall_result=[ep1, ep2])
         llm = MockLLMClient()
@@ -819,9 +821,11 @@ class TestMemoryRecallFallback:
         ep1 = MagicMock()
         ep1.user_input = "Recent action 1"
         ep1.reflection = "Did something recently."
+        ep1.timestamp = 0
         ep2 = MagicMock()
         ep2.user_input = "Recent action 2"
         ep2.reflection = "Did another thing."
+        ep2.timestamp = 0
 
         rt = self._make_crew_runtime_with_fallback(
             recall_result=[],
@@ -1043,9 +1047,11 @@ class TestEndToEndWardRoomRecall:
         ep1 = MagicMock()
         ep1.user_input = "Fallback episode"
         ep1.reflection = "Fallback reflection."
+        ep1.timestamp = 0
         ep2 = MagicMock()
         ep2.user_input = "Another fallback"
         ep2.reflection = "Another reflection."
+        ep2.timestamp = 0
 
         rt = MagicMock()
         rt._is_crew_agent.return_value = True

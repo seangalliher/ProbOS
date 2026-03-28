@@ -60,6 +60,9 @@ def mock_runtime(mock_agent):
     # Event listener (needed for create_app)
     runtime.add_event_listener = MagicMock()
 
+    # Workforce not enabled in test
+    runtime.work_item_store = None
+
     return runtime
 
 
