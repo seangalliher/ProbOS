@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-453 COMPLETE — Ward Room Social Fabric: Hebbian integration + agent-to-agent DMs + Captain visibility. (1) `REL_SOCIAL` Hebbian connections recorded on Ward Room replies and @mentions. (2) `[DM @callsign]...[/DM]` action tag in proactive loop with deterministic DM channels. (3) Two Captain API endpoints (`/api/wardroom/dms`, `/api/wardroom/dms/{id}/threads`) + HXI DM browser tab. 19 new tests (13 DM + 6 Hebbian social). 3584 passed, 0 failed (parallel, -m "not slow").
+## Current Status: BF-057 COMPLETE — Identity Persistence on Restart (CRITICAL). Naming ceremony now checks identity registry for existing birth certificate before running. Warm boot: restores callsign from cert, syncs callsign_registry + ontology, skips LLM ceremony. Cold start: runs ceremony as before. Boot ordering verified correct (identity_registry.start() at line 658, agent spawn later). 1 file modified (runtime.py), 6 new tests.
 
 ---
 
@@ -10,8 +10,9 @@
 |-----|--------|----------|--------|
 | [**Era I: Genesis**](progress-era-1-genesis.md) | 1-9 | Building the Ship | Complete |
 | [**Era II: Emergence**](progress-era-2-emergence.md) | 10-21 | The Ship Comes Alive | Complete |
-| [**Era III: Product**](progress-era-3-product.md) | 22-29 | The Ship Sets Sail | In Progress |
-| [**Era IV: Evolution**](DECISIONS.md) | 30+ | The Ship Evolves | Active |
+| [**Era III: Product**](progress-era-3-product.md) | 22-29 | The Ship Sets Sail | Complete |
+| [**Era IV: Evolution**](DECISIONS.md) | 30 | The Ship Evolves | Active |
+| Era V: Civilization | 31-36 | The Ship Becomes a Society | Planned |
 
 ## Release Tagging Policy
 

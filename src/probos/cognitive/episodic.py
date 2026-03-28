@@ -213,18 +213,21 @@ class EpisodicMemory:
                     self._collection.delete(ids=ids_to_delete)
 
     def _is_rate_limited(self, episode: Episode) -> bool:
-        """BF-039: Check if agent has exceeded episode rate limit in the last hour."""
+        """BF-039/BF-048: Check if agent has exceeded episode rate limit in the last hour."""
         if not episode.agent_ids:
             return False
         agent_id = episode.agent_ids[0]
         one_hour_ago = time.time() - 3600
         try:
+            # Use get() with where filter for timestamp range
             recent = self._collection.get(
                 where={"timestamp": {"$gte": one_hour_ago}},
                 include=["metadatas"],
             )
-        except Exception:
-            return False
+        except Exception as exc:
+            # BF-048: Fail CLOSED on query error — assume rate limited to prevent flooding
+            logger.debug("Rate limit query failed (fail-closed): %s", exc)
+            return True
         count = 0
         for meta in (recent.get("metadatas") or []):
             if agent_id in meta.get("agent_ids_json", "[]"):

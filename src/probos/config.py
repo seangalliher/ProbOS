@@ -391,6 +391,11 @@ class CognitiveJournalConfig(BaseModel):
     enabled: bool = True
 
 
+class CommunicationsConfig(BaseModel):
+    """Communications settings (AD-485)."""
+    dm_min_rank: str = "ensign"  # Minimum rank to send DMs: ensign|lieutenant|commander|senior
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
@@ -426,6 +431,7 @@ class SystemConfig(BaseModel):
     channels: ChannelsConfig = ChannelsConfig()
     medical: MedicalConfig = MedicalConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
+    communications: CommunicationsConfig = CommunicationsConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

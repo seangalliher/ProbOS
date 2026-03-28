@@ -91,6 +91,73 @@ class CognitiveAgent(BaseAgent):
             "context": intent.get("context", "") if isinstance(intent, dict) else "",
         }
 
+    def _compose_dm_instructions(self, brief: bool = False) -> str:
+        """Build DM instruction block with department-grouped roster (BF-051/052)."""
+        _rt = getattr(self, '_runtime', None)
+        if not _rt:
+            return ""
+
+        # Build department-grouped roster
+        _dm_crew_list = ""
+        if hasattr(_rt, 'callsign_registry') and hasattr(_rt, 'ontology') and _rt.ontology:
+            try:
+                _all_cs = _rt.callsign_registry.all_callsigns()
+                _self_atype = getattr(self, 'agent_type', '')
+                dept_groups: dict[str, list[str]] = {}
+                for atype, cs in _all_cs.items():
+                    if atype == _self_atype or not cs:
+                        continue
+                    dept_id = _rt.ontology.get_agent_department(atype)
+                    dept_name = (dept_id or "bridge").capitalize()
+                    dept_groups.setdefault(dept_name, []).append(f"@{cs}")
+                if dept_groups:
+                    parts = []
+                    for dn in sorted(dept_groups):
+                        members = ", ".join(sorted(dept_groups[dn]))
+                        parts.append(f"{dn}: {members}")
+                    _dm_crew_list = "Available crew to DM:\n" + "\n".join(parts) + "\n"
+            except Exception:
+                try:
+                    _all_cs = _rt.callsign_registry.all_callsigns()
+                    _self_atype = getattr(self, 'agent_type', '')
+                    _crew_entries = [f"@{cs}" for atype, cs in _all_cs.items()
+                                     if atype != _self_atype and cs]
+                    if _crew_entries:
+                        _dm_crew_list = f"Available crew to DM: {', '.join(sorted(_crew_entries))}\n"
+                except Exception:
+                    pass
+        elif hasattr(_rt, 'callsign_registry'):
+            try:
+                _all_cs = _rt.callsign_registry.all_callsigns()
+                _self_atype = getattr(self, 'agent_type', '')
+                _crew_entries = [f"@{cs}" for atype, cs in _all_cs.items()
+                                 if atype != _self_atype and cs]
+                if _crew_entries:
+                    _dm_crew_list = f"Available crew to DM: {', '.join(sorted(_crew_entries))}\n"
+            except Exception:
+                pass
+
+        if brief:
+            return (
+                "\n\nYou may also send a private message to a crew member:\n"
+                "[DM @callsign]\nYour message (2-3 sentences).\n[/DM]\n"
+                f"{_dm_crew_list}"
+                "ONLY DM crew listed above. You may DM @captain for urgent matters.\n"
+            )
+
+        return (
+            "**Direct message a crew member** — reach out privately to another agent:\n"
+            "[DM @callsign]\n"
+            "Your message to this crew member (2-3 sentences).\n"
+            "[/DM]\n"
+            f"{_dm_crew_list}"
+            "Use for: consulting a specialist, coordinating on a shared concern, "
+            "asking for input on something in your department. "
+            "ONLY DM crew members listed above. Do NOT invent crew members who don't exist. "
+            "You may DM @captain for urgent matters that need the Captain's direct attention. "
+            "Use sparingly — routine reports belong in your observation post.\n\n"
+        )
+
     async def decide(self, observation: dict) -> dict:
         """Consult the LLM with instructions + observation.
 
@@ -181,6 +248,10 @@ class CognitiveAgent(BaseAgent):
                     "Place endorsements AFTER your reply text, each on its own line. "
                     "Do NOT endorse your own posts."
                 )
+                # BF-051: DM syntax available in ward room context too
+                _dm_instr = self._compose_dm_instructions(brief=True)
+                if _dm_instr:
+                    composed += _dm_instr
             elif observation.get("intent") == "proactive_think":
                 composed += (
                     "\n\nYou are reviewing recent ship activity during a quiet moment. "
@@ -219,14 +290,9 @@ class CognitiveAgent(BaseAgent):
                     "[/NOTEBOOK]\n"
                     "Use for: research findings, pattern analysis, baseline readings, diagnostic reports. "
                     "This writes to your personal notebook in Ship's Records (AD-434).\n\n"
-                    "**Direct message a crew member** — reach out privately to another agent:\n"
-                    "[DM @callsign]\n"
-                    "Your message to this crew member (2-3 sentences).\n"
-                    "[/DM]\n"
-                    "Use for: consulting a specialist, coordinating on a shared concern, "
-                    "asking for input on something in your department. "
-                    "DMs require Commander rank or higher. Do NOT DM the Captain — "
-                    "use your observation post or wait for the Captain to DM you.\n\n"
+                )
+                composed += self._compose_dm_instructions()
+                composed += (
                     "**When to act vs. observe:**\n"
                     "- See a good post? → [ENDORSE post_id UP] (not a reply saying 'good point')\n"
                     "- Have a concrete addition? → [REPLY thread_id] with your contribution\n"

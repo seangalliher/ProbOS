@@ -1,4 +1,6 @@
 import type { Agent, AgentProfileData } from '../../store/types';
+import { useStore } from '../../store/useStore';
+import { useEffect } from 'react';
 
 const TRAIT_LABELS: Record<string, string> = {
   openness: 'Openness',
@@ -36,6 +38,16 @@ interface Props {
 }
 
 export function ProfileInfoTab({ profileData, agent }: Props) {
+  const dmChannels = useStore(s => s.wardRoomDmChannels);
+  const refreshDms = useStore(s => s.refreshWardRoomDmChannels);
+  useEffect(() => { refreshDms(); }, [refreshDms]);
+
+  // Filter DM channels involving this agent (by agent ID prefix in channel name)
+  const agentIdPrefix = (agent.id || '').slice(0, 8);
+  const agentDms = agentIdPrefix
+    ? dmChannels.filter(dm => dm.channel.name.includes(agentIdPrefix))
+    : [];
+
   if (!profileData) {
     return (
       <div style={{ color: '#555568', fontSize: 12, textAlign: 'center', marginTop: 40 }}>
@@ -136,6 +148,34 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
               <span style={{ color: '#8888a0' }}>
                 {conn.weight.toFixed(3)} ({conn.relType})
               </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Recent Communications (AD-485) */}
+      {agentDms.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ color: '#8888a0', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>
+            Recent Communications
+          </div>
+          {agentDms.map(dm => (
+            <div key={dm.channel.id} style={{
+              padding: '4px 0', fontSize: 11,
+              borderBottom: '1px solid rgba(255,255,255,0.02)',
+            }}>
+              <div style={{ color: '#c0bab0' }}>
+                {dm.channel.description || dm.channel.name}
+              </div>
+              {dm.latest_thread && (
+                <div style={{ color: '#8888a0', fontSize: 10, marginTop: 1 }}>
+                  {(dm.latest_thread.body || '').slice(0, 80)}
+                  {(dm.latest_thread.body || '').length > 80 ? '…' : ''}
+                </div>
+              )}
+              <div style={{ color: '#6a6a7a', fontSize: 10 }}>
+                {dm.thread_count} message{dm.thread_count !== 1 ? 's' : ''}
+              </div>
             </div>
           ))}
         </div>

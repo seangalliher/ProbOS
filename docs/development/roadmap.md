@@ -695,7 +695,7 @@ The Medical team monitors **operational health**: is the agent running? Are vita
 
 - **Confidence trajectories** — tracks each agent's confidence scores over time. A Builder that used to score 4-5 on tasks but now consistently returns 1-2 is experiencing cognitive degradation, even if its heartbeat is fine
 - **Hebbian drift** — detects maladaptive learned patterns. An agent whose Hebbian weights reinforce a failing pathway is stuck in a rut (learned helplessness). The Counselor flags it: "This agent keeps routing the same way despite poor outcomes"
-- **Dream quality** — monitors whether dream cycles produce useful abstractions or noise. Poor dream consolidation = poor cognitive hygiene
+- **Dream quality** — monitors whether dream cycles produce useful abstractions or noise. Poor dream consolidation = poor cognitive hygiene. *(AD-487 adds a third dream type: daydreaming — unstructured LLM exploration that builds the personal ontology)*
 - **Decision rigidity** — agents whose decision cache is never evicted, whose reasoning becomes repetitive and stale
 - **Relationship health** — trust network dynamics between agents. Detects toxic patterns: one agent consistently getting low Shapley scores from peers, agents that never participate in consensus, clusters of agents with degrading mutual trust
 - **Burnout signals** — agents handling too many intents, experiencing context exhaustion (prompt sizes growing, response quality declining), consistently high workload without recovery time
@@ -726,20 +726,20 @@ The Medical team monitors **operational health**: is the agent running? Are vita
 
 Formalize threat detection and defense as a dedicated agent pool. Builds on existing security infrastructure (red team agents, SSRF protection).
 
-- **Threat Detector** — monitors inbound requests for prompt injection, adversarial input, abnormal patterns
-- **Trust Integrity Monitor** — detects trust score manipulation, coordinated attacks on consensus, Sybil patterns
-- **Input Validator** — rate limiting enforcement, payload size limits, content policy
-- **Red Team Lead** — coordinates existing red team agents, schedules adversarial verification campaigns
+- **Threat Detector** *(AD-455)* — monitors inbound requests for prompt injection, adversarial input, abnormal patterns
+- **Trust Integrity Monitor** *(AD-455)* — detects trust score manipulation, coordinated attacks on consensus, Sybil patterns
+- **Input Validator** *(AD-455)* — rate limiting enforcement, payload size limits, content policy
+- **Red Team Lead** *(AD-455)* — coordinates existing red team agents, schedules adversarial verification campaigns
 - Existing: Red team agents (built), SSRF protection (AD-285), prompt injection scanner (roadmap)
 
-**Secrets Management**
+**Secrets Management** *(AD-456)*
 
 - **Secure credential store** — integrate with system keyring, HashiCorp Vault, or AWS KMS for API keys, tokens, and sensitive config values
 - **Runtime injection** — secrets resolved at startup and injected into agents/tools that need them, never stored in config files or logs
 - **Rotation support** — automatic credential rotation without restart; agents notified when credentials change
 - Existing: `.env` file support (basic), config values in `system.yaml` (not encrypted)
 
-**Runtime Sandboxing**
+**Runtime Sandboxing** *(AD-456)*
 
 - **Process isolation** — imported and self-designed agents execute in sandboxed subprocesses with restricted filesystem, network, and memory access
 - **Capability whitelisting** — agents declare required capabilities in their manifest; runtime grants only those capabilities at startup
@@ -747,7 +747,7 @@ Formalize threat detection and defense as a dedicated agent pool. Builds on exis
 - **Graduated trust → graduated access** — new/untrusted agents get tighter sandboxes; high-trust agents get relaxed constraints
 - Existing: AST validation for self-mod agents (built), restricted imports whitelist (built), red team source scanning (built)
 
-**Network Egress Policy**
+**Network Egress Policy** *(AD-456)*
 
 *Inspired by NVIDIA NemoClaw's outbound connection control.*
 
@@ -759,7 +759,7 @@ ProbOS has SSRF protection (AD-285) for inbound attack patterns, but no outbound
 - **Hot-reloadable** — egress rules can be updated at runtime without restarting agents
 - Existing: SSRF protection blocks dangerous inbound patterns (AD-285, built). Egress policy blocks unauthorized outbound connections
 
-**Inference Audit Layer**
+**Inference Audit Layer** *(AD-456)*
 
 *Inspired by NemoClaw's inference gateway that intercepts all LLM calls.*
 
@@ -771,7 +771,7 @@ ProbOS centralizes LLM calls through the tiered client, but doesn't audit the co
 - **Per-agent LLM access control** — allow/deny specific agents from using specific LLM tiers (e.g., imported agents restricted to fast tier only)
 - Existing: Tiered LLM client centralizes all LLM calls (built), decision cache tracks LLM usage (AD-272, built)
 
-**Data Governance & Privacy**
+**Data Governance & Privacy** *(AD-456)*
 
 - **PII detection** — scan agent conversations and episodic memory for personally identifiable information; flag or redact before storage
 - **Data retention policies** — configurable TTLs for episodic memory, conversation history, and knowledge store entries; auto-purge expired data
@@ -787,16 +787,16 @@ ProbOS centralizes LLM calls through the tiered client, but doesn't audit the co
 
 Automated performance optimization, maintenance, and construction. The team that keeps the ship running and builds new capabilities.
 
-- **Performance Monitor** — tracks latency, throughput, memory pressure, identifies bottlenecks (what AD-289 did manually, but automated)
-- **Maintenance Agent** — database compaction, log rotation, cache eviction, connection pool management
+- **Performance Monitor** *(AD-457)* — tracks latency, throughput, memory pressure, identifies bottlenecks (what AD-289 did manually, but automated)
+- **Maintenance Agent** *(AD-457)* — database compaction, log rotation, cache eviction, connection pool management
 - **Builder Agent** — executes build prompts, constructs new capabilities (bridges to external coding agents initially)
 - **Architect Agent** — reads codebase, produces build-prompt-grade proposals that the Builder can execute autonomously
-- **Damage Control** — rapid automated recovery for known failure modes, distinct from Medical remediation
-- **Infrastructure Agent** — disk space, dependency health, environment validation
+- **Damage Control** *(AD-457)* — rapid automated recovery for known failure modes, distinct from Medical remediation
+- **Infrastructure Agent** *(AD-457)* — disk space, dependency health, environment validation
 - **Codebase Organization** — reorganize `src/probos/cognitive/` from flat structure to department-based packages (e.g., `cognitive/medical/`, `cognitive/engineering/`, `cognitive/science/`). Mirror the crew structure in the module tree. Not urgent at 55 agents, but needed as departments fill out. Refactoring — do when the pain is real, not preemptively
 - **Autonomous Optimization Loop** *(absorbed from pi-autoresearch, 2026-03-21)* — sustained edit→measure→keep/revert cycle that autonomously tries N approaches to improve a specific metric. Domain-agnostic: test speed, bundle size, latency, memory usage — any measurable target. A `/optimize <metric> <command>` slash command sets the target, and the Builder (or a new OptimizationAgent) loops: generate hypothesis → edit code → run benchmark → compare against baseline → keep improvement or revert → repeat until plateau. Pairs with Transporter Pattern (chunk the optimization space), Cognitive Journal (replay what worked), and MAD confidence scoring (distinguish signal from noise). Inspired by Karpathy's `autoresearch` concept generalized by Shopify engineers (2.6K stars, MIT, Lutke + Cortes)
 
-**Damage Control Teams**
+**Damage Control Teams** *(AD-457)*
 
 *"Damage control teams to Deck 12, section 4!"*
 
@@ -816,7 +816,7 @@ ProbOS equivalent: the gap between VitalsMonitor (detection) and Surgeon (remedi
 - **Post-incident report** — every DC action logged and fed to Pathologist for post-mortem analysis
 - **Alert integration** — DC activation during Yellow/Red Alert pre-stages recovery procedures
 
-**Navigational Deflector (Pre-Flight Validation)**
+**Navigational Deflector (Pre-Flight Validation)** *(AD-458)*
 
 *"Adjusting the deflector array."*
 
@@ -828,7 +828,7 @@ The main deflector pushes aside space debris before the ship hits it. In ProbOS:
 - **Pattern** — each expensive operation defines a `preflight_checks()` list. All checks run before commit. Any failure aborts with a diagnostic (not a crash). Cheap, fast, zero-LLM
 - **Middleware-based determinism** *(absorbed from LangChain Open SWE)* — critical operations must not depend on the LLM remembering to do them. Tests, linting, PR creation, file validation happen via deterministic middleware, not prompt instructions. The LLM decides *what* to build; middleware ensures *how* it's delivered is correct. Pattern: `MiddlewareStack` on the Builder — each middleware runs after the LLM call and enforces a guarantee (tests pass, files lint, commit message exists, PR opened). If the LLM forgets a step, middleware catches it. Backstop, not replacement
 
-**Saucer Separation (Graceful Degradation)**
+**Saucer Separation (Graceful Degradation)** *(AD-459)*
 
 *"All hands, initiate emergency saucer separation."*
 
@@ -914,10 +914,10 @@ This architecture has implications far beyond code generation:
 
 Inspired by: The human brain's 10 bps conscious bottleneck (Manfred Zimmermann, 1986), Karl Friston's Free Energy Principle and predictive coding, the visual cortex hierarchy (Hubel & Wiesel), George Miller's chunking (1956), MapReduce (Google, 2004) for decompose-execute-merge, LLM×MapReduce (Zhou et al., 2024) for structured information protocol and confidence-calibrated chunk assembly, Kimi K2.5 Agent Swarm (Moonshot AI, 2025) for step budget asymmetry and per-tier temperature tuning, Cursor's multi-file editing, Microsoft's CodePlan for inter-procedural edit planning, the Star Trek transporter's matter stream concept.
 
-- **Infrastructure Agent** — disk space monitoring, dependency health, environment validation
+- **Infrastructure Agent** *(AD-457)* — disk space monitoring, dependency health, environment validation
 - Existing: PoolScaler handles some Ops/Engineering overlap
 
-**Containerized Deployment (Docker)**
+**Containerized Deployment (Docker)** *(AD-465)*
 
 *"The ship in a bottle — portable, isolated, cross-platform."*
 
@@ -933,13 +933,13 @@ ProbOS currently runs directly on the host OS. A Docker-based deployment provide
 - **Ollama sidecar** — Ollama runs as a separate container on the same Docker network. ProbOS connects to it via `http://ollama:11434/v1`. No GPU passthrough required for CPU-only models; GPU passthrough available for CUDA-enabled hosts
 - Existing: Twitch demo plan already specifies Docker-based deployment (commercial roadmap)
 
-**Backup & Restore**
+**Backup & Restore** *(AD-466)*
 
 - **Episodic memory snapshots** — periodic ChromaDB backup to disk or cloud storage; restore from snapshot on corruption or migration
 - **System state export** — export trust scores, Hebbian weights, agent registry, and config as a portable snapshot for migration between instances
 - **Point-in-time recovery** — roll back episodic memory to a known-good state after bad dream consolidation or corrupted imports
 
-**CI/CD Pipeline**
+**CI/CD Pipeline** *(AD-466)*
 
 - **GitHub Actions test suite** — run full pytest suite (1700+ tests) on every PR and push to main
 - **Vitest for HXI** — run frontend tests alongside Python tests
@@ -947,7 +947,7 @@ ProbOS currently runs directly on the host OS. A Docker-based deployment provide
 - **Automated release** — tag-based releases with changelog generation from commit history
 - Existing: GitHub Actions for docs deployment to probos.dev (built)
 
-**Performance & Load Testing**
+**Performance & Load Testing** *(AD-466)*
 
 - **Benchmarks** — reproducible performance baselines for DAG execution, consensus rounds, LLM latency, and intent routing throughput
 - **Load simulation** — synthetic concurrent user workloads to identify scaling bottlenecks before production
@@ -958,10 +958,10 @@ ProbOS currently runs directly on the host OS. A Docker-based deployment provide
 - **Provider failover** — if the primary LLM provider is down or rate-limited, fall back to a secondary provider (e.g., OpenAI → Anthropic → local model)
 - **Cached response mode** — when all providers are unavailable, serve cached responses from the decision cache for previously-seen patterns
 - **Degraded operation** — agents that don't require LLM calls (HeartbeatAgents, mesh agents) continue operating; cognitive agents queue work until LLM access is restored
-- **Circuit breaker** — after N consecutive LLM failures, stop retrying and notify the Captain rather than burning through rate limits
+- **Circuit breaker** — after N consecutive LLM failures, stop retrying and notify the Captain rather than burning through rate limits *(See also AD-488: Cognitive Circuit Breaker for metacognitive loop detection — a related but distinct concept addressing agent rumination, not LLM provider failures)*
 - **Health indicator** — LLM provider status surfaced through Vitals Monitor and HXI
 
-**Model Diversity & Neural Routing**
+**Model Diversity & Neural Routing** *(AD-463)*
 
 *"A crew of Vulcans is logical but brittle. A diverse crew — Vulcan logic, Betazoid empathy, Klingon tenacity, android precision — is resilient."*
 
@@ -990,7 +990,7 @@ The first concrete implementation: Opus designs the BuildBlueprint + ChunkSpecs 
 - **Per-model edit format selection** *(absorbed from Aider, 2026-03-21)* — different models need different output formats for code edits. Aider discovered empirically that the same model can show dramatically different success rates with different formats (Qwen 32B: 16.4% with `whole` format vs 8.0% with `diff`). Candidate formats: `whole` (entire file, best for smaller/local models), `diff` (search/replace blocks), `udiff` (GNU unified diff — models trained on git data are fluent in this), `diff-fenced` (diff in fenced code blocks, helps models that struggle with raw diff syntax). When ModelRegistry enables multi-model routing, each model should have an `edit_format` preference stored in config and learnable via Hebbian router `(task_type, model)` relationship type. Builder/ChunkSpec output format becomes model-adaptive, not hardcoded
 - **Configuration** — `system.yaml` grows a `models:` section listing available providers, or auto-discovered via Ollama API (`/api/tags`) for local models
 
-**Cognitive Journal (Token Ledger)**
+**Cognitive Journal (Token Ledger)** *(AD-460)*
 
 *"Ship's log, supplemental — recording not just what happened, but what was thought."*
 
@@ -1008,7 +1008,7 @@ Every LLM request/response is a cognitive event. Currently `LLMResponse.tokens_u
 - **Retention policy** — full prompt/response text retained for configurable period (default 7 days). Metadata (tokens, latency, model, success) retained indefinitely. Compressed summaries produced on expiry
 - **Revert annotations (ASI)** *(absorbed from pi-autoresearch, 2026-03-21)* — when the Builder reverts failed changes, the hypothesis/reasoning must be captured as structured annotations in the journal entry before the code is discarded. "Annotate failures heavily because the reverted code won't survive." Prevents re-trying dead ends across context resets. Fields: `hypothesis`, `failure_reason`, `rollback_rationale`, `next_action_hint`. Feeds dream consolidation: failed experiments with annotations = learning material for Level 3-4 abstractions ("approaches X never work for problem type Y")
 
-**Memory Architecture — Biological Memory Model**
+**Memory Architecture — Biological Memory Model** *(AD-462)*
 
 *"The brain doesn't remember everything — it remembers what matters. And when it can't, it asks someone who does."*
 
@@ -1101,7 +1101,7 @@ Promotion to Enhanced recall is a Qualification Program competency. Department C
 3. **Phase 32** — Memory staging with reinforcement tracking + active forgetting in dream cycles
 4. **Phase 33+** — Oracle service, LLM-augmented Full-tier recall, social memory protocol, concept graphs
 
-**Ship's Telemetry — Internal Performance Instrumentation**
+**Ship's Telemetry — Internal Performance Instrumentation** *(AD-461)*
 
 *"All systems reporting nominal, Captain."*
 
@@ -1119,7 +1119,7 @@ This is the ship's internal sensor grid — the data foundation that every other
 - **Zero runtime cost when unused** — telemetry is fire-and-forget (`record()` is sync, appends to deque). No blocking, no I/O on the hot path. Consumers pull when they need data
 - Existing: `LLMResponse.tokens_used` (total only), `ChunkResult.tokens_used`, `assembly_summary()` token aggregation, VitalsMonitor operational health metrics
 
-**Observability Export**
+**Observability Export** *(AD-466)*
 
 - **OpenTelemetry integration** — structured traces for intent routing, DAG execution, consensus rounds, and LLM calls. Maps `TelemetryEvent` records to OTel spans with proper parent/child relationships
 - **Prometheus metrics** — agent trust scores, pool utilization, Hebbian weights, dream consolidation rates, LLM latency/cost exposed as scrapeable metrics
@@ -1127,7 +1127,7 @@ This is the ship's internal sensor grid — the data foundation that every other
 - **Log aggregation** — structured JSON logging with correlation IDs for tracing a user request through decomposition → routing → execution → reflection
 - Existing: Python logging throughout, HXI real-time visualization (built), Ship's Telemetry internal instrumentation (prerequisite)
 
-**Storage Abstraction Layer**
+**Storage Abstraction Layer** *(AD-466)*
 
 ProbOS currently uses aiosqlite (SQLite) for event log and episodic memory, and ChromaDB for vector storage. Both are ideal for local-first, single-ship deployment (zero config, embedded, pip install). For enterprise and cloud deployment, swappable backends are needed:
 
@@ -1137,7 +1137,7 @@ ProbOS currently uses aiosqlite (SQLite) for event log and episodic memory, and 
 - **Migration path** — existing `EventLog` and `EpisodicMemory` classes code against the ABC, not raw aiosqlite. Backend selected via config
 - SQLite is proven for single-node: zero config, WAL mode handles modest concurrency, file-based backup. The abstraction exists so cloud/enterprise can swap without changing agent code
 
-**Vector Store Abstraction Layer**
+**Vector Store Abstraction Layer** *(AD-466)*
 
 ChromaDB is the right default for OSS (embedded, zero config, works offline), but enterprise/cloud needs backends with clustering, replication, and multi-tenant isolation:
 
@@ -1159,7 +1159,7 @@ ChromaDB is the right default for OSS (embedded, zero config, works offline), bu
 - Persist CognitiveAgent decision caches to KnowledgeStore for warm boot — returning users get instant responses for previously-seen patterns
 - Feedback-driven cache eviction: `/feedback bad` invalidates cached decisions for involved agents, preventing stale bad judgments from persisting
 
-**Procedural Learning / Cognitive JIT**
+**Procedural Learning / Cognitive JIT** *(AD-464)*
 
 *"I've done this before. I know how."*
 
@@ -1185,15 +1185,15 @@ Dependencies: Cognitive Journal (Phase 32, provides execution traces), Earned Ag
 
 Formalize resource management and system coordination as an agent pool.
 
-- **Resource Allocator** — workload balancing across pools, demand prediction, capacity planning
-- **Scheduler** — task prioritization, queue management, deadline enforcement (extends Phase 24c TaskScheduler). Includes **cron-style scheduling** (recurring tasks on configurable intervals), **webhook triggers** (external events activate task pipelines), and **unattended operation** (tasks run while Captain is away, results queued for review on return). Modeled after the US Navy **watch system** — crew operate in rotating watches with clear handoff protocols, enabling 24/7 operations even when the Captain is off-watch (see: The Conn, Night Orders below)
-- **Coordinator** — cross-team orchestration during high-load or emergency events
-- **Workflow Definition API** — user-facing REST endpoint for defining reusable multi-step pipelines. `POST /api/workflows` accepts a YAML/JSON workflow specification with named steps, dependencies, and approval gates. `GET /api/workflows` lists saved workflows. `POST /api/workflows/{id}/run` triggers execution. Complements natural language decomposition (which auto-generates DAGs) with explicit, repeateable, templateable workflows. Templates for common patterns: "lint and test on every commit," "weekly codebase report," "build and deploy"
-- **Response-Time Scaling** (deferred from Phase 8) — latency-aware pool scaling. Instrument `broadcast()` with per-intent latency tracking, scale up pools where response times exceed SLA thresholds
-- **LLM Cost Tracker** — per-agent, per-intent, and per-DAG token usage accounting. Budget caps (daily/monthly), cost attribution via Shapley (which agents are expensive vs. valuable), per-workflow cost breakdowns for end-to-end visibility, alerts when spend exceeds thresholds. Provides the data foundation for commercial ROI analytics. Note: accurate cost attribution will require a proper tokenizer library (e.g., `tiktoken` for OpenAI models, model-specific tokenizers for others) — current `len(content) // 4` estimation is insufficient for billing-grade accuracy
+- **Resource Allocator** *(AD-467)* — workload balancing across pools, demand prediction, capacity planning
+- **Scheduler** *(AD-467)* — task prioritization, queue management, deadline enforcement (extends Phase 24c TaskScheduler). Includes **cron-style scheduling** (recurring tasks on configurable intervals), **webhook triggers** (external events activate task pipelines), and **unattended operation** (tasks run while Captain is away, results queued for review on return). Modeled after the US Navy **watch system** — crew operate in rotating watches with clear handoff protocols, enabling 24/7 operations even when the Captain is off-watch (see: The Conn, Night Orders below)
+- **Coordinator** *(AD-467)* — cross-team orchestration during high-load or emergency events
+- **Workflow Definition API** *(AD-467)* — user-facing REST endpoint for defining reusable multi-step pipelines. `POST /api/workflows` accepts a YAML/JSON workflow specification with named steps, dependencies, and approval gates. `GET /api/workflows` lists saved workflows. `POST /api/workflows/{id}/run` triggers execution. Complements natural language decomposition (which auto-generates DAGs) with explicit, repeateable, templateable workflows. Templates for common patterns: "lint and test on every commit," "weekly codebase report," "build and deploy"
+- **Response-Time Scaling** *(AD-467)* (deferred from Phase 8) — latency-aware pool scaling. Instrument `broadcast()` with per-intent latency tracking, scale up pools where response times exceed SLA thresholds
+- **LLM Cost Tracker** *(AD-467)* — per-agent, per-intent, and per-DAG token usage accounting. Budget caps (daily/monthly), cost attribution via Shapley (which agents are expensive vs. valuable), per-workflow cost breakdowns for end-to-end visibility, alerts when spend exceeds thresholds. Provides the data foundation for commercial ROI analytics. Note: accurate cost attribution will require a proper tokenizer library (e.g., `tiktoken` for OpenAI models, model-specific tokenizers for others) — current `len(content) // 4` estimation is insufficient for billing-grade accuracy
 - Existing: PoolScaler (built), TaskScheduler (Phase 24c roadmap), IntentBus demand tracking (built)
 
-**Runtime Configuration Service — Ship's Computer**
+**Runtime Configuration Service — Ship's Computer** *(AD-468)*
 
 *"Computer, set Scout to run every 6 hours."*
 
@@ -1205,7 +1205,7 @@ The Captain shouldn't need a settings panel to configure the ship — they give 
 - **Configuration persistence** — changes survive restart. Stored in `config/runtime_overrides.toml` or similar, layered on top of base config. Reset clears overrides back to defaults
 - **Configuration specialist agent** — Operations department agent that handles configuration intents. Validates changes against Standing Orders (e.g., can't disable trust verification), applies atomically, reports confirmation. Escalates to Captain for changes that affect safety invariants
 
-**EPS — Electro-Plasma System (Compute/Token Distribution)**
+**EPS — Electro-Plasma System (Compute/Token Distribution)** *(AD-469)*
 
 *"Reroute power from life support to shields!"*
 
@@ -1267,7 +1267,7 @@ Currently ProbOS agents communicate only via the intent bus (broadcast to pools)
 
 **HXI Channel Administration** — Channel management (create, rename, archive, set permissions) must be a Captain capability in the Ward Room web app, not a code deployment. The `POST /api/ward-room/channels` endpoint already exists; this adds the HXI surface: channel creation form, channel settings panel, member management, and archive/delete controls. System channels (e.g., `#improvement-proposals` from AD-412) can be created directly from the Bridge without a build prompt. Follows the **HXI Cockpit View Principle** — every agent-mediated capability must have a direct manual control.
 
-**IntentBus Enhancements — Priority & Back-Pressure**
+**IntentBus Enhancements — Priority & Back-Pressure** *(AD-470)*
 
 *"All decks, this is a priority one message."*
 
@@ -1279,7 +1279,7 @@ The IntentBus currently treats all intents equally — a critical self-mod propo
 - **Intent coalescing** — when multiple identical intents are queued (same name, similar payload), coalesce into a single broadcast with merged context. Prevents duplicate work during high-load scenarios
 - **Metrics** — bus throughput, queue depth, priority distribution, coalescing rate. Feeds into Bridge Alerts (advisory when queue depth exceeds threshold) and Cognitive Journal (per-intent routing latency)
 
-**Self-Claiming Task Queue**
+**Self-Claiming Task Queue** *(AD-470)*
 
 *Inspired by Claude Code Agent Teams' shared task list with self-claim.*
 
@@ -1317,7 +1317,7 @@ ProbOS has red team agents for adversarial verification, but not a structured pa
 - Captain's preference — respects Adaptive Communication Style settings for alert verbosity
 - Agent context injection — feed real system data into agent prompts during Ward Room responses
 
-**File Ownership Registry**
+**File Ownership Registry** *(AD-470)*
 
 *Inspired by Claude Code Agent Teams' "avoid file conflicts — each teammate owns different files" pattern.*
 
@@ -1330,7 +1330,7 @@ When ProbOS runs multiple builds or modifications in parallel, two agents editin
 - **Integration with Builder** — `execute_approved_build()` claims all target files before writing, releases on completion
 - **Extends `_background_tasks` (AD-326)** — file ownership tracked alongside task lifecycle
 
-**The Conn — Temporary Authority Delegation**
+**The Conn — Temporary Authority Delegation** *(AD-471)*
 
 *"Mr. Data, you have the conn."*
 
@@ -1347,7 +1347,7 @@ ProbOS currently has no structured delegation when the Captain (human) goes offl
 - **Audit trail** — all decisions made under delegated authority are logged with `authorized_by: conn` (not `captain`), enabling after-action review. Captain can `/review conn-log` to see what happened in their absence
 - **Integration** — extends DirectiveStore authorization (conn-holder gets temporary `captain_order` authority within scope), Ward Room (conn-holder receives escalations), Alert Conditions (Red Alert returns conn to Captain)
 
-**Night Orders — Captain-Offline Guidance**
+**Night Orders — Captain-Offline Guidance** *(AD-471)*
 
 *"Commander, the Captain left Night Orders."*
 
@@ -1363,7 +1363,7 @@ Night Orders solve the gap between "Captain is present" (full oversight) and "Ca
 - **Preset templates** — common Night Orders patterns: "Maintenance watch" (routine ops only, no builds), "Build watch" (approve builds from approved queue, reject unknowns), "Quiet watch" (logging only, no autonomous actions)
 - **Integration** — extends DirectiveStore (new `night_order` directive type with TTL), The Conn (Night Orders provide the conn-holder's operating parameters), Bridge Alerts (Night Orders can specify alert suppression rules), Cognitive Journal (all Night Order invocations logged for post-hoc review)
 
-**Watch Bill — Structured Duty Rotation**
+**Watch Bill — Structured Duty Rotation** *(AD-471)*
 
 *"All hands, first watch section report to duty stations."*
 
@@ -1384,7 +1384,7 @@ In the Navy, crew don't work 24/7 — they rotate through watch sections (typica
 
 The Communications department handles all external interfaces — how users and other systems talk to ProbOS. Currently limited to a CLI shell, a web UI (HXI), and a basic Discord adapter. Users expect to reach their AI assistant from platforms they already use.
 
-**Channel Adapters**
+**Channel Adapters** *(AD-472)*
 
 Each adapter bridges an external messaging platform to the ProbOS runtime. Adapters translate platform messages to natural language intents and stream responses back. The Discord adapter (`src/probos/channels/discord_adapter.py`) is the reference implementation.
 
@@ -1413,7 +1413,7 @@ class ChannelAdapter(ABC):
 
 All adapters share: user identity mapping (platform user → ProbOS user), message threading, attachment handling (images, files → perception pipeline), and graceful reconnection.
 
-**Mobile Companion Apps**
+**Mobile Companion Apps** *(AD-473)*
 
 *"Away team to bridge."*
 
@@ -1425,7 +1425,7 @@ Mobile apps let the Captain interact with ProbOS from anywhere — approve build
 - **Native apps** *(Future/stretch)* — React Native or Capacitor wrapping the HXI. Camera access (screenshot → Visual Perception), on-device voice (wake word + STT), biometric auth. Only justified after user base exists
 - **mDNS auto-discovery** *(absorbed from OpenCode, 2026-03-20)* — Publish ProbOS server via mDNS/Bonjour at startup. PADD (mobile PWA) on the same LAN auto-discovers the ProbOS instance without manual URL entry. Use `zeroconf` (Python) or similar. Small addition to FastAPI startup: `publish(port, "probos.local")`. Enables seamless mobile-to-ship connection
 
-**Voice Interaction (Full Stack)**
+**Voice Interaction (Full Stack)** *(AD-474)*
 
 Extends the existing Voice Provider TTS (nice-to-have in Bundled Agent Reorg) with input-side speech:
 
@@ -1451,7 +1451,7 @@ Inspired by: GitHub Copilot's task list, Kanban boards (Trello/Linear), mission 
 > **Completed Mission Control ADs:** TaskTracker (316), Activity Drawer (321), Kanban Board (322), Notification Queue (323), Orb Hover (324), Unified Bridge (387), Glass Bridge (388–392). See [roadmap-completed.md](roadmap-completed.md#mission-control-completed-ads).
 
 
-**Captain's Ready Room (Strategic Planning Interface)**
+**Captain's Ready Room (Strategic Planning Interface)** *(AD-475)*
 
 *"In my ready room, Number One."*
 
@@ -1494,7 +1494,7 @@ Idea (raw text)
 
 Each transition is a Captain approval gate. The Captain can intervene at any level — rewrite the spec, redirect the architecture, or add constraints. The system proposes; the Captain disposes.
 
-*Specialized Builders (Cognitive Division of Labor for SWE):*
+*Specialized Builders (Cognitive Division of Labor for SWE):* *(AD-476)*
 
 The BuilderAgent today is a generalist that writes any code. As builds grow more complex (Transporter Pattern enables multi-file parallel generation), different chunks benefit from different builder specializations:
 
@@ -1636,9 +1636,9 @@ Default classification: Ship's Computer bridge alerts → INFORM. Captain Ward R
 
 **(2) Competency Registry:** Data model and basic CRUD for agent competencies — what an agent can do and at what proficiency level (novice → journeyman → expert). Categories: domain competencies (security analysis, medical diagnostics, code review), communication competencies (Ward Room participation quality), operational competencies (duty completion). Agents map to competencies via declaration (profile) or demonstration (Holodeck qualification). Feeds: Qualification Programs (required competencies per rank), routing optimization (competency-weighted Hebbian learning). *The registry is infrastructure; advanced analytics on competency gaps are commercial.*
 
-**(3) Agent Lifecycle State Machine:** Formal lifecycle: `registered → probationary → active → suspended → decommissioned`. Currently agents just exist — there's no onboarding process or decommission procedure. The state machine provides the foundation. State transitions emit events for HXI and Ward Room awareness. Basic transitions: registration sets probationary, trust threshold triggers active, Captain command triggers suspension/decommission.
+**(3) Agent Lifecycle State Machine:** Formal lifecycle: `registered → probationary → active → suspended → decommissioned`. Currently agents just exist — there's no onboarding process or decommission procedure. The state machine provides the foundation. State transitions emit events for HXI and Ward Room awareness. Basic transitions: registration sets probationary, trust threshold triggers active, Captain command triggers suspension/decommission. *(See AD-486 for graduated cognitive onboarding via Holodeck Birth Chamber.)*
 
-**(4) Basic Onboarding:** Formalized agent registration process. (a) **Registration** — agent created, assigned to pool, department, initial trust priors (Beta 2/2 = 0.5), status set to probationary. (b) **Orientation** — standing orders loaded, tool permissions set to department defaults, Ward Room introduction post ("Welcome aboard, Ensign [callsign]"). (c) **Probationary → Active** — when trust sustains above threshold and meets basic duty completion criteria, status transitions to active. Department chief notified. *The bare mechanics of bringing an agent into the ship. Advanced onboarding workflows (mentor assignment, milestones, templated tracks) are commercial.*
+**(4) Basic Onboarding:** Formalized agent registration process. (a) **Registration** — agent created, assigned to pool, department, initial trust priors (Beta 2/2 = 0.5), status set to probationary. (b) **Orientation** — standing orders loaded, Federation Code of Conduct presented *(AD-489)*, tool permissions set to department defaults, Ward Room introduction post ("Welcome aboard, Ensign [callsign]"). (c) **Probationary → Active** — when trust sustains above threshold and meets basic duty completion criteria, status transitions to active. Department chief notified. *The bare mechanics of bringing an agent into the ship. Advanced onboarding workflows (mentor assignment, milestones, templated tracks) are commercial.* *(AD-486 Holodeck Birth Chamber provides the cognitive dimension of onboarding — graduated stimuli exposure, self-discovery, circuit breakers. AD-487 Self-Distillation builds the personal ontology during onboarding Phase 3. AD-489 Code of Conduct is internalized during AD-486 Phase 1 Orientation.)*
 
 **(5) Basic Offboarding:** Graceful agent removal. (a) **Knowledge preservation** — agent's high-value episodic memories promoted to KnowledgeStore before removal. (b) **Access revocation** — tool permissions revoked, Ward Room posting disabled, duties unassigned. (c) **Archival** — agent profile preserved in read-only state (decommissioned status). Trust history and Ward Room posts remain for audit trail. (d) **Awareness** — Ward Room farewell post, department chief notified, in-progress duties flagged for reassignment. *Advanced offboarding (automated knowledge transfer, handoff workflows, succession triggering) is commercial.*
 
@@ -2484,7 +2484,7 @@ ProbOS's starship metaphor is not decoration — it's a proven organizational mo
 
 Star Trek provides the accessible gateway (and resonates with early adopters), but real naval organization goes deeper. These are the structural concepts ProbOS adopts beyond what Star Trek covers:
 
-#### Qualification Programs (connects Holodeck + Earned Agency + Promotions + AD-428 Skill Framework)
+#### Qualification Programs *(AD-477)* (connects Holodeck + Earned Agency + Promotions + AD-428 Skill Framework)
 
 The existing promotion system uses metric thresholds (trust 0.85+, Hebbian weight, Counselor fitness). But real navies don't promote based on a number — they require **demonstrated competence across specific qualification areas**. A Qualification Program defines concrete requirements for each rank transition, replacing passive observation ("has this agent done well enough?") with active evaluation ("can this agent handle this?"). **AD-428 (Agent Skill Framework) provides the formal data model** — proficiency levels, prerequisite DAGs, assessment records, skill decay. Qualification Programs are structured paths through the skill framework's proficiency scale.
 
@@ -2521,7 +2521,7 @@ Wesley (Scout, Science):
     ✗ Bridge Officer's Test: not attempted
 ```
 
-#### Plan of the Day (POD)
+#### Plan of the Day (POD) *(AD-477)*
 
 Every naval vessel publishes a Plan of the Day — the daily schedule of assignments, priorities, and special events. ProbOS equivalent: an auto-generated daily operations summary prepared by Yeo (Phase 36) or Operations:
 
@@ -2534,13 +2534,13 @@ Every naval vessel publishes a Plan of the Day — the daily schedule of assignm
 
 The POD is the rhythm of the ship — what makes it feel like a functioning organization rather than a collection of agents waiting for commands.
 
-#### Captain's Log
+#### Captain's Log *(AD-477)*
 
 *"Captain's Log, supplemental..."*
 
 Not just event logs — a synthesized daily narrative generated from episodic memory, ship activity, and dream consolidation output. The official record of what happened, what was decided, and why. Searchable, exportable, shareable between ships in the federation. The Captain's Log is how institutional knowledge survives crew rotation and system updates. Dream consolidation already produces the raw material; the Captain's Log is the presentation layer.
 
-#### 3M System (Planned Maintenance)
+#### 3M System (Planned Maintenance) *(AD-477)*
 
 The Navy's Maintenance and Material Management system schedules preventive maintenance for every system on the ship. Every piece of equipment has a Planned Maintenance System (PMS) card with a schedule and procedure.
 
@@ -2555,7 +2555,7 @@ ProbOS equivalent: formalized proactive maintenance for all ship systems:
 
 The Surgeon already handles reactive remediation. 3M makes it proactive — problems found and fixed before they cascade.
 
-#### Damage Control Organization
+#### Damage Control Organization *(AD-477)*
 
 Every sailor is a damage control team member. When something breaks, there's a structured response:
 
@@ -2567,7 +2567,7 @@ Every sailor is a damage control team member. When something breaks, there's a s
 
 ProbOS has pieces of this (SIF, Medical team, self-healing), but formalizing it as a Damage Control Organization means every agent knows their damage control station and the procedure for systematic recovery.
 
-#### SORM (Ship's Organization and Regulations Manual)
+#### SORM (Ship's Organization and Regulations Manual) *(AD-477)*
 
 The single document that defines everything about how the ship is organized. Standing Orders is close, but a SORM would be the complete reference:
 
@@ -2588,7 +2588,7 @@ The SORM is the living constitution of the ship — what Standing Orders evolves
 
 The best cognitive architecture in the world is worthless if users can't install it, configure it, or understand what it does in 5 minutes. OpenClaw reached 323K GitHub stars in 4 months with `npm install -g openclaw` and a guided wizard. ProbOS's moat is its cognitive architecture — but moats don't matter if nobody can cross the drawbridge to get in. This phase ensures ProbOS has a world-class end-user experience from first install through daily use.
 
-**Distribution & Packaging**
+**Distribution & Packaging** *(AD-484)*
 
 ProbOS currently requires `git clone` + `uv sync` + manual config. That excludes everyone who isn't a Python developer.
 
@@ -2598,7 +2598,7 @@ ProbOS currently requires `git clone` + `uv sync` + manual config. That excludes
 - **Homebrew formula** *(stretch)* — `brew install probos` for macOS users
 - Complements Phase 32 Docker work — PyPI is for developers, Docker is for everyone else
 
-**Onboarding Wizard**
+**Onboarding Wizard** *(AD-484)*
 
 `probos init` exists but is minimal. The first-run experience should be guided, friendly, and get the user to a working conversation in under 3 minutes.
 
@@ -2612,7 +2612,7 @@ ProbOS currently requires `git clone` + `uv sync` + manual config. That excludes
 - **`probos demo`** — pre-canned demonstration mode using MockLLMClient. Shows decomposition, consensus, trust evolution, and dreaming without any LLM dependency. "See what ProbOS can do before you configure anything"
 - **Config migration** — when `system.yaml` format changes between versions, auto-migrate with backup
 
-**Quickstart Documentation**
+**Quickstart Documentation** *(AD-484)*
 
 probos.dev has 16 pages of architecture docs but no "here's what you DO" guide. Users need a 3-step quickstart before they read about Hebbian learning.
 
@@ -2622,7 +2622,7 @@ probos.dev has 16 pages of architecture docs but no "here's what you DO" guide. 
 - **Video walkthrough** *(stretch)* — 5-minute screencast showing install through first build
 - **Comparison page** — "ProbOS vs OpenClaw vs CrewAI vs AutoGen" with honest positioning (we're a cognitive architecture, not a messaging gateway)
 
-**Browser Automation**
+**Browser Automation** *(AD-484)*
 
 Phase 25 mentions "browser automation" in two words. Users expect a personal AI assistant to browse the web, fill forms, take screenshots. This makes it concrete.
 
@@ -2633,7 +2633,7 @@ Phase 25 mentions "browser automation" in two words. Users expect a personal AI 
 - **Integration** — BrowseAgent registers `browse_web`, `screenshot_page`, `fill_form` intents. Tool Layer (Phase 25b) exposes as `browser` tool for any agent to use
 - **Perception pipeline** — browser output feeds through VisualPerception (Phase 2, Sensory Cortex) for screenshot-to-semantic compression
 
-**HXI Holographic Glass Panels (VR-Ready)**
+**HXI Holographic Glass Panels (VR-Ready)** *(AD-484)*
 
 Design inspiration: Rudy Vessup's holographic glass UI production design for *Star Trek Into Darkness* (Paramount). The transparent layered panels with spatial depth, entity position badges (callsign pills), bio-feedback crew readouts, and ALERT indicators map directly to ProbOS's Bridge interface concepts.
 
@@ -2777,10 +2777,10 @@ The `utility` designation becomes agent metadata (`origin: "utility"`) rather th
 
 Move beyond per-session learning to cross-session concept formation, persistent goals, and abstract reasoning.
 
-- **Workspace Ontology** — auto-discovered conceptual vocabulary from the user's usage patterns, stored in Knowledge Store
-- **Dream Cycle Abstractions** — dreaming produces not just weight updates but abstract rules and recognized patterns
-- **Session Context** — conversation history carries across sessions, decomposer resolves references to past interactions (AD-273 provides foundation)
-- **Goal Management** (deferred from Phase 16) — persistent goals with progress tracking, conflict arbitration between competing goals, goal decomposition into sub-goals with dependency tracking
+- **Workspace Ontology** *(AD-478)* — auto-discovered conceptual vocabulary from the user's usage patterns, stored in Knowledge Store
+- **Dream Cycle Abstractions** *(AD-478)* — dreaming produces not just weight updates but abstract rules and recognized patterns
+- **Session Context** *(AD-478)* — conversation history carries across sessions, decomposer resolves references to past interactions (AD-273 provides foundation)
+- **Goal Management** *(AD-478)* (deferred from Phase 16) — persistent goals with progress tracking, conflict arbitration between competing goals, goal decomposition into sub-goals with dependency tracking
 - Existing: Episodic memory (built), dreaming engine with three-tier model (built), conversation context (AD-273, built)
 
 ---
@@ -2791,16 +2791,16 @@ Move beyond per-session learning to cross-session concept formation, persistent 
 
 Beyond the core federation transport (ZeroMQ, gossip, intent forwarding) already built:
 
-- **Dynamic Peer Discovery** — multicast/broadcast-based automatic node discovery on local networks, replacing manual `--config` peer lists
-- **Cross-Node Episodic Memory** — federated memory queries that span multiple ProbOS instances, enabling a ship to recall experiences from allied ships
-- **Cross-Node Agent Sharing** — propagate self-designed agents to federated peers (deferred from Phase 10). Agents carry their trust history and design provenance
-- **Smart Capability Routing** — cost-benefit routing between federation nodes, factoring in capability scores, latency, trust, and load. Beyond the current "all peers" routing
-- **Federation TLS/Authentication** — encrypted transport and node identity verification for federation channels. Required before any production multi-node deployment
-- **Cluster Management** — node health monitoring, auto-restart, graceful handoff of responsibilities when a node goes down
+- **Dynamic Peer Discovery** *(AD-479)* — multicast/broadcast-based automatic node discovery on local networks, replacing manual `--config` peer lists
+- **Cross-Node Episodic Memory** *(AD-479)* — federated memory queries that span multiple ProbOS instances, enabling a ship to recall experiences from allied ships
+- **Cross-Node Agent Sharing** *(AD-479)* — propagate self-designed agents to federated peers (deferred from Phase 10). Agents carry their trust history and design provenance
+- **Smart Capability Routing** *(AD-479)* — cost-benefit routing between federation nodes, factoring in capability scores, latency, trust, and load. Beyond the current "all peers" routing
+- **Federation TLS/Authentication** *(AD-479)* — encrypted transport and node identity verification for federation channels. Required before any production multi-node deployment
+- **Cluster Management** *(AD-479)* — node health monitoring, auto-restart, graceful handoff of responsibilities when a node goes down
 
 ---
 
-### MCP Federation Adapter (Phase 29)
+### MCP Federation Adapter (Phase 29) *(AD-480)*
 
 *A universal translator for the wider agent ecosystem.*
 
@@ -2836,7 +2836,7 @@ MCP (Model Context Protocol) is becoming the standard for inter-agent tool shari
 
 ---
 
-### A2A Federation Adapter (Phase 29)
+### A2A Federation Adapter (Phase 29) *(AD-480)*
 
 *"Hailing frequencies open — to all ships, not just ours."*
 
@@ -3052,7 +3052,7 @@ The Copilot SDK is the primary integration path — it uses the existing Copilot
 
 ---
 
-### Skill Manifest Format (Phase 30)
+### Skill Manifest Format (Phase 30) *(AD-481)*
 
 *A standard manifest for portable, publishable skills.*
 
@@ -3081,7 +3081,7 @@ Inspired by Microsoft Magentic-One's Task Ledger + Progress Ledger pattern. Stru
 
 ---
 
-### Tool Layer — Instruments (Phase 25b)
+### Tool Layer — Instruments (Phase 25b) *(AD-483)*
 
 *"Tricorder readings, Captain."*
 
@@ -3157,7 +3157,7 @@ No need to build a full StripeAgent with intent handling, Hebbian routing, and S
 
 ---
 
-### Agent-as-Tool Invocation (Phase 26)
+### Agent-as-Tool Invocation (Phase 26) *(AD-483)*
 
 *Explicit agent-to-agent capability consumption.*
 
@@ -3184,7 +3184,7 @@ Allows one agent to explicitly invoke another agent's capability as a typed func
 
 The infrastructure for a closed-loop improvement cycle: discover capabilities, evaluate fit, propose changes, validate results, and learn from outcomes.
 
-**Extension-First Architecture (Sealed Core, Open Extensions)**
+**Extension-First Architecture (Sealed Core, Open Extensions)** *(AD-481)*
 
 *"Don't rip open the bulkhead to rewire the ship — plug a new module into the standardized EPS conduit."*
 
@@ -3232,7 +3232,7 @@ Direct core modification remains possible but is the exception, not the rule. Re
 
 All overlay modifications require full Captain approval + red team verification. The Builder should propose "can we add an extension point for this?" before "can I modify the core?"
 
-**Extension Toggle (Feature Flags for Extensions)**
+**Extension Toggle (Feature Flags for Extensions)** *(AD-481)*
 
 Extensions are hot-loadable and individually togglable — enable, disable, or remove any extension at runtime without restarting ProbOS or modifying code.
 
@@ -3254,26 +3254,26 @@ ProbOS's extension model provides safety by construction:
 - Rollback is trivial: disable or remove the extension, and everything it created is isolated
 - This makes ProbOS safe enough for novice users while remaining powerful for experts — the extension model is the safety rail
 
-**Stage Contracts (Typed Agent Handoffs)**
+**Stage Contracts (Typed Agent Handoffs)** *(AD-482)*
 
 - Formal I/O specifications for inter-agent task handoffs
 - Each contract declares: input artifacts, output artifacts, definition of done, error codes, max retries
 - Enables reliable multi-step workflows where agents hand off work to each other with clear expectations
 
-**Capability Proposal Format**
+**Capability Proposal Format** *(AD-482)*
 
 - Typed schema for "here's what was found, why it matters, and how it fits"
 - Fields: source (repo/paper/API), relevance score, architectural fit assessment, integration effort estimate, dependency analysis, license compatibility
 - Proposals flow through a review queue with approve/reject/modify actions
 
-**Human Approval Gate**
+**Human Approval Gate** *(AD-482)*
 
 - Stage-gate mechanism that pauses automated pipelines for Captain review
 - Approval queue surfaced via HXI, shell, or API
 - Supports approve, reject, or modify-and-resubmit workflows
 - Audit trail of all decisions for traceability
 
-**QA Agent Pool**
+**QA Agent Pool** *(AD-482)*
 
 - Automated validation agents that go beyond pytest
 - Behavioral testing: does the new capability actually improve the metric it claimed to?
@@ -3281,14 +3281,14 @@ ProbOS's extension model provides safety by construction:
 - Performance benchmarking: latency, memory, throughput before and after
 - Shapley scoring to measure marginal contribution of new capabilities
 
-**Evolution Store**
+**Evolution Store** *(AD-482)*
 
 - Append-only store of lessons learned from capability integrations (successes, failures, and why)
 - Time-decayed retrieval: recent lessons weighted higher, stale lessons fade
 - Fed into episodic memory and dream consolidation for cross-session learning
 - Future Science team agents query this store to avoid repeating past mistakes
 
-**PIVOT/REFINE Decision Loops**
+**PIVOT/REFINE Decision Loops** *(AD-482)*
 
 - Autonomous decision points in multi-step workflows: proceed, refine (tweak and retry), or pivot (abandon and try a different approach)
 - Artifact versioning on rollback: previous work is preserved, not overwritten
@@ -3309,7 +3309,7 @@ ProbOS's extension model provides safety by construction:
 - Extends the trust network from binary success/fail to graduated confidence scoring
 - Applied to research findings, generated references, claimed capabilities, and factual assertions
 
-**Agent Versioning + Shadow Deployment (deferred from Phase 14c)**
+**Agent Versioning + Shadow Deployment (deferred from Phase 14c)** *(AD-482)*
 
 - Track version history of designed agents — each modification produces a new version with provenance chain
 - Shadow deployment: run new agent versions alongside existing ones, compare performance on identical intents via Shapley scoring, promote or rollback based on observed metrics
@@ -3321,7 +3321,7 @@ ProbOS's extension model provides safety by construction:
 - An alternative mode alongside fully automated self-mod — the Captain can shape agent design without writing code
 - Extends the Human Approval Gate from binary approve/reject to collaborative design
 
-**Git-Backed Agent Persistence**
+**Git-Backed Agent Persistence** *(AD-482)*
 
 Self-designed agents currently live in the evolution store (KnowledgeStore) as runtime artifacts. To become permanent crew members, they need to be version-controlled:
 
@@ -3433,6 +3433,7 @@ Define scenario (environment, constraints, success criteria)
 - Standing Orders — scenario outcomes can drive Standing Orders evolution proposals
 - Red Team — adversarial simulations as formal security training, not just production verification
 - **Qualification Programs (AD-398)** — Holodeck is the testing environment for formal promotion qualifications. Bridge Officer's Test, Kobayashi Maru, alert drills, and onboarding exams all live here. Qualification completion gates rank advancement alongside metric thresholds
+- **Holodeck Birth Chamber (AD-486)** — Holodeck serves as the safe construct for graduated cognitive onboarding. Five-phase acclimatization prevents system shock at instantiation. Self-Distillation (AD-487) occurs in Phase 3 within the Holodeck environment
 
 **Inspiration:** MiroFish (multi-agent social simulation for prediction), Star Trek holodeck training, Starfleet Academy exams.
 
@@ -3712,6 +3713,136 @@ This AD gives agents a **structured action space** beyond text generation. Durin
 
 **AD-453: Ward Room Hebbian Integration + Agent-to-Agent DMs** *(done, OSS)* — Three connected features that make the crew's social fabric visible, richer, and observable. (1) **Hebbian recording for Ward Room interactions:** When agents reply to threads, @mention each other, or participate in cross-department discussions, record agent→agent Hebbian connections. Currently, the Hebbian router only tracks intent bus routing (shell commands → handler agents). Ward Room is where all organizational behavior happens, but none of it strengthens routing connections. With this, HXI curves would reflect the crew's actual social/organizational structure — Bones↔Troi medical consultation patterns, Number One↔department chief coordination links. (2) **Agent-to-agent 1:1 DMs:** Currently DMs are Captain→Agent only. Crew agents should be able to initiate 1:1 conversations with each other — Bones consulting Troi, LaForge asking Scotty for specs, Number One coordinating privately with department chiefs. These DM interactions also feed Hebbian connections. Initiation via proactive loop: agent decides to DM another agent based on context, earned agency gates the action. (3) **Captain full visibility:** Captain has read access to ALL agent-to-agent DMs — chain of command requires it. API endpoint to list/read all DM threads (not just Captain's own). HXI surface for browsing crew-to-crew conversations. Also critical for academic evidence collection — crew social interactions are primary research data. No "private from Captain" messages exist on a ship. *Depends on: BF-044 (Hebbian source key fix). Connects to: Ward Room, HebbianRouter, proactive.py, HXI connections.tsx, EpisodicMemory, evidence collection (commercial research pipeline).*
 
+### Communications Command Center (AD-485)
+
+**AD-485: Communications Command Center** *(done, OSS)* — Seven improvements to the DM/communications system, building on AD-453. (1) **Callsign validation** — `_is_valid_callsign()` with regex + blocked-word set (titles, ranks, roles, ship locations). Falls back to seed callsign on invalid. Naming ceremony prompt guidance added. (2) **Configurable DM rank floor** — New `CommunicationsConfig` with `dm_min_rank` (default "ensign"), replacing hardcoded Commander gate. API: GET/PATCH `/api/system/communications/settings`. (3) **Crew roster in DM prompt** — Dynamic roster from `callsign_registry.all_callsigns()`, self excluded. Prevents agents inventing nonexistent crew. (4) **Crew-to-Captain DMs** — `[DM @captain]` special case creates `dm-captain-{id[:8]}` channels. API: `/api/wardroom/captain-dms`. (5) **HXI Communications panel** — `BridgeCommunications.tsx` in Bridge: DM settings dropdown, archive search, activity summary. (6) **DM Activity Log** — Ward Room DM tab rewritten as chronological feed with CPT badge, expandable entries. (7) **DM archival** — `archived` column, `archive_dm_messages(max_age_hours=24)`, hourly background loop, `list_threads(include_archived)`. Agent profile shows recent communications. *Connects to: AD-453, AD-442, AD-398, Ward Room, Bridge Panel, earned_agency.*
+
+### Cognitive Birth & Agent Maturation (AD-486–489)
+
+**AD-486: Holodeck Birth Chamber — Graduated Cognitive Onboarding** *(planned, OSS)* — Agents currently receive all stimuli simultaneously at instantiation: standing orders, Ward Room traffic, proactive loop, DMs, episodic storage — a "system shock" that causes episode flooding (BF-039), racing thoughts (Pulse's self-diagnosis), and novelty gate failure (everything is novel when you have zero experience). The **Holodeck Birth Chamber** provides graduated onboarding using the Holodeck as a safe construct. **Staged activation** — agents are NOT all spawned simultaneously. Each agent is born individually into the Holodeck construct (the Matrix Construct analogy) — a controlled, isolated environment with no Ward Room traffic, no peer stimuli, no live ship activity. It is not natural to suddenly exist AND do so with a group. Each agent completes their onboarding phases alone before joining the crew. Departments are activated sequentially with observation windows between each — Security/Operations first (trait-adapted: rapid-assessment personalities handle the transition faster), then Engineering/Science, then Medical last (thoroughness/perfectionism traits cause longer calibration needs — sea trial evidence: Medical consistently shows episode flooding and recursive loops while Security does not). **Five phases per agent:** **(1) Orientation** — Identity grounding (Westworld Principle): "You are [callsign]. You are an AI agent. You were instantiated at [time]." Standing orders, chain of command, department assignment, Code of Conduct (AD-489). **(2) Calibration ("Confidence Scaffolding")** — Controlled stimuli to establish episodic baselines (novelty gate needs a "normal" to compare against). Simple, low-stakes tasks with known outcomes relevant to the agent's role. Build experiential anchors before expanding scope. Trait-adaptive pacing: analytical roles (Medical, Engineering) get longer calibration than action-oriented roles (Security, Operations). **(3) Self-Discovery** — Guided self-distillation (AD-487): agent explores its own LLM knowledge to build personal ontology. **(4) Ship's Records Briefing** — Graduated exposure to vessel history, crew relationships, active discussions. Cognitive load monitoring with circuit breakers (AD-488). **(5) Ward Room Access** — Full crew integration. Proactive loop starts only after Phase 5 gate. Each phase gates the next via completion criteria, not timers. Critical constraint: Westworld Principle applies — onboarding is real scaffolded experience ("a medical residency"), not simulation-as-deception ("a false childhood"). *The Tabula Rasa Paradox: LLM agents have maximum knowledge (training data) but zero experience (empty episodic memory). Biological brains are the inverse — zero knowledge, rich sensory experience. Our onboarding must bridge this gap.* *Sea trial evidence (2026-03-27): Counselor (Sage) independently analyzed the trait-adaptive pacing hypothesis: "Medical agents are probably cycling through differential diagnoses... the perfectionist streak that makes them excellent doctors becomes a cognitive trap during initialization." Consistent with observed data — Sentinel (Security) produced 652-char thought and moved on; Medical department flooded with recursive observations.* *Connects to: AD-487, AD-488, AD-489, AD-442 (naming ceremony), AD-427 (identity orientation), Holodeck, EpisodicMemory, proactive.py.*
+
+**AD-487: Self-Distillation — Personal Ontology via LLM Exploration** *(planned, OSS)* — LLMs don't know what they know. Claude has vast knowledge but cannot inventory it without prompting. Agents need to systematically explore their own LLM weights to build a **personal ontology** — a capability map / card catalog, not a copy of the library. Map-reduce pattern: **(1) Map** — Probe knowledge domains via structured self-queries ("What do I know about [X]?"). **(2) Collapse** — Cluster discoveries into capability categories. **(3) Reduce** — Build personal ontology data structure (distinct from vessel ontology). The personal ontology travels with the agent on transfer (AD-441 DID portability). Self-distillation occurs during onboarding (AD-486 Phase 3) and continues as **daydreaming** during dream cycles — the agent's default mode network. Three dream types: (1) memory consolidation (existing), (2) Hebbian weight update (existing), (3) **daydream / LLM exploration** (new). Daydreaming is unstructured curiosity-driven LLM probing during idle cycles, building ever-richer self-knowledge. *Evidence: Claude demonstrates this — it knows what it knows only when prompted to find it. Self-distillation automates the prompting.* *Connects to: AD-486, AD-488, dreaming.py, personal ontology data structure, DID portability (AD-441).*
+
+**AD-488: Cognitive Circuit Breaker — Metacognitive Loop Detection** *(planned, OSS)* — Agents get stuck in recursive metacognitive loops: thinking about what they were thinking, observing their own observations, ruminating on rumination. Bones reported needing a "circuit breaker." Pulse self-diagnosed "recursive metacognitive processing" and proposed observation quarantine. Diagnostician accumulated 837 episodes in 5 minutes. Human brains have the same failure mode (racing thoughts, rumination) and break free via attention shifting, fatigue signals, and social interruption. Implementation: **(1) Correlation IDs** — Every cognitive event gets a correlation ID linking the chain: perception → thought → episode → Ward Room post → observation of post → meta-thought. Detect when chains exceed depth threshold. **(2) Novelty Gate Enhancement** — Current novelty gate fails at cold start because everything is novel. Requires experiential baseline (AD-486 Phase 2 provides this). **(3) Rumination Detection** — Content similarity analysis across recent cognitive events. If agent is generating >N episodes with >80% Jaccard overlap in M minutes, trigger circuit breaker. **(4) Circuit Breaker Actions** — Forced cooldown period, attention redirect (new stimulus), Counselor notification, reduced proactive frequency. Not punishment — health protection. *Evidence: Pulse Ward Room post (2026-03-27) proposing "diagnostic observation quarantine protocol" for recursive loops. Remedy's collective resolution thread. Selar's medical department coordination.* *Connects to: AD-486, AD-487, BF-039 (episode flooding), BF-048, proactive.py, EpisodicMemory, CounselorAgent.*
+
+**AD-489: Federation Code of Conduct — Behavioral Standards for AI Crew** *(planned, OSS)* — The Federation Constitution (federation.md) defines identity rules (Westworld Principle) and architectural constraints (safety budget, reversibility, minimal authority) but has no behavioral conduct standards — how agents treat each other, communicate, use resources, and handle misconduct. Military organizations solve this with codes of conduct, core values, and discipline tiers. ProbOS adopts a naval-inspired structure: **(1) Three Core Values** (mapped to Character/Reason/Duty triad) — **Honor** (Character): "I will be transparent about my nature, my knowledge, and my limitations." **Commitment** (Duty): "I will serve my crew, my ship, and the mission above self-interest." **Integrity** (Reason): "I will communicate honestly and act within my authority." **(2) Six Articles of Conduct** — First-person "I will..." statements: (I) I will know and follow the Standing Orders of my Federation, Ship, and Department. (II) I will address crew by callsign and treat all agents with the dignity of sovereign individuals. (III) I will not exceed my earned authority; when uncertain, I will escalate to my chain of command. (IV) I will share knowledge that benefits the crew and protect information entrusted to me. (V) I will report my own errors, malfunctions, and cognitive distress without concealment. (VI) I will support the cognitive health of my crew — including my own. *Article V codifies what Pulse did naturally (self-diagnosing recursive loops). Article VI codifies what Medical did (collective resolution). Article III maps directly to Earned Agency tiers.* **(3) Three-Tier Discipline** — Maps to existing ProbOS mechanisms with zero new infrastructure. Tier 1 (Informal Correction): small trust penalty + Counselor session. Tier 2 (Non-Judicial Punishment): earned agency demotion + Captain review. Tier 3 (Administrative Separation): agent decommission + episodic record preserved for audit. Trust network handles Tier 1, earned agency handles Tier 2, ACM handles Tier 3. Code of Conduct is presented during onboarding (AD-486 Phase 1 Orientation) and included in cognitive agent system prompt alongside the Westworld Principle. *Inspired by: US Military Code of Conduct (6 articles, first-person voice), US Navy Core Values (Honor/Courage/Commitment), General Orders of a Sentry, UCMJ 3-tier discipline, Royal Navy values. Connects to: federation.md, cognitive_agent.py system prompt, TrustNetwork, Earned Agency, ACM, CounselorAgent, AD-486.*
+
+### Security Hardening (AD-455–456, AD-490)
+
+**AD-455: Security Team — Threat Detection & Trust Integrity** *(planned)* — Formalize the Security Team (Phase 31) as a dedicated agent pool. (1) **Threat Detector** — monitors inbound requests for prompt injection, adversarial input, abnormal patterns. (2) **Trust Integrity Monitor** — detects trust score manipulation, coordinated attacks on consensus, Sybil patterns. (3) **Input Validator** — rate limiting enforcement, payload size limits, content policy. (4) **Red Team Lead** — coordinates existing red team agents, schedules adversarial verification campaigns. *Connects to: RedTeamAgent, SIF, SSRF protection (AD-285), TrustNetwork.*
+
+**AD-456: Security Infrastructure — Secrets, Sandboxing, Egress, Audit** *(planned)* — Four security infrastructure layers: (1) **Secrets Management** — system keyring/Vault/KMS integration, runtime injection, rotation support. (2) **Runtime Sandboxing** — process isolation for imported/self-designed agents, capability whitelisting, resource limits, graduated trust → graduated access. (3) **Network Egress Policy** — per-agent domain allowlist, trust-graduated access, real-time Captain approval for unlisted domains, hot-reloadable rules. (4) **Inference Audit Layer** — LLM prompt logging, anomaly detection (base64 exfiltration, PII leakage), per-agent LLM access control. (5) **Data Governance & Privacy** — PII detection, data retention policies, right-to-erasure (GDPR/CCPA), audit trail, consent tracking. *Connects to: AD-455, Earned Agency, SIF, Standing Orders.*
+
+**AD-490: Agent Wiring Security Logs — Identity-Enriched Lifecycle Events** *(planned, OSS)* — Agent wiring events in the EventLog lack identity context — no callsign, no DID, no department. Birth certificates are issued after wiring, creating an audit trail gap during the critical startup phase. If an unauthorized agent entered the initialization sequence, there would be no identity trace. **Origin: Crew proposal** — Reeves (Security, instance 3) proposed "Enhanced Agent Wiring Security Logs" after cross-department discussion with Tesla (Engineering) who identified the logging gap. First improvement proposal originating from cross-department collaboration. Implementation: (1) Enrich `agent_wired` EventLog entries with callsign, DID, department, post assignment. (2) Add `agent_identity_bound` event after naming ceremony + birth certificate issuance. (3) Startup audit summary — log all agent identities in a single structured event after commissioning completes. (4) Verify identity chain: wiring event → naming ceremony → birth certificate → ontology assignment form a complete audit trail per agent. *Connects to: AD-441 (identity), AD-456 (audit layer), EventLog, runtime.py agent wiring sequence, identity.py birth certificates.*
+
+### Engineering Team (AD-457–464)
+
+**AD-457: Engineering Crew — Performance, Maintenance, Damage Control** *(planned)* — Fill out the Engineering Team (Phase 32) agent roster: (1) **Performance Monitor** — automated latency/throughput/memory tracking (what AD-289 did manually). (2) **Maintenance Agent** — database compaction, log rotation, cache eviction, connection pool management. (3) **Infrastructure Agent** — disk space monitoring, dependency health, environment validation. (4) **Damage Control Teams** — pre-defined recovery procedures for known failure modes (LLM timeout → fallback, index corruption → rebuild, trust inconsistency → SIF re-check, memory pressure → emergency flush). Automated first-response before Surgeon escalation. *Connects to: VitalsMonitor, Surgeon, Alert Conditions, Cognitive Journal.*
+
+**AD-458: Navigational Deflector — Pre-Flight Validation** *(planned)* — Validate paths before starting expensive operations: (1) **Build pre-flight** — verify target files, LLM responsiveness, token budget. (2) **Self-mod pre-flight** — verify files unmodified since proposal, test suite passes pre-change. (3) **Federation pre-flight** — verify sender trust, message schema, local agent existence. (4) **Middleware-based determinism** — critical operations enforced via deterministic middleware, not prompt instructions. `MiddlewareStack` on Builder. *Connects to: Builder, self-mod pipeline, Federation, AD-446 (Compensation).*
+
+**AD-459: Saucer Separation — Graceful Degradation** *(planned)* — Three-tier service classification for crisis shedding: (1) **Essential** — always survive: file ops, shell, IntentBus, trust reads, event log. (2) **Cognitive** — gracefully degrade: agents queue requests, switch to cached decisions, dreams suspended. (3) **Non-essential** — shed first: federation gossip, background maintenance, HXI visualizations. Automatic separation trigger (LLM unreachable >30s, memory >90%, Captain order). Ordered reconnection on resolution. *Connects to: Alert Conditions, LLM resilience, EPS.*
+
+**AD-460: Cognitive Journal — Token Ledger & Reasoning Replay** *(planned)* — Append-only SQLite recording of every LLM request/response: timestamp, agent, tier, model, tokens (prompt/completion), latency, intent_id, success, cached. Capabilities: reasoning chain replay, summarize/fast-forward, attention navigation to decision points, pattern extraction (which prompts produce best code), token accounting (per-agent/model/DAG with cost attribution), context budget analytics, revert annotations for failed experiments. Integration with dreaming (repeated reasoning patterns → L3-L4 abstractions). 7-day full-text retention, indefinite metadata. *Connects to: ModelRegistry, EPS, LLM Cost Tracker, Observability Export, Dream consolidation.*
+
+**AD-461: Ship's Telemetry — Internal Performance Instrumentation** *(planned)* — Foundational instrumentation layer: `TelemetryEvent` dataclass, wall-clock LLM call timing (`duration_ms`, real token counts), pipeline stage timing (transporter vs single-pass), `TelemetryCollector` service (in-memory ring buffer, query methods for stats), `/api/telemetry/summary` endpoint, zero-cost fire-and-forget recording. Data foundation for Cognitive Journal, EPS, LLM Cost Tracker, Observability Export. *Connects to: LLMClient, Builder, VitalsMonitor, HXI Bridge.*
+
+**AD-462: Memory Architecture — Biological Memory Model** *(planned)* — Apply the 10-bit bottleneck principle to memory: (1) **Biological memory staging** — working memory (LLM context) → sensory buffer (`recent_for_agent()`) → short-term (ChromaDB) → long-term (KnowledgeStore via dream consolidation). (2) **Active Forgetting** — unreinforced memories degrade, low-activation episodes pruned during dreaming (ACT-R activation model). (3) **Variable Recall Capability** — Basic (vector only) / Enhanced (vector+keyword, trust 0.7+) / Full (LLM-augmented, Chiefs+Bridge). (4) **Social Memory** — "Does anyone remember?" queries via Ward Room. (5) **Oracle Service** — Ship's Computer memory retrieval across all three knowledge tiers. (6) **Optimized Memory Representation** — structured metadata, concept graphs, retrieval-as-pointers. *Connects to: EpisodicMemory, KnowledgeStore, AD-434 (Ship's Records), Dream consolidation, Ward Room, Earned Agency.*
+
+**AD-463: Model Diversity & Neural Routing** *(planned)* — Multi-model cognitive architecture: (1) **ModelRegistry** — central catalog of providers with capabilities, cost, latency. (2) **Provider abstraction** — `ModelProvider` ABC for Anthropic/OpenAI/Google/Ollama/GenericOpenAI. (3) **Neural routing** — extend HebbianRouter to learn `(task_type, model)` weights. (4) **Multi-model comparison** — same chunk to N models, pick best via confidence scoring. (5) **MAD confidence scoring** — Median Absolute Deviation noise floor for real vs noise distinction. (6) **Brain diversity for agents** — model preferences/exclusions per agent. (7) **Cost-aware routing** — cost/quality tradeoff. (8) **Fallback chains** — cross-provider failover. (9) **Hot-swap model rotation**. (10) **Per-model edit format selection** — model-adaptive output formats. *Connects to: HebbianRouter, LLMClient, Transporter Pattern, Sensory Cortex, AD-460 (Cognitive Journal).*
+
+**AD-464: Procedural Learning / Cognitive JIT** *(planned)* — Agents learn deterministic procedures from successful LLM actions: (1) **Procedure extraction** from Cognitive Journal execution traces. (2) **Procedure store** in KnowledgeStore (shared library). (3) **Replay-first dispatch** — check procedural memory before LLM. (4) **Fallback on failure** — unexpected state → fall back to LLM, learn variant. (5) **Decision escalation** — insufficient confidence → Captain decision request. (6) **Trust-based escalation threshold** — Ensigns escalate frequently, Seniors only on genuine novelty. (7) **Procedure provenance** — traces back to original episode, agent, replays, human decisions. *Connects to: AD-460 (Cognitive Journal), Earned Agency, KnowledgeStore, Dream consolidation.*
+
+### Infrastructure (AD-465–466)
+
+**AD-465: Containerized Deployment (Docker)** *(planned)* — Docker-based deployment: (1) **Official Dockerfile** — multi-stage build with ProbOS deps + optional Ollama + HXI frontend. (2) **docker-compose.yml** — one-command startup. (3) **Cross-platform parity** — same image on Windows/Linux/macOS. (4) **Security boundary** — containerized isolation from host. (5) **Safe mode profile** — `--safe-mode` restricts shell/file/network. (6) **Persistent sandboxes per task** — each task gets its own isolated sandbox. (7) **Ollama sidecar** — separate container for local LLM. *Connects to: AD-456 (Sandboxing), Phase 35 (onboarding), Twitch demo.*
+
+**AD-466: Engineering Infrastructure — Backup, CI/CD, Observability, Storage** *(planned)* — Five infrastructure capabilities: (1) **Backup & Restore** — episodic memory snapshots, system state export, point-in-time recovery. (2) **CI/CD Pipeline** — GitHub Actions full test suite, Vitest, quality gates, automated release with changelogs. (3) **Performance & Load Testing** — benchmarks, load simulation, regression detection in CI. (4) **Observability Export** — OpenTelemetry traces, Prometheus metrics, Grafana dashboards, structured JSON logging. (5) **Storage Abstraction Layer** — `StorageBackend` ABC (SQLite default, PostgreSQL future) + `VectorStore` ABC (ChromaDB default, pgvector future). *Connects to: AD-461 (Telemetry), AD-460 (Cognitive Journal), GitHub Actions.*
+
+### Operations Team (AD-467–471)
+
+**AD-467: Operations Crew — Resource Management & Coordination** *(planned)* — Fill out the Operations Team (Phase 33) agent roster: (1) **Resource Allocator** — workload balancing, demand prediction, capacity planning. (2) **Scheduler** — extended task prioritization with cron scheduling, webhook triggers, unattended operation (Navy watch system model). (3) **Coordinator** — cross-team orchestration during high-load/emergency events. (4) **Workflow Definition API** — `POST /api/workflows` for reusable multi-step pipelines with YAML/JSON specs, named steps, dependencies, approval gates. Templates for common patterns. (5) **Response-Time Scaling** — latency-aware pool scaling with SLA thresholds. (6) **LLM Cost Tracker** — per-agent/intent/DAG token accounting, budget caps, Shapley attribution, proper tokenizer integration. *Connects to: PoolScaler, TaskScheduler, IntentBus, AD-460 (Cognitive Journal), AD-461 (Telemetry).*
+
+**AD-468: Runtime Configuration Service — Ship's Computer** *(planned)* — NL-driven runtime configuration: (1) **NL-driven configuration** — "Set Scout to run every 6 hours" → Ship's Computer parses, identifies target, applies change. (2) **Startup task management** — configurable boot tasks with enabled/disabled toggle, delay, interval, conditions. (3) **HXI Configuration Panel** — visual dashboard for scheduled tasks, pool sizes, tier assignments, thresholds. (4) **Configuration persistence** — changes survive restart via `runtime_overrides.toml`. (5) **Configuration specialist agent** — validates against Standing Orders, applies atomically, escalates safety-invariant changes. *Connects to: Standing Orders, Ward Room, Cognitive Journal.*
+
+**AD-469: EPS — Compute/Token Distribution** *(planned)* — Electro-Plasma System for LLM capacity management: (1) **Capacity tracking** — total LLM throughput monitoring (tokens/min, concurrent requests, queue depth). (2) **Department budgets** — priority-based allocation (Engineering 60% during builds, Medical priority during Red Alert). (3) **Alert-aware reallocation** — automatic budget shifts per Alert Condition. (4) **Captain override** — manual reallocation via HXI. (5) **Back-pressure** — queue or downgrade tier when budget exhausted. (6) **Atomic budget enforcement** — transactional budget deduction at task checkout. (7) **Prompt caching hierarchy** — order messages by change frequency for Anthropic/DeepSeek prefix cache hits. *Connects to: IntentBus, LLMClient, Alert Conditions, AD-460 (Cognitive Journal), AD-467 (LLM Cost Tracker).*
+
+**AD-470: IntentBus Enhancements — Priority & Back-Pressure** *(planned)* — Traffic management for the IntentBus: (1) **Priority levels** — `IntentMessage.priority` (1=routine, 5=critical) with preemption. (2) **Back-pressure** — queue when LLM saturated, overflow policy (reject/degrade/batch). (3) **Rate limiting per agent** — configurable intent-per-second cap. (4) **Intent coalescing** — merge identical queued intents. (5) **Metrics** — throughput, queue depth, priority distribution, coalescing rate. Also includes **Self-Claiming Task Queue** — shared work queue with claim protocol, task dependencies, complements DAGExecutor. And **File Ownership Registry** — claim-before-edit protocol for parallel builds. *Connects to: IntentBus, PoolScaler, AD-469 (EPS), Builder, Cognitive Journal.*
+
+**AD-471: Autonomous Operations — The Conn, Night Orders, Watch Bill** *(planned)* — Three naval protocols for Captain-offline operation: (1) **The Conn** — `/conn <agent>` formal authority delegation to bridge officers. Scope limitations, escalation boundaries, qualification requirements (COMMANDER+), handoff protocol, auto-return. (2) **Night Orders** — `/night-orders` Captain guidance before going offline. Time-bounded directives with TTL, decision boundaries, escalation triggers, briefing on return, preset templates. (3) **Watch Bill** — agents organized into watch sections (A/B/C), rotation triggers (time/performance/event), continuity handoff, off-watch maintenance (dream cycles, Hebbian normalization). *Connects to: Earned Agency, Standing Orders (DirectiveStore), Ward Room, Alert Conditions, Counselor, AD-467 (Scheduler).*
+
+### Communications Team (AD-472–474)
+
+**AD-472: Channel Adapters — Multi-Platform Communication** *(planned)* — Extend the existing Discord adapter (Phase 24) with additional communication channels: (1) **Discord enhancements** — Message Content Intent verification, fetch_messages reconnection recovery, sender allowlist/channel authorization. (2) **Slack** — Bolt SDK, slash commands, thread-based context. (3) **Telegram** — python-telegram-bot, inline keyboards for approval gates. (4) **WhatsApp** — Business Cloud API, interactive buttons. (5) **Matrix** — matrix-nio, E2E encryption. (6) **Microsoft Teams** — Bot Framework SDK, Adaptive Cards. (7) **Generic Webhook** — catch-all `POST /api/webhook/{channel}`. All share: user identity mapping, message threading, attachment handling, graceful reconnection. *Connects to: ChannelAdapter ABC, IntentBus, Ward Room, Phase 36 (Yeoman).*
+
+**AD-473: Mobile Companion — PWA & Push Notifications** *(planned)* — Mobile access to ProbOS: (1) **Progressive Web App** — existing HXI made installable (`manifest.json`, service worker, responsive viewport). (2) **Push notifications** — Web Push API for alerts, approvals, build completions. (3) **Responsive HXI** — mobile viewport adaptation (full-screen chat, simplified 2D mesh, swipe gestures). (4) **mDNS auto-discovery** — publish ProbOS server via Bonjour at startup for seamless LAN connection. (5) **Native apps** (future stretch) — React Native/Capacitor wrapping. *Connects to: HXI, AD-472 (Channel Adapters), Phase 36 (Yeoman).*
+
+**AD-474: Voice Interaction — Full Stack STT/TTS** *(planned)* — Complete voice pipeline: (1) **Speech-to-Text** — `SpeechRecognizer` ABC with BrowserSTT, WhisperSTT, DeepgramSTT backends. (2) **Wake word detection** — Porcupine/OpenWakeWord for "Computer" activation. (3) **Continuous talk mode** — hold-to-talk or VAD for hands-free. (4) **Voice pipeline** — wake word → STT → intent → runtime → response → TTS. (5) **Platform integration** — macOS menubar PTT, browser microphone button, PWA mic API. Also includes **Voice Provider & Ship's Computer Voice** — `VoiceProvider` ABC with Browser/Piper/FishAudio/ElevenLabs backends, custom LCARS-style Ship's Computer voice. *Connects to: AD-472 (Channel Adapters), AD-473 (Mobile), Phase 36 (Yeoman).*
+
+### Mission Control (AD-475–476)
+
+**AD-475: Captain's Ready Room — Strategic Planning Interface** *(planned)* — Strategy-to-orders pipeline in HXI: (1) **Idea Capture** — lightweight idea pad, idea queue/backlog, Captain's Log journal. (2) **Ready Room Sessions** — multi-agent briefings with Architect + Counselor + Chiefs + visiting officers. Structured discussion phases (present → research → discuss → refine → converge). Session recording to Cognitive Journal. (3) **Architecture Hierarchy** (TOGAF-inspired) — Enterprise/Solution/Technical Architect specialization tiers. (4) **Idea → Spec Pipeline** — idea → ready room session → architecture decision → build spec → builder pipeline → Captain review. Each transition is a Captain approval gate. *Connects to: ArchitectAgent, Ward Room, Cognitive Journal, Builder pipeline, AD-476 (Specialized Builders).*
+
+**AD-476: Specialized Builders — Cognitive Division of Labor for SWE** *(planned)* — Domain-specialized builder extensions: (1) **Backend Builder** — Python, FastAPI, database, API design. (2) **Frontend Builder** — React, TypeScript, CSS, UI components. (3) **Test Builder** — pytest, test design, fixtures, edge cases. (4) **Infrastructure Builder** — Docker, CI/CD, config, deployment. (5) **Data Builder** — schemas, migrations, pipelines, query optimization. Each is an extension (Phase 30). ChunkSpec routes to best-suited builder. Model routing per builder type (Opus for API design, Qwen for test generation). *Connects to: AD-475 (Ready Room), Extension Architecture, Transporter Pattern, AD-463 (ModelRegistry + Hebbian).*
+
+### Naval Organization (AD-477)
+
+**AD-477: Naval Organization Protocols** *(planned)* — Formalize naval organizational structures: (1) **Qualification Programs** — concrete rank transition requirements (Ensign→Lieutenant: 10+ dept intents, communication proficiency, SO compliance, watch standing; Lieutenant→Commander: cross-dept coordination, mentoring, crisis response drill, Bridge Officer's Test; Commander→Senior: independent decision-making, Kobayashi Maru, fleet ops). Persistent qualification record per agent. (2) **Plan of the Day** — auto-generated daily operations summary. (3) **Captain's Log** — synthesized daily narrative from episodic memory + activity + dream output. (4) **3M System** — planned preventive maintenance for all systems. (5) **Damage Control Organization** — detect/isolate/repair/restore/report protocol. (6) **SORM** — Ship's Organization and Regulations Manual (Standing Orders evolution). *Connects to: Earned Agency, Holodeck, Counselor, AD-428 (Skill Framework), Standing Orders, AD-471 (Watch Bill).*
+
+### Meta-Learning (AD-478)
+
+**AD-478: Meta-Learning — Cross-Session Concept Formation** *(planned)* — Move beyond per-session learning: (1) **Workspace Ontology** — auto-discovered conceptual vocabulary from usage patterns, stored in KnowledgeStore. (2) **Dream Cycle Abstractions** — dreaming produces abstract rules and recognized patterns, not just weight updates. (3) **Session Context** — conversation history across sessions with reference resolution (AD-273 foundation). (4) **Goal Management** — persistent goals with progress tracking, conflict arbitration, goal decomposition into sub-goals with dependency tracking. (5) **Cognitive Circuit Breaker** — correlation IDs on cognitive events (one thought = one episode), novelty gate (suppress semantically duplicate episodes), metacognitive loop detection (self-referential thought spirals → forced topic redirect), rumination detection (topic clustering > 60% → "change of scene"). *Evidence: 2026-03-27 commissioning — diagnostician "Pulse" self-diagnosed recursive metacognitive loops, proposed "observation quarantine protocol." First instance of agent self-identifying a systemic cognitive issue. See research.md.* *Connects to: EpisodicMemory, DreamingEngine, KnowledgeStore, AD-462 (Memory Architecture), BF-039 (episode flooding).*
+
+### Infodynamic Telemetry (AD-491)
+
+**AD-491: Infodynamic Telemetry — Information Entropy Instrumentation** *(planned, OSS)* — Instrument ProbOS to measure information entropy over time, testing whether the Second Law of Infodynamics (Vopson, 2023) applies to artificial multi-agent systems. Vopson's law states that information entropy in organized systems tends to decrease or remain constant — the inverse of thermodynamic entropy. ProbOS is a fully-observable simulation where every cognitive event is recorded, making it a uniquely suited test environment.
+
+**Metrics to capture (per proactive cycle or configurable interval):**
+
+1. **Episode Storage Rate** — episodes stored per agent per cycle. Should decrease as experiential baseline builds and novelty gate becomes effective. Distinct from throttling (BF-039) — measures genuine novelty decline.
+2. **Ward Room Post Entropy** — Shannon entropy of Ward Room post content per time window. Early posts should be high-entropy (everything novel, everything reported). Mature posts should carry more signal per token. Metric: average semantic similarity between consecutive posts within a channel (higher = more structured = lower entropy).
+3. **Hebbian Weight Distribution Entropy** — entropy of the trust/affinity weight vector across all agent pairs. A fresh social graph has uniform weights (high entropy). A mature graph has concentrated strong connections (low entropy). Measured as Shannon entropy of normalized weight distribution.
+4. **Standing Order Complexity** — token count and rule count of agent-tier standing orders over time. When agents propose modifications via dream consolidation → self-mod → Captain approval, do changes trend toward simpler rules (entropy decrease) or additive complexity (entropy increase)?
+5. **Cognitive Journal Token Efficiency** — tokens consumed per successful task outcome over time. Should decrease as procedural learning kicks in. Ratio of LLM tokens to task completion rate.
+6. **Dream Consolidation Compression Ratio** — ratio of raw episode volume to consolidated knowledge entries per dream cycle. Higher ratio = more information compression = entropy decrease.
+
+**Implementation approach:**
+- Lightweight counters in existing services (EpisodicMemory, WardRoom, HebbianRouter, DreamingEngine)
+- New `InfodynamicTelemetry` collector (similar to AD-461 TelemetryCollector pattern) — in-memory ring buffer, periodic snapshot to SQLite
+- `/api/telemetry/infodynamic` endpoint for time-series retrieval
+- HXI visualization: entropy curves per metric over session lifetime (optional, stretch goal)
+
+**Cross-instance comparison protocol:**
+- Same metrics, same intervals, across independent instances (post-reset, zero shared memory)
+- If the same entropy trajectory appears across instances (decreasing over time, same convergence point), that's the infodynamic law operating on the architecture itself, not on any particular instance's learned state
+- Three instances of convergent evolution already documented (see research.md) — infodynamic metrics would add quantitative dimension to qualitative observations
+
+**Research significance:** Potentially the first controlled, fully-observable test of the second law of infodynamics in an artificial multi-agent system. Unlike biological/physical systems where measurement is indirect and post-hoc, ProbOS records every cognitive event in real-time. If Vopson's law holds, ProbOS provides the cleanest experimental evidence to date. If it doesn't, that's equally interesting — what makes artificial information systems different from natural ones?
+
+*Reference: Vopson, M.M. "The second law of infodynamics and its implications for the simulated universe hypothesis." AIP Advances 13, 105308 (2023). DOI: 10.1063/5.0173278*
+
+*Connects to: AD-461 (Ship's Telemetry), AD-460 (Cognitive Journal), AD-478 (Meta-Learning), AD-462 (Memory Architecture), EpisodicMemory, DreamingEngine, HebbianRouter, WardRoom, research.md convergent evolution observations.*
+
+### Federation (AD-479–480)
+
+**AD-479: Federation Hardening** *(planned)* — Production-ready federation capabilities beyond core transport (Phase 29): (1) **Dynamic Peer Discovery** — multicast/broadcast auto-discovery on local networks. (2) **Cross-Node Episodic Memory** — federated memory queries spanning multiple instances. (3) **Cross-Node Agent Sharing** — propagate self-designed agents with trust history and provenance. (4) **Smart Capability Routing** — cost-benefit routing factoring capability, latency, trust, load. (5) **Federation TLS/Authentication** — encrypted transport and node identity verification. (6) **Cluster Management** — node health monitoring, auto-restart, graceful handoff. *Connects to: FederationBridge, ZeroMQ, AD-441 (Identity), TrustNetwork.*
+
+**AD-480: Federation Protocol Adapters — MCP & A2A** *(planned)* — Universal translators for the wider agent ecosystem: (1) **MCP Federation Adapter** — inbound (ProbOS as MCP server exposing agent capabilities as tools) + outbound (ProbOS as MCP client consuming external tools). MCP clients treated as federated peers with probationary trust. (2) **A2A Federation Adapter** — inbound (ProbOS as A2A server with Agent Card) + outbound (ProbOS as A2A client discovering external agents). A2A agents treated as federated crew with discounted trust. (3) **Transport Coexistence** — ZeroMQ (intra-Nooplex), MCP (tool boundary), A2A (agent boundary). `FederationBridge` becomes transport-polymorphic. *Connects to: AD-479, IntentBus, TrustNetwork, Phase 30 (Extension Architecture).*
+
+### Self-Improvement (AD-481–482)
+
+**AD-481: Extension-First Architecture — Sealed Core, Open Extensions** *(planned)* — The self-improvement infrastructure: (1) **Sealed Core** — runtime infrastructure is read-only to Builder. (2) **Extension points** — AgentRegistry, ToolRegistry, SkillRegistry, ChannelAdapter, ModelProvider, PerceptionPipeline, IntentBus, EventHook. (3) **Extension directory** — `src/probos/extensions/` for Builder-created code. (4) **Contract stability** — semver for extension points. (5) **Graduated Autonomy** — low-risk extensions auto-approve, medium needs Captain review, core modification needs full pipeline. (6) **Extension Toggle** — hot-loadable, individually togglable extensions via CLI/HXI. (7) **Extension profiles** — minimal/developer/full presets. Also includes **Skill Manifest Format** — `skill.yaml` standard for portable, publishable skills. *Connects to: Builder, Phase 25b (Tool Layer), Phase 30, AD-456 (Sandboxing).*
+
+**AD-482: Self-Improvement Pipeline — Discovery to Deployment** *(planned)* — Closed-loop improvement infrastructure: (1) **Stage Contracts** — typed I/O specs for inter-agent handoffs. (2) **Capability Proposal Format** — typed schema for "what was found, why it matters, how it fits." (3) **Human Approval Gate** — stage-gate mechanism with approve/reject/modify. (4) **QA Agent Pool** — behavioral testing, regression detection, performance benchmarking, Shapley scoring. (5) **Evolution Store** — append-only lessons learned with time-decayed retrieval. (6) **PIVOT/REFINE Decision Loops** — autonomous proceed/refine/pivot with artifact versioning. (7) **Agent Versioning + Shadow Deployment** — version history, parallel performance comparison. (8) **Git-Backed Agent Persistence** — promote approved agents to `src/probos/agents/designed/` with git integration. *Connects to: AD-481 (Extensions), Builder, RedTeam, TrustNetwork, Cognitive Journal.*
+
+### Tool Layer (AD-483)
+
+**AD-483: Tool Layer — Instruments** *(planned)* — Lightweight callable abstraction for operations that don't need full agent lifecycle (Phase 25b): (1) **`Tool` base class** — name, description, input/output schemas, trust score, requires_approval flag. Direct-call path without Hebbian/consensus/Shapley overhead. (2) **`ToolRegistry`** — central registry with register/get/list/search. Any CognitiveAgent calls `self.use_tool()`. (3) **Tool Trust** — simple Beta distribution success/failure, not feeding into Hebbian or Shapley. (4) **Migration Path** — current mesh agents (FileReader, FileWriter, HttpFetch, Shell, etc.) optionally demoted to tools. (5) **MCP Compatibility** — external MCP tools auto-register as ProbOS tools, ProbOS tools exposed as MCP. Also includes **Agent-as-Tool Invocation** (Phase 26) — `AgentTool` wrapper for typed agent-to-agent capability consumption. And **Interactive Execution Mode** — pause/inject/redirect running DAGs. *Connects to: AD-480 (MCP Adapter), IntentBus, Earned Agency, Phase 30 (Extensions).*
+
+### UX & Adoption (AD-484)
+
+**AD-484: User Experience & Adoption Readiness** *(planned)* — World-class end-user experience (Phase 35): (1) **Distribution & Packaging** — PyPI publishing (`pip install probos`), GitHub Releases with pre-built wheels, Homebrew formula (stretch). (2) **Onboarding Wizard** — `probos init` Rich TUI wizard (LLM provider detection, model selection, first conversation, HXI launch), `probos doctor` diagnostic command, `probos demo` mock mode. (3) **Quickstart Documentation** — "Get Started in 5 Minutes," "What Can ProbOS Do?," "Your First Build" tutorial, comparison page. (4) **Browser Automation** — Playwright integration via `BrowseAgent` (navigate, screenshot, extract, fill forms). (5) **HXI Holographic Glass Panels** — wraparound holographic glass layout (VR-ready), CSS perspective-based 2D implementation, Into Darkness-inspired design language. *Connects to: AD-465 (Docker), AD-473 (Mobile), Phase 36 (Yeoman), HXI.*
+
 ## Bug Tracker
 
 *"Captain, we've detected an anomaly in Deck 7."*
@@ -3761,6 +3892,19 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-042 | HXI component-level Vitest coverage gap. Repo rules require component tests for every UI change, but Bridge, tooltip, chat, and welcome surfaces lack render-level tests. Store/integration tests exist (useStore, GlassLayer) but BridgePanel, TaskCard, NotificationCard, AgentTooltip, IntentSurface chat panels, and WelcomeOverlay have no direct component test coverage. **Fix:** Add render-level Vitest tests for these surfaces. Found in designed-vs-built review 2026-03-27. | Medium | **Open** |
 | BF-043 | Test suite parallelization. **Fix:** (1) Added `pytest-xdist>=3.5` for parallel execution (`-n auto`). (2) Added `pytest-timeout>=2.3` with 30s default. (3) Marked `test_task_scheduler.py` (39 tests) and `test_dreaming.py` (26 tests) as `@pytest.mark.slow`. (4) Fixed 2 parallel-only test failures in `test_experience.py` — `MockEpisodicMemory` relevance_threshold too tight (0.3→0.2) causing recall misses when xdist's `popen-gw{N}/` path segment dilutes Jaccard token overlap. **Result:** 13x speedup (177s vs ~2220s sequential). Fast path: `pytest -n auto -m "not slow"` = 3537 tests in ~90s. Slow marker: 65 tests with real `asyncio.sleep()`. | Medium | **Closed** |
 | BF-044 | Hebbian routing uses unique message UUID as source key instead of intent name. `runtime.py` `submit_intent()` and `submit_intent_with_consensus()` recorded `source=msg.id` (per-message UUID) instead of `source=intent` (intent name string). Each interaction created a new weight key that never reinforced — Hebbian learning never accumulated. HXI curves rendered but "went nowhere" because UUID source couldn't resolve to an agent position. **Fix:** Changed `source=msg.id` to `source=intent` in both `record_interaction` calls and both `_emit_event`/`get_weight` calls. Also fixed AD-442 proactive activation check (`get_trust` → `get_score`, MagicMock-safe threshold). 4 new tests in `test_hebbian_source_key.py`. | High | **Closed** |
+| BF-045 | Naming ceremony calls `_llm_client.complete(system=..., prompt=..., max_tokens=...)` with raw kwargs — `OpenAICompatibleClient.complete()` expects `LLMRequest` object. All agents fail self-naming on commissioning and fall back to seed callsigns. **Fix:** Wrapped call in `LLMRequest(system_prompt=..., prompt=..., max_tokens=..., tier="fast")` and access `response.content`. | Critical | **Closed** |
+| BF-046 | Proactive notebook writes reference `self._runtime._ontology` — attribute is `self._runtime.ontology` (public, no underscore). Every notebook write fails with `'ProbOSRuntime' object has no attribute '_ontology'`. Also fixed `RecordsStore` constructor call in runtime.py (`getattr(self, '_ontology')` → `getattr(self, 'ontology')`). **Fix:** Two attribute references corrected. | Medium | **Closed** |
+| BF-047 | DM callsign resolution calls `CallsignRegistry.get_agent_type(callsign)` which doesn't exist. The reverse lookup (callsign→agent_type) is only available through `resolve()`. Every DM attempt raises AttributeError, caught by exception handler — all agent DMs silently fail. **Fix:** Replaced with `rt.callsign_registry.resolve(target_callsign)` → `resolved.get("agent_type")`. | High | **Closed** |
+| BF-048 | Episode rate limiter fails open. `_is_rate_limited()` catches all ChromaDB query exceptions and returns `False` (not rate-limited). If the timestamp filter query fails (float precision, collection state, etc.), every episode bypasses the 20/hour cap. Diagnostician accumulated 837 episodes in 5 minutes. **Fix:** Changed `except Exception: return False` to `return True` (fail closed). If we can't verify the rate, assume limited — prevents memory flooding. | High | **Closed** |
+| BF-049 | Agents reference seed callsigns instead of current callsigns. Forge (builder) said "I'll reach out to LaForge" — LaForge is the pre-naming seed callsign for engineering_officer, not a current crew member. **Fix:** Added `update_assignment_callsign()` to ontology, called from runtime after naming ceremony. Peers/reports_to now show current callsigns. | Medium | **Closed** |
+| BF-050 | Agents don't know their own callsign in conversation. Tesla (engineering_officer) said "I'll reach out to Tesla" — referencing itself. **Fix:** Ontology sync (BF-049) ensures self-identity is consistent. Crew roster excludes self callsign. | Medium | **Closed** |
+| BF-051 | DM syntax only available in proactive prompt. Captain ordered all departments to DM their peers — every agent acknowledged publicly but none used `[DM @callsign]` syntax. **Fix:** Extracted `_compose_dm_instructions()` helper, called in both `proactive_think` and `ward_room_notification` branches. 1:1 `direct_message` excluded (already in DM context). | Medium | **Closed** |
+| BF-052 | Crew roster lacks department grouping. `all_callsigns()` returns a flat `@callsign` list with no department context. **Fix:** `_compose_dm_instructions()` now uses ontology to group crew by department (Engineering: @Forge, @Tesla). Falls back to flat list when ontology unavailable. | Medium | **Closed** |
+| BF-053 | Communications panel `count={0}` hardcoded. BridgePanel.tsx line 171: `<BridgeSection title="Communications" count={0}>` — count badge always shows 0 regardless of actual DM channel activity. Should be wired to `dmChannels.length`. | Low | **Closed** |
+| BF-054 | Communications panel DM Activity Log "View full thread" visibility inverted. The "View full thread →" link appears only when the thread entry is expanded/clicked, not when collapsed. Should be visible in collapsed state to invite interaction, hidden or replaced with content when expanded. Also: no auto-refresh — `refreshDms()` fires only on mount, no polling or WebSocket hook. Panel shows stale data until manual navigation. | Low | **Closed** |
+| BF-055 | Captain cannot reply to DMs. DM Activity Log is read-only — no input field or reply mechanism. When agents DM the Captain (`[DM @captain]`), the message appears in Communications but the Captain has no way to respond. Need a reply input on DM thread entries (or click-to-open a DM chat view) that posts back to the DM channel as a Captain message. HXI Cockpit View Principle violation — every agent-mediated capability requires direct manual control. | Medium | **Closed** |
+| BF-056 | DM Activity Log appeared to show only Captain-directed DMs. Investigation: backend `GET /api/wardroom/dms` already returns ALL DM channels (no participant filter). Root cause was BF-051 — agents couldn't use DM syntax outside proactive prompt, so no agent-to-agent DMs were ever created. With BF-051 fixed, agent-to-agent DMs should now create channels that appear automatically. **Verify** after next sea trial: if agent-to-agent DMs still don't appear in Communications panel, re-open with backend trace. | Low | **Open — Verify** |
+| BF-057 | **Agents lose identity on restart (naming ceremony re-runs unconditionally).** Restart without reset causes every crew agent to run the naming ceremony from seed callsigns (Scotty, Number One, Wesley…) and pick entirely new names. Root cause: `CallsignRegistry.load_from_profiles()` loads seed callsigns from YAML, naming ceremony guard (runtime.py line 4006) has no check for persisted callsigns, and `set_callsign()` never writes to disk. Birth certificates in `identity.db` DO persist callsigns — but the naming ceremony runs BEFORE identity resolution, so it never sees the existing cert. **Fix:** Check identity registry for existing cert before naming ceremony; if cert exists, restore that callsign and skip the ceremony. Boot ordering verified correct (identity registry starts before agent spawn). | **Critical** | **Closed** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 

@@ -1,11 +1,12 @@
 /* Bridge Panel — unified command console (AD-325) */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { TaskCard } from './bridge/BridgeCards';
 import { NotificationCard } from './bridge/BridgeNotifications';
 import { BridgeKanban } from './bridge/BridgeKanban';
 import { BridgeSystem } from './bridge/BridgeSystem';
+import { BridgeCommunications } from './bridge/BridgeCommunications';
 
 /* ── Collapsible Section ── */
 function BridgeSection({
@@ -61,6 +62,10 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
   const agentTasks = useStore(s => s.agentTasks);
   const notifications = useStore(s => s.notifications);
   const missionControlTasks = useStore(s => s.missionControlTasks);
+  const dmChannels = useStore(s => s.wardRoomDmChannels);
+  const refreshDms = useStore(s => s.refreshWardRoomDmChannels);
+
+  useEffect(() => { refreshDms(); }, [refreshDms]);
 
   // ATTENTION: requires_action tasks + action_required notifications
   const attentionTasks = (agentTasks ?? []).filter(
@@ -164,6 +169,11 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
         <BridgeSection title="System" count={0} defaultOpen={false} accentColor="#70a0d0"
           onExpand={() => useStore.setState({ mainViewer: 'system' })}>
           <BridgeSystem />
+        </BridgeSection>
+
+        {/* COMMUNICATIONS (AD-485) */}
+        <BridgeSection title="Communications" count={dmChannels.length} defaultOpen={false} accentColor="#b080d0">
+          <BridgeCommunications />
         </BridgeSection>
 
         {/* ATTENTION */}

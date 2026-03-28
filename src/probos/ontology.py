@@ -746,6 +746,19 @@ class VesselOntologyService:
         if assignment:
             assignment.agent_id = agent_id
 
+    def update_assignment_callsign(self, agent_type: str, new_callsign: str) -> bool:
+        """Update the callsign on an agent's Assignment after naming ceremony (BF-049)."""
+        assignment = self._assignments.get(agent_type)
+        if not assignment:
+            return False
+        self._assignments[agent_type] = Assignment(
+            agent_type=assignment.agent_type,
+            post_id=assignment.post_id,
+            callsign=new_callsign,
+            agent_id=assignment.agent_id,
+        )
+        return True
+
     def get_assignment_for_agent_by_id(self, agent_id: str) -> Assignment | None:
         """Find assignment by runtime agent_id (set via wire_agent)."""
         for a in self._assignments.values():

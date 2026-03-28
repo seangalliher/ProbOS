@@ -540,7 +540,7 @@ def create_app(runtime: Any) -> FastAPI:
             "repository_structure": [asdict(d) for d in ont.get_repository_structure()],
         }
 
-    # ── Ward Room DMs API (AD-453) ──────────────────────────────────
+    # ── Ward Room DMs API (AD-453/AD-485) ───────────────────────────
 
     @app.get("/api/wardroom/dms")
     async def list_dm_channels():
@@ -575,6 +575,70 @@ def create_app(runtime: Any) -> FastAPI:
             raise HTTPException(status_code=404, detail="DM channel not found")
         threads = await runtime.ward_room.list_threads(channel_id, limit=100)
         return {"channel": dm_ch, "threads": threads}
+
+    @app.get("/api/wardroom/captain-dms")
+    async def list_captain_dms():
+        """List all DMs addressed to the Captain."""
+        if not runtime.ward_room:
+            return []
+        channels = await runtime.ward_room.list_channels()
+        captain_channels = [c for c in channels
+                            if c.channel_type == "dm" and "captain" in c.name.lower()]
+        result = []
+        for ch in captain_channels:
+            threads = await runtime.ward_room.list_threads(ch.id, limit=20)
+            result.append({
+                "channel": {"id": ch.id, "name": ch.name, "description": ch.description,
+                            "created_at": ch.created_at},
+                "threads": threads,
+                "thread_count": len(threads),
+            })
+        return result
+
+    @app.get("/api/wardroom/dms/archive")
+    async def search_dm_archive(q: str = "", since: float = 0, until: float = 0):
+        """Search archived DM messages. Captain oversight."""
+        if not runtime.ward_room:
+            return {"results": [], "count": 0}
+        channels = await runtime.ward_room.list_channels()
+        dm_channels = [c for c in channels if c.channel_type == "dm"]
+        results = []
+        for ch in dm_channels:
+            threads = await runtime.ward_room.list_threads(
+                ch.id, limit=200, include_archived=True
+            )
+            for t in threads:
+                _title = getattr(t, 'title', '') or ''
+                _body = getattr(t, 'body', '') or ''
+                _created = getattr(t, 'created_at', 0) or 0
+                if q and q.lower() not in (_title + _body).lower():
+                    continue
+                if since and _created < since:
+                    continue
+                if until and _created > until:
+                    continue
+                results.append({"channel": ch.name, "thread": t})
+        return {"results": results, "count": len(results)}
+
+    # ── Communications Settings API (AD-485) ──────────────────────
+
+    @app.get("/api/system/communications/settings")
+    async def get_communications_settings():
+        """Get current communications settings."""
+        return {
+            "dm_min_rank": runtime.config.communications.dm_min_rank,
+        }
+
+    @app.patch("/api/system/communications/settings")
+    async def update_communications_settings(body: dict):
+        """Update communications settings. Captain only."""
+        valid_ranks = ["ensign", "lieutenant", "commander", "senior"]
+        if "dm_min_rank" in body:
+            rank_val = body["dm_min_rank"].lower()
+            if rank_val not in valid_ranks:
+                raise HTTPException(status_code=400, detail=f"Invalid rank. Must be one of: {valid_ranks}")
+            runtime.config.communications.dm_min_rank = rank_val
+        return await get_communications_settings()
 
     # ── Ship's Records API (AD-434) ────────────────────────────────
 

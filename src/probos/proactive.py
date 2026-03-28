@@ -777,8 +777,14 @@ class ProactiveCognitiveLoop:
             )
             actions_executed.extend(reply_actions)
 
-        # --- Direct Messages (Commander+) --- AD-453
-        if rank in (Rank.COMMANDER, Rank.SENIOR):
+        # --- Direct Messages --- AD-453/AD-485
+        # Read configurable minimum rank (default: ensign = everyone can DM)
+        dm_min_rank_str = "ensign"
+        if hasattr(rt, 'config') and hasattr(rt.config, 'communications'):
+            dm_min_rank_str = rt.config.communications.dm_min_rank
+        dm_min_rank = Rank[dm_min_rank_str.upper()] if dm_min_rank_str.upper() in Rank.__members__ else Rank.ENSIGN
+        _RANK_ORDER_DM = [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]
+        if _RANK_ORDER_DM.index(rank) >= _RANK_ORDER_DM.index(dm_min_rank):
             text, dm_actions = await self._extract_and_execute_dms(agent, text)
             actions_executed.extend(dm_actions)
 
@@ -792,8 +798,8 @@ class ProactiveCognitiveLoop:
             try:
                 callsign = agent.callsign if hasattr(agent, 'callsign') else agent.agent_type
                 department = ""
-                if self._runtime._ontology:
-                    dept = self._runtime._ontology.get_agent_department(agent.agent_type)
+                if self._runtime.ontology:
+                    dept = self._runtime.ontology.get_agent_department(agent.agent_type)
                     if dept:
                         department = dept.department_id if hasattr(dept, 'department_id') else str(dept)
                 await self._runtime._records_store.write_notebook(
@@ -901,10 +907,48 @@ class ProactiveCognitiveLoop:
             if not dm_body:
                 continue
 
+            # AD-485: Special case — DM to Captain
+            if target_callsign.lower() == "captain":
+                try:
+                    sender_callsign = ""
+                    if hasattr(rt, 'callsign_registry'):
+                        sender_callsign = rt.callsign_registry.get_callsign(agent.agent_type)
+
+                    captain_channel_name = f"dm-captain-{agent.id[:8]}"
+                    dm_channel = None
+                    channels = await rt.ward_room.list_channels()
+                    for ch in channels:
+                        if ch.name == captain_channel_name and ch.channel_type == "dm":
+                            dm_channel = ch
+                            break
+                    if not dm_channel:
+                        dm_channel = await rt.ward_room.create_channel(
+                            name=captain_channel_name,
+                            description=f"DM: {sender_callsign or agent.agent_type} → Captain",
+                            channel_type="dm",
+                            created_by=agent.id,
+                        )
+
+                    await rt.ward_room.create_thread(
+                        channel_id=dm_channel.id,
+                        author_id=agent.id,
+                        title=f"[DM to Captain from @{sender_callsign or agent.agent_type}]",
+                        body=dm_body,
+                        author_callsign=sender_callsign or agent.agent_type,
+                    )
+
+                    actions.append({"type": "dm", "target_callsign": "captain", "target_agent_id": "captain"})
+                    logger.info("AD-485: %s sent DM to Captain", sender_callsign or agent.agent_type)
+                except Exception as e:
+                    logger.warning("AD-485: DM to Captain failed: %s", e)
+                continue
+
             # Resolve callsign to agent_type
             target_agent_type = None
             if hasattr(rt, 'callsign_registry'):
-                target_agent_type = rt.callsign_registry.get_agent_type(target_callsign)
+                resolved = rt.callsign_registry.resolve(target_callsign)
+                if resolved:
+                    target_agent_type = resolved.get("agent_type")
             if not target_agent_type:
                 logger.debug("AD-453: DM target @%s not found in registry", target_callsign)
                 continue

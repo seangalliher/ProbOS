@@ -149,7 +149,7 @@ class TestHebbianSocial:
         rt._emit_event = MagicMock()
 
         rt.callsign_registry = MagicMock()
-        rt.callsign_registry.get_agent_type = MagicMock(return_value="diagnostician")
+        rt.callsign_registry.resolve = MagicMock(return_value={"agent_type": "diagnostician"})
         rt.callsign_registry.get_callsign = MagicMock(return_value="Bones")
 
         target = MagicMock()

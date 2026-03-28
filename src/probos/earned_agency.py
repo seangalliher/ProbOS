@@ -61,19 +61,16 @@ def can_think_proactively(rank: Rank) -> bool:
 def can_perform_action(rank: Rank, action: str) -> bool:
     """Can this agent perform a specific Ward Room action?
 
-    AD-437: Action space gating by rank.
-    - Ensign: no actions (reactive only)
-    - Lieutenant: endorse + reply
-    - Commander: endorse + reply
-    - Senior: endorse + reply + thread management (lock, pin)
+    AD-437/AD-485: Action space gating by rank.
+    - Ensign: dm only (configurable via communications.dm_min_rank)
+    - Lieutenant: endorse + reply + dm
+    - Commander: endorse + reply + dm
+    - Senior: endorse + reply + dm + thread management (lock, pin)
     """
-    if rank == Rank.ENSIGN:
-        return False
-
     _ACTION_TIERS: dict[str, Rank] = {
         "endorse": Rank.LIEUTENANT,
         "reply": Rank.LIEUTENANT,
-        "dm": Rank.COMMANDER,  # AD-453
+        "dm": Rank.ENSIGN,  # AD-485: configurable via communications.dm_min_rank
         "lock": Rank.SENIOR,
         "pin": Rank.SENIOR,
     }

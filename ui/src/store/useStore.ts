@@ -287,6 +287,10 @@ export interface HXIState {
   refreshWardRoomUnread: () => void;
   setWardRoomView: (view: 'channels' | 'dms') => void;
   refreshWardRoomDmChannels: () => void;
+  // Communications settings (AD-485)
+  communicationsSettings: { dm_min_rank: string };
+  refreshCommunicationsSettings: () => void;
+  updateCommunicationsSettings: (settings: Partial<{ dm_min_rank: string }>) => void;
   setShowIntro: (v: boolean) => void;
   setShowLegend: (v: boolean) => void;
   setShowHistory: (v: boolean) => void;
@@ -387,6 +391,7 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomUnread: {},
   wardRoomView: 'channels' as const,
   wardRoomDmChannels: [],
+  communicationsSettings: { dm_min_rank: 'ensign' },
   // Assignments (AD-408)
   assignments: [],
   // Scheduled Tasks (Phase 25a)
@@ -542,6 +547,28 @@ export const useStore = create<HXIState>((set, get) => ({
       if (resp.ok) {
         const data = await resp.json();
         set({ wardRoomDmChannels: data || [] });
+      }
+    } catch { /* swallow */ }
+  },
+  refreshCommunicationsSettings: async () => {
+    try {
+      const resp = await fetch('/api/system/communications/settings');
+      if (resp.ok) {
+        const data = await resp.json();
+        set({ communicationsSettings: data });
+      }
+    } catch { /* swallow */ }
+  },
+  updateCommunicationsSettings: async (settings) => {
+    try {
+      const resp = await fetch('/api/system/communications/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        set({ communicationsSettings: data });
       }
     } catch { /* swallow */ }
   },

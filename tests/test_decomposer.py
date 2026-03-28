@@ -605,12 +605,15 @@ class TestReflectHardeningExtended:
         """Runtime sets fallback string when reflect raises an exception."""
 
         class ExplodingLLM(MockLLMClient):
-            _call_count = 0
+            def __init__(self):
+                super().__init__()
+                self._call_count = 0
 
             async def complete(self, request):
                 self._call_count += 1
-                # Explode only on the reflect call (2nd call)
-                if self._call_count > 1:
+                # Explode on reflect call (identified by "Original request:" prefix)
+                prompt = getattr(request, 'prompt', '') or ''
+                if prompt.startswith('Original request:'):
                     raise RuntimeError("LLM on fire")
                 return await super().complete(request)
 

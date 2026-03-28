@@ -1073,7 +1073,7 @@ class ProbOSRuntime:
                 rcfg = self.config.records
                 if not rcfg.repo_path:
                     rcfg = rcfg.model_copy(update={"repo_path": str(self._data_dir / "ship-records")})
-                self._records_store = RecordsStore(rcfg, ontology=getattr(self, '_ontology', None))
+                self._records_store = RecordsStore(rcfg, ontology=getattr(self, 'ontology', None))
                 await self._records_store.initialize()
                 logger.info("ship-records started")
             except Exception as e:
@@ -1354,6 +1354,21 @@ class ProbOSRuntime:
             # AD-416: Start Ward Room pruning loop
             archive_dir = self._data_dir / "ward_room_archive"
             await self.ward_room.start_prune_loop(self.config.ward_room, archive_dir)
+
+            # AD-485: Archive old DM messages periodically
+            async def _dm_archive_loop() -> None:
+                import asyncio
+                while True:
+                    await asyncio.sleep(3600)  # Every hour
+                    try:
+                        archived = await self.ward_room.archive_dm_messages(max_age_hours=24)
+                        if archived:
+                            logger.info("Archived %d old DM messages", archived)
+                    except Exception as e:
+                        logger.debug("DM archival failed: %s", e)
+
+            import asyncio as _aio_dm
+            _aio_dm.get_event_loop().create_task(_dm_archive_loop())
 
         # --- Assignment Service (AD-408) ---
         if self.config.assignments.enabled:
@@ -3987,8 +4002,26 @@ class ProbOSRuntime:
         )
 
         # AD-442: Self-naming ceremony for crew agents
+        # BF-057: Check for existing identity FIRST — skip ceremony on warm boot
         is_crew = self._is_crew_agent(agent)
-        if is_crew and self.config.onboarding.enabled and self.config.onboarding.naming_ceremony:
+        _existing_identity_callsign = ""
+        if is_crew and self.identity_registry:
+            existing_cert = self.identity_registry.get_by_slot(agent.id)
+            if existing_cert and existing_cert.callsign:
+                _existing_identity_callsign = existing_cert.callsign
+
+        if _existing_identity_callsign:
+            # Warm boot — restore persisted identity, skip naming ceremony
+            if agent.callsign != _existing_identity_callsign:
+                agent.callsign = _existing_identity_callsign
+                self.callsign_registry.set_callsign(agent.agent_type, _existing_identity_callsign)
+                # BF-049: Sync ontology so peers/reports_to show current callsigns
+                if hasattr(self, 'ontology') and self.ontology:
+                    self.ontology.update_assignment_callsign(agent.agent_type, _existing_identity_callsign)
+                logger.info("BF-057: %s identity restored from birth certificate: '%s'",
+                           agent.agent_type, _existing_identity_callsign)
+        elif is_crew and self.config.onboarding.enabled and self.config.onboarding.naming_ceremony:
+            # Cold start — run naming ceremony
             if hasattr(agent, '_llm_client') and agent._llm_client:
                 try:
                     chosen_callsign = await self._run_naming_ceremony(agent)
@@ -3997,6 +4030,9 @@ class ProbOSRuntime:
                         agent.callsign = chosen_callsign
                         # Update the registry so other agents see the new name
                         self.callsign_registry.set_callsign(agent.agent_type, chosen_callsign)
+                        # BF-049: Sync ontology so peers/reports_to show current callsigns
+                        if hasattr(self, 'ontology') and self.ontology:
+                            self.ontology.update_assignment_callsign(agent.agent_type, chosen_callsign)
                         logger.info("AD-442: %s renamed from '%s' to '%s'", agent.agent_type, old_callsign, chosen_callsign)
                 except Exception as e:
                     logger.warning("AD-442: Naming ceremony error for %s: %s", agent.agent_type, e)
@@ -4149,19 +4185,28 @@ class ProbOSRuntime:
             "(1-2 sentences) on the second line. Example:\n"
             "Scotty\n"
             "The name feels right for an engineer — it carries a legacy of resourcefulness and "
-            "dedication to keeping the ship running.\n"
+            "dedication to keeping the ship running.\n\n"
+            "Choose a name that is a plausible human first name, last name, or naval callsign. "
+            "It must be 2-20 alphabetic characters. No titles, ranks, numbers, or special characters. "
+            "Do NOT use your role name, department name, or ship location as your callsign. "
+            "Your name should be something a crewmate could call you — a person's name, not a function. "
+            "Examples: 'Riker', 'Chapel', 'Keiko', 'Torres', 'Bashir', 'Sato', 'Reed'.\n"
         )
 
         # Make single LLM call
         try:
             if hasattr(agent, '_llm_client') and agent._llm_client:
+                from probos.types import LLMRequest
                 response = await agent._llm_client.complete(
-                    system="You are choosing your own name. Respond with only your chosen callsign on line 1 and a brief reason on line 2.",
-                    prompt=prompt,
-                    max_tokens=100,
+                    LLMRequest(
+                        system_prompt="You are choosing your own name. Respond with only your chosen callsign on line 1 and a brief reason on line 2.",
+                        prompt=prompt,
+                        max_tokens=100,
+                        tier="fast",
+                    )
                 )
 
-                lines = response.strip().split('\n')
+                lines = response.content.strip().split('\n')
                 chosen = lines[0].strip().strip('"').strip("'")
                 reason = lines[1].strip() if len(lines) > 1 else ""
 
@@ -4169,6 +4214,37 @@ class ProbOSRuntime:
                 if not chosen or len(chosen) > 30:
                     chosen = seed_callsign
                     reason = "Default callsign accepted."
+
+                # AD-485: Callsign safety validation
+                import re as _re_cs
+
+                def _is_valid_callsign(name: str) -> bool:
+                    """Callsign must be a plausible human name or naval callsign."""
+                    if not _re_cs.match(r"^[A-Za-z][A-Za-z' -]{0,18}[A-Za-z]$", name):
+                        return False
+                    _blocked = {
+                        "captain", "admiral", "ensign", "lieutenant", "commander",
+                        "senior", "sir", "madam", "doctor", "dr", "agent", "bot",
+                        "ai", "system", "probos", "computer", "ship", "null", "none",
+                        "undefined", "test", "admin", "root", "god", "lord",
+                        "bridge", "engineering", "sickbay", "ops", "helm", "conn",
+                        "scout", "builder", "architect", "counselor", "surgeon",
+                        "pharmacist", "pathologist", "diagnostician", "security",
+                        "operations", "tactical", "science", "medical", "comms",
+                        "transporter", "holodeck", "brig", "armory", "shuttle",
+                        "turbolift", "quarters", "wardroom", "ready room",
+                    }
+                    if name.lower().strip() in _blocked:
+                        return False
+                    if not any(c.isalpha() for c in name):
+                        return False
+                    return True
+
+                if not _is_valid_callsign(chosen):
+                    logger.warning("Agent %s chose invalid callsign '%s', keeping seed '%s'",
+                                   agent.agent_type, chosen, seed_callsign)
+                    chosen = seed_callsign
+                    reason = "Chosen name was not a valid callsign."
 
                 # Check for duplicates against existing crew
                 if chosen.lower() in [c.lower() for c in existing_crew]:

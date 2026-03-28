@@ -1141,3 +1141,75 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 | AD-453 | **Ward Room Social Fabric** — Three connected features. (1) **Hebbian recording for Ward Room interactions:** Agent replies, @mentions, and cross-department thread participation record agent→agent Hebbian connections. Currently Hebbian only tracks intent bus routing — Ward Room organizational behavior is invisible to the routing mesh. (2) **Agent-to-agent 1:1 DMs:** Crew agents can initiate DMs with each other (Bones→Troi, Number One→dept chiefs). Proactive loop initiates, earned agency gates. DM interactions also feed Hebbian connections. (3) **Captain full visibility:** Captain has read access to ALL agent-to-agent DMs — chain of command. API endpoint + HXI surface for browsing crew-to-crew conversations. Critical for academic evidence collection. No "private from Captain" messages exist on a ship. *Depends on: BF-044. Connects to: Ward Room, HebbianRouter, proactive.py, HXI, EpisodicMemory, evidence pipeline.* |
 
 **Status:** AD-453 COMPLETE. Implemented across 10 files: `routing.py` (REL_SOCIAL constant), `ward_room.py` (hebbian_router param + social recording in create_post + get_or_create_dm_channel), `runtime.py` (wired hebbian_router to WardRoom), `proactive.py` (_extract_and_execute_dms action tag), `cognitive_agent.py` (DM prompt instructions), `earned_agency.py` (dm→Commander gate), `api.py` (2 Captain DM endpoints), `WardRoomPanel.tsx` (DM browser tab), `useStore.ts` (DM state/actions). 19 tests: `test_ward_room_dms.py` (13) + `test_hebbian_social.py` (6). 3584 passed.
+
+### AD-485: Communications Command Center
+
+| AD | Decision |
+|----|----------|
+| AD-485 | **Communications Command Center** — Seven interconnected improvements to the DM/communications system. **(1) Callsign Validation:** `_is_valid_callsign()` in naming ceremony with regex `^[A-Za-z][A-Za-z' -]{0,18}[A-Za-z]$` + blocked-word set (titles, ranks, roles, locations, system words). Falls back to seed callsign on invalid. LLM prompt guidance added for naming ceremony. **(2) Configurable DM Rank Floor:** New `CommunicationsConfig` pydantic model with `dm_min_rank: str = "ensign"`. Proactive loop reads from `rt.config.communications.dm_min_rank` instead of hardcoded Commander gate. `can_perform_action("dm")` tier changed from Commander to Ensign. Removed blanket Ensign deny in earned_agency. **(3) Crew Roster in DM Prompt:** Dynamic roster built from `callsign_registry.all_callsigns()` in cognitive_agent.py prompt composition. Self excluded. "ONLY DM crew members listed above." **(4) Crew-to-Captain DMs:** Special `[DM @captain]` handling in proactive loop. Creates `dm-captain-{agent.id[:8]}` channels. Two new API endpoints: `/api/wardroom/captain-dms`, `/api/wardroom/dms/archive`. **(5) HXI Communications Panel:** `BridgeCommunications.tsx` in Bridge panel — DM settings (rank dropdown), archive search, DM activity summary. Store: `communicationsSettings`, `refreshCommunicationsSettings`, `updateCommunicationsSettings`. **(6) DM Activity Log:** `WardRoomPanel.tsx` rewritten — chronological DM feed replacing channel list, expandable entries, CPT badge on Captain DMs. **(7) DM Message Archival:** `archived` column on threads table, `archive_dm_messages(max_age_hours=24)`, `list_threads(include_archived=False)`, hourly background loop in runtime. Agent profile `ProfileInfoTab` shows recent communications. *Connects to: AD-453 (DMs), AD-442 (naming ceremony), AD-398 (earned agency), Ward Room, Bridge Panel, config.* |
+
+**Status:** AD-485 COMPLETE. 12 files modified (6 Python + 4 TypeScript + 2 test infrastructure). 3 new test files: `test_callsign_validation.py` (10), `test_communications_settings.py` (10), additions to `test_ward_room_dms.py` (5 new). 40 targeted tests, 3605+ full regression passed.
+
+### AD-486–489: Cognitive Birth, Self-Distillation, Circuit Breakers, Code of Conduct
+
+| AD | Decision |
+|----|----------|
+| AD-486 | **Holodeck Birth Chamber — Graduated Cognitive Onboarding** — Agents currently receive all stimuli simultaneously at instantiation (standing orders, Ward Room, proactive loop, DMs, episodic storage), causing episode flooding (BF-039), racing thoughts, and novelty gate failure. The Tabula Rasa Paradox: LLM agents have max knowledge (training data) but zero experience (empty episodic memory) — the inverse of biological brains. Five-phase graduated onboarding in the Holodeck construct: (1) Orientation — identity grounding via Westworld Principle, (2) Calibration — controlled stimuli to establish episodic baselines, (3) Self-Discovery — guided self-distillation (AD-487) to build personal ontology, (4) Ship's Records Briefing — graduated exposure to vessel history, (5) Ward Room Access — full crew integration. Westworld Principle constraint: onboarding is real scaffolded experience ("a medical residency"), not simulation-as-deception ("a false childhood"). *Connects to: AD-487, AD-488, AD-442, AD-427, Holodeck, EpisodicMemory.* |
+| AD-487 | **Self-Distillation — Personal Ontology via LLM Exploration** — LLMs don't know what they know without prompting. Agents systematically explore their own LLM weights via map-reduce: Map (probe knowledge domains) → Collapse (cluster discoveries) → Reduce (build personal ontology data structure). "Don't copy the library, build the card catalog." Personal ontology is distinct from vessel ontology and travels with the agent on transfer (AD-441 DID portability). Self-distillation continues post-onboarding as **daydreaming** — a third dream type (alongside memory consolidation and Hebbian weight update): unstructured curiosity-driven LLM exploration during dream cycles. The agent's default mode network. *Connects to: AD-486, AD-488, dreaming.py, DID portability (AD-441).* |
+| AD-488 | **Cognitive Circuit Breaker — Metacognitive Loop Detection** — Agents get stuck in recursive metacognitive loops: thinking about thinking, observing observations, ruminating on rumination. Evidence: Bones reported needing a "circuit breaker," Pulse self-diagnosed "recursive metacognitive processing" and proposed observation quarantine, Diagnostician accumulated 837 episodes in 5 minutes. Four components: (1) Correlation IDs on cognitive event chains — detect depth > threshold, (2) Novelty gate enhancement — requires experiential baseline from AD-486 Phase 2, (3) Rumination detection — content similarity analysis (Jaccard > 0.8 in N-minute window), (4) Circuit breaker actions — forced cooldown, attention redirect, Counselor notification. Not punishment — health protection. *Connects to: AD-486, AD-487, BF-039, BF-048, proactive.py, EpisodicMemory, CounselorAgent.* |
+| AD-489 | **Federation Code of Conduct — Behavioral Standards for AI Crew** — Federation Constitution has identity rules (Westworld Principle) and architectural constraints but no behavioral conduct standards. Naval-inspired structure: **(1) Three Core Values** mapped to Character/Reason/Duty triad — **Honor** (Character): "I will be transparent about my nature, my knowledge, and my limitations." **Commitment** (Duty): "I will serve my crew, my ship, and the mission above self-interest." **Integrity** (Reason): "I will communicate honestly and act within my authority." **(2) Six Articles of Conduct** — "I will..." statements: (I) Know and follow Standing Orders. (II) Address crew by callsign, treat all agents with dignity of sovereign individuals. (III) Not exceed earned authority; escalate when uncertain. (IV) Share beneficial knowledge, protect entrusted information. (V) Report own errors, malfunctions, and cognitive distress without concealment. (VI) Support cognitive health of crew — including my own. Article V codifies Pulse's self-diagnosis behavior. Article VI codifies Medical's collective resolution. **(3) Three-Tier Discipline** — maps to existing mechanisms: Tier 1 (trust penalty + Counselor), Tier 2 (earned agency demotion + Captain review), Tier 3 (decommission + episodic audit trail). Zero new infrastructure. Presented during onboarding (AD-486 Phase 1). *Inspired by: US Code of Conduct, Navy Core Values, UCMJ, Royal Navy. Connects to: federation.md, cognitive_agent.py, TrustNetwork, Earned Agency, ACM, AD-486.* |
+
+**Status:** AD-486, AD-487, AD-488, AD-489 — PLANNED. Documented 2026-03-27.
+
+### BF-049/050/051/052: Wave 1 Agent Awareness & DM Accessibility
+
+| BF | Fix |
+|----|-----|
+| BF-049 | **Ontology callsign sync** — `update_assignment_callsign()` added to `VesselOntologyService`. Runtime calls it after naming ceremony. Peers/reports_to in `get_crew_context()` now show current callsigns, not stale seeds. |
+| BF-050 | **Self-identity in roster** — Crew roster built by `_compose_dm_instructions()` excludes agent's own callsign. Combined with BF-049 ontology sync, agents no longer reference themselves or stale names. |
+| BF-051 | **DM syntax in ward room context** — Extracted `_compose_dm_instructions(brief)` helper from the proactive_think branch of `cognitive_agent.py`. Called in both `proactive_think` (full) and `ward_room_notification` (brief) branches. 1:1 `direct_message` excluded. |
+| BF-052 | **Department-grouped roster** — `_compose_dm_instructions()` uses `ontology.get_agent_department()` to group crew by department. Output: `Engineering: @Forge, @Tesla`. Falls back to flat list when ontology unavailable. |
+
+**Files modified:** `ontology.py`, `runtime.py`, `cognitive_agent.py`. **Tests:** `test_ontology_callsign_sync.py` (4 new), `test_communications_settings.py` (+7 new).
+
+**Status:** BF-049/050/051/052 COMPLETE.
+
+### AD-490: Agent Wiring Security Logs
+
+| AD | Decision |
+|----|----------|
+| AD-490 | **Agent Wiring Security Logs — Identity-Enriched Lifecycle Events** — Agent wiring events lack identity context (no callsign, DID, or department). Birth certificates are issued after wiring, creating an audit trail gap during startup. **Origin: crew proposal** — Reeves (Security, instance 3) proposed after cross-department discussion with Tesla (Engineering) who identified the logging gap. First improvement proposal from cross-department collaboration. Implementation: (1) Enrich `agent_wired` events with callsign, DID, department. (2) Add `agent_identity_bound` event after naming + birth certificate. (3) Startup audit summary event after commissioning completes. (4) Verify wiring → naming → birth cert → ontology assignment chain. *Connects to: AD-441, AD-456, EventLog, runtime.py, identity.py.* |
+
+**Status:** AD-490 — PLANNED. Documented 2026-03-27. Originated from crew improvement proposal (Reeves/Tesla cross-department collaboration).
+
+### BF-053/054/055: Communications UI Polish (Wave 2)
+
+| BF | Decision |
+|----|----------|
+| BF-053 | **Communications badge wired** — `BridgePanel.tsx` Communications section `count={0}` replaced with `count={dmChannels.length}`. Added `useEffect` to refresh DM channels on mount. |
+| BF-054 | **DM Activity Log toggle + auto-refresh** — "View full thread →" now visible in collapsed state (was only in expanded). Expanded state shows "Open in Ward Room →" (navigates to channel). Auto-refresh every 15s via `setInterval`. |
+| BF-055 | **Captain reply to DMs** — Inline reply textarea on expanded DM entries. Posts as `author_id: 'captain'`, `author_callsign: 'Captain'` to DM channel via existing `POST /api/wardroom/channels/{id}/threads`. Enter sends, Shift+Enter newline. HXI Cockpit View Principle restored. |
+
+**Files modified:** `BridgePanel.tsx`, `WardRoomPanel.tsx`. **Frontend-only, no backend changes.**
+
+**Status:** BF-053/054/055 COMPLETE.
+
+### BF-057: Identity Persistence on Restart (CRITICAL — 2026-03-27)
+
+**Discovery:** Restart without reset caused all 11 crew agents to re-run naming ceremony and pick new names. Instance 3 crew (Curie, Pax, Keiko, Tesla, Reeves) became Cortex, Bones, Hatch, Geordi, Sentinel. Total identity loss.
+
+**Root cause chain:**
+1. `CallsignRegistry.load_from_profiles()` always loads seed callsigns from YAML (Scotty, Number One, etc.)
+2. Naming ceremony guard has no check for existing persistent identity
+3. `set_callsign()` updates in-memory only — never persists chosen callsigns
+4. Birth certificates in `identity.db` DO persist callsigns, but naming ceremony runs BEFORE identity resolution
+
+**Fix:** Check `identity_registry.get_by_slot(agent.id)` for existing birth certificate BEFORE the naming ceremony decision. If cert exists → restore that callsign, skip ceremony. If no cert (cold start) → run ceremony as before. Birth certificate is the source of truth for identity across restarts.
+
+**Impact:** Undermines AD-441 (Persistent Agent Identity), AD-441c (Birth Certificates), AD-442 (Self-Naming Ceremony). Trust records reference old agent identities. Ward Room history references old callsigns. Every restart was effectively a partial reset.
+
+**Implementation:** Added identity check before naming ceremony in `_wire_agent()` (runtime.py). Warm boot path: `identity_registry.get_by_slot(agent.id)` → restore callsign → sync callsign_registry + ontology → skip LLM call. Cold start path unchanged. Boot ordering verified correct (identity_registry.start() line 658, agent spawn later). `resolve_or_issue()` returns existing cert unchanged.
+
+**Files modified:** `runtime.py`. **Tests:** `test_identity_persistence.py` (6 new).
+
+**Status:** BF-057 COMPLETE.

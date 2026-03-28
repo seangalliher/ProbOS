@@ -11,6 +11,7 @@ import pytest
 from probos.acm import AgentCapitalService, LifecycleState
 from probos.config import OnboardingConfig, SystemConfig
 from probos.crew_profile import CallsignRegistry
+from probos.types import LLMResponse
 
 
 # ── Fixtures / Helpers ──────────────────────────────────────────────
@@ -59,7 +60,7 @@ class TestNamingCeremony:
         rt.registry.all.return_value = []
 
         agent = _make_agent()
-        agent._llm_client.complete = AsyncMock(return_value="McCoy\nA classic name for a doctor.")
+        agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content="McCoy\nA classic name for a doctor."))
 
         result = asyncio.get_event_loop().run_until_complete(rt._run_naming_ceremony(agent))
         assert result == "McCoy"
@@ -76,7 +77,7 @@ class TestNamingCeremony:
         rt.registry.all.return_value = []
 
         agent = _make_agent(callsign="Bones")
-        agent._llm_client.complete = AsyncMock(return_value="")
+        agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content=""))
 
         result = asyncio.get_event_loop().run_until_complete(rt._run_naming_ceremony(agent))
         assert result == "Bones"
@@ -113,7 +114,7 @@ class TestNamingCeremony:
         rt.registry.all.return_value = [existing]
 
         agent = _make_agent(agent_type="diagnostician", callsign="Doc", agent_id="diag-1")
-        agent._llm_client.complete = AsyncMock(return_value="Bones\nI want to be called Bones.")
+        agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content="Bones\nI want to be called Bones."))
 
         result = asyncio.get_event_loop().run_until_complete(rt._run_naming_ceremony(agent))
         assert result == "Doc"  # Falls back to seed
@@ -131,7 +132,7 @@ class TestNamingCeremony:
 
         agent = _make_agent(callsign="Bones")
         long_name = "A" * 50
-        agent._llm_client.complete = AsyncMock(return_value=f"{long_name}\nToo long.")
+        agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content=f"{long_name}\nToo long."))
 
         result = asyncio.get_event_loop().run_until_complete(rt._run_naming_ceremony(agent))
         assert result == "Bones"
@@ -148,7 +149,7 @@ class TestNamingCeremony:
         rt.registry.all.return_value = []
 
         agent = _make_agent(callsign="Bones")
-        agent._llm_client.complete = AsyncMock(return_value='"Scotty"\nThe name feels right.')
+        agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content='"Scotty"\nThe name feels right.'))
 
         result = asyncio.get_event_loop().run_until_complete(rt._run_naming_ceremony(agent))
         assert result == "Scotty"

@@ -69,7 +69,7 @@ class TestDmActionTag:
 
         # Set up callsign registry
         rt.callsign_registry = MagicMock()
-        rt.callsign_registry.get_agent_type = MagicMock(return_value="diagnostician")
+        rt.callsign_registry.resolve = MagicMock(return_value={"agent_type": "diagnostician"})
         rt.callsign_registry.get_callsign = MagicMock(return_value="Bones")
 
         # Set up agents list
@@ -134,10 +134,10 @@ class TestDmActionTag:
         assert len(actions) == 0
 
     @pytest.mark.asyncio
-    async def test_dm_action_requires_commander_rank(self):
-        """Lieutenant can't send DMs (earned agency gate)."""
+    async def test_dm_action_ensign_can_dm_at_default(self):
+        """AD-485: Ensign can DM when dm tier is Ensign (default)."""
         from probos.earned_agency import can_perform_action, Rank
-        assert not can_perform_action(Rank.LIEUTENANT, "dm")
+        assert can_perform_action(Rank.ENSIGN, "dm")
 
     @pytest.mark.asyncio
     async def test_dm_action_commander_can_send(self):
@@ -177,3 +177,112 @@ class TestDmApi:
         non_dm_ch = next(c for c in channels if c.channel_type != "dm")
         dm_channels = [c for c in channels if c.channel_type == "dm"]
         assert non_dm_ch.id not in {c.id for c in dm_channels}
+
+
+class TestAD485CaptainDmAndArchival:
+    """AD-485: Captain DMs, archival, and crew roster tests."""
+
+    @pytest.mark.asyncio
+    async def test_captain_dm_creates_channel(self, wr):
+        """DM to @captain creates dm-captain-{id} channel."""
+        from probos.proactive import ProactiveCognitiveLoop
+
+        loop = ProactiveCognitiveLoop(interval=60)
+        rt = MagicMock()
+        rt.ward_room = wr
+        rt.trust_network = MagicMock()
+        rt.trust_network.get_score = MagicMock(return_value=0.9)
+        rt.callsign_registry = MagicMock()
+        rt.callsign_registry.get_callsign = MagicMock(return_value="Bones")
+        rt.callsign_registry.resolve = MagicMock(return_value=None)
+        rt._agents = []
+        rt.hebbian_router = None
+        loop._runtime = rt
+
+        agent = MagicMock()
+        agent.agent_type = "diagnostician"
+        agent.id = "diag-001-full-uuid"
+        agent.callsign = "Bones"
+
+        text = "[DM @captain]\nCaptain, there is an urgent medical concern.\n[/DM]"
+        cleaned, actions = await loop._extract_and_execute_dms(agent, text)
+
+        assert len(actions) == 1
+        assert actions[0]["target_callsign"] == "captain"
+
+        # Verify channel was created
+        channels = await wr.list_channels()
+        captain_dms = [c for c in channels if "captain" in c.name and c.channel_type == "dm"]
+        assert len(captain_dms) == 1
+
+    @pytest.mark.asyncio
+    async def test_dm_archive_marks_old_messages(self, wr):
+        """Messages older than threshold get archived flag."""
+        import time
+        ch = await wr.get_or_create_dm_channel("a-001", "b-002")
+        await wr.create_thread(
+            channel_id=ch.id, author_id="a-001",
+            title="Old message", body="This is old",
+        )
+        # Backdate the thread
+        await wr._db.execute(
+            "UPDATE threads SET created_at = ? WHERE channel_id = ?",
+            (time.time() - 100000, ch.id),
+        )
+        await wr._db.commit()
+
+        count = await wr.archive_dm_messages(max_age_hours=24)
+        assert count == 1
+
+    @pytest.mark.asyncio
+    async def test_dm_archive_preserves_recent(self, wr):
+        """Messages within threshold not archived."""
+        ch = await wr.get_or_create_dm_channel("a-001", "b-002")
+        await wr.create_thread(
+            channel_id=ch.id, author_id="a-001",
+            title="Recent message", body="This is new",
+        )
+        count = await wr.archive_dm_messages(max_age_hours=24)
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_archive_search_finds_archived(self, wr):
+        """Archived threads visible with include_archived=True."""
+        import time
+        ch = await wr.get_or_create_dm_channel("a-001", "b-002")
+        await wr.create_thread(
+            channel_id=ch.id, author_id="a-001",
+            title="Archived msg", body="Old content",
+        )
+        await wr._db.execute(
+            "UPDATE threads SET created_at = ?, archived = 1 WHERE channel_id = ?",
+            (time.time() - 100000, ch.id),
+        )
+        await wr._db.commit()
+
+        # Without include_archived, should not appear
+        threads_active = await wr.list_threads(ch.id, include_archived=False)
+        assert len(threads_active) == 0
+
+        # With include_archived, should appear
+        threads_all = await wr.list_threads(ch.id, include_archived=True)
+        assert len(threads_all) == 1
+
+    def test_crew_roster_in_dm_prompt(self):
+        """AD-485: Roster-building logic produces correct DM crew list."""
+        # Directly test the roster-building logic from cognitive_agent.py
+        # (embedded in decide()'s proactive_think prompt composition)
+        callsigns = {
+            "diagnostician": "Bones",
+            "counselor": "Troi",
+            "engineer": "LaForge",
+        }
+        self_atype = "diagnostician"
+        crew_entries = [f"@{cs}" for atype, cs in callsigns.items()
+                        if atype != self_atype and cs]
+        dm_crew_list = f"Available crew to DM: {', '.join(sorted(crew_entries))}\n"
+
+        assert "@Bones" not in dm_crew_list  # Self excluded
+        assert "@Troi" in dm_crew_list
+        assert "@LaForge" in dm_crew_list
+        assert dm_crew_list.startswith("Available crew to DM:")

@@ -229,6 +229,11 @@ class WardRoomService:
                 await self._db.execute("ALTER TABLE threads ADD COLUMN max_responders INTEGER NOT NULL DEFAULT 0")
             except Exception:
                 pass  # Column already exists
+            # AD-485: archived flag for DM message archival
+            try:
+                await self._db.execute("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass  # Column already exists
             await self._db.commit()
         await self._ensure_default_channels()
         await self._refresh_channel_cache()
@@ -695,17 +700,20 @@ class WardRoomService:
 
     async def list_threads(
         self, channel_id: str, limit: int = 50, offset: int = 0, sort: str = "recent",
+        include_archived: bool = False,
     ) -> list[WardRoomThread]:
         """Threads in channel. Pinned first, then sorted by last_activity or net_score."""
         if not self._db:
             return []
 
         order_col = "net_score" if sort == "top" else "last_activity"
+        archive_filter = "" if include_archived else "AND (archived = 0 OR archived IS NULL) "
         sql = (
             "SELECT id, channel_id, author_id, title, body, created_at, last_activity, "
             "pinned, locked, thread_mode, max_responders, reply_count, net_score, "
             "author_callsign, channel_name "
-            f"FROM threads WHERE channel_id = ? ORDER BY pinned DESC, {order_col} DESC "
+            f"FROM threads WHERE channel_id = ? {archive_filter}"
+            f"ORDER BY pinned DESC, {order_col} DESC "
             "LIMIT ? OFFSET ?"
         )
         threads: list[WardRoomThread] = []
@@ -720,6 +728,33 @@ class WardRoomService:
                     author_callsign=row[13], channel_name=row[14],
                 ))
         return threads
+
+    async def archive_dm_messages(self, max_age_hours: int = 24) -> int:
+        """Archive DM thread posts older than max_age_hours. Returns count archived."""
+        if not self._db:
+            return 0
+        cutoff = time.time() - (max_age_hours * 3600)
+
+        # Find DM channels
+        async with self._db.execute(
+            "SELECT id FROM channels WHERE channel_type = 'dm'"
+        ) as cursor:
+            dm_channel_ids = [row[0] async for row in cursor]
+
+        if not dm_channel_ids:
+            return 0
+
+        # Archive old threads in DM channels (mark as archived, don't delete)
+        placeholders = ','.join('?' * len(dm_channel_ids))
+        async with self._db.execute(
+            f"UPDATE threads SET archived = 1 WHERE channel_id IN ({placeholders}) "
+            f"AND created_at < ? AND (archived = 0 OR archived IS NULL)",
+            (*dm_channel_ids, cutoff),
+        ) as cursor:
+            count = cursor.rowcount
+
+        await self._db.commit()
+        return count
 
     async def browse_threads(
         self,

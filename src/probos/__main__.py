@@ -558,10 +558,14 @@ def _cmd_reset(args: argparse.Namespace) -> None:
                 "post-reset with degraded routing (Hebbian weights wiped). "
                 "Consider adding agent_hint to critical tasks or disabling them first.\n"
             )
+        records_warning = ""
+        if getattr(args, 'wipe_records', False):
+            records_warning = "\n⚠  --wipe-records: Ship's Records will also be permanently deleted.\n"
         answer = input(
             "This will permanently delete all learned state "
             "(designed agents, trust, routing weights, episodes, workflows, QA reports, "
             "Ward Room history, event log, cognitive journal, DAG checkpoints)."
+            f"{records_warning}"
             f"{task_warning}"
             "\nContinue? [y/N]: "
         ).strip().lower()
@@ -632,6 +636,18 @@ def _cmd_reset(args: argparse.Namespace) -> None:
         journal_db.unlink()
         journal_cleared = True
 
+    # Wipe Ship's Records if --wipe-records (sea trials mode)
+    records_cleared = False
+    records_dir = data_dir / "ship-records"
+    if getattr(args, 'wipe_records', False) and records_dir.is_dir():
+        def _force_remove_readonly(func, path, exc_info):  # noqa: ARG001
+            """Handle read-only git objects on Windows."""
+            import stat
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        shutil.rmtree(records_dir, onerror=_force_remove_readonly)
+        records_cleared = True
+
     # Git commit if repo is git-initialized
     if (repo_path / ".git").is_dir():
         try:
@@ -653,9 +669,10 @@ def _cmd_reset(args: argparse.Namespace) -> None:
     checkpoint_msg = " DAG checkpoints cleared." if checkpoints_cleared else ""
     events_msg = " Event log cleared." if events_cleared else ""
     journal_msg = " Cognitive journal cleared." if journal_cleared else ""
+    records_msg = " Ship's Records wiped." if records_cleared else ""
     console.print(
         f"[bold green]Reset complete.[/bold green] Cleared: {summary}."
-        f"{chroma_msg}{hebbian_msg}{wardroom_msg}{checkpoint_msg}{events_msg}{journal_msg}"
+        f"{chroma_msg}{hebbian_msg}{wardroom_msg}{checkpoint_msg}{events_msg}{journal_msg}{records_msg}"
     )
     if wardroom_cleared:
         console.print(f"  Ward Room archived to: {archive_path}")
@@ -721,6 +738,7 @@ def main() -> None:
     reset_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
     reset_parser.add_argument("--keep-trust", action="store_true", help="Preserve trust scores")
     reset_parser.add_argument("--keep-wardroom", action="store_true", help="Preserve Ward Room history")
+    reset_parser.add_argument("--wipe-records", action="store_true", help="Also wipe Ship's Records (sea trials)")
     reset_parser.add_argument("--config", "-c", type=Path, default=None, help="Path to config YAML")
     reset_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")
 
