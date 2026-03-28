@@ -1290,7 +1290,7 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 - **Naval foundation:** 3-M PMS cards → Work Item Templates. Watch sections → AgentCalendar. WQSB → multi-role resource allocation. Operator rounds → recurring duty-type WorkItems.
 - **OSS/Commercial split:** OSS = engine + lightweight Scrumban. Commercial = advanced Schedule Board (AD-C-010), capacity planning (AD-C-011), Project WBS + PSA financials (AD-C-012), scheduling optimization (AD-C-013), auto-escalation (AD-C-014), Agent Capital Management integration (AD-C-015).
 
-**Status:** AD-496, AD-497, AD-498 — PLANNED.
+**Status:** AD-496 — COMPLETE (2026-03-28). AD-497 — COMPLETE (2026-03-28). AD-498 — PLANNED.
 
 ## AD-499: Ship & Crew Naming Conventions (2026-03-28)
 
@@ -1306,3 +1306,27 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 - **Builds on AD-441/442:** Enhances existing identity infrastructure. `ShipBirthCertificate.vessel_name` already exists. AD-442 Self-Naming Ceremony already runs. This AD adds the registry, the personal name field, and the federated display format.
 
 **Status:** AD-499 — PLANNED.
+
+## AD-502–506: Cognitive Self-Regulation Wave (2026-03-28)
+
+| AD | Decision |
+|----|----------|
+| AD-502 | Temporal Context Injection — Agent Time Awareness. Agents are temporally blind (17 temporal dimensions tracked by runtime, zero injected into prompts). This AD injects a temporal context header into every cognitive cycle: current UTC time, birth date/age, system uptime, time since last action, posts this hour. Session Ledger persists shutdown timestamp to KnowledgeStore. Lifecycle state awareness distinguishes stasis recovery vs reset vs first boot. Hibernation protocol with pre-shutdown "entering stasis" and post-wake orientation. Episode recall includes relative timestamps. |
+| AD-503 | Counselor Activation — Data Gathering & Persistence. Counselor (AD-378) is architecturally positioned but functionally passive. This AD: runtime metric gathering (Counselor pulls own data from TrustNetwork/HebbianRouter/AgentMeta/CrewProfile), CognitiveProfile SQLite persistence, wellness sweep implementation, event subscriptions (trust_update, circuit_breaker_trip, dream_complete), wellness_review duty wiring. |
+| AD-495 | Counselor Auto-Assessment on Circuit Breaker Trip — absorbed into this wave. Originally scoped out of AD-488. Requires AD-503 for metric gathering. Auto-dispatches counselor_assess on circuit breaker trip. |
+| AD-504 | Agent Self-Monitoring Context — Tier 1 self-regulation. Agent's last N posts with timestamps injected into cognitive context. Self-similarity score as numeric signal. Standing orders guidance for self-regulation. "Take a breath" dynamic cooldown. Cognitive offloading to Ship's Records notebooks. Earned Agency scaling of self-regulation expectations. |
+| AD-505 | Counselor Therapeutic Intervention — Tier 2 intervention. Proactive 1:1 DMs ("office hours"). Peer repetition feedback tracking. Therapeutic recommendations (forced dream, attention redirect, workload review, extended cooldown). Recommendation delivery to Captain. COUNSELOR_GUIDANCE directive expansion. |
+| AD-506 | Graduated System Response — replaces binary circuit breaker. Green/Amber/Red/Critical zones. Amber: rising similarity, dynamic cooldown increase, Counselor notified. Red: circuit breaker threshold, Counselor auto-assessment, mandatory cooldown. Critical: repeated trips, Captain escalation, fitness-for-duty review. Tier interaction credits. |
+
+**Key design decisions:**
+- **Three-tier self-regulation model:** (1) Internal self-awareness — agents see their recent outputs and can self-regulate. (2) Social regulation — peer "you already said that" feedback preserved as healthy and diagnostic. (3) System guardrails — raised to last-resort thresholds, Counselor as clinical bridge. Mirrors human metacognitive monitoring (Dunlosky), reflective architecture (SOAR), autonomous regulation (SDT).
+- **"Don't take away the natural safeguard":** Peer regulation is already happening naturally in the Ward Room. System suppression removes the learning opportunity. Goal: add Tier 1, preserve Tier 2, raise threshold for Tier 3.
+- **Repetition is diagnostic, not just noise:** Repetitive behavior is a cognitive health signal (excitement, overload, fixation). The Counselor should observe and act on it therapeutically, not the system should silently suppress it.
+- **Repetition isn't always bad:** Stuck repetition (same thing, hoping for different result) vs escalating emphasis (same thing, because urgency increased). Self-awareness (knowing you're repeating) is the differentiator.
+- **Earned Agency extension:** Higher-rank agents expected to self-regulate more effectively. Commander+ gets more self-monitoring context, weaker system gates. Ensigns get stronger system gates while learning.
+- **Notebook escape valve:** Agents can externalize persistent thoughts to Ship's Records (AD-434) to release them from active cognition. Cognitive offloading, not suppression.
+- **AD-502 is the foundation:** Without temporal awareness, agents cannot self-regulate. Build prompts for AD-503–506 generated after AD-502 is complete and behavioral observations confirm hypotheses.
+
+**Triggered by:** Medical crew repetitive posting incident (14+ near-identical posts across 4 agents analyzing trust anomalies without temporal data, self-awareness, or Counselor intervention).
+
+**Status:** AD-502 — **COMPLETE** (2026-03-28). 5 components shipped: Session Ledger, Temporal Context Header, Episode Timestamp Surfacing, Lifecycle State Detection, Hibernation Protocol. TemporalConfig with 6 boolean toggles. birth_timestamp hydrated at _wire_agent(). 52 tests. AD-503–506 — PLANNED (build prompts deferred until crew behavioral observations confirm design hypotheses).

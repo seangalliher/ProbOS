@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-488 COMPLETE + AD-499 PLANNED — AD-488 Cognitive Circuit Breaker shipped (CLOSED/OPEN/HALF_OPEN state machine, velocity + similarity detection, escalating cooldowns, attention redirect, 18 tests). BF-060/061/062 proactive loop fixes shipped. AD-499 Ship & Crew Naming Conventions designed: three-layer naming (ship name via ShipNameRegistry, agent personal name + callsign coexistence, `Name [ShipName]` federated display format). AD-496/497/498 Workforce Scheduling Engine planned.
+## Current Status: AD-502 COMPLETE — Temporal Context Injection shipped. Agents now have real-time temporal awareness: Session Ledger (stasis detection via session_last.json), temporal context header in all cognitive cycles (clock, birth age, uptime, last action, post count), lifecycle state detection (first_boot/stasis_recovery/reset), hibernation protocol ("Entering Stasis" / lifecycle-aware wake announcements), episode timestamp surfacing (relative ages on recalled memories), birth_timestamp hydration via _wire_agent(). TemporalConfig (6 toggles) in config.py/system.yaml. 52 new tests, all passing. Next: AD-503 (Counselor Activation) or observe crew behavior under temporal awareness.
 
 ---
 
