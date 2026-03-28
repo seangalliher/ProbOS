@@ -128,15 +128,23 @@ class TestBuildApproveEndpoint:
     @pytest.mark.asyncio
     async def test_approve_returns_started(self, chat_client):
         """POST /api/build/approve returns status=started."""
-        resp = await chat_client.post("/api/build/approve", json={
-            "build_id": "test123",
-            "file_changes": [
-                {"path": "src/foo.py", "content": "print('hi')\n", "mode": "create"},
-            ],
-            "title": "Test Build",
-            "description": "A test",
-            "ad_number": 999,
-        })
+        # Mock execute_approved_build to prevent background task from running
+        # real git subprocesses (which hang in CI).
+        mock_result = MagicMock(success=True, error=None, test_output="ok")
+        with patch(
+            "probos.cognitive.builder.execute_approved_build",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            resp = await chat_client.post("/api/build/approve", json={
+                "build_id": "test123",
+                "file_changes": [
+                    {"path": "src/foo.py", "content": "print('hi')\n", "mode": "create"},
+                ],
+                "title": "Test Build",
+                "description": "A test",
+                "ad_number": 999,
+            })
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "started"
