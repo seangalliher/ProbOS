@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-502 COMPLETE — Temporal Context Injection shipped. Agents now have real-time temporal awareness: Session Ledger (stasis detection via session_last.json), temporal context header in all cognitive cycles (clock, birth age, uptime, last action, post count), lifecycle state detection (first_boot/stasis_recovery/reset), hibernation protocol ("Entering Stasis" / lifecycle-aware wake announcements), episode timestamp surfacing (relative ages on recalled memories), birth_timestamp hydration via _wire_agent(). TemporalConfig (6 toggles) in config.py/system.yaml. 52 new tests, all passing. Next: AD-503 (Counselor Activation) or observe crew behavior under temporal awareness.
+## Current Status: AD-502 COMPLETE. Crew Development Wave (AD-507–512) DESIGNED — research document + 6 AD stubs in roadmap. Framework: Core Knowledge Curriculum (507), Scoped Cognition (508), Boot Camp Pipeline (509), Team Simulations (510), Autonomy Boundaries (511), Discovery-Based Learning (512). Triggered by AD-502 temporal context results confirming "least restrictive environment" principle. Next: AD-503 (Counselor Activation), AD-471 build prompt rewrite (depends AD-496+498), or observe crew behavior under temporal awareness.
 
 ---
 

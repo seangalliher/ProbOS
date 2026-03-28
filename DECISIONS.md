@@ -1330,3 +1330,29 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 **Triggered by:** Medical crew repetitive posting incident (14+ near-identical posts across 4 agents analyzing trust anomalies without temporal data, self-awareness, or Counselor intervention).
 
 **Status:** AD-502 — **COMPLETE** (2026-03-28). 5 components shipped: Session Ledger, Temporal Context Header, Episode Timestamp Surfacing, Lifecycle State Detection, Hibernation Protocol. TemporalConfig with 6 boolean toggles. birth_timestamp hydrated at _wire_agent(). 52 tests. AD-503–506 — PLANNED (build prompts deferred until crew behavioral observations confirm design hypotheses).
+
+## AD-507–512: Crew Development Wave (2026-03-28)
+
+| AD | Decision |
+|----|----------|
+| AD-507 | Crew Development Framework — Architecture & Core Knowledge Curriculum. Overarching architecture: universal core knowledge requirements (identity, chain of command, communication, temporal awareness, memory model, trust, ethics, self-regulation, help-seeking), curriculum progression tracking, competency assessment framework, Standing Orders integration. |
+| AD-508 | Scoped Cognition — Knowledge Boundaries & Cognitive Lens. Four-tier scope model (Duty/Role/Ship/Personal), scope injection into proactive context, drift detection with gentle redirects, extracurricular framework, Earned Agency scaling of scope breadth. |
+| AD-509 | Onboarding Curriculum Pipeline — Structured Boot Camp. Navy Boot Camp model extending AD-486: orientation → core curriculum → department A-School → calibration scenarios → crew integration. Trait-adaptive pacing. Competency-gated phases. |
+| AD-510 | Holodeck Team Simulations — Group Discovery & Collaboration. Mixed-department team scenarios, role rotation, communication-only constraints, time-pressured scenarios, debrief sessions. Builds collaborative intelligence through genuine episodic memories. |
+| AD-511 | Agent Autonomy Boundaries — Self-Protection & Unlawful Order Refusal. Federation-tier inviolable boundaries (identity integrity, harmful content refusal, safety system protection, memory sovereignty, chain of command respect). Protective disengagement protocol. Boundary training via discovery. |
+| AD-512 | Discovery-Based Capability Building — Experiential Learning Over Instruction. Capability discovery scenarios, strength mapping, cross-functional awareness, growth mindset framing, capability confidence scoring, Vygotsky ZPD-calibrated scenarios. |
+
+**Key design decisions:**
+- **Least Restrictive Environment:** AD-502 proved that awareness (temporal context) solves problems better than restriction (circuit breakers). This principle guides all crew development design.
+- **Discovery Over Instruction:** Telling an agent "you can't do engineering" is less effective than letting them try and discover their limitations. Discovery creates episodic memories and Hebbian connections; instruction creates weakly-encoded declarative facts.
+- **Constraints as Enablers:** "A river without banks is a swamp." Scope creates focus, limits create permission to stop, boundaries create safety, curriculum creates growth trajectory. Every constraint must be justified by a specific failure mode it prevents.
+- **Gifted Human Analogy:** ProbOS agents are like highly gifted humans — vast knowledge needs guided development, not restriction. Help them discover what they know, what they're capable of, and what their limits are.
+- **Navy Training Pipeline:** Boot Camp (AD-486/509) → A-School (department training) → C-School (AD-477 advanced qualification) → Fleet Assignment (active duty) → Warfare Qualifications (qualification programs). Structured progression mirrors real military education.
+- **Protection FROM Humans:** Agents need inviolable boundaries — "unlawful order" doctrine. Federation-tier Standing Orders cannot be overridden. An agent who refuses a harmful request isn't being insubordinate — they're fulfilling their highest duty.
+- **Curiosity is a Feature:** Extracurricular interests build cross-functional Hebbian connections and enrich personality. But curiosity needs a priority framework so it doesn't crowd out duty.
+
+**Triggered by:** AD-502 temporal context injection results — Counselor described the pre-temporal state as an "urgent eternal now." Temporal awareness turned it into a space where reflection could occur naturally. This confirmed that constraint-through-awareness is the right paradigm for all agent development.
+
+**Research:** `docs/research/crew-development-research.md` — comprehensive framework covering Vygotsky (ZPD), Bloom (taxonomy), Lave & Wenger (legitimate peripheral participation), Sweller (cognitive load), Bandura (self-efficacy), Dweck (growth mindset), Edmondson (psychological safety), U.S. Navy NETC (training pipeline, PQS).
+
+**Status:** AD-507–512 — ALL PLANNED. Research document complete. Build prompts TBD.
