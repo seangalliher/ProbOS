@@ -396,6 +396,23 @@ class CommunicationsConfig(BaseModel):
     dm_min_rank: str = "ensign"  # Minimum rank to send DMs: ensign|lieutenant|commander|senior
 
 
+class WorkforceConfig(BaseModel):
+    """Workforce Scheduling Engine configuration (AD-496)."""
+    enabled: bool = False
+    tick_interval_seconds: float = 10.0
+    default_capacity: int = 1           # Default concurrent task limit per agent
+
+
+class TemporalConfig(BaseModel):
+    """AD-502: Temporal awareness configuration."""
+    enabled: bool = True
+    include_birth_time: bool = True
+    include_system_uptime: bool = True
+    include_last_action: bool = True
+    include_post_count: bool = True
+    include_episode_timestamps: bool = True
+
+
 class SystemInfo(BaseModel):
     """Top-level system identity."""
 
@@ -432,6 +449,8 @@ class SystemConfig(BaseModel):
     medical: MedicalConfig = MedicalConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
     communications: CommunicationsConfig = CommunicationsConfig()
+    workforce: WorkforceConfig = WorkforceConfig()
+    temporal: TemporalConfig = TemporalConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:
