@@ -389,7 +389,8 @@ class TestOnboardingConfig:
 
 class TestProactiveActivation:
 
-    def test_proactive_cycle_activates_probationary_agent(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_proactive_cycle_activates_probationary_agent(self, tmp_path):
         """Agent in PROBATIONARY with trust >= 0.65 → check_activation called."""
         from probos.proactive import ProactiveCognitiveLoop
 
@@ -424,6 +425,6 @@ class TestProactiveActivation:
         # Stub _think_for_agent to avoid full LLM path
         loop._think_for_agent = AsyncMock()
 
-        asyncio.get_event_loop().run_until_complete(loop._run_cycle())
+        await loop._run_cycle()
 
         rt.acm.check_activation.assert_called_once()
