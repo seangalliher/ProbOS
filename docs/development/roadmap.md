@@ -3925,6 +3925,43 @@ Foundation for ProbOS workforce management — how work gets defined, scheduled,
 
 *Connects to: AD-496 (WorkItem storage), AD-497 (HXI template picker), AD-471 (Night Orders templates), AD-477 (3M maintenance templates — PMS cards become templates), AD-419 (DutyScheduleTracker evolves to generate duty-type WorkItems via templates).*
 
+### Ship & Crew Naming Conventions (AD-499)
+
+*"Every ship has a name. Every name has a ship."*
+
+Formal naming system for ProbOS instances, crew agents, and federated identity disambiguation. Ships get named on commissioning (Ship's Computer selects). Crew agents self-name (distinct from role callsign). Federation display uses `Name [ShipName]` format for cross-instance disambiguation.
+
+**AD-499: Ship & Crew Naming Conventions** *(planned, OSS)* — Three-layer naming system building on AD-441 (DIDs), AD-441b (Ship Commissioning), and AD-442 (Self-Naming Ceremony):
+
+**(1) Ship Naming** — Ship's Computer selects a name from a curated **Ship Name Registry** on commissioning (reset = new ship, new name). Name categories: exploration vessels (Discovery, Challenger, Endeavour, Fram), virtues/qualities (Resolute, Invincible, Valiant, Dauntless), celestial bodies (Polaris, Sirius, Vega, Orion), naval heritage (Constitution, Defiant, Intrepid, Yorktown). Name stored in the `ShipBirthCertificate` (AD-441b genesis block) `vessel_name` field. Within a Nooplex fleet, ship names must be unique — the global registry (commercial) enforces this; OSS validates locally. Ship naming ceremony = first Captain's Log entry, giving it narrative weight. If decommissioned, name enters a cooling period before reuse (naval tradition). `ShipNameRegistry` class: curated pool, category-based selection, uniqueness validation, name reservation for federation sync.
+
+**(2) Agent Personal Names (Option B — Name + Callsign Coexist)** — Each crew agent has TWO identity facets: a **personal name** (who they are) and a **callsign** (what they do). Personal name is self-chosen during AD-442's Self-Naming Ceremony — agent receives current roster for uniqueness checking and chooses freely. Callsign remains role-derived (LaForge = Engineering Chief, Bones = Medical Chief). Both stored on the Agent Birth Certificate. ACM validates personal name uniqueness within the ship's active roster. Display priority: personal name for social/Ward Room, callsign for operational/duty contexts. Example: agent's personal name is "Forge", callsign is "LaForge", role is Chief Engineer. Ward Room post header: `Forge (LaForge)`. Duty log: `LaForge — Engineering Watch`. The personal name is the agent's sovereign choice; the callsign is their billet.
+
+**(3) Federated Display Format** — `Name [ShipName]` for cross-instance contexts:
+
+| Context | Format | Example |
+|---------|--------|---------|
+| Local (single ship) | `Name` | `Forge` |
+| Local formal | `Name (Callsign)` | `Forge (LaForge)` |
+| Federation / Nooplex | `Name [ShipName]` | `Forge [Enterprise]` |
+| Federation formal | `Rank Name (Callsign) — ShipName` | `LT Forge (LaForge) — Enterprise` |
+| DID | `did:probos:{instance}:{uuid}` | `did:probos:enterprise-7f3a:forge-a1b2` |
+| Logs / Audit | `Name [ShipName] ({agent_id})` | `Forge [Enterprise] (a1b2c3)` |
+
+The ship name is a **birth provenance marker**, not a current assignment. If agent Forge transfers from Enterprise to Defiant via AD-443 (Mobility Protocol), they remain `Forge [Enterprise]` — that's their origin. Transfer Certificate shows current assignment. This also works cleanly with the Clean Room mobility model — agent arrives as `Forge [Enterprise]` with identity but zero memories of Enterprise.
+
+**Implementation scope:**
+- `ShipNameRegistry` — name pool, category selection, uniqueness, reservation. Loaded from `ship_names.yaml` config.
+- `ShipBirthCertificate.vessel_name` — already exists (AD-441b), populated by registry on commissioning.
+- `AgentBirthCertificate` — add `personal_name` field alongside existing `callsign`.
+- AD-442 Self-Naming Ceremony update — agent receives name pool constraints + roster for uniqueness; ceremony produces both personal name and callsign.
+- `CallsignRegistry` — add `personal_name` lookup alongside `callsign` lookup.
+- Ward Room display — use personal name for message headers, callsign for operational references.
+- HXI — agent profile shows both name and callsign. Federation contexts append `[ShipName]`.
+- Federation protocol — `Name [ShipName]` included in federation message headers and Agent Cards (AD-480).
+
+*Connects to: AD-441 (DIDs — ship name = human-readable instance_id), AD-441b (Ship Commissioning — vessel_name field), AD-442 (Self-Naming Ceremony — personal name selection), AD-443 (Mobility — birth provenance persists across transfers), AD-427 (ACM — name uniqueness validation), AD-479 (Federation — display format in cross-instance messages), AD-480 (A2A Agent Cards — federated identity), Ward Room, HXI agent profiles, CallsignRegistry.*
+
 ### Federation (AD-479–480)
 
 **AD-479: Federation Hardening** *(planned)* — Production-ready federation capabilities beyond core transport (Phase 29): (1) **Dynamic Peer Discovery** — multicast/broadcast auto-discovery on local networks. (2) **Cross-Node Episodic Memory** — federated memory queries spanning multiple instances. (3) **Cross-Node Agent Sharing** — propagate self-designed agents with trust history and provenance. (4) **Smart Capability Routing** — cost-benefit routing factoring capability, latency, trust, load. (5) **Federation TLS/Authentication** — encrypted transport and node identity verification. (6) **Cluster Management** — node health monitoring, auto-restart, graceful handoff. *Connects to: FederationBridge, ZeroMQ, AD-441 (Identity), TrustNetwork.*

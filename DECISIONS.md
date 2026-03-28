@@ -1291,3 +1291,18 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 - **OSS/Commercial split:** OSS = engine + lightweight Scrumban. Commercial = advanced Schedule Board (AD-C-010), capacity planning (AD-C-011), Project WBS + PSA financials (AD-C-012), scheduling optimization (AD-C-013), auto-escalation (AD-C-014), Agent Capital Management integration (AD-C-015).
 
 **Status:** AD-496, AD-497, AD-498 — PLANNED.
+
+## AD-499: Ship & Crew Naming Conventions (2026-03-28)
+
+| AD | Decision |
+|----|----------|
+| AD-499 | Three-layer naming system for ProbOS instances, crew agents, and federated identity. (1) **Ship Naming** — Ship's Computer selects from curated `ShipNameRegistry` on commissioning. Categories: exploration vessels, virtues, celestial bodies, naval heritage. Stored in `ShipBirthCertificate.vessel_name`. Unique within Nooplex fleet. Ship naming ceremony = first Captain's Log entry. (2) **Agent Personal Names (Option B)** — Name + Callsign coexist. Personal name = self-chosen sovereign identity (who they are). Callsign = role-derived billet (what they do). Both on Birth Certificate. ACM validates name uniqueness within ship roster. Example: personal name "Forge", callsign "LaForge", role Chief Engineer. (3) **Federated Display** — `Name [ShipName]` format. Local: `Forge`. Federation: `Forge [Enterprise]`. Formal: `LT Forge (LaForge) — Enterprise`. Ship name is **birth provenance**, not current assignment — persists across transfers (AD-443). |
+
+**Key design decisions:**
+- **Option B (Name + Callsign):** Personal name is sovereign identity, callsign is operational role. Both coexist. Social contexts use name, duty contexts use callsign.
+- **Birth provenance, not assignment:** Ship name in federated display is permanent origin marker. Agent Forge born on Enterprise remains `Forge [Enterprise]` even after transfer to Defiant.
+- **Ship's Computer names the ship:** Not random — curated pool organized by category, selected by Ship's Computer on commissioning. Unique within federation.
+- **`Name [ShipName]` format:** Clean, unambiguous, readable. Square brackets distinguish ship name from parenthetical callsign: `Forge [Enterprise] (LaForge)`.
+- **Builds on AD-441/442:** Enhances existing identity infrastructure. `ShipBirthCertificate.vessel_name` already exists. AD-442 Self-Naming Ceremony already runs. This AD adds the registry, the personal name field, and the federated display format.
+
+**Status:** AD-499 — PLANNED.

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-496/497/498 PLANNED — Workforce Scheduling Engine: Universal Resource Scheduling for AI agents. Seven core entities (WorkItem, BookableResource, ResourceRequirement, Booking, BookingTimestamp, BookingJournal, AgentCalendar). Work Type Registry with configurable state machines (card/task/work_order/duty/incident). Scrumban Board HXI. Templates for common work patterns. Research complete: D365 URS, Navy 3-M/PMS, Scrumban, 10+ OSS projects. Commercial extensions: AD-C-010 through AD-C-015 (Schedule Board, Capacity Planning, Project WBS/PSA, Optimization, Auto-Escalation, ACM Integration).
+## Current Status: AD-488 COMPLETE + AD-499 PLANNED — AD-488 Cognitive Circuit Breaker shipped (CLOSED/OPEN/HALF_OPEN state machine, velocity + similarity detection, escalating cooldowns, attention redirect, 18 tests). BF-060/061/062 proactive loop fixes shipped. AD-499 Ship & Crew Naming Conventions designed: three-layer naming (ship name via ShipNameRegistry, agent personal name + callsign coexistence, `Name [ShipName]` federated display format). AD-496/497/498 Workforce Scheduling Engine planned.
 
 ---
 
