@@ -1245,6 +1245,10 @@ class ProbOSRuntime:
                     self._stasis_duration = stasis_duration
                     self._previous_session = previous_session
                     logger.info("AD-502: Stasis recovery detected — stasis duration: %s", _format_duration(stasis_duration))
+                elif (self._data_dir / "trust.db").exists():
+                    # Data dir has state but no session record — ungraceful restart
+                    self._lifecycle_state = "restart"
+                    logger.info("AD-502: Restart detected (no session record) — treating as restart, not first boot")
             except Exception:
                 pass  # first boot or corrupted record
 
@@ -1746,6 +1750,9 @@ class ProbOSRuntime:
                         elif self._lifecycle_state == "first_boot":
                             title = "System Online — First Activation"
                             body = "This is the maiden voyage. All systems operational."
+                        elif self._lifecycle_state == "restart":
+                            title = "System Restart — All Stations Resume"
+                            body = "System restart complete. All stations resume normal operations."
                         else:
                             title = "System Online"
                             body = "ProbOS startup complete. All systems operational."
@@ -1791,14 +1798,31 @@ class ProbOSRuntime:
                         await self.ward_room.create_thread(
                             channel_id=row[0],
                             author_id="system",
+                            author_callsign="Ship's Computer",
                             title="Entering Stasis",
                             body=msg,
-                            author_callsign="Ship's Computer",
                             thread_mode="announce",
                             max_responders=0,
                         )
             except Exception:
                 pass  # best-effort, don't block shutdown
+
+        # AD-502: Persist session record immediately after stasis announcement
+        # (before service teardown, which may exceed the shutdown timeout)
+        if self._knowledge_store:
+            try:
+                session_record = {
+                    "session_id": self._session_id,
+                    "start_time_utc": self._start_time_wall,
+                    "shutdown_time_utc": time.time(),
+                    "uptime_seconds": time.monotonic() - self._start_time,
+                    "agent_count": len([a for a in self.registry.all() if self._is_crew_agent(a)]),
+                    "reason": reason,
+                }
+                session_path = Path(self._knowledge_store._data_dir) / "session_last.json"
+                session_path.write_text(json.dumps(session_record, indent=2))
+            except Exception as e:
+                logger.debug("AD-502: Session record persistence failed: %s", e)
 
         # AD-435: Grace period for in-flight DB writes to complete
         logger.info("Shutdown grace period (1s)...")
@@ -1946,21 +1970,6 @@ class ProbOSRuntime:
                 )
                 # Flush all pending commits
                 await self._knowledge_store.flush()
-
-                # AD-502: Persist session record for stasis awareness
-                try:
-                    session_record = {
-                        "session_id": self._session_id,
-                        "start_time_utc": self._start_time_wall,
-                        "shutdown_time_utc": time.time(),
-                        "uptime_seconds": time.monotonic() - self._start_time,
-                        "agent_count": len([a for a in self.registry.all() if self._is_crew_agent(a)]),
-                        "reason": reason,
-                    }
-                    session_path = Path(self._knowledge_store._data_dir) / "session_last.json"
-                    session_path.write_text(json.dumps(session_record, indent=2))
-                except Exception as e:
-                    logger.debug("AD-502: Session record persistence failed: %s", e)
             except Exception as e:
                 logger.warning("Knowledge store shutdown persistence failed: %s", e)
 
@@ -3682,6 +3691,14 @@ class ProbOSRuntime:
                         agent_callsign = ""
                         if agent and hasattr(self, 'callsign_registry'):
                             agent_callsign = self.callsign_registry.get_callsign(agent.agent_type)
+                        # BF-066: Extract [DM @callsign]...[/DM] blocks before posting
+                        if agent and self.proactive_loop:
+                            response_text, dm_actions = await self.proactive_loop._extract_and_execute_dms(
+                                agent, response_text,
+                            )
+                            response_text = response_text.strip()
+                        if not response_text:
+                            continue  # entire response was DM blocks, nothing to post publicly
                         await self.ward_room.create_post(
                             thread_id=thread_id,
                             author_id=agent_id,
