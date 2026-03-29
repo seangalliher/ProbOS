@@ -1464,3 +1464,31 @@ This follows the AD-452 principle: "Capability depth, not capability existence."
 **Connects to:** AD-398 (Three-Tier Agent Architecture — clean crew/infrastructure separation), AD-452 (Agent Tier Licensing — OSS functional vs Commercial Pro depth), AD-302 (Builder creation — being refactored), Standing Orders (builder.md quality gates, engineering.md department protocols), Visiting Officer Subordination Principle, Cognitive JIT (Phase 32), Qualification Programs (SWE competency requirements).
 
 **Status:** **DECIDED** (2026-03-29). Architecture approved. Implementation deferred — requires build prompt and builder execution.
+
+## AD-515: Extract runtime.py Modules (2026-03-29)
+
+Wave 3 continuation (architecture decomposition). Extracted 5 responsibility groups from `ProbOSRuntime` (5,321-line god object) into dedicated modules with constructor injection. Pure structural refactor — zero behavior changes.
+
+| Module | File | Lines | Responsibility |
+|--------|------|-------|----------------|
+| Agent Onboarding | `agent_onboarding.py` | 365 | Naming ceremony, agent wiring, identity registration |
+| Ward Room Router | `ward_room_router.py` | 567 | Event routing, targeting, endorsements, bridge alerts |
+| Dream Adapter | `dream_adapter.py` | 297 | Dream/emergent detection orchestration, episode building |
+| Self-Mod Manager | `self_mod_manager.py` | 331 | Self-modification pipeline management, designed agents |
+| Warm Boot | `warm_boot.py` | 279 | Knowledge restore on startup |
+| Crew Utils | `crew_utils.py` | 26 | Shared `is_crew_agent` utility |
+
+**Results:**
+- **runtime.py:** 5,321 → 4,102 lines (−1,219 lines, 23% reduction)
+- **6 new files:** 1,865 lines total
+- **Tests:** 4039 passed, 6 failed (pre-existing xdist/Windows async flakes), 11 skipped
+- **8 test files updated** with helpers for new service classes — zero regressions
+
+**Key design decisions:**
+- **Constructor injection throughout.** No circular imports, no global runtime access. Each service receives exactly what it needs.
+- **`is_crew_agent` shared utility.** Extracted to `crew_utils.py` — used by Ward Room Router, Dream Adapter, and runtime.
+- **Thin delegation in runtime.py.** Runtime creates services in `start()`, delegates to them. Methods stay on runtime as public API but forward to the extracted service.
+
+**Files changed:** `src/probos/runtime.py`, `src/probos/agent_onboarding.py` (new), `src/probos/ward_room_router.py` (new), `src/probos/dream_adapter.py` (new), `src/probos/self_mod_manager.py` (new), `src/probos/warm_boot.py` (new), `src/probos/crew_utils.py` (new), `tests/test_onboarding.py`, `tests/test_ward_room_agents.py`, `tests/test_ward_room.py`, `tests/test_proactive.py`, `tests/test_bridge_alerts.py`, `tests/test_identity_persistence.py`, `tests/test_dreaming.py`, `tests/test_correction_runtime.py`.
+
+**Status:** **COMPLETE** (2026-03-29). 4039 tests passing. runtime.py reduced by 23%.

@@ -1319,6 +1319,7 @@ class TestHandleProposeImprovement:
     async def test_handle_propose_improvement_success(self, tmp_path):
         """Successful proposal creates a thread in Improvement Proposals channel."""
         from probos.ward_room import WardRoomService
+        from probos.ward_room_router import WardRoomRouter
 
         events = []
         wr = WardRoomService(
@@ -1332,6 +1333,20 @@ class TestHandleProposeImprovement:
         rt.ward_room = wr
         rt.callsign_registry = MagicMock()
         rt.callsign_registry.get_callsign = MagicMock(return_value="LaForge")
+
+        # AD-515: Create WardRoomRouter so delegation works
+        rt._ward_room_router = WardRoomRouter(
+            ward_room=wr,
+            registry=MagicMock(),
+            intent_bus=MagicMock(),
+            trust_network=MagicMock(),
+            ontology=None,
+            callsign_registry=rt.callsign_registry,
+            episodic_memory=None,
+            event_emitter=MagicMock(),
+            event_log=AsyncMock(),
+            config=MagicMock(),
+        )
 
         # Import and bind the real method
         from probos.runtime import ProbOSRuntime
@@ -1371,6 +1386,20 @@ class TestHandleProposeImprovement:
 
         rt = MagicMock()
         rt.ward_room = MagicMock()
+        # AD-515: Set up router so validation delegates properly
+        from probos.ward_room_router import WardRoomRouter
+        rt._ward_room_router = WardRoomRouter(
+            ward_room=rt.ward_room,
+            registry=MagicMock(),
+            intent_bus=MagicMock(),
+            trust_network=MagicMock(),
+            ontology=None,
+            callsign_registry=MagicMock(),
+            episodic_memory=None,
+            event_emitter=MagicMock(),
+            event_log=AsyncMock(),
+            config=MagicMock(),
+        )
         handler = ProbOSRuntime._handle_propose_improvement.__get__(rt, type(rt))
 
         intent = MagicMock()
@@ -1388,6 +1417,7 @@ class TestHandleProposeImprovement:
 
         rt = MagicMock()
         rt.ward_room = None
+        rt._ward_room_router = None  # AD-515: prevent auto-created MagicMock
         handler = ProbOSRuntime._handle_propose_improvement.__get__(rt, type(rt))
 
         intent = MagicMock()

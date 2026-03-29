@@ -74,6 +74,17 @@ def _make_dag(intents=None):
     return _DAG(nodes)
 
 
+def _attach_self_mod_manager(rt, pipeline=None):
+    """AD-515: Attach a minimal SelfModManager for __new__-based tests."""
+    from probos.self_mod_manager import SelfModManager
+    mgr = SelfModManager.__new__(SelfModManager)
+    mgr._self_mod_pipeline = pipeline or getattr(rt, 'self_mod_pipeline', None)
+    mgr._last_execution = getattr(rt, '_last_execution', None)
+    mgr._last_execution_text = getattr(rt, '_last_execution_text', None)
+    rt._self_mod_manager = mgr
+    return mgr
+
+
 # ---------------------------------------------------------------------------
 # _find_designed_record
 # ---------------------------------------------------------------------------
@@ -90,6 +101,7 @@ class TestFindDesignedRecord:
         r1 = _FakeRecord(status="active")
         r2 = _FakeRecord(status="active")
         rt.self_mod_pipeline._records = [r1, r2]
+        _attach_self_mod_manager(rt)
 
         result = rt._find_designed_record("fetch_news")
         assert result is r2  # most recent (last in list)
@@ -100,6 +112,7 @@ class TestFindDesignedRecord:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt.self_mod_pipeline = MagicMock()
         rt.self_mod_pipeline._records = [_FakeRecord(agent_type="other")]
+        _attach_self_mod_manager(rt)
 
         result = rt._find_designed_record("http_fetch")
         assert result is None
@@ -109,7 +122,7 @@ class TestFindDesignedRecord:
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt.self_mod_pipeline = None
-
+        # AD-515: _self_mod_manager not set → getattr returns None → returns None
         result = rt._find_designed_record("anything")
         assert result is None
 
@@ -120,6 +133,7 @@ class TestFindDesignedRecord:
         rt.self_mod_pipeline = MagicMock()
         r = _FakeRecord(status="patched")
         rt.self_mod_pipeline._records = [r]
+        _attach_self_mod_manager(rt)
 
         result = rt._find_designed_record("fetch_news")
         assert result is r
@@ -147,6 +161,8 @@ class TestWasLastExecutionSuccessful:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         dag = _make_dag(["a", "b"])
         rt._last_execution = {"dag": dag}
+        mgr = _attach_self_mod_manager(rt)
+        mgr._last_execution = rt._last_execution
 
         assert rt._was_last_execution_successful() is True
 
@@ -162,6 +178,8 @@ class TestWasLastExecutionSuccessful:
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt._last_execution = {"dag": _D()}
+        mgr = _attach_self_mod_manager(rt)
+        mgr._last_execution = rt._last_execution
 
         assert rt._was_last_execution_successful() is False
 
@@ -188,6 +206,9 @@ class TestFormatExecutionContext:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt._last_execution = {"dag": _make_dag(["http_fetch"])}
         rt._last_execution_text = "get news from CNN"
+        mgr = _attach_self_mod_manager(rt)
+        mgr._last_execution = rt._last_execution
+        mgr._last_execution_text = rt._last_execution_text
 
         ctx = rt._format_execution_context()
         assert "get news from CNN" in ctx
@@ -206,6 +227,9 @@ class TestFormatExecutionContext:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt._last_execution = {"dag": _D()}
         rt._last_execution_text = "get news"
+        mgr = _attach_self_mod_manager(rt)
+        mgr._last_execution = rt._last_execution
+        mgr._last_execution_text = rt._last_execution_text
 
         ctx = rt._format_execution_context()
         assert "http_fetch" in ctx

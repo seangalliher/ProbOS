@@ -255,10 +255,9 @@ class TestBehavioralAlerts:
 class TestAlertDelivery:
     async def test_advisory_posts_to_all_hands(self):
         """Advisory alert posts to ship channel + info notification."""
-        from probos.runtime import ProbOSRuntime
+        from probos.ward_room_router import WardRoomRouter
 
-        runtime = MagicMock()
-        runtime.ward_room = MagicMock()
+        ward_room = MagicMock()
         ship_channel = MagicMock()
         ship_channel.channel_type = "ship"
         ship_channel.id = "ship-ch"
@@ -266,11 +265,26 @@ class TestAlertDelivery:
         dept_channel.channel_type = "department"
         dept_channel.department = "engineering"
         dept_channel.id = "eng-ch"
-        runtime.ward_room.list_channels = AsyncMock(return_value=[ship_channel, dept_channel])
-        runtime.ward_room.create_thread = AsyncMock()
-        runtime.notify = MagicMock()
-        runtime.event_log = MagicMock()
-        runtime.event_log.log = AsyncMock()
+        ward_room.list_channels = AsyncMock(return_value=[ship_channel, dept_channel])
+        ward_room.create_thread = AsyncMock()
+        notify_fn = MagicMock()
+        event_log = MagicMock()
+        event_log.log = AsyncMock()
+
+        router = WardRoomRouter(
+            ward_room=ward_room,
+            registry=MagicMock(),
+            intent_bus=MagicMock(),
+            trust_network=MagicMock(),
+            ontology=None,
+            callsign_registry=MagicMock(),
+            episodic_memory=None,
+            event_emitter=MagicMock(),
+            event_log=event_log,
+            config=MagicMock(),
+            notify_fn=notify_fn,
+            proactive_loop=None,
+        )
 
         alert = BridgeAlert(
             id="a1", severity=AlertSeverity.ADVISORY,
@@ -279,38 +293,48 @@ class TestAlertDelivery:
             department=None, dedup_key="test",
         )
 
-        import types
-        runtime._deliver_bridge_alert = types.MethodType(
-            ProbOSRuntime._deliver_bridge_alert, runtime,
-        )
-        await runtime._deliver_bridge_alert(alert)
+        await router.deliver_bridge_alert(alert)
 
         # Posted to ship channel (advisory -> All Hands)
-        runtime.ward_room.create_thread.assert_called_once()
-        call_kwargs = runtime.ward_room.create_thread.call_args[1]
+        ward_room.create_thread.assert_called_once()
+        call_kwargs = ward_room.create_thread.call_args[1]
         assert call_kwargs["channel_id"] == "ship-ch"
         assert call_kwargs["author_callsign"] == "Ship's Computer"
         assert "[ADVISORY]" in call_kwargs["title"]
 
         # Info notification to Captain
-        runtime.notify.assert_called_once()
-        notif_kwargs = runtime.notify.call_args[1]
+        notify_fn.assert_called_once()
+        notif_kwargs = notify_fn.call_args[1]
         assert notif_kwargs["notification_type"] == "info"
 
     async def test_alert_posts_with_action_required(self):
         """Alert severity posts to ship channel + action_required notification."""
-        from probos.runtime import ProbOSRuntime
+        from probos.ward_room_router import WardRoomRouter
 
-        runtime = MagicMock()
-        runtime.ward_room = MagicMock()
+        ward_room = MagicMock()
         ship_channel = MagicMock()
         ship_channel.channel_type = "ship"
         ship_channel.id = "ship-ch"
-        runtime.ward_room.list_channels = AsyncMock(return_value=[ship_channel])
-        runtime.ward_room.create_thread = AsyncMock()
-        runtime.notify = MagicMock()
-        runtime.event_log = MagicMock()
-        runtime.event_log.log = AsyncMock()
+        ward_room.list_channels = AsyncMock(return_value=[ship_channel])
+        ward_room.create_thread = AsyncMock()
+        notify_fn = MagicMock()
+        event_log = MagicMock()
+        event_log.log = AsyncMock()
+
+        router = WardRoomRouter(
+            ward_room=ward_room,
+            registry=MagicMock(),
+            intent_bus=MagicMock(),
+            trust_network=MagicMock(),
+            ontology=None,
+            callsign_registry=MagicMock(),
+            episodic_memory=None,
+            event_emitter=MagicMock(),
+            event_log=event_log,
+            config=MagicMock(),
+            notify_fn=notify_fn,
+            proactive_loop=None,
+        )
 
         alert = BridgeAlert(
             id="a2", severity=AlertSeverity.ALERT,
@@ -320,26 +344,21 @@ class TestAlertDelivery:
             related_agent_id="agent-x",
         )
 
-        import types
-        runtime._deliver_bridge_alert = types.MethodType(
-            ProbOSRuntime._deliver_bridge_alert, runtime,
-        )
-        await runtime._deliver_bridge_alert(alert)
+        await router.deliver_bridge_alert(alert)
 
-        runtime.ward_room.create_thread.assert_called_once()
-        call_kwargs = runtime.ward_room.create_thread.call_args[1]
+        ward_room.create_thread.assert_called_once()
+        call_kwargs = ward_room.create_thread.call_args[1]
         assert "[ALERT]" in call_kwargs["title"]
 
-        runtime.notify.assert_called_once()
-        notif_kwargs = runtime.notify.call_args[1]
+        notify_fn.assert_called_once()
+        notif_kwargs = notify_fn.call_args[1]
         assert notif_kwargs["notification_type"] == "action_required"
 
     async def test_info_posts_to_department_channel(self):
         """Info severity posts to department channel, no Captain notification."""
-        from probos.runtime import ProbOSRuntime
+        from probos.ward_room_router import WardRoomRouter
 
-        runtime = MagicMock()
-        runtime.ward_room = MagicMock()
+        ward_room = MagicMock()
         ship_channel = MagicMock()
         ship_channel.channel_type = "ship"
         ship_channel.id = "ship-ch"
@@ -347,11 +366,26 @@ class TestAlertDelivery:
         eng_channel.channel_type = "department"
         eng_channel.department = "science"
         eng_channel.id = "sci-ch"
-        runtime.ward_room.list_channels = AsyncMock(return_value=[ship_channel, eng_channel])
-        runtime.ward_room.create_thread = AsyncMock()
-        runtime.notify = MagicMock()
-        runtime.event_log = MagicMock()
-        runtime.event_log.log = AsyncMock()
+        ward_room.list_channels = AsyncMock(return_value=[ship_channel, eng_channel])
+        ward_room.create_thread = AsyncMock()
+        notify_fn = MagicMock()
+        event_log = MagicMock()
+        event_log.log = AsyncMock()
+
+        router = WardRoomRouter(
+            ward_room=ward_room,
+            registry=MagicMock(),
+            intent_bus=MagicMock(),
+            trust_network=MagicMock(),
+            ontology=None,
+            callsign_registry=MagicMock(),
+            episodic_memory=None,
+            event_emitter=MagicMock(),
+            event_log=event_log,
+            config=MagicMock(),
+            notify_fn=notify_fn,
+            proactive_loop=None,
+        )
 
         alert = BridgeAlert(
             id="a3", severity=AlertSeverity.INFO,
@@ -360,19 +394,15 @@ class TestAlertDelivery:
             department="science", dedup_key="test",
         )
 
-        import types
-        runtime._deliver_bridge_alert = types.MethodType(
-            ProbOSRuntime._deliver_bridge_alert, runtime,
-        )
-        await runtime._deliver_bridge_alert(alert)
+        await router.deliver_bridge_alert(alert)
 
-        runtime.ward_room.create_thread.assert_called_once()
-        call_kwargs = runtime.ward_room.create_thread.call_args[1]
+        ward_room.create_thread.assert_called_once()
+        call_kwargs = ward_room.create_thread.call_args[1]
         assert call_kwargs["channel_id"] == "sci-ch"
         assert "[INFO]" in call_kwargs["title"]
 
         # No Captain notification for info severity
-        runtime.notify.assert_not_called()
+        notify_fn.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

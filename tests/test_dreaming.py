@@ -1040,10 +1040,29 @@ class TestDreamSchedulerProactiveAwareness:
         """_on_post_micro_dream skips EmergentDetector when proactively busy."""
         from unittest.mock import MagicMock, PropertyMock
         from probos.runtime import ProbOSRuntime
+        from probos.dream_adapter import DreamAdapter
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt._emergent_detector = MagicMock()
         rt.dream_scheduler = MagicMock()
+
+        # AD-515: Create DreamAdapter used by delegation
+        rt._dream_adapter = DreamAdapter(
+            dream_scheduler=rt.dream_scheduler,
+            emergent_detector=rt._emergent_detector,
+            episodic_memory=None,
+            knowledge_store=None,
+            hebbian_router=MagicMock(),
+            trust_network=MagicMock(),
+            event_emitter=MagicMock(),
+            self_mod_pipeline=None,
+            bridge_alerts=None,
+            ward_room=None,
+            registry=MagicMock(),
+            event_log=None,
+            config=MagicMock(),
+            pools={},
+        )
 
         # When proactively busy — skip analysis
         type(rt.dream_scheduler).is_proactively_busy = PropertyMock(return_value=True)

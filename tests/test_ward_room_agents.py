@@ -123,7 +123,7 @@ class TestRateLimiting:
     async def test_cooldown_prevents_rapid_response(self):
         """Agent that responded recently is skipped."""
         runtime = _make_mock_runtime()
-        runtime._ward_room_cooldowns = {"agent-1": time.time()}  # Just responded
+        runtime._ward_room_cooldowns["agent-1"] = time.time()  # Just responded
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1"}
         runtime.ward_room.list_channels = AsyncMock(return_value=[
@@ -572,16 +572,11 @@ class TestRoundParticipation:
 def _make_mock_runtime(ward_room=None):
     """Create a mock runtime with the minimum fields needed."""
     from probos.runtime import ProbOSRuntime
+    from probos.ward_room_router import WardRoomRouter
 
     runtime = MagicMock()
     runtime.ward_room = ward_room or MagicMock()
-    runtime._ward_room_cooldowns = {}
     runtime._WARD_ROOM_COOLDOWN_SECONDS = 30
-    # AD-407d: agent-to-agent tracking
-    runtime._ward_room_thread_rounds = {}
-    runtime._ward_room_round_participants = {}
-    # BF-016b: per-thread agent response tracking
-    runtime._ward_room_agent_thread_responses = {}
     # Config mock
     runtime.config = MagicMock()
     runtime.config.ward_room.max_agent_rounds = 3
@@ -598,6 +593,32 @@ def _make_mock_runtime(ward_room=None):
     runtime.callsign_registry.resolve.return_value = None
     runtime.callsign_registry.get_callsign.return_value = ""
     runtime.ontology = None  # AD-429e: Explicit None so _is_crew_agent uses legacy set
+    runtime.trust_network = MagicMock()
+    runtime.trust_network.get_score.return_value = 0.5
+
+    # AD-515: Create WardRoomRouter so delegation works
+    event_log = AsyncMock()
+    router = WardRoomRouter(
+        ward_room=runtime.ward_room,
+        registry=runtime.registry,
+        intent_bus=runtime.intent_bus,
+        trust_network=runtime.trust_network,
+        ontology=runtime.ontology,
+        callsign_registry=runtime.callsign_registry,
+        episodic_memory=None,
+        event_emitter=MagicMock(),
+        event_log=event_log,
+        config=runtime.config,
+        notify_fn=None,
+        proactive_loop=None,
+    )
+    runtime._ward_room_router = router
+
+    # Expose router state through runtime attrs so tests can inspect/manipulate
+    runtime._ward_room_cooldowns = router._cooldowns
+    runtime._ward_room_thread_rounds = router._thread_rounds
+    runtime._ward_room_round_participants = router._round_participants
+    runtime._ward_room_agent_thread_responses = router._agent_thread_responses
 
     # Bind real methods so self.method() calls work on the mock
     import types
@@ -702,8 +723,7 @@ class TestThreadModeRouting:
         """BF-022: DISCUSS threads on ship-wide let Lieutenants respond."""
         runtime = _make_mock_runtime()
         runtime.config.earned_agency.enabled = True
-        runtime.trust_network = MagicMock()
-        runtime.trust_network.get_score.return_value = 0.5  # Lieutenant
+        # trust_network already returns 0.5 (Lieutenant) from _make_mock_runtime
 
         channel = _make_channel("ch1", "ship")
         agent = _make_agent("agent-1", "architect")

@@ -1291,10 +1291,29 @@ class TestImprovementProposals:
 class TestEndorsementActivation:
     """AD-426: Ward Room Endorsement Activation."""
 
+    @staticmethod
+    def _attach_router(rt, ward_room=None, trust_network=None):
+        """AD-515: Attach WardRoomRouter so delegation methods work."""
+        from unittest.mock import AsyncMock, MagicMock
+        from probos.ward_room_router import WardRoomRouter
+        rt._ward_room_router = WardRoomRouter(
+            ward_room=ward_room or getattr(rt, 'ward_room', MagicMock()),
+            registry=MagicMock(),
+            intent_bus=MagicMock(),
+            trust_network=trust_network or getattr(rt, 'trust_network', None) or MagicMock(),
+            ontology=None,
+            callsign_registry=MagicMock(),
+            episodic_memory=None,
+            event_emitter=MagicMock(),
+            event_log=AsyncMock(),
+            config=MagicMock(),
+        )
+
     # ------ Test 1: _extract_endorsements parses UP endorsement ------
     def test_extract_endorsements_up(self):
         from probos.runtime import ProbOSRuntime
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        self._attach_router(rt)
         text = "Great discussion!\n[ENDORSE abc123 UP]"
         cleaned, endorsements = rt._extract_endorsements(text)
         assert cleaned == "Great discussion!"
@@ -1305,6 +1324,7 @@ class TestEndorsementActivation:
     def test_extract_endorsements_multiple(self):
         from probos.runtime import ProbOSRuntime
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        self._attach_router(rt)
         text = "My reply here.\n[ENDORSE post1 UP]\n[ENDORSE post2 DOWN]\n[ENDORSE post3 UP]"
         cleaned, endorsements = rt._extract_endorsements(text)
         assert "My reply here" in cleaned
@@ -1315,6 +1335,7 @@ class TestEndorsementActivation:
     def test_extract_endorsements_none(self):
         from probos.runtime import ProbOSRuntime
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        self._attach_router(rt)
         text = "Just a normal reply, no endorsements."
         cleaned, endorsements = rt._extract_endorsements(text)
         assert cleaned == text
@@ -1324,6 +1345,7 @@ class TestEndorsementActivation:
     def test_extract_endorsements_no_response(self):
         from probos.runtime import ProbOSRuntime
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        self._attach_router(rt)
         text = "[NO_RESPONSE]\n[ENDORSE xyz789 UP]"
         cleaned, endorsements = rt._extract_endorsements(text)
         assert len(endorsements) == 1
@@ -1351,6 +1373,7 @@ class TestEndorsementActivation:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt.ward_room = ward_room
         rt.trust_network = None
+        self._attach_router(rt, ward_room=ward_room)
 
         await rt._process_endorsements(
             [{"post_id": post.id, "direction": "up"}], agent_id="worf",
@@ -1386,6 +1409,8 @@ class TestEndorsementActivation:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt.ward_room = ward_room
         rt.trust_network = trust
+        self._attach_router(rt, ward_room=ward_room, trust_network=trust)
+        self._attach_router(rt, ward_room=ward_room, trust_network=trust)
 
         await rt._process_endorsements(
             [{"post_id": post.id, "direction": "up"}], agent_id="worf",
@@ -1413,6 +1438,7 @@ class TestEndorsementActivation:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt.ward_room = ward_room
         rt.trust_network = None
+        self._attach_router(rt, ward_room=ward_room)
 
         # Should not raise
         await rt._process_endorsements(
@@ -1449,6 +1475,7 @@ class TestEndorsementActivation:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt.ward_room = ward_room
         rt.trust_network = trust
+        self._attach_router(rt, ward_room=ward_room, trust_network=trust)
 
         await rt._process_endorsements(
             [{"post_id": post.id, "direction": "up"}], agent_id="worf",

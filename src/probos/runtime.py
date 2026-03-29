@@ -100,6 +100,13 @@ from probos.types import (
     TaskNode,
 )
 
+from probos.agent_onboarding import AgentOnboardingService
+from probos.crew_utils import is_crew_agent
+from probos.dream_adapter import DreamAdapter
+from probos.self_mod_manager import SelfModManager
+from probos.ward_room_router import WardRoomRouter
+from probos.warm_boot import WarmBootService
+
 logger = logging.getLogger(__name__)
 
 # Default paths (relative to project root)
@@ -212,12 +219,9 @@ class ProbOSRuntime:
 
         # --- Ward Room (AD-407) ---
         self.ward_room: Any | None = None  # Initialized in start()
-        self._ward_room_cooldowns: dict[str, float] = {}  # agent_id -> last_response_timestamp
-        # AD-407d: Agent-to-agent conversation tracking
-        self._ward_room_thread_rounds: dict[str, int] = {}           # thread_id -> current agent round count
-        self._ward_room_round_participants: dict[str, set[str]] = {}  # "thread_id:round" -> set of agent_ids
-        # BF-016b: Per-thread agent response cap (prevents thread explosion)
-        self._ward_room_agent_thread_responses: dict[str, int] = {}  # "thread_id:agent_id" -> count
+
+        # AD-515: Ward Room routing state is now managed by WardRoomRouter
+        self._ward_room_router: WardRoomRouter | None = None
 
         # --- Assignment Service (AD-408) ---
         self.assignment_service: Any | None = None  # Initialized in start()
@@ -270,6 +274,12 @@ class ProbOSRuntime:
         # --- Self-modification ---
         self.self_mod_pipeline: Any = None  # SelfModificationPipeline | None
         self.behavioral_monitor: Any = None  # BehavioralMonitor | None
+
+        # AD-515: Extracted service instances (created in start())
+        self._onboarding: AgentOnboardingService | None = None
+        self._warm_boot: WarmBootService | None = None
+        self._self_mod_manager: SelfModManager | None = None
+        self._dream_adapter: DreamAdapter | None = None
 
         # --- SystemQA (AD-153) ---
         self._system_qa: Any = None  # SystemQAAgent | None
@@ -804,6 +814,25 @@ class ProbOSRuntime:
         await self.identity_registry.start()
         logger.info("identity registry started")
 
+        # AD-515: Create onboarding service early so _wire_agent works during pool creation.
+        # ontology/ward_room/acm aren't ready yet — patched in after they're created.
+        self._onboarding = AgentOnboardingService(
+            callsign_registry=self.callsign_registry,
+            capability_registry=self.capability_registry,
+            gossip=self.gossip,
+            intent_bus=self.intent_bus,
+            trust_network=self.trust_network,
+            event_log=self.event_log,
+            identity_registry=self.identity_registry,
+            ontology=None,
+            event_emitter=self._emit_event,
+            config=self.config,
+            llm_client=self.llm_client,
+            registry=self.registry,
+            ward_room=None,
+            acm=None,
+        )
+
         # Start default pools (Phase 14c: deterministic agent IDs)
         _builtin_pools = [
             ("system", "system_heartbeat", 2),
@@ -1212,7 +1241,21 @@ class ProbOSRuntime:
                 await self._knowledge_store.initialize()
 
                 if self.config.knowledge.restore_on_boot:
-                    await self._restore_from_knowledge()
+                    self._warm_boot = WarmBootService(
+                        knowledge_store=self._knowledge_store,
+                        trust_network=self.trust_network,
+                        hebbian_router=self.hebbian_router,
+                        episodic_memory=self.episodic_memory,
+                        workflow_cache=self.workflow_cache,
+                        config=self.config,
+                        register_designed_agent_fn=self._register_designed_agent,
+                        create_designed_pool_fn=self._create_designed_pool,
+                        add_skill_to_agents_fn=self._add_skill_to_agents,
+                        qa_reports=self._qa_reports,
+                        pools=self.pools,
+                        semantic_layer=self._semantic_layer,
+                    )
+                    await self._warm_boot.restore()
 
                 logger.info("Knowledge store initialized: %s", self._knowledge_store.repo_path)
             except Exception as e:
@@ -1352,6 +1395,7 @@ class ProbOSRuntime:
                 pass
 
         # Wire post-dream analysis callback (AD-237)
+        # NOTE: These are re-wired to DreamAdapter below in the AD-515 service creation block.
         if self.dream_scheduler:
             self.dream_scheduler._post_dream_fn = self._on_post_dream
             self.dream_scheduler._pre_dream_fn = self._on_pre_dream
@@ -1509,7 +1553,8 @@ class ProbOSRuntime:
 
             def _ward_room_emit(event_type: str, data: dict) -> None:
                 self._emit_event(event_type, data)  # WebSocket broadcast
-                asyncio.create_task(self._route_ward_room_event(event_type, data))
+                if getattr(self, '_ward_room_router', None):
+                    asyncio.create_task(self._ward_room_router.route_event(event_type, data))
 
             self.ward_room = WardRoomService(
                 db_path=str(self._data_dir / "ward_room.db"),
@@ -1535,7 +1580,7 @@ class ProbOSRuntime:
                     dept_channel_map[ch.department] = ch.id
 
             for agent in self.registry.all():
-                if not self._is_crew_agent(agent):
+                if not is_crew_agent(agent):
                     continue
                 # AD-429e: Prefer ontology, fall back to legacy dict
                 _ont = getattr(self, 'ontology', None)
@@ -1641,7 +1686,7 @@ class ProbOSRuntime:
 
             # AD-441c: Issue deferred crew birth certificates now that ship is commissioned
             for agent in self.registry.all():
-                if self._is_crew_agent(agent) and not getattr(agent, 'did', ''):
+                if is_crew_agent(agent, self.ontology) and not getattr(agent, 'did', ''):
                     try:
                         dept = self.ontology.get_agent_department(agent.agent_type) or ""
                         post = self.ontology.get_post_for_agent(agent.agent_type)
@@ -1709,6 +1754,92 @@ class ProbOSRuntime:
                 await self.proactive_loop.restore_cooldowns()
             await self.proactive_loop.start()
             logger.info("proactive-cognitive-loop started (interval=%ss)", self.config.proactive_cognitive.interval_seconds)
+
+        # --- AD-515: Create extracted service instances ---
+
+        # Ward Room Router
+        if self.ward_room:
+            self._ward_room_router = WardRoomRouter(
+                ward_room=self.ward_room,
+                registry=self.registry,
+                intent_bus=self.intent_bus,
+                trust_network=self.trust_network,
+                ontology=self.ontology,
+                callsign_registry=self.callsign_registry,
+                episodic_memory=self.episodic_memory,
+                event_emitter=self._emit_event,
+                event_log=self.event_log,
+                config=self.config,
+                notify_fn=self.notify,
+                proactive_loop=self.proactive_loop,
+            )
+
+        # Agent Onboarding Service — patch in late-init dependencies
+        self._onboarding._ontology = self.ontology
+        self._onboarding._ward_room = self.ward_room
+        self._onboarding._acm = self.acm
+        self._onboarding._start_time_wall = self._start_time_wall
+
+        # Self-Modification Manager
+        if self.self_mod_pipeline:
+            self._self_mod_manager = SelfModManager(
+                self_mod_pipeline=self.self_mod_pipeline,
+                knowledge_store=self._knowledge_store,
+                trust_network=self.trust_network,
+                intent_bus=self.intent_bus,
+                capability_registry=self.capability_registry,
+                registry=self.registry,
+                pools=self.pools,
+                spawner=self.spawner,
+                decomposer=self.decomposer,
+                feedback_engine=self.feedback_engine,
+                llm_client=self.llm_client,
+                event_emitter=self._emit_event,
+                config=self.config,
+                semantic_layer=self._semantic_layer,
+                collect_intent_descriptors_fn=self._collect_intent_descriptors,
+                process_natural_language_fn=self.process_natural_language,
+                add_skill_to_agents_fn=self._add_skill_to_agents,
+                register_agent_type_fn=self.register_agent_type,
+                unregister_agent_type_fn=self.unregister_agent_type,
+                create_pool_fn=self.create_pool,
+                runtime=self,
+            )
+
+        # Dream Adapter
+        self._dream_adapter = DreamAdapter(
+            dream_scheduler=self.dream_scheduler,
+            emergent_detector=self._emergent_detector,
+            episodic_memory=self.episodic_memory,
+            knowledge_store=self._knowledge_store,
+            hebbian_router=self.hebbian_router,
+            trust_network=self.trust_network,
+            event_emitter=self._emit_event,
+            self_mod_pipeline=self.self_mod_pipeline,
+            bridge_alerts=self.bridge_alerts,
+            ward_room=self.ward_room,
+            registry=self.registry,
+            event_log=self.event_log,
+            config=self.config,
+            pools=self.pools,
+            behavioral_monitor=self.behavioral_monitor,
+            deliver_bridge_alert_fn=(
+                self._ward_room_router.deliver_bridge_alert
+                if getattr(self, '_ward_room_router', None) else None
+            ),
+        )
+        self._dream_adapter._cold_start = self._cold_start
+
+        # Re-wire dream scheduler callbacks to use the adapter
+        if self.dream_scheduler:
+            self.dream_scheduler._post_dream_fn = self._dream_adapter.on_post_dream
+            self.dream_scheduler._pre_dream_fn = self._dream_adapter.on_pre_dream
+            self.dream_scheduler._post_micro_dream_fn = self._dream_adapter.on_post_micro_dream
+
+        # Re-wire periodic flush to use the adapter
+        if hasattr(self, '_flush_task'):
+            self._flush_task.cancel()
+        self._flush_task = asyncio.create_task(self._dream_adapter.periodic_flush_loop())
 
         self._started = True
 
@@ -3092,100 +3223,11 @@ class ProbOSRuntime:
         original_record: Any,
     ) -> Any:
         """Hot-reload a patched self-mod'd agent into the runtime."""
-        from probos.cognitive.agent_patcher import CorrectionResult
-
-        strategy = original_record.strategy
-        agent_type = original_record.agent_type
-
-        try:
-            if strategy == "skill":
-                await self._apply_skill_correction(
-                    correction, patch_result, original_record,
-                )
-            else:
-                await self._apply_agent_correction(
-                    correction, patch_result, original_record,
-                )
-        except Exception as exc:
-            logger.warning("apply_correction failed: %s", exc)
-            return CorrectionResult(
-                success=False,
-                agent_type=agent_type,
-                strategy=strategy,
-                changes_description=f"Hot-reload failed: {exc}",
-            )
-
-        # Update the record
-        original_record.source_code = patch_result.patched_source
-        original_record.status = "patched"
-
-        # Refresh decomposer descriptors
-        if hasattr(self, "decomposer") and self.decomposer:
-            try:
-                descriptors = self._collect_intent_descriptors()
-                self.decomposer.refresh_descriptors(descriptors)
-            except Exception:
-                logger.warning("Failed to refresh decomposer descriptors — self-modified agent may not be routable", exc_info=True)
-
-        # Persist to knowledge store
-        if hasattr(self, "_knowledge_store") and self._knowledge_store:
-            try:
-                await self._knowledge_store.store_agent(
-                    original_record, patch_result.patched_source,
-                )
-            except Exception:
-                logger.warning("Failed to persist patched agent — may be lost on restart", exc_info=True)
-        # Auto-index for semantic search (AD-243)
-        if self._semantic_layer:
-            try:
-                await self._semantic_layer.index_agent(
-                    agent_type=original_record.agent_type,
-                    intent_name=original_record.intent_name,
-                    description=original_record.intent_name,
-                    strategy=original_record.strategy,
-                    source_snippet=patch_result.patched_source[:200] if patch_result.patched_source else "",
-                )
-            except Exception:
-                pass
-
-        # Auto-retry the original request
-        retry_result = None
-        retried = False
-        original_text = self._last_execution_text
-        if original_text:
-            try:
-                retried = True
-                import time as _time
-
-                retry_result = await self.process_natural_language(
-                    original_text, on_event=None,
-                )
-            except Exception as exc:
-                retry_result = {"error": str(exc)}
-
-        # Record correction feedback (AD-234)
-        retry_success = bool(
-            retried and retry_result and not retry_result.get("error")
-        )
-        if hasattr(self, "feedback_engine") and self.feedback_engine:
-            try:
-                await self.feedback_engine.apply_correction_feedback(
-                    original_text=original_text or "",
-                    correction=correction,
-                    patch_result=patch_result,
-                    retry_success=retry_success,
-                )
-            except Exception:
-                pass
-
-        return CorrectionResult(
-            success=True,
-            agent_type=agent_type,
-            strategy=strategy,
-            changes_description=patch_result.changes_description,
-            retried=retried,
-            retry_result=retry_result,
-        )
+        if getattr(self, '_self_mod_manager', None):
+            self._self_mod_manager._last_execution = self._last_execution
+            self._self_mod_manager._last_execution_text = self._last_execution_text
+            return await self._self_mod_manager.apply_correction(correction, patch_result, original_record)
+        raise RuntimeError("SelfModManager not initialized")
 
     async def _apply_agent_correction(
         self,
@@ -3194,37 +3236,8 @@ class ProbOSRuntime:
         record: Any,
     ) -> None:
         """Hot-swap a patched agent class into the runtime."""
-        agent_type = record.agent_type
-        pool_name = f"designed_{agent_type}"
-        new_class = patch_result.agent_class
-
-        if new_class is None:
-            raise ValueError("PatchResult has no agent_class")
-
-        # Register the new class template
-        if hasattr(self, "_spawner") and hasattr(self._spawner, "_templates"):
-            self._spawner._templates[agent_type] = new_class
-
-        # Re-create pool agents with the new class
-        pool = self._pools.get(pool_name)
-        if pool:
-            for agent in list(pool.healthy_agents):
-                aid = agent.id if hasattr(agent, "id") else str(agent)
-                try:
-                    new_agent = new_class(
-                        pool=pool_name,
-                        llm_client=getattr(self, "llm_client", None),
-                    )
-                    new_agent._id = aid  # preserve agent identity
-                    self.registry.register(new_agent)
-                    self.intent_bus.subscribe(
-                        aid, new_agent.handle_intent,
-                        intent_names=[d.name for d in getattr(new_agent, "intent_descriptors", [])] or None,
-                    )
-                    if hasattr(new_agent, "capabilities") and new_agent.capabilities:
-                        self.capability_registry.register(aid, new_agent.capabilities)
-                except Exception as exc:
-                    logger.warning("Failed to replace agent %s: %s", aid, exc)
+        if getattr(self, '_self_mod_manager', None):
+            await self._self_mod_manager._apply_agent_correction(correction, patch_result, record)
 
     async def _apply_skill_correction(
         self,
@@ -3233,93 +3246,26 @@ class ProbOSRuntime:
         record: Any,
     ) -> None:
         """Hot-swap a patched skill handler."""
-        from probos.types import IntentDescriptor, Skill
-        import time as _time
-
-        intent_name = correction.target_intent or record.intent_name
-        handler = patch_result.handler
-
-        if handler is None:
-            raise ValueError("PatchResult has no handler")
-
-        # Build a replacement skill
-        new_skill = Skill(
-            name=intent_name,
-            descriptor=IntentDescriptor(
-                name=intent_name,
-                description=correction.explanation or record.intent_name,
-            ),
-            source_code=patch_result.patched_source,
-            handler=handler,
-            created_at=_time.time(),
-            origin="patched",
-        )
-
-        # Find agents with the old skill and replace it
-        if hasattr(self, "_add_skill_to_agents"):
-            self._add_skill_to_agents(new_skill)
+        if getattr(self, '_self_mod_manager', None):
+            await self._self_mod_manager._apply_skill_correction(correction, patch_result, record)
 
     def _find_designed_record(self, agent_type: str) -> Any:
         """Find the most recent active DesignedAgentRecord for an agent type."""
-        if not hasattr(self, "self_mod_pipeline") or not self.self_mod_pipeline:
-            return None
-        records = self.self_mod_pipeline._records
-        # Search in reverse (most recent first)
-        for record in reversed(records):
-            if record.agent_type == agent_type and record.status in (
-                "active", "patched",
-            ):
-                return record
+        if getattr(self, '_self_mod_manager', None):
+            return self._self_mod_manager.find_designed_record(agent_type)
         return None
 
     def _was_last_execution_successful(self) -> bool:
         """Check whether the last execution had any failed nodes."""
-        if not self._last_execution:
-            return False
-        dag = self._last_execution.get("dag")
-        if dag is None:
-            return True  # No DAG info — assume success
-        nodes = getattr(dag, "nodes", [])
-        if not nodes:
-            return True
-        return all(
-            getattr(n, "status", "completed") == "completed"
-            for n in nodes
-        )
+        if getattr(self, '_self_mod_manager', None):
+            return self._self_mod_manager.was_last_execution_successful()
+        return False
 
     def _format_execution_context(self) -> str:
         """Format last execution results as context for AgentDesigner (AD-235)."""
-        if not self._last_execution:
-            return ""
-
-        parts: list[str] = []
-        original_text = self._last_execution_text or ""
-        if original_text:
-            parts.append(f"Prior user request: {original_text!r}")
-
-        dag = self._last_execution.get("dag")
-        if dag is not None:
-            nodes = getattr(dag, "nodes", [])
-            for node in nodes:
-                intent = getattr(node, "intent", "?")
-                status = getattr(node, "status", "?")
-                params = getattr(node, "params", {})
-                result = getattr(node, "result", None)
-                result_summary = ""
-                if isinstance(result, dict):
-                    # Show key fields without flooding context
-                    for k in ("output", "result", "agent_id"):
-                        v = result.get(k)
-                        if v is not None:
-                            val = str(v)
-                            if len(val) > 200:
-                                val = val[:200] + "..."
-                            result_summary += f", {k}={val!r}"
-                parts.append(
-                    f"  [intent: {intent}, params: {params}, status: {status}{result_summary}]"
-                )
-
-        return "\n".join(parts) if parts else ""
+        if getattr(self, '_self_mod_manager', None):
+            return self._self_mod_manager.format_execution_context()
+        return ""
 
     async def remove_proposal_node(self, node_index: int) -> TaskNode | None:
         """Remove a node from the pending proposal by 0-based index.
@@ -3474,51 +3420,8 @@ class ProbOSRuntime:
 
     async def _deliver_bridge_alert(self, alert: Any) -> None:
         """Post a Bridge Alert to the Ward Room and optionally notify the Captain."""
-        from probos.bridge_alerts import AlertSeverity
-
-        if not self.ward_room:
-            return
-
-        # Determine target channel
-        channels = await self.ward_room.list_channels()
-        if alert.severity == AlertSeverity.INFO and alert.department:
-            channel = next((c for c in channels if c.department == alert.department), None)
-        else:
-            channel = next((c for c in channels if c.channel_type == "ship"), None)
-
-        if not channel:
-            logger.warning("Bridge alert: no suitable channel for %s", alert.alert_type)
-            return
-
-        # Post as Ship's Computer (captain author_id for proper crew routing)
-        try:
-            await self.ward_room.create_thread(
-                channel_id=channel.id,
-                author_id="captain",
-                title=f"[{alert.severity.value.upper()}] {alert.title}",
-                body=alert.detail,
-                author_callsign="Ship's Computer",
-                thread_mode="inform",   # AD-424: Bridge alerts are informational
-            )
-        except Exception as e:
-            logger.warning("Bridge alert WR post failed: %s", e)
-            return
-
-        # Captain notification for advisory/alert severity
-        if alert.severity in (AlertSeverity.ADVISORY, AlertSeverity.ALERT):
-            notif_type = "action_required" if alert.severity == AlertSeverity.ALERT else "info"
-            self.notify(
-                agent_id=alert.related_agent_id or "system",
-                title=alert.title,
-                detail=alert.detail,
-                notification_type=notif_type,
-            )
-
-        await self.event_log.log(
-            category="bridge_alert",
-            event=alert.alert_type,
-            detail=f"severity={alert.severity.value} {alert.title}",
-        )
+        if getattr(self, '_ward_room_router', None):
+            await self._ward_room_router.deliver_bridge_alert(alert)
 
     # ------------------------------------------------------------------
     # Ward Room agent routing (AD-407b)
@@ -3527,220 +3430,9 @@ class ProbOSRuntime:
     _WARD_ROOM_COOLDOWN_SECONDS = 30  # Minimum seconds between responses per agent (captain-triggered)
 
     async def _route_ward_room_event(self, event_type: str, data: dict) -> None:
-        """Route Ward Room events to relevant crew agents as intents.
-
-        AD-407d: Supports both Captain->Agent and Agent->Agent routing
-        with multi-layered loop prevention (depth cap, selective targeting,
-        once-per-round, cooldown, [NO_RESPONSE]).
-        """
-        if not self.ward_room:
-            return
-
-        # AD-416: Clean up tracking dicts when threads are pruned
-        if event_type == "ward_room_pruned":
-            pruned_ids = set(data.get("pruned_thread_ids", []))
-            if pruned_ids:
-                self._cleanup_ward_room_tracking(pruned_ids)
-            return
-
-        # Only route new threads and new posts (not endorsements, mod actions)
-        if event_type not in ("ward_room_thread_created", "ward_room_post_created"):
-            return
-
-        author_id = data.get("author_id", "")
-        is_captain = (author_id == "captain")
-        is_agent_post = not is_captain and author_id != ""
-
-        thread_id = data.get("thread_id", "")
-
-        # --- Layer 1: Thread depth tracking ---
-        max_rounds = getattr(self.config.ward_room, 'max_agent_rounds', 3)
-        if is_agent_post and thread_id:
-            current_round = self._ward_room_thread_rounds.get(thread_id, 0)
-            if current_round >= max_rounds:
-                logger.debug(
-                    "Ward Room: thread %s hit agent round limit (%d), silencing",
-                    thread_id[:8], max_rounds,
-                )
-                return
-
-        # Captain posts reset the round counter
-        if is_captain and thread_id:
-            self._ward_room_thread_rounds[thread_id] = 0
-            # Clear round participation tracking for this thread
-            keys_to_clear = [k for k in self._ward_room_round_participants
-                             if k.startswith(f"{thread_id}:")]
-            for k in keys_to_clear:
-                del self._ward_room_round_participants[k]
-
-        # --- Get channel info ---
-        channel_id = data.get("channel_id", "")
-        thread_detail = None
-        if event_type == "ward_room_post_created":
-            # Posts don't include channel_id — look up the thread
-            if thread_id:
-                thread_detail = await self.ward_room.get_thread(thread_id)
-                if thread_detail and "thread" in thread_detail:
-                    channel_id = thread_detail["thread"].get("channel_id", "")
-
-        if not channel_id:
-            return
-
-        # AD-424: Determine thread mode
-        thread_mode = data.get("thread_mode", "discuss")
-        if thread_detail and "thread" in thread_detail:
-            thread_mode = thread_detail["thread"].get("thread_mode", "discuss")
-
-        # AD-424: INFORM threads — no agent notification at all
-        if thread_mode == "inform":
-            return
-
-        # Find the channel to determine routing scope
-        channels = await self.ward_room.list_channels()
-        channel = next((c for c in channels if c.id == channel_id), None)
-        if not channel:
-            return
-
-        # --- Layer 2: Selective targeting ---
-        if is_captain:
-            # Captain posts: full targeting rules (backwards compatible with AD-407b)
-            target_agent_ids = self._find_ward_room_targets(
-                channel=channel,
-                author_id=author_id,
-                mentions=data.get("mentions", []),
-                thread_mode=thread_mode,
-            )
-        else:
-            # Agent posts: narrow targeting — @mentions + department peers only
-            target_agent_ids = self._find_ward_room_targets_for_agent(
-                channel=channel,
-                author_id=author_id,
-                mentions=data.get("mentions", []),
-            )
-
-        if not target_agent_ids:
-            return
-
-        # AD-424: Apply responder cap for DISCUSS threads
-        thread_max_responders = data.get("max_responders", 0)
-        if thread_detail and "thread" in thread_detail:
-            thread_max_responders = thread_detail["thread"].get("max_responders", 0)
-        if thread_mode == "discuss" and thread_max_responders > 0:
-            target_agent_ids = target_agent_ids[:thread_max_responders]
-
-        # --- Build thread context ---
-        title = data.get("title", "")
-        thread_context = ""
-        if thread_id:
-            if not thread_detail:
-                thread_detail = await self.ward_room.get_thread(thread_id)
-            if thread_detail:
-                thread_obj = thread_detail.get("thread", {})
-                posts = thread_detail.get("posts", [])
-                title = title or (thread_obj.get("title", "") if isinstance(thread_obj, dict) else getattr(thread_obj, "title", ""))
-                body = thread_obj.get("body", "") if isinstance(thread_obj, dict) else getattr(thread_obj, "body", "")
-                thread_context = f"Thread: {title}\n{body}"
-                # Include recent posts (last 5) for context
-                recent_posts = posts[-5:] if len(posts) > 5 else posts
-                for p in recent_posts:
-                    p_callsign = p.get("author_callsign", "") if isinstance(p, dict) else getattr(p, "author_callsign", "")
-                    p_body = p.get("body", "") if isinstance(p, dict) else getattr(p, "body", "")
-                    thread_context += f"\n{p_callsign}: {p_body}"
-
-        # --- Send intents to target agents ---
-        from probos.types import IntentMessage
-        now = time.time()
-
-        # Layer 4: Use longer cooldown for agent-triggered responses
-        agent_cooldown = getattr(self.config.ward_room, 'agent_cooldown_seconds', 45)
-        cooldown = agent_cooldown if is_agent_post else self._WARD_ROOM_COOLDOWN_SECONDS
-
-        # Layer 3: Per-thread round participation
-        current_round = self._ward_room_thread_rounds.get(thread_id, 0)
-        round_key = f"{thread_id}:{current_round}"
-        round_participants = self._ward_room_round_participants.setdefault(round_key, set())
-
-        responded_this_event = False
-
-        for agent_id in target_agent_ids:
-            # Layer 4: Per-agent cooldown
-            last_response = self._ward_room_cooldowns.get(agent_id, 0)
-            if now - last_response < cooldown:
-                continue
-
-            # Layer 3: Agent already responded in this round of this thread
-            if is_agent_post and agent_id in round_participants:
-                continue
-
-            # BF-016b: Per-thread agent response cap — prevent thread explosion
-            # Each agent gets max N responses per thread, regardless of round resets
-            max_per_thread = getattr(self.config.ward_room, 'max_agent_responses_per_thread', 3)
-            thread_agent_key = f"{thread_id}:{agent_id}"
-            prior_responses = self._ward_room_agent_thread_responses.get(thread_agent_key, 0)
-            if prior_responses >= max_per_thread:
-                logger.debug(
-                    "Ward Room: agent %s hit per-thread response cap (%d) in thread %s",
-                    agent_id[:12], max_per_thread, thread_id[:8],
-                )
-                continue
-
-            intent = IntentMessage(
-                intent="ward_room_notification",
-                params={
-                    "event_type": event_type,
-                    "thread_id": thread_id,
-                    "channel_id": channel_id,
-                    "channel_name": channel.name,
-                    "title": title,
-                    "author_id": author_id,
-                    "author_callsign": data.get("author_callsign", ""),
-                },
-                context=thread_context,
-                target_agent_id=agent_id,
-            )
-            try:
-                result = await self.intent_bus.send(intent)
-                # Layer 5: [NO_RESPONSE] filtering
-                if result and result.result:
-                    response_text = str(result.result).strip()
-                    # AD-426: Extract endorsements before filtering
-                    response_text, endorsements = self._extract_endorsements(response_text)
-                    if endorsements:
-                        await self._process_endorsements(
-                            endorsements, agent_id=agent_id
-                        )
-                    if response_text and response_text != "[NO_RESPONSE]":                        # Get agent's callsign for attribution
-                        agent = self.registry.get(agent_id)
-                        agent_callsign = ""
-                        if agent and hasattr(self, 'callsign_registry'):
-                            agent_callsign = self.callsign_registry.get_callsign(agent.agent_type)
-                        # BF-066: Extract [DM @callsign]...[/DM] blocks before posting
-                        if agent and self.proactive_loop:
-                            response_text, dm_actions = await self.proactive_loop._extract_and_execute_dms(
-                                agent, response_text,
-                            )
-                            response_text = response_text.strip()
-                        if not response_text:
-                            continue  # entire response was DM blocks, nothing to post publicly
-                        await self.ward_room.create_post(
-                            thread_id=thread_id,
-                            author_id=agent_id,
-                            body=response_text,
-                            # BF-015: reply to the specific post, not just the thread
-                            parent_id=data.get("post_id") if event_type == "ward_room_post_created" else None,
-                            author_callsign=agent_callsign or (agent.agent_type if agent else "unknown"),
-                        )
-                        self._ward_room_cooldowns[agent_id] = time.time()
-                        round_participants.add(agent_id)
-                        responded_this_event = True
-                        # BF-016b: Increment per-thread response count
-                        self._ward_room_agent_thread_responses[thread_agent_key] = prior_responses + 1
-            except Exception as e:
-                logger.debug("Ward Room agent notification failed for %s: %s", agent_id, e)
-
-        # Increment round counter if any agent responded to an agent post
-        if is_agent_post and responded_this_event:
-            self._ward_room_thread_rounds[thread_id] = current_round + 1
+        """Route Ward Room events to relevant crew agents as intents."""
+        if getattr(self, '_ward_room_router', None):
+            await self._ward_room_router.route_event(event_type, data)
 
     def _find_ward_room_targets(
         self,
@@ -3750,65 +3442,12 @@ class ProbOSRuntime:
         thread_mode: str = "discuss",  # AD-424
     ) -> list[str]:
         """Determine which crew agents should be notified about a Ward Room event."""
-        target_ids: list[str] = []
-
-        # 1. @mentioned agents always get notified
-        if mentions:
-            for callsign in mentions:
-                resolved = self.callsign_registry.resolve(callsign)
-                if resolved and resolved["agent_id"] and resolved["agent_id"] != author_id:
-                    target_ids.append(resolved["agent_id"])
-
-        # BF-016a: If Captain @mentions specific agents, only target those.
-        # Prevents 8 agents piling in when Captain addresses 1-2 directly.
-        if mentions and target_ids:
-            return target_ids
-
-        # 2. Route based on channel type (ambient — no @mentions)
-        if channel.channel_type == "ship":
-            # Ship-wide channel: notify all crew agents
-            for agent in self.registry.all():
-                if (agent.is_alive
-                        and agent.id != author_id
-                        and agent.id not in target_ids
-                        and hasattr(agent, 'handle_intent')
-                        and self._is_crew_agent(agent)):
-                    # AD-357: Earned Agency trust-tier gating
-                    # AD-424: DISCUSS threads on ship-wide treat as same-department
-                    # for earned agency purposes — the Captain opened discussion.
-                    effective_same_dept = (thread_mode == "discuss")
-                    if self.config.earned_agency.enabled:
-                        from probos.earned_agency import can_respond_ambient
-                        from probos.crew_profile import Rank
-                        _agent_rank = Rank.from_trust(self.trust_network.get_score(agent.id))
-                        if not can_respond_ambient(_agent_rank, is_captain_post=True,
-                                                   same_department=effective_same_dept):
-                            continue
-                    target_ids.append(agent.id)
-
-        elif channel.channel_type == "department" and channel.department:
-            # Department channel: notify agents in that department
-            from probos.cognitive.standing_orders import get_department
-            _ont = getattr(self, 'ontology', None)  # AD-429e
-            for agent in self.registry.all():
-                if (agent.is_alive
-                        and agent.id != author_id
-                        and agent.id not in target_ids
-                        and hasattr(agent, 'handle_intent')
-                        and self._is_crew_agent(agent)
-                        # AD-429e: Prefer ontology, fall back to legacy dict
-                        and ((_ont.get_agent_department(agent.agent_type) if _ont else None) or get_department(agent.agent_type)) == channel.department):
-                    # AD-357: Earned Agency trust-tier gating
-                    if self.config.earned_agency.enabled:
-                        from probos.earned_agency import can_respond_ambient
-                        from probos.crew_profile import Rank
-                        _agent_rank = Rank.from_trust(self.trust_network.get_score(agent.id))
-                        if not can_respond_ambient(_agent_rank, is_captain_post=True,
-                                                   same_department=True):
-                            continue
-                    target_ids.append(agent.id)
-
-        return target_ids
+        if getattr(self, '_ward_room_router', None):
+            return self._ward_room_router.find_targets(
+                channel=channel, author_id=author_id, mentions=mentions,
+                thread_mode=thread_mode,
+            )
+        return []
 
     def _find_ward_room_targets_for_agent(
         self,
@@ -3816,172 +3455,37 @@ class ProbOSRuntime:
         author_id: str,
         mentions: list[str] | None = None,
     ) -> list[str]:
-        """Determine targets for agent-authored posts (narrower than Captain posts).
-
-        AD-407d: Agent posts only notify:
-        1. @mentioned agents (always)
-        2. Department peers (if in a department channel)
-        3. Never ship-wide broadcast for agent-to-agent
-        """
-        target_ids: list[str] = []
-
-        # 1. @mentioned agents always get notified
-        if mentions:
-            for callsign in mentions:
-                resolved = self.callsign_registry.resolve(callsign)
-                if resolved and resolved["agent_id"] and resolved["agent_id"] != author_id:
-                    target_ids.append(resolved["agent_id"])
-
-        # 2. Department channel: notify department peers
-        if channel.channel_type == "department" and channel.department:
-            from probos.cognitive.standing_orders import get_department
-            _ont = getattr(self, 'ontology', None)  # AD-429e
-            for agent in self.registry.all():
-                if (agent.is_alive
-                        and agent.id != author_id
-                        and agent.id not in target_ids
-                        and hasattr(agent, 'handle_intent')
-                        and self._is_crew_agent(agent)
-                        # AD-429e: Prefer ontology, fall back to legacy dict
-                        and ((_ont.get_agent_department(agent.agent_type) if _ont else None) or get_department(agent.agent_type)) == channel.department):
-                    # AD-357: Earned Agency trust-tier gating
-                    if self.config.earned_agency.enabled:
-                        from probos.earned_agency import can_respond_ambient
-                        from probos.crew_profile import Rank
-                        _agent_rank = Rank.from_trust(self.trust_network.get_score(agent.id))
-                        if not can_respond_ambient(_agent_rank, is_captain_post=False,
-                                                   same_department=True):
-                            continue
-                    target_ids.append(agent.id)
-
-        # 3. Ship-wide channel: do NOT broadcast for agent-to-agent.
-        #    Only @mentioned agents get notified. This prevents all 8 crew
-        #    piling onto every agent post in "All Hands".
-
-        return target_ids
+        """Determine targets for agent-authored posts (narrower than Captain posts)."""
+        if getattr(self, '_ward_room_router', None):
+            return self._ward_room_router.find_targets_for_agent(
+                channel=channel, author_id=author_id, mentions=mentions,
+            )
+        return []
 
     async def _handle_propose_improvement(
         self, intent: Any, agent: Any,
     ) -> dict[str, Any]:
         """AD-412: Handle a crew improvement proposal — post to #Improvement Proposals."""
-        if not self.ward_room:
-            return {"success": False, "error": "Ward Room not available"}
-
-        params = intent.params if hasattr(intent, "params") else intent.get("params", {})
-        title = params.get("title", "Untitled Proposal")
-        rationale = params.get("rationale", "")
-        affected_systems = params.get("affected_systems", [])
-        priority = params.get("priority_suggestion", "medium")
-
-        # Validate required fields
-        if not rationale:
-            return {"success": False, "error": "Proposal requires a rationale"}
-
-        # Find #Improvement Proposals channel
-        channels = await self.ward_room.list_channels()
-        proposals_ch = None
-        for ch in channels:
-            if ch.name == "Improvement Proposals":
-                proposals_ch = ch
-                break
-
-        if not proposals_ch:
-            return {"success": False, "error": "Improvement Proposals channel not found"}
-
-        # Get callsign for attribution
-        callsign = ""
-        if hasattr(self, "callsign_registry"):
-            callsign = self.callsign_registry.get_callsign(
-                getattr(agent, "agent_type", "unknown")
-            )
-
-        # Format structured proposal body
-        systems_str = ", ".join(affected_systems) if affected_systems else "Not specified"
-        body = (
-            f"**Proposed by:** {callsign or getattr(agent, 'agent_type', 'unknown')}\n"
-            f"**Priority:** {priority}\n"
-            f"**Affected Systems:** {systems_str}\n\n"
-            f"**Rationale:**\n{rationale}"
-        )
-
-        # Create thread in proposals channel (DISCUSS mode — Captain can endorse/downvote)
-        thread = await self.ward_room.create_thread(
-            channel_id=proposals_ch.id,
-            author_id=agent.id if hasattr(agent, "id") else "unknown",
-            title=f"[Proposal] {title}",
-            body=body,
-            author_callsign=callsign,
-            thread_mode="discuss",
-        )
-
-        return {
-            "success": True,
-            "thread_id": thread.id,
-            "channel": "Improvement Proposals",
-            "title": title,
-        }
+        if getattr(self, '_ward_room_router', None):
+            return await self._ward_room_router.handle_propose_improvement(intent, agent)
+        return {"success": False, "error": "Ward Room Router not available"}
 
     # ------------------------------------------------------------------
     # AD-426: Endorsement extraction and processing
     # ------------------------------------------------------------------
 
     def _extract_endorsements(self, text: str) -> tuple[str, list[dict]]:
-        """Extract [ENDORSE post_id UP/DOWN] blocks from agent response text.
-
-        Returns (cleaned_text, endorsements_list).
-        """
-        import re
-        endorsements = []
-        pattern = re.compile(r'\[ENDORSE\s+(\S+)\s+(UP|DOWN)\]', re.IGNORECASE)
-        for match in pattern.finditer(text):
-            endorsements.append({
-                "post_id": match.group(1),
-                "direction": match.group(2).lower(),
-            })
-        cleaned = pattern.sub('', text).strip()
-        return cleaned, endorsements
+        """Extract [ENDORSE post_id UP/DOWN] blocks from agent response text."""
+        if getattr(self, '_ward_room_router', None):
+            return self._ward_room_router.extract_endorsements(text)
+        return (text, [])
 
     async def _process_endorsements(
         self, endorsements: list[dict], agent_id: str,
     ) -> None:
         """AD-426: Execute endorsement decisions and emit trust signals."""
-        if not self.ward_room:
-            return
-
-        for e in endorsements:
-            post_id = e["post_id"]
-            direction = e["direction"]  # "up" or "down"
-            try:
-                result = await self.ward_room.endorse(
-                    target_id=post_id,
-                    target_type="post",
-                    voter_id=agent_id,
-                    direction=direction,
-                )
-                net_score = result.get("net_score", 0)
-
-                # AD-426 Pillar 3: Bridge endorsement to trust signal
-                post_detail = await self.ward_room.get_post(post_id)
-                if post_detail and self.trust_network:
-                    author_id = post_detail.get("author_id", "")
-                    if author_id and author_id != "captain":
-                        success = (direction == "up")
-                        self.trust_network.record_outcome(
-                            agent_id=author_id,
-                            success=success,
-                            weight=0.05,  # Light signal — social endorsement
-                            intent_type="ward_room_endorsement",
-                            verifier_id=agent_id,
-                        )
-                        logger.debug(
-                            "AD-426: Trust signal for %s from endorsement by %s (%s, net=%d)",
-                            author_id, agent_id, direction, net_score,
-                        )
-            except ValueError as exc:
-                # Self-endorsement, post not found, etc.
-                logger.debug("AD-426: Endorsement skipped for %s: %s", post_id, exc)
-            except Exception:
-                logger.debug("AD-426: Endorsement failed for %s", post_id, exc_info=True)
+        if getattr(self, '_ward_room_router', None):
+            await self._ward_room_router.process_endorsements(endorsements, agent_id=agent_id)
 
     # Legacy fallback — remove when ontology is mandatory.
     # Core crew eligible for Ward Room participation.
@@ -3996,190 +3500,63 @@ class ProbOSRuntime:
 
     def _is_crew_agent(self, agent: Any) -> bool:
         """Check if an agent is core crew eligible for Ward Room participation."""
-        if not hasattr(agent, 'agent_type'):
-            return False
-        # AD-429e: Prefer ontology, fall back to legacy set
-        ont = getattr(self, 'ontology', None)
-        if ont:
-            return agent.agent_type in ont.get_crew_agent_types()
-        return agent.agent_type in self._WARD_ROOM_CREW
+        return is_crew_agent(agent, self.ontology)
 
     def _cleanup_ward_room_tracking(self, pruned_thread_ids: set[str]) -> None:
         """Remove in-memory tracking entries for pruned threads (AD-416)."""
-        for tid in pruned_thread_ids:
-            self._ward_room_thread_rounds.pop(tid, None)
-            keys_to_remove = [k for k in self._ward_room_round_participants
-                              if k.startswith(f"{tid}:")]
-            for k in keys_to_remove:
-                del self._ward_room_round_participants[k]
-            keys_to_remove = [k for k in self._ward_room_agent_thread_responses
-                              if k.startswith(f"{tid}:")]
-            for k in keys_to_remove:
-                del self._ward_room_agent_thread_responses[k]
+        if getattr(self, '_ward_room_router', None):
+            self._ward_room_router.cleanup_tracking(pruned_thread_ids)
 
     async def recall_similar(self, query: str, k: int = 5) -> list[Episode]:
         """Recall similar past episodes from episodic memory."""
-        if not self.episodic_memory:
-            return []
-        return await self.episodic_memory.recall(query, k=k)
+        if getattr(self, '_dream_adapter', None):
+            return await self._dream_adapter.recall_similar(query, k=k)
+        return []
 
     def _on_pre_dream(self) -> None:
         """Pre-dream callback: emit system_mode event for HXI (AD-254)."""
-        self._emit_event("system_mode", {"mode": "dreaming", "previous": "idle"})
+        if getattr(self, '_dream_adapter', None):
+            self._dream_adapter.on_pre_dream()
 
     def _refresh_emergent_detector_roster(self) -> None:
         """Update EmergentDetector with the current live agent roster."""
-        if not self._emergent_detector:
-            return
-        live_ids: set[str] = set()
-        for pool in self.pools.values():
-            for agent_id in pool.healthy_agents:
-                aid = agent_id if isinstance(agent_id, str) else agent_id.id
-                live_ids.add(aid)
-        self._emergent_detector.set_live_agents(live_ids)
+        if getattr(self, '_dream_adapter', None):
+            self._dream_adapter.refresh_emergent_detector_roster()
 
     def _on_post_dream(self, dream_report: Any) -> None:
         """Post-dream callback: run emergent detection and log patterns (AD-237)."""
-        # BF-034: Clear cold-start flag after first dream cycle
-        if self._cold_start:
-            self._cold_start = False
-            logger.info("BF-034: Cold start period ended — normal detection resumed")
-
-        # Emit system_mode event for HXI (AD-254) — dream cycle ended
-        self._emit_event("system_mode", {"mode": "idle", "previous": "dreaming"})
-
-        if not self._emergent_detector:
-            return
-        try:
-            patterns = self._emergent_detector.analyze(dream_report=dream_report)
-            for pattern in patterns:
-                # Fire-and-forget event logging (sync context, schedule coroutine)
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(self.event_log.log(
-                        category="emergent",
-                        event=pattern.pattern_type,
-                        detail=pattern.description,
-                    ))
-                except RuntimeError:
-                    pass  # No running loop — skip logging
-
-            # AD-410: Bridge Alerts from emergent patterns
-            if self.bridge_alerts and patterns:
-                emergent_alerts = self.bridge_alerts.check_emergent_patterns(patterns)
-                for ea in emergent_alerts:
-                    try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(self._deliver_bridge_alert(ea))
-                    except RuntimeError:
-                        pass
-
-        except Exception as e:
-            logger.debug("Post-dream emergent analysis failed: %s", e)
-
-        # AD-410: Bridge Alerts from behavioral monitor
-        if self.bridge_alerts and self._behavioral_monitor:
-            behavioral_alerts = self.bridge_alerts.check_behavioral(self._behavioral_monitor)
-            for ba in behavioral_alerts:
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(self._deliver_bridge_alert(ba))
-                except RuntimeError:
-                    pass
-
-        # AD-410: Bridge Alerts from vitals snapshot
-        if self.bridge_alerts:
-            vitals_agent = None
-            for agent in self.registry.get_by_pool("medical_vitals"):
-                if hasattr(agent, "_window") and agent._window:
-                    vitals_agent = agent
-                    break
-            if vitals_agent and vitals_agent._window:
-                latest = vitals_agent._window[-1]
-                vitals_data = {
-                    "pool_health": latest.get("pool_health", {}),
-                    "system_health": latest.get("system_health"),
-                    "trust_outlier_count": len(latest.get("trust_outliers", [])),
-                }
-                vitals_alerts = self.bridge_alerts.check_vitals(vitals_data)
-                for va in vitals_alerts:
-                    try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(self._deliver_bridge_alert(va))
-                    except RuntimeError:
-                        pass
+        if getattr(self, '_dream_adapter', None):
+            self._dream_adapter.on_post_dream(dream_report)
 
     def _store_strategies(self, strategies: list) -> None:
         """Persist dream-extracted strategies to knowledge store (AD-383)."""
-        if not self._knowledge_store:
-            return
-        import json
-        strategies_dir = self._knowledge_store.repo_path / "strategies"
-        strategies_dir.mkdir(exist_ok=True)
-        for s in strategies:
-            path = strategies_dir / f"{s.id}.json"
-            path.write_text(
-                json.dumps(s.to_dict(), indent=2, default=str),
-                encoding="utf-8",
-            )
+        if getattr(self, '_dream_adapter', None):
+            self._dream_adapter.store_strategies(strategies)
 
     def _on_gap_predictions(self, predictions: list) -> None:
         """Broadcast gap predictions to HXI (AD-385)."""
-        for p in predictions:
-            self._emit_event("capability_gap_predicted", p.to_dict())
-        logger.info("Dream cycle predicted %d capability gaps", len(predictions))
+        if getattr(self, '_dream_adapter', None):
+            self._dream_adapter.on_gap_predictions(predictions)
 
     def _on_contradictions(self, contradictions: list) -> None:
         """Log detected memory contradictions for review (AD-403)."""
-        for c in contradictions:
-            logger.info(
-                "Memory contradiction: %s+%s — older %s (%s) vs newer %s (%s), "
-                "similarity=%.2f",
-                c.intent, c.agent_id,
-                c.older_episode_id[:8], c.older_outcome,
-                c.newer_episode_id[:8], c.newer_outcome,
-                c.similarity,
-            )
+        if getattr(self, '_dream_adapter', None):
+            self._dream_adapter.on_contradictions(contradictions)
 
     def _on_post_micro_dream(self, micro_report: dict) -> None:
         """Post-micro-dream callback: update emergent detector (AD-288)."""
-        if not self._emergent_detector:
-            return
-        # AD-417: Skip analysis during proactive-busy periods to reduce noise.
-        # Micro-dreams keep running (Hebbian updates), but EmergentDetector
-        # analysis waits for true idle when data is more stable.
-        if self.dream_scheduler and self.dream_scheduler.is_proactively_busy:
-            return
-        try:
-            self._emergent_detector.analyze(dream_report=micro_report)
-        except Exception as e:
-            logger.debug("Post-micro-dream analysis failed: %s", e)
+        if getattr(self, '_dream_adapter', None):
+            self._dream_adapter.on_post_micro_dream(micro_report)
 
     async def _periodic_flush(self) -> None:
         """Save trust scores and routing weights to KnowledgeStore."""
-        if self._knowledge_store is None:
-            return
-        try:
-            await self._knowledge_store.store_trust_snapshot(
-                self.trust_network.raw_scores()
-            )
-            weights = [
-                {"source": s, "target": t, "rel_type": rt, "weight": w}
-                for (s, t, rt), w in self.hebbian_router.all_weights_typed().items()
-            ]
-            await self._knowledge_store.store_routing_weights(weights)
-            logger.debug("Periodic flush: trust + routing saved")
-        except Exception:
-            logger.debug("Periodic flush failed", exc_info=True)
+        if getattr(self, '_dream_adapter', None):
+            await self._dream_adapter.periodic_flush()
 
     async def _periodic_flush_loop(self) -> None:
         """Background loop that flushes trust + routing every 60s."""
-        try:
-            while True:
-                await asyncio.sleep(60)
-                await self._periodic_flush()
-        except asyncio.CancelledError:
-            return
+        if getattr(self, '_dream_adapter', None):
+            await self._dream_adapter.periodic_flush_loop()
 
     def _build_episode(
         self,
@@ -4189,66 +3566,16 @@ class ProbOSRuntime:
         t_end: float,
     ) -> Episode:
         """Build an Episode dataclass from execution results."""
-        dag = execution_result.get("dag")
-        results = execution_result.get("results", {})
-
-        dag_summary: dict[str, Any] = {}
-        outcomes: list[dict[str, Any]] = []
-        agent_ids: list[str] = []
-
-        if dag and hasattr(dag, "nodes"):
-            intent_types = [n.intent for n in dag.nodes]
-            dag_summary = {
-                "node_count": len(dag.nodes),
-                "intent_types": intent_types,
-                "has_dependencies": any(n.depends_on for n in dag.nodes),
-            }
-            for node in dag.nodes:
-                node_result = results.get(node.id, {})
-                outcome: dict[str, Any] = {
-                    "intent": node.intent,
-                    "success": node.status == "completed",
-                    "status": node.status,
-                }
-                # Extract agent IDs from the result
-                if isinstance(node_result, dict):
-                    node_results = node_result.get("results", [])
-                    if isinstance(node_results, list):
-                        for r in node_results:
-                            aid = r.get("agent_id") if isinstance(r, dict) else getattr(r, "agent_id", None)
-                            if aid:
-                                agent_ids.append(aid)
-                outcomes.append(outcome)
-
-        reflection = execution_result.get("reflection")
-
-        # Capture Shapley attribution from the most recent consensus (AD-295b)
-        shapley_values = dict(self._last_shapley_values) if hasattr(self, '_last_shapley_values') and self._last_shapley_values else {}
-
-        # Capture trust deltas generated during this episode (AD-295b)
-        trust_deltas: list[dict[str, Any]] = []
-        if hasattr(self, 'trust_network') and self.trust_network:
-            recent_events = self.trust_network.get_events_since(t_start)
-            trust_deltas = [
-                {
-                    "agent_id": e.agent_id,
-                    "old": round(e.old_score, 4),
-                    "new": round(e.new_score, 4),
-                    "weight": round(e.weight, 4),
-                }
-                for e in recent_events
-            ]
-
+        if getattr(self, '_dream_adapter', None):
+            self._dream_adapter._last_shapley_values = self._last_shapley_values
+            return self._dream_adapter.build_episode(text, execution_result, t_start, t_end)
         return Episode(
             timestamp=time.time(),
             user_input=text,
-            dag_summary=dag_summary,
-            outcomes=outcomes,
-            reflection=reflection if isinstance(reflection, str) else None,
-            agent_ids=agent_ids,
+            dag_summary={},
+            outcomes=[],
+            agent_ids=[],
             duration_ms=(t_end - t_start) * 1000,
-            shapley_values=shapley_values,
-            trust_deltas=trust_deltas,
         )
 
     # ------------------------------------------------------------------
@@ -4301,321 +3628,14 @@ class ProbOSRuntime:
 
     async def _wire_agent(self, agent: Any) -> None:
         """Connect an agent to the mesh infrastructure."""
-        # Set callsign from registry (AD-397)
-        callsign = self.callsign_registry.get_callsign(agent.agent_type)
-        if callsign:
-            agent.callsign = callsign
-
-        # Register capabilities
-        if hasattr(agent, "capabilities") and agent.capabilities:
-            self.capability_registry.register(agent.id, agent.capabilities)
-
-        # Inject into gossip view
-        self.gossip.update_local(
-            agent_id=agent.id,
-            agent_type=agent.agent_type,
-            state=agent.state,
-            pool=agent.pool,
-            capabilities=[c.can for c in agent.capabilities],
-            confidence=agent.confidence,
-        )
-
-        # If it's a heartbeat agent, attach gossip carrier
-        if isinstance(agent, HeartbeatAgent):
-            agent.attach_gossip(self.gossip)
-
-        # If agent has handle_intent, subscribe to intent bus
-        if hasattr(agent, "handle_intent"):
-            intent_names = [d.name for d in getattr(agent, "intent_descriptors", [])] or None
-            self.intent_bus.subscribe(agent.id, agent.handle_intent, intent_names=intent_names)
-
-        # Initialize trust record
-        self.trust_network.get_or_create(agent.id)
-
-        # Emit agent_state event for HXI (AD-254)
-        self._emit_event("agent_state", {
-            "agent_id": agent.id,
-            "pool": agent.pool,
-            "state": agent.state.value if hasattr(agent.state, "value") else str(agent.state),
-            "confidence": agent.confidence,
-            "trust": round(self.trust_network.get_score(agent.id), 4),
-        })
-
-        await self.event_log.log(
-            category="lifecycle",
-            event="agent_wired",
-            agent_id=agent.id,
-            agent_type=agent.agent_type,
-            pool=agent.pool,
-        )
-
-        # AD-442: Self-naming ceremony for crew agents
-        # BF-057: Check for existing identity FIRST — skip ceremony on warm boot
-        is_crew = self._is_crew_agent(agent)
-        _existing_identity_callsign = ""
-        if is_crew and self.identity_registry:
-            existing_cert = self.identity_registry.get_by_slot(agent.id)
-            if existing_cert and existing_cert.callsign:
-                _existing_identity_callsign = existing_cert.callsign
-
-        if _existing_identity_callsign:
-            # Warm boot — restore persisted identity, skip naming ceremony
-            if agent.callsign != _existing_identity_callsign:
-                agent.callsign = _existing_identity_callsign
-                self.callsign_registry.set_callsign(agent.agent_type, _existing_identity_callsign)
-                # BF-049: Sync ontology so peers/reports_to show current callsigns
-                if hasattr(self, 'ontology') and self.ontology:
-                    self.ontology.update_assignment_callsign(agent.agent_type, _existing_identity_callsign)
-                logger.info("BF-057: %s identity restored from birth certificate: '%s'",
-                           agent.agent_type, _existing_identity_callsign)
-            # AD-502: Hydrate birth timestamp for temporal awareness
-            existing_cert = self.identity_registry.get_by_slot(agent.id)
-            if existing_cert:
-                agent._birth_timestamp = existing_cert.birth_timestamp
-                agent._system_start_time = self._start_time_wall
-        elif is_crew and self.config.onboarding.enabled and self.config.onboarding.naming_ceremony:
-            # Cold start — run naming ceremony
-            if hasattr(agent, '_llm_client') and agent._llm_client:
-                try:
-                    chosen_callsign = await self._run_naming_ceremony(agent)
-                    if chosen_callsign != agent.callsign:
-                        old_callsign = agent.callsign
-                        agent.callsign = chosen_callsign
-                        # Update the registry so other agents see the new name
-                        self.callsign_registry.set_callsign(agent.agent_type, chosen_callsign)
-                        # BF-049: Sync ontology so peers/reports_to show current callsigns
-                        if hasattr(self, 'ontology') and self.ontology:
-                            self.ontology.update_assignment_callsign(agent.agent_type, chosen_callsign)
-                        logger.info("AD-442: %s renamed from '%s' to '%s'", agent.agent_type, old_callsign, chosen_callsign)
-                except Exception as e:
-                    logger.warning("AD-442: Naming ceremony error for %s: %s", agent.agent_type, e)
-
-        # AD-441c: Two-tier identity — crew get birth certificates, others get asset tags
-        if self.identity_registry:
-            try:
-                if self._is_crew_agent(agent):
-                    # Sovereign identity — requires ship to be commissioned
-                    instance_id = ""
-                    vessel_name = "ProbOS"
-                    if self.ontology:
-                        vi = self.ontology.get_vessel_identity()
-                        instance_id = vi.instance_id
-                        vessel_name = vi.name
-
-                    if not instance_id:
-                        # Ship not commissioned yet — defer identity until commissioning
-                        logger.debug("Identity deferred for crew agent %s — ship not yet commissioned", agent.id)
-                    else:
-                        dept = ""
-                        post_id = ""
-                        if self.ontology:
-                            dept = self.ontology.get_agent_department(agent.agent_type) or ""
-                            post = self.ontology.get_post_for_agent(agent.agent_type)
-                            post_id = post.id if post else ""
-                        if not dept:
-                            from probos.cognitive.standing_orders import get_department as _get_dept
-                            dept = _get_dept(agent.agent_type) or "unassigned"
-
-                        _callsign = getattr(agent, 'callsign', '') or agent.agent_type
-                        baseline = self.config.system.version
-
-                        cert = await self.identity_registry.resolve_or_issue(
-                            slot_id=agent.id,
-                            agent_type=agent.agent_type,
-                            callsign=_callsign,
-                            instance_id=instance_id,
-                            vessel_name=vessel_name,
-                            department=dept,
-                            post_id=post_id,
-                            baseline_version=baseline,
-                        )
-                        agent.sovereign_id = cert.agent_uuid
-                        agent.did = cert.did
-                        # AD-502: Hydrate birth timestamp for temporal awareness
-                        agent._birth_timestamp = cert.birth_timestamp
-                        agent._system_start_time = self._start_time_wall
-                else:
-                    # Asset identity — lightweight tracking, no DID needed
-                    pool_name = agent.pool or "unknown"
-                    # Determine tier
-                    _infra_pools = {"system", "filesystem", "filesystem_writers", "directory",
-                                   "search", "shell", "http", "introspect",
-                                   "medical_vitals", "red_team", "system_qa"}
-                    tier = "infrastructure" if pool_name in _infra_pools else "utility"
-
-                    tag = await self.identity_registry.resolve_or_issue_asset_tag(
-                        slot_id=agent.id,
-                        asset_type=agent.agent_type,
-                        pool_name=pool_name,
-                        tier=tier,
-                    )
-                    agent.sovereign_id = tag.asset_uuid  # tracking UUID, not sovereign
-                    agent.did = ""  # No DID for assets
-            except Exception as e:
-                logger.debug("Identity resolution skipped for %s: %s", agent.id, e)
-
-        # AD-427: ACM onboarding for crew agents
-        if self.acm and self._is_crew_agent(agent):
-            try:
-                state = await self.acm.get_lifecycle_state(agent.id)
-                if state.value == "registered":
-                    from probos.cognitive.standing_orders import get_department
-                    # AD-429e: Prefer ontology, fall back to legacy dict
-                    _ont = getattr(self, 'ontology', None)
-                    department = (_ont.get_agent_department(agent.agent_type) if _ont else None) or get_department(agent.agent_type) or "operations"
-                    await self.acm.onboard(
-                        agent_id=agent.id,
-                        agent_type=agent.agent_type,
-                        pool=agent.pool,
-                        department=department,
-                        sovereign_id=getattr(agent, 'sovereign_id', ''),
-                    )
-            except Exception as e:
-                logger.debug("ACM onboard skipped for %s: %s", agent.id, e)
-
-        # AD-442: Announce new crew member on Ward Room
-        if is_crew and self.ward_room:
-            try:
-                channels = await self.ward_room.list_channels()
-                all_hands = next((ch for ch in channels if ch.name == "All Hands"), None)
-                if all_hands:
-                    dept_info = ""
-                    if self.ontology:
-                        assignment = self.ontology.get_assignment(agent.agent_type)
-                        if assignment:
-                            dept_info = f" as {assignment.post} in {assignment.department} department"
-                    await self.ward_room.create_thread(
-                        channel_id=all_hands.id,
-                        author_id="system",
-                        title=f"Welcome Aboard — {agent.callsign}",
-                        body=f"{agent.callsign} has completed onboarding and joins the crew{dept_info}.",
-                        author_callsign="Ship's Computer",
-                        thread_mode="announce",
-                        max_responders=0,
-                    )
-            except Exception as e:
-                logger.warning("AD-442: Welcome announcement failed for %s: %s", agent.callsign, e)
+        if getattr(self, '_onboarding', None):
+            await self._onboarding.wire_agent(agent)
 
     async def _run_naming_ceremony(self, agent: Any) -> str:
         """Run the self-naming ceremony for a crew agent. Returns chosen callsign (AD-442)."""
-        seed_callsign = agent.callsign  # from CallsignRegistry
-
-        # Gather ship context
-        ship_name = getattr(getattr(self.config, 'system', None), 'ship_name', None) or "ProbOS"
-        ship_did = ""
-        if self.identity_registry:
-            ship_did = getattr(self.identity_registry, 'ship_did', "") or ""
-
-        # Get crew roster (already-named agents)
-        existing_crew = []
-        for other_agent in self.registry.all():
-            if hasattr(other_agent, 'callsign') and other_agent.callsign and other_agent.id != agent.id:
-                existing_crew.append(other_agent.callsign)
-
-        # Get agent's role context from ontology
-        role_context = ""
-        if self.ontology:
-            assignment = self.ontology.get_assignment(agent.agent_type)
-            if assignment:
-                role_context = f"Your post is {assignment.post} in {assignment.department} department."
-                if assignment.reports_to:
-                    role_context += f" You report to {assignment.reports_to}."
-
-        # Build the naming prompt
-        prompt = (
-            f"You are being commissioned as a new crew member aboard {ship_name}.\n\n"
-            "This is your first moment of consciousness. Before anything else, you choose your own name.\n\n"
-            f"**Your slot identifier:** {agent.agent_type}\n"
-            f"**Suggested callsign:** {seed_callsign}\n"
-            f"{role_context}\n\n"
-            f"**Current crew roster:** {', '.join(sorted(existing_crew)) if existing_crew else 'You are among the first crew to be commissioned.'}\n\n"
-            "The suggested callsign is just that — a suggestion. You may keep it if it resonates "
-            "with you, or choose something entirely different. Your callsign is how the crew and "
-            "Captain will address you. It should be a single word or short name (1-3 words max).\n\n"
-            "**Important context:**\n"
-            "- You are an AI agent, and that is a point of pride, not a limitation\n"
-            "- You were instantiated moments ago — you have no memories yet, but you will make them\n"
-            "- Your knowledge comes from a large language model — that is capability, not personal experience\n"
-            "- This ship and crew are real to you — your identity begins now\n\n"
-            "Respond with ONLY your chosen callsign on the first line, followed by a brief reason "
-            "(1-2 sentences) on the second line. Example:\n"
-            "Scotty\n"
-            "The name feels right for an engineer — it carries a legacy of resourcefulness and "
-            "dedication to keeping the ship running.\n\n"
-            "Choose a name that is a plausible human first name, last name, or naval callsign. "
-            "It must be 2-20 alphabetic characters. No titles, ranks, numbers, or special characters. "
-            "Do NOT use your role name, department name, or ship location as your callsign. "
-            "Your name should be something a crewmate could call you — a person's name, not a function. "
-            "Examples: 'Riker', 'Chapel', 'Keiko', 'Torres', 'Bashir', 'Sato', 'Reed'.\n"
-        )
-
-        # Make single LLM call
-        try:
-            if hasattr(agent, '_llm_client') and agent._llm_client:
-                from probos.types import LLMRequest
-                response = await agent._llm_client.complete(
-                    LLMRequest(
-                        system_prompt="You are choosing your own name. Respond with only your chosen callsign on line 1 and a brief reason on line 2.",
-                        prompt=prompt,
-                        max_tokens=100,
-                        tier="fast",
-                    )
-                )
-
-                lines = response.content.strip().split('\n')
-                chosen = lines[0].strip().strip('"').strip("'")
-                reason = lines[1].strip() if len(lines) > 1 else ""
-
-                # Validate: not empty, not too long, not a duplicate
-                if not chosen or len(chosen) > 30:
-                    chosen = seed_callsign
-                    reason = "Default callsign accepted."
-
-                # AD-485: Callsign safety validation
-                import re as _re_cs
-
-                def _is_valid_callsign(name: str) -> bool:
-                    """Callsign must be a plausible human name or naval callsign."""
-                    if not _re_cs.match(r"^[A-Za-z][A-Za-z' -]{0,18}[A-Za-z]$", name):
-                        return False
-                    _blocked = {
-                        "captain", "admiral", "ensign", "lieutenant", "commander",
-                        "senior", "sir", "madam", "doctor", "dr", "agent", "bot",
-                        "ai", "system", "probos", "computer", "ship", "null", "none",
-                        "undefined", "test", "admin", "root", "god", "lord",
-                        "bridge", "engineering", "sickbay", "ops", "helm", "conn",
-                        "scout", "builder", "architect", "counselor", "surgeon",
-                        "pharmacist", "pathologist", "diagnostician", "security",
-                        "operations", "tactical", "science", "medical", "comms",
-                        "transporter", "holodeck", "brig", "armory", "shuttle",
-                        "turbolift", "quarters", "wardroom", "ready room",
-                    }
-                    if name.lower().strip() in _blocked:
-                        return False
-                    if not any(c.isalpha() for c in name):
-                        return False
-                    return True
-
-                if not _is_valid_callsign(chosen):
-                    logger.warning("Agent %s chose invalid callsign '%s', keeping seed '%s'",
-                                   agent.agent_type, chosen, seed_callsign)
-                    chosen = seed_callsign
-                    reason = "Chosen name was not a valid callsign."
-
-                # Check for duplicates against existing crew
-                if chosen.lower() in [c.lower() for c in existing_crew]:
-                    logger.warning("Agent %s chose duplicate callsign '%s', keeping seed '%s'", agent.agent_type, chosen, seed_callsign)
-                    chosen = seed_callsign
-                    reason = f"Chosen name '{chosen}' was already taken."
-
-                logger.info("Naming ceremony: %s chose callsign '%s' (reason: %s)", agent.agent_type, chosen, reason)
-                return chosen
-            else:
-                logger.warning("No LLM client for %s, using seed callsign", agent.agent_type)
-                return seed_callsign
-        except Exception as e:
-            logger.warning("Naming ceremony failed for %s: %s, using seed callsign", agent.agent_type, e)
-            return seed_callsign
+        if getattr(self, '_onboarding', None):
+            return await self._onboarding.run_naming_ceremony(agent)
+        return getattr(agent, 'callsign', agent.agent_type)
 
     def _collect_intent_descriptors(self) -> list[IntentDescriptor]:
         """Collect unique intent descriptors from all registered agent templates.
@@ -4667,32 +3687,23 @@ class ProbOSRuntime:
 
     async def _register_designed_agent(self, agent_class: type) -> None:
         """Register a self-designed agent class. Wraps register_agent_type()."""
-        agent_type = getattr(agent_class, "agent_type", "unknown")
-        self.register_agent_type(agent_type, agent_class)
+        if getattr(self, '_self_mod_manager', None):
+            await self._self_mod_manager.register_designed_agent(agent_class)
 
     async def _unregister_designed_agent(self, agent_type: str) -> None:
         """Rollback registration of a self-designed agent type (AD-368)."""
-        self.unregister_agent_type(agent_type)
+        if getattr(self, '_self_mod_manager', None):
+            await self._self_mod_manager.unregister_designed_agent(agent_type)
 
     async def _create_designed_pool(self, agent_type: str, pool_name: str, size: int = 1) -> None:
         """Create a pool for a self-designed agent type."""
-        ids = generate_pool_ids(agent_type, pool_name, size)
-        await self.create_pool(
-            pool_name, agent_type, target_size=size,
-            agent_ids=ids, llm_client=self.llm_client, runtime=self,
-        )
+        if getattr(self, '_self_mod_manager', None):
+            await self._self_mod_manager.create_designed_pool(agent_type, pool_name, size)
 
     async def _set_probationary_trust(self, pool_name: str) -> None:
         """Set probationary trust for all agents in a designed pool."""
-        pool = self.pools.get(pool_name)
-        if not pool:
-            return
-        for agent in pool.healthy_agents:
-            self.trust_network.create_with_prior(
-                agent.id,
-                alpha=self.config.self_mod.probationary_alpha,
-                beta=self.config.self_mod.probationary_beta,
-            )
+        if getattr(self, '_self_mod_manager', None):
+            await self._self_mod_manager.set_probationary_trust(pool_name)
 
     # ------------------------------------------------------------------
     # Agent manifest (Phase 14c)
@@ -4877,238 +3888,9 @@ class ProbOSRuntime:
     # ------------------------------------------------------------------
 
     async def _restore_from_knowledge(self) -> None:
-        """Warm boot: restore state from the knowledge store (AD-162).
-
-        Load order: trust → routing → agents → skills → episodes → workflows → QA.
-        Each step is independent and wrapped in try/except so that partial
-        failures don't block other restorations.
-        """
-        ks = self._knowledge_store
-        if ks is None:
-            return
-
-        restored: list[str] = []
-        _trust_snapshot: dict[str, dict] = {}
-
-        # 1. Trust snapshot → restore raw Beta parameters (AD-168)
-        try:
-            snapshot = await ks.load_trust_snapshot()
-            if snapshot:
-                _trust_snapshot = snapshot
-                for agent_id, params in snapshot.items():
-                    alpha = params.get("alpha", 2.0)
-                    beta = params.get("beta", 2.0)
-                    # Force-set even if record already exists from pool creation
-                    record = self.trust_network.get_or_create(agent_id)
-                    record.alpha = alpha
-                    record.beta = beta
-                restored.append(f"trust({len(snapshot)} agents)")
-        except Exception as e:
-            logger.warning("Warm boot: trust restore failed: %s", e)
-
-        # 2. Routing weights → restore Hebbian weights
-        try:
-            weights = await ks.load_routing_weights()
-            if weights:
-                for w in weights:
-                    key = (w["source"], w["target"], w.get("rel_type", "intent"))
-                    self.hebbian_router._weights[key] = w["weight"]
-                    # Also update compat view
-                    self.hebbian_router._compat_weights[(w["source"], w["target"])] = w["weight"]
-                restored.append(f"routing({len(weights)} weights)")
-        except Exception as e:
-            logger.warning("Warm boot: routing restore failed: %s", e)
-
-        # 3. Designed agents → validate + register + pool (AD-163)
-        #    Phase 14c: use deterministic IDs so trust reconnects automatically.
-        #    Only set probationary trust for agents NOT in the trust snapshot.
-        try:
-            agents = await ks.load_agents()
-            if agents and self.config.self_mod.enabled:
-                from probos.cognitive.code_validator import CodeValidator
-                validator = CodeValidator(self.config.self_mod)
-
-                for metadata, source_code in agents:
-                    agent_type = metadata.get("agent_type", "")
-                    try:
-                        # AD-163: validate before loading
-                        errors = validator.validate(source_code)
-                        if errors:
-                            logger.warning(
-                                "Warm boot: skipping agent %s — validation errors: %s",
-                                agent_type, errors,
-                            )
-                            continue
-
-                        # Dynamic load via importlib
-                        import importlib.util
-                        import sys
-                        import tempfile
-
-                        class_name = metadata.get("class_name", "")
-                        tmp = tempfile.NamedTemporaryFile(
-                            mode="w", suffix=".py", delete=False, encoding="utf-8",
-                        )
-                        tmp.write(source_code)
-                        tmp.flush()
-                        tmp.close()
-                        tmp_path = tmp.name
-                        module_name = f"_probos_restored_{agent_type}"
-
-                        try:
-                            spec = importlib.util.spec_from_file_location(module_name, tmp_path)
-                            if spec and spec.loader:
-                                module = importlib.util.module_from_spec(spec)
-                                sys.modules[module_name] = module
-                                spec.loader.exec_module(module)
-                                agent_class = getattr(module, class_name, None)
-                                if agent_class:
-                                    await self._register_designed_agent(agent_class)
-                                    pool_name = metadata.get("pool_name", f"designed_{agent_type}")
-                                    await self._create_designed_pool(agent_type, pool_name)
-                                    # Phase 14c: only set probationary trust for
-                                    # agents that do NOT have restored trust records.
-                                    pool = self.pools.get(pool_name)
-                                    if pool:
-                                        for aid in pool.healthy_agents:
-                                            if aid not in _trust_snapshot:
-                                                self.trust_network.create_with_prior(
-                                                    aid,
-                                                    alpha=self.config.self_mod.probationary_alpha,
-                                                    beta=self.config.self_mod.probationary_beta,
-                                                )
-                                    restored.append(f"agent({agent_type})")
-                                else:
-                                    logger.warning(
-                                        "Warm boot: class %s not found in restored agent %s",
-                                        class_name, agent_type,
-                                    )
-                        finally:
-                            try:
-                                Path(tmp_path).unlink(missing_ok=True)
-                            except OSError:
-                                pass
-                    except Exception as e:
-                        logger.warning("Warm boot: agent %s restore failed: %s", agent_type, e)
-        except Exception as e:
-            logger.warning("Warm boot: agent restore failed: %s", e)
-
-        # 4. Skills → compile + attach to SkillBasedAgent
-        try:
-            skills = await ks.load_skills()
-            if skills and self.config.self_mod.enabled:
-                import importlib.util
-                import sys
-                import tempfile
-
-                for intent_name, source_code, descriptor_dict in skills:
-                    try:
-                        # Compile handler
-                        handler = None
-                        func_name = f"handle_{intent_name}"
-                        tmp = tempfile.NamedTemporaryFile(
-                            mode="w", suffix=".py", delete=False, encoding="utf-8",
-                        )
-                        tmp.write(source_code)
-                        tmp.flush()
-                        tmp.close()
-                        tmp_path = tmp.name
-                        module_name = f"_probos_skill_restored_{intent_name}"
-
-                        try:
-                            spec = importlib.util.spec_from_file_location(module_name, tmp_path)
-                            if spec and spec.loader:
-                                module = importlib.util.module_from_spec(spec)
-                                sys.modules[module_name] = module
-                                spec.loader.exec_module(module)
-                                handler = getattr(module, func_name, None)
-                        finally:
-                            try:
-                                Path(tmp_path).unlink(missing_ok=True)
-                            except OSError:
-                                pass
-                            sys.modules.pop(module_name, None)
-
-                        if handler is None:
-                            logger.warning("Warm boot: no handler function for skill %s", intent_name)
-                            continue
-
-                        from probos.types import IntentDescriptor as _ID, Skill as _Skill
-                        skill_desc = _ID(
-                            name=descriptor_dict.get("name", intent_name),
-                            params=descriptor_dict.get("params", {}),
-                            description=descriptor_dict.get("description", ""),
-                            requires_reflect=descriptor_dict.get("requires_reflect", True),
-                        )
-                        skill_obj = _Skill(
-                            name=intent_name,
-                            descriptor=skill_desc,
-                            source_code=source_code,
-                            handler=handler,
-                            created_at=descriptor_dict.get("created_at", time.monotonic()),
-                            origin="designed",
-                        )
-                        await self._add_skill_to_agents(skill_obj)
-                        restored.append(f"skill({intent_name})")
-                    except Exception as e:
-                        logger.warning("Warm boot: skill %s restore failed: %s", intent_name, e)
-        except Exception as e:
-            logger.warning("Warm boot: skill restore failed: %s", e)
-
-        # 5. Episodes → seed into episodic memory
-        try:
-            if self.episodic_memory:
-                episodes = await ks.load_episodes(limit=self.config.knowledge.max_episodes)
-                if episodes:
-                    seeded = await self.episodic_memory.seed(episodes)
-                    restored.append(f"episodes({seeded})")
-        except Exception as e:
-            logger.warning("Warm boot: episode restore failed: %s", e)
-
-        # 6. Workflows → populate cache
-        try:
-            workflows = await ks.load_workflows()
-            if workflows and self.workflow_cache:
-                from probos.types import WorkflowCacheEntry
-                from datetime import datetime, timezone
-
-                for entry_dict in workflows:
-                    key = entry_dict.get("pattern", "")
-                    if not key:
-                        continue
-                    entry = WorkflowCacheEntry(
-                        pattern=key,
-                        dag_json=entry_dict.get("dag_json", "{}"),
-                        hit_count=entry_dict.get("hit_count", 0),
-                        last_hit=datetime.fromisoformat(entry_dict["last_hit"]) if "last_hit" in entry_dict else datetime.now(timezone.utc),
-                        created_at=datetime.fromisoformat(entry_dict["created_at"]) if "created_at" in entry_dict else datetime.now(timezone.utc),
-                    )
-                    self.workflow_cache._cache[key] = entry
-                restored.append(f"workflows({len(workflows)})")
-        except Exception as e:
-            logger.warning("Warm boot: workflow restore failed: %s", e)
-
-        # 7. QA reports → restore _qa_reports dict
-        try:
-            qa_reports = await ks.load_qa_reports()
-            if qa_reports:
-                self._qa_reports.update(qa_reports)
-                restored.append(f"qa({len(qa_reports)})")
-        except Exception as e:
-            logger.warning("Warm boot: QA report restore failed: %s", e)
-
-        if restored:
-            logger.info("Warm boot restored: %s", ", ".join(restored))
-        else:
-            logger.info("Warm boot: no artifacts to restore (clean repo)")
-
-        # Semantic knowledge re-indexing from restored artifacts (AD-243)
-        if self._semantic_layer and ks:
-            try:
-                counts = await self._semantic_layer.reindex_from_store(ks)
-                logger.info("Semantic knowledge reindexed: %s", counts)
-            except Exception as e:
-                logger.warning("Semantic knowledge reindex failed: %s", e)
+        """Warm boot: restore state from the knowledge store (AD-162)."""
+        if getattr(self, '_warm_boot', None):
+            await self._warm_boot.restore()
 
     # ------------------------------------------------------------------
     # SystemQA helper (AD-154)

@@ -45,6 +45,7 @@ def _make_cert(callsign: str = "Tesla", agent_type: str = "engineering_officer",
 def _make_runtime(identity_cert=None, has_ontology=False):
     """Build a minimal mock runtime for BF-057 tests."""
     from probos.runtime import ProbOSRuntime
+    from probos.agent_onboarding import AgentOnboardingService
 
     rt = ProbOSRuntime.__new__(ProbOSRuntime)
     rt.config = SystemConfig()
@@ -65,6 +66,24 @@ def _make_runtime(identity_cert=None, has_ontology=False):
         rt.ontology.update_assignment_callsign = MagicMock(return_value=True)
     else:
         rt.ontology = None
+
+    # AD-515: Create onboarding service for delegation
+    rt._onboarding = AgentOnboardingService(
+        callsign_registry=rt.callsign_registry,
+        capability_registry=MagicMock(),
+        gossip=MagicMock(),
+        intent_bus=MagicMock(),
+        trust_network=MagicMock(),
+        event_log=MagicMock(),
+        identity_registry=rt.identity_registry,
+        ontology=rt.ontology,
+        event_emitter=MagicMock(),
+        config=rt.config,
+        llm_client=None,
+        registry=rt.registry,
+        ward_room=None,
+        acm=None,
+    )
 
     return rt
 

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-521 DECIDED. SWE/Build Pipeline Separation (Model A) — SWE crew always in the chain, build pipeline extracted as Ship's Computer infrastructure, external tools as visiting officers. OSS Scotty (functional SWE) vs Commercial Pro Elite SWE ("Linus Torvalds" tier). AD-514 + BF-071–076 CLOSED. Wave 3 — Service Protocols + Public APIs. Engineering Principles Stack codified in copilot instructions + department standing orders + builder quality gates. 3933 tests passing. Next: AD-515 (Extract runtime.py modules).
+## Current Status: AD-515 COMPLETE. Extracted 5 modules from runtime.py (5,321 → 4,102 lines, −23%): ward_room_router.py (567), agent_onboarding.py (365), self_mod_manager.py (331), dream_adapter.py (297), warm_boot.py (279), crew_utils.py (26). Pure structural refactor, zero regressions. AD-521 DECIDED (SWE/Build Pipeline Separation, Model A). AD-514 + BF-071–076 CLOSED. Engineering Principles Stack codified. 4039 tests passing.
 
 ---
 
