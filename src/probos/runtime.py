@@ -460,21 +460,26 @@ class ProbOSRuntime:
     def _populate_watch_roster(self) -> None:
         """Populate watch roster from ontology assignments.
 
-        Default: all crew on ALPHA watch (full ops). Future: configurable
-        watch sections per department from organization.yaml.
+        Each assignment in organization.yaml specifies which watches
+        the agent stands (e.g., watches: [alpha, beta, gamma]).
+        Defaults to [alpha] if omitted.
         """
         if not self.ontology or not self.watch_manager:
             return
         from probos.watch_rotation import WatchType
+        _WATCH_MAP = {"alpha": WatchType.ALPHA, "beta": WatchType.BETA, "gamma": WatchType.GAMMA}
         crew_types = self.ontology.get_crew_agent_types()
         for agent_type in crew_types:
             assignment = self.ontology.get_assignment_for_agent(agent_type)
             if assignment:
                 for agent in self.registry.all():
                     if agent.agent_type == agent_type:
-                        self.watch_manager.assign_to_watch(
-                            agent.id, WatchType.ALPHA,
-                        )
+                        for watch_name in assignment.watches:
+                            watch = _WATCH_MAP.get(watch_name)
+                            if watch:
+                                self.watch_manager.assign_to_watch(
+                                    agent.id, watch,
+                                )
 
     def is_conn_qualified(self, agent_id: str) -> bool:
         """Check if an agent is qualified to hold the conn.

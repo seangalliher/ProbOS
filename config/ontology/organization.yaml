@@ -118,37 +118,50 @@ posts:
     tier: crew
 
 # Agent-to-post assignments (which agent_type fills which post)
+# watches: which watch rotations the agent stands (alpha/beta/gamma).
+#   Omit to default to [alpha]. Essential roles stand all watches.
 assignments:
   - agent_type: architect
     post_id: first_officer
     callsign: "Number One"
+    watches: [alpha, beta]
   - agent_type: counselor
     post_id: counselor
     callsign: "Troi"
+    watches: [alpha, beta]
   - agent_type: engineering_officer
     post_id: chief_engineer
     callsign: "LaForge"
+    watches: [alpha, beta, gamma]
   - agent_type: builder
     post_id: builder_officer
     callsign: "Scotty"
+    watches: [alpha]
   - agent_type: scout
     post_id: scout_officer
     callsign: "Wesley"
+    watches: [alpha, gamma]
   - agent_type: diagnostician
     post_id: chief_medical
     callsign: "Bones"
+    watches: [alpha, beta]
   - agent_type: surgeon
     post_id: surgeon_officer
     callsign: "Pulaski"
+    watches: [alpha, gamma]
   - agent_type: pharmacist
     post_id: pharmacist_officer
     callsign: "Ogawa"
+    watches: [beta, gamma]
   - agent_type: pathologist
     post_id: pathologist_officer
     callsign: "Selar"
+    watches: [beta, gamma]
   - agent_type: security_officer
     post_id: chief_security
     callsign: "Worf"
+    watches: [alpha, beta, gamma]
   - agent_type: operations_officer
     post_id: chief_operations
     callsign: "O'Brien"
+    watches: [alpha, beta, gamma]

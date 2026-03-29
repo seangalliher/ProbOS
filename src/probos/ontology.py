@@ -45,6 +45,7 @@ class Assignment:
     agent_type: str
     post_id: str
     callsign: str
+    watches: list[str] = field(default_factory=lambda: ["alpha"])
     agent_id: str | None = None  # Filled at runtime when agent wires
 
 
@@ -423,6 +424,7 @@ class VesselOntologyService:
                 agent_type=assign_data["agent_type"],
                 post_id=assign_data["post_id"],
                 callsign=assign_data["callsign"],
+                watches=assign_data.get("watches", ["alpha"]),
             )
             self._assignments[assignment.agent_type] = assignment
 
