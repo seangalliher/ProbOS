@@ -9,6 +9,7 @@ function DmActivityLog() {
   const dmChannels = useStore(s => s.wardRoomDmChannels);
   const refresh = useStore(s => s.refreshWardRoomDmChannels);
   const selectChannel = useStore(s => s.selectWardRoomChannel);
+  const setView = useStore(s => s.setWardRoomView);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
@@ -123,7 +124,7 @@ function DmActivityLog() {
             {isExpanded && (
               <div style={{ marginTop: 6 }}>
                 <span
-                  onClick={e => { e.stopPropagation(); selectChannel(ch.id); }}
+                  onClick={e => { e.stopPropagation(); selectChannel(ch.id); setView('channels'); }}
                   style={{
                     fontSize: 10, color: '#f0b060', cursor: 'pointer',
                     textDecoration: 'underline',
