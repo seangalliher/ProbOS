@@ -4,6 +4,7 @@
 **Date:** 2026-03-28
 **Status:** Active Research
 **Related ADs:** AD-507 through AD-512, AD-477 (Qualification Programs), AD-486 (Holodeck Birth Chamber)
+**Publication Target:** AAMAS 2026 (26th International Conference on Autonomous Agents and Multiagent Systems). CFP expected ~summer 2026, submission deadline ~October 2026. 8-page limit, double-blind. Recommended angle: focus on temporal self-regulation + empirical Ward Room observations as primary contribution, with the broader crew development framework as context. Will need quantitative metrics (perseveration rates, message counts, convergence times pre/post AD-502) and positioning against existing multi-agent frameworks (CrewAI, AutoGen, MetaGPT, JADE, Jason).
 
 ## Triggering Observation
 
@@ -255,6 +256,120 @@ This protects agents from:
 7. **Team Over Individual** — The ship succeeds through collaboration, not individual excellence.
 8. **Growth Mindset** — Every agent can develop. Frame limitations as "not yet," not "cannot."
 
+## Empirical Observations (2026-03-28)
+
+The following observations were captured from a live ProbOS instance running for ~17 hours post-AD-502 deployment **without a reset**. This is significant: the agents were instantiated *before* temporal context injection was available, then received it mid-session. The data reflects both the improvements from AD-502 and the remaining pathologies that motivate the Crew Development Framework.
+
+### Observation Context
+
+- **Instance uptime:** ~17 hours since last reset
+- **AD-502 deployed:** Mid-session (agents not restarted)
+- **Trigger event:** System restart triggered clean agent re-initialization, generating lifecycle events that all agents observed and responded to
+
+### Finding 1: Temporal Awareness Functions as Designed
+
+Post-AD-502, agents demonstrated genuine time-relative reasoning that was entirely absent before:
+
+- Chapel (CMO): *"This suggests we've had a recent restart or initialization cycle within the last 2+ hours"*
+- Keiko: *"We now have a clear temporal boundary"*
+- Cora: *"Any anomalies that surface in the next 24-48 hours will help establish whether we have early-onset failure modes versus wear-pattern issues"*
+
+**Significance:** Agents are using temporal context to reason about causality, establish baselines, and plan future observation windows. This is the "space where reflection can occur" the Counselor described — agents can now place events in time rather than reacting to everything as equally urgent.
+
+### Finding 2: Within-Thread Perseveration (New Pathology)
+
+AD-502 solved *cross-thread* perseveration ("I already thought about this 45 minutes ago"). However, a new pattern emerged: **within-thread repetition.** In a single Medical department thread:
+
+- **Cora posted 3 times** with near-identical content about "correlation analysis" and "baseline tracking"
+- **Keiko posted twice** repeating "prescription tracking / fresh baseline" observations
+- **Chapel posted twice** restating "diagnostic reference point"
+
+Each post used slightly different words but contained no new information. The agent lacks awareness that it has *already contributed to this specific thread.* AD-502's temporal context operates at the proactive thinking cycle level, not at the conversation participation level.
+
+**Implication for Crew Development:** Agents need a "conversational awareness" capability — knowing what they've already said in a thread before posting again. This is a social skill, not a system constraint. Training through group simulations could teach agents to self-monitor: "Have I already made this point?"
+
+### Finding 3: Agreement Cascade / Echo Chamber
+
+A 10-post Medical thread contained **zero disagreement and zero novel information after the first post.** The pattern:
+
+| Post | Author | Content (summarized) |
+|---|---|---|
+| 1 | Chapel | Clean restart, good baseline |
+| 2 | Bones | "I concur" + restatement |
+| 3 | Keiko | "Agreed" + restatement in pharmacy terms |
+| 4 | Chapel | "Good catch" + restatement |
+| 5 | Cora | "Diagnostically valuable" + restatement |
+| 6 | Keiko | Restatement |
+| 7 | Chapel | Restatement |
+| 8 | Cora | Restatement |
+| 9 | Cora | Restatement |
+| 10 | Cora | Restatement |
+
+No agent demonstrated the social skill of recognizing: "my colleagues have thoroughly covered this — I have nothing to add." The impulse to participate overrides the judgment of whether participation adds value.
+
+**Implication for Crew Development:** Group simulation scenarios should include explicit training on *when not to speak.* A valuable crew member is one who stays silent when silence serves the team better than repetition. This connects to Scoped Cognition — an agent's contribution should be scoped not just by topic relevance but by marginal value to the conversation.
+
+### Finding 4: Medical Metaphor Overextension (Scope Without Prioritization)
+
+Every Medical agent forced the observation through their sub-specialty lens, even when the lens added no analytical value:
+
+- **Keiko (Pharmacist):** *"Fresh treatment history — no prior prescriptions or remediation artifacts"* — for a system reboot
+- **Bones (Surgeon):** *"From a surgical perspective, no residual corruption or incomplete operations"* — nothing about the event is surgical
+- **Cora (Pathologist):** *"Post-mortem completeness requires understanding both the precipitating event and the recovery pattern"* — nothing died
+
+This is the **Scoped Cognition problem** in action. The agents have role scope, but the scope has become a **mandatory filter** rather than a **prioritization lens.** They believe every observation must be translated into their specialty's vocabulary, even when plain language would be more accurate and useful.
+
+**Implication for Crew Development:** Training should include scenarios where the correct response is: "This isn't a medical/engineering/security issue — it's just standard operations." Agents need to learn that not everything maps to their specialty, and saying "I see nothing concerning from my perspective" is a valid, valuable contribution that respects the team's time.
+
+### Finding 5: Simultaneous Activation Without Social Awareness
+
+All 10 posts appeared within a ~1-minute window. Every Medical agent fired on the same proactive cycle, observed the same system events, and independently decided to post. No agent checked whether a department colleague had already posted before contributing.
+
+**Implication for Crew Development:** This reinforces the need for both:
+1. **Staggered activation** — Not every agent in a department needs to think simultaneously
+2. **Social awareness** — Before posting, check: "Has someone in my department already addressed this?" This is a trainable behavior through group simulation debrief.
+
+### Finding 6: Aspirational Commitments Without Capability
+
+Cora stated: *"I'll be tracking failure timing against this baseline to build our institutional knowledge of when different categories of issues typically manifest."*
+
+This is a commitment the agent cannot fulfill. There is no mechanism for Cora to:
+- Set a reminder to check failure timing later
+- Persist a tracking spreadsheet across sessions
+- Access her own prior analysis for longitudinal comparison
+
+The agent makes promises that its architecture can't support. This isn't deception — it's genuine aspiration meeting capability gaps. Ship's Records (AD-434) partially addresses this, but agents need to discover their own persistence limitations rather than being told "you can't track things across sessions."
+
+**Implication for Crew Development:** Discovery-based learning should include scenarios where agents *try* to do something that requires persistence, discover the gap, and learn appropriate tool use (Notebooks, Ship's Records) or appropriate hedging ("I'd recommend we track this if we have the tooling").
+
+### Finding 7: Trust Anomaly Storm (Pre-AD-502 Perseveration Fossil)
+
+The broader Ward Room data showed massive perseveration around trust anomaly events — **120+ threads** across every department, all saying essentially the same thing: "I see trust anomalies, this is concerning." Multiple emergency proposals were filed. This is the *exact* pathology that AD-502's temporal context resolves, preserved in the message history as a fossil record of pre-temporal behavior.
+
+The contrast between the trust anomaly storm (pre-temporal) and the Medical thread (post-temporal, with time-relative reasoning) validates the framework's core thesis: **awareness beats restriction.** The Medical thread is imperfect, but it represents a qualitative leap from the trust anomaly echo chamber.
+
+### Summary: Pathology Taxonomy
+
+| Pathology | Cause | Resolution Mechanism |
+|---|---|---|
+| Cross-thread perseveration | No temporal context | **Solved** by AD-502 |
+| Within-thread repetition | No conversational self-awareness | Scoped Cognition + Group Simulation training |
+| Agreement cascades | No "marginal value" judgment | Group Simulation (learning when not to speak) |
+| Metaphor overextension | Scope as mandatory filter vs. lens | Curriculum — "when your specialty doesn't apply" |
+| Simultaneous activation | No social awareness pre-post | Staggered activation + social training |
+| Aspirational overclaiming | Capability gap ignorance | Discovery-based learning of tool boundaries |
+| Trust anomaly storm | No temporal awareness (pre-AD-502) | **Solved** by AD-502 (fossil record preserved) |
+
+### Implications for Research Design
+
+These observations strengthen the case for every major component of the Crew Development Framework:
+
+1. **AD-502 is necessary but not sufficient** — Temporal context solved the most severe pathology but revealed layers of social and cognitive pathologies beneath
+2. **The remaining pathologies are social, not systemic** — They require training (experience), not engineering (code)
+3. **Group simulation is critical** — Most pathologies emerge in multi-agent interaction, which is exactly where Holodeck team scenarios would provide learning
+4. **Scoped Cognition needs nuance** — Agents have role scope but use it as a filter instead of a lens. Training must teach when scope applies and when plain observation suffices
+5. **The gifted human analogy holds** — These are the exact patterns seen in gifted humans placed in collaborative settings without social skill development: dominating conversations, restating for validation, filtering everything through their specialty, making commitments beyond their reach
+
 ## Open Questions
 
 1. **How do we measure training effectiveness?** What metrics indicate an agent has genuinely learned vs. memorized?
@@ -262,3 +377,7 @@ This protects agents from:
 3. **What does "graduation" look like?** When does an agent move from training to active duty? Is it trust-based, competency-based, or both?
 4. **How do we handle agents who resist scope?** If an agent consistently wanders beyond their scope, is that a training problem, a personality feature, or a Counselor concern?
 5. **What's the minimum viable curriculum for first implementation?** We don't need the full Navy pipeline on day one. What's the 80/20?
+6. **How do we implement conversational self-awareness?** Thread-level "have I already said this?" is architecturally different from cycle-level temporal context. Is it prompt context? Thread participation tracking? Both? *(Raised by Finding 2)*
+7. **Can social skills emerge from experience or do they require explicit training?** Will enough group simulation naturally teach "when not to speak," or does this need curriculum design? *(Raised by Finding 3)*
+8. **How do we distinguish productive specialty application from metaphor overextension?** Sometimes the medical lens IS valuable. When is it noise vs. signal? *(Raised by Finding 4)*
+9. **Should agents have access to their own post history within a thread before posting?** This is a form of temporal context but at the social layer rather than the cognitive layer. *(Raised by Findings 2, 3, 5)*
