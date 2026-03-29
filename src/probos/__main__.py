@@ -15,12 +15,14 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
 from probos.cognitive.episodic import EpisodicMemory
@@ -517,15 +519,275 @@ utility_agents:
 
 _RESET_SUBDIRS = ("episodes", "agents", "skills", "trust", "routing", "workflows", "qa")
 
+# ── Tiered Reset Architecture (BF-070) ──────────────────────────────
+# Each tier is cumulative: Tier N includes all tiers 1..N-1.
+
+RESET_TIERS = {
+    1: {
+        "name": "Reboot",
+        "flag": "--soft",
+        "description": "Runtime transients — safe, timeline intact",
+        "files": ["scheduled_tasks.db", "events.db"],
+        "dirs": ["checkpoints"],
+        # NOTE: session_last.json is NOT here — soft reset preserves stasis detection
+    },
+    2: {
+        "name": "Recommissioning",
+        "flag": "(default)",
+        "description": "New ship, new crew — maiden voyage",
+        "files": [
+            # Cognition (former Shore Leave)
+            "session_last.json", "chroma.sqlite3", "cognitive_journal.db",
+            "hebbian_weights.db", "trust.db", "service_profiles.db",
+            # Identity
+            "identity.db", "acm.db", "skills.db", "directives.db",
+        ],
+        "dirs": ["semantic"],
+        "special": ["chromadb_uuid_dirs", "knowledge_subdirs", "ontology_instance_id"],
+    },
+    3: {
+        "name": "Maiden Voyage",
+        "flag": "--full",
+        "description": "Institutional knowledge — organizational memory lost",
+        "files": ["ward_room.db", "workforce.db"],
+        "dirs": ["ship-records", "scout_reports"],
+        "archive_first": ["ward_room.db"],
+    },
+}
+
+# Files that are NEVER cleared by any tier
+_ALWAYS_PRESERVED = ["archives/"]
+
+
+def _get_file_size(path: Path) -> str:
+    """Return a human-readable size string for a file or directory."""
+    if not path.exists():
+        return ""
+    if path.is_file():
+        size = path.stat().st_size
+    elif path.is_dir():
+        size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    else:
+        return ""
+    if size < 1024:
+        return f"{size} B"
+    elif size < 1024 * 1024:
+        return f"{size / 1024:.0f} KB"
+    else:
+        return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _resolve_tier(args: argparse.Namespace) -> int:
+    """Determine effective tier from CLI flags."""
+    if getattr(args, 'soft', False):
+        return 1
+    elif getattr(args, 'full', False) or getattr(args, 'wipe_records', False):
+        return 3
+    else:
+        return 2  # default: Recommissioning
+
+
+def _collect_tier_targets(tier: int, data_dir: Path) -> dict[int, list[tuple[str, str, str]]]:
+    """Collect files/dirs to clear for each tier up to the given tier.
+
+    Returns {tier_num: [(display_name, description, size_str), ...]}.
+    """
+    result: dict[int, list[tuple[str, str, str]]] = {}
+
+    for t in range(1, tier + 1):
+        tier_def = RESET_TIERS[t]
+        items: list[tuple[str, str, str]] = []
+
+        for fname in tier_def.get("files", []):
+            fpath = data_dir / fname
+            size = _get_file_size(fpath)
+            items.append((fname, _file_purpose(fname), size))
+
+        for dname in tier_def.get("dirs", []):
+            dpath = data_dir / dname
+            if dpath.is_dir():
+                n_items = len(list(dpath.iterdir()))
+                items.append((dname + "/", _file_purpose(dname), f"{n_items} item(s)"))
+            else:
+                items.append((dname + "/", _file_purpose(dname), ""))
+
+        for special in tier_def.get("special", []):
+            if special == "chromadb_uuid_dirs":
+                uuid_dirs = _find_chromadb_uuid_dirs(data_dir)
+                if uuid_dirs:
+                    items.append(("<uuid>/ dirs", "ChromaDB HNSW indexes", f"{len(uuid_dirs)} dir(s)"))
+            elif special == "knowledge_subdirs":
+                items.append(("knowledge/ subdirs", "Operational state", ""))
+            elif special == "ontology_instance_id":
+                fpath = data_dir / "ontology" / "instance_id"
+                items.append(("ontology/instance_id", "Ship DID", _get_file_size(fpath)))
+
+        result[t] = items
+
+    return result
+
+
+def _file_purpose(name: str) -> str:
+    """Return a short description of what a file/dir stores."""
+    purposes = {
+        "session_last.json": "Session record",
+        "scheduled_tasks.db": "Scheduled tasks",
+        "events.db": "Event log",
+        "checkpoints": "DAG checkpoints",
+        "chroma.sqlite3": "Episodic memory",
+        "cognitive_journal.db": "Cognitive journal",
+        "hebbian_weights.db": "Hebbian weights",
+        "trust.db": "Trust network",
+        "service_profiles.db": "Service profiles",
+        "semantic": "Semantic indexes",
+        "identity.db": "Identity registry",
+        "acm.db": "Agent Capital Mgmt",
+        "skills.db": "Skill registry",
+        "directives.db": "Standing orders",
+        "ward_room.db": "Ward Room",
+        "workforce.db": "Workforce data",
+        "ship-records": "Ship's Records",
+        "scout_reports": "Scout reports",
+    }
+    return purposes.get(name, name)
+
+
+def _find_chromadb_uuid_dirs(data_dir: Path) -> list[Path]:
+    """Find UUID-named directories in data_dir (ChromaDB HNSW indexes)."""
+    uuid_pattern = re.compile(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+        re.IGNORECASE,
+    )
+    result = []
+    if data_dir.is_dir():
+        for entry in data_dir.iterdir():
+            if entry.is_dir() and uuid_pattern.match(entry.name):
+                result.append(entry)
+    return result
+
+
+def _show_confirmation_prompt(tier: int, data_dir: Path, active_task_count: int, console: Console) -> bool:
+    """Show Rich confirmation prompt with tier details. Returns True if user confirms."""
+    tier_names = {1: "Reboot", 2: "Recommissioning", 3: "Maiden Voyage"}
+    targets = _collect_tier_targets(tier, data_dir)
+
+    tier_labels = {
+        1: "Tier 1 — Runtime Transients",
+        2: "Tier 2 — Cognition + Identity",
+        3: "Tier 3 — Institutional Knowledge",
+    }
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Name", style="bold")
+    table.add_column("Purpose", style="dim")
+    table.add_column("Size", style="dim", justify="right")
+
+    # What will be cleared
+    for t in range(1, tier + 1):
+        items = targets.get(t, [])
+        table.add_row(f"\n[bold]{tier_labels[t]}[/bold]", "", "")
+        for name, purpose, size in items:
+            table.add_row(f"  • {name}", purpose, size)
+
+    # What will be preserved
+    preserved_items = []
+    for t in range(tier + 1, 4):
+        for fname in RESET_TIERS[t].get("files", []):
+            fpath = data_dir / fname
+            preserved_items.append((fname, _file_purpose(fname), _get_file_size(fpath)))
+        for dname in RESET_TIERS[t].get("dirs", []):
+            preserved_items.append((dname + "/", _file_purpose(dname), ""))
+    # Always preserved
+    preserved_items.append(("archives/", "Ward Room backups", ""))
+
+    if preserved_items:
+        table.add_row("\n[bold green]Preserved:[/bold green]", "", "")
+        for name, purpose, size in preserved_items:
+            table.add_row(f"  • {name}", purpose, size)
+
+    panel = Panel(
+        table,
+        title=f"ProbOS Reset: Tier {tier} — {tier_names[tier]}",
+        subtitle="Continue? [y/N]",
+        style="yellow" if tier == 1 else ("red" if tier == 3 else "bold"),
+    )
+    console.print(panel)
+
+    if active_task_count > 0:
+        console.print(
+            f"  [yellow]⚠  {active_task_count} active scheduled task(s) will fire post-reset "
+            "with degraded routing.[/yellow]"
+        )
+
+    answer = input("  Continue? [y/N]: ").strip().lower()
+    return answer == "y"
+
+
+def _show_dry_run(tier: int, data_dir: Path, active_task_count: int, console: Console) -> None:
+    """Show what would be cleared without making changes."""
+    _show_confirmation_prompt.__wrapped__ = True  # just reuse the display
+    tier_names = {1: "Reboot", 2: "Recommissioning", 3: "Maiden Voyage"}
+    targets = _collect_tier_targets(tier, data_dir)
+
+    tier_labels = {
+        1: "Tier 1 — Runtime Transients",
+        2: "Tier 2 — Cognition + Identity",
+        3: "Tier 3 — Institutional Knowledge",
+    }
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Name", style="bold")
+    table.add_column("Purpose", style="dim")
+    table.add_column("Size", style="dim", justify="right")
+
+    for t in range(1, tier + 1):
+        items = targets.get(t, [])
+        table.add_row(f"\n[bold]{tier_labels[t]}[/bold]", "", "")
+        for name, purpose, size in items:
+            table.add_row(f"  • {name}", purpose, size)
+
+    preserved_items = []
+    for t in range(tier + 1, 4):
+        for fname in RESET_TIERS[t].get("files", []):
+            fpath = data_dir / fname
+            preserved_items.append((fname, _file_purpose(fname), _get_file_size(fpath)))
+        for dname in RESET_TIERS[t].get("dirs", []):
+            preserved_items.append((dname + "/", _file_purpose(dname), ""))
+    preserved_items.append(("archives/", "Ward Room backups", ""))
+
+    if preserved_items:
+        table.add_row("\n[bold green]Preserved:[/bold green]", "", "")
+        for name, purpose, size in preserved_items:
+            table.add_row(f"  • {name}", purpose, size)
+
+    panel = Panel(
+        table,
+        title=f"[DRY RUN] ProbOS Reset: Tier {tier} — {tier_names[tier]}",
+        subtitle="[DRY RUN] No changes made.",
+        style="dim",
+    )
+    console.print(panel)
+
+    if active_task_count > 0:
+        console.print(
+            f"  [yellow]⚠  {active_task_count} active scheduled task(s) would fire post-reset "
+            "with degraded routing.[/yellow]"
+        )
+    console.print("\n  [dim][DRY RUN] No changes made.[/dim]")
+
 
 def _cmd_reset(args: argparse.Namespace) -> None:
-    """Handle ``probos reset`` — clear all learned state from the KnowledgeStore."""
+    """Handle ``probos reset`` — tiered reset system (BF-070)."""
     console = Console()
 
+    # Deprecated flag notice
+    if getattr(args, 'wipe_records', False):
+        console.print("[yellow]⚠ --wipe-records is deprecated, use --full[/yellow]")
+
     # Load config to find knowledge repo_path
-    config, _ = _load_config_with_fallback(args.config)
+    config, _ = _load_config_with_fallback(getattr(args, 'config', None))
     repo_path = Path(config.knowledge.repo_path).expanduser() if config.knowledge.repo_path else Path.home() / ".probos" / "knowledge"
-    data_dir = args.data_dir or _default_data_dir()
+    data_dir = getattr(args, 'data_dir', None) or _default_data_dir()
     data_dir = Path(data_dir)
 
     # Use data_dir-based knowledge path if the config path doesn't exist
@@ -533,11 +795,15 @@ def _cmd_reset(args: argparse.Namespace) -> None:
     if not repo_path.is_dir() and data_dir_knowledge.is_dir():
         repo_path = data_dir_knowledge
 
+    # Resolve the effective tier
+    tier = _resolve_tier(args)
+
     # AD-418: Check for active scheduled tasks that survive reset
     scheduled_db = data_dir / "scheduled_tasks.db"
     active_task_count = 0
     if scheduled_db.is_file():
         import sqlite3
+        conn = None
         try:
             conn = sqlite3.connect(str(scheduled_db))
             conn.row_factory = sqlite3.Row
@@ -547,122 +813,86 @@ def _cmd_reset(args: argparse.Namespace) -> None:
             )
             row = cursor.fetchone()
             active_task_count = row["cnt"] if row else 0
-            conn.close()
         except Exception:
             pass  # DB may not exist or have wrong schema
+        finally:
+            if conn:
+                conn.close()
 
-    if not args.yes:
-        task_warning = ""
-        if active_task_count > 0:
-            task_warning = (
-                f"\n⚠  {active_task_count} active scheduled task(s) will continue to fire "
-                "post-reset with degraded routing (Hebbian weights wiped). "
-                "Consider adding agent_hint to critical tasks or disabling them first.\n"
-            )
-        records_warning = ""
-        if getattr(args, 'wipe_records', False):
-            records_warning = "\n⚠  --wipe-records: Ship's Records will also be permanently deleted.\n"
-        answer = input(
-            "This will permanently delete all learned state "
-            "(designed agents, trust, routing weights, episodes, workflows, QA reports, "
-            "Ward Room history, event log, cognitive journal, DAG checkpoints)."
-            f"{records_warning}"
-            f"{task_warning}"
-            "\nContinue? [y/N]: "
-        ).strip().lower()
-        if answer != "y":
+    # --dry-run: show what would happen and exit
+    if getattr(args, 'dry_run', False):
+        _show_dry_run(tier, data_dir, active_task_count, console)
+        return
+
+    # Confirmation prompt (skipped with -y)
+    if not getattr(args, 'yes', False):
+        if not _show_confirmation_prompt(tier, data_dir, active_task_count, console):
             console.print("[dim]Aborted.[/dim]")
             return
 
-    # Clear KnowledgeStore subdirectories
-    cleared = []
-    for sub in _RESET_SUBDIRS:
-        if sub == "trust" and args.keep_trust:
-            continue
-        sub_dir = repo_path / sub
-        if not sub_dir.is_dir():
-            continue
-        for fp in sub_dir.glob("*"):
-            if fp.is_file() and fp.suffix in (".json", ".py"):
-                fp.unlink()
-        cleared.append(sub)
+    # ── Execute reset ──
+    tier_counts: dict[int, int] = {}
+    total_freed: int = 0
+    archive_path: Path | None = None
 
-    # Clear ChromaDB persistence
-    chroma_dir = data_dir / "chroma"
-    chroma_cleared = False
-    if chroma_dir.is_dir():
-        shutil.rmtree(chroma_dir)
-        chroma_cleared = True
+    for t in range(1, tier + 1):
+        tier_def = RESET_TIERS[t]
+        count = 0
 
-    # Clear Hebbian weights DB (stale weights from defunct agents cause ghost anomalies)
-    hebbian_cleared = False
-    hebbian_db = data_dir / "hebbian_weights.db"
-    if hebbian_db.is_file():
-        hebbian_db.unlink()
-        hebbian_cleared = True
+        # Archive files first (ward_room.db at Tier 4)
+        for fname in tier_def.get("archive_first", []):
+            fpath = data_dir / fname
+            if fpath.is_file():
+                archive_dir = data_dir / "archives"
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                archive_path = archive_dir / f"{fpath.stem}_{timestamp}{fpath.suffix}"
+                shutil.copy2(str(fpath), str(archive_path))
 
-    # Clear Ward Room DB (AD-413)
-    wardroom_cleared = False
-    wardroom_db = data_dir / "ward_room.db"
-    if wardroom_db.is_file() and not args.keep_wardroom:
-        # Archive before wiping
-        archive_dir = data_dir / "archives"
-        archive_dir.mkdir(parents=True, exist_ok=True)
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        archive_path = archive_dir / f"ward_room_{timestamp}.db"
-        shutil.copy2(str(wardroom_db), str(archive_path))
-        wardroom_db.unlink()
-        wardroom_cleared = True
+        # Delete files
+        for fname in tier_def.get("files", []):
+            fpath = data_dir / fname
+            if fpath.is_file():
+                total_freed += fpath.stat().st_size
+                fpath.unlink()
+                count += 1
 
-    # Clear DAG checkpoints (AD-413)
-    checkpoints_cleared = False
-    checkpoint_dir = data_dir / "checkpoints"
-    if checkpoint_dir.is_dir():
-        for fp in checkpoint_dir.glob("*.json"):
-            fp.unlink()
-        checkpoints_cleared = True
+        # Delete directories
+        for dname in tier_def.get("dirs", []):
+            dpath = data_dir / dname
+            if dpath.is_dir():
+                for fp in dpath.glob("*"):
+                    if fp.is_file():
+                        total_freed += fp.stat().st_size
+                        fp.unlink()
+                    elif fp.is_dir():
+                        shutil.rmtree(fp, onerror=_force_remove_readonly)
+                count += 1
 
-    # Clear event log (AD-413)
-    events_cleared = False
-    events_db = data_dir / "events.db"
-    if events_db.is_file():
-        events_db.unlink()
-        events_cleared = True
+        # Special cleanup
+        for special in tier_def.get("special", []):
+            if special == "chromadb_uuid_dirs":
+                for uuid_dir in _find_chromadb_uuid_dirs(data_dir):
+                    shutil.rmtree(uuid_dir, onerror=_force_remove_readonly)
+                    count += 1
+            elif special == "knowledge_subdirs":
+                # Clear KnowledgeStore subdirectories (json/py files)
+                for sub in _RESET_SUBDIRS:
+                    sub_dir = repo_path / sub
+                    if not sub_dir.is_dir():
+                        continue
+                    for fp in sub_dir.glob("*"):
+                        if fp.is_file() and fp.suffix in (".json", ".py"):
+                            fp.unlink()
+                    count += 1
+            elif special == "ontology_instance_id":
+                instance_id_file = data_dir / "ontology" / "instance_id"
+                if instance_id_file.is_file():
+                    instance_id_file.unlink()
+                    count += 1
 
-    # Clear Cognitive Journal (AD-431)
-    journal_cleared = False
-    journal_db = data_dir / "cognitive_journal.db"
-    if journal_db.is_file():
-        journal_db.unlink()
-        journal_cleared = True
-
-    # Wipe Ship's Records if --wipe-records (sea trials mode)
-    records_cleared = False
-    records_dir = data_dir / "ship-records"
-    if getattr(args, 'wipe_records', False) and records_dir.is_dir():
-        def _force_remove_readonly(func, path, exc_info):  # noqa: ARG001
-            """Handle read-only git objects on Windows."""
-            import stat
-            os.chmod(path, stat.S_IWRITE)
-            func(path)
-        shutil.rmtree(records_dir, onerror=_force_remove_readonly)
-        records_cleared = True
-
-    # Clear identity registry (AD-441, BF-059) — new instance = new ship, new crew
-    identity_cleared = False
-    identity_db = data_dir / "identity.db"
-    if identity_db.is_file():
-        identity_db.unlink()
-        identity_cleared = True
-
-    # Clear instance ID (BF-059) — new instance = new ship DID
-    instance_id_cleared = False
-    ontology_dir = data_dir / "ontology"
-    instance_id_file = ontology_dir / "instance_id"
-    if instance_id_file.is_file():
-        instance_id_file.unlink()
-        instance_id_cleared = True
+        tier_counts[t] = count
 
     # Git commit if repo is git-initialized
     if (repo_path / ".git").is_dir():
@@ -672,33 +902,55 @@ def _cmd_reset(args: argparse.Namespace) -> None:
                 capture_output=True, encoding="utf-8", errors="replace", timeout=30,
             )
             subprocess.run(
-                ["git", "-C", str(repo_path), "commit", "-m", "probos reset: cleared all artifacts"],
+                ["git", "-C", str(repo_path), "commit", "-m",
+                 f"probos reset: Tier {tier} — {RESET_TIERS[tier]['name']}"],
                 capture_output=True, encoding="utf-8", errors="replace", timeout=30,
             )
         except Exception:
             pass  # Best-effort commit
 
-    summary = ", ".join(cleared) if cleared else "nothing"
-    chroma_msg = " ChromaDB wiped." if chroma_cleared else ""
-    hebbian_msg = " Hebbian weights wiped." if hebbian_cleared else ""
-    wardroom_msg = " Ward Room archived and wiped." if wardroom_cleared else ""
-    checkpoint_msg = " DAG checkpoints cleared." if checkpoints_cleared else ""
-    events_msg = " Event log cleared." if events_cleared else ""
-    journal_msg = " Cognitive journal cleared." if journal_cleared else ""
-    records_msg = " Ship's Records wiped." if records_cleared else ""
-    identity_msg = " Identity registry cleared." if identity_cleared else ""
-    instance_id_msg = " Instance ID cleared (new ship DID on next boot)." if instance_id_cleared else ""
-    console.print(
-        f"[bold green]Reset complete.[/bold green] Cleared: {summary}."
-        f"{chroma_msg}{hebbian_msg}{wardroom_msg}{checkpoint_msg}{events_msg}{journal_msg}{records_msg}{identity_msg}{instance_id_msg}"
-    )
-    if wardroom_cleared:
-        console.print(f"  Ward Room archived to: {archive_path}")
+    # ── Summary output ──
+    tier_names = {1: "Reboot", 2: "Recommissioning", 3: "Maiden Voyage"}
+    tier_labels_short = {1: "Runtime", 2: "Cognition+Identity", 3: "Knowledge"}
+
+    console.print(f"\n[bold green]Reset complete — Tier {tier}: {tier_names[tier]}[/bold green]\n")
+
+    for t in range(1, tier + 1):
+        count = tier_counts.get(t, 0)
+        console.print(f"  Tier {t} ({tier_labels_short[t]}):   {count} item(s) cleared")
+
+    if total_freed > 0:
+        if total_freed < 1024 * 1024:
+            freed_str = f"{total_freed / 1024:.1f} KB"
+        else:
+            freed_str = f"{total_freed / (1024 * 1024):.1f} MB"
+        console.print(f"  Space freed: {freed_str}")
+
+    # Show preserved items
+    preserved = []
+    for t in range(tier + 1, 4):
+        for fname in RESET_TIERS[t].get("files", []):
+            preserved.append(fname)
+        for dname in RESET_TIERS[t].get("dirs", []):
+            preserved.append(dname + "/")
+    preserved.append("archives/")
+    console.print(f"\n  Preserved: {', '.join(preserved)}")
+
+    if archive_path:
+        console.print(f"\n  Ward Room archived to: {archive_path}")
+
     if active_task_count > 0:
         console.print(
-            f"  [yellow]⚠ {active_task_count} scheduled task(s) active — "
+            f"\n  [yellow]⚠ {active_task_count} scheduled task(s) active — "
             "routing may be degraded until Hebbian weights rebuild.[/yellow]"
         )
+
+
+def _force_remove_readonly(func, path, exc_info):  # noqa: ARG001
+    """Handle read-only git objects on Windows."""
+    import stat
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
 
 
 def main() -> None:
@@ -752,11 +1004,12 @@ def main() -> None:
     serve_parser.add_argument("--discord", action="store_true", help="Also start Discord bot adapter")
 
     # --- probos reset ---
-    reset_parser = subparsers.add_parser("reset", help="Clear all learned state (designed agents, trust, episodes, etc.)")
+    reset_parser = subparsers.add_parser("reset", help="Clear learned state (tiered: --soft, default, --full)")
     reset_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
-    reset_parser.add_argument("--keep-trust", action="store_true", help="Preserve trust scores")
-    reset_parser.add_argument("--keep-wardroom", action="store_true", help="Preserve Ward Room history")
-    reset_parser.add_argument("--wipe-records", action="store_true", help="Also wipe Ship's Records (sea trials)")
+    reset_parser.add_argument("--soft", action="store_true", help="Tier 1: Reboot — runtime transients only")
+    reset_parser.add_argument("--full", action="store_true", help="Tier 3: Maiden Voyage — everything including records")
+    reset_parser.add_argument("--dry-run", action="store_true", help="Show what would be cleared, do nothing")
+    reset_parser.add_argument("--wipe-records", action="store_true", help="(deprecated, use --full)")
     reset_parser.add_argument("--config", "-c", type=Path, default=None, help="Path to config YAML")
     reset_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")
 

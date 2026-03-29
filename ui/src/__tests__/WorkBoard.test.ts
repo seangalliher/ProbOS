@@ -215,3 +215,43 @@ describe('WorkBoard store (AD-497)', () => {
     expect(doneCol).toHaveLength(20);
   });
 });
+
+// ── AD-498  Work Type Registry & Templates (UI) ───────────────────────
+
+describe('WorkBoard templates (AD-498)', () => {
+  it('workTemplates state initializes to null', () => {
+    expect(useStore.getState().workTemplates).toBeNull();
+  });
+
+  it('fetchWorkTemplates calls /api/templates', async () => {
+    const mockTemplates = [
+      { template_id: 't1', name: 'Security Scan', category: 'security', work_type: 'task', variables: ['target'] },
+    ];
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ templates: mockTemplates }) });
+    global.fetch = mockFetch as any;
+    await useStore.getState().fetchWorkTemplates();
+    expect(mockFetch).toHaveBeenCalledWith('/api/templates');
+  });
+
+  it('createFromTemplate calls correct endpoint', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    global.fetch = mockFetch as any;
+    await useStore.getState().createFromTemplate('security_scan', { target: 'main.py' }, { assigned_to: 'res-1' });
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/api/work-items/from-template/security_scan',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ variables: { target: 'main.py' }, overrides: { assigned_to: 'res-1' } }),
+      })
+    );
+  });
+
+  it('workTypeDefinitions hydrated from snapshot', () => {
+    const types = [
+      { type_id: 'task', display_name: 'Task', initial_status: 'open', terminal_statuses: ['done', 'cancelled'], valid_transitions: [] },
+    ];
+    useStore.setState({ workTypeDefinitions: types as any });
+    expect(useStore.getState().workTypeDefinitions).toHaveLength(1);
+    expect(useStore.getState().workTypeDefinitions![0].type_id).toBe('task');
+  });
+});

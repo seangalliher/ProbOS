@@ -100,3 +100,52 @@ describe('ProfileWorkTab store (AD-497)', () => {
     expect(available).toHaveLength(2);
   });
 });
+
+// ── AD-498  Profile Work Tab template tests ───────────────────────────
+
+describe('ProfileWorkTab templates (AD-498)', () => {
+  it('createFromTemplate calls API with agent assignment', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    global.fetch = mockFetch as any;
+    await useStore.getState().createFromTemplate(
+      'crew_health_check', {}, { assigned_to: 'res-1' }
+    );
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/api/work-items/from-template/crew_health_check',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ variables: {}, overrides: { assigned_to: 'res-1' } }),
+      })
+    );
+  });
+
+  it('workTemplates can be set in store', () => {
+    const templates = [
+      { template_id: 't1', name: 'Security Scan', category: 'security', work_type: 'task', variables: ['target'], description: '', title_pattern: '', estimated_tokens: 0, default_priority: 3, tags: [], default_steps: [], ttl_seconds: null },
+      { template_id: 't2', name: 'Crew Health Check', category: 'operations', work_type: 'duty', variables: [], description: '', title_pattern: '', estimated_tokens: 0, default_priority: 3, tags: [], default_steps: [], ttl_seconds: null },
+    ];
+    useStore.setState({ workTemplates: templates as any });
+    expect(useStore.getState().workTemplates).toHaveLength(2);
+  });
+
+  it('template items tracked with template_id', () => {
+    const items = [
+      makeItem({ id: 'w1', template_id: 'security_scan', work_type: 'task' }),
+      makeItem({ id: 'w2', template_id: null, work_type: 'task' }),
+    ];
+    useStore.setState({ workItems: items });
+    const templated = useStore.getState().workItems!.filter(w => w.template_id !== null);
+    expect(templated).toHaveLength(1);
+    expect(templated[0].template_id).toBe('security_scan');
+  });
+
+  it('fetchWorkTemplates populates store', async () => {
+    const mockTemplates = [
+      { template_id: 't1', name: 'Test', category: 'test', work_type: 'task', variables: [] },
+    ];
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ templates: mockTemplates }) });
+    global.fetch = mockFetch as any;
+    await useStore.getState().fetchWorkTemplates();
+    expect(mockFetch).toHaveBeenCalledWith('/api/templates');
+  });
+});

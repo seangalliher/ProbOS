@@ -1,0 +1,15 @@
+# Work Item Templates — ProbOS AD-498
+# Built-in templates are registered in code. Add custom templates here.
+# See docs for template schema.
+
+# Custom templates (uncomment and modify):
+# templates:
+#   - template_id: custom_review
+#     name: "Custom Review"
+#     work_type: task
+#     title_pattern: "Review — {subject}"
+#     description_pattern: "Perform review of {subject}"
+#     default_priority: 3
+#     estimated_tokens: 20000
+#     tags: [review]
+#     category: general

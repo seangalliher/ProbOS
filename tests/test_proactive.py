@@ -501,10 +501,19 @@ class TestPerAgentCooldown:
 
 
 class TestResetScope:
-    """AD-413: Fine-grained reset scope tests."""
+    """BF-070: Tiered reset scope tests."""
+
+    def _reset_args(self, data_dir, **overrides):
+        import argparse
+        defaults = dict(
+            yes=True, soft=False, full=False,
+            dry_run=False, wipe_records=False, config=None, data_dir=data_dir,
+        )
+        defaults.update(overrides)
+        return argparse.Namespace(**defaults)
 
     def test_reset_archives_wardroom(self, tmp_path):
-        """probos reset should archive ward_room.db before deleting."""
+        """Tier 3 reset (--full) should archive ward_room.db before deleting."""
         import argparse
         import shutil
         from probos.__main__ import _cmd_reset
@@ -519,16 +528,8 @@ class TestResetScope:
         knowledge_dir = tmp_path / "knowledge"
         knowledge_dir.mkdir()
 
-        # Mock args
-        args = argparse.Namespace(
-            yes=True,
-            keep_trust=False,
-            keep_wardroom=False,
-            config=None,
-            data_dir=data_dir,
-        )
+        args = self._reset_args(data_dir, full=True)
 
-        # Patch _load_config_with_fallback and _default_data_dir
         from unittest.mock import patch as mock_patch
         mock_config = MagicMock()
         mock_config.knowledge.repo_path = str(knowledge_dir)
@@ -547,8 +548,8 @@ class TestResetScope:
         assert len(archives) == 1
         assert archives[0].read_text() == "fake ward room data"
 
-    def test_reset_keeps_wardroom_with_flag(self, tmp_path):
-        """--keep-wardroom should preserve ward_room.db."""
+    def test_default_reset_preserves_wardroom(self, tmp_path):
+        """Default Tier 2 reset preserves ward_room.db (only cleared at Tier 3)."""
         import argparse
         from probos.__main__ import _cmd_reset
 
@@ -560,13 +561,7 @@ class TestResetScope:
         knowledge_dir = tmp_path / "knowledge"
         knowledge_dir.mkdir()
 
-        args = argparse.Namespace(
-            yes=True,
-            keep_trust=False,
-            keep_wardroom=True,
-            config=None,
-            data_dir=data_dir,
-        )
+        args = self._reset_args(data_dir)  # default = Tier 2
 
         from unittest.mock import patch as mock_patch
         mock_config = MagicMock()
@@ -580,7 +575,7 @@ class TestResetScope:
         assert wr_db.read_text() == "keep me"
 
     def test_reset_clears_checkpoints(self, tmp_path):
-        """probos reset should clear DAG checkpoint JSON files."""
+        """Tier 1 reset clears DAG checkpoint JSON files."""
         import argparse
         from probos.__main__ import _cmd_reset
 
@@ -594,13 +589,7 @@ class TestResetScope:
         knowledge_dir = tmp_path / "knowledge"
         knowledge_dir.mkdir()
 
-        args = argparse.Namespace(
-            yes=True,
-            keep_trust=False,
-            keep_wardroom=False,
-            config=None,
-            data_dir=data_dir,
-        )
+        args = self._reset_args(data_dir, soft=True)  # Tier 1 includes checkpoints
 
         from unittest.mock import patch as mock_patch
         mock_config = MagicMock()
@@ -614,7 +603,7 @@ class TestResetScope:
         assert len(remaining) == 0
 
     def test_reset_clears_events_db(self, tmp_path):
-        """probos reset should clear events.db."""
+        """Tier 1 reset clears events.db."""
         import argparse
         from probos.__main__ import _cmd_reset
 
@@ -626,13 +615,7 @@ class TestResetScope:
         knowledge_dir = tmp_path / "knowledge"
         knowledge_dir.mkdir()
 
-        args = argparse.Namespace(
-            yes=True,
-            keep_trust=False,
-            keep_wardroom=False,
-            config=None,
-            data_dir=data_dir,
-        )
+        args = self._reset_args(data_dir, soft=True)
 
         from unittest.mock import patch as mock_patch
         mock_config = MagicMock()

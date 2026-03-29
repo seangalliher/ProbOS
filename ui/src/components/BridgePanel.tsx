@@ -5,7 +5,7 @@ import { useStore } from '../store/useStore';
 import { TaskCard } from './bridge/BridgeCards';
 import { NotificationCard } from './bridge/BridgeNotifications';
 import { BridgeKanban } from './bridge/BridgeKanban';
-import { BridgeSystem } from './bridge/BridgeSystem';
+import { BridgeSystem, BridgeThreads, BridgeShutdown } from './bridge/BridgeSystem';
 import { BridgeCommunications } from './bridge/BridgeCommunications';
 
 /* ── Collapsible Section ── */
@@ -165,14 +165,19 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
 
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
-        {/* SYSTEM (AD-436) */}
+        {/* SYSTEM — services only */}
         <BridgeSection title="System" count={0} defaultOpen={false} accentColor="#70a0d0"
           onExpand={() => useStore.setState({ mainViewer: 'system' })}>
           <BridgeSystem />
         </BridgeSection>
 
-        {/* COMMUNICATIONS (AD-485) */}
-        <BridgeSection title="Communications" count={dmChannels.length} defaultOpen={false} accentColor="#b080d0">
+        {/* COMMUNICATIONS — threads + DMs */}
+        <BridgeSection title="Communications" count={dmChannels.length} defaultOpen={false} accentColor="#b080d0"
+          onExpand={() => useStore.setState({ wardRoomOpen: true, wardRoomView: 'channels' })}>
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: 9, color: '#666', marginBottom: 4, fontWeight: 600 }}>THREADS</div>
+            <BridgeThreads />
+          </div>
           <BridgeCommunications />
         </BridgeSection>
 
@@ -203,18 +208,16 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
           </BridgeSection>
         )}
 
-        {/* KANBAN */}
-        {kanbanTasks.length > 0 && (
-          <BridgeSection
-            title="Kanban"
-            count={kanbanTasks.length}
-            defaultOpen={false}
-            accentColor="#d0a030"
-            onExpand={() => useStore.setState({ mainViewer: 'kanban' })}
-          >
-            <BridgeKanban />
-          </BridgeSection>
-        )}
+        {/* WORK BOARD — always visible */}
+        <BridgeSection
+          title="Work Board"
+          count={kanbanTasks.length}
+          defaultOpen={false}
+          accentColor="#d0a030"
+          onExpand={() => useStore.setState({ mainViewer: 'work' })}
+        >
+          <BridgeKanban />
+        </BridgeSection>
 
         {/* RECENT */}
         {recentTasks.length > 0 && (
@@ -233,6 +236,15 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
             No activity
           </div>
         )}
+      </div>
+
+      {/* SHUTDOWN — fixed at bottom, outside scroll area */}
+      <div style={{
+        padding: '8px 12px',
+        borderTop: '1px solid rgba(255,255,255,0.08)',
+        background: 'rgba(10, 10, 18, 0.95)',
+      }}>
+        <BridgeShutdown />
       </div>
     </div>
   );

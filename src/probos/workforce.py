@@ -17,8 +17,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
@@ -84,8 +86,468 @@ _TERMINAL_STATUSES = frozenset({"done", "cancelled", "failed"})
 
 
 # ---------------------------------------------------------------------------
-# Data model — Seven Core Entities
+# Work Type Registry (AD-498)
 # ---------------------------------------------------------------------------
+
+@dataclass
+class WorkTypeTransition:
+    """A valid state transition for a work type."""
+    from_status: str
+    to_status: str
+    requires_assignment: bool = False
+    auto_creates_booking: bool = False
+
+
+@dataclass
+class WorkTypeDefinition:
+    """Formal definition of a work type with state machine."""
+    type_id: str
+    display_name: str
+    description: str
+    initial_status: str
+    terminal_statuses: frozenset[str]
+    valid_transitions: list[WorkTypeTransition]
+    required_fields: list[str] = field(default_factory=list)
+    supports_children: bool = False
+    auto_assign_eligible: bool = True
+    verification_required: bool = False
+    default_priority: int = 3
+    metadata_schema: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type_id": self.type_id,
+            "display_name": self.display_name,
+            "description": self.description,
+            "initial_status": self.initial_status,
+            "terminal_statuses": list(self.terminal_statuses),
+            "valid_transitions": [
+                {"from_status": t.from_status, "to_status": t.to_status, "requires_assignment": t.requires_assignment}
+                for t in self.valid_transitions
+            ],
+            "required_fields": self.required_fields,
+            "supports_children": self.supports_children,
+            "auto_assign_eligible": self.auto_assign_eligible,
+            "verification_required": self.verification_required,
+            "default_priority": self.default_priority,
+        }
+
+
+BUILTIN_WORK_TYPES: dict[str, WorkTypeDefinition] = {
+    "card": WorkTypeDefinition(
+        type_id="card",
+        display_name="Card",
+        description="Lightest work unit. No assignment required, no verification.",
+        initial_status="draft",
+        terminal_statuses=frozenset({"done", "cancelled"}),
+        valid_transitions=[
+            WorkTypeTransition("draft", "open"),
+            WorkTypeTransition("draft", "done"),
+            WorkTypeTransition("draft", "cancelled"),
+            WorkTypeTransition("open", "done"),
+            WorkTypeTransition("open", "cancelled"),
+        ],
+        default_priority=5,
+    ),
+    "task": WorkTypeDefinition(
+        type_id="task",
+        display_name="Task",
+        description="Single-agent work. Requires assignment for in_progress.",
+        initial_status="open",
+        terminal_statuses=frozenset({"done", "failed", "cancelled"}),
+        valid_transitions=[
+            WorkTypeTransition("open", "in_progress", requires_assignment=True),
+            WorkTypeTransition("open", "cancelled"),
+            WorkTypeTransition("open", "blocked"),
+            WorkTypeTransition("in_progress", "done"),
+            WorkTypeTransition("in_progress", "failed"),
+            WorkTypeTransition("in_progress", "cancelled"),
+            WorkTypeTransition("in_progress", "blocked"),
+            WorkTypeTransition("blocked", "in_progress"),
+            WorkTypeTransition("blocked", "cancelled"),
+        ],
+        supports_children=True,
+        default_priority=3,
+    ),
+    "work_order": WorkTypeDefinition(
+        type_id="work_order",
+        display_name="Work Order",
+        description="Multi-step formal work. Requires review before done. Supports children.",
+        initial_status="draft",
+        terminal_statuses=frozenset({"done", "failed", "cancelled"}),
+        valid_transitions=[
+            WorkTypeTransition("draft", "open"),
+            WorkTypeTransition("draft", "cancelled"),
+            WorkTypeTransition("open", "scheduled"),
+            WorkTypeTransition("open", "cancelled"),
+            WorkTypeTransition("open", "blocked"),
+            WorkTypeTransition("scheduled", "in_progress", requires_assignment=True, auto_creates_booking=True),
+            WorkTypeTransition("scheduled", "cancelled"),
+            WorkTypeTransition("scheduled", "blocked"),
+            WorkTypeTransition("in_progress", "review"),
+            WorkTypeTransition("in_progress", "failed"),
+            WorkTypeTransition("in_progress", "cancelled"),
+            WorkTypeTransition("in_progress", "blocked"),
+            WorkTypeTransition("review", "done"),
+            WorkTypeTransition("review", "in_progress"),
+            WorkTypeTransition("review", "failed"),
+            WorkTypeTransition("blocked", "in_progress"),
+            WorkTypeTransition("blocked", "cancelled"),
+        ],
+        supports_children=True,
+        verification_required=True,
+        default_priority=2,
+        required_fields=["title"],
+    ),
+    "duty": WorkTypeDefinition(
+        type_id="duty",
+        display_name="Duty",
+        description="Recurring scheduled work. Auto-creates booking on start.",
+        initial_status="scheduled",
+        terminal_statuses=frozenset({"done", "failed"}),
+        valid_transitions=[
+            WorkTypeTransition("scheduled", "in_progress", auto_creates_booking=True),
+            WorkTypeTransition("scheduled", "blocked"),
+            WorkTypeTransition("in_progress", "done"),
+            WorkTypeTransition("in_progress", "failed"),
+            WorkTypeTransition("in_progress", "blocked"),
+            WorkTypeTransition("blocked", "in_progress"),
+            WorkTypeTransition("blocked", "cancelled"),
+        ],
+        auto_assign_eligible=False,
+        default_priority=3,
+    ),
+    "incident": WorkTypeDefinition(
+        type_id="incident",
+        display_name="Incident",
+        description="High-urgency reactive work. All transitions require assignment.",
+        initial_status="open",
+        terminal_statuses=frozenset({"done", "failed"}),
+        valid_transitions=[
+            WorkTypeTransition("open", "in_progress", requires_assignment=True),
+            WorkTypeTransition("open", "blocked"),
+            WorkTypeTransition("in_progress", "review", requires_assignment=True),
+            WorkTypeTransition("in_progress", "failed"),
+            WorkTypeTransition("in_progress", "blocked"),
+            WorkTypeTransition("review", "done", requires_assignment=True),
+            WorkTypeTransition("review", "in_progress", requires_assignment=True),
+            WorkTypeTransition("review", "failed"),
+            WorkTypeTransition("blocked", "in_progress"),
+            WorkTypeTransition("blocked", "cancelled"),
+        ],
+        default_priority=1,
+        required_fields=["title"],
+    ),
+}
+
+
+class WorkTypeRegistry:
+    """Registry of work type definitions with state machine validation."""
+
+    def __init__(self) -> None:
+        self._types: dict[str, WorkTypeDefinition] = {}
+        self._register_builtins()
+
+    def _register_builtins(self) -> None:
+        for wt in BUILTIN_WORK_TYPES.values():
+            self._types[wt.type_id] = wt
+
+    def register(self, work_type: WorkTypeDefinition) -> None:
+        self._types[work_type.type_id] = work_type
+
+    def get(self, type_id: str) -> WorkTypeDefinition | None:
+        return self._types.get(type_id)
+
+    def list_types(self) -> list[WorkTypeDefinition]:
+        return list(self._types.values())
+
+    def validate_transition(self, type_id: str, from_status: str, to_status: str) -> tuple[bool, str]:
+        wt = self._types.get(type_id)
+        if not wt:
+            return True, ""  # Unknown type = permissive (backward compat)
+        if from_status in wt.terminal_statuses:
+            return False, f"Cannot transition from terminal status '{from_status}'"
+        valid = any(
+            t.from_status == from_status and t.to_status == to_status
+            for t in wt.valid_transitions
+        )
+        if not valid:
+            return False, f"Work type '{type_id}' does not allow transition '{from_status}' → '{to_status}'"
+        return True, ""
+
+    def get_valid_targets(self, type_id: str, from_status: str) -> list[str]:
+        """Return list of valid target statuses from a given status."""
+        wt = self._types.get(type_id)
+        if not wt:
+            return []
+        return [t.to_status for t in wt.valid_transitions if t.from_status == from_status]
+
+    def get_initial_status(self, type_id: str) -> str:
+        wt = self._types.get(type_id)
+        return wt.initial_status if wt else "open"
+
+    def validate_required_fields(self, type_id: str, work_item: WorkItem) -> tuple[bool, str]:
+        wt = self._types.get(type_id)
+        if not wt:
+            return True, ""
+        for field_name in wt.required_fields:
+            if getattr(work_item, field_name, None) is None:
+                return False, f"Work type '{type_id}' requires field '{field_name}'"
+        return True, ""
+
+
+# ---------------------------------------------------------------------------
+# Work Item Templates (AD-498)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class WorkItemTemplate:
+    """Reusable template for creating pre-configured work items."""
+    template_id: str
+    name: str
+    description: str
+    work_type: str
+    title_pattern: str
+    description_pattern: str = ""
+    default_steps: list[dict] = field(default_factory=list)
+    required_capabilities: list[str] = field(default_factory=list)
+    estimated_tokens: int = 0
+    min_trust: float = 0.0
+    default_priority: int = 3
+    tags: list[str] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+    ttl_seconds: int | None = None
+    category: str = "general"
+
+    def to_dict(self) -> dict[str, Any]:
+        # Parse variables from patterns
+        variables = sorted(set(
+            re.findall(r"\{(\w+)\}", self.title_pattern + " " + self.description_pattern)
+        ))
+        return {
+            "template_id": self.template_id,
+            "name": self.name,
+            "description": self.description,
+            "work_type": self.work_type,
+            "title_pattern": self.title_pattern,
+            "description_pattern": self.description_pattern,
+            "category": self.category,
+            "estimated_tokens": self.estimated_tokens,
+            "default_priority": self.default_priority,
+            "tags": self.tags,
+            "default_steps": self.default_steps,
+            "min_trust": self.min_trust,
+            "variables": variables,
+            "ttl_seconds": self.ttl_seconds,
+        }
+
+
+BUILTIN_TEMPLATES: dict[str, WorkItemTemplate] = {
+    "security_scan": WorkItemTemplate(
+        template_id="security_scan",
+        name="Security Scan",
+        description="Run a security scan on a target module or subsystem.",
+        work_type="work_order",
+        title_pattern="Security Scan — {target}",
+        description_pattern="Perform security analysis of {target}. Report vulnerabilities and remediation steps.",
+        default_steps=[
+            {"label": "Analyze", "status": "pending"},
+            {"label": "Report", "status": "pending"},
+            {"label": "Verify fixes", "status": "pending"},
+        ],
+        required_capabilities=["security"],
+        estimated_tokens=30000,
+        min_trust=0.6,
+        default_priority=2,
+        tags=["security", "scan"],
+        category="security",
+    ),
+    "engineering_diagnostic": WorkItemTemplate(
+        template_id="engineering_diagnostic",
+        name="Engineering Diagnostic",
+        description="Run diagnostics on a system component.",
+        work_type="work_order",
+        title_pattern="Engineering Diagnostic — {system}",
+        description_pattern="Diagnose and report on health of {system}.",
+        default_steps=[
+            {"label": "Inspect", "status": "pending"},
+            {"label": "Diagnose", "status": "pending"},
+            {"label": "Report", "status": "pending"},
+        ],
+        required_capabilities=["engineering"],
+        estimated_tokens=25000,
+        default_priority=3,
+        tags=["engineering", "diagnostic"],
+        category="engineering",
+    ),
+    "code_review": WorkItemTemplate(
+        template_id="code_review",
+        name="Code Review",
+        description="Review code for a given subject.",
+        work_type="task",
+        title_pattern="Code Review — {subject}",
+        description_pattern="Review code changes for {subject}. Check quality, security, and correctness.",
+        required_capabilities=["code_review"],
+        estimated_tokens=20000,
+        default_priority=3,
+        tags=["review", "code"],
+        category="engineering",
+    ),
+    "scout_report": WorkItemTemplate(
+        template_id="scout_report",
+        name="Scout Report",
+        description="Periodic reconnaissance report.",
+        work_type="duty",
+        title_pattern="Scout Report — {date}",
+        description_pattern="Compile external intelligence report for {date}.",
+        estimated_tokens=15000,
+        default_priority=4,
+        tags=["operations", "scout"],
+        category="operations",
+    ),
+    "crew_health_check": WorkItemTemplate(
+        template_id="crew_health_check",
+        name="Crew Health Check",
+        description="Periodic crew wellness assessment.",
+        work_type="duty",
+        title_pattern="Crew Health Check — {date}",
+        description_pattern="Assess cognitive health and fitness of all crew for {date}.",
+        required_capabilities=["medical"],
+        estimated_tokens=10000,
+        default_priority=4,
+        tags=["medical", "health"],
+        category="medical",
+    ),
+    "night_maintenance": WorkItemTemplate(
+        template_id="night_maintenance",
+        name="Maintenance Watch",
+        description="Night orders: maintenance mode. Run diagnostics, handle routine maintenance.",
+        work_type="task",
+        title_pattern="Night Orders — Maintenance Watch",
+        estimated_tokens=15000,
+        default_priority=4,
+        tags=["night_orders", "maintenance"],
+        ttl_seconds=28800,
+        category="night_orders",
+        metadata={
+            "can_approve_builds": False,
+            "alert_boundary": "yellow",
+            "escalation_triggers": ["trust_drop", "red_alert", "security_alert"],
+            "instructions": "Run scheduled diagnostics. Monitor system health. Escalate anomalies.",
+        },
+    ),
+    "night_build": WorkItemTemplate(
+        template_id="night_build",
+        name="Build Watch",
+        description="Night orders: build mode. Process build queue items.",
+        work_type="task",
+        title_pattern="Night Orders — Build Watch",
+        estimated_tokens=50000,
+        default_priority=3,
+        tags=["night_orders", "build"],
+        ttl_seconds=28800,
+        category="night_orders",
+        metadata={
+            "can_approve_builds": True,
+            "alert_boundary": "yellow",
+            "escalation_triggers": ["trust_drop", "red_alert", "build_failure"],
+            "instructions": "Process build queue. Approve routine builds. Escalate failures.",
+        },
+    ),
+    "night_quiet": WorkItemTemplate(
+        template_id="night_quiet",
+        name="Quiet Watch",
+        description="Night orders: quiet mode. Monitor only, no proactive actions.",
+        work_type="task",
+        title_pattern="Night Orders — Quiet Watch",
+        estimated_tokens=5000,
+        default_priority=5,
+        tags=["night_orders", "quiet"],
+        ttl_seconds=28800,
+        category="night_orders",
+        metadata={
+            "can_approve_builds": False,
+            "alert_boundary": "green",
+            "escalation_triggers": ["red_alert", "security_alert"],
+            "instructions": "Monitor only. No proactive actions. Escalate critical alerts only.",
+        },
+    ),
+}
+
+
+class TemplateStore:
+    """Registry of work item templates."""
+
+    def __init__(self) -> None:
+        self._templates: dict[str, WorkItemTemplate] = {}
+        self._register_builtins()
+
+    def _register_builtins(self) -> None:
+        for t in BUILTIN_TEMPLATES.values():
+            self._templates[t.template_id] = t
+
+    def register(self, template: WorkItemTemplate) -> None:
+        self._templates[template.template_id] = template
+
+    def get(self, template_id: str) -> WorkItemTemplate | None:
+        return self._templates.get(template_id)
+
+    def list_templates(self, category: str | None = None) -> list[WorkItemTemplate]:
+        templates = list(self._templates.values())
+        if category:
+            templates = [t for t in templates if t.category == category]
+        return sorted(templates, key=lambda t: (t.category, t.name))
+
+    def instantiate(
+        self,
+        template_id: str,
+        variables: dict[str, str] | None = None,
+        overrides: dict | None = None,
+    ) -> dict:
+        template = self._templates.get(template_id)
+        if not template:
+            raise ValueError(f"Template '{template_id}' not found")
+
+        variables = variables or {}
+        title = template.title_pattern.format_map(defaultdict(str, variables))
+        description = template.description_pattern.format_map(defaultdict(str, variables)) if template.description_pattern else ""
+
+        kwargs: dict = {
+            "title": title,
+            "description": description,
+            "work_type": template.work_type,
+            "priority": template.default_priority,
+            "estimated_tokens": template.estimated_tokens,
+            "trust_requirement": template.min_trust,
+            "required_capabilities": list(template.required_capabilities),
+            "tags": list(template.tags),
+            "steps": [dict(s) for s in template.default_steps],
+            "metadata": {**template.metadata, "template_id": template.template_id},
+            "template_id": template.template_id,
+        }
+        if template.ttl_seconds:
+            kwargs["ttl_seconds"] = template.ttl_seconds
+
+        if overrides:
+            for key in ("priority", "assigned_to", "due_at", "tags", "description"):
+                if key in overrides:
+                    kwargs[key] = overrides[key]
+            if "metadata" in overrides:
+                kwargs["metadata"].update(overrides["metadata"])
+
+        return kwargs
+
+    def reload_templates(self, template_dicts: list[dict]) -> int:
+        """Hot-reload templates from config dicts. Returns count registered."""
+        count = 0
+        for td in template_dicts:
+            try:
+                t = WorkItemTemplate(**td)
+                self._templates[t.template_id] = t
+                count += 1
+            except Exception:
+                logger.warning("Failed to load custom template: %s", td.get("template_id", "?"))
+        return count
 
 # (1) WorkItem
 
@@ -447,6 +909,7 @@ class WorkItemStore:
         db_path: str | None = None,
         emit_event: Callable[..., Any] | None = None,
         tick_interval: float = 10.0,
+        config: dict | None = None,
     ):
         self.db_path = db_path
         self._db: aiosqlite.Connection | None = None
@@ -459,6 +922,24 @@ class WorkItemStore:
         self._calendars: dict[str, AgentCalendar] = {}
         # Snapshot cache for sync-safe access
         self._snapshot_cache: dict[str, Any] = {"work_items": [], "bookings": []}
+        # AD-498: Work Type Registry + Template Store
+        self.work_type_registry = WorkTypeRegistry()
+        self.template_store = TemplateStore()
+        # Load custom types/templates from config
+        if config:
+            for ct in config.get("custom_work_types", []):
+                try:
+                    transitions = [WorkTypeTransition(**t) for t in ct.pop("valid_transitions", [])]
+                    ct["valid_transitions"] = transitions
+                    ct["terminal_statuses"] = frozenset(ct.get("terminal_statuses", []))
+                    self.work_type_registry.register(WorkTypeDefinition(**ct))
+                except Exception:
+                    logger.warning("Failed to load custom work type: %s", ct.get("type_id", "?"))
+            for td in config.get("custom_templates", []):
+                try:
+                    self.template_store.register(WorkItemTemplate(**td))
+                except Exception:
+                    logger.warning("Failed to load custom template: %s", td.get("template_id", "?"))
 
     # -- Lifecycle --
 
@@ -504,6 +985,10 @@ class WorkItemStore:
         now = time.time()
         kwargs.setdefault("created_at", now)
         kwargs.setdefault("updated_at", now)
+        # AD-498: Set initial status from work type registry if not explicitly provided
+        work_type = kwargs.get("work_type", "task")
+        if "status" not in kwargs:
+            kwargs["status"] = self.work_type_registry.get_initial_status(work_type)
         item = WorkItem(**kwargs)
         if self._db:
             await self._db.execute(
@@ -651,7 +1136,12 @@ class WorkItemStore:
         item = await self.get_work_item(work_item_id)
         if not item:
             return None
-        if item.status in _TERMINAL_STATUSES:
+        # AD-498: Validate against work type state machine
+        valid, reason = self.work_type_registry.validate_transition(
+            item.work_type, item.status, new_status,
+        )
+        if not valid:
+            logger.warning("Invalid transition for %s: %s", work_item_id, reason)
             return None
         old_status = item.status
         now = time.time()
@@ -695,6 +1185,18 @@ class WorkItemStore:
         await self._db.commit()
         await self._refresh_snapshot_cache()
         return True
+
+    async def create_from_template(
+        self,
+        template_id: str,
+        variables: dict[str, str] | None = None,
+        overrides: dict | None = None,
+        created_by: str = "captain",
+    ) -> WorkItem:
+        """Create a work item from a template with variable substitution."""
+        kwargs = self.template_store.instantiate(template_id, variables, overrides)
+        kwargs["created_by"] = created_by
+        return await self.create_work_item(**kwargs)
 
     # ======================================================================
     # Assignment Engine
@@ -1187,6 +1689,8 @@ class WorkItemStore:
         """Return cached snapshot for build_state_snapshot."""
         result = dict(self._snapshot_cache)
         result["resources"] = [r.to_dict() for r in self._resources.values()]
+        result["work_types"] = [wt.to_dict() for wt in self.work_type_registry.list_types()]
+        result["templates"] = [t.to_dict() for t in self.template_store.list_templates()]
         return result
 
     async def _refresh_snapshot_cache(self) -> None:

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
-import type { WorkItemView, BookingView, BookableResourceView } from '../../store/types';
+import type { WorkItemView, BookingView, BookableResourceView, WorkItemTemplateView } from '../../store/types';
 
 const PRIORITY_COLORS: Record<number, string> = {
   1: '#d05050', 2: '#e08040', 3: '#d0b050', 4: '#5090d0', 5: '#888',
@@ -37,10 +37,16 @@ export function ProfileWorkTab({ agentId }: Props) {
   const moveWorkItem = useStore(s => s.moveWorkItem);
   const assignWorkItem = useStore(s => s.assignWorkItem);
   const createWorkItem = useStore(s => s.createWorkItem);
+  const workTemplates = useStore(s => s.workTemplates);
+  const createFromTemplate = useStore(s => s.createFromTemplate);
+  const fetchWorkTemplates = useStore(s => s.fetchWorkTemplates);
 
   const [showCreate, setShowCreate] = useState(false);
   const [createTitle, setCreateTitle] = useState('');
   const [createPriority, setCreatePriority] = useState(3);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<WorkItemTemplateView | null>(null);
+  const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
   const [completedItems, setCompletedItems] = useState<WorkItemView[]>([]);
   const [sectionsOpen, setSectionsOpen] = useState<Record<string, boolean>>({
     active: true, blocked: true, completed: false, duty: true,
@@ -75,6 +81,18 @@ export function ProfileWorkTab({ agentId }: Props) {
     setCreatePriority(3);
     setShowCreate(false);
   }, [createTitle, createPriority, agentUuid, createWorkItem]);
+
+  const handleTemplateCreate = useCallback(async () => {
+    if (!selectedTemplate) return;
+    await createFromTemplate(selectedTemplate.template_id, templateVars, { assigned_to: agentUuid });
+    setSelectedTemplate(null);
+    setTemplateVars({});
+    setShowTemplatePicker(false);
+  }, [selectedTemplate, templateVars, agentUuid, createFromTemplate]);
+
+  useEffect(() => {
+    if (!workTemplates) fetchWorkTemplates();
+  }, []);
 
   const getBooking = (itemId: string): BookingView | undefined =>
     myBookings.find(b => b.work_item_id === itemId && b.status === 'active');
@@ -172,12 +190,18 @@ export function ProfileWorkTab({ agentId }: Props) {
   return (
     <div style={{ padding: '8px 12px', overflowY: 'auto', height: '100%' }}>
       {/* Create button */}
-      <div style={{ marginBottom: 6 }}>
+      <div style={{ marginBottom: 6, display: 'flex', gap: 4 }}>
         {!showCreate ? (
-          <button onClick={() => setShowCreate(true)} style={{
-            padding: '3px 8px', fontSize: 10, borderRadius: 4, cursor: 'pointer',
-            background: 'rgba(80,176,160,0.15)', border: '1px solid rgba(80,176,160,0.3)', color: '#50b0a0',
-          }}>+ Create Task</button>
+          <>
+            <button onClick={() => setShowCreate(true)} style={{
+              padding: '3px 8px', fontSize: 10, borderRadius: 4, cursor: 'pointer',
+              background: 'rgba(80,176,160,0.15)', border: '1px solid rgba(80,176,160,0.3)', color: '#50b0a0',
+            }}>+ Create Task</button>
+            <button onClick={() => setShowTemplatePicker(!showTemplatePicker)} style={{
+              padding: '3px 8px', fontSize: 10, borderRadius: 4, cursor: 'pointer',
+              background: 'rgba(144,112,192,0.15)', border: '1px solid rgba(144,112,192,0.3)', color: '#9070c0',
+            }}>From Template</button>
+          </>
         ) : (
           <div style={{ ...cardStyle, background: 'rgba(80,176,160,0.05)', border: '1px solid rgba(80,176,160,0.2)' }}>
             <input
@@ -202,6 +226,37 @@ export function ProfileWorkTab({ agentId }: Props) {
           </div>
         )}
       </div>
+
+      {/* Template picker */}
+      {showTemplatePicker && (
+        <div style={{ ...cardStyle, background: 'rgba(144,112,192,0.05)', border: '1px solid rgba(144,112,192,0.2)', marginBottom: 6 }}>
+          {!selectedTemplate ? (
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', fontSize: 10 }}>
+              {(workTemplates ?? []).map(t => (
+                <button key={t.template_id} onClick={() => { setSelectedTemplate(t); setTemplateVars({}); }}
+                  style={{ ...actionBtnStyle, color: '#c8d0e0' }}>
+                  {t.name}
+                </button>
+              ))}
+              <button onClick={() => setShowTemplatePicker(false)} style={actionBtnStyle}>Cancel</button>
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize: 10, color: '#9070c0', fontWeight: 600, marginBottom: 4 }}>{selectedTemplate.name}</div>
+              {selectedTemplate.variables.map(v => (
+                <input key={v} placeholder={v} value={templateVars[v] || ''} onChange={e => setTemplateVars(prev => ({ ...prev, [v]: e.target.value }))}
+                  onKeyDown={e => e.key === 'Enter' && handleTemplateCreate()}
+                  style={{ display: 'block', width: '100%', padding: '3px 6px', fontSize: 11, borderRadius: 3, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#c8d0e0', outline: 'none', marginBottom: 3, boxSizing: 'border-box' }}
+                />
+              ))}
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button onClick={handleTemplateCreate} style={{ ...actionBtnStyle, color: '#9070c0', borderColor: 'rgba(144,112,192,0.3)' }}>Create</button>
+                <button onClick={() => setSelectedTemplate(null)} style={actionBtnStyle}>Back</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Active Work */}
       {sectionHeader('Active Work', activeItems.length, 'active')}

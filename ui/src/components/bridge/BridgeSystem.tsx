@@ -182,7 +182,7 @@ function ThreadManagement() {
   );
 }
 
-/* ── Exported composite ── */
+/* ── Exported composites ── */
 export function BridgeSystem() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -190,14 +190,14 @@ export function BridgeSystem() {
         <div style={{ fontSize: 9, color: '#666', marginBottom: 4, fontWeight: 600 }}>SERVICES</div>
         <ServiceStatusList />
       </div>
-      <div>
-        <div style={{ fontSize: 9, color: '#666', marginBottom: 4, fontWeight: 600 }}>THREADS</div>
-        <ThreadManagement />
-      </div>
-      <div>
-        <div style={{ fontSize: 9, color: '#666', marginBottom: 2, fontWeight: 600 }}>SHUTDOWN</div>
-        <ShutdownControl />
-      </div>
     </div>
   );
+}
+
+export function BridgeThreads() {
+  return <ThreadManagement />;
+}
+
+export function BridgeShutdown() {
+  return <ShutdownControl />;
 }

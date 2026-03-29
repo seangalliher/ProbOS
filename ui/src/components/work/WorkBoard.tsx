@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, DragEvent } from 'react';
 import { useStore } from '../../store/useStore';
-import type { WorkItemView, BookableResourceView } from '../../store/types';
+import type { WorkItemView, BookableResourceView, WorkItemTemplateView } from '../../store/types';
 
 // ── Column config ──────────────────────────────────────────────────
 type ColKey = 'backlog' | 'ready' | 'in_progress' | 'review' | 'done';
@@ -130,9 +130,12 @@ function WorkCard({ item, resources, onDragStart }: {
 export default function WorkBoard() {
   const workItems = useStore(s => s.workItems);
   const bookableResources = useStore(s => s.bookableResources);
+  const workTemplates = useStore(s => s.workTemplates);
   const moveWorkItem = useStore(s => s.moveWorkItem);
   const createWorkItem = useStore(s => s.createWorkItem);
   const assignWorkItem = useStore(s => s.assignWorkItem);
+  const createFromTemplate = useStore(s => s.createFromTemplate);
+  const fetchWorkTemplates = useStore(s => s.fetchWorkTemplates);
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<ColKey | null>(null);
@@ -147,6 +150,10 @@ export default function WorkBoard() {
   const [quickPriority, setQuickPriority] = useState(3);
   const [wipWarning, setWipWarning] = useState<string | null>(null);
   const [showBlocked, setShowBlocked] = useState(false);
+  const [quickWorkType, setQuickWorkType] = useState('card');
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<WorkItemTemplateView | null>(null);
+  const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
 
   // Fetch done items on mount
   const [doneItems, setDoneItems] = useState<WorkItemView[]>([]);
@@ -155,6 +162,7 @@ export default function WorkBoard() {
       .then(r => r.ok ? r.json() : { work_items: [] })
       .then(d => setDoneItems(d.work_items || []))
       .catch(() => {});
+    if (!workTemplates) fetchWorkTemplates();
   }, []);
 
   const allItems = useMemo(() => {
@@ -264,11 +272,20 @@ export default function WorkBoard() {
   // Quick create
   const handleQuickCreate = useCallback(async () => {
     if (!quickTitle.trim()) return;
-    await createWorkItem({ title: quickTitle.trim(), priority: quickPriority, work_type: 'card' });
+    await createWorkItem({ title: quickTitle.trim(), priority: quickPriority, work_type: quickWorkType });
     setQuickTitle('');
     setQuickPriority(3);
+    setQuickWorkType('card');
     setShowQuickCreate(false);
-  }, [quickTitle, quickPriority, createWorkItem]);
+  }, [quickTitle, quickPriority, quickWorkType, createWorkItem]);
+
+  const handleTemplateCreate = useCallback(async () => {
+    if (!selectedTemplate) return;
+    await createFromTemplate(selectedTemplate.template_id, templateVars);
+    setSelectedTemplate(null);
+    setTemplateVars({});
+    setShowTemplatePicker(false);
+  }, [selectedTemplate, templateVars, createFromTemplate]);
 
   // Toggle filter set helpers
   const toggleSet = <T,>(setFn: React.Dispatch<React.SetStateAction<Set<T>>>, val: T) => {
@@ -345,6 +362,9 @@ export default function WorkBoard() {
         <button onClick={() => setShowQuickCreate(!showQuickCreate)} style={{ ...toolbarBtn, color: '#50b0a0', borderColor: 'rgba(80,176,160,0.3)' }}>
           + Quick Create
         </button>
+        <button onClick={() => setShowTemplatePicker(!showTemplatePicker)} style={{ ...toolbarBtn, color: '#9070c0', borderColor: 'rgba(144,112,192,0.3)' }}>
+          From Template
+        </button>
       </div>
 
       {/* WIP warning */}
@@ -408,12 +428,56 @@ export default function WorkBoard() {
             placeholder="Card title..." autoFocus
             style={{ flex: 1, padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#c8d0e0', outline: 'none' }}
           />
+          <select value={quickWorkType} onChange={e => setQuickWorkType(e.target.value)}
+            style={{ fontSize: 10, padding: '3px 4px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#aaa', borderRadius: 3 }}>
+            {['card', 'task', 'work_order', 'duty', 'incident'].map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
           <select value={quickPriority} onChange={e => setQuickPriority(Number(e.target.value))}
             style={{ fontSize: 10, padding: '3px 4px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#aaa', borderRadius: 3 }}>
             {[1,2,3,4,5].map(p => <option key={p} value={p}>P{p}</option>)}
           </select>
           <button onClick={handleQuickCreate} style={{ ...toolbarBtn, color: '#50b0a0' }}>Add</button>
           <button onClick={() => setShowQuickCreate(false)} style={toolbarBtn}>&#10005;</button>
+        </div>
+      )}
+
+      {/* Template picker */}
+      {showTemplatePicker && (
+        <div style={{ padding: '6px 16px', borderBottom: '1px solid rgba(255,255,255,0.04)', fontSize: 11 }}>
+          {!selectedTemplate ? (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {Object.entries(
+                (workTemplates ?? []).reduce<Record<string, WorkItemTemplateView[]>>((acc, t) => {
+                  (acc[t.category] = acc[t.category] || []).push(t);
+                  return acc;
+                }, {})
+              ).map(([cat, templates]) => (
+                <div key={cat} style={{ marginRight: 8 }}>
+                  <div style={{ fontSize: 9, color: '#8888a0', fontWeight: 600, textTransform: 'uppercase', marginBottom: 2 }}>{cat}</div>
+                  {templates.map(t => (
+                    <button key={t.template_id} onClick={() => { setSelectedTemplate(t); setTemplateVars({}); }}
+                      style={{ ...toolbarBtn, display: 'block', marginBottom: 2, color: '#c8d0e0', textAlign: 'left' }}>
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              ))}
+              <button onClick={() => setShowTemplatePicker(false)} style={{ ...toolbarBtn, marginLeft: 'auto' }}>&#10005;</button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ color: '#9070c0', fontWeight: 600 }}>{selectedTemplate.name}</span>
+              {selectedTemplate.variables.map(v => (
+                <input key={v} placeholder={v} value={templateVars[v] || ''} onChange={e => setTemplateVars(prev => ({ ...prev, [v]: e.target.value }))}
+                  onKeyDown={e => e.key === 'Enter' && handleTemplateCreate()}
+                  style={{ padding: '3px 6px', fontSize: 11, borderRadius: 3, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#c8d0e0', outline: 'none', width: 120 }}
+                />
+              ))}
+              <button onClick={handleTemplateCreate} style={{ ...toolbarBtn, color: '#9070c0' }}>Create</button>
+              <button onClick={() => setSelectedTemplate(null)} style={toolbarBtn}>Back</button>
+              <button onClick={() => setShowTemplatePicker(false)} style={toolbarBtn}>&#10005;</button>
+            </div>
+          )}
         </div>
       )}
 

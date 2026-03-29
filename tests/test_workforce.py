@@ -148,6 +148,8 @@ class TestWorkItemCRUD:
     async def test_list_work_items_filter_status(self, store):
         await store.create_work_item(title="Open 1")
         item2 = await store.create_work_item(title="Done 1")
+        # task: open -> in_progress -> done (AD-498 state machine)
+        await store.transition_work_item(item2.id, "in_progress")
         await store.transition_work_item(item2.id, "done")
         open_items = await store.list_work_items(status="open")
         assert len(open_items) == 1
@@ -309,10 +311,10 @@ class TestAssignmentEngine:
     async def test_pull_claim_filter_work_type(self, store_with_resource):
         store = store_with_resource
         await store.create_work_item(title="Task", work_type="task")
-        await store.create_work_item(title="Duty", work_type="duty")
-        result = await store.claim_work_item("agent-001", work_type="duty")
+        await store.create_work_item(title="Incident", work_type="incident")
+        result = await store.claim_work_item("agent-001", work_type="incident")
         assert result is not None
-        assert result[0].work_type == "duty"
+        assert result[0].work_type == "incident"
 
     @pytest.mark.asyncio
     async def test_unassign_work_item(self, store_with_resource):
@@ -588,6 +590,8 @@ class TestWorkforceSnapshot:
     @pytest.mark.asyncio
     async def test_snapshot_excludes_terminal_items(self, store):
         item = await store.create_work_item(title="Terminal item")
+        # task: open -> in_progress -> done (AD-498 state machine)
+        await store.transition_work_item(item.id, "in_progress")
         await store.transition_work_item(item.id, "done")
         snap = store.snapshot()
         assert len(snap["work_items"]) == 0
@@ -782,5 +786,452 @@ class TestSnapshotIncludesResources:
             assert "work_items" in snapshot
             assert "bookings" in snapshot
             assert "resources" in snapshot
+        finally:
+            await store.stop()
+
+
+# ── AD-498  Work Type Registry & Templates ──────────────────────────────
+
+
+class TestWorkTypeRegistry:
+    """Unit tests for WorkTypeRegistry."""
+
+    def test_builtin_types_registered(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        types = reg.list_types()
+        assert len(types) >= 5
+        type_ids = [t.type_id for t in types]
+        for expected in ("card", "task", "work_order", "duty", "incident"):
+            assert expected in type_ids
+
+    def test_card_state_machine(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        assert reg.validate_transition("card", "draft", "open") == (True, "")
+        assert reg.validate_transition("card", "open", "done") == (True, "")
+        valid, reason = reg.validate_transition("card", "draft", "in_progress")
+        assert not valid
+
+    def test_task_state_machine(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        assert reg.validate_transition("task", "open", "in_progress") == (True, "")
+        assert reg.validate_transition("task", "in_progress", "done") == (True, "")
+        valid, _ = reg.validate_transition("task", "open", "done")
+        assert not valid
+
+    def test_work_order_state_machine(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        assert reg.validate_transition("work_order", "draft", "open") == (True, "")
+        assert reg.validate_transition("work_order", "in_progress", "review") == (True, "")
+        assert reg.validate_transition("work_order", "review", "done") == (True, "")
+        valid, _ = reg.validate_transition("work_order", "open", "done")
+        assert not valid
+
+    def test_duty_state_machine(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        assert reg.validate_transition("duty", "scheduled", "in_progress") == (True, "")
+        assert reg.validate_transition("duty", "in_progress", "done") == (True, "")
+        valid, _ = reg.validate_transition("duty", "scheduled", "done")
+        assert not valid
+
+    def test_incident_state_machine(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        assert reg.validate_transition("incident", "open", "in_progress") == (True, "")
+        assert reg.validate_transition("incident", "in_progress", "review") == (True, "")
+        assert reg.validate_transition("incident", "review", "done") == (True, "")
+
+    def test_terminal_status_rejected(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        valid, reason = reg.validate_transition("task", "done", "open")
+        assert not valid
+        assert "terminal" in reason.lower()
+
+    def test_custom_type_registration(self):
+        from probos.workforce import WorkTypeRegistry, WorkTypeDefinition, WorkTypeTransition
+        reg = WorkTypeRegistry()
+        custom = WorkTypeDefinition(
+            type_id="custom_test",
+            display_name="Custom",
+            description="Test type",
+            initial_status="new",
+            terminal_statuses=frozenset({"closed"}),
+            valid_transitions=[WorkTypeTransition("new", "closed")],
+        )
+        reg.register(custom)
+        assert reg.get("custom_test") is not None
+        assert reg.validate_transition("custom_test", "new", "closed") == (True, "")
+
+    def test_unknown_type_permissive(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        valid, _ = reg.validate_transition("unknown_type", "foo", "bar")
+        assert valid
+
+    def test_initial_statuses(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        assert reg.get_initial_status("card") == "draft"
+        assert reg.get_initial_status("task") == "open"
+        assert reg.get_initial_status("work_order") == "draft"
+        assert reg.get_initial_status("duty") == "scheduled"
+        assert reg.get_initial_status("incident") == "open"
+        assert reg.get_initial_status("unknown") == "open"
+
+    def test_required_fields(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        wt = reg.get("incident")
+        assert wt is not None
+
+    def test_valid_targets(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        targets = reg.get_valid_targets("task", "open")
+        assert "in_progress" in targets
+        assert "cancelled" in targets
+
+    def test_blocked_transitions(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        assert reg.validate_transition("task", "open", "blocked") == (True, "")
+        assert reg.validate_transition("task", "blocked", "in_progress") == (True, "")
+        assert reg.validate_transition("task", "blocked", "cancelled") == (True, "")
+
+    def test_to_dict(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        wt = reg.get("task")
+        d = wt.to_dict()
+        assert d["type_id"] == "task"
+        assert "valid_transitions" in d
+        assert isinstance(d["valid_transitions"], list)
+
+    def test_cancelled_from_non_terminal(self):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        assert reg.validate_transition("task", "in_progress", "cancelled") == (True, "")
+        assert reg.validate_transition("work_order", "open", "cancelled") == (True, "")
+
+
+class TestTemplateStore:
+    """Unit tests for TemplateStore."""
+
+    def test_builtin_count(self):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        templates = store.list_templates()
+        assert len(templates) >= 8
+
+    def test_instantiate_with_variables(self):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        data = store.instantiate("security_scan", {"target": "api.py"})
+        assert "api.py" in data["title"]
+        assert data["work_type"] == "work_order"
+
+    def test_instantiate_without_variables(self):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        data = store.instantiate("crew_health_check", {})
+        assert "title" in data
+        assert data["work_type"] == "duty"
+
+    def test_instantiate_with_overrides(self):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        data = store.instantiate("code_review", {"target": "main.py"}, overrides={"priority": 1, "assigned_to": "agent-1"})
+        assert data["priority"] == 1
+        assert data["assigned_to"] == "agent-1"
+
+    def test_category_filter(self):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        security = store.list_templates(category="security")
+        assert all(t.category == "security" for t in security)
+
+    def test_night_orders_metadata(self):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        data = store.instantiate("night_maintenance", {})
+        assert "metadata" in data
+        meta = data.get("metadata", {})
+        assert "can_approve_builds" in meta
+
+    def test_ttl_propagation(self):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        data = store.instantiate("night_maintenance", {})
+        assert data.get("ttl_seconds") is not None
+
+    def test_not_found_error(self):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        with pytest.raises(ValueError):
+            store.instantiate("nonexistent_template", {})
+
+    def test_custom_registration(self):
+        from probos.workforce import TemplateStore, WorkItemTemplate
+        store = TemplateStore()
+        custom = WorkItemTemplate(
+            template_id="test_custom",
+            name="Custom Test",
+            description="A test template",
+            work_type="task",
+            title_pattern="Custom: {thing}",
+            category="test",
+        )
+        store.register(custom)
+        assert store.get("test_custom") is not None
+        data = store.instantiate("test_custom", {"thing": "widget"})
+        assert data["title"] == "Custom: widget"
+
+    def test_to_dict_variables(self):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        t = store.get("security_scan")
+        d = t.to_dict()
+        assert "target" in d["variables"]
+
+    def test_metadata_merge(self):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        data = store.instantiate("night_maintenance", {}, overrides={"metadata": {"extra": "val"}})
+        # Overrides replace metadata entirely when passed as dict
+        assert data["metadata"].get("extra") == "val"
+
+    def test_reload_templates(self):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        initial = len(store.list_templates())
+        store.reload_templates([])
+        assert len(store.list_templates()) == initial
+
+
+class TestWorkTypeValidationIntegration:
+    """Integration tests: WorkItemStore + WorkTypeRegistry."""
+
+    @pytest.mark.asyncio
+    async def test_initial_status_card(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            item = await store.create_work_item(title="Card", work_type="card")
+            assert item.status == "draft"
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_initial_status_task(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            item = await store.create_work_item(title="Task", work_type="task")
+            assert item.status == "open"
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_initial_status_duty(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            item = await store.create_work_item(title="Duty", work_type="duty")
+            assert item.status == "scheduled"
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_valid_transition(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            item = await store.create_work_item(title="T", work_type="task")
+            result = await store.transition_work_item(item.id, "in_progress")
+            assert result is not None
+            assert result.status == "in_progress"
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_invalid_transition_rejected(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            item = await store.create_work_item(title="T", work_type="task")
+            result = await store.transition_work_item(item.id, "done")
+            assert result is None  # open -> done not valid for task
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_card_direct_done(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            item = await store.create_work_item(title="C", work_type="card")
+            # draft -> open
+            item = await store.transition_work_item(item.id, "open")
+            assert item is not None
+            # open -> done
+            item = await store.transition_work_item(item.id, "done")
+            assert item is not None
+            assert item.status == "done"
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_work_order_requires_review(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            item = await store.create_work_item(title="WO", work_type="work_order")
+            assert item.status == "draft"
+            item = await store.transition_work_item(item.id, "open")
+            item = await store.transition_work_item(item.id, "scheduled")
+            item = await store.transition_work_item(item.id, "in_progress")
+            # Can't skip review
+            result = await store.transition_work_item(item.id, "done")
+            assert result is None
+            item = await store.transition_work_item(item.id, "review")
+            item = await store.transition_work_item(item.id, "done")
+            assert item.status == "done"
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_create_from_template(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            item = await store.create_from_template(
+                "security_scan", {"target": "api.py"}, overrides={"assigned_to": "agent-1"}
+            )
+            assert "api.py" in item.title
+            assert item.assigned_to == "agent-1"
+            assert item.work_type == "work_order"
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_template_ttl(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            item = await store.create_from_template("night_maintenance", {})
+            assert item.ttl_seconds is not None
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_snapshot_includes_types_and_templates(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            await store._refresh_snapshot_cache()
+            snapshot = store.snapshot()
+            assert "work_types" in snapshot
+            assert "templates" in snapshot
+            assert len(snapshot["work_types"]) >= 5
+            assert len(snapshot["templates"]) >= 8
+        finally:
+            await store.stop()
+
+
+class TestWorkTypeAPI:
+    """API endpoint tests for work types and templates."""
+
+    @pytest.mark.asyncio
+    async def test_work_types_list(self, tmp_path):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        types = reg.list_types()
+        assert len(types) >= 5
+
+    @pytest.mark.asyncio
+    async def test_templates_list_all(self, tmp_path):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        templates = store.list_templates()
+        assert len(templates) >= 8
+
+    @pytest.mark.asyncio
+    async def test_templates_list_filtered(self, tmp_path):
+        from probos.workforce import TemplateStore
+        store = TemplateStore()
+        security = store.list_templates(category="security")
+        ops = store.list_templates(category="operations")
+        assert len(security) >= 1
+        assert len(ops) >= 1
+
+    @pytest.mark.asyncio
+    async def test_transitions_api(self, tmp_path):
+        from probos.workforce import WorkTypeRegistry
+        reg = WorkTypeRegistry()
+        targets = reg.get_valid_targets("task", "open")
+        assert isinstance(targets, list)
+        assert "in_progress" in targets
+
+    @pytest.mark.asyncio
+    async def test_create_from_template_variables(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            item = await store.create_from_template(
+                "engineering_diagnostic", {"system": "EPS Grid"}
+            )
+            assert "EPS Grid" in item.title
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_invalid_template_raises(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            with pytest.raises(ValueError):
+                await store.create_from_template("nonexistent", {})
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_custom_config_types(self, tmp_path):
+        config = {
+            "custom_work_types": [{
+                "type_id": "epic",
+                "display_name": "Epic",
+                "description": "Large feature",
+                "initial_status": "draft",
+                "terminal_statuses": ["done", "cancelled"],
+                "valid_transitions": [
+                    {"from_status": "draft", "to_status": "open"},
+                    {"from_status": "open", "to_status": "done"},
+                ],
+            }],
+            "custom_templates": [],
+        }
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"), config=config)
+        await store.start()
+        try:
+            assert store.work_type_registry.get("epic") is not None
+            item = await store.create_work_item(title="E", work_type="epic")
+            assert item.status == "draft"
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_backward_compat_unknown_type(self, tmp_path):
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            item = await store.create_work_item(title="X", work_type="mystery_type")
+            assert item.status == "open"  # default initial status
+            result = await store.transition_work_item(item.id, "in_progress")
+            assert result is not None  # permissive for unknown types
         finally:
             await store.stop()

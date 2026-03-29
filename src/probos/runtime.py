@@ -1234,9 +1234,13 @@ class ProbOSRuntime:
                 logger.warning("Knowledge store initialization failed: %s — continuing without persistence", e)
                 self._knowledge_store = None
 
-        # AD-502: Detect lifecycle state — stasis vs reset vs first boot
+        # AD-502: Detect lifecycle state — stasis vs first boot
         # BF-065: Use self._data_dir directly (not knowledge_store) so detection
         # works even if knowledge store is disabled or fails to initialize.
+        # BF-070: Removed trust.db heuristic — runtime creates trust.db during
+        # initialization (line ~814) before this check runs, so it was always
+        # true after a reset, misclassifying first_boot as "restart".
+        # Now: session_last.json present = stasis recovery, absent = first boot.
         try:
             session_path = self._data_dir / "session_last.json"
             if session_path.exists():
@@ -1246,10 +1250,8 @@ class ProbOSRuntime:
                 self._stasis_duration = stasis_duration
                 self._previous_session = previous_session
                 logger.info("AD-502: Stasis recovery detected — stasis duration: %s", _format_duration(stasis_duration))
-            elif (self._data_dir / "trust.db").exists():
-                # Data dir has state but no session record — ungraceful restart
-                self._lifecycle_state = "restart"
-                logger.info("AD-502: Restart detected (no session record) — treating as restart, not first boot")
+            else:
+                logger.info("AD-502: No session record — first boot (maiden voyage)")
         except Exception:
             pass  # first boot or corrupted record
 
@@ -1315,7 +1317,9 @@ class ProbOSRuntime:
         self._refresh_emergent_detector_roster()
 
         # BF-034: Detect cold start (post-reset boot with empty state)
-        if self._knowledge_store and self._emergent_detector:
+        # BF-069: Don't gate on _knowledge_store — cold start detection must work
+        # even if knowledge store is disabled or fails to initialize.
+        if self._emergent_detector:
             trust_records = self.trust_network.raw_scores()
             all_at_prior = all(
                 abs(r["alpha"] - self.config.consensus.trust_prior_alpha) < 0.01
@@ -1505,6 +1509,10 @@ class ProbOSRuntime:
                 db_path=str(self._data_dir / "workforce.db"),
                 emit_event=self._emit_event,
                 tick_interval=self.config.workforce.tick_interval_seconds,
+                config={
+                    "custom_work_types": self.config.workforce.custom_work_types,
+                    "custom_templates": self.config.workforce.custom_templates,
+                },
             )
             await self.work_item_store.start()
             await self._register_workforce_resources()

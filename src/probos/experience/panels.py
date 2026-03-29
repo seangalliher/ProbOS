@@ -209,8 +209,9 @@ def render_status_panel(status: dict[str, Any]) -> Panel:
     if ep:
         lines.append("")
         lines.append("[bold]Episodic Memory[/bold]")
-        lines.append(f"  Episodes: {ep.get('total_episodes', 0)}")
-        lines.append(f"  Intents:  {ep.get('unique_intents', 0)}")
+        lines.append(f"  Episodes: {ep.get('total', ep.get('total_episodes', 0))}")
+        intent_dist = ep.get("intent_distribution", {})
+        lines.append(f"  Intents:  {len(intent_dist) if intent_dist else ep.get('unique_intents', 0)}")
 
     return Panel("\n".join(lines), title="System Status", border_style="blue")
 

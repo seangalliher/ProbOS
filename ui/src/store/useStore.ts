@@ -12,6 +12,7 @@ import type {
   Assignment,  // AD-408
   ScheduledTaskView,  // Phase 25a
   WorkItemView, BookingView, BookableResourceView,  // AD-497
+  WorkTypeDefinitionView, WorkItemTemplateView,  // AD-498
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
 } from './types';
@@ -214,6 +215,8 @@ export interface HXIState {
   workItems: WorkItemView[] | null;
   workBookings: BookingView[] | null;
   bookableResources: BookableResourceView[] | null;
+  workTypeDefinitions: WorkTypeDefinitionView[] | null;
+  workTemplates: WorkItemTemplateView[] | null;
   expandedGlassTask: string | null;
   notifications: NotificationView[] | null;
   pendingRoutingPulse: { source: string; target: string } | null;
@@ -318,6 +321,10 @@ export interface HXIState {
   moveWorkItem: (itemId: string, newStatus: string) => Promise<void>;
   assignWorkItem: (itemId: string, resourceId: string) => Promise<void>;
   createWorkItem: (item: { title: string; priority?: number; work_type?: string; assigned_to?: string; description?: string }) => Promise<void>;
+  // AD-498: Template actions
+  fetchWorkTypes: () => Promise<void>;
+  fetchWorkTemplates: () => Promise<void>;
+  createFromTemplate: (templateId: string, variables?: Record<string, string>, overrides?: Record<string, any>) => Promise<void>;
 }
 
 /** Derive MissionControlTasks from BuildQueueItems (AD-322). */
@@ -379,6 +386,8 @@ export const useStore = create<HXIState>((set, get) => ({
   workItems: null,
   workBookings: null,
   bookableResources: null,
+  workTypeDefinitions: null,
+  workTemplates: null,
   expandedGlassTask: null,
   notifications: null,
   pendingRoutingPulse: null,
@@ -626,6 +635,39 @@ export const useStore = create<HXIState>((set, get) => ({
       console.error('Failed to create work item:', e);
     }
   },
+  // AD-498: Work type and template actions
+  fetchWorkTypes: async () => {
+    try {
+      const resp = await fetch('/api/work-types');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      set({ workTypeDefinitions: data.work_types || [] });
+    } catch (e) {
+      console.error('Failed to fetch work types:', e);
+    }
+  },
+  fetchWorkTemplates: async () => {
+    try {
+      const resp = await fetch('/api/templates');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      set({ workTemplates: data.templates || [] });
+    } catch (e) {
+      console.error('Failed to fetch templates:', e);
+    }
+  },
+  createFromTemplate: async (templateId: string, variables?: Record<string, string>, overrides?: Record<string, any>) => {
+    try {
+      const resp = await fetch(`/api/work-items/from-template/${templateId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ variables: variables || {}, overrides: overrides || {} }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+    } catch (e) {
+      console.error('Failed to create from template:', e);
+    }
+  },
   setShowIntro: (v) => set({ showIntro: v }),
   setShowLegend: (v) => set({ showLegend: v }),
   setShowHistory: (v) => set({ showHistory: v }),
@@ -822,6 +864,8 @@ export const useStore = create<HXIState>((set, get) => ({
             workItems: wf.work_items?.length ? wf.work_items : null,
             workBookings: wf.bookings?.length ? wf.bookings : null,
             bookableResources: wf.resources?.length ? wf.resources : null,
+            workTypeDefinitions: wf.work_types?.length ? wf.work_types : null,
+            workTemplates: wf.templates?.length ? wf.templates : null,
           });
         }
         break;

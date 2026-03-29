@@ -7,6 +7,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import tempfile
@@ -219,7 +220,7 @@ class TestProbOSInit:
 
 
 class TestProbOSReset:
-    """Tests for ``probos reset`` CLI subcommand (AD-264)."""
+    """Tests for ``probos reset`` CLI subcommand (BF-070: Tiered Reset)."""
 
     def _make_repo(self, tmp_path):
         """Create a fake KnowledgeStore directory with sample files."""
@@ -233,45 +234,61 @@ class TestProbOSReset:
             (d / ".gitkeep").write_text("")
         return repo
 
-    def test_reset_clears_artifacts(self, tmp_path):
-        """Reset deletes *.json and *.py from all subdirs, keeps dirs and .gitkeep."""
-        import argparse
-        from probos.__main__ import _cmd_reset, _RESET_SUBDIRS
-
-        repo = self._make_repo(tmp_path)
+    def _make_data_dir(self, tmp_path):
+        """Create a data dir with files across all tiers."""
         data_dir = tmp_path / "data"
         data_dir.mkdir()
+        # Tier 1 (transients)
+        (data_dir / "events.db").write_text("events")
+        (data_dir / "scheduled_tasks.db").write_text("tasks")
+        cp_dir = data_dir / "checkpoints"
+        cp_dir.mkdir()
+        (cp_dir / "dag1.json").write_text("{}")
+        # Tier 2 (cognition + identity) — session_last.json lives here now
+        (data_dir / "session_last.json").write_text("{}")
+        (data_dir / "chroma.sqlite3").write_text("chroma")
+        (data_dir / "cognitive_journal.db").write_text("journal")
+        (data_dir / "hebbian_weights.db").write_text("hebbian")
+        (data_dir / "trust.db").write_text("trust")
+        (data_dir / "service_profiles.db").write_text("profiles")
+        sem_dir = data_dir / "semantic"
+        sem_dir.mkdir()
+        (sem_dir / "index.bin").write_text("idx")
+        (data_dir / "identity.db").write_text("identity")
+        (data_dir / "acm.db").write_text("acm")
+        (data_dir / "skills.db").write_text("skills")
+        (data_dir / "directives.db").write_text("directives")
+        ont_dir = data_dir / "ontology"
+        ont_dir.mkdir()
+        (ont_dir / "instance_id").write_text("did:probos:old")
+        # Tier 3 (institutional knowledge)
+        (data_dir / "ward_room.db").write_text("ward room data")
+        (data_dir / "workforce.db").write_text("workforce")
+        sr_dir = data_dir / "ship-records"
+        sr_dir.mkdir()
+        (sr_dir / "log.md").write_text("captain's log")
+        scout_dir = data_dir / "scout_reports"
+        scout_dir.mkdir()
+        (scout_dir / "report.json").write_text("{}")
+        return data_dir
 
-        args = argparse.Namespace(
-            yes=True, keep_trust=False, config=None, data_dir=data_dir,
+    def _reset_args(self, data_dir, **overrides):
+        """Create argparse Namespace for reset with tier flags."""
+        defaults = dict(
+            yes=True, soft=False, full=False,
+            dry_run=False, wipe_records=False, config=None, data_dir=data_dir,
         )
-        with patch("probos.__main__._load_config_with_fallback") as mock_cfg:
-            from types import SimpleNamespace
-            mock_cfg.return_value = (
-                SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
-                None,
-            )
-            _cmd_reset(args)
+        defaults.update(overrides)
+        return argparse.Namespace(**defaults)
 
-        for sub in _RESET_SUBDIRS:
-            d = repo / sub
-            assert d.is_dir(), f"{sub}/ directory should still exist"
-            assert not list(d.glob("*.json")), f"{sub}/ should have no .json files"
-            assert not list(d.glob("*.py")), f"{sub}/ should have no .py files"
-            assert (d / ".gitkeep").exists(), f"{sub}/.gitkeep should survive"
-
-    def test_reset_keeps_trust_with_flag(self, tmp_path):
-        """--keep-trust preserves trust/ but clears everything else."""
-        import argparse
+    def test_tier1_soft_only_clears_transients(self, tmp_path):
+        """--soft (Tier 1) clears only runtime transients, preserves timeline."""
         from probos.__main__ import _cmd_reset
 
         repo = self._make_repo(tmp_path)
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
+        data_dir = self._make_data_dir(tmp_path)
+        args = self._reset_args(data_dir, soft=True)
 
-        args = argparse.Namespace(
-            yes=True, keep_trust=True, config=None, data_dir=data_dir,
-        )
         with patch("probos.__main__._load_config_with_fallback") as mock_cfg:
             from types import SimpleNamespace
             mock_cfg.return_value = (
@@ -280,27 +297,29 @@ class TestProbOSReset:
             )
             _cmd_reset(args)
 
-        # Trust files should survive
-        assert (repo / "trust" / "sample.json").exists()
-        assert (repo / "trust" / "sample.py").exists()
-        # Other dirs should be cleared
-        assert not list((repo / "episodes").glob("*.json"))
-        assert not list((repo / "agents").glob("*.py"))
+        # Tier 1 files cleared
+        assert not (data_dir / "events.db").exists()
+        assert not (data_dir / "scheduled_tasks.db").exists()
+        assert len(list((data_dir / "checkpoints").glob("*.json"))) == 0
 
-    def test_reset_clears_chromadb(self, tmp_path):
-        """Reset removes the chroma/ directory."""
-        import argparse
+        # session_last.json SURVIVES soft reset (timeline intact for stasis recovery)
+        assert (data_dir / "session_last.json").exists()
+
+        # Tier 2+ files preserved
+        assert (data_dir / "chroma.sqlite3").exists()
+        assert (data_dir / "trust.db").exists()
+        assert (data_dir / "hebbian_weights.db").exists()
+        assert (data_dir / "identity.db").exists()
+        assert (data_dir / "ward_room.db").exists()
+
+    def test_tier2_default_clears_cognition_and_identity(self, tmp_path):
+        """Default reset (Tier 2) clears cognition + identity, preserves institutional."""
         from probos.__main__ import _cmd_reset
 
         repo = self._make_repo(tmp_path)
-        data_dir = tmp_path / "data"
-        chroma_dir = data_dir / "chroma"
-        chroma_dir.mkdir(parents=True)
-        (chroma_dir / "chroma.sqlite3").write_text("fake")
+        data_dir = self._make_data_dir(tmp_path)
+        args = self._reset_args(data_dir)  # no tier flag = default Tier 2
 
-        args = argparse.Namespace(
-            yes=True, keep_trust=False, config=None, data_dir=data_dir,
-        )
         with patch("probos.__main__._load_config_with_fallback") as mock_cfg:
             from types import SimpleNamespace
             mock_cfg.return_value = (
@@ -309,19 +328,133 @@ class TestProbOSReset:
             )
             _cmd_reset(args)
 
-        assert not chroma_dir.exists()
+        # Tier 1+2 files cleared
+        assert not (data_dir / "session_last.json").exists()
+        assert not (data_dir / "chroma.sqlite3").exists()
+        assert not (data_dir / "trust.db").exists()
+        assert not (data_dir / "hebbian_weights.db").exists()
+        assert not (data_dir / "cognitive_journal.db").exists()
+        assert not (data_dir / "service_profiles.db").exists()
+        assert not (data_dir / "identity.db").exists()
+        assert not (data_dir / "acm.db").exists()
+        assert not (data_dir / "skills.db").exists()
+        assert not (data_dir / "directives.db").exists()
+        assert not (data_dir / "ontology" / "instance_id").exists()
+        assert not (data_dir / "events.db").exists()
+
+        # Tier 3 files preserved
+        assert (data_dir / "ward_room.db").exists()
+        assert (data_dir / "workforce.db").exists()
+        assert (data_dir / "ship-records").is_dir()
+        assert (data_dir / "scout_reports").is_dir()
+
+        # Knowledge subdirs cleared (Tier 2 special)
+        for sub in ("episodes", "agents", "routing"):
+            assert not list((repo / sub).glob("*.json"))
+            assert not list((repo / sub).glob("*.py"))
+
+    def test_tier3_full_clears_everything(self, tmp_path):
+        """--full (Tier 3) clears everything including records."""
+        from probos.__main__ import _cmd_reset
+
+        repo = self._make_repo(tmp_path)
+        data_dir = self._make_data_dir(tmp_path)
+        args = self._reset_args(data_dir, full=True)
+
+        with patch("probos.__main__._load_config_with_fallback") as mock_cfg:
+            from types import SimpleNamespace
+            mock_cfg.return_value = (
+                SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
+                None,
+            )
+            _cmd_reset(args)
+
+        # All tiers cleared
+        assert not (data_dir / "session_last.json").exists()
+        assert not (data_dir / "chroma.sqlite3").exists()
+        assert not (data_dir / "identity.db").exists()
+        assert not (data_dir / "ward_room.db").exists()
+        assert not (data_dir / "workforce.db").exists()
+
+        # Ward Room archived
+        archives = list((data_dir / "archives").glob("ward_room_*.db"))
+        assert len(archives) == 1
+        assert archives[0].read_text() == "ward room data"
+
+    def test_wipe_records_is_alias_for_full(self, tmp_path):
+        """--wipe-records backward compat alias triggers Tier 3."""
+        from probos.__main__ import _cmd_reset
+
+        repo = self._make_repo(tmp_path)
+        data_dir = self._make_data_dir(tmp_path)
+        args = self._reset_args(data_dir, wipe_records=True)
+
+        with patch("probos.__main__._load_config_with_fallback") as mock_cfg:
+            from types import SimpleNamespace
+            mock_cfg.return_value = (
+                SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
+                None,
+            )
+            _cmd_reset(args)
+
+        # Same as Tier 4 — everything cleared
+        assert not (data_dir / "ward_room.db").exists()
+        assert not (data_dir / "workforce.db").exists()
+        assert not (data_dir / "identity.db").exists()
+
+    def test_dry_run_changes_nothing(self, tmp_path):
+        """--dry-run shows what would happen but doesn't delete anything."""
+        from probos.__main__ import _cmd_reset
+
+        repo = self._make_repo(tmp_path)
+        data_dir = self._make_data_dir(tmp_path)
+        args = self._reset_args(data_dir, dry_run=True)
+
+        with patch("probos.__main__._load_config_with_fallback") as mock_cfg:
+            from types import SimpleNamespace
+            mock_cfg.return_value = (
+                SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
+                None,
+            )
+            _cmd_reset(args)
+
+        # Everything should still exist
+        assert (data_dir / "session_last.json").exists()
+        assert (data_dir / "chroma.sqlite3").exists()
+        assert (data_dir / "identity.db").exists()
+        assert (data_dir / "ward_room.db").exists()
+
+    def test_chromadb_uuid_dirs_cleaned(self, tmp_path):
+        """Default reset (Tier 2) cleans UUID-named ChromaDB HNSW index directories."""
+        from probos.__main__ import _cmd_reset
+
+        repo = self._make_repo(tmp_path)
+        data_dir = self._make_data_dir(tmp_path)
+        # Create a UUID-named dir (ChromaDB HNSW index)
+        uuid_dir = data_dir / "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        uuid_dir.mkdir()
+        (uuid_dir / "index.bin").write_text("hnsw data")
+
+        args = self._reset_args(data_dir)  # Default = Tier 2 (includes ChromaDB cleanup)
+
+        with patch("probos.__main__._load_config_with_fallback") as mock_cfg:
+            from types import SimpleNamespace
+            mock_cfg.return_value = (
+                SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
+                None,
+            )
+            _cmd_reset(args)
+
+        assert not uuid_dir.exists()
 
     def test_reset_no_crash_empty_repo(self, tmp_path):
         """Reset on a nonexistent knowledge dir doesn't crash."""
-        import argparse
         from probos.__main__ import _cmd_reset
 
         repo = tmp_path / "nonexistent_knowledge"
         data_dir = tmp_path / "data"
 
-        args = argparse.Namespace(
-            yes=True, keep_trust=False, config=None, data_dir=data_dir,
-        )
+        args = self._reset_args(data_dir)
         with patch("probos.__main__._load_config_with_fallback") as mock_cfg:
             from types import SimpleNamespace
             mock_cfg.return_value = (

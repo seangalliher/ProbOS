@@ -482,6 +482,39 @@ export interface BookableResourceView {
 
 export type ScrumbanColumn = 'backlog' | 'ready' | 'in_progress' | 'review' | 'done';
 
+// Work Type Registry (AD-498)
+
+export interface WorkTypeDefinitionView {
+  type_id: string;
+  display_name: string;
+  description: string;
+  initial_status: string;
+  terminal_statuses: string[];
+  valid_transitions: Array<{
+    from_status: string;
+    to_status: string;
+    requires_assignment: boolean;
+  }>;
+  supports_children: boolean;
+  verification_required: boolean;
+  default_priority: number;
+}
+
+export interface WorkItemTemplateView {
+  template_id: string;
+  name: string;
+  description: string;
+  work_type: string;
+  title_pattern: string;
+  category: string;
+  estimated_tokens: number;
+  default_priority: number;
+  tags: string[];
+  default_steps: Array<{ label: string; status: string }>;
+  variables: string[];
+  ttl_seconds: number | null;
+}
+
 // Service status (AD-436)
 
 export interface ServiceStatus {

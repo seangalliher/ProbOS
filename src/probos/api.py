@@ -2433,6 +2433,75 @@ def create_app(runtime: Any) -> FastAPI:
 
     # ── Workforce Scheduling Engine (AD-496) ──────────────────────────
 
+    # -- Work Type Registry & Templates (AD-498) --
+
+    @app.get("/api/work-types")
+    async def list_work_types() -> dict[str, Any]:
+        """List registered work types."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        types = runtime.work_item_store.work_type_registry.list_types()
+        return {"work_types": [wt.to_dict() for wt in types]}
+
+    @app.get("/api/work-types/{type_id}")
+    async def get_work_type(type_id: str) -> dict[str, Any]:
+        """Get work type definition."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        wt = runtime.work_item_store.work_type_registry.get(type_id)
+        if not wt:
+            raise HTTPException(404, f"Work type '{type_id}' not found")
+        return {"work_type": wt.to_dict()}
+
+    @app.get("/api/work-types/{type_id}/transitions")
+    async def get_work_type_transitions(type_id: str, from_status: str = "open") -> dict[str, Any]:
+        """Get valid transitions for a work type from a given status."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        wt = runtime.work_item_store.work_type_registry.get(type_id)
+        if not wt:
+            raise HTTPException(404, f"Work type '{type_id}' not found")
+        targets = runtime.work_item_store.work_type_registry.get_valid_targets(type_id, from_status)
+        return {"type_id": type_id, "from_status": from_status, "valid_targets": targets}
+
+    @app.get("/api/templates")
+    async def list_templates(category: str | None = None) -> dict[str, Any]:
+        """List work item templates."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        templates = runtime.work_item_store.template_store.list_templates(category)
+        return {"templates": [t.to_dict() for t in templates]}
+
+    @app.get("/api/templates/{template_id}")
+    async def get_template(template_id: str) -> dict[str, Any]:
+        """Get template details."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        t = runtime.work_item_store.template_store.get(template_id)
+        if not t:
+            raise HTTPException(404, f"Template '{template_id}' not found")
+        return {"template": t.to_dict()}
+
+    @app.post("/api/work-items/from-template/{template_id}")
+    async def create_from_template(template_id: str, request: Request) -> dict[str, Any]:
+        """Create work item from template."""
+        if not runtime.work_item_store:
+            raise HTTPException(503, "Workforce engine not enabled")
+        body = await request.json()
+        try:
+            item = await runtime.work_item_store.create_from_template(
+                template_id,
+                variables=body.get("variables"),
+                overrides=body.get("overrides"),
+                created_by=body.get("created_by", "captain"),
+            )
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+        _broadcast_event({"type": "work_item_created", "data": {"work_item": item.to_dict()}})
+        return {"work_item": item.to_dict()}
+
+    # -- Work Items (AD-496) --
+
     @app.post("/api/work-items")
     async def create_work_item(request: Request) -> dict[str, Any]:
         """Create a new work item."""

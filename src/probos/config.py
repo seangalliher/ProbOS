@@ -401,6 +401,9 @@ class WorkforceConfig(BaseModel):
     enabled: bool = False
     tick_interval_seconds: float = 10.0
     default_capacity: int = 1           # Default concurrent task limit per agent
+    custom_work_types: list[dict] = []
+    custom_templates: list[dict] = []
+    template_config_path: str = "config/work_templates.yaml"
 
 
 class TemporalConfig(BaseModel):

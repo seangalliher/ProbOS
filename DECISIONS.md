@@ -1290,7 +1290,7 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 - **Naval foundation:** 3-M PMS cards → Work Item Templates. Watch sections → AgentCalendar. WQSB → multi-role resource allocation. Operator rounds → recurring duty-type WorkItems.
 - **OSS/Commercial split:** OSS = engine + lightweight Scrumban. Commercial = advanced Schedule Board (AD-C-010), capacity planning (AD-C-011), Project WBS + PSA financials (AD-C-012), scheduling optimization (AD-C-013), auto-escalation (AD-C-014), Agent Capital Management integration (AD-C-015).
 
-**Status:** AD-496 — COMPLETE (2026-03-28). AD-497 — COMPLETE (2026-03-28). AD-498 — PLANNED.
+**Status:** AD-496 — COMPLETE (2026-03-28). AD-497 — COMPLETE (2026-03-28). AD-498 — COMPLETE (2026-03-28).
 
 ## AD-499: Ship & Crew Naming Conventions (2026-03-28)
 

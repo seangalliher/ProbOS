@@ -115,7 +115,8 @@ class TestResetIdentityCleanup:
 
     def _make_args(self, data_dir):
         return argparse.Namespace(
-            yes=True, keep_trust=False, config=None, data_dir=data_dir,
+            yes=True, soft=False, full=False,
+            dry_run=False, wipe_records=False, config=None, data_dir=data_dir,
         )
 
     def test_reset_clears_identity_db(self, tmp_path):

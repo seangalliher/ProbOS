@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-471 COMPLETE. Autonomous Operations — The Conn (formal authority delegation), Night Orders (Captain-offline guidance with TTL), Watch Bill (wall-clock duty rotation). ConnManager, NightOrdersManager, WatchManager extensions, runtime wiring, proactive context injection, shell commands, API endpoints. 35 tests. Fixed Rank ordinal comparison bug (string enums → list-index). Crew Development Wave (AD-507–512) DESIGNED. Next: AD-503 (Counselor Activation), or observe crew behavior under temporal awareness + autonomous ops.
+## Current Status: BF-070 CLOSED. Tiered Reset System — replaced ad-hoc reset with 3-tier declarative architecture: Tier 1 `--soft` (Reboot, preserves stasis timeline), Tier 2 default (Recommissioning, maiden voyage), Tier 3 `--full` (Maiden Voyage, everything). Fixed 11 databases silently missed by reset, ChromaDB no-op cleanup, broken lifecycle detection. BF-070e consolidated from 4→3 tiers (Shore Leave reserved for commercial mobility). `--dry-run` support, Rich confirmation prompt. Next: AD-503 (Counselor Activation).
 
 ---
 
