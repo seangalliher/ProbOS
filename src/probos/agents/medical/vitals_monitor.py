@@ -250,3 +250,19 @@ class VitalsMonitorAgent(HeartbeatAgent):
     def window(self) -> list[dict[str, Any]]:
         """Return the sliding window of recent metrics."""
         return list(self._window)
+
+    # ------------------------------------------------------------------
+    # AD-514: Public API
+    # ------------------------------------------------------------------
+
+    @property
+    def latest_vitals(self) -> dict | None:
+        """Return the most recent vitals snapshot, or None."""
+        if self._window:
+            return self._window[-1]
+        return None
+
+    @property
+    def vitals_window(self) -> list:
+        """Return a copy of the vitals history window."""
+        return list(self._window)

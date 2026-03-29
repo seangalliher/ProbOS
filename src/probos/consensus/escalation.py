@@ -80,6 +80,14 @@ class EscalationManager:
         """Set the Tier 3 user prompt callback."""
         self._user_callback = callback
 
+    # ------------------------------------------------------------------
+    # AD-514: Public API
+    # ------------------------------------------------------------------
+
+    def set_surge_callback(self, fn: Callable) -> None:
+        """Set the pool surge callback for escalation-triggered scaling."""
+        self._surge_fn = fn
+
     def set_pre_user_hook(self, hook: Callable) -> None:
         """Set a hook called before user consultation (e.g., live.stop)."""
         self._pre_user_hook = hook

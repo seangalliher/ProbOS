@@ -43,6 +43,14 @@ class CapabilityRegistry:
     def unregister(self, agent_id: AgentID) -> None:
         self._capabilities.pop(agent_id, None)
 
+    # ------------------------------------------------------------------
+    # AD-514: Public API
+    # ------------------------------------------------------------------
+
+    def get_all_capabilities(self) -> dict:
+        """Return a copy of all registered capabilities {agent_id: [capabilities]}."""
+        return dict(self._capabilities)
+
     def query(
         self,
         intent: str,

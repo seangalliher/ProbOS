@@ -245,3 +245,23 @@ class ResourcePool:
             "current_size": len(self._agent_ids),
             "agents": agents,
         }
+
+    # ------------------------------------------------------------------
+    # AD-514: Public API for agent ID access
+    # ------------------------------------------------------------------
+
+    def get_agent_ids(self) -> list[AgentID]:
+        """Return a copy of all agent IDs in this pool."""
+        return list(self._agent_ids)
+
+    def contains_agent(self, agent_id: AgentID) -> bool:
+        """Check if an agent is in this pool."""
+        return agent_id in self._agent_ids
+
+    def remove_agent_by_id(self, agent_id: AgentID) -> None:
+        """Remove an agent from this pool by ID."""
+        if agent_id in self._agent_ids:
+            self._agent_ids.remove(agent_id)
+            logger.debug("Agent %s removed from pool %s tracking", agent_id, self.name)
+        else:
+            logger.debug("Agent %s not found in pool %s tracking; no-op", agent_id, self.name)

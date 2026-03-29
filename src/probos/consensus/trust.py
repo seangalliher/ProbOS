@@ -226,8 +226,14 @@ class TrustNetwork:
             record.beta = self.prior_beta + (record.beta - self.prior_beta) * self.decay_rate
 
     def remove(self, agent_id: AgentID) -> None:
-        """Remove an agent's trust record (agent recycled)."""
-        self._records.pop(agent_id, None)
+        """Remove an agent's trust record. Delegates to remove_agent."""
+        self.remove_agent(agent_id)
+
+    def remove_agent(self, agent_id: AgentID) -> None:
+        """Remove an agent's trust record. Public API for AD-514."""
+        if agent_id in self._records:
+            del self._records[agent_id]
+            logger.info("Trust record removed for agent %s", agent_id)
 
     def reconcile(self, active_agent_ids: set[str]) -> int:
         """Remove trust records for agents not in the active set. Returns count removed."""

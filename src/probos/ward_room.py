@@ -1506,3 +1506,45 @@ class WardRoomService:
             "UPDATE credibility SET credibility_score = ?, total_endorsements = ? WHERE agent_id = ?",
             (new_score, new_total, agent_id),
         )
+
+    # ------------------------------------------------------------------
+    # AD-514: Public API
+    # ------------------------------------------------------------------
+
+    def set_ontology(self, ontology: Any) -> None:
+        """Inject ontology reference for crew-aware channel management."""
+        self._ontology = ontology
+
+    async def post_system_message(self, channel_name: str, content: str, author: str = "ship_computer") -> None:
+        """Post a system-generated message to a named channel.
+
+        Used for lifecycle announcements (System Online, Entering Stasis, etc.).
+        Creates thread + post in the named channel. No-op if channel not found.
+        """
+        if self._db is None:
+            return
+        cursor = await self._db.execute(
+            "SELECT id FROM channels WHERE name = ?", (channel_name,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return
+        channel_id = row[0]
+        thread_id = str(uuid.uuid4())
+        post_id = str(uuid.uuid4())
+        now = time.time()
+        await self._db.execute(
+            "INSERT INTO threads (id, channel_id, title, body, author_id, created_at, last_activity) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (thread_id, channel_id, content[:80], content, author, now, now),
+        )
+        await self._db.execute(
+            "INSERT INTO posts (id, thread_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)",
+            (post_id, thread_id, author, content, now),
+        )
+        await self._db.commit()
+        logger.info("System message posted to channel %s: %s", channel_name, content[:80])
+
+    @property
+    def is_started(self) -> bool:
+        """Whether the Ward Room database connection is active."""
+        return self._db is not None

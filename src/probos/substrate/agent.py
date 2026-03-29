@@ -177,3 +177,26 @@ class BaseAgent(ABC):
             f"<{self.__class__.__name__} id={self.id[:8]} "
             f"state={self.state.value} confidence={self.confidence:.3f}>"
         )
+
+    # ------------------------------------------------------------------
+    # AD-514: Public API
+    # ------------------------------------------------------------------
+
+    def set_temporal_context(self, birth_time: float, system_start_time: float) -> None:
+        """Set temporal awareness for AD-502 lifecycle context."""
+        self._birth_timestamp = birth_time
+        self._system_start_time = system_start_time
+
+    @property
+    def has_llm_client(self) -> bool:
+        """Whether this agent has an LLM client configured."""
+        return hasattr(self, '_llm_client') and self._llm_client is not None
+
+    @property
+    def llm_client(self):
+        """The agent's LLM client, or None."""
+        return getattr(self, '_llm_client', None)
+
+    def _replace_id(self, new_id: str) -> None:
+        """Replace agent ID during hot-swap. Internal use only."""
+        self.id = new_id

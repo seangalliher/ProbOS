@@ -217,3 +217,11 @@ class WorkflowCache:
             return
         min_key = min(self._cache, key=lambda k: self._cache[k].hit_count)
         del self._cache[min_key]
+
+    # ------------------------------------------------------------------
+    # AD-514: Public API
+    # ------------------------------------------------------------------
+
+    def restore_entry(self, key: str, value) -> None:
+        """Restore a cached workflow entry during warm boot."""
+        self._cache[key] = value

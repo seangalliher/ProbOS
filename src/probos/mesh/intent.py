@@ -250,3 +250,11 @@ class IntentBus:
                         confidence=0.0,
                     )
                 )
+
+    # ------------------------------------------------------------------
+    # AD-514: Public API
+    # ------------------------------------------------------------------
+
+    def set_federation_handler(self, fn: Callable) -> None:
+        """Set the federation forwarding handler for cross-realm intents."""
+        self._federation_fn = fn

@@ -20,22 +20,104 @@ This file contains **durable architectural knowledge** that changes rarely. For 
 
 ---
 
-## Building: Engineering Standards
+## Building: Engineering Principles (Standing Order)
 
-When writing code in this codebase:
+All code MUST maintain the **ProbOS Principles Stack**. These are enforced during architect review and apply to all contributors.
+
+### SOLID Principles
+
+- **(S) Single Responsibility**: One reason to change per class. No god objects. Extract focused modules when classes exceed ~500 lines or ~15 methods.
+- **(O) Open/Closed**: Extend via public APIs, not private member patching. Never access `obj._private_attr` from outside the owning class. If you need to modify behavior, define a public method on the target.
+- **(L) Liskov Substitution**: Subtypes must honor base contracts. If `BaseAgent` defines `act()`, every subclass must implement it compatibly.
+- **(I) Interface Segregation**: Depend on narrow `typing.Protocol` interfaces, not entire classes. Consumers should only see the methods they use.
+- **(D) Dependency Inversion**: Constructor injection. Depend on abstractions (protocols), not concretions. New services should accept dependencies as parameters, not import and instantiate them internally.
+
+### Additional Engineering Principles
+
+- **Law of Demeter**: Don't reach through objects. No `a.b._c` chains. If wiring is needed, define a public API on the target.
+- **Fail Fast**: Default to log-and-degrade. Three tiers for exception handling:
+
+  | Tier | When | Pattern |
+  |------|------|---------|
+  | Swallow | Non-critical, no user impact | `except: pass` (rare, must justify) |
+  | Log-and-degrade | Visible degradation acceptable | `except: logger.warning(...); return fallback` |
+  | Propagate | Security, data integrity, safety | `except: logger.error(...); raise` |
+
+- **Defense in Depth**: Validate at every boundary. Input sanitization at API AND service layers. Never assume the caller already checked.
+- **DRY**: Search for existing implementations before writing new ones. If same logic exists in 2+ places, extract it.
+- **Cloud-Ready Storage**: New database modules must use an abstract connection interface (`typing.Protocol`), not direct `aiosqlite.connect()`. This enables the commercial overlay to swap storage backends (SQLite → Postgres) without changing business logic.
+
+### Coding Standards
+
 - Follow existing patterns. Check how similar things are already done before inventing new approaches.
-- Tests use pytest + pytest-asyncio. Prefer `_Fake*` stub classes over complex mock chains. Test files mirror source paths.
 - New agents must follow the `perceive -> decide -> act -> report` lifecycle. CognitiveAgent subclasses use `instructions`-first design.
 - Destructive intents must set `requires_consensus=True` in their IntentDescriptor.
-- Lower layers must not import from higher layers (Substrate cannot import from Cognitive).
-- In async contexts, always use `asyncio.get_running_loop()`, never `get_event_loop()`.
 - Store raw trust parameters `(alpha, beta)`, never derived mean scores. Derived scores lose the full Beta distribution information.
 - Restored designed agent code must pass `CodeValidator` validation before `importlib` loading. No exceptions on warm boot.
+
+### Testing Standards
+
+- **Framework**: pytest + pytest-asyncio. Prefer `_Fake*` stub classes over complex mock chains. Test files mirror source paths.
 - **Test gates**: After each logical build step, run the full test suite. Do not proceed to the next step if tests fail. Report the test count after each step.
-- Run tests with: `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q`
+- **Run tests with**: `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q`
+- **Coverage rule**: All new public methods and branches must have tests. Target 100% coverage on new code — gaps require justification.
+- **Test structure**: Follow Arrange-Act-Assert. Each test should verify one behavior. Name tests descriptively: `test_{method}_{scenario}_{expected}` (e.g., `test_get_template_missing_key_returns_none`).
+- **Boundary testing**: Every public method must test at minimum: (1) happy path, (2) error/edge case, (3) empty/None input where applicable.
+- **Test isolation**: Tests must not depend on execution order. No shared mutable state between tests. Each test creates its own fixtures. If a test fails when run alone, it's broken.
+- **No test pollution**: Tests must clean up any resources they create (temp files, background tasks, DB entries). Use `tmp_path` fixture for files, `try/finally` or context managers for cleanup.
+- **API test requirement**: Every new API endpoint (`api.py`) must have at least 3 tests — happy path, error case, and input validation. Test in `tests/test_distribution.py` or `tests/test_hxi_chat_integration.py`.
 - **UI test requirement**: Every UI change (TypeScript/React) must include a Vitest component test. The HXI has broken from untested UI changes multiple times — tooltips, bloom position, chat rendering. No UI PR without tests.
-- **API test requirement**: Every new API endpoint (`api.py`) must have at least 2 tests — happy path and error case. Test in `tests/test_distribution.py` or `tests/test_hxi_chat_integration.py`.
 - **UI tests run with**: `cd ui && npx vitest run` (when Vitest is set up)
+
+### Type Annotation Standards
+
+- **Public API rule**: All public methods and properties must have full type annotations (parameters + return type). No exceptions.
+- **Protocol compliance**: When a class structurally implements a `typing.Protocol`, its method signatures must match exactly — annotate to prove it.
+- **Use modern Python typing**: `X | None` over `Optional[X]`, `list[str]` over `List[str]` (Python 3.10+ syntax). Use `from __future__ import annotations` in modules with complex types.
+- **Internal methods**: Type annotations recommended but not required on private (`_method`) internals.
+
+### Logging Standards
+
+- **Structured context**: Every log message must include *what* failed, *why* it matters, and *what happens next*. Bad: `logger.warning("error")`. Good: `logger.warning("Template %s not found in spawner; falling back to default", template_name)`.
+- **Log levels**:
+
+  | Level | When |
+  |-------|------|
+  | `debug` | Internal state useful during development only |
+  | `info` | System lifecycle events (startup, shutdown, agent spawned, pool created) |
+  | `warning` | Degraded operation — something failed but the system compensated |
+  | `error` | Operation failed, user impact, requires investigation |
+  | `exception` | Same as error but with traceback — use inside `except` blocks |
+
+- **No bare `print()`**: Use `logger` for all operational output. `print()` is only for CLI/shell user-facing output.
+- **No sensitive data in logs**: Never log API keys, tokens, full file contents, or user credentials.
+
+### Async Discipline
+
+- Always use `asyncio.get_running_loop()`, never `get_event_loop()`.
+- **Task references**: Always hold a reference to tasks created with `asyncio.create_task()`. Fire-and-forget tasks silently swallow exceptions and can be garbage collected. Store in a set or instance variable and remove on completion.
+- **Never use `asyncio.ensure_future()`** — use `asyncio.create_task()`. `ensure_future` is ambiguous about whether it receives a coroutine or future.
+- **Cancellation handling**: Long-running async methods should catch `asyncio.CancelledError`, perform cleanup, and re-raise. Never swallow cancellation.
+- **Async context cleanup**: Use `async with` for resources that need async teardown. If a class has `async def start()`, it must have `async def stop()` with corresponding cleanup.
+
+### Import & Module Standards
+
+- **Layer discipline**: Lower layers must not import from higher layers (Substrate cannot import from Cognitive). Cross-cutting modules (`federation/`, `knowledge/`, `runtime.py`) may import from any layer.
+- **Circular import prevention**: Use `TYPE_CHECKING` guard for type-only imports that would create cycles:
+  ```python
+  from __future__ import annotations
+  from typing import TYPE_CHECKING
+  if TYPE_CHECKING:
+      from probos.runtime import ProbOSRuntime
+  ```
+- **Import order**: stdlib → third-party → local, separated by blank lines. Tools like `isort` conventions.
+- **No wildcard imports**: Never use `from module import *`. Always import specific names.
+
+### Configuration Standards
+
+- **Pydantic models only**: New configuration must be added to the existing Pydantic models in `config.py`. Never read config from raw dicts, environment variables, or ad-hoc YAML parsing.
+- **Defaults required**: Every config field must have a sensible default so ProbOS runs out of the box with zero configuration.
+- **Validation at parse time**: Use Pydantic validators. Invalid config should fail at startup, not at runtime when the feature is first used.
 
 ---
 
@@ -47,11 +129,14 @@ When reviewing PROGRESS.md or evaluating changes, check for:
 - **Self-modification safety**: The validation chain must be preserved: static analysis -> sandbox test -> probationary trust -> QA smoke tests -> behavioral monitoring. On warm boot: CodeValidator must validate restored agent code before `importlib` loading.
 - **Consensus integrity**: New destructive intents must require consensus.
 - **Trust/Hebbian coherence**: The learning loop must remain intact: trust influences consensus -> outcomes update trust + Hebbian -> Hebbian influences routing. Trust must store raw `(alpha, beta)` parameters.
-- **Test coverage**: Check the test count in `PROGRESS.md` line 2. New features need tests. Flag untested code paths.
+- **Test coverage**: Check the test count in `PROGRESS.md` line 2. New features need tests. Flag untested code paths. New public methods must have boundary tests (happy path + error + edge case).
 - **Episodic completeness**: Every execution path should store an episode, or the learning loop breaks.
 - **Agent tier correctness**: Is this agent classified as core/utility/domain appropriately? Domain agents should not have direct access to internal system state. Utility agents operate on the system, not for the user.
 - **Governance axioms**: Evaluate against the three axioms — Safety Budget (risk-proportional consensus), Reversibility Preference (prefer reversible strategies), Minimal Authority (scoped capabilities, earned trust).
 - **Nooplex alignment**: Does this change close a gap, maintain alignment, or introduce a regression against the Nooplex paper (`Vibes/Nooplex_Final.md`)?
+- **Type annotations**: All new public methods must have full type annotations. Missing return types or untyped parameters on public APIs are a review blocker.
+- **Logging quality**: Log messages must include context (what, why, what next). Bare `logger.warning("error")` or `logger.error("failed")` are review blockers.
+- **Async hygiene**: `create_task()` calls must store the reference. `ensure_future()` usage is flagged. Cancellation must be handled in long-running loops.
 
 ### Common Review Flags
 
@@ -69,6 +154,13 @@ When reviewing PROGRESS.md or evaluating changes, check for:
 - **IntentBus fan-out side effects**: "This change adds HTTP calls in agent code. Remember: `IntentBus.broadcast()` fans out to ALL subscribers. 3 HttpFetchAgents × N broadcasts = 3N HTTP calls. Use `_mesh_fetch()` for designed agents — rate limiter handles the rest."
 - **HXI Canvas regression**: "This UI change touches agents.tsx, animations.tsx, or CognitiveCanvas.tsx. Verify tooltips, bloom position, and raycasting still work after the change."
 - **HXI emoji violation**: "This UI code uses emoji (👍, 🔊, ✨, etc.) instead of inline SVG glyphs. Replace with stroke-based SVG icons per HXI Design Principle #3."
+- **Missing type annotations**: "This public method has no return type annotation. All public APIs must be fully typed."
+- **Bare log message**: "This log message has no context. Include what failed and what the system did about it."
+- **Fire-and-forget task**: "This `create_task()` doesn't store the task reference. Exceptions will be silently lost."
+- **Test isolation violation**: "This test relies on state from a previous test. Each test must create its own fixtures."
+- **Missing boundary test**: "This public method has a happy-path test but no error/edge case test."
+- **Circular import risk**: "This import creates a cycle between [X] and [Y]. Use `TYPE_CHECKING` guard for type-only imports."
+- **Raw config access**: "This reads configuration from a raw dict/env var instead of using the Pydantic models in config.py."
 
 ## Architect: Claude Code Prompt Drafting
 
@@ -80,6 +172,7 @@ When asked to draft implementation prompts for Claude Code sessions:
 - **Include explicit "Do not build" constraints** for adjacent features that are tempting to add. Name them specifically. Example: "Do not build federation routing in this phase. Do not refactor the intent bus."
 - Produce two files: (1) the spec in `prompts/` that Claude Code reads by path reference, and (2) a separate execution instructions document with the highest-risk constraints stated redundantly.
 - Follow the pattern: "Phase X, Step Y: [title]. Implement [specific thing] in [specific file]. It should [behavior]. Wire it from [caller]. Add tests in [test file]. Do not change [boundaries]."
+- **Every build prompt must include this line in its acceptance criteria:** "Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`."
 
 ### AD Numbering — Hard Rule
 

@@ -1153,3 +1153,15 @@ class ProactiveCognitiveLoop:
 
         cleaned = pattern.sub('', text).strip()
         return cleaned, actions
+
+    # ------------------------------------------------------------------
+    # AD-514: Public API
+    # ------------------------------------------------------------------
+
+    def set_knowledge_store(self, store) -> None:
+        """Inject knowledge store for cooldown persistence."""
+        self._knowledge_store = store
+
+    def get_cooldowns(self) -> dict:
+        """Return a copy of per-agent cooldown data for persistence."""
+        return dict(self._agent_cooldowns)

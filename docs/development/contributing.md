@@ -86,6 +86,67 @@ New database modules must use an abstract connection interface rather than calli
 
 This principle ensures the OSS core remains deployable as a standalone application while supporting cloud-native scaling in the commercial product.
 
+### Testing Standards
+
+- **Framework**: pytest + pytest-asyncio. Prefer `_Fake*` stub classes over complex mock chains.
+- **Coverage**: All new public methods and branches must have tests. Target 100% coverage on new code.
+- **Test structure**: Arrange-Act-Assert. One behavior per test. Name tests: `test_{method}_{scenario}_{expected}`.
+- **Boundary testing**: Every public method needs at minimum: happy path, error/edge case, and empty/None input where applicable.
+- **Isolation**: Tests must not depend on execution order. No shared mutable state. Each test creates its own fixtures.
+- **Cleanup**: Tests must clean up resources (temp files, tasks, DB entries). Use `tmp_path`, `try/finally`, or context managers.
+- **API endpoints**: Minimum 3 tests per endpoint — happy path, error case, input validation.
+- **UI changes**: Every TypeScript/React change requires a Vitest component test.
+
+### Type Annotation Standards
+
+- All public methods and properties must have full type annotations (parameters + return type).
+- When a class implements a `typing.Protocol`, its method signatures must match exactly.
+- Use modern syntax: `X | None` over `Optional[X]`, `list[str]` over `List[str]` (Python 3.10+).
+- Internal `_private` methods: annotations recommended but not required.
+
+### Logging Standards
+
+Every log message must include **what** failed, **why** it matters, and **what happens next**.
+
+```python
+# Bad
+logger.warning("error")
+
+# Good
+logger.warning("Template %s not found in spawner; falling back to default", template_name)
+```
+
+| Level | When |
+|-------|------|
+| `debug` | Internal state useful during development only |
+| `info` | System lifecycle events (startup, shutdown, agent spawned) |
+| `warning` | Degraded operation — failed but compensated |
+| `error` | Operation failed, user impact, requires investigation |
+| `exception` | Same as error but with traceback — use inside `except` blocks |
+
+No bare `print()` for operational output — use `logger`. No sensitive data (API keys, tokens) in logs.
+
+### Async Discipline
+
+- Use `asyncio.get_running_loop()`, never `get_event_loop()`.
+- Use `asyncio.create_task()`, never `asyncio.ensure_future()`.
+- Always hold a reference to created tasks — fire-and-forget silently swallows exceptions.
+- Long-running async methods must catch `asyncio.CancelledError`, clean up, and re-raise.
+- Use `async with` for resources that need async teardown. `start()` implies `stop()`.
+
+### Import & Module Standards
+
+- Lower layers must not import from higher layers.
+- Use `TYPE_CHECKING` guard for type-only imports that would create cycles.
+- Import order: stdlib → third-party → local, separated by blank lines.
+- Never use `from module import *`.
+
+### Configuration Standards
+
+- New config must use Pydantic models in `config.py`. No raw dicts or ad-hoc env var parsing.
+- Every config field must have a sensible default (zero-config startup).
+- Use Pydantic validators — invalid config should fail at startup, not at runtime.
+
 ## Architecture Guidelines
 
 - **Three capability tiers: Agents, Tools, Skills.** Agents are the unit of behavior (crew members who think and decide). Tools are the unit of action (instruments like tricorders — typed callables shared across agents). Skills are the unit of knowledge (data access attached to agents). Rule of thumb: if someone would ask for it, it's an agent. If it performs a specific action any agent might need, it's a tool. If an agent needs reference data to do its job, it's a skill.

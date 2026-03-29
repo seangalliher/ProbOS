@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: BF-070 CLOSED. Tiered Reset System — replaced ad-hoc reset with 3-tier declarative architecture: Tier 1 `--soft` (Reboot, preserves stasis timeline), Tier 2 default (Recommissioning, maiden voyage), Tier 3 `--full` (Maiden Voyage, everything). Fixed 11 databases silently missed by reset, ChromaDB no-op cleanup, broken lifecycle detection. BF-070e consolidated from 4→3 tiers (Shore Leave reserved for commercial mobility). `--dry-run` support, Rich confirmation prompt. Next: AD-503 (Counselor Activation).
+## Current Status: AD-521 DECIDED. SWE/Build Pipeline Separation (Model A) — SWE crew always in the chain, build pipeline extracted as Ship's Computer infrastructure, external tools as visiting officers. OSS Scotty (functional SWE) vs Commercial Pro Elite SWE ("Linus Torvalds" tier). AD-514 + BF-071–076 CLOSED. Wave 3 — Service Protocols + Public APIs. Engineering Principles Stack codified in copilot instructions + department standing orders + builder quality gates. 3933 tests passing. Next: AD-515 (Extract runtime.py modules).
 
 ---
 

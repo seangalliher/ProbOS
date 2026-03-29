@@ -1761,7 +1761,7 @@ class ProbOSRuntime:
                             max_responders=0,
                         )
             except Exception:
-                pass  # best-effort
+                logger.debug("Cold-start announcement failed", exc_info=True)
 
     # --- BF-071: Retention prune loops ---
 

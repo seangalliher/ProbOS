@@ -386,6 +386,14 @@ class CallsignRegistry:
         self._type_to_callsign[agent_type] = callsign
         self._callsign_to_type[callsign.lower()] = agent_type
 
+    # ------------------------------------------------------------------
+    # AD-514: Public API
+    # ------------------------------------------------------------------
+
+    def get_profile(self, agent_type: str) -> dict | None:
+        """Return the crew profile for the given agent type, or None."""
+        return self._type_to_profile.get(agent_type)
+
 
 def load_seed_profile(agent_type: str, profiles_dir: str = "") -> dict[str, Any]:
     """Load seed personality and identity from crew_profiles/ YAML.

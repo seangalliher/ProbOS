@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from typing import Any, TYPE_CHECKING
 
 from probos.types import AgentState
@@ -70,3 +71,26 @@ class AgentSpawner:
         if respawn and agent_type in self._templates:
             return await self.spawn(agent_type, pool, agent_id=agent_id)
         return None
+
+    # ------------------------------------------------------------------
+    # AD-514: Public API for template access
+    # ------------------------------------------------------------------
+
+    def get_template(self, agent_type: str) -> type[BaseAgent] | None:
+        """Return the registered agent class for the given type, or None."""
+        return self._templates.get(agent_type)
+
+    def list_templates(self) -> dict[str, type[BaseAgent]]:
+        """Return a copy of all registered templates {type_name: class}."""
+        return dict(self._templates)
+
+    def iter_templates(self) -> Iterator[tuple[str, type[BaseAgent]]]:
+        """Iterate over (type_name, class) pairs."""
+        return iter(self._templates.items())
+
+    def replace_template(self, agent_type: str, cls: type[BaseAgent]) -> None:
+        """Replace the class for an existing agent type (self-mod hot-swap)."""
+        if agent_type not in self._templates:
+            raise KeyError(f"Unknown agent type: {agent_type}")
+        self._templates[agent_type] = cls
+        logger.info("Template replaced: %s -> %s", agent_type, cls.__name__)

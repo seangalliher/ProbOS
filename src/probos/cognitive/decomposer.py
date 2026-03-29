@@ -258,6 +258,19 @@ class IntentDecomposer:
         """Update the set of intent descriptors used for dynamic prompt assembly."""
         self._intent_descriptors = list(descriptors)
 
+    # ------------------------------------------------------------------
+    # AD-514: Public API
+    # ------------------------------------------------------------------
+
+    def set_callsign_map(self, callsign_map: dict[str, str]) -> None:
+        """Set the callsign→agent_type mapping for @mention resolution."""
+        self._callsign_map = callsign_map
+
+    @property
+    def intent_descriptor_count(self) -> int:
+        """Number of registered intent descriptors."""
+        return len(self._intent_descriptors)
+
     async def decompose(
         self,
         text: str,

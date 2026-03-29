@@ -11,6 +11,7 @@ import asyncio
 import logging
 import time
 from collections import Counter
+from collections.abc import Callable
 from typing import Any
 
 from probos.cognitive.contradiction_detector import detect_contradictions
@@ -483,3 +484,22 @@ class DreamScheduler:
                 break
             except Exception as e:
                 logger.warning("Dream monitor error: %s", e)
+
+    # ------------------------------------------------------------------
+    # AD-514: Public API for callback injection
+    # ------------------------------------------------------------------
+
+    def set_callbacks(
+        self,
+        *,
+        pre_dream: Callable | None = None,
+        post_dream: Callable | None = None,
+        post_micro_dream: Callable | None = None,
+    ) -> None:
+        """Set lifecycle callbacks for dream events."""
+        if pre_dream is not None:
+            self._pre_dream_fn = pre_dream
+        if post_dream is not None:
+            self._post_dream_fn = post_dream
+        if post_micro_dream is not None:
+            self._post_micro_dream_fn = post_micro_dream

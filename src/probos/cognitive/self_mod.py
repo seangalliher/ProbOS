@@ -573,6 +573,25 @@ class SelfModificationPipeline:
         """Return all designed agent records (active and removed)."""
         return list(self._records)
 
+    # ------------------------------------------------------------------
+    # AD-514: Public API
+    # ------------------------------------------------------------------
+
+    @property
+    def validator(self):
+        """The code validator used by this pipeline."""
+        return self._validator
+
+    @property
+    def sandbox(self):
+        """The execution sandbox used by this pipeline."""
+        return self._sandbox
+
+    @property
+    def design_records(self) -> list:
+        """All design records (DesignedAgentRecord) tracked by this pipeline."""
+        return list(self._records)
+
     def designed_agent_status(self) -> dict:
         """Return status summary for shell/panels."""
         agents = []

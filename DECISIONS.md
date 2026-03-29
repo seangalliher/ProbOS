@@ -1382,3 +1382,85 @@ Three naval protocols for Captain-offline operation, aligned with US Navy OOD, N
 **Files changed:** `src/probos/conn.py` (new), `src/probos/watch_rotation.py`, `src/probos/runtime.py`, `src/probos/proactive.py`, `src/probos/experience/shell.py`, `src/probos/api.py`, `tests/test_autonomous_operations.py` (new, 35 tests).
 
 **Status:** **COMPLETE** (2026-03-28). 35 tests passing. Deferred: Night Orders → WorkItems integration, Watch sections → AgentCalendar mapping.
+
+## BF-071–075: Code Review Waves 1+2 (2026-03-29)
+
+Systematic code quality improvements identified through comprehensive codebase SOLID assessment (grades: S=D, O=B+, L=A-, I=C, D=D). Executed in two waves.
+
+**Wave 1 (BF-071–073):** Safety hardening — replaced private member access patterns, added guards.
+
+**Wave 2 (BF-074–075):**
+- BF-074 Code Hygiene: `_format_duration` deduplication (3 copies → `utils/__init__.py`), `encoding="utf-8"` fixes, `ensure_future` → `create_task` (9 locations), `get_event_loop` → `get_running_loop`.
+- BF-075 Exception Audit: ~25 swallowed exceptions upgraded from silent to logged across 7 files. Established 3-tier exception policy (swallow/log-and-degrade/propagate).
+
+**Engineering Principles Stack established:** SOLID + Law of Demeter + Fail Fast + Defense in Depth + DRY + Cloud-Ready Storage. Documented in `.github/copilot-instructions.md` (builder sees), `docs/development/contributing.md` (contributors), and the commercial overlay docs. Extended with testing, type annotation, logging, async, import, and configuration standards.
+
+**Status:** **COMPLETE** (2026-03-29). Zero regressions.
+
+## AD-514: Service Protocols + Public APIs (2026-03-29)
+
+First AD of Wave 3 (architecture decomposition). Added `typing.Protocol` definitions and public API methods to replace 47 private-member access patterns across runtime.py.
+
+| Component | Detail |
+|-----------|--------|
+| Protocols | 7 in new `src/probos/protocols.py`: EpisodicMemoryProtocol, TrustNetworkProtocol, EventLogProtocol, WardRoomProtocol, KnowledgeStoreProtocol, HebbianRouterProtocol, EventEmitterProtocol |
+| Public APIs | 17 target objects got public methods: AgentSpawner (4), HebbianRouter (6), WardRoomService (3), ResourcePool (3), TrustNetwork (1), DreamScheduler (1), ProactiveCognitiveLoop (2), SelfModificationPipeline (3), IntentDecomposer (2), CapabilityRegistry (1), EscalationManager (1), IntentBus (1), WorkflowCache (1), PoolGroupRegistry (1), CallsignRegistry (1), BaseAgent (4), VitalsMonitorAgent (2) |
+| Tests | 60 in `tests/test_public_apis.py` (51 initial + 9 boundary tests from BF-076) |
+
+**Key design decisions:**
+- **Pure additions, zero behavior changes.** Existing private-access call sites in runtime.py NOT changed — that's AD-515's job.
+- **Protocols use `@runtime_checkable`** for isinstance validation during testing.
+- **Methods are trivial wrappers** around existing private state — no logic changes.
+
+**BF-076 quality fixes applied:** Tightened type annotations (bare `dict`/`list`/`tuple` → fully typed), added structured logging on all mutation methods, fixed `post_system_message` runtime bug (wrong column names, missing `body`, second DB connection), resolved duplicate methods (`trust.py:remove` delegates to `remove_agent`, `routing.py` getters delegate to existing methods), added 10 boundary/edge tests.
+
+**Files changed:** `src/probos/protocols.py` (new), `src/probos/substrate/spawner.py`, `src/probos/substrate/pool.py`, `src/probos/mesh/routing.py`, `src/probos/consensus/trust.py`, `src/probos/ward_room.py`, `tests/test_public_apis.py`.
+
+**Status:** **COMPLETE** (2026-03-29). 60 tests passing. Next: AD-515 (Extract runtime.py modules).
+
+## AD-521: SWE/Build Pipeline Separation — Model A (2026-03-29)
+
+Architecture decision to cleanly separate the **crew SWE role** from the **build pipeline infrastructure**. Currently `BuilderAgent` (cognitive/builder.py) is a single class that is both a sovereign crew member (Scotty, with callsign, personality, standing orders) and the code generation pipeline (BuildSpec parsing, SEARCH/REPLACE application, test-gate). This conflates crew identity with tool capability.
+
+**Decision: Model A — SWE always in the chain.**
+
+```
+Architect → SWE (Scotty) → { Native Build Pipeline | Copilot | Claude Code }
+                ↓
+         Quality Gates (self-check per standing orders)
+                ↓
+         Inspector (independent review)
+```
+
+**Three-layer separation:**
+
+| Layer | Identity | Role |
+|-------|----------|------|
+| SWE Crew (Scotty) | Sovereign, crew tier | Engineering judgment, quality gates, tool selection, output ownership |
+| Build Pipeline | Infrastructure, no identity (Ship's Computer service) | Parse specs, apply patches, run test-gate, write files |
+| External Tools (Copilot, Claude Code) | Visiting officers | Code generation under SWE command |
+
+**Key design principles:**
+- **SWE is always in the chain.** The architect delegates to the SWE, not directly to coding tools. The SWE chooses which tool to use (native pipeline, Copilot, Claude Code) based on the task.
+- **Build pipeline is infrastructure.** Like CodebaseIndex or the CI system — a Ship's Computer service that doesn't need sovereign identity. Mechanical execution of BuildSpecs.
+- **Visiting Officer Subordination.** External coding tools (Copilot, Claude Code) operate under the SWE's command. The SWE owns the output quality, not the tool.
+- **Tool selection is a crew competency.** SWE learns which tool fits which task — native pipeline for mechanical changes, external LLM for creative solutions, inline edits for one-liners.
+- **Multiple SWEs can share infrastructure.** Separating the pipeline from the crew member enables parallel workstreams (e.g., one SWE on runtime, another on UI) all using the same build pipeline service.
+- **Cognitive JIT lives in the crew, not the pipeline.** Phase 32's procedural learning (LLM does task → extract procedure → replay without LLM) is an engineering competency belonging to the SWE agent, not the infrastructure.
+
+**Implementation scope:**
+1. Extract `BuildPipeline` as a Ship's Computer service (infrastructure, no identity) from `BuilderAgent`
+2. Refactor `BuilderAgent` → `SoftwareEngineerAgent` (crew tier) that delegates to BuildPipeline or external tools
+3. SWE receives specs from Architect, applies engineering judgment, selects tool, validates output against quality gates (standing orders), reports up
+4. Inspector/ReviewerAgent (separate crew role) performs independent principles audit
+5. Update pool registration, pool groups, `_WARD_ROOM_CREW`, spawner templates
+
+**SWE crew tiering (AD-452 alignment):**
+- **OSS: Scotty** — Functional SWE crew agent. Engineering judgment, quality gates, tool delegation, standing orders compliance. Capable of receiving specs, choosing the right tool, validating output, and reporting up. "Junior engineer who follows the process."
+- **Commercial Pro: Elite SWE** — "Linus Torvalds" tier. Deeper cognitive chains, solution tree search, architectural reasoning, code review as peer (not just checklist), cross-subsystem impact analysis, proactive refactoring proposals, Cognitive JIT mastery. The kind of SWE who pushes back on the architect's spec with a better approach. Same Model A pipeline — just a dramatically more capable crew member at the top.
+
+This follows the AD-452 principle: "Capability depth, not capability existence." The OSS SWE is functional and follows the engineering process. The commercial SWE is a force multiplier who elevates the entire pipeline.
+
+**Connects to:** AD-398 (Three-Tier Agent Architecture — clean crew/infrastructure separation), AD-452 (Agent Tier Licensing — OSS functional vs Commercial Pro depth), AD-302 (Builder creation — being refactored), Standing Orders (builder.md quality gates, engineering.md department protocols), Visiting Officer Subordination Principle, Cognitive JIT (Phase 32), Qualification Programs (SWE competency requirements).
+
+**Status:** **DECIDED** (2026-03-29). Architecture approved. Implementation deferred — requires build prompt and builder execution.

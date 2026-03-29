@@ -45,6 +45,14 @@ class PoolGroupRegistry:
         """Get the group name for a given pool, or None if ungrouped."""
         return self._pool_to_group.get(pool_name)
 
+    # ------------------------------------------------------------------
+    # AD-514: Public API
+    # ------------------------------------------------------------------
+
+    def get_group_for_pool(self, pool_name: str) -> str | None:
+        """Return the group name for a given pool, or None."""
+        return self._pool_to_group.get(pool_name)
+
     def excluded_pools(self) -> set[str]:
         """Return the union of all pool names in groups with exclude_from_scaler=True."""
         result: set[str] = set()

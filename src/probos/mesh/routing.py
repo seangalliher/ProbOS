@@ -263,3 +263,41 @@ class HebbianRouter:
     async def save(self) -> None:
         """Manually trigger a save to disk."""
         await self._save_to_db()
+
+    # ------------------------------------------------------------------
+    # AD-514: Public API for weight access
+    # ------------------------------------------------------------------
+
+    def get_all_weights(self) -> dict[_FullKey, float]:
+        """Public API: get all Hebbian weights (copy)."""
+        return dict(self.all_weights_typed())
+
+    def set_weight(self, key: _FullKey, value: float) -> None:
+        """Set a single routing weight."""
+        self._weights[key] = value
+        logger.debug("Hebbian weight set: %s = %.4f", key, value)
+
+    def remove_weights_for_agent(self, agent_id: AgentID) -> None:
+        """Remove all routing weights involving the given agent."""
+        before = len(self._weights)
+        self._weights = {k: v for k, v in self._weights.items() if agent_id not in k[:2]}
+        removed = before - len(self._weights)
+        if removed:
+            logger.info("Removed %d Hebbian weights for agent %s", removed, agent_id)
+
+    def get_all_compat_weights(self) -> dict[_WeightKey, float]:
+        """Public API: get all compatibility weights (copy)."""
+        return dict(self.all_weights())
+
+    def set_compat_weight(self, key: _WeightKey, value: float) -> None:
+        """Set a single compatibility weight."""
+        self._compat_weights[key] = value
+        logger.debug("Compat weight set: %s = %.4f", key, value)
+
+    def remove_compat_weights_for_agent(self, agent_id: AgentID) -> None:
+        """Remove all compatibility weights involving the given agent."""
+        before = len(self._compat_weights)
+        self._compat_weights = {k: v for k, v in self._compat_weights.items() if agent_id not in k}
+        removed = before - len(self._compat_weights)
+        if removed:
+            logger.info("Removed %d compat weights for agent %s", removed, agent_id)
