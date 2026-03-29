@@ -67,6 +67,9 @@ class ProbOSShell:
         "/amend":      "Amend an existing directive (/amend <id> <new text>)",
         "/revoke":     "Revoke a directive (/revoke <id>)",
         "/directives": "Show active directives (/directives [agent_type])",
+        "/conn":        "Manage the conn (/conn <callsign> | /conn return | /conn status | /conn log)",
+        "/night-orders": "Set Night Orders (/night-orders <template> [ttl_hours] | /night-orders expire | /night-orders status)",
+        "/watch":       "Show watch bill status (/watch)",
         "/scout":     "Run scout intelligence scan (/scout) or view report (/scout report)",
         "/credentials": "List registered credentials and their status (/credentials)",
         "/bridge":    "Return to bridge (exit 1:1 crew session)",
@@ -230,6 +233,9 @@ class ProbOSShell:
             "/amend":   self._cmd_amend,
             "/revoke":  self._cmd_revoke,
             "/directives": self._cmd_directives,
+            "/conn":    self._cmd_conn,
+            "/night-orders": self._cmd_night_orders,
+            "/watch":   self._cmd_watch,
             "/scout":   self._cmd_scout,
             "/credentials": self._cmd_credentials,
             "/bridge":  self._cmd_bridge,
@@ -1417,6 +1423,183 @@ class ProbOSShell:
         self.console.print("[dim]Shutting down...[/dim]")
 
     # ------------------------------------------------------------------
+    # --- AD-471: Autonomous operations commands ---
+
+    async def _cmd_conn(self, arg: str) -> None:
+        """Manage the conn — temporary authority delegation."""
+        rt = self.runtime
+        if not rt.conn_manager:
+            self.console.print("[red]Conn manager not initialized[/red]")
+            return
+
+        parts = arg.strip().split(maxsplit=1)
+        subcmd = parts[0].lower() if parts else "status"
+
+        if subcmd == "status":
+            status = rt.conn_manager.get_status()
+            if not status["active"]:
+                self.console.print("[dim]No one has the conn. Captain has command.[/dim]")
+            else:
+                self.console.print(f"[bold cyan]{status['holder']}[/bold cyan] has the conn")
+                self.console.print(f"  Duration: {status['duration_seconds']:.0f}s")
+                self.console.print(f"  Actions: {status['actions_taken']}")
+                self.console.print(f"  Escalations: {status['escalation_count']}")
+                self.console.print(f"  Can approve builds: {status['can_approve_builds']}")
+
+        elif subcmd == "return":
+            if not rt.conn_manager.is_active:
+                self.console.print("[dim]No active conn to return.[/dim]")
+                return
+            result = rt.conn_manager.return_conn()
+            # Expire Night Orders when Captain returns
+            if hasattr(rt, '_night_orders_mgr') and rt._night_orders_mgr:
+                rt._night_orders_mgr.expire()
+            # Ward Room announcement
+            if rt.ward_room:
+                await rt.ward_room.post_message(
+                    channel_id="all-hands",
+                    author_id="system",
+                    author_callsign="Bridge",
+                    content=f"Captain on the bridge. The conn has been returned from {result['holder']}. {result['actions_taken']} action(s) taken, {result['escalation_count']} escalation(s).",
+                )
+            self.console.print(f"[bold green]Conn returned from {result['holder']}[/bold green]")
+            self.console.print(f"  Duration: {result['duration_seconds']:.0f}s")
+            self.console.print(f"  Actions taken: {result['actions_taken']}")
+
+        elif subcmd == "log":
+            log = rt.conn_manager.get_conn_log()
+            if not log:
+                self.console.print("[dim]No conn log entries.[/dim]")
+                return
+            import time as _time
+            for entry in log[-20:]:  # Last 20 entries
+                ts = _time.strftime("%H:%M:%S", _time.localtime(entry.get("timestamp", 0)))
+                self.console.print(f"  [{ts}] {entry.get('action', '?')}: {entry}")
+
+        else:
+            # Interpret as callsign — grant conn
+            callsign = arg.strip()
+            if not callsign:
+                self.console.print("[red]Usage: /conn <callsign> | /conn return | /conn status | /conn log[/red]")
+                return
+
+            # Find agent by callsign
+            target_agent = None
+            for agent in rt.registry.all():
+                if hasattr(agent, 'callsign') and agent.callsign and agent.callsign.lower() == callsign.lower():
+                    target_agent = agent
+                    break
+
+            if not target_agent:
+                self.console.print(f"[red]No agent found with callsign '{callsign}'[/red]")
+                return
+
+            # Check qualification
+            if not rt.is_conn_qualified(target_agent.id):
+                self.console.print(f"[red]{callsign} is not qualified for the conn (requires COMMANDER+ rank, bridge/chief post)[/red]")
+                return
+
+            # Grant conn
+            rt.conn_manager.grant_conn(
+                agent_id=target_agent.id,
+                agent_type=target_agent.agent_type,
+                callsign=target_agent.callsign,
+                reason="Captain delegation",
+            )
+
+            # Ward Room announcement
+            if rt.ward_room:
+                await rt.ward_room.post_message(
+                    channel_id="all-hands",
+                    author_id="system",
+                    author_callsign="Bridge",
+                    content=f"{target_agent.callsign}, you have the conn. Captain is going offline.",
+                )
+            self.console.print(f"[bold cyan]{target_agent.callsign}[/bold cyan] has the conn.")
+
+    async def _cmd_night_orders(self, arg: str) -> None:
+        """Set Night Orders — Captain-offline guidance."""
+        rt = self.runtime
+        if not hasattr(rt, '_night_orders_mgr') or not rt._night_orders_mgr:
+            self.console.print("[red]Night Orders manager not initialized[/red]")
+            return
+
+        from probos.watch_rotation import NIGHT_ORDER_TEMPLATES
+
+        parts = arg.strip().split(maxsplit=1)
+        subcmd = parts[0].lower() if parts else "status"
+
+        if subcmd == "status":
+            status = rt._night_orders_mgr.get_status()
+            if not status["active"]:
+                self.console.print("[dim]No active Night Orders.[/dim]")
+            else:
+                self.console.print("[bold]Night Orders active[/bold]")
+                self.console.print(f"  Template: {status['template'] or 'custom'}")
+                self.console.print(f"  Remaining: {status['remaining_hours']}h")
+                self.console.print(f"  Instructions: {status['instructions_count']}")
+                self.console.print(f"  Invoked: {status['invoked_count']} times")
+                self.console.print(f"  Builds: {'allowed' if status['can_approve_builds'] else 'not allowed'}")
+                self.console.print(f"  Alert boundary: {status['alert_boundary']}")
+
+        elif subcmd == "expire":
+            result = rt._night_orders_mgr.expire()
+            self.console.print("[green]Night Orders expired.[/green]")
+            if result.get("invoked_count", 0) > 0:
+                self.console.print(f"  {result['invoked_count']} instruction(s) were invoked.")
+
+        elif subcmd in NIGHT_ORDER_TEMPLATES:
+            # Template-based Night Orders
+            template = subcmd
+            ttl = 8.0
+            if len(parts) > 1:
+                try:
+                    ttl = float(parts[1])
+                except ValueError:
+                    pass
+            orders = rt._night_orders_mgr.set_night_orders(
+                instructions=[],
+                ttl_hours=ttl,
+                template=template,
+            )
+            # Apply to conn manager if active
+            if rt.conn_manager and rt.conn_manager.is_active:
+                rt.conn_manager.state.can_approve_builds = orders.can_approve_builds
+            tpl = NIGHT_ORDER_TEMPLATES[template]
+            self.console.print(f"[bold]Night Orders set: {tpl['name']}[/bold]")
+            self.console.print(f"  {tpl['description']}")
+            self.console.print(f"  TTL: {ttl}h")
+
+        else:
+            # Custom Night Orders — treat entire arg as instruction
+            if not arg.strip():
+                self.console.print("[red]Usage: /night-orders <template>|expire|status[/red]")
+                self.console.print("  Templates: maintenance, build, quiet")
+                return
+            rt._night_orders_mgr.set_night_orders(
+                instructions=[arg.strip()],
+                ttl_hours=8.0,
+            )
+            self.console.print("[bold]Night Orders set (custom, 8h TTL)[/bold]")
+
+    async def _cmd_watch(self, arg: str) -> None:
+        """Show watch bill status."""
+        rt = self.runtime
+        if not hasattr(rt, 'watch_manager') or not rt.watch_manager:
+            self.console.print("[dim]Watch manager not initialized.[/dim]")
+            return
+        status = rt.watch_manager.get_watch_status()
+        self.console.print(f"[bold]Current Watch:[/bold] {status['current_watch'].upper()}")
+        self.console.print(f"  Time-appropriate: {status['time_appropriate_watch'].upper()}")
+        self.console.print(f"  On duty: {len(status['on_duty'])} agent(s)")
+        self.console.print(f"  Standing tasks: {status['standing_tasks_count']}")
+        self.console.print(f"  Active orders: {status['active_orders_count']}")
+        self.console.print()
+        for watch, agents in status['roster'].items():
+            count = len(agents)
+            marker = " ◄" if watch == status['current_watch'] else ""
+            self.console.print(f"  {watch.upper()}: {count} agent(s){marker}")
+
     # Natural language handler
     # ------------------------------------------------------------------
 

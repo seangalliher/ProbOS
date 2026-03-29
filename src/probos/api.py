@@ -414,6 +414,29 @@ def create_app(runtime: Any) -> FastAPI:
         _track_task(_do_shutdown(), name="system-shutdown")
         return {"status": "shutting_down", "reason": req.reason}
 
+    # --- AD-471: Autonomous operations endpoints ---
+
+    @app.get("/api/system/conn")
+    async def get_conn_status() -> Any:
+        """Get current conn delegation status."""
+        if not runtime.conn_manager:
+            return JSONResponse({"active": False, "holder": None})
+        return JSONResponse(runtime.conn_manager.get_status())
+
+    @app.get("/api/system/night-orders")
+    async def get_night_orders_status() -> Any:
+        """Get current Night Orders status."""
+        if not hasattr(runtime, '_night_orders_mgr') or not runtime._night_orders_mgr:
+            return JSONResponse({"active": False})
+        return JSONResponse(runtime._night_orders_mgr.get_status())
+
+    @app.get("/api/system/watch")
+    async def get_watch_status() -> Any:
+        """Get watch bill status."""
+        if not hasattr(runtime, 'watch_manager') or not runtime.watch_manager:
+            return JSONResponse({"error": "Watch manager not initialized"}, status_code=404)
+        return JSONResponse(runtime.watch_manager.get_watch_status())
+
     # --- Ontology endpoints (AD-429a) ---
 
     @app.get("/api/ontology/vessel")

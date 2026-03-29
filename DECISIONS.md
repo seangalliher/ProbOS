@@ -1356,3 +1356,29 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 **Research:** `docs/research/crew-development-research.md` — comprehensive framework covering Vygotsky (ZPD), Bloom (taxonomy), Lave & Wenger (legitimate peripheral participation), Sweller (cognitive load), Bandura (self-efficacy), Dweck (growth mindset), Edmondson (psychological safety), U.S. Navy NETC (training pipeline, PQS).
 
 **Status:** AD-507–512 — ALL PLANNED. Research document complete. Build prompts TBD.
+
+## AD-471: Autonomous Operations — The Conn, Night Orders, Watch Bill (2026-03-28)
+
+Three naval protocols for Captain-offline operation, aligned with US Navy OOD, Night Orders, and watch rotation practices.
+
+| Component | Implementation |
+|-----------|---------------|
+| The Conn | `ConnManager` + `ConnState` in `src/probos/conn.py`. `grant_conn()`, `return_conn()`, `record_action()`, `check_escalation()`, `is_authorized()`. CAPTAIN_ONLY actions (modify_standing_orders, approve_self_mod, red_alert, destructive_action, prune_agent). ESCALATION_TRIGGERS (trust_drop, red_alert, build_failure, security_alert, captain_auth_required). Conn transfer with log. |
+| Night Orders | `NightOrdersManager` + `NightOrders` in `src/probos/watch_rotation.py`. Three templates: maintenance (can_approve_builds=False, alert_boundary=yellow), build (can_approve_builds=True), quiet (alert_boundary=green). TTL auto-expiry. Invocation tracking. Escalation trigger checking. |
+| Watch Bill | `WatchManager` extensions: `_get_current_watch_by_time()` (ALPHA 0800-1600, BETA 1600-0000, GAMMA 0000-0800), `auto_rotate()`, `get_watch_status()`, `_expire_night_orders()`. |
+| CaptainOrder TTL | Extended dataclass: `is_night_order`, `ttl_seconds` (default 28800), `expires_at`, `template`, `is_expired()`. |
+| Runtime wiring | ConnManager/NightOrdersManager/WatchManager initialized at startup. `_emit_event` → `_check_night_order_escalation`. `is_conn_qualified()` checks COMMANDER+ rank (ordinal list comparison) + bridge/chief post. Watch roster populated from ontology. |
+| Proactive context | Conn-holder agent gets `conn_authority` dict in `_gather_context()` with Night Orders instructions, scope, and decision boundaries. |
+| Shell commands | `/conn` (status/return/log/grant), `/night-orders` (status/expire/template/custom), `/watch` (watch bill status). |
+| API endpoints | `GET /api/system/conn`, `GET /api/system/night-orders`, `GET /api/system/watch`. |
+
+**Key design decisions:**
+- **Standalone managers, not AD-496 integration:** Implemented as independent ConnManager/NightOrdersManager rather than creating WorkItems through AD-496's WorkItemStore. This keeps the implementation focused and avoids coupling to the scheduling engine. WorkItem integration deferred.
+- **Rank ordinal comparison fix:** Discovered that `Rank.value < Rank.COMMANDER.value` compared string enum values alphabetically. Fixed to use `_RANK_ORDER` list-index comparison matching earned_agency.py pattern.
+- **Complementary to AD-496:** WatchManager handles agent **availability** (who is on duty). WorkItemStore (AD-496) handles **assignment** (what work is assigned). They don't conflict — Watch Bill answers "who's on watch?", WorkItemStore answers "what are they working on?"
+- **Context injection scope:** Only the conn-holder agent receives Night Orders context. Other agents are unaware of the conn delegation details.
+- **Event-driven escalation:** Every `_emit_event` checks Night Orders escalation triggers. Trust drops below 0.6 + matching trigger → bridge alert.
+
+**Files changed:** `src/probos/conn.py` (new), `src/probos/watch_rotation.py`, `src/probos/runtime.py`, `src/probos/proactive.py`, `src/probos/experience/shell.py`, `src/probos/api.py`, `tests/test_autonomous_operations.py` (new, 35 tests).
+
+**Status:** **COMPLETE** (2026-03-28). 35 tests passing. Deferred: Night Orders → WorkItems integration, Watch sections → AgentCalendar mapping.

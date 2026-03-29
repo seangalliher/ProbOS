@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-502 COMPLETE. Crew Development Wave (AD-507–512) DESIGNED — research document + 6 AD stubs in roadmap. Framework: Core Knowledge Curriculum (507), Scoped Cognition (508), Boot Camp Pipeline (509), Team Simulations (510), Autonomy Boundaries (511), Discovery-Based Learning (512). Triggered by AD-502 temporal context results confirming "least restrictive environment" principle. Next: AD-503 (Counselor Activation), AD-471 build prompt rewrite (depends AD-496+498), or observe crew behavior under temporal awareness.
+## Current Status: AD-471 COMPLETE. Autonomous Operations — The Conn (formal authority delegation), Night Orders (Captain-offline guidance with TTL), Watch Bill (wall-clock duty rotation). ConnManager, NightOrdersManager, WatchManager extensions, runtime wiring, proactive context injection, shell commands, API endpoints. 35 tests. Fixed Rank ordinal comparison bug (string enums → list-index). Crew Development Wave (AD-507–512) DESIGNED. Next: AD-503 (Counselor Activation), or observe crew behavior under temporal awareness + autonomous ops.
 
 ---
 

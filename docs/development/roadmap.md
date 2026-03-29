@@ -1330,7 +1330,7 @@ When ProbOS runs multiple builds or modifications in parallel, two agents editin
 - **Integration with Builder** — `execute_approved_build()` claims all target files before writing, releases on completion
 - **Extends `_background_tasks` (AD-326)** — file ownership tracked alongside task lifecycle
 
-**The Conn — Temporary Authority Delegation** *(AD-471)*
+**The Conn — Temporary Authority Delegation** *(AD-471, COMPLETE, OSS)*
 
 *"Mr. Data, you have the conn."*
 
@@ -1347,7 +1347,7 @@ ProbOS currently has no structured delegation when the Captain (human) goes offl
 - **Audit trail** — all decisions made under delegated authority are logged with `authorized_by: conn` (not `captain`), enabling after-action review. Captain can `/review conn-log` to see what happened in their absence
 - **Integration** — extends DirectiveStore authorization (conn-holder gets temporary `captain_order` authority within scope), Ward Room (conn-holder receives escalations), Alert Conditions (Red Alert returns conn to Captain)
 
-**Night Orders — Captain-Offline Guidance** *(AD-471)*
+**Night Orders — Captain-Offline Guidance** *(AD-471, COMPLETE, OSS)*
 
 *"Commander, the Captain left Night Orders."*
 
@@ -1363,7 +1363,7 @@ Night Orders solve the gap between "Captain is present" (full oversight) and "Ca
 - **Preset templates** — common Night Orders patterns: "Maintenance watch" (routine ops only, no builds), "Build watch" (approve builds from approved queue, reject unknowns), "Quiet watch" (logging only, no autonomous actions)
 - **Integration** — extends DirectiveStore (new `night_order` directive type with TTL), The Conn (Night Orders provide the conn-holder's operating parameters), Bridge Alerts (Night Orders can specify alert suppression rules), Cognitive Journal (all Night Order invocations logged for post-hoc review)
 
-**Watch Bill — Structured Duty Rotation** *(AD-471)*
+**Watch Bill — Structured Duty Rotation** *(AD-471, COMPLETE, OSS)*
 
 *"All hands, first watch section report to duty stations."*
 
@@ -3769,7 +3769,7 @@ This AD gives agents a **structured action space** beyond text generation. Durin
 
 **AD-470: IntentBus Enhancements — Priority & Back-Pressure** *(planned)* — Traffic management for the IntentBus: (1) **Priority levels** — `IntentMessage.priority` (1=routine, 5=critical) with preemption. (2) **Back-pressure** — queue when LLM saturated, overflow policy (reject/degrade/batch). (3) **Rate limiting per agent** — configurable intent-per-second cap. (4) **Intent coalescing** — merge identical queued intents. (5) **Metrics** — throughput, queue depth, priority distribution, coalescing rate. Also includes **Self-Claiming Task Queue** — shared work queue with claim protocol, task dependencies, complements DAGExecutor. And **File Ownership Registry** — claim-before-edit protocol for parallel builds. *Connects to: IntentBus, PoolScaler, AD-469 (EPS), Builder, Cognitive Journal.*
 
-**AD-471: Autonomous Operations — The Conn, Night Orders, Watch Bill** *(build prompt stale — depends: AD-496, AD-498)* — Three naval protocols for Captain-offline operation: (1) **The Conn** — `/conn <agent>` formal authority delegation to bridge officers. Scope limitations, escalation boundaries, qualification requirements (COMMANDER+), handoff protocol, auto-return. (2) **Night Orders** — `/night-orders` Captain guidance before going offline. Time-bounded directives create temporary WorkItems (via AD-496) with TTL, using AD-498 templates. Decision boundaries, escalation triggers, briefing on return. (3) **Watch Bill** — agents organized into watch sections (A/B/C) mapped to AgentCalendar entries (AD-496), rotation triggers (time/performance/event), continuity handoff, off-watch maintenance (dream cycles, Hebbian normalization). **Note:** Existing build prompt at `prompts/ad-471-autonomous-operations.md` is STALE — written before AD-496 architecture. Must be rewritten after AD-496 and AD-498 are complete. *Connects to: AD-496 (WorkItemStore, AgentCalendar, BookableResource), AD-498 (Night Orders templates, duty type), Earned Agency, Standing Orders (DirectiveStore), Ward Room, Alert Conditions, Counselor, AD-467 (Scheduler).*
+**AD-471: Autonomous Operations — The Conn, Night Orders, Watch Bill** *(COMPLETE, OSS)* — Three naval protocols for Captain-offline operation: (1) **The Conn** — `/conn <agent>` formal authority delegation to bridge officers. ConnManager with ConnState, scope limitations (CAPTAIN_ONLY actions), escalation boundaries, qualification requirements (COMMANDER+ rank via Rank ordinal, bridge/chief post via ontology), handoff protocol, auto-return. (2) **Night Orders** — `/night-orders` Captain guidance before going offline. NightOrdersManager with NightOrders dataclass, time-bounded TTL with auto-expiry, three preset templates (maintenance/build/quiet), escalation triggers firing bridge alerts, invocation tracking. (3) **Watch Bill** — WatchManager extensions: wall-clock duty rotation (ALPHA 0800-1600, BETA 1600-0000, GAMMA 0000-0800), `auto_rotate()` based on system time, `_expire_night_orders()` in dispatch loop, `get_watch_status()`. CaptainOrder extended with `is_night_order`, `ttl_seconds`, `expires_at`, `template` fields. Runtime wiring: ConnManager/NightOrdersManager/WatchManager initialized at startup, `_emit_event` → `_check_night_order_escalation`, `is_conn_qualified()`. Proactive context injection: conn-holder agent gets Night Orders instructions in `_gather_context()`. Shell commands: `/conn`, `/night-orders`, `/watch`. API endpoints: `/api/system/conn`, `/api/system/night-orders`, `/api/system/watch`. 35 tests across 8 classes. **Note:** Implemented as standalone managers (not integrated with AD-496 WorkItemStore). Deferred pickup items (Night Orders → WorkItems, Watch → AgentCalendar) remain for future integration. *Connects to: Earned Agency, Standing Orders (DirectiveStore), Ward Room, Alert Conditions, AD-496 (deferred integration), AD-498 (deferred template integration).*
 
 ### Communications Team (AD-472–474)
 
@@ -3981,8 +3981,8 @@ Foundation for ProbOS workforce management — how work gets defined, scheduled,
 | Template instantiation endpoint | **AD-498** | `POST /api/work-items/from-template/{template_id}` with variable substitution. |
 | Scrumban Board WebSocket hydration | **AD-497** | ~~Events and snapshot are ready from AD-496. AD-497 builds the frontend.~~ COMPLETE — WebSocket events broadcast on all mutations, snapshot hydration. |
 | Work Tab in Agent Profile | **AD-497** | ~~Active/completed/blocked WorkItems per agent, daily schedule, duty integration.~~ COMPLETE — Full rewrite with 4 sections, create task, reassign/cancel/retry. |
-| Night Orders creating WorkItems | **AD-471** | Rewrite to use `create_work_item(ttl_seconds=..., work_type="task")` instead of standalone CaptainOrders. |
-| Watch sections → AgentCalendar | **AD-471** | Map Alpha/Beta/Gamma watch patterns to AgentCalendar entries. Calendar infrastructure is ready. |
+| Night Orders creating WorkItems | **AD-471** | ~~Rewrite to use `create_work_item(ttl_seconds=..., work_type="task")` instead of standalone CaptainOrders.~~ **AD-471 COMPLETE** — implemented as standalone NightOrdersManager. WorkItem integration deferred. |
+| Watch sections → AgentCalendar | **AD-471** | ~~Map Alpha/Beta/Gamma watch patterns to AgentCalendar entries. Calendar infrastructure is ready.~~ **AD-471 COMPLETE** — implemented wall-clock rotation in WatchManager. AgentCalendar mapping deferred. |
 | Billing integration (BookingJournal.billable) | **AD-C-015** | Commercial ACM Integration uses booking journals for cost calculation. |
 | Scheduling optimization (offer pattern) | **AD-C-010** | Commercial Schedule Board with offer-based assignment and timeout escalation. |
 | Full calendar-based capacity planning | **AD-C-012** | Calendar entries minus maintenance windows minus bookings. Simplified version in AD-496. |

@@ -658,6 +658,30 @@ class ProactiveCognitiveLoop:
         if redirect:
             context["circuit_breaker_redirect"] = redirect
 
+        # AD-471: Night Orders context for conn-holder
+        if hasattr(rt, 'conn_manager') and rt.conn_manager and rt.conn_manager.is_active:
+            conn_state = rt.conn_manager.state
+            if conn_state.holder_agent_id == agent.id:
+                # This agent holds the conn — inject Night Orders
+                night_ctx: dict[str, Any] = {
+                    "role": "You currently hold the conn (temporary command authority).",
+                    "conn_scope": {
+                        "can_approve_builds": conn_state.can_approve_builds,
+                        "can_change_alert_yellow": conn_state.can_change_alert_yellow,
+                        "can_issue_orders": conn_state.can_issue_orders,
+                    },
+                }
+                if hasattr(rt, '_night_orders_mgr') and rt._night_orders_mgr and rt._night_orders_mgr.active:
+                    orders = rt._night_orders_mgr.orders
+                    night_ctx["night_orders"] = {
+                        "template": orders.template or "custom",
+                        "instructions": orders.instructions,
+                        "alert_boundary": orders.alert_boundary,
+                        "escalation_triggers": orders.escalation_triggers,
+                        "remaining_hours": round(max(0, orders.expires_at - time.time()) / 3600, 1),
+                    }
+                context["conn_authority"] = night_ctx
+
         return context
 
     async def _is_similar_to_recent_posts(self, agent: Any, text: str, threshold: float = 0.5) -> bool:

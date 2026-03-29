@@ -362,6 +362,11 @@ class ProbOSRuntime:
         self._stasis_duration: float = 0.0
         self._previous_session: dict | None = None
 
+        # AD-471: Autonomous operations — conn and night orders
+        self.conn_manager: ConnManager | None = None
+        self._night_orders_mgr: NightOrdersManager | None = None
+        self.watch_manager: WatchManager | None = None
+
         # Register built-in agent templates
         self.spawner.register_template("system_heartbeat", SystemHeartbeatAgent)
         self.spawner.register_template("file_reader", FileReaderAgent)
@@ -441,6 +446,119 @@ class ProbOSRuntime:
                 fn(event)
             except Exception:
                 pass
+        # AD-471: Check Night Orders escalation on every event
+        self._check_night_order_escalation(event_type, data)
+
+    # --- AD-471: Autonomous operations helpers ---
+
+    async def _dispatch_watch_intent(self, intent_type: str, params: dict) -> Any:
+        """Bridge between WatchManager and intent bus."""
+        from probos.intent import IntentMessage
+        intent = IntentMessage(intent=intent_type, **params)
+        return await self.intent_bus.publish(intent)
+
+    def _populate_watch_roster(self) -> None:
+        """Populate watch roster from ontology assignments.
+
+        Default: all crew on ALPHA watch (full ops). Future: configurable
+        watch sections per department from organization.yaml.
+        """
+        if not self.ontology or not self.watch_manager:
+            return
+        from probos.watch_rotation import WatchType
+        crew_types = self.ontology.get_crew_agent_types()
+        for agent_type in crew_types:
+            assignment = self.ontology.get_assignment_for_agent(agent_type)
+            if assignment:
+                for agent in self.registry.all():
+                    if agent.agent_type == agent_type:
+                        self.watch_manager.assign_to_watch(
+                            agent.id, WatchType.ALPHA,
+                        )
+
+    def is_conn_qualified(self, agent_id: str) -> bool:
+        """Check if an agent is qualified to hold the conn.
+
+        Requirements:
+        - COMMANDER+ rank (trust >= 0.7)
+        - Bridge officer or department chief
+        """
+        agent = self.registry.get(agent_id)
+        if not agent:
+            return False
+
+        # Check rank — Rank is in crew_profile, not earned_agency
+        trust = 0.5
+        if self.trust_network:
+            trust = self.trust_network.get_trust_score(agent.id)
+        from probos.crew_profile import Rank
+        rank = Rank.from_trust(trust)
+        _RANK_ORDER = [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]
+        if _RANK_ORDER.index(rank) < _RANK_ORDER.index(Rank.COMMANDER):
+            return False
+
+        # Check role — bridge officers and department chiefs
+        if not self.ontology:
+            return False
+        post = self.ontology.get_post_for_agent(agent.agent_type)
+        if not post:
+            return False
+        # Bridge officers (report directly to captain) or department chiefs
+        CONN_ELIGIBLE_POSTS = {
+            "first_officer", "counselor",
+            "chief_engineer", "chief_science", "chief_medical",
+            "chief_security", "chief_operations",
+        }
+        return post.id in CONN_ELIGIBLE_POSTS
+
+    def _check_night_order_escalation(self, event_type: str, details: dict[str, Any] | None = None) -> None:
+        """Check if a runtime event should trigger Night Orders escalation.
+
+        Called from event emission points (trust changes, alert changes,
+        build results). If the event matches a Night Orders escalation trigger,
+        fires a bridge alert to wake the Captain.
+        """
+        if not hasattr(self, '_night_orders_mgr') or not self._night_orders_mgr:
+            return
+        if not self._night_orders_mgr.active:
+            return
+
+        # Map runtime events to Night Orders trigger names
+        trigger_map = {
+            "trust_change": "trust_drop",
+            "alert_condition_change": "red_alert",
+            "build_failure": "build_failure",
+            "security_alert": "security_alert",
+        }
+        trigger = trigger_map.get(event_type)
+        if not trigger:
+            return
+
+        # Additional condition checks
+        if trigger == "trust_drop" and details:
+            # Only escalate if trust dropped below floor
+            new_trust = details.get("new_trust", 1.0)
+            if new_trust >= 0.6:  # Not below floor
+                return
+        if trigger == "red_alert" and details:
+            new_level = details.get("new_level", "")
+            if new_level.lower() != "red":
+                return
+
+        # Check against Night Orders escalation triggers
+        if self._night_orders_mgr.check_escalation(trigger):
+            # Also notify conn manager
+            if self.conn_manager:
+                self.conn_manager.check_escalation(trigger, details)
+            # Fire bridge alert
+            if hasattr(self, 'bridge_alerts') and self.bridge_alerts:
+                self.bridge_alerts.add_alert(
+                    severity="critical",
+                    title=f"Night Orders escalation: {trigger}",
+                    source="night_orders",
+                    details=details or {},
+                )
+            logger.warning("Night Orders escalation triggered: %s", trigger)
 
     async def _on_build_complete(self, build: Any) -> None:
         """Callback fired when a dispatched build finishes (AD-375)."""
@@ -1554,6 +1672,21 @@ class ProbOSRuntime:
 
         # --- Proactive Cognitive Loop (Phase 28b) ---
         if self.config.proactive_cognitive.enabled and self.ward_room:
+
+            # AD-471: Initialize conn manager, night orders, and watch manager
+            from probos.conn import ConnManager
+            from probos.watch_rotation import WatchManager, NightOrdersManager
+            self.conn_manager = ConnManager()
+            self._night_orders_mgr = NightOrdersManager()
+            self.watch_manager = WatchManager(
+                dispatch_fn=self._dispatch_watch_intent,
+                check_interval=30.0,
+            )
+            # Populate roster from ontology
+            if self.ontology:
+                self._populate_watch_roster()
+            await self.watch_manager.start()
+
             from probos.proactive import ProactiveCognitiveLoop
             self.proactive_loop = ProactiveCognitiveLoop(
                 interval=self.config.proactive_cognitive.interval_seconds,
@@ -1700,6 +1833,14 @@ class ProbOSRuntime:
                     pass  # Non-critical
             await self.proactive_loop.stop()
             self.proactive_loop = None
+
+        # AD-471: Stop watch manager and expire Night Orders
+        if hasattr(self, 'watch_manager') and self.watch_manager:
+            await self.watch_manager.stop()
+            self.watch_manager = None
+        if hasattr(self, '_night_orders_mgr') and self._night_orders_mgr:
+            if self._night_orders_mgr.active:
+                self._night_orders_mgr.expire()
 
         # Stop Persistent Task Store (Phase 25a)
         if self.persistent_task_store:
