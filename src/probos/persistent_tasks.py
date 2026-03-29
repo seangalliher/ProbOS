@@ -76,6 +76,9 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     enabled INTEGER NOT NULL DEFAULT 1,
     agent_hint TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON scheduled_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_webhook ON scheduled_tasks(webhook_name);
 """
 
 _VALID_SCHEDULE_TYPES = {"once", "interval", "cron"}
@@ -119,6 +122,7 @@ class PersistentTaskStore:
         """Open DB, create schema, scan for stale DAG checkpoints."""
         if self.db_path:
             self._db = await aiosqlite.connect(self.db_path)
+            await self._db.execute("PRAGMA foreign_keys = ON")
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
             await self._db.commit()

@@ -13,6 +13,7 @@ from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.types import IntentMessage
+from probos.utils import format_duration
 
 logger = logging.getLogger(__name__)
 
@@ -53,23 +54,6 @@ class ProactiveCognitiveLoop:
         self._config: Any = None   # Set via set_config()
         self._duty_tracker: DutyScheduleTracker | None = None
         self._circuit_breaker = CognitiveCircuitBreaker()
-
-    @staticmethod
-    def _format_duration(seconds: float) -> str:
-        """AD-502: Format seconds into human-readable duration."""
-        seconds = max(0.0, seconds)
-        if seconds < 60:
-            return f"{int(seconds)}s"
-        elif seconds < 3600:
-            return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-        elif seconds < 86400:
-            hours = int(seconds // 3600)
-            mins = int((seconds % 3600) // 60)
-            return f"{hours}h {mins}m"
-        else:
-            days = int(seconds // 86400)
-            hours = int((seconds % 86400) // 3600)
-            return f"{days}d {hours}h"
 
     def set_runtime(self, runtime: Any) -> None:
         """Wire the runtime reference (provides registry, trust, WR, memory, etc.)."""
@@ -129,7 +113,7 @@ class ProactiveCognitiveLoop:
                     # Apply same clamping as set_agent_cooldown
                     self._agent_cooldowns[agent_id] = max(60.0, min(1800.0, cooldown))
         except Exception:
-            pass  # Non-critical — boot proceeds with defaults
+            logger.info("Failed to restore proactive cooldowns — agents may be temporarily over-active", exc_info=True)
 
     async def start(self) -> None:
         """Start the periodic think loop."""
@@ -207,7 +191,7 @@ class ProactiveCognitiveLoop:
                         if activated:
                             logger.info("AD-442: %s activated (trust=%.2f)", getattr(agent, 'callsign', agent.id), _tscore)
                 except Exception:
-                    pass  # Non-critical — best effort
+                    logger.debug("ACM activation check failed for agent", exc_info=True)
 
             try:
                 await self._think_for_agent(agent, rank, trust_score)
@@ -504,7 +488,7 @@ class ProactiveCognitiveLoop:
                         {
                             "input": (ep.user_input[:500] + " [trimmed]") if ep.user_input and len(ep.user_input) > 500 else (ep.user_input or ""),
                             "reflection": (ep.reflection[:500] + " [trimmed]") if ep.reflection and len(ep.reflection) > 500 else (ep.reflection or ""),
-                            **({"age": self._format_duration(time.time() - ep.timestamp)}
+                            **({"age": format_duration(time.time() - ep.timestamp)}
                                if include_ts and ep.timestamp > 0 else {}),
                         }
                         for ep in episodes

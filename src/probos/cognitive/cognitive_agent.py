@@ -11,6 +11,7 @@ from typing import Any
 
 from probos.substrate.agent import BaseAgent
 from probos.types import IntentMessage, IntentResult, LLMRequest, Skill
+from probos.utils import format_duration
 
 logger = logging.getLogger(__name__)
 
@@ -483,23 +484,6 @@ class CognitiveAgent(BaseAgent):
             d for d in cls.intent_descriptors if d.name != intent_name
         ]
 
-    @staticmethod
-    def _format_duration(seconds: float) -> str:
-        """AD-502: Format seconds into human-readable duration."""
-        seconds = max(0.0, seconds)
-        if seconds < 60:
-            return f"{int(seconds)}s"
-        elif seconds < 3600:
-            return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-        elif seconds < 86400:
-            hours = int(seconds // 3600)
-            mins = int((seconds % 3600) // 60)
-            return f"{hours}h {mins}m"
-        else:
-            days = int(seconds // 86400)
-            hours = int((seconds % 86400) // 3600)
-            return f"{days}d {hours}h"
-
     def _build_temporal_context(self) -> str:
         """AD-502: Build temporal awareness header for agent prompts."""
         # Respect config if available
@@ -520,20 +504,20 @@ class CognitiveAgent(BaseAgent):
             if birth_ts:
                 birth_dt = datetime.fromtimestamp(birth_ts, tz=timezone.utc)
                 age = (now - birth_dt).total_seconds()
-                parts.append(f"Your birth: {birth_dt.strftime('%Y-%m-%d %H:%M:%S UTC')} (age: {self._format_duration(age)})")
+                parts.append(f"Your birth: {birth_dt.strftime('%Y-%m-%d %H:%M:%S UTC')} (age: {format_duration(age)})")
 
         # System uptime
         if (tcfg is None or tcfg.include_system_uptime):
             sys_start = getattr(self, '_system_start_time', None)
             if sys_start:
                 uptime = time.time() - sys_start
-                parts.append(f"System uptime: {self._format_duration(uptime)}")
+                parts.append(f"System uptime: {format_duration(uptime)}")
 
         # Last action recency
         if (tcfg is None or tcfg.include_last_action):
             if hasattr(self, 'meta') and self.meta.last_active:
                 since_last = (now - self.meta.last_active).total_seconds()
-                parts.append(f"Your last action: {self._format_duration(since_last)} ago")
+                parts.append(f"Your last action: {format_duration(since_last)} ago")
 
         # Post count
         if (tcfg is None or tcfg.include_post_count):
@@ -820,13 +804,13 @@ class CognitiveAgent(BaseAgent):
                     {
                         "input": ep.user_input[:200] if ep.user_input else "",
                         "reflection": ep.reflection[:200] if ep.reflection else "",
-                        **({"age": self._format_duration(time.time() - ep.timestamp)}
+                        **({"age": format_duration(time.time() - ep.timestamp)}
                            if include_ts and ep.timestamp > 0 else {}),
                     }
                     for ep in episodes
                 ]
         except Exception:
-            pass  # Non-critical — agent proceeds without memory context
+            logger.debug("Failed to fetch episodic memory context", exc_info=True)
 
         return observation
 
@@ -890,7 +874,7 @@ class CognitiveAgent(BaseAgent):
             if EpisodicMemory.should_store(episode):
                 await self._runtime.episodic_memory.store(episode)
         except Exception:
-            pass  # Non-critical — never block the action
+            logger.debug("Failed to store action episode", exc_info=True)
 
     def _resolve_tier(self) -> str:
         """Determine which LLM tier to use.  Default: 'standard'.

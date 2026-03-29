@@ -191,6 +191,11 @@ CREATE TABLE IF NOT EXISTS mod_actions (
     moderator_id TEXT NOT NULL,
     created_at REAL NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_threads_channel ON threads(channel_id);
+CREATE INDEX IF NOT EXISTS idx_posts_thread ON posts(thread_id);
+CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_id);
+CREATE INDEX IF NOT EXISTS idx_mod_actions_channel ON mod_actions(channel_id);
 """
 
 
@@ -217,6 +222,7 @@ class WardRoomService:
         """Open DB, run schema, create default channels."""
         if self.db_path:
             self._db = await aiosqlite.connect(self.db_path)
+            await self._db.execute("PRAGMA foreign_keys = ON")
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
             await self._db.commit()
@@ -969,7 +975,7 @@ class WardRoomService:
                 if EpisodicMemory.should_store(episode):
                     await self._episodic_memory.store(episode)
             except Exception:
-                pass  # Non-critical — don't block Ward Room operations
+                logger.debug("Failed to store thread creation episode", exc_info=True)
         return thread
 
     async def update_thread(
@@ -1169,7 +1175,7 @@ class WardRoomService:
                 if EpisodicMemory.should_store(episode):
                     await self._episodic_memory.store(episode)
             except Exception:
-                pass  # Non-critical
+                logger.debug("Failed to store reply episode", exc_info=True)
 
         # AD-453: Record Hebbian social connections for replies
         if self._hebbian_router and author_id:
@@ -1206,7 +1212,7 @@ class WardRoomService:
                                 "rel_type": "social",
                             })
             except Exception:
-                pass  # Non-critical — Ward Room must never break for Hebbian
+                logger.debug("Failed to record Hebbian social interaction", exc_info=True)
         return post
 
     async def get_post(self, post_id: str) -> dict[str, Any] | None:

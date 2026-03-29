@@ -698,9 +698,12 @@ def create_app(runtime: Any) -> FastAPI:
         """List documents in Ship's Records."""
         if not runtime._records_store:
             return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
-        entries = await runtime._records_store.list_entries(
-            directory=directory, author=author, status=status, classification=classification,
-        )
+        try:
+            entries = await runtime._records_store.list_entries(
+                directory=directory, author=author, status=status, classification=classification,
+            )
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
         return {"documents": entries, "count": len(entries)}
 
     @app.get("/api/records/documents/{path:path}")
@@ -708,7 +711,10 @@ def create_app(runtime: Any) -> FastAPI:
         """Read a specific document from Ship's Records."""
         if not runtime._records_store:
             return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
-        entry = await runtime._records_store.read_entry(path, reader_id=reader)
+        try:
+            entry = await runtime._records_store.read_entry(path, reader_id=reader)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
         if entry is None:
             return JSONResponse({"error": "Not found or access denied"}, status_code=404)
         return entry
@@ -739,7 +745,10 @@ def create_app(runtime: Any) -> FastAPI:
         """List a crew member's notebook entries."""
         if not runtime._records_store:
             return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
-        entries = await runtime._records_store.list_entries(f"notebooks/{callsign}")
+        try:
+            entries = await runtime._records_store.list_entries(f"notebooks/{callsign}")
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
         return {"callsign": callsign, "entries": entries}
 
     @app.post("/api/records/notebooks/{callsign}")
@@ -752,14 +761,17 @@ def create_app(runtime: Any) -> FastAPI:
         content = body.get("content", "")
         if not content:
             return JSONResponse({"error": "content required"}, status_code=400)
-        path = await runtime._records_store.write_notebook(
-            callsign=callsign,
-            topic_slug=topic,
-            content=content,
-            department=body.get("department", ""),
-            tags=body.get("tags", []),
-            classification=body.get("classification", "department"),
-        )
+        try:
+            path = await runtime._records_store.write_notebook(
+                callsign=callsign,
+                topic_slug=topic,
+                content=content,
+                department=body.get("department", ""),
+                tags=body.get("tags", []),
+                classification=body.get("classification", "department"),
+            )
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
         return {"path": path, "status": "written"}
 
     @app.get("/api/records/search")
@@ -777,7 +789,10 @@ def create_app(runtime: Any) -> FastAPI:
         """Get git history for a specific record."""
         if not runtime._records_store:
             return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
-        history = await runtime._records_store.get_history(path, limit=limit)
+        try:
+            history = await runtime._records_store.get_history(path, limit=limit)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
         return {"path": path, "history": history}
 
     # ── Identity Endpoints (AD-441) ─────────────────────────────────
@@ -1754,7 +1769,7 @@ def create_app(runtime: Any) -> FastAPI:
                 )
                 await runtime.episodic_memory.store(episode)
             except Exception:
-                pass  # Non-critical — don't block the response
+                logger.debug("Failed to store HXI conversation episode", exc_info=True)
 
         return {
             "response": response_text,
@@ -1782,7 +1797,7 @@ def create_app(runtime: Any) -> FastAPI:
                         "text": f"[Previous conversation] {ep.user_input}",
                     })
             except Exception:
-                pass
+                logger.debug("Failed to load HXI conversation history", exc_info=True)
         return {"memories": memories}
 
     # --- Cognitive Journal (AD-431) ---

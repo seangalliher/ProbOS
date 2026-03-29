@@ -28,6 +28,63 @@ uv run pytest tests/ -v
 - Async-first — most interfaces are `async`
 - Pydantic for configuration and data models
 - `pytest` + `pytest-asyncio` for testing
+- `encoding="utf-8"` on all `open()` calls
+- `asyncio.create_task()` over `asyncio.ensure_future()`
+
+## Engineering Principles
+
+All contributions must adhere to the **ProbOS Principles Stack**. Pull requests that introduce violations will be flagged during review.
+
+### Structure — SOLID
+
+| Principle | Rule | ProbOS Example |
+|-----------|------|----------------|
+| **Single Responsibility** | One reason to change per class. No god objects. | New services get their own module — don't add methods to `runtime.py`. |
+| **Open/Closed** | Extend via public APIs, not private member patching. | Never `obj._private_attr = value`. Define a public setter or constructor parameter. |
+| **Liskov Substitution** | Subtypes must honor base contracts. | Any `CognitiveAgent` subclass must work wherever the base is expected. |
+| **Interface Segregation** | Depend on narrow `typing.Protocol` interfaces, not entire classes. | An agent needing episodic memory depends on `EpisodicMemoryProtocol`, not all of `ProbOSRuntime`. |
+| **Dependency Inversion** | Depend on abstractions, inject via constructor. | Services receive dependencies at construction — never reach into a runtime god object. |
+
+### Communication — Law of Demeter
+
+A method should only call methods on: (a) itself, (b) its parameters, (c) objects it creates, (d) its direct dependencies. Never chain through objects: `self.thing._internal_thing.do_stuff()`.
+
+If two services need to be wired together, define a public API on the target service.
+
+### Reliability — Fail Fast
+
+Errors should be detected and reported as close to their origin as possible. Three tiers:
+
+| Tier | When | Pattern |
+|------|------|---------|
+| **Swallow** | Truly non-critical: shutdown cleanup, telemetry, rebuildable indexes | `except Exception: pass` |
+| **Log-and-degrade** | System continues but capability is reduced | `except Exception: logger.debug("...", exc_info=True)` |
+| **Propagate** | Caller must know: security boundaries, data integrity | `raise` or re-raise |
+
+**Default to log-and-degrade.** Every `except Exception: pass` must be justified.
+
+### Security — Defense in Depth
+
+- Validate at **every** boundary, not just the edge
+- Input sanitization at the API layer **and** the service layer
+- Database constraints enforced by the engine (`PRAGMA foreign_keys = ON`), not just application code
+- File path operations must sanitize against traversal (no `../` escape from data directories)
+- Never assume the caller already checked
+
+### Efficiency — DRY
+
+- Search for existing implementations before writing new ones
+- If the same logic exists in 2+ places, extract to a shared utility (`src/probos/utils/`)
+- This applies to patterns too — if 6 SQLite modules do the same migration dance, that's a shared helper
+
+### Cloud-Ready Storage
+
+New database modules must use an abstract connection interface rather than calling `aiosqlite.connect()` directly. This enables the commercial overlay to swap storage backends (SQLite → Postgres) without modifying business logic.
+
+- OSS: SQLite implementation (embedded, zero config, single-ship)
+- Commercial: Managed database services for multi-tenant cloud deployment
+
+This principle ensures the OSS core remains deployable as a standalone application while supporting cloud-native scaling in the commercial product.
 
 ## Architecture Guidelines
 

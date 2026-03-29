@@ -323,6 +323,7 @@ class SkillRegistry:
     async def start(self) -> None:
         if self._db_path:
             self._db = await aiosqlite.connect(self._db_path)
+            await self._db.execute("PRAGMA foreign_keys = ON")
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
             await self._db.commit()
@@ -424,6 +425,7 @@ class AgentSkillService:
     async def start(self) -> None:
         if self._db_path:
             self._db = await aiosqlite.connect(self._db_path)
+            await self._db.execute("PRAGMA foreign_keys = ON")
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
             await self._db.commit()

@@ -61,6 +61,7 @@ class CognitiveJournal:
         db_dir = Path(self.db_path).parent
         db_dir.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.db_path)
+        await self._db.execute("PRAGMA foreign_keys = ON")
         self._db.row_factory = __import__("aiosqlite").Row
         # AD-432: Migrate columns BEFORE full schema (indexes reference them)
         # Create base table first (without AD-432 columns for pre-existing DBs)
@@ -92,6 +93,45 @@ class CognitiveJournal:
             await self._db.commit()
         except Exception:
             logger.debug("Journal wipe failed", exc_info=True)
+
+    async def prune(self, retention_days: int = 14, max_rows: int = 500_000) -> int:
+        """Delete journal entries older than retention_days and enforce max_rows.
+
+        Returns number of rows deleted.
+        """
+        if not self._db:
+            return 0
+
+        import time as _time
+        deleted = 0
+
+        # Age-based pruning (timestamp is Unix epoch float)
+        if retention_days > 0:
+            cutoff = _time.time() - (retention_days * 86400)
+            cursor = await self._db.execute(
+                "DELETE FROM journal WHERE timestamp < ?", (cutoff,)
+            )
+            deleted += cursor.rowcount
+
+        # Row-count cap
+        if max_rows > 0:
+            cursor = await self._db.execute("SELECT COUNT(*) FROM journal")
+            row = await cursor.fetchone()
+            total = row[0] if row else 0
+            if total > max_rows:
+                excess = total - max_rows
+                cursor = await self._db.execute(
+                    "DELETE FROM journal WHERE id IN "
+                    "(SELECT id FROM journal ORDER BY timestamp ASC LIMIT ?)",
+                    (excess,)
+                )
+                deleted += cursor.rowcount
+
+        if deleted > 0:
+            await self._db.commit()
+            logger.info("CognitiveJournal pruned: %d entries removed", deleted)
+
+        return deleted
 
     async def record(
         self,

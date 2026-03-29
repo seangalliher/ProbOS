@@ -71,6 +71,7 @@ from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient, OpenAIComp
 from probos.cognitive.working_memory import WorkingMemoryManager
 from probos.cognitive.workflow_cache import WorkflowCache
 from probos.config import KnowledgeConfig, SystemConfig, load_config
+from probos.utils import format_duration
 from probos.consensus.escalation import EscalationManager
 from probos.consensus.quorum import QuorumEngine
 from probos.consensus.trust import TrustNetwork
@@ -105,23 +106,6 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_CONFIG = _PROJECT_ROOT / "config" / "system.yaml"
 _DEFAULT_DATA_DIR = _PROJECT_ROOT / "data"
-
-
-def _format_duration(seconds: float) -> str:
-    """AD-502: Format seconds into human-readable duration."""
-    seconds = max(0.0, seconds)
-    if seconds < 60:
-        return f"{int(seconds)}s"
-    elif seconds < 3600:
-        return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-    elif seconds < 86400:
-        hours = int(seconds // 3600)
-        mins = int((seconds % 3600) // 60)
-        return f"{hours}h {mins}m"
-    else:
-        days = int(seconds // 86400)
-        hours = int((seconds % 86400) // 3600)
-        return f"{days}d {hours}h"
 
 
 class ProbOSRuntime:
@@ -445,7 +429,7 @@ class ProbOSRuntime:
             try:
                 fn(event)
             except Exception:
-                pass
+                logger.debug("Event listener failed for %s", event_type, exc_info=True)
         # AD-471: Check Night Orders escalation on every event
         self._check_night_order_escalation(event_type, data)
 
@@ -651,7 +635,7 @@ class ProbOSRuntime:
                 tc_n = snap.get("tc_n", 0.0)
                 routing_entropy = snap.get("routing_entropy", 0.0)
             except Exception:
-                pass
+                logger.debug("Emergent detector summary failed", exc_info=True)
 
         return {
             "agents": agents,
@@ -808,6 +792,7 @@ class ProbOSRuntime:
         # Start infrastructure
         self._data_dir.mkdir(parents=True, exist_ok=True)
         await self.event_log.start()
+        asyncio.create_task(self._event_log_prune_loop())
         await self.hebbian_router.start()
         await self.signal_manager.start()
         await self.gossip.start()
@@ -1249,11 +1234,11 @@ class ProbOSRuntime:
                 self._lifecycle_state = "stasis_recovery"
                 self._stasis_duration = stasis_duration
                 self._previous_session = previous_session
-                logger.info("AD-502: Stasis recovery detected — stasis duration: %s", _format_duration(stasis_duration))
+                logger.info("AD-502: Stasis recovery detected — stasis duration: %s", format_duration(stasis_duration))
             else:
                 logger.info("AD-502: No session record — first boot (maiden voyage)")
         except Exception:
-            pass  # first boot or corrupted record
+            logger.warning("Failed to load session record for lifecycle detection", exc_info=True)
 
         # Initialize Ship's Records (AD-434)
         if self.config.records.enabled:
@@ -1359,7 +1344,7 @@ class ProbOSRuntime:
                             max_responders=0,
                         )
                 except Exception:
-                    pass  # best-effort
+                    logger.debug("Cold-start announcement failed", exc_info=True)
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(_announce_cold_start())
@@ -1610,6 +1595,7 @@ class ProbOSRuntime:
                 db_path=str(self._data_dir / "cognitive_journal.db"),
             )
             await self.cognitive_journal.start()
+            asyncio.create_task(self._journal_prune_loop())
             logger.info("cognitive-journal started")
 
         # --- Skill Framework (AD-428) ---
@@ -1743,7 +1729,7 @@ class ProbOSRuntime:
                     row = await cursor.fetchone()
                     if row:
                         if self._lifecycle_state == "stasis_recovery":
-                            dur = _format_duration(self._stasis_duration)
+                            dur = format_duration(self._stasis_duration)
                             prev = self._previous_session
                             shutdown_str = datetime.fromtimestamp(
                                 prev["shutdown_time_utc"], tz=timezone.utc
@@ -1776,6 +1762,34 @@ class ProbOSRuntime:
                         )
             except Exception:
                 pass  # best-effort
+
+    # --- BF-071: Retention prune loops ---
+
+    async def _event_log_prune_loop(self) -> None:
+        """Periodic event log retention cleanup."""
+        cfg = self.config.event_log
+        while True:
+            await asyncio.sleep(cfg.prune_interval_seconds)
+            try:
+                await self.event_log.prune(
+                    retention_days=cfg.retention_days,
+                    max_rows=cfg.max_rows,
+                )
+            except Exception:
+                logger.debug("Event log prune failed", exc_info=True)
+
+    async def _journal_prune_loop(self) -> None:
+        """Periodic cognitive journal retention cleanup."""
+        cfg = self.config.cognitive_journal
+        while True:
+            await asyncio.sleep(cfg.prune_interval_seconds)
+            try:
+                await self.cognitive_journal.prune(
+                    retention_days=cfg.retention_days,
+                    max_rows=cfg.max_rows,
+                )
+            except Exception:
+                logger.debug("Journal prune failed", exc_info=True)
 
     async def stop(self, reason: str = "") -> None:
         """Graceful shutdown of all pools, mesh services, and persistence."""
@@ -1868,7 +1882,7 @@ class ProbOSRuntime:
                 try:
                     await self._knowledge_store.store_cooldowns(self.proactive_loop._agent_cooldowns.copy())
                 except Exception:
-                    pass  # Non-critical
+                    logger.warning("Failed to persist proactive cooldowns", exc_info=True)
             await self.proactive_loop.stop()
             self.proactive_loop = None
 
@@ -2366,7 +2380,7 @@ class ProbOSRuntime:
                 for pool_name in group.pool_names:
                     dept_lookup[pool_name] = group.display_name
         except Exception:
-            pass
+            logger.debug("Failed to build department lookup", exc_info=True)
 
         for name, pool in self.pools.items():
             pools.append(PoolSnapshot(
@@ -2381,7 +2395,7 @@ class ProbOSRuntime:
         try:
             departments = [g.display_name for g in self.pool_groups.all_groups()]
         except Exception:
-            pass
+            logger.debug("System mode detection failed", exc_info=True)
 
         # System mode
         system_mode = "active"
@@ -2391,7 +2405,7 @@ class ProbOSRuntime:
             elif (_time.monotonic() - self._last_request_time) > 30:
                 system_mode = "idle"
         except Exception:
-            pass
+            logger.debug("System mode detection failed", exc_info=True)
 
         # Intent count
         intent_count = 0
@@ -2718,7 +2732,7 @@ class ProbOSRuntime:
                                 try:
                                     await self._knowledge_store.store_agent(record, record.source_code)
                                 except Exception:
-                                    pass  # Never block on persistence failure
+                                    logger.warning("Failed to persist designed agent — may be lost on restart", exc_info=True)
                             # Auto-index for semantic search (AD-243)
                             if self._semantic_layer:
                                 try:
@@ -2864,7 +2878,7 @@ class ProbOSRuntime:
                     try:
                         await self._knowledge_store.store_episode(episode)
                     except Exception:
-                        pass  # Never block on persistence failure
+                        logger.warning("Failed to persist episode — episodic memory data loss", exc_info=True)
             except Exception as e:
                 logger.warning("Episode storage failed: %s: %s", type(e).__name__, e)
                 self._record_error(f"Episode: {type(e).__name__}: {str(e)[:60]}")
@@ -3111,7 +3125,7 @@ class ProbOSRuntime:
                 descriptors = self._collect_intent_descriptors()
                 self.decomposer.refresh_descriptors(descriptors)
             except Exception:
-                pass
+                logger.warning("Failed to refresh decomposer descriptors — self-modified agent may not be routable", exc_info=True)
 
         # Persist to knowledge store
         if hasattr(self, "_knowledge_store") and self._knowledge_store:
@@ -3120,7 +3134,7 @@ class ProbOSRuntime:
                     original_record, patch_result.patched_source,
                 )
             except Exception:
-                pass
+                logger.warning("Failed to persist patched agent — may be lost on restart", exc_info=True)
         # Auto-index for semantic search (AD-243)
         if self._semantic_layer:
             try:
@@ -4846,7 +4860,7 @@ class ProbOSRuntime:
                 }
                 await self._knowledge_store.store_skill(skill.name, skill.source_code, descriptor_dict)
             except Exception:
-                pass  # Never block on persistence failure
+                logger.warning("Failed to persist skill — may be lost on restart", exc_info=True)
         # Auto-index skill for semantic search (AD-243)
         if self._semantic_layer:
             try:
@@ -5133,7 +5147,7 @@ class ProbOSRuntime:
                     }
                     await self._knowledge_store.store_qa_report(record.agent_type, report_dict)
                 except Exception:
-                    pass  # Never block on persistence failure
+                    logger.debug("Failed to persist QA report", exc_info=True)
             # Auto-index QA report for semantic search (AD-243)
             if self._semantic_layer:
                 try:
@@ -5237,7 +5251,7 @@ class ProbOSRuntime:
                     detail=f"QA failed for {record.agent_type}: {repr(e)}",
                 )
             except Exception:
-                pass
+                logger.debug("Failed to log QA error event", exc_info=True)
             return None
 
     async def _extract_unhandled_intent(self, text: str) -> dict[str, Any] | None:

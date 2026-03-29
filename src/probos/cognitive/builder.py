@@ -632,7 +632,7 @@ async def decompose_blueprint(
             logger.warning("ChunkDecomposer: LLM error: %s, using fallback", response.error)
             blueprint = _fallback_decompose(blueprint)
             if on_event:
-                asyncio.ensure_future(on_event("transporter_decomposed", {
+                asyncio.create_task(on_event("transporter_decomposed", {
                     "chunk_count": len(blueprint.chunks),
                     "chunks": [{"chunk_id": c.chunk_id, "description": c.description, "target_file": c.target_file} for c in blueprint.chunks],
                     "fallback": True,
@@ -653,7 +653,7 @@ async def decompose_blueprint(
             logger.warning("ChunkDecomposer: LLM returned empty chunks, using fallback")
             blueprint = _fallback_decompose(blueprint)
             if on_event:
-                asyncio.ensure_future(on_event("transporter_decomposed", {
+                asyncio.create_task(on_event("transporter_decomposed", {
                     "chunk_count": len(blueprint.chunks),
                     "chunks": [{"chunk_id": c.chunk_id, "description": c.description, "target_file": c.target_file} for c in blueprint.chunks],
                     "fallback": True,
@@ -664,7 +664,7 @@ async def decompose_blueprint(
         logger.warning("ChunkDecomposer: failed (%s), using fallback decomposition", exc)
         blueprint = _fallback_decompose(blueprint)
         if on_event:
-            asyncio.ensure_future(on_event("transporter_decomposed", {
+            asyncio.create_task(on_event("transporter_decomposed", {
                 "chunk_count": len(blueprint.chunks),
                 "chunks": [{"chunk_id": c.chunk_id, "description": c.description, "target_file": c.target_file} for c in blueprint.chunks],
                 "fallback": True,
@@ -707,7 +707,7 @@ async def decompose_blueprint(
         logger.warning("ChunkDecomposer: invalid DAG (%s), using fallback", err)
         blueprint = _fallback_decompose(blueprint)
         if on_event:
-            asyncio.ensure_future(on_event("transporter_decomposed", {
+            asyncio.create_task(on_event("transporter_decomposed", {
                 "chunk_count": len(blueprint.chunks),
                 "chunks": [{"chunk_id": c.chunk_id, "description": c.description, "target_file": c.target_file} for c in blueprint.chunks],
                 "fallback": True,
@@ -734,7 +734,7 @@ async def decompose_blueprint(
         len(chunks), len(spec.target_files),
     )
     if on_event:
-        asyncio.ensure_future(on_event("transporter_decomposed", {
+        asyncio.create_task(on_event("transporter_decomposed", {
             "chunk_count": len(blueprint.chunks),
             "chunks": [
                 {"chunk_id": c.chunk_id, "description": c.description, "target_file": c.target_file}
@@ -1347,7 +1347,7 @@ async def transporter_build(
     if on_event:
         class _EventEmitter:
             def _emit_event(self_, event_type, data):
-                asyncio.ensure_future(on_event(event_type, data))
+                asyncio.create_task(on_event(event_type, data))
         await _emit_transporter_events(_EventEmitter(), "", blueprint, assembled, validation)
 
     if not validation.valid:

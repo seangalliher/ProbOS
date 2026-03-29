@@ -360,7 +360,7 @@ class SelfModificationPipeline:
         try:
             await self._set_trust_fn(pool_name)
         except Exception:
-            pass
+            logger.warning("Failed to set probationary trust for new agent — trust boundary risk", exc_info=True)
 
         # 7. Track with behavioral monitor
         self._monitor.track_agent_type(agent_type)

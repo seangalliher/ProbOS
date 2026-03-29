@@ -128,7 +128,7 @@ class FederationBridge:
                         if not valid:
                             continue
                     except Exception:
-                        pass
+                        logger.warning("Federation message validator failed — message passed without validation", exc_info=True)
                 results.append(ir)
                 self._stats["results_collected"] += 1
 

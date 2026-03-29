@@ -104,6 +104,7 @@ class TrustNetwork:
         """Initialize — load trust scores from SQLite if configured."""
         if self.db_path:
             self._db = await aiosqlite.connect(self.db_path)
+            await self._db.execute("PRAGMA foreign_keys = ON")
             await self._db.execute(_SCHEMA)
             await self._db.commit()
             await self._load_from_db()

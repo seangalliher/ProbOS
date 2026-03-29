@@ -386,9 +386,19 @@ class MedicalConfig(BaseModel):
     scheduled_diagnosis_interval: float = 300.0
 
 
+class EventLogConfig(BaseModel):
+    """Event log retention configuration."""
+    retention_days: int = 7          # Delete events older than N days (0 = keep forever)
+    max_rows: int = 100_000          # Hard cap on total rows (0 = no cap)
+    prune_interval_seconds: float = 3600.0  # Check for pruning every N seconds
+
+
 class CognitiveJournalConfig(BaseModel):
     """Cognitive Journal — append-only LLM reasoning trace store (AD-431)."""
     enabled: bool = True
+    retention_days: int = 14         # Keep journal entries for N days (0 = keep forever)
+    max_rows: int = 500_000          # Hard cap on total rows (0 = no cap)
+    prune_interval_seconds: float = 3600.0
 
 
 class CommunicationsConfig(BaseModel):
@@ -450,6 +460,7 @@ class SystemConfig(BaseModel):
     persistent_tasks: PersistentTasksConfig = PersistentTasksConfig()
     channels: ChannelsConfig = ChannelsConfig()
     medical: MedicalConfig = MedicalConfig()
+    event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
     communications: CommunicationsConfig = CommunicationsConfig()
     workforce: WorkforceConfig = WorkforceConfig()
@@ -461,7 +472,7 @@ def load_config(path: str | Path) -> SystemConfig:
     path = Path(path)
     if not path.exists():
         return SystemConfig()
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     # YAML sections with all values commented out parse as key: None.
     # Remove these so pydantic uses defaults instead of failing validation.

@@ -947,6 +947,7 @@ class WorkItemStore:
         """Open DB, create schema, start tick loop."""
         if self.db_path:
             self._db = await aiosqlite.connect(self.db_path)
+            await self._db.execute("PRAGMA foreign_keys = ON")
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
             await self._db.commit()

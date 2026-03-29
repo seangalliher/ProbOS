@@ -385,7 +385,7 @@ class DreamScheduler:
             return
         self._stopped = False
         self._last_activity_time = time.monotonic()
-        self._task = asyncio.ensure_future(self._monitor_loop())
+        self._task = asyncio.create_task(self._monitor_loop())
 
     async def stop(self) -> None:
         """Stop the background monitoring task."""

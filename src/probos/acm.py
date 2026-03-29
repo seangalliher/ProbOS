@@ -105,6 +105,7 @@ class AgentCapitalService:
         """Initialize ACM database."""
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(str(self._data_dir / "acm.db"))
+        await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
 

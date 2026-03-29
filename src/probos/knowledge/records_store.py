@@ -116,7 +116,7 @@ class RecordsStore:
         full_content = f"---\n{fm_yaml}---\n\n{content}"
 
         # Write file
-        file_path = self._repo_path / path
+        file_path = self._safe_path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(full_content, encoding="utf-8")
 
@@ -178,6 +178,7 @@ class RecordsStore:
         Creates or updates notebooks/{callsign}/{topic_slug}.md
         """
         path = f"notebooks/{callsign}/{topic_slug}.md"
+        self._safe_path(path)  # Validate before delegating to write_entry
         return await self.write_entry(
             author=callsign,
             path=path,
@@ -200,7 +201,7 @@ class RecordsStore:
 
         Returns {"frontmatter": {...}, "content": "..."} or None if denied.
         """
-        file_path = self._repo_path / path
+        file_path = self._safe_path(path)
         if not file_path.exists():
             return None
 
@@ -233,7 +234,7 @@ class RecordsStore:
 
         Returns list of {"path": ..., "frontmatter": {...}} dicts.
         """
-        search_path = self._repo_path / directory if directory else self._repo_path
+        search_path = self._safe_path(directory) if directory else self._repo_path
         results = []
 
         for md_file in sorted(search_path.rglob("*.md")):
@@ -263,6 +264,7 @@ class RecordsStore:
 
     async def get_history(self, path: str, limit: int = 20) -> list[dict]:
         """Get git log for a specific file."""
+        self._safe_path(path)  # Validate — raises ValueError if traversal
         try:
             result = await self._git(
                 "log", f"--max-count={limit}",
@@ -285,7 +287,7 @@ class RecordsStore:
 
     async def publish(self, path: str, author: str) -> None:
         """Promote a document from draft to published status."""
-        file_path = self._repo_path / path
+        file_path = self._safe_path(path)
         if not file_path.exists():
             raise FileNotFoundError(f"Record not found: {path}")
 
@@ -379,6 +381,19 @@ class RecordsStore:
                 return fm, parts[2].strip()
         return {}, raw
 
+    def _safe_path(self, user_path: str) -> Path:
+        """Validate and resolve a user-supplied path, preventing traversal.
+
+        Raises ValueError if the resolved path escapes the records repo.
+        """
+        resolved = (self._repo_path / user_path).resolve()
+        repo_resolved = self._repo_path.resolve()
+
+        if not resolved.is_relative_to(repo_resolved):
+            raise ValueError(f"Path traversal denied: {user_path!r}")
+
+        return resolved
+
     async def _write_config(self) -> None:
         """Write the .shiprecords.yaml configuration file."""
         config = {
@@ -400,7 +415,7 @@ class RecordsStore:
 
     async def _git(self, *args: str) -> str:
         """Run a git command in the records repo."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._git_sync, args)
 
     def _git_sync(self, args: tuple[str, ...]) -> str:

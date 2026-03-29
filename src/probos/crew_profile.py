@@ -325,7 +325,7 @@ class CallsignRegistry:
             if yaml_file.stem.startswith("_"):
                 continue
             try:
-                with open(yaml_file, "r") as f:
+                with open(yaml_file, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f) or {}
             except Exception:
                 continue
@@ -406,7 +406,7 @@ def load_seed_profile(agent_type: str, profiles_dir: str = "") -> dict[str, Any]
         return {}
 
     import yaml
-    with open(target, "r") as f:
+    with open(target, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 

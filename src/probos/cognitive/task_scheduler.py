@@ -108,7 +108,7 @@ class TaskScheduler:
         if self._task is not None:
             return
         self._stopped = False
-        self._task = asyncio.ensure_future(self._tick_loop())
+        self._task = asyncio.create_task(self._tick_loop())
 
     async def stop(self) -> None:
         """Stop the background tick loop."""

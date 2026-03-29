@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS assignment_members (
     PRIMARY KEY (assignment_id, agent_id),
     FOREIGN KEY (assignment_id) REFERENCES assignments(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_assignments_status ON assignments(status);
 """
 
 
@@ -88,6 +90,7 @@ class AssignmentService:
     async def start(self) -> None:
         if self.db_path:
             self._db = await aiosqlite.connect(self.db_path)
+            await self._db.execute("PRAGMA foreign_keys = ON")
             await self._db.executescript(_SCHEMA)
             await self._db.commit()
         # Warm the snapshot cache

@@ -441,7 +441,7 @@ class KnowledgeStore:
             loop = asyncio.get_running_loop()
             self._commit_timer = loop.call_later(
                 self._config.commit_debounce_seconds,
-                lambda: asyncio.ensure_future(self._flush_pending()),
+                lambda: asyncio.create_task(self._flush_pending()),
             )
         except RuntimeError:
             # No running loop (e.g. during testing without async context)

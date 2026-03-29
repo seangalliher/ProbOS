@@ -14,39 +14,39 @@ import pytest
 # ---------------------------------------------------------------------------
 # Duration Formatter Tests
 # ---------------------------------------------------------------------------
-from probos.runtime import _format_duration
+from probos.utils import format_duration
 
 
 class TestFormatDuration:
     """Component 4: Duration formatter utility."""
 
     def test_format_duration_seconds(self):
-        assert _format_duration(45) == "45s"
+        assert format_duration(45) == "45s"
 
     def test_format_duration_minutes(self):
-        assert _format_duration(750) == "12m 30s"
+        assert format_duration(750) == "12m 30s"
 
     def test_format_duration_hours(self):
-        assert _format_duration(13500) == "3h 45m"
+        assert format_duration(13500) == "3h 45m"
 
     def test_format_duration_days(self):
-        assert _format_duration(140400) == "1d 15h"
+        assert format_duration(140400) == "1d 15h"
 
     def test_format_duration_zero(self):
-        assert _format_duration(0) == "0s"
+        assert format_duration(0) == "0s"
 
     def test_format_duration_negative_clamped(self):
         """Negative durations should be clamped to 0."""
-        assert _format_duration(-10) == "0s"
+        assert format_duration(-10) == "0s"
 
     def test_format_duration_boundary_60(self):
-        assert _format_duration(60) == "1m 0s"
+        assert format_duration(60) == "1m 0s"
 
     def test_format_duration_boundary_3600(self):
-        assert _format_duration(3600) == "1h 0m"
+        assert format_duration(3600) == "1h 0m"
 
     def test_format_duration_boundary_86400(self):
-        assert _format_duration(86400) == "1d 0h"
+        assert format_duration(86400) == "1d 0h"
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +349,7 @@ class TestEpisodeTimestamps:
             {
                 "input": ep.user_input[:200] if ep.user_input else "",
                 "reflection": ep.reflection[:200] if ep.reflection else "",
-                **({"age": CognitiveAgent._format_duration(time.time() - ep.timestamp)}
+                **({"age": format_duration(time.time() - ep.timestamp)}
                    if include_ts and ep.timestamp > 0 else {}),
             }
             for ep in episodes
@@ -365,7 +365,7 @@ class TestEpisodeTimestamps:
         mem = {
             "input": ep.user_input,
             "reflection": ep.reflection,
-            **({"age": CognitiveAgent._format_duration(time.time() - ep.timestamp)}
+            **({"age": format_duration(time.time() - ep.timestamp)}
                if include_ts and ep.timestamp > 0 else {}),
         }
         assert "age" not in mem
@@ -373,8 +373,8 @@ class TestEpisodeTimestamps:
     def test_episode_timestamp_formatting(self):
         """Correct human-readable duration."""
         from probos.cognitive.cognitive_agent import CognitiveAgent
-        assert CognitiveAgent._format_duration(195) == "3m 15s"
-        assert CognitiveAgent._format_duration(7200) == "2h 0m"
+        assert format_duration(195) == "3m 15s"
+        assert format_duration(7200) == "2h 0m"
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +392,7 @@ class TestHibernationProtocol:
 
     def test_stasis_recovery_announcement_includes_duration(self):
         """Stasis recovery announcement includes human-readable duration."""
-        duration = _format_duration(7200)
+        duration = format_duration(7200)
         body = f"Stasis duration: {duration}."
         assert "2h 0m" in body
 
@@ -415,7 +415,7 @@ class TestHibernationProtocol:
     def test_stasis_notification_includes_duration(self):
         """Stasis recovery notification includes duration."""
         stasis_duration = 18000.0  # 5 hours
-        dur = _format_duration(stasis_duration)
+        dur = format_duration(stasis_duration)
         assert dur == "5h 0m"
 
 

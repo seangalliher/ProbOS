@@ -41,6 +41,7 @@ class EventLog:
     async def start(self) -> None:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.db_path)
+        await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
         logger.info("EventLog opened: %s", self.db_path)
@@ -124,3 +125,56 @@ class EventLog:
         async with self._db.execute(sql, params) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else 0
+
+    async def count_all(self) -> int:
+        """Total event count."""
+        return await self.count()
+
+    async def prune(self, retention_days: int = 7, max_rows: int = 100_000) -> int:
+        """Delete events older than retention_days and enforce max_rows cap.
+
+        Returns number of rows deleted.
+        """
+        if not self._db:
+            return 0
+
+        deleted = 0
+
+        # Age-based pruning
+        if retention_days > 0:
+            from datetime import timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+            cursor = await self._db.execute(
+                "DELETE FROM events WHERE timestamp < ?", (cutoff,)
+            )
+            deleted += cursor.rowcount
+
+        # Row-count cap
+        if max_rows > 0:
+            cursor = await self._db.execute("SELECT COUNT(*) FROM events")
+            row = await cursor.fetchone()
+            total = row[0] if row else 0
+            if total > max_rows:
+                excess = total - max_rows
+                cursor = await self._db.execute(
+                    "DELETE FROM events WHERE id IN "
+                    "(SELECT id FROM events ORDER BY id ASC LIMIT ?)",
+                    (excess,)
+                )
+                deleted += cursor.rowcount
+
+        if deleted > 0:
+            await self._db.commit()
+            logger.info("EventLog pruned: %d events removed", deleted)
+
+        return deleted
+
+    async def wipe(self) -> None:
+        """Delete all events. Used by probos reset."""
+        if not self._db:
+            return
+        try:
+            await self._db.execute("DELETE FROM events")
+            await self._db.commit()
+        except Exception:
+            logger.debug("EventLog wipe failed", exc_info=True)
