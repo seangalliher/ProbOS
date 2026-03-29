@@ -1235,22 +1235,23 @@ class ProbOSRuntime:
                 self._knowledge_store = None
 
         # AD-502: Detect lifecycle state — stasis vs reset vs first boot
-        if self._knowledge_store:
-            try:
-                session_path = Path(self._knowledge_store._data_dir) / "session_last.json"
-                if session_path.exists():
-                    previous_session = json.loads(session_path.read_text())
-                    stasis_duration = time.time() - previous_session["shutdown_time_utc"]
-                    self._lifecycle_state = "stasis_recovery"
-                    self._stasis_duration = stasis_duration
-                    self._previous_session = previous_session
-                    logger.info("AD-502: Stasis recovery detected — stasis duration: %s", _format_duration(stasis_duration))
-                elif (self._data_dir / "trust.db").exists():
-                    # Data dir has state but no session record — ungraceful restart
-                    self._lifecycle_state = "restart"
-                    logger.info("AD-502: Restart detected (no session record) — treating as restart, not first boot")
-            except Exception:
-                pass  # first boot or corrupted record
+        # BF-065: Use self._data_dir directly (not knowledge_store) so detection
+        # works even if knowledge store is disabled or fails to initialize.
+        try:
+            session_path = self._data_dir / "session_last.json"
+            if session_path.exists():
+                previous_session = json.loads(session_path.read_text())
+                stasis_duration = time.time() - previous_session["shutdown_time_utc"]
+                self._lifecycle_state = "stasis_recovery"
+                self._stasis_duration = stasis_duration
+                self._previous_session = previous_session
+                logger.info("AD-502: Stasis recovery detected — stasis duration: %s", _format_duration(stasis_duration))
+            elif (self._data_dir / "trust.db").exists():
+                # Data dir has state but no session record — ungraceful restart
+                self._lifecycle_state = "restart"
+                logger.info("AD-502: Restart detected (no session record) — treating as restart, not first boot")
+        except Exception:
+            pass  # first boot or corrupted record
 
         # Initialize Ship's Records (AD-434)
         if self.config.records.enabled:
@@ -1808,21 +1809,21 @@ class ProbOSRuntime:
                 pass  # best-effort, don't block shutdown
 
         # AD-502: Persist session record immediately after stasis announcement
-        # (before service teardown, which may exceed the shutdown timeout)
-        if self._knowledge_store:
-            try:
-                session_record = {
-                    "session_id": self._session_id,
-                    "start_time_utc": self._start_time_wall,
-                    "shutdown_time_utc": time.time(),
-                    "uptime_seconds": time.monotonic() - self._start_time,
-                    "agent_count": len([a for a in self.registry.all() if self._is_crew_agent(a)]),
-                    "reason": reason,
-                }
-                session_path = Path(self._knowledge_store._data_dir) / "session_last.json"
-                session_path.write_text(json.dumps(session_record, indent=2))
-            except Exception as e:
-                logger.debug("AD-502: Session record persistence failed: %s", e)
+        # BF-065: Write to self._data_dir directly (not knowledge_store) so it
+        # persists even if knowledge store is torn down or never initialized.
+        try:
+            session_record = {
+                "session_id": self._session_id,
+                "start_time_utc": self._start_time_wall,
+                "shutdown_time_utc": time.time(),
+                "uptime_seconds": time.monotonic() - self._start_time,
+                "agent_count": len([a for a in self.registry.all() if self._is_crew_agent(a)]),
+                "reason": reason,
+            }
+            session_path = self._data_dir / "session_last.json"
+            session_path.write_text(json.dumps(session_record, indent=2))
+        except Exception as e:
+            logger.debug("AD-502: Session record persistence failed: %s", e)
 
         # AD-435: Grace period for in-flight DB writes to complete
         logger.info("Shutdown grace period (1s)...")
