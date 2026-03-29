@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -411,6 +412,7 @@ def create_app(runtime: Any) -> FastAPI:
         async def _do_shutdown():
             await asyncio.sleep(1)  # Let response return first
             await runtime.stop(reason=req.reason)
+            os._exit(0)  # BF-068: Force process exit after runtime stops
         _track_task(_do_shutdown(), name="system-shutdown")
         return {"status": "shutting_down", "reason": req.reason}
 
