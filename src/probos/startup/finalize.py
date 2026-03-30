@@ -1,0 +1,234 @@
+"""Phase 8: Finalization — proactive loop, service wiring, startup event (AD-517).
+
+Creates the proactive cognitive loop, WardRoomRouter, SelfModManager,
+DreamAdapter, re-wires dream callbacks, patches late-init onboarding
+dependencies, and announces startup to the Ward Room.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
+
+from probos.startup.results import FinalizationResult
+from probos.utils import format_duration
+
+if TYPE_CHECKING:
+    from probos.config import SystemConfig
+
+logger = logging.getLogger(__name__)
+
+
+async def finalize_startup(
+    *,
+    runtime: Any,  # ProbOSRuntime — passed as Any to avoid circular import
+    config: "SystemConfig",
+) -> FinalizationResult:
+    """Wire late-init services, start proactive loop, announce startup.
+
+    This phase has direct access to the runtime object because it must
+    wire cross-cutting services that reference many runtime attributes.
+    """
+    logger.info("Startup [finalize]: starting")
+
+    conn_manager = None
+    night_orders_mgr = None
+    watch_manager = None
+    proactive_loop = None
+    ward_room_router = None
+    self_mod_manager = None
+
+    # --- Proactive Cognitive Loop (Phase 28b) ---
+    if config.proactive_cognitive.enabled and runtime.ward_room:
+        from probos.conn import ConnManager
+        from probos.watch_rotation import WatchManager, NightOrdersManager
+
+        conn_manager = ConnManager()
+        night_orders_mgr = NightOrdersManager()
+        watch_manager = WatchManager(
+            dispatch_fn=runtime._dispatch_watch_intent,
+            check_interval=30.0,
+        )
+        # Populate roster from ontology
+        if runtime.ontology:
+            runtime._populate_watch_roster()
+        await watch_manager.start()
+
+        from probos.proactive import ProactiveCognitiveLoop
+
+        proactive_loop = ProactiveCognitiveLoop(
+            interval=config.proactive_cognitive.interval_seconds,
+            cooldown=config.proactive_cognitive.cooldown_seconds,
+            on_event=lambda evt: runtime._emit_event(evt.get("type", ""), evt.get("data", {})),
+        )
+        proactive_loop.set_runtime(runtime)
+        proactive_loop.set_config(config.proactive_cognitive)
+        if config.proactive_cognitive.duty_schedule.enabled:
+            proactive_loop.set_duty_schedule(config.proactive_cognitive.duty_schedule)
+        # PATCH(AD-517): Wire knowledge store for cooldown persistence
+        if runtime._knowledge_store:
+            proactive_loop._knowledge_store = runtime._knowledge_store
+            await proactive_loop.restore_cooldowns()
+        await proactive_loop.start()
+        logger.info("proactive-cognitive-loop started (interval=%ss)", config.proactive_cognitive.interval_seconds)
+
+    # --- AD-515: Create extracted service instances ---
+    from probos.ward_room_router import WardRoomRouter
+    from probos.self_mod_manager import SelfModManager
+    from probos.dream_adapter import DreamAdapter
+
+    # Ward Room Router
+    if runtime.ward_room:
+        ward_room_router = WardRoomRouter(
+            ward_room=runtime.ward_room,
+            registry=runtime.registry,
+            intent_bus=runtime.intent_bus,
+            trust_network=runtime.trust_network,
+            ontology=runtime.ontology,
+            callsign_registry=runtime.callsign_registry,
+            episodic_memory=runtime.episodic_memory,
+            event_emitter=runtime._emit_event,
+            event_log=runtime.event_log,
+            config=config,
+            notify_fn=runtime.notify,
+            proactive_loop=proactive_loop,
+        )
+        # Wire the router ref so Ward Room emit callback can route events
+        if hasattr(runtime.ward_room, '_ward_room_router_ref'):
+            runtime.ward_room._ward_room_router_ref[0] = ward_room_router
+
+    # Agent Onboarding Service — patch in late-init dependencies
+    # PATCH(AD-517): These are set via private attrs because onboarding
+    # is created before these services exist.
+    runtime._onboarding._ontology = runtime.ontology
+    runtime._onboarding._ward_room = runtime.ward_room
+    runtime._onboarding._acm = runtime.acm
+    runtime._onboarding._start_time_wall = runtime._start_time_wall
+
+    # Self-Modification Manager
+    if runtime.self_mod_pipeline:
+        self_mod_manager = SelfModManager(
+            self_mod_pipeline=runtime.self_mod_pipeline,
+            knowledge_store=runtime._knowledge_store,
+            trust_network=runtime.trust_network,
+            intent_bus=runtime.intent_bus,
+            capability_registry=runtime.capability_registry,
+            registry=runtime.registry,
+            pools=runtime.pools,
+            spawner=runtime.spawner,
+            decomposer=runtime.decomposer,
+            feedback_engine=runtime.feedback_engine,
+            llm_client=runtime.llm_client,
+            event_emitter=runtime._emit_event,
+            config=config,
+            semantic_layer=runtime._semantic_layer,
+            collect_intent_descriptors_fn=runtime._collect_intent_descriptors,
+            process_natural_language_fn=runtime.process_natural_language,
+            add_skill_to_agents_fn=runtime._add_skill_to_agents,
+            register_agent_type_fn=runtime.register_agent_type,
+            unregister_agent_type_fn=runtime.unregister_agent_type,
+            create_pool_fn=runtime.create_pool,
+            runtime=runtime,
+        )
+
+    # Dream Adapter
+    dream_adapter = DreamAdapter(
+        dream_scheduler=runtime.dream_scheduler,
+        emergent_detector=runtime._emergent_detector,
+        episodic_memory=runtime.episodic_memory,
+        knowledge_store=runtime._knowledge_store,
+        hebbian_router=runtime.hebbian_router,
+        trust_network=runtime.trust_network,
+        event_emitter=runtime._emit_event,
+        self_mod_pipeline=runtime.self_mod_pipeline,
+        bridge_alerts=runtime.bridge_alerts,
+        ward_room=runtime.ward_room,
+        registry=runtime.registry,
+        event_log=runtime.event_log,
+        config=config,
+        pools=runtime.pools,
+        behavioral_monitor=runtime.behavioral_monitor,
+        deliver_bridge_alert_fn=(
+            ward_room_router.deliver_bridge_alert
+            if ward_room_router else None
+        ),
+    )
+    dream_adapter._cold_start = runtime._cold_start
+
+    # Re-wire dream scheduler callbacks to use the adapter
+    if runtime.dream_scheduler:
+        # PATCH(AD-517): Dream scheduler callback re-wiring
+        runtime.dream_scheduler._post_dream_fn = dream_adapter.on_post_dream
+        runtime.dream_scheduler._pre_dream_fn = dream_adapter.on_pre_dream
+        runtime.dream_scheduler._post_micro_dream_fn = dream_adapter.on_post_micro_dream
+
+    # Re-wire periodic flush to use the adapter
+    if hasattr(runtime, '_flush_task'):
+        runtime._flush_task.cancel()
+    runtime._flush_task = asyncio.create_task(dream_adapter.periodic_flush_loop())
+
+    runtime._started = True
+
+    await runtime.event_log.log(category="system", event="started")
+    logger.info(
+        "ProbOS started: %d agents across %d pools + %d red team",
+        runtime.registry.count,
+        len(runtime.pools),
+        len(runtime._red_team_agents),
+    )
+
+    # AD-435 + AD-502: Announce startup to Ward Room (lifecycle-aware)
+    if runtime.ward_room:
+        try:
+            async with runtime.ward_room._db.execute(
+                "SELECT id FROM channels WHERE name = 'All Hands' LIMIT 1"
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    if runtime._lifecycle_state == "stasis_recovery":
+                        dur = format_duration(runtime._stasis_duration)
+                        prev = runtime._previous_session
+                        shutdown_str = datetime.fromtimestamp(
+                            prev["shutdown_time_utc"], tz=timezone.utc
+                        ).strftime("%Y-%m-%d %H:%M:%S UTC") if prev else "unknown"
+                        title = "Stasis Recovery — All Hands"
+                        body = (
+                            f"All hands: The ship has returned from stasis. "
+                            f"Stasis duration: {dur}. "
+                            f"Previous session ended: {shutdown_str}. "
+                            f"All crew identities and memories are intact. "
+                            f"Resume normal operations."
+                        )
+                    elif runtime._lifecycle_state == "first_boot":
+                        title = "System Online — First Activation"
+                        body = "This is the maiden voyage. All systems operational."
+                    elif runtime._lifecycle_state == "restart":
+                        title = "System Restart — All Stations Resume"
+                        body = "System restart complete. All stations resume normal operations."
+                    else:
+                        title = "System Online"
+                        body = "ProbOS startup complete. All systems operational."
+                    await runtime.ward_room.create_thread(
+                        channel_id=row[0],
+                        author_id="system",
+                        title=title,
+                        body=body,
+                        author_callsign="Ship's Computer",
+                        thread_mode="announce",
+                        max_responders=0,
+                    )
+        except Exception:
+            logger.debug("Startup announcement failed", exc_info=True)
+
+    logger.info("Startup [finalize]: complete")
+    return FinalizationResult(
+        conn_manager=conn_manager,
+        night_orders_mgr=night_orders_mgr,
+        watch_manager=watch_manager,
+        proactive_loop=proactive_loop,
+        ward_room_router=ward_room_router,
+        self_mod_manager=self_mod_manager,
+        dream_adapter=dream_adapter,
+    )

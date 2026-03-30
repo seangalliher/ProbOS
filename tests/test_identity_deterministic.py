@@ -51,9 +51,9 @@ class TestDeterministicCrewIds:
     def test_crew_pools_pass_agent_ids(self):
         """All 7 crew pool create_pool calls include agent_ids= in source."""
         import inspect
-        from probos.runtime import ProbOSRuntime
+        from probos.startup.agent_fleet import create_agent_fleet
 
-        source = inspect.getsource(ProbOSRuntime.start)
+        source = inspect.getsource(create_agent_fleet)
 
         for agent_type, pool_name in _CREW_POOLS:
             # Find the create_pool block for this agent type

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-515 COMPLETE. Extracted 5 modules from runtime.py (5,321 → 4,102 lines, −23%): ward_room_router.py (567), agent_onboarding.py (365), self_mod_manager.py (331), dream_adapter.py (297), warm_boot.py (279), crew_utils.py (26). Pure structural refactor, zero regressions. AD-521 DECIDED (SWE/Build Pipeline Separation, Model A). AD-514 + BF-071–076 CLOSED. Engineering Principles Stack codified. 4039 tests passing.
+## Current Status: AD-517 COMPLETE. Extracted runtime.py start() (1,104 lines) into 8 startup phase modules in src/probos/startup/ — start() reduced to 217 lines (−80%), runtime.py 4,102 → 3,216 lines (−21.6%). Wave 3 totals: runtime.py 5,321 → 3,216 (−39.6%), api.py 3,109 → 295 (−90.5%). AD-515/516/517 all COMPLETE. AD-521 DECIDED. 3935 tests passing.
 
 ---
 

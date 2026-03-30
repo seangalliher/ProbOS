@@ -1060,9 +1060,9 @@ class TestSelfModDurability:
     def test_self_mod_success_event_includes_agent_id(self):
         """self_mod_success event should include agent_id field."""
         import inspect
-        from probos import api as api_module
+        from probos.routers import chat as chat_router_module
 
-        source = inspect.getsource(api_module)
+        source = inspect.getsource(chat_router_module)
         # Check that self_mod_success event includes agent_id
         assert 'agent_id' in source[source.index('self_mod_success'):][:500], (
             "self_mod_success event should include agent_id field"

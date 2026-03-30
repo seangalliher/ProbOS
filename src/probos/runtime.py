@@ -799,24 +799,27 @@ class ProbOSRuntime:
         logger.info("ProbOS %s starting...", self.config.system.version)
         logger.info("=" * 60)
 
-        # Start infrastructure
-        self._data_dir.mkdir(parents=True, exist_ok=True)
-        await self.event_log.start()
-        asyncio.create_task(self._event_log_prune_loop())
-        await self.hebbian_router.start()
-        await self.signal_manager.start()
-        await self.gossip.start()
-        await self.trust_network.start()
+        # Phase 1: Infrastructure (AD-517)
+        from probos.startup.infrastructure import boot_infrastructure
 
-        # --- Sovereign Agent Identity (AD-441) ---
-        from probos.identity import AgentIdentityRegistry
-        self.identity_registry = AgentIdentityRegistry(data_dir=self._data_dir)
-        await self.identity_registry.start()
-        logger.info("identity registry started")
+        infra = await boot_infrastructure(
+            event_log=self.event_log,
+            hebbian_router=self.hebbian_router,
+            signal_manager=self.signal_manager,
+            gossip=self.gossip,
+            trust_network=self.trust_network,
+            data_dir=self._data_dir,
+            config=self.config,
+            event_log_prune_loop_fn=self._event_log_prune_loop,
+        )
+        self.identity_registry = infra.identity_registry
 
-        # AD-515: Create onboarding service early so _wire_agent works during pool creation.
-        # ontology/ward_room/acm aren't ready yet — patched in after they're created.
-        self._onboarding = AgentOnboardingService(
+        # Phase 2: Agent Fleet (AD-517)
+        from probos.startup.agent_fleet import create_agent_fleet
+
+        # Create onboarding service first — needed by _wire_agent during pool creation
+        from probos.agent_onboarding import AgentOnboardingService as _AOS
+        self._onboarding = _AOS(
             callsign_registry=self.callsign_registry,
             capability_registry=self.capability_registry,
             gossip=self.gossip,
@@ -833,1066 +836,177 @@ class ProbOSRuntime:
             acm=None,
         )
 
-        # Start default pools (Phase 14c: deterministic agent IDs)
-        _builtin_pools = [
-            ("system", "system_heartbeat", 2),
-            ("filesystem", "file_reader", 3),
-            ("filesystem_writers", "file_writer", 3),
-            ("directory", "directory_list", 3),
-            ("search", "file_search", 3),
-            ("shell", "shell_command", 3),
-            ("http", "http_fetch", 3),
-        ]
-        for pool_name, agent_type, size in _builtin_pools:
-            ids = generate_pool_ids(agent_type, pool_name, size)
-            await self.create_pool(pool_name, agent_type, target_size=size, agent_ids=ids)
+        fleet = await create_agent_fleet(
+            config=self.config,
+            pools=self.pools,
+            llm_client=self.llm_client,
+            decomposer=self.decomposer,
+            strategy_advisor=self._strategy_advisor,
+            runtime=self,
+            create_pool_fn=self.create_pool,
+            spawn_red_team_fn=self._spawn_red_team,
+            collect_intent_descriptors_fn=self._collect_intent_descriptors,
+        )
+        self.codebase_index = fleet.codebase_index
 
-        # Introspect pool (needs runtime kwarg)
-        ids = generate_pool_ids("introspect", "introspect", 2)
-        await self.create_pool("introspect", "introspect", target_size=2, agent_ids=ids, runtime=self)
+        # Phase 3: Fleet Organization (AD-517)
+        from probos.startup.fleet_organization import organize_fleet
 
-        # Bundled CognitiveAgent pools (Phase 22, AD-252)
-        if self.config.utility_agents.enabled:
-            _utility_pools = [
-                ("web_search", "web_search", 2),
-                ("page_reader", "page_reader", 2),
-                ("weather", "weather", 2),
-                ("news", "news", 2),
-                ("translator", "translator", 2),
-                ("summarizer", "summarizer", 2),
-                ("calculator", "calculator", 2),
-                ("todo_manager", "todo_manager", 2),
-                ("note_taker", "note_taker", 2),
-                ("scheduler", "scheduler", 2),
-            ]
-            for pool_name, agent_type, size in _utility_pools:
-                ids = generate_pool_ids(agent_type, pool_name, size)
-                await self.create_pool(
-                    pool_name, agent_type, target_size=size,
-                    agent_ids=ids, llm_client=self.llm_client, runtime=self,
-                )
+        org = await organize_fleet(
+            config=self.config,
+            pools=self.pools,
+            pool_groups=self.pool_groups,
+            escalation_manager=self.escalation_manager,
+            intent_bus=self.intent_bus,
+            trust_network=self.trust_network,
+            llm_client=self.llm_client,
+            build_pool_intent_map_fn=self._build_pool_intent_map,
+            find_consensus_pools_fn=self._find_consensus_pools,
+            build_self_model_fn=self._build_self_model,
+            validate_remote_result_fn=self._validate_remote_result,
+        )
+        self.pool_scaler = org.pool_scaler
+        self.federation_bridge = org.federation_bridge
+        self._federation_transport = org.federation_transport
 
-        # Engineering team — Builder Agent (AD-302)
-        if self.config.utility_agents.enabled:
-            ids = generate_pool_ids("builder", "builder", 1)
-            await self.create_pool(
-                "builder", "builder", target_size=1,
-                agent_ids=ids, llm_client=self.llm_client, runtime=self,
-            )
+        # Phase 4: Cognitive Services (AD-517)
+        from probos.startup.cognitive_services import init_cognitive_services
 
-        # Science team — Architect Agent (AD-307)
-        if self.config.utility_agents.enabled:
-            ids = generate_pool_ids("architect", "architect", 1)
-            await self.create_pool(
-                "architect", "architect", target_size=1,
-                agent_ids=ids, llm_client=self.llm_client, runtime=self,
-            )
-
-        # Science team — Scout Agent (AD-394)
-        if self.config.utility_agents.enabled:
-            ids = generate_pool_ids("scout", "scout", 1)
-            await self.create_pool(
-                "scout", "scout", target_size=1,
-                agent_ids=ids, llm_client=self.llm_client, runtime=self,
-            )
-
-        # Bridge crew — Counselor (AD-398)
-        if self.config.utility_agents.enabled:
-            ids = generate_pool_ids("counselor", "counselor", 1)
-            await self.create_pool(
-                "counselor", "counselor", target_size=1,
-                agent_ids=ids, llm_client=self.llm_client, runtime=self,
-            )
-
-        # Security team — Security Officer (AD-398)
-        if self.config.utility_agents.enabled:
-            ids = generate_pool_ids("security_officer", "security_officer", 1)
-            await self.create_pool(
-                "security_officer", "security_officer", target_size=1,
-                agent_ids=ids, llm_client=self.llm_client, runtime=self,
-            )
-
-        # Operations team — Operations Officer (AD-398)
-        if self.config.utility_agents.enabled:
-            ids = generate_pool_ids("operations_officer", "operations_officer", 1)
-            await self.create_pool(
-                "operations_officer", "operations_officer", target_size=1,
-                agent_ids=ids, llm_client=self.llm_client, runtime=self,
-            )
-
-        # Engineering team — Engineering Officer (AD-398)
-        if self.config.utility_agents.enabled:
-            ids = generate_pool_ids("engineering_officer", "engineering_officer", 1)
-            await self.create_pool(
-                "engineering_officer", "engineering_officer", target_size=1,
-                agent_ids=ids, llm_client=self.llm_client, runtime=self,
-            )
-
-        # Build CodebaseIndex — ship's library, available to all agents (AD-297)
-        from probos.cognitive.codebase_index import CodebaseIndex
-        self.codebase_index = CodebaseIndex(source_root=Path(__file__).resolve().parent)
-        self.codebase_index.build()
-
-        # Medical team pool (AD-290)
-        if self.config.medical.enabled:
-            med_cfg = self.config.medical
-
-            # Create vitals monitor pool entry (HeartbeatAgent — no LLM)
-            ids = generate_pool_ids("vitals_monitor", "medical_vitals", 1)
-            await self.create_pool(
-                "medical_vitals", "vitals_monitor", target_size=1,
-                agent_ids=ids, runtime=self,
-                window_size=med_cfg.vitals_window_size,
-                pool_health_min=med_cfg.pool_health_min,
-                trust_floor=med_cfg.trust_floor,
-                health_floor=med_cfg.health_floor,
-                max_trust_outliers=med_cfg.max_trust_outliers,
-            )
-
-            # CognitiveAgent medical agents — all share "medical" pool
-            _medical_cognitive = [
-                ("diagnostician", "diagnostician"),
-                ("surgeon", "surgeon"),
-                ("pharmacist", "pharmacist"),
-                ("pathologist", "pathologist"),
-            ]
-            for agent_type_name, pool_suffix in _medical_cognitive:
-                ids = generate_pool_ids(agent_type_name, f"medical_{pool_suffix}", 1)
-                await self.create_pool(
-                    f"medical_{pool_suffix}", agent_type_name, target_size=1,
-                    agent_ids=ids, llm_client=self.llm_client, runtime=self,
-                )
-
-            # Register codebase_knowledge skill on CognitiveAgent medical agents
-            from probos.cognitive.codebase_skill import create_codebase_skill
-            codebase_skill = create_codebase_skill(self.codebase_index)
-            for pool_name in ["medical_pathologist"]:
-                pool = self.pools.get(pool_name)
-                if pool:
-                    for agent in pool.healthy_agents:
-                        if hasattr(agent, "add_skill"):
-                            agent.add_skill(codebase_skill)
-
-        # Attach codebase_knowledge skill to architect pool (AD-307)
-        if self.config.utility_agents.enabled:
-            from probos.cognitive.codebase_skill import create_codebase_skill as _create_cb_skill
-            _cb_skill = _create_cb_skill(self.codebase_index)
-            pool = self.pools.get("architect")
-            if pool:
-                for agent in pool.healthy_agents:
-                    if hasattr(agent, "add_skill"):
-                        agent.add_skill(_cb_skill)
-
-        # Refresh decomposer with intent descriptors from all registered templates
-        self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
-
-        # Wire StrategyAdvisor on all CognitiveAgent instances (AD-384)
-        if self._strategy_advisor:
-            from probos.cognitive.cognitive_agent import CognitiveAgent as _CA
-
-            for pool in self.pools.values():
-                for agent in pool.healthy_agents:
-                    if isinstance(agent, _CA) and hasattr(agent, "set_strategy_advisor"):
-                        agent.set_strategy_advisor(self._strategy_advisor)
-
-        # Spawn red team agents
-        await self._spawn_red_team(self.config.consensus.red_team_pool_size)
-
-        # Register pool groups (crew teams) — AD-291
-        self.pool_groups.register(PoolGroup(
-            name="core",
-            display_name="Core Systems",
-            pool_names={"system", "filesystem", "filesystem_writers", "directory", "search", "shell", "http", "introspect", "medical_vitals", "red_team", "system_qa"},
-            exclude_from_scaler=True,
-        ))
-
-        if self.config.utility_agents.enabled:
-            self.pool_groups.register(PoolGroup(
-                name="utility",
-                display_name="Utility Agents",
-                pool_names={"web_search", "page_reader", "weather", "news", "translator", "summarizer", "calculator", "todo_manager", "note_taker", "scheduler"},
-            ))
-
-        if self.config.medical.enabled:
-            self.pool_groups.register(PoolGroup(
-                name="medical",
-                display_name="Medical",
-                pool_names={"medical_diagnostician", "medical_surgeon", "medical_pharmacist", "medical_pathologist"},
-                exclude_from_scaler=True,
-            ))
-
-        if self.config.self_mod.enabled:
-            sm_pools = {"skills"}
-            self.pool_groups.register(PoolGroup(
-                name="self_mod",
-                display_name="Self-Modification",
-                pool_names=sm_pools,
-                exclude_from_scaler=True,
-            ))
-
-        # Security pool group (AD-398: cognitive security officer)
-        self.pool_groups.register(PoolGroup(
-            name="security",
-            display_name="Security",
-            pool_names={"security_officer"},
-            exclude_from_scaler=True,
-        ))
-
-        # Engineering pool group (AD-302, AD-398: add engineering_officer)
-        self.pool_groups.register(PoolGroup(
-            name="engineering",
-            display_name="Engineering",
-            pool_names={"builder", "engineering_officer"},
-            exclude_from_scaler=True,
-        ))
-
-        # Science pool group (AD-307)
-        self.pool_groups.register(PoolGroup(
-            name="science",
-            display_name="Science",
-            pool_names={"architect", "scout"},
-            exclude_from_scaler=True,
-        ))
-
-        # Operations pool group (AD-398)
-        self.pool_groups.register(PoolGroup(
-            name="operations",
-            display_name="Operations",
-            pool_names={"operations_officer"},
-            exclude_from_scaler=True,
-        ))
-
-        # Bridge pool group (BF-015: Counselor was ungrouped)
-        self.pool_groups.register(PoolGroup(
-            name="bridge",
-            display_name="Bridge",
-            pool_names={"counselor"},
-            exclude_from_scaler=True,
-        ))
-
-        # Start pool scaler if scaling is enabled
-        if self.config.scaling.enabled:
-            pool_intent_map = self._build_pool_intent_map()
-            consensus_pools = self._find_consensus_pools()
-            self.pool_scaler = PoolScaler(
-                pools=self.pools,
-                intent_bus=self.intent_bus,
-                pool_config=self.config.pools,
-                scaling_config=self.config.scaling,
-                pool_intent_map=pool_intent_map,
-                excluded_pools=self.pool_groups.excluded_pools(),
-                trust_network=self.trust_network,
-                consensus_pools=consensus_pools,
-                consensus_min_agents=self.config.consensus.min_votes,
-            )
-            await self.pool_scaler.start()
-
-            # Wire surge function into escalation manager
-            self.escalation_manager._surge_fn = self.pool_scaler.request_surge
-
-        # Start federation if enabled
-        if self.config.federation.enabled:
-            from probos.federation import FederationRouter, FederationBridge
-            from probos.federation.mock_transport import MockFederationTransport, MockTransportBus
-
-            # Use real transport if pyzmq available, else skip
-            transport = None
-            try:
-                from probos.federation.transport import FederationTransport
-                transport = FederationTransport(
-                    node_id=self.config.federation.node_id,
-                    bind_address=self.config.federation.bind_address,
-                    peers=self.config.federation.peers,
-                )
-                await transport.start()
-            except ImportError:
-                logger.warning("pyzmq not available; federation transport disabled")
-            except Exception as e:
-                logger.warning("Federation transport failed to start: %s", e)
-
-            if transport is not None:
-                router = FederationRouter()
-                validate_fn = (
-                    self._validate_remote_result
-                    if self.config.federation.validate_remote_results
-                    else None
-                )
-                bridge = FederationBridge(
-                    node_id=self.config.federation.node_id,
-                    transport=transport,
-                    router=router,
-                    intent_bus=self.intent_bus,
-                    config=self.config.federation,
-                    self_model_fn=self._build_self_model,
-                    validate_fn=validate_fn,
-                )
-                await bridge.start()
-                self.intent_bus._federation_fn = bridge.forward_intent
-                self.federation_bridge = bridge
-                self._federation_transport = transport
-                logger.info("Federation started: node=%s", self.config.federation.node_id)
-
-        # Start self-modification pipeline if enabled
-        if self.config.self_mod.enabled:
-            from probos.cognitive.agent_designer import AgentDesigner
-            from probos.cognitive.code_validator import CodeValidator
-            from probos.cognitive.dependency_resolver import DependencyResolver
-            from probos.cognitive.sandbox import SandboxRunner
-            from probos.cognitive.behavioral_monitor import BehavioralMonitor
-            from probos.cognitive.self_mod import SelfModificationPipeline
-            from probos.cognitive.skill_designer import SkillDesigner
-            from probos.cognitive.skill_validator import SkillValidator
-
-            designer = AgentDesigner(self.llm_client, self.config.self_mod)
-            validator = CodeValidator(self.config.self_mod)
-            sandbox = SandboxRunner(self.config.self_mod, llm_client=self.llm_client)
-            self.behavioral_monitor = BehavioralMonitor()
-            skill_designer = SkillDesigner(self.llm_client, self.config.self_mod)
-            skill_validator = SkillValidator(self.config.self_mod)
-            dependency_resolver = DependencyResolver(
-                allowed_imports=self.config.self_mod.allowed_imports,
-            )
-
-            # Optional research phase
-            research = None
-            if self.config.self_mod.research_enabled:
-                from probos.cognitive.research import ResearchPhase
-                research = ResearchPhase(
-                    llm_client=self.llm_client,
-                    submit_intent_fn=self.submit_intent_with_consensus,
-                    config=self.config.self_mod,
-                )
-
-            self.self_mod_pipeline = SelfModificationPipeline(
-                designer=designer,
-                validator=validator,
-                sandbox=sandbox,
-                monitor=self.behavioral_monitor,
-                config=self.config.self_mod,
-                register_fn=self._register_designed_agent,
-                unregister_fn=self._unregister_designed_agent,
-                create_pool_fn=self._create_designed_pool,
-                set_trust_fn=self._set_probationary_trust,
-                user_approval_fn=None,  # Shell sets this after creation
-                skill_designer=skill_designer,
-                skill_validator=skill_validator,
-                add_skill_fn=self._add_skill_to_agents,
-                research=research,
-                dependency_resolver=dependency_resolver,
-                event_log=self.event_log,
-            )
-            logger.info("Self-modification pipeline enabled")
-
-            # Spawn skills pool for SkillBasedAgent
-            ids = generate_pool_ids("skill_agent", "skills", 2)
-            await self.create_pool(
-                "skills", "skill_agent", target_size=2,
-                agent_ids=ids,
-                llm_client=self.llm_client,
-            )
-
-            # Spawn SystemQA pool if QA enabled (AD-153: single agent)
-            if self.config.qa.enabled:
-                ids = generate_pool_ids("system_qa", "system_qa", 1)
-                await self.create_pool("system_qa", "system_qa", target_size=1, agent_ids=ids)
-                qa_pool = self.pools.get("system_qa")
-                if qa_pool and qa_pool.healthy_agents:
-                    agents = list(qa_pool.healthy_agents)
-                    if isinstance(agents[0], str):
-                        self._system_qa = self.registry.get(agents[0])
-                    else:
-                        self._system_qa = agents[0]
-
-        # Start episodic memory if provided
-        if self.episodic_memory:
-            await self.episodic_memory.start()
-
-        # Create FeedbackEngine (AD-219)
-        from probos.cognitive.feedback import FeedbackEngine
-        self.feedback_engine = FeedbackEngine(
+        cog = await init_cognitive_services(
+            config=self.config,
+            data_dir=self._data_dir,
+            registry=self.registry,
+            pools=self.pools,
+            llm_client=self.llm_client,
             trust_network=self.trust_network,
             hebbian_router=self.hebbian_router,
             episodic_memory=self.episodic_memory,
+            intent_bus=self.intent_bus,
+            working_memory=self.working_memory,
             event_log=self.event_log,
+            workflow_cache=self.workflow_cache,
+            qa_reports=self._qa_reports,
+            submit_intent_with_consensus_fn=self.submit_intent_with_consensus,
+            register_designed_agent_fn=self._register_designed_agent,
+            unregister_designed_agent_fn=self._unregister_designed_agent,
+            create_designed_pool_fn=self._create_designed_pool,
+            set_probationary_trust_fn=self._set_probationary_trust,
+            add_skill_to_agents_fn=self._add_skill_to_agents,
+            create_pool_fn=self.create_pool,
         )
+        self.self_mod_pipeline = cog.self_mod_pipeline
+        self.behavioral_monitor = cog.behavioral_monitor
+        self._system_qa = cog.system_qa
+        self.feedback_engine = cog.feedback_engine
+        self._correction_detector = cog.correction_detector
+        self._agent_patcher = cog.agent_patcher
+        self._knowledge_store = cog.knowledge_store
+        self._warm_boot = cog.warm_boot_service
+        self._records_store = cog.records_store
+        self._strategy_advisor = cog.strategy_advisor
+        self._lifecycle_state = cog.lifecycle_state
+        self._stasis_duration = cog.stasis_duration
+        self._previous_session = cog.previous_session
 
-        # Create CorrectionDetector + AgentPatcher (AD-229, AD-230)
-        from probos.cognitive.correction_detector import CorrectionDetector
-        from probos.cognitive.agent_patcher import AgentPatcher
-        self._correction_detector = CorrectionDetector(llm_client=self.llm_client)
-        if hasattr(self, "self_mod_pipeline") and self.self_mod_pipeline:
-            self._agent_patcher = AgentPatcher(
-                llm_client=self.llm_client,
-                code_validator=self.self_mod_pipeline._validator,
-                sandbox=self.self_mod_pipeline._sandbox,
-            )
+        # Phase 5: Dreaming & Detection (AD-517)
+        from probos.startup.dreaming import init_dreaming
 
-        # Initialize knowledge store (AD-159) and warm boot (AD-162)
-        if self.config.knowledge.enabled:
-            try:
-                from probos.knowledge.store import KnowledgeStore
-
-                # If no explicit repo_path, use data_dir/knowledge (AD-159)
-                kcfg = self.config.knowledge
-                if not kcfg.repo_path:
-                    kcfg = kcfg.model_copy(update={"repo_path": str(self._data_dir / "knowledge")})
-
-                self._knowledge_store = KnowledgeStore(kcfg)
-                await self._knowledge_store.initialize()
-
-                if self.config.knowledge.restore_on_boot:
-                    self._warm_boot = WarmBootService(
-                        knowledge_store=self._knowledge_store,
-                        trust_network=self.trust_network,
-                        hebbian_router=self.hebbian_router,
-                        episodic_memory=self.episodic_memory,
-                        workflow_cache=self.workflow_cache,
-                        config=self.config,
-                        register_designed_agent_fn=self._register_designed_agent,
-                        create_designed_pool_fn=self._create_designed_pool,
-                        add_skill_to_agents_fn=self._add_skill_to_agents,
-                        qa_reports=self._qa_reports,
-                        pools=self.pools,
-                        semantic_layer=self._semantic_layer,
-                    )
-                    await self._warm_boot.restore()
-
-                logger.info("Knowledge store initialized: %s", self._knowledge_store.repo_path)
-            except Exception as e:
-                logger.warning("Knowledge store initialization failed: %s — continuing without persistence", e)
-                self._knowledge_store = None
-
-        # AD-502: Detect lifecycle state — stasis vs first boot
-        # BF-065: Use self._data_dir directly (not knowledge_store) so detection
-        # works even if knowledge store is disabled or fails to initialize.
-        # BF-070: Removed trust.db heuristic — runtime creates trust.db during
-        # initialization (line ~814) before this check runs, so it was always
-        # true after a reset, misclassifying first_boot as "restart".
-        # Now: session_last.json present = stasis recovery, absent = first boot.
-        try:
-            session_path = self._data_dir / "session_last.json"
-            if session_path.exists():
-                previous_session = json.loads(session_path.read_text())
-                stasis_duration = time.time() - previous_session["shutdown_time_utc"]
-                self._lifecycle_state = "stasis_recovery"
-                self._stasis_duration = stasis_duration
-                self._previous_session = previous_session
-                logger.info("AD-502: Stasis recovery detected — stasis duration: %s", format_duration(stasis_duration))
-            else:
-                logger.info("AD-502: No session record — first boot (maiden voyage)")
-        except Exception:
-            logger.warning("Failed to load session record for lifecycle detection", exc_info=True)
-
-        # Initialize Ship's Records (AD-434)
-        if self.config.records.enabled:
-            try:
-                from probos.knowledge.records_store import RecordsStore
-                rcfg = self.config.records
-                if not rcfg.repo_path:
-                    rcfg = rcfg.model_copy(update={"repo_path": str(self._data_dir / "ship-records")})
-                self._records_store = RecordsStore(rcfg, ontology=getattr(self, 'ontology', None))
-                await self._records_store.initialize()
-                logger.info("ship-records started")
-            except Exception as e:
-                logger.warning("Ship's Records failed to start: %s — continuing without records", e)
-                self._records_store = None
-
-        # Wire StrategyAdvisor (AD-384) if knowledge store is available
-        if self._knowledge_store:
-            from probos.cognitive.strategy_advisor import StrategyAdvisor
-
-            strategies_dir = self._knowledge_store.repo_path / "strategies"
-            strategies_dir.mkdir(exist_ok=True)
-            self._strategy_advisor = StrategyAdvisor(
-                strategies_dir=strategies_dir,
-                hebbian_router=self.hebbian_router,
-            )
-
-        # Start dreaming scheduler if episodic memory is available
-        if self.episodic_memory:
-            dream_cfg = self.config.dreaming
-            engine = DreamingEngine(
-                router=self.hebbian_router,
-                trust_network=self.trust_network,
-                episodic_memory=self.episodic_memory,
-                config=dream_cfg,
-                idle_scale_down_fn=(
-                    self.pool_scaler.scale_down_idle
-                    if self.pool_scaler
-                    else None
-                ),
-                strategy_store_fn=(
-                    self._store_strategies if self._knowledge_store else None
-                ),
-                gap_prediction_fn=self._on_gap_predictions,
-                contradiction_resolve_fn=self._on_contradictions,
-            )
-            self.dream_scheduler = DreamScheduler(
-                engine=engine,
-                idle_threshold_seconds=dream_cfg.idle_threshold_seconds,
-                dream_interval_seconds=dream_cfg.dream_interval_seconds,
-                proactive_extends_idle=dream_cfg.proactive_extends_idle,
-            )
-            self.dream_scheduler.start()
-
-        # Create EmergentDetector (AD-237) — unconditional, pure observer
-        self._emergent_detector = EmergentDetector(
-            hebbian_router=self.hebbian_router,
+        dream_result, cold_start = await init_dreaming(
+            config=self.config,
             trust_network=self.trust_network,
+            hebbian_router=self.hebbian_router,
             episodic_memory=self.episodic_memory,
+            pool_scaler=self.pool_scaler,
+            knowledge_store=self._knowledge_store,
+            ward_room=self.ward_room,
+            registry=self.registry,
+            store_strategies_fn=self._store_strategies,
+            on_gap_predictions_fn=self._on_gap_predictions,
+            on_contradictions_fn=self._on_contradictions,
+            on_post_dream_fn=self._on_post_dream,
+            on_pre_dream_fn=self._on_pre_dream,
+            on_post_micro_dream_fn=self._on_post_micro_dream,
+            process_natural_language_fn=self.process_natural_language,
+            periodic_flush_loop_fn=self._periodic_flush_loop,
+            refresh_emergent_detector_roster_fn=self._refresh_emergent_detector_roster,
         )
-        # Provide live agent roster so detector filters out defunct agents
-        self._refresh_emergent_detector_roster()
-
-        # BF-034: Detect cold start (post-reset boot with empty state)
-        # BF-069: Don't gate on _knowledge_store — cold start detection must work
-        # even if knowledge store is disabled or fails to initialize.
-        if self._emergent_detector:
-            trust_records = self.trust_network.raw_scores()
-            all_at_prior = all(
-                abs(r["alpha"] - self.config.consensus.trust_prior_alpha) < 0.01
-                and abs(r["beta"] - self.config.consensus.trust_prior_beta) < 0.01
-                for r in trust_records.values()
-            ) if trust_records else True
-            episodes_empty = not self.episodic_memory
-            if all_at_prior and episodes_empty:
-                self._cold_start = True
-                self._emergent_detector.set_cold_start_suppression(300)  # 5 minutes
-                logger.info("BF-034: Cold start detected — suppressing trust anomalies for 5 minutes")
-
-        # AD-502: Cold start overrides stasis_recovery → this is actually a reset
+        self.dream_scheduler = dream_result.dream_scheduler
+        self._emergent_detector = dream_result.emergent_detector
+        self.task_scheduler = dream_result.task_scheduler
+        self._flush_task = dream_result.flush_task
+        self._cold_start = cold_start
         if self._cold_start:
             self._lifecycle_state = "reset"
 
-        # BF-034: Announce fresh start to crew
-        if self._cold_start and self.ward_room:
-            async def _announce_cold_start():
-                try:
-                    channels = await self.ward_room.list_channels()
-                    all_hands = next((c for c in channels if c.channel_type == "ship"), None)
-                    if all_hands:
-                        await self.ward_room.create_thread(
-                            channel_id=all_hands.id,
-                            author_id="system",
-                            title="Fresh Start — System Reset",
-                            body=(
-                                "This instance has been reset. All crew are being created fresh "
-                                "through the Construct. All trust scores are at baseline (0.5) — "
-                                "this is normal initialization, not a demotion. Trust will be rebuilt "
-                                "through demonstrated competence. Episodic memory has been cleared. "
-                                "Previous experiences are not available."
-                            ),
-                            author_callsign="Ship's Computer",
-                            thread_mode="announce",
-                            max_responders=0,
-                        )
-                except Exception:
-                    logger.debug("Cold-start announcement failed", exc_info=True)
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(_announce_cold_start())
-            except RuntimeError:
-                pass
+        # Phase 6: Structural Services (AD-517)
+        from probos.startup.structural_services import init_structural_services
 
-        # Wire post-dream analysis callback (AD-237)
-        # NOTE: These are re-wired to DreamAdapter below in the AD-515 service creation block.
-        if self.dream_scheduler:
-            self.dream_scheduler._post_dream_fn = self._on_post_dream
-            self.dream_scheduler._pre_dream_fn = self._on_pre_dream
-            self.dream_scheduler._post_micro_dream_fn = self._on_post_micro_dream
-
-        # Start task scheduler (AD-282)
-        self.task_scheduler = TaskScheduler(
-            process_fn=self.process_natural_language,
-        )
-        self.task_scheduler.start()
-
-        # Schedule daily scout scan (AD-394)
-        if self.config.channels.discord.scout_channel_id:
-            self.task_scheduler.schedule(
-                text="/scout",
-                delay_seconds=60,
-                interval_seconds=86400,
-                channel_id=str(self.config.channels.discord.scout_channel_id),
-            )
-
-        # Start periodic flush of trust + routing weights
-        self._flush_task = asyncio.create_task(self._periodic_flush_loop())
-
-        # Create SemanticKnowledgeLayer (AD-243) — only when episodic memory available
-        if self.episodic_memory:
-            try:
-                db_dir = Path(self.episodic_memory.db_path).parent
-                self._semantic_layer = SemanticKnowledgeLayer(
-                    db_path=db_dir / "semantic",
-                    episodic_memory=self.episodic_memory,
-                )
-                await self._semantic_layer.start()
-                logger.info("Semantic knowledge layer started")
-            except Exception as e:
-                logger.warning("Semantic knowledge layer initialization failed: %s — continuing without", e)
-                self._semantic_layer = None
-
-        # Persist agent manifest (Phase 14c)
-        await self._persist_manifest()
-
-        # Reconcile trust store — remove stale entries from previous sessions (AD-280)
-        active_ids = {a.id for a in self.registry.all()}
-        removed = self.trust_network.reconcile(active_ids)
-        if removed:
-            logger.info("trust-reconcile removed=%d stale entries", removed)
-
-        # Start Structural Integrity Field (AD-370)
-        self.sif = StructuralIntegrityField(
+        struct, semantic_layer = await init_structural_services(
+            config=self.config,
+            data_dir=self._data_dir,
+            registry=self.registry,
+            pools=self.pools,
+            spawner=self.spawner,
             trust_network=self.trust_network,
             intent_bus=self.intent_bus,
             hebbian_router=self.hebbian_router,
-            spawner=self.spawner,
-            pool_manager=self.pools,
+            episodic_memory=self.episodic_memory,
+            emergent_detector=self._emergent_detector,
+            emit_event_fn=self._emit_event,
+            persist_manifest_fn=self._persist_manifest,
+            on_build_complete_fn=self._on_build_complete,
         )
-        await self.sif.start()
+        self._semantic_layer = semantic_layer
+        self.sif = struct.sif
+        self.initiative = struct.initiative
+        self.build_queue = struct.build_queue
+        self.build_dispatcher = struct.build_dispatcher
+        self.task_tracker = struct.task_tracker
+        self.service_profiles = struct.service_profiles
+        self.directive_store = struct.directive_store
 
-        # Start InitiativeEngine (AD-381)
-        self.initiative = InitiativeEngine(
-            on_event=lambda evt: self._emit_event(evt.get("type", ""), evt.get("data", {})),
-            on_proposal=lambda p: logger.info("Initiative: %s", p.action_detail),
+        # Phase 7: Communication & Services (AD-517)
+        from probos.startup.communication import init_communication
+
+        comm = await init_communication(
+            config=self.config,
+            data_dir=self._data_dir,
+            checkpoint_dir=self._checkpoint_dir,
+            registry=self.registry,
+            identity_registry=self.identity_registry,
+            episodic_memory=self.episodic_memory,
+            hebbian_router=self.hebbian_router,
+            emit_event_fn=self._emit_event,
+            process_natural_language_fn=self.process_natural_language,
+            register_workforce_resources_fn=self._register_workforce_resources,
+            journal_prune_loop_fn=self._journal_prune_loop,
         )
-        if self.sif:
-            self.initiative.set_sif(self.sif)
-        if self._emergent_detector:
-            self.initiative.set_detector(self._emergent_detector)
-        await self.initiative.start()
+        self.persistent_task_store = comm.persistent_task_store
+        self.work_item_store = comm.work_item_store
+        self.ward_room = comm.ward_room
+        self.assignment_service = comm.assignment_service
+        self.bridge_alerts = comm.bridge_alerts
+        self.cognitive_journal = comm.cognitive_journal
+        self.skill_registry = comm.skill_registry
+        self.skill_service = comm.skill_service
+        self.acm = comm.acm
+        self.ontology = comm.ontology
 
-        # Start Automated Builder Dispatch (AD-375)
-        import pathlib
-        _repo_root = str(pathlib.Path(__file__).resolve().parent.parent.parent)
-        self.build_queue = BuildQueue()
-        _worktree_mgr = WorktreeManager(repo_root=_repo_root)
-        self.build_dispatcher = BuildDispatcher(
-            queue=self.build_queue,
-            worktree_mgr=_worktree_mgr,
-            on_build_complete=self._on_build_complete,
-        )
-        await self.build_dispatcher.start()
-        logger.info("build-dispatcher started")
-
-        # --- Task Tracker (AD-316) ---
-        self.task_tracker = TaskTracker(on_event=self._emit_event)
-        logger.info("task-tracker started")
-
-        # --- Service Profiles (AD-382) ---
-        self.service_profiles = ServiceProfileStore(
-            db_path=self._data_dir / "service_profiles.db"
-        )
-        HttpFetchAgent.set_profile_store(self.service_profiles)
-        logger.info("service-profiles started")
-
-        # --- Directive Store (AD-386) ---
-        try:
-            self.directive_store = DirectiveStore(
-                db_path=str(Path(self._data_dir) / "directives.db")
-            )
-            set_directive_store(self.directive_store)
-            logger.info("DirectiveStore initialized")
-        except Exception:
-            logger.exception("DirectiveStore init failed (non-fatal)")
-
-        # --- Persistent Task Store (Phase 25a) ---
-        # Replaces the old checkpoint-scan-only block (AD-405).
-        # PersistentTaskStore handles stale checkpoint detection internally.
-        if self.config.persistent_tasks.enabled:
-            from probos.persistent_tasks import PersistentTaskStore
-            self.persistent_task_store = PersistentTaskStore(
-                db_path=str(self._data_dir / "scheduled_tasks.db"),
-                emit_event=self._emit_event,
-                process_fn=self.process_natural_language,
-                tick_interval=self.config.persistent_tasks.tick_interval_seconds,
-                checkpoint_dir=self._checkpoint_dir,
-            )
-            await self.persistent_task_store.start()
-            logger.info("persistent-task-store started")
-        else:
-            # Fallback: still scan checkpoints for logging (original AD-405 behavior)
-            from probos.cognitive.checkpoint import scan_checkpoints
-            stale = scan_checkpoints(self._checkpoint_dir)
-            if stale:
-                logger.info(
-                    "Found %d incomplete DAG checkpoint(s) from previous session",
-                    len(stale),
-                )
-                for cp in stale:
-                    completed = sum(
-                        1 for s in cp.node_states.values()
-                        if s.get("status") == "completed"
-                    )
-                    logger.info(
-                        "  - DAG %s: '%s' (%d/%d nodes completed)",
-                        cp.dag_id[:8], cp.source_text[:60],
-                        completed, len(cp.node_states),
-                    )
-
-        # --- Workforce Scheduling Engine (AD-496) ---
-        if self.config.workforce.enabled:
-            from probos.workforce import WorkItemStore
-            self.work_item_store = WorkItemStore(
-                db_path=str(self._data_dir / "workforce.db"),
-                emit_event=self._emit_event,
-                tick_interval=self.config.workforce.tick_interval_seconds,
-                config={
-                    "custom_work_types": self.config.workforce.custom_work_types,
-                    "custom_templates": self.config.workforce.custom_templates,
-                },
-            )
-            await self.work_item_store.start()
-            await self._register_workforce_resources()
-            logger.info("workforce-scheduling-engine started")
-
-        # --- Ward Room (AD-407) ---
-        if self.config.ward_room.enabled:
-            from probos.ward_room import WardRoomService
-
-            def _ward_room_emit(event_type: str, data: dict) -> None:
-                self._emit_event(event_type, data)  # WebSocket broadcast
-                if getattr(self, '_ward_room_router', None):
-                    asyncio.create_task(self._ward_room_router.route_event(event_type, data))
-
-            self.ward_room = WardRoomService(
-                db_path=str(self._data_dir / "ward_room.db"),
-                emit_event=_ward_room_emit,
-                episodic_memory=self.episodic_memory,  # AD-430a
-                hebbian_router=self.hebbian_router,  # AD-453
-            )
-            await self.ward_room.start()
-            logger.info("ward-room started")
-
-            # AD-425: Auto-subscribe crew agents to their department + All Hands channels
-            from probos.cognitive.standing_orders import get_department
-            wr_channels = await self.ward_room.list_channels()
-            all_hands_id = None
-            proposals_ch_id = None  # AD-412
-            dept_channel_map: dict[str, str] = {}  # dept_name -> channel_id
-            for ch in wr_channels:
-                if ch.name == "All Hands":
-                    all_hands_id = ch.id
-                elif ch.name == "Improvement Proposals":
-                    proposals_ch_id = ch.id  # AD-412
-                elif ch.channel_type == "department" and ch.department:
-                    dept_channel_map[ch.department] = ch.id
-
-            for agent in self.registry.all():
-                if not is_crew_agent(agent):
-                    continue
-                # AD-429e: Prefer ontology, fall back to legacy dict
-                _ont = getattr(self, 'ontology', None)
-                dept = (_ont.get_agent_department(agent.agent_type) if _ont else None) or get_department(agent.agent_type)
-                if dept and dept in dept_channel_map:
-                    await self.ward_room.subscribe(agent.id, dept_channel_map[dept])
-                if all_hands_id:
-                    await self.ward_room.subscribe(agent.id, all_hands_id)
-                # AD-412: Subscribe all crew to Improvement Proposals
-                if proposals_ch_id:
-                    await self.ward_room.subscribe(agent.id, proposals_ch_id)
-
-            # AD-416: Start Ward Room pruning loop
-            archive_dir = self._data_dir / "ward_room_archive"
-            await self.ward_room.start_prune_loop(self.config.ward_room, archive_dir)
-
-            # AD-485: Archive old DM messages periodically
-            async def _dm_archive_loop() -> None:
-                import asyncio
-                while True:
-                    await asyncio.sleep(3600)  # Every hour
-                    try:
-                        archived = await self.ward_room.archive_dm_messages(max_age_hours=24)
-                        if archived:
-                            logger.info("Archived %d old DM messages", archived)
-                    except Exception as e:
-                        logger.debug("DM archival failed: %s", e)
-
-            import asyncio as _aio_dm
-            _aio_dm.get_event_loop().create_task(_dm_archive_loop())
-
-        # --- Assignment Service (AD-408) ---
-        if self.config.assignments.enabled:
-            from probos.assignment import AssignmentService
-            self.assignment_service = AssignmentService(
-                db_path=str(self._data_dir / "assignments.db"),
-                emit_event=self._emit_event,
-                ward_room=self.ward_room,  # May be None if WR disabled
-            )
-            await self.assignment_service.start()
-            logger.info("assignment-service started")
-
-        # --- Bridge Alerts (AD-410) ---
-        if self.config.bridge_alerts.enabled and self.ward_room:
-            from probos.bridge_alerts import BridgeAlertService
-            self.bridge_alerts = BridgeAlertService(
-                cooldown_seconds=self.config.bridge_alerts.cooldown_seconds,
-                trust_drop_threshold=self.config.bridge_alerts.trust_drop_threshold,
-                trust_drop_alert_threshold=self.config.bridge_alerts.trust_drop_alert_threshold,
-            )
-            logger.info("bridge-alerts started")
-
-        # --- Cognitive Journal (AD-431) ---
-        if self.config.cognitive_journal.enabled:
-            from probos.cognitive.journal import CognitiveJournal
-            self.cognitive_journal = CognitiveJournal(
-                db_path=str(self._data_dir / "cognitive_journal.db"),
-            )
-            await self.cognitive_journal.start()
-            asyncio.create_task(self._journal_prune_loop())
-            logger.info("cognitive-journal started")
-
-        # --- Skill Framework (AD-428) ---
-        from probos.skill_framework import SkillRegistry, AgentSkillService
-        skills_db = str(self._data_dir / "skills.db")
-        self.skill_registry = SkillRegistry(db_path=skills_db)
-        self.skill_service = AgentSkillService(db_path=skills_db, registry=self.skill_registry)
-        await self.skill_registry.start()
-        await self.skill_registry.register_builtins()
-        await self.skill_service.start()
-        logger.info("skill-framework started")
-
-        # --- Agent Capital Management (AD-427) ---
-        from probos.acm import AgentCapitalService
-        self.acm = AgentCapitalService(data_dir=self._data_dir)
-        await self.acm.start()
-        logger.info("acm started")
-
-        # AD-441: Wire identity registry to ACM
-        if self.acm and self.identity_registry:
-            self.acm.set_identity_registry(self.identity_registry)
-
-        # --- Vessel Ontology (AD-429a) ---
-        ontology_dir = Path(__file__).resolve().parent.parent.parent / "config" / "ontology"
-        if ontology_dir.exists():
-            from probos.ontology import VesselOntologyService
-            self.ontology = VesselOntologyService(ontology_dir, data_dir=self._data_dir)
-            await self.ontology.initialize()
-            # Wire all registered agents to their ontology posts
-            for agent in self.registry.all():
-                self.ontology.wire_agent(agent.agent_type, agent.id)
-            logger.info("ontology initialized")
-
-        # --- Ship Commissioning (AD-441b) ---
-        # Now that ontology is loaded, commission the ship's identity
-        if self.ontology and self.identity_registry:
-            vi = self.ontology.get_vessel_identity()
-            await self.identity_registry.start(
-                instance_id=vi.instance_id,
-                vessel_name=vi.name,
-                version=self.config.system.version,
-            )
-
-            # AD-441c: Issue deferred crew birth certificates now that ship is commissioned
-            for agent in self.registry.all():
-                if is_crew_agent(agent, self.ontology) and not getattr(agent, 'did', ''):
-                    try:
-                        dept = self.ontology.get_agent_department(agent.agent_type) or ""
-                        post = self.ontology.get_post_for_agent(agent.agent_type)
-                        post_id = post.id if post else ""
-                        if not dept:
-                            from probos.cognitive.standing_orders import get_department as _get_dept
-                            dept = _get_dept(agent.agent_type) or "unassigned"
-
-                        _callsign = getattr(agent, 'callsign', '') or agent.agent_type
-                        cert = await self.identity_registry.resolve_or_issue(
-                            slot_id=agent.id,
-                            agent_type=agent.agent_type,
-                            callsign=_callsign,
-                            instance_id=vi.instance_id,
-                            vessel_name=vi.name,
-                            department=dept,
-                            post_id=post_id,
-                            baseline_version=self.config.system.version,
-                        )
-                        agent.sovereign_id = cert.agent_uuid
-                        agent.did = cert.did
-                    except Exception as e:
-                        logger.debug("Deferred identity skipped for %s: %s", agent.id, e)
-
-        # --- Wire ontology ↔ skill service (AD-429b) ---
-        if self.ontology and self.skill_service:
-            self.ontology.set_skill_service(self.skill_service)
-
-        # AD-429e: Wire ontology into WardRoom (constructed before ontology init)
+        # PATCH(AD-517): Wire ontology into WardRoom (constructed before ontology init)
         if self.ontology and self.ward_room:
             self.ward_room._ontology = self.ontology
 
-        # --- Proactive Cognitive Loop (Phase 28b) ---
-        if self.config.proactive_cognitive.enabled and self.ward_room:
+        # Phase 8: Finalization (AD-517)
+        from probos.startup.finalize import finalize_startup
 
-            # AD-471: Initialize conn manager, night orders, and watch manager
-            from probos.conn import ConnManager
-            from probos.watch_rotation import WatchManager, NightOrdersManager
-            self.conn_manager = ConnManager()
-            self._night_orders_mgr = NightOrdersManager()
-            self.watch_manager = WatchManager(
-                dispatch_fn=self._dispatch_watch_intent,
-                check_interval=30.0,
-            )
-            # Populate roster from ontology
-            if self.ontology:
-                self._populate_watch_roster()
-            await self.watch_manager.start()
-
-            from probos.proactive import ProactiveCognitiveLoop
-            self.proactive_loop = ProactiveCognitiveLoop(
-                interval=self.config.proactive_cognitive.interval_seconds,
-                cooldown=self.config.proactive_cognitive.cooldown_seconds,
-                on_event=lambda evt: self._emit_event(evt.get("type", ""), evt.get("data", {})),
-            )
-            self.proactive_loop.set_runtime(self)
-            # AD-414: Wire config for trust signal weights
-            self.proactive_loop.set_config(self.config.proactive_cognitive)
-            # AD-419: Wire duty schedule
-            if self.config.proactive_cognitive.duty_schedule.enabled:
-                self.proactive_loop.set_duty_schedule(self.config.proactive_cognitive.duty_schedule)
-            # AD-415: Wire knowledge store for cooldown persistence
-            if self._knowledge_store:
-                self.proactive_loop._knowledge_store = self._knowledge_store
-                await self.proactive_loop.restore_cooldowns()
-            await self.proactive_loop.start()
-            logger.info("proactive-cognitive-loop started (interval=%ss)", self.config.proactive_cognitive.interval_seconds)
-
-        # --- AD-515: Create extracted service instances ---
-
-        # Ward Room Router
-        if self.ward_room:
-            self._ward_room_router = WardRoomRouter(
-                ward_room=self.ward_room,
-                registry=self.registry,
-                intent_bus=self.intent_bus,
-                trust_network=self.trust_network,
-                ontology=self.ontology,
-                callsign_registry=self.callsign_registry,
-                episodic_memory=self.episodic_memory,
-                event_emitter=self._emit_event,
-                event_log=self.event_log,
-                config=self.config,
-                notify_fn=self.notify,
-                proactive_loop=self.proactive_loop,
-            )
-
-        # Agent Onboarding Service — patch in late-init dependencies
-        self._onboarding._ontology = self.ontology
-        self._onboarding._ward_room = self.ward_room
-        self._onboarding._acm = self.acm
-        self._onboarding._start_time_wall = self._start_time_wall
-
-        # Self-Modification Manager
-        if self.self_mod_pipeline:
-            self._self_mod_manager = SelfModManager(
-                self_mod_pipeline=self.self_mod_pipeline,
-                knowledge_store=self._knowledge_store,
-                trust_network=self.trust_network,
-                intent_bus=self.intent_bus,
-                capability_registry=self.capability_registry,
-                registry=self.registry,
-                pools=self.pools,
-                spawner=self.spawner,
-                decomposer=self.decomposer,
-                feedback_engine=self.feedback_engine,
-                llm_client=self.llm_client,
-                event_emitter=self._emit_event,
-                config=self.config,
-                semantic_layer=self._semantic_layer,
-                collect_intent_descriptors_fn=self._collect_intent_descriptors,
-                process_natural_language_fn=self.process_natural_language,
-                add_skill_to_agents_fn=self._add_skill_to_agents,
-                register_agent_type_fn=self.register_agent_type,
-                unregister_agent_type_fn=self.unregister_agent_type,
-                create_pool_fn=self.create_pool,
-                runtime=self,
-            )
-
-        # Dream Adapter
-        self._dream_adapter = DreamAdapter(
-            dream_scheduler=self.dream_scheduler,
-            emergent_detector=self._emergent_detector,
-            episodic_memory=self.episodic_memory,
-            knowledge_store=self._knowledge_store,
-            hebbian_router=self.hebbian_router,
-            trust_network=self.trust_network,
-            event_emitter=self._emit_event,
-            self_mod_pipeline=self.self_mod_pipeline,
-            bridge_alerts=self.bridge_alerts,
-            ward_room=self.ward_room,
-            registry=self.registry,
-            event_log=self.event_log,
-            config=self.config,
-            pools=self.pools,
-            behavioral_monitor=self.behavioral_monitor,
-            deliver_bridge_alert_fn=(
-                self._ward_room_router.deliver_bridge_alert
-                if getattr(self, '_ward_room_router', None) else None
-            ),
-        )
-        self._dream_adapter._cold_start = self._cold_start
-
-        # Re-wire dream scheduler callbacks to use the adapter
-        if self.dream_scheduler:
-            self.dream_scheduler._post_dream_fn = self._dream_adapter.on_post_dream
-            self.dream_scheduler._pre_dream_fn = self._dream_adapter.on_pre_dream
-            self.dream_scheduler._post_micro_dream_fn = self._dream_adapter.on_post_micro_dream
-
-        # Re-wire periodic flush to use the adapter
-        if hasattr(self, '_flush_task'):
-            self._flush_task.cancel()
-        self._flush_task = asyncio.create_task(self._dream_adapter.periodic_flush_loop())
-
-        self._started = True
-
-        await self.event_log.log(category="system", event="started")
-        logger.info(
-            "ProbOS started: %d agents across %d pools + %d red team",
-            self.registry.count,
-            len(self.pools),
-            len(self._red_team_agents),
-        )
-
-        # AD-435 + AD-502: Announce startup to Ward Room (lifecycle-aware)
-        if self.ward_room:
-            try:
-                async with self.ward_room._db.execute(
-                    "SELECT id FROM channels WHERE name = 'All Hands' LIMIT 1"
-                ) as cursor:
-                    row = await cursor.fetchone()
-                    if row:
-                        if self._lifecycle_state == "stasis_recovery":
-                            dur = format_duration(self._stasis_duration)
-                            prev = self._previous_session
-                            shutdown_str = datetime.fromtimestamp(
-                                prev["shutdown_time_utc"], tz=timezone.utc
-                            ).strftime("%Y-%m-%d %H:%M:%S UTC") if prev else "unknown"
-                            title = "Stasis Recovery — All Hands"
-                            body = (
-                                f"All hands: The ship has returned from stasis. "
-                                f"Stasis duration: {dur}. "
-                                f"Previous session ended: {shutdown_str}. "
-                                f"All crew identities and memories are intact. "
-                                f"Resume normal operations."
-                            )
-                        elif self._lifecycle_state == "first_boot":
-                            title = "System Online — First Activation"
-                            body = "This is the maiden voyage. All systems operational."
-                        elif self._lifecycle_state == "restart":
-                            title = "System Restart — All Stations Resume"
-                            body = "System restart complete. All stations resume normal operations."
-                        else:
-                            title = "System Online"
-                            body = "ProbOS startup complete. All systems operational."
-                        await self.ward_room.create_thread(
-                            channel_id=row[0],
-                            author_id="system",
-                            title=title,
-                            body=body,
-                            author_callsign="Ship's Computer",
-                            thread_mode="announce",
-                            max_responders=0,
-                        )
-            except Exception:
-                logger.debug("Cold-start announcement failed", exc_info=True)
+        fin = await finalize_startup(runtime=self, config=self.config)
+        self.conn_manager = fin.conn_manager
+        self._night_orders_mgr = fin.night_orders_mgr
+        self.watch_manager = fin.watch_manager
+        self.proactive_loop = fin.proactive_loop
+        self._ward_room_router = fin.ward_room_router
+        self._self_mod_manager = fin.self_mod_manager
+        self._dream_adapter = fin.dream_adapter
 
     # --- BF-071: Retention prune loops ---
 

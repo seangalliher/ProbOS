@@ -243,10 +243,10 @@ class TestImportApprovalRestore:
     """Verify import approval callback is restored after API self-mod (AD-366)."""
 
     def test_self_mod_import_approval_finally_block(self):
-        """api.py finally block must save and restore _import_approval_fn."""
+        """Chat router finally block must save and restore _import_approval_fn."""
         from pathlib import Path
 
-        source = Path("src/probos/api.py").read_text(encoding="utf-8")
+        source = Path("src/probos/routers/chat.py").read_text(encoding="utf-8")
         # Must save original before overwriting
         assert "original_import_approval_fn" in source
         # At least 4 references: declaration, save, set, restore

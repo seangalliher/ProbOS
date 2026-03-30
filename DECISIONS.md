@@ -1492,3 +1492,79 @@ Wave 3 continuation (architecture decomposition). Extracted 5 responsibility gro
 **Files changed:** `src/probos/runtime.py`, `src/probos/agent_onboarding.py` (new), `src/probos/ward_room_router.py` (new), `src/probos/dream_adapter.py` (new), `src/probos/self_mod_manager.py` (new), `src/probos/warm_boot.py` (new), `src/probos/crew_utils.py` (new), `tests/test_onboarding.py`, `tests/test_ward_room_agents.py`, `tests/test_ward_room.py`, `tests/test_proactive.py`, `tests/test_bridge_alerts.py`, `tests/test_identity_persistence.py`, `tests/test_dreaming.py`, `tests/test_correction_runtime.py`.
 
 **Status:** **COMPLETE** (2026-03-29). 4039 tests passing. runtime.py reduced by 23%.
+
+## AD-516: Extract api.py into FastAPI Routers (2026-03-29)
+
+Wave 3 continuation (architecture decomposition). Extracted 122 routes from the 3,109-line `api.py` monolith into 16 FastAPI router modules in `src/probos/routers/`.
+
+| Router | File | Lines | Routes |
+|--------|------|-------|--------|
+| Dependencies | `deps.py` | 27 | 4 dependency injectors |
+| Ontology | `ontology.py` | 156 | 7 |
+| System | `system.py` | 152 | 13 |
+| Ward Room | `wardroom.py` | 340 | 17 |
+| Ward Room Admin | `wardroom_admin.py` | 52 | 2 |
+| Records | `records.py` | 139 | 6 |
+| Identity | `identity.py` | 77 | 4 |
+| Agents | `agents.py` | 259 | 6 |
+| Journal | `journal.py` | 64 | 4 |
+| Skills | `skills.py` | 96 | 6 |
+| ACM | `acm.py` | 101 | 5 |
+| Assignments | `assignments.py` | 94 | 7 |
+| Scheduled Tasks | `scheduled_tasks.py` | 115 | 7 |
+| Workforce | `workforce.py` | 305 | 17 |
+| Build | `build.py` | 443 | 7 + 3 helpers |
+| Design | `design.py` | 184 | 2 + 1 helper |
+| Chat | `chat.py` | 536 | 3 + 1 helper |
+
+**Results:**
+- **api.py:** 3,109 → 295 lines (−90.5%)
+- **16 new router files** + `api_models.py` (shared Pydantic models)
+- **Tests:** 4040 passed, 11 skipped, 3 failed (pre-existing Windows asyncio timeout — unrelated)
+- **2 source-reading tests updated** to point at `routers/chat.py`
+
+**What stays in api.py (295 lines):**
+- `create_app()` — CORS, lifespan, app state wiring, router registration
+- `/api/tasks` endpoint (closure over `_background_tasks`)
+- WebSocket endpoint + `_broadcast_event` + `_safe_serialize`
+- Static file serving
+- Module-level helpers imported by routers/tests
+- Backwards-compatible re-exports from `api_models.py`
+
+**Key design decisions:**
+- **`Depends(get_runtime)` pattern.** Routers get runtime via FastAPI dependency injection, not closure state.
+- **`app.state.runtime` as the single runtime reference.** Set in `create_app()` lifespan, accessed via `request.app.state.runtime`.
+- **Ward Room route prefix unified** to `/api/wardroom/` (was inconsistent `/api/wardroom/` vs `/api/ward-room/`).
+- **WebSocket stays in api.py.** Manages shared `_ws_clients` state that's tightly coupled to the app lifecycle.
+
+**Status:** **COMPLETE** (2026-03-29). 4040 tests passing. api.py reduced by 90.5%.
+
+## AD-517: Extract runtime.py start() into Startup Phases (2026-03-29)
+
+Wave 3 continuation (architecture decomposition). The 1,104-line `start()` method contained 44 sequential initialization steps, 15 private member patches, and 55 attribute assignments. Extracted into 8 focused startup phase modules in `src/probos/startup/`.
+
+| Phase | Module | Lines | Key Services |
+|-------|--------|-------|-------------|
+| 1 | `infrastructure.py` | 66 | Event log, Hebbian, trust, identity registry |
+| 2 | `agent_fleet.py` | 217 | 7 core pools, utility pools, CodebaseIndex, red team |
+| 3 | `fleet_organization.py` | 190 | Pool groups, scaler, federation |
+| 4 | `cognitive_services.py` | 271 | Self-mod, memory, knowledge, warm boot |
+| 5 | `dreaming.py` | 174 | Dream engine, emergent detector, task scheduler |
+| 6 | `structural_services.py` | 159 | SIF, initiative, build dispatcher, tasks |
+| 7 | `communication.py` | 297 | Ward Room, skills, ACM, ontology, commissioning |
+| 8 | `finalize.py` | 234 | Proactive loop, WardRoomRouter, DreamAdapter |
+| — | `results.py` | 154 | 8 typed result dataclasses |
+
+**Results:**
+- **start():** 1,104 → 217 lines (−80%)
+- **runtime.py:** 4,102 → 3,216 lines (−21.6%)
+- **Wave 3 cumulative:** runtime.py 5,321 → 3,216 (−39.6%), api.py 3,109 → 295 (−90.5%)
+- **Tests:** 3,935 passed, 0 failed. 1 test updated (source inspection reads from `create_agent_fleet`).
+
+**Key design decisions:**
+- **Typed result dataclasses.** Each phase returns a `*Result` dataclass. Runtime assigns services from results — no reaching into phase internals.
+- **Explicit parameters, not runtime passthrough.** Each phase function takes exactly the dependencies it needs. Exception: `finalize_startup()` takes the runtime reference for AD-515 service wiring (30+ constructor params otherwise).
+- **Initialization order preserved exactly.** Phases execute sequentially in dependency order. No reordering.
+- **Private member patches documented.** All 15 `_attr` patches tagged with `# PATCH(AD-517)` comments for future cleanup.
+
+**Status:** **COMPLETE** (2026-03-29). 3935 tests passing. start() reduced by 80%.
