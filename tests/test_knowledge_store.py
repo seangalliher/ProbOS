@@ -1303,8 +1303,8 @@ class TestRuntimeKnowledgeIntegration:
         try:
             # Use submit_intent to trigger a real intent that generates an episode
             # process_natural_language with MockLLMClient returns empty DAG,
-            # so we directly call _build_episode and store_episode to test the hook
-            episode = rt._build_episode(
+            # so we directly call dream_adapter.build_episode and store_episode to test the hook
+            episode = rt.dream_adapter.build_episode(
                 "read file test.txt",
                 {"dag": None, "results": {}, "complete": True, "node_count": 0},
                 0.0, 1.0,

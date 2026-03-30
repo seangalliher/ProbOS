@@ -63,6 +63,9 @@ def mock_runtime(mock_agent):
     # Workforce not enabled in test
     runtime.work_item_store = None
 
+    # is_crew_agent uses ontology — None falls back to legacy set (scout is crew)
+    runtime.ontology = None
+
     return runtime
 
 

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-517 COMPLETE. Extracted runtime.py start() (1,104 lines) into 8 startup phase modules in src/probos/startup/ — start() reduced to 217 lines (−80%), runtime.py 4,102 → 3,216 lines (−21.6%). Wave 3 totals: runtime.py 5,321 → 3,216 (−39.6%), api.py 3,109 → 295 (−90.5%). AD-515/516/517 all COMPLETE. AD-521 DECIDED. 3935 tests passing.
+## Current Status: AD-518 COMPLETE — Eliminated 34 delegation shims from runtime.py, extracted stop() to startup/shutdown.py (282 lines), renamed 5 private attributes to public. runtime.py 3,216 → 2,762 (−14.1%). Wave 3 cumulative: runtime.py 5,321 → 2,762 (−48.1%), api.py 3,109 → 295 (−90.5%). AD-515/516/517 also complete. BF-079 OPEN (spec= audit). 3923 tests passing.
 
 ---
 

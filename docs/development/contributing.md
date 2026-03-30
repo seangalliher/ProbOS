@@ -58,7 +58,7 @@ Errors should be detected and reported as close to their origin as possible. Thr
 | Tier | When | Pattern |
 |------|------|---------|
 | **Swallow** | Truly non-critical: shutdown cleanup, telemetry, rebuildable indexes | `except Exception: pass` |
-| **Log-and-degrade** | System continues but capability is reduced | `except Exception: logger.debug("...", exc_info=True)` |
+| **Log-and-degrade** | System continues but capability is reduced | `except Exception: logger.warning("...", exc_info=True)` |
 | **Propagate** | Caller must know: security boundaries, data integrity | `raise` or re-raise |
 
 **Default to log-and-degrade.** Every `except Exception: pass` must be justified.
@@ -96,6 +96,7 @@ This principle ensures the OSS core remains deployable as a standalone applicati
 - **Cleanup**: Tests must clean up resources (temp files, tasks, DB entries). Use `tmp_path`, `try/finally`, or context managers.
 - **API endpoints**: Minimum 3 tests per endpoint — happy path, error case, input validation.
 - **UI changes**: Every TypeScript/React change requires a Vitest component test.
+- **Mock discipline**: Always use `MagicMock(spec=RealClass)` or `AsyncMock(spec=RealClass)` when mocking system objects (runtime, services, registries). Unspec'd mocks silently invent attributes on access — a test passes even when the code references attributes that don't exist on the real object. This is the #1 cause of refactoring bugs surviving the test suite. Shared mock factories (e.g., `_make_mock_runtime()`) must use `spec=` on the top-level object.
 
 ### Type Annotation Standards
 
@@ -126,6 +127,8 @@ logger.warning("Template %s not found in spawner; falling back to default", temp
 
 No bare `print()` for operational output — use `logger`. No sensitive data (API keys, tokens) in logs.
 
+**Exception handler logging must be `warning` or higher — never `debug`.** A caught exception that degrades functionality is operationally significant. Using `debug` makes failures invisible in production and can hide bugs for months (see BF-078).
+
 ### Async Discipline
 
 - Use `asyncio.get_running_loop()`, never `get_event_loop()`.
@@ -146,6 +149,14 @@ No bare `print()` for operational output — use `logger`. No sensitive data (AP
 - New config must use Pydantic models in `config.py`. No raw dicts or ad-hoc env var parsing.
 - Every config field must have a sensible default (zero-config startup).
 - Use Pydantic validators — invalid config should fail at startup, not at runtime.
+
+### Refactoring Safety
+
+When renaming, moving, or removing attributes during decomposition:
+
+- **Search all access patterns**, not just `self._attr`. When moving `self._agents` from runtime to registry, search `\._agents\b` to catch `rt._agents`, `runtime._agents`, `self._runtime._agents`, etc. A `self._attr` grep misses external callers using different variable names.
+- **Run affected tests with `spec=` mocks** before and after the refactoring. If a test uses unspec'd `MagicMock()`, it will pass regardless of whether the attribute exists.
+- **Check exception handlers** along the affected code paths. Swallowed exceptions can hide broken references indefinitely. Grep for `except.*Exception` near the changed code.
 
 ## Architecture Guidelines
 

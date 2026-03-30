@@ -4,7 +4,7 @@ import pytest
 
 
 def _is_valid_callsign(name: str) -> bool:
-    """Mirror of the validation function in runtime.py._run_naming_ceremony."""
+    """Mirror of the validation function in agent_onboarding.run_naming_ceremony."""
     if not re.match(r"^[A-Za-z][A-Za-z' -]{0,18}[A-Za-z]$", name):
         return False
     _blocked = {

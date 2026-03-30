@@ -76,7 +76,7 @@ class TestDmActionTag:
         target_agent = MagicMock()
         target_agent.agent_type = "diagnostician"
         target_agent.id = "diag-001"
-        rt._agents = [target_agent]
+        rt.registry.all.return_value = [target_agent]
 
         rt.hebbian_router = None  # skip Hebbian for this test
 
@@ -195,7 +195,7 @@ class TestAD485CaptainDmAndArchival:
         rt.callsign_registry = MagicMock()
         rt.callsign_registry.get_callsign = MagicMock(return_value="Bones")
         rt.callsign_registry.resolve = MagicMock(return_value=None)
-        rt._agents = []
+        rt.registry.all.return_value = []
         rt.hebbian_router = None
         loop._runtime = rt
 

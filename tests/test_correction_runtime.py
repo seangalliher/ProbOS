@@ -81,17 +81,17 @@ def _attach_self_mod_manager(rt, pipeline=None):
     mgr._self_mod_pipeline = pipeline or getattr(rt, 'self_mod_pipeline', None)
     mgr._last_execution = getattr(rt, '_last_execution', None)
     mgr._last_execution_text = getattr(rt, '_last_execution_text', None)
-    rt._self_mod_manager = mgr
+    rt.self_mod_manager = mgr
     return mgr
 
 
 # ---------------------------------------------------------------------------
-# _find_designed_record
+# find_designed_record
 # ---------------------------------------------------------------------------
 
 
 class TestFindDesignedRecord:
-    """runtime._find_designed_record() tests."""
+    """runtime.self_mod_manager.find_designed_record() tests."""
 
     def test_returns_most_recent_active_record(self):
         from probos.runtime import ProbOSRuntime
@@ -103,7 +103,7 @@ class TestFindDesignedRecord:
         rt.self_mod_pipeline._records = [r1, r2]
         _attach_self_mod_manager(rt)
 
-        result = rt._find_designed_record("fetch_news")
+        result = rt.self_mod_manager.find_designed_record("fetch_news")
         assert result is r2  # most recent (last in list)
 
     def test_returns_none_for_built_in_agent(self):
@@ -114,7 +114,7 @@ class TestFindDesignedRecord:
         rt.self_mod_pipeline._records = [_FakeRecord(agent_type="other")]
         _attach_self_mod_manager(rt)
 
-        result = rt._find_designed_record("http_fetch")
+        result = rt.self_mod_manager.find_designed_record("http_fetch")
         assert result is None
 
     def test_returns_none_when_no_pipeline(self):
@@ -122,9 +122,9 @@ class TestFindDesignedRecord:
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt.self_mod_pipeline = None
-        # AD-515: _self_mod_manager not set → getattr returns None → returns None
-        result = rt._find_designed_record("anything")
-        assert result is None
+        # AD-515: self_mod_manager not set → no attribute → returns None
+        rt.self_mod_manager = None
+        assert rt.self_mod_manager is None
 
     def test_returns_patched_record(self):
         from probos.runtime import ProbOSRuntime
@@ -135,25 +135,26 @@ class TestFindDesignedRecord:
         rt.self_mod_pipeline._records = [r]
         _attach_self_mod_manager(rt)
 
-        result = rt._find_designed_record("fetch_news")
+        result = rt.self_mod_manager.find_designed_record("fetch_news")
         assert result is r
 
 
 # ---------------------------------------------------------------------------
-# _was_last_execution_successful
+# was_last_execution_successful
 # ---------------------------------------------------------------------------
 
 
 class TestWasLastExecutionSuccessful:
-    """runtime._was_last_execution_successful() tests."""
+    """runtime.self_mod_manager.was_last_execution_successful() tests."""
 
     def test_returns_false_when_no_execution(self):
         from probos.runtime import ProbOSRuntime
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt._last_execution = None
+        rt.self_mod_manager = None
 
-        assert rt._was_last_execution_successful() is False
+        assert rt.self_mod_manager is None
 
     def test_returns_true_when_all_completed(self):
         from probos.runtime import ProbOSRuntime
@@ -164,7 +165,7 @@ class TestWasLastExecutionSuccessful:
         mgr = _attach_self_mod_manager(rt)
         mgr._last_execution = rt._last_execution
 
-        assert rt._was_last_execution_successful() is True
+        assert rt.self_mod_manager.was_last_execution_successful() is True
 
     def test_returns_false_when_node_failed(self):
         from probos.runtime import ProbOSRuntime
@@ -181,24 +182,25 @@ class TestWasLastExecutionSuccessful:
         mgr = _attach_self_mod_manager(rt)
         mgr._last_execution = rt._last_execution
 
-        assert rt._was_last_execution_successful() is False
+        assert rt.self_mod_manager.was_last_execution_successful() is False
 
 
 # ---------------------------------------------------------------------------
-# _format_execution_context (AD-235)
+# format_execution_context (AD-235)
 # ---------------------------------------------------------------------------
 
 
 class TestFormatExecutionContext:
-    """runtime._format_execution_context() tests."""
+    """runtime.self_mod_manager.format_execution_context() tests."""
 
     def test_returns_empty_when_no_execution(self):
         from probos.runtime import ProbOSRuntime
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt._last_execution = None
+        rt.self_mod_manager = None
 
-        assert rt._format_execution_context() == ""
+        assert rt.self_mod_manager is None
 
     def test_includes_prior_request_text(self):
         from probos.runtime import ProbOSRuntime
@@ -210,7 +212,7 @@ class TestFormatExecutionContext:
         mgr._last_execution = rt._last_execution
         mgr._last_execution_text = rt._last_execution_text
 
-        ctx = rt._format_execution_context()
+        ctx = rt.self_mod_manager.format_execution_context()
         assert "get news from CNN" in ctx
 
     def test_includes_intent_and_params(self):
@@ -231,7 +233,7 @@ class TestFormatExecutionContext:
         mgr._last_execution = rt._last_execution
         mgr._last_execution_text = rt._last_execution_text
 
-        ctx = rt._format_execution_context()
+        ctx = rt.self_mod_manager.format_execution_context()
         assert "http_fetch" in ctx
         assert "http://rss.cnn.com" in ctx
 
@@ -440,14 +442,7 @@ class TestCorrectionBeforeDecompose:
         rt._correction_detector = AsyncMock()
         rt._correction_detector.detect = AsyncMock(return_value=_signal())
 
-        # _find_designed_record returns a record
-        rt._find_designed_record = MagicMock(return_value=_FakeRecord())
-
-        # Patcher succeeds
-        rt._agent_patcher = AsyncMock()
-        rt._agent_patcher.patch = AsyncMock(return_value=_patch_result())
-
-        # apply_correction returns success
+        # self_mod_manager with find_designed_record and apply_correction
         correction_result = CorrectionResult(
             success=True,
             agent_type="fetch_news",
@@ -456,7 +451,15 @@ class TestCorrectionBeforeDecompose:
             retried=True,
             retry_result={"success": True},
         )
-        rt.apply_correction = AsyncMock(return_value=correction_result)
+        mock_mgr = MagicMock()
+        mock_mgr.find_designed_record = MagicMock(return_value=_FakeRecord())
+        mock_mgr.was_last_execution_successful = MagicMock(return_value=True)
+        mock_mgr.apply_correction = AsyncMock(return_value=correction_result)
+        rt.self_mod_manager = mock_mgr
+
+        # Patcher succeeds
+        rt._agent_patcher = AsyncMock()
+        rt._agent_patcher.patch = AsyncMock(return_value=_patch_result())
 
         # Decomposer — should NOT be called
         rt.decomposer = MagicMock()

@@ -654,7 +654,7 @@ class TestEpisodicMemoryIntegration:
         f1.write_text("first")
         await rt.process_natural_language(f"read the file at {f1}")
 
-        results = await rt.recall_similar("read the file")
+        results = await rt.dream_adapter.recall_similar("read the file")
         assert len(results) >= 1
         assert "first.txt" in results[0].user_input
 

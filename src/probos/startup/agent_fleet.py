@@ -4,8 +4,8 @@ Creates agent pools, builds the codebase index, refreshes intent
 descriptors, wires strategy advisors, and spawns red-team agents.
 
 Note: The AgentOnboardingService is created in start() *before* this
-phase runs, because _wire_agent (called during pool creation) depends
-on self._onboarding being set.
+phase runs, because wire_agent (called during pool creation) depends
+on self.onboarding being set.
 """
 
 from __future__ import annotations

@@ -21,7 +21,8 @@ def _make_engine_and_rt(trust_score=0.55):
     rt.ward_room.list_channels = AsyncMock(return_value=[])
     rt.trust_network = MagicMock()
     rt.trust_network.get_score = MagicMock(return_value=trust_score)
-    rt._extract_endorsements = MagicMock(return_value=("", []))
+    rt.ward_room_router = MagicMock()
+    rt.ward_room_router.extract_endorsements = MagicMock(return_value=("", []))
     rt._records_store = MagicMock()
     rt._records_store.write_notebook = AsyncMock()
     rt.ontology = None

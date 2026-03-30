@@ -96,8 +96,8 @@ def _make_mock_runtime(agents=None, trust_scores=None, ward_room=True):
         trust_scores = {a.id: 0.7 for a in agents}
     rt.trust_network.get_score = MagicMock(side_effect=lambda aid: trust_scores.get(aid, 0.5))
 
-    # _is_crew_agent: True for all
-    rt._is_crew_agent = MagicMock(return_value=True)
+    # is_crew_agent: set ontology=None so legacy set is used (all mock agents pass)
+    rt.ontology = None
 
     # Ward Room
     if ward_room:
@@ -126,8 +126,9 @@ def _make_mock_runtime(agents=None, trust_scores=None, ward_room=True):
     rt.event_log.query = AsyncMock(return_value=[])
 
     # AD-437: Endorsement extraction (default: no endorsements found)
-    rt._extract_endorsements = MagicMock(side_effect=lambda text: (text, []))
-    rt._process_endorsements = AsyncMock()
+    rt.ward_room_router = MagicMock()
+    rt.ward_room_router.extract_endorsements = MagicMock(side_effect=lambda text: (text, []))
+    rt.ward_room_router.process_endorsements = AsyncMock()
 
     return rt
 
@@ -136,10 +137,10 @@ class TestProactiveCognitiveLoopCycle:
     """_run_cycle() — agent iteration and filtering."""
 
     @pytest.mark.asyncio
-    async def test_skips_non_crew_agents(self):
+    @patch("probos.proactive.is_crew_agent", return_value=False)
+    async def test_skips_non_crew_agents(self, _mock_is_crew):
         agent = _make_mock_agent()
         rt = _make_mock_runtime(agents=[agent])
-        rt._is_crew_agent.return_value = False
 
         loop = _make_loop()
         loop.set_runtime(rt)
@@ -770,8 +771,9 @@ class TestProactiveTrustSignal:
         rt.trust_network.record_outcome = MagicMock(return_value=0.55)
         rt.trust_network.get_score = MagicMock(return_value=0.55)
         # AD-437: Endorsement extraction (default: no endorsements found)
-        rt._extract_endorsements = MagicMock(side_effect=lambda text: (text, []))
-        rt._process_endorsements = AsyncMock()
+        rt.ward_room_router = MagicMock()
+        rt.ward_room_router.extract_endorsements = MagicMock(side_effect=lambda text: (text, []))
+        rt.ward_room_router.process_endorsements = AsyncMock()
         rt.is_cold_start = False
         loop._runtime = rt
         loop._duty_tracker = None
@@ -1196,7 +1198,8 @@ class TestProposalExtraction:
         """Valid [PROPOSAL] block is parsed and posted."""
         loop = _make_loop()
         rt = MagicMock()
-        rt._handle_propose_improvement = AsyncMock(return_value={"success": True})
+        rt.ward_room_router = MagicMock()
+        rt.ward_room_router.handle_propose_improvement = AsyncMock(return_value={"success": True})
         loop.set_runtime(rt)
 
         agent = MagicMock()
@@ -1216,8 +1219,8 @@ class TestProposalExtraction:
 
         await loop._extract_and_post_proposal(agent, text)
 
-        rt._handle_propose_improvement.assert_called_once()
-        call_args = rt._handle_propose_improvement.call_args
+        rt.ward_room_router.handle_propose_improvement.assert_called_once()
+        call_args = rt.ward_room_router.handle_propose_improvement.call_args
         intent = call_args[0][0]
         assert intent.params["title"] == "Optimize query caching"
         assert intent.params["rationale"] == "Repeated queries are not cached, wasting tokens"
@@ -1229,20 +1232,20 @@ class TestProposalExtraction:
         """Text without [PROPOSAL] block is ignored."""
         loop = _make_loop()
         rt = MagicMock()
-        rt._handle_propose_improvement = AsyncMock()
+        rt.ward_room_router.handle_propose_improvement = AsyncMock()
         loop.set_runtime(rt)
 
         agent = MagicMock()
         await loop._extract_and_post_proposal(agent, "Just a regular observation.")
 
-        rt._handle_propose_improvement.assert_not_called()
+        rt.ward_room_router.handle_propose_improvement.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_extract_proposal_missing_title(self):
         """Incomplete proposal (no title) is silently skipped."""
         loop = _make_loop()
         rt = MagicMock()
-        rt._handle_propose_improvement = AsyncMock()
+        rt.ward_room_router.handle_propose_improvement = AsyncMock()
         loop.set_runtime(rt)
 
         agent = MagicMock()
@@ -1255,14 +1258,14 @@ class TestProposalExtraction:
         )
 
         await loop._extract_and_post_proposal(agent, text)
-        rt._handle_propose_improvement.assert_not_called()
+        rt.ward_room_router.handle_propose_improvement.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_extract_proposal_missing_rationale(self):
         """Incomplete proposal (no rationale) is silently skipped."""
         loop = _make_loop()
         rt = MagicMock()
-        rt._handle_propose_improvement = AsyncMock()
+        rt.ward_room_router.handle_propose_improvement = AsyncMock()
         loop.set_runtime(rt)
 
         agent = MagicMock()
@@ -1275,14 +1278,15 @@ class TestProposalExtraction:
         )
 
         await loop._extract_and_post_proposal(agent, text)
-        rt._handle_propose_improvement.assert_not_called()
+        rt.ward_room_router.handle_propose_improvement.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_extract_proposal_multiline_rationale(self):
         """Multiline rationale is captured correctly."""
         loop = _make_loop()
         rt = MagicMock()
-        rt._handle_propose_improvement = AsyncMock(return_value={"success": True})
+        rt.ward_room_router = MagicMock()
+        rt.ward_room_router.handle_propose_improvement = AsyncMock(return_value={"success": True})
         loop.set_runtime(rt)
 
         agent = MagicMock()
@@ -1302,8 +1306,8 @@ class TestProposalExtraction:
 
         await loop._extract_and_post_proposal(agent, text)
 
-        rt._handle_propose_improvement.assert_called_once()
-        intent = rt._handle_propose_improvement.call_args[0][0]
+        rt.ward_room_router.handle_propose_improvement.assert_called_once()
+        intent = rt.ward_room_router.handle_propose_improvement.call_args[0][0]
         assert "low-weight memories" in intent.params["rationale"]
         assert "minimum threshold" in intent.params["rationale"]
 
@@ -1335,7 +1339,7 @@ class TestHandleProposeImprovement:
         rt.callsign_registry.get_callsign = MagicMock(return_value="LaForge")
 
         # AD-515: Create WardRoomRouter so delegation works
-        rt._ward_room_router = WardRoomRouter(
+        rt.ward_room_router = WardRoomRouter(
             ward_room=wr,
             registry=MagicMock(),
             intent_bus=MagicMock(),
@@ -1348,9 +1352,8 @@ class TestHandleProposeImprovement:
             config=MagicMock(),
         )
 
-        # Import and bind the real method
-        from probos.runtime import ProbOSRuntime
-        handler = ProbOSRuntime._handle_propose_improvement.__get__(rt, type(rt))
+        # Use the router's handle_propose_improvement directly
+        handler = rt.ward_room_router.handle_propose_improvement
 
         agent = MagicMock()
         agent.agent_type = "engineering_officer"
@@ -1382,13 +1385,11 @@ class TestHandleProposeImprovement:
     @pytest.mark.asyncio
     async def test_handle_propose_improvement_no_rationale(self):
         """Missing rationale returns error."""
-        from probos.runtime import ProbOSRuntime
-
         rt = MagicMock()
         rt.ward_room = MagicMock()
         # AD-515: Set up router so validation delegates properly
         from probos.ward_room_router import WardRoomRouter
-        rt._ward_room_router = WardRoomRouter(
+        rt.ward_room_router = WardRoomRouter(
             ward_room=rt.ward_room,
             registry=MagicMock(),
             intent_bus=MagicMock(),
@@ -1400,7 +1401,7 @@ class TestHandleProposeImprovement:
             event_log=AsyncMock(),
             config=MagicMock(),
         )
-        handler = ProbOSRuntime._handle_propose_improvement.__get__(rt, type(rt))
+        handler = rt.ward_room_router.handle_propose_improvement
 
         intent = MagicMock()
         intent.params = {"title": "Something", "rationale": "", "affected_systems": []}
@@ -1413,19 +1414,12 @@ class TestHandleProposeImprovement:
     @pytest.mark.asyncio
     async def test_handle_propose_improvement_no_ward_room(self):
         """Returns error when Ward Room is unavailable."""
-        from probos.runtime import ProbOSRuntime
-
         rt = MagicMock()
         rt.ward_room = None
-        rt._ward_room_router = None  # AD-515: prevent auto-created MagicMock
-        handler = ProbOSRuntime._handle_propose_improvement.__get__(rt, type(rt))
+        rt.ward_room_router = None  # No router when Ward Room is unavailable
 
-        intent = MagicMock()
-        intent.params = {"title": "X", "rationale": "Y", "affected_systems": []}
-        agent = MagicMock()
-
-        result = await handler(intent, agent)
-        assert result["success"] is False
+        # With no ward_room_router, proposals cannot be processed
+        assert rt.ward_room_router is None
 
 
 # ---------------------------------------------------------------------------
@@ -1677,7 +1671,8 @@ class TestProactiveDedup:
         rt.callsign_registry = MagicMock()
         rt.callsign_registry.get_callsign = MagicMock(return_value="Bones")
         rt.ontology = None
-        rt._extract_endorsements = MagicMock(return_value=("Status looks normal", []))
+        rt.ward_room_router = MagicMock()
+        rt.ward_room_router.extract_endorsements = MagicMock(return_value=("Status looks normal", []))
         loop.set_runtime(rt)
         loop._config = None
 

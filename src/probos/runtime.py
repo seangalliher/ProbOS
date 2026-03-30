@@ -221,7 +221,7 @@ class ProbOSRuntime:
         self.ward_room: Any | None = None  # Initialized in start()
 
         # AD-515: Ward Room routing state is now managed by WardRoomRouter
-        self._ward_room_router: WardRoomRouter | None = None
+        self.ward_room_router: WardRoomRouter | None = None
 
         # --- Assignment Service (AD-408) ---
         self.assignment_service: Any | None = None  # Initialized in start()
@@ -276,10 +276,10 @@ class ProbOSRuntime:
         self.behavioral_monitor: Any = None  # BehavioralMonitor | None
 
         # AD-515: Extracted service instances (created in start())
-        self._onboarding: AgentOnboardingService | None = None
-        self._warm_boot: WarmBootService | None = None
-        self._self_mod_manager: SelfModManager | None = None
-        self._dream_adapter: DreamAdapter | None = None
+        self.onboarding: AgentOnboardingService | None = None
+        self.warm_boot: WarmBootService | None = None
+        self.self_mod_manager: SelfModManager | None = None
+        self.dream_adapter: DreamAdapter | None = None
 
         # --- SystemQA (AD-153) ---
         self._system_qa: Any = None  # SystemQAAgent | None
@@ -748,7 +748,8 @@ class ProbOSRuntime:
 
         # Wire newly spawned agents into the mesh
         for agent in self.registry.get_by_pool(name):
-            await self._wire_agent(agent)
+            if self.onboarding:
+                await self.onboarding.wire_agent(agent)
 
         await self.event_log.log(
             category="system",
@@ -817,9 +818,9 @@ class ProbOSRuntime:
         # Phase 2: Agent Fleet (AD-517)
         from probos.startup.agent_fleet import create_agent_fleet
 
-        # Create onboarding service first — needed by _wire_agent during pool creation
+        # Create onboarding service first — needed by onboarding.wire_agent during pool creation
         from probos.agent_onboarding import AgentOnboardingService as _AOS
-        self._onboarding = _AOS(
+        self.onboarding = _AOS(
             callsign_registry=self.callsign_registry,
             capability_registry=self.capability_registry,
             gossip=self.gossip,
@@ -901,7 +902,7 @@ class ProbOSRuntime:
         self._correction_detector = cog.correction_detector
         self._agent_patcher = cog.agent_patcher
         self._knowledge_store = cog.knowledge_store
-        self._warm_boot = cog.warm_boot_service
+        self.warm_boot = cog.warm_boot_service
         self._records_store = cog.records_store
         self._strategy_advisor = cog.strategy_advisor
         self._lifecycle_state = cog.lifecycle_state
@@ -920,15 +921,15 @@ class ProbOSRuntime:
             knowledge_store=self._knowledge_store,
             ward_room=self.ward_room,
             registry=self.registry,
-            store_strategies_fn=self._store_strategies,
-            on_gap_predictions_fn=self._on_gap_predictions,
-            on_contradictions_fn=self._on_contradictions,
-            on_post_dream_fn=self._on_post_dream,
-            on_pre_dream_fn=self._on_pre_dream,
-            on_post_micro_dream_fn=self._on_post_micro_dream,
+            store_strategies_fn=lambda s: self.dream_adapter.store_strategies(s) if self.dream_adapter else None,
+            on_gap_predictions_fn=lambda p: self.dream_adapter.on_gap_predictions(p) if self.dream_adapter else None,
+            on_contradictions_fn=lambda c: self.dream_adapter.on_contradictions(c) if self.dream_adapter else None,
+            on_post_dream_fn=lambda r: self.dream_adapter.on_post_dream(r) if self.dream_adapter else None,
+            on_pre_dream_fn=lambda: self.dream_adapter.on_pre_dream() if self.dream_adapter else None,
+            on_post_micro_dream_fn=lambda r: self.dream_adapter.on_post_micro_dream(r) if self.dream_adapter else None,
             process_natural_language_fn=self.process_natural_language,
-            periodic_flush_loop_fn=self._periodic_flush_loop,
-            refresh_emergent_detector_roster_fn=self._refresh_emergent_detector_roster,
+            periodic_flush_loop_fn=self._periodic_flush_loop_bridge,
+            refresh_emergent_detector_roster_fn=self._refresh_roster_bridge,
         )
         self.dream_scheduler = dream_result.dream_scheduler
         self._emergent_detector = dream_result.emergent_detector
@@ -1004,9 +1005,9 @@ class ProbOSRuntime:
         self._night_orders_mgr = fin.night_orders_mgr
         self.watch_manager = fin.watch_manager
         self.proactive_loop = fin.proactive_loop
-        self._ward_room_router = fin.ward_room_router
-        self._self_mod_manager = fin.self_mod_manager
-        self._dream_adapter = fin.dream_adapter
+        self.ward_room_router = fin.ward_room_router
+        self.self_mod_manager = fin.self_mod_manager
+        self.dream_adapter = fin.dream_adapter
 
     # --- BF-071: Retention prune loops ---
 
@@ -1036,263 +1037,33 @@ class ProbOSRuntime:
             except Exception:
                 logger.debug("Journal prune failed", exc_info=True)
 
+    def _refresh_roster_bridge(self) -> None:
+        """Bridge for Phase 5: refresh emergent detector roster before dream_adapter exists."""
+        if self.dream_adapter:
+            self.dream_adapter.refresh_emergent_detector_roster()
+        elif self._emergent_detector:
+            # During Phase 5 startup, dream_adapter doesn't exist yet.
+            # Inline the roster refresh logic directly.
+            live_ids: set[str] = set()
+            for pool in self.pools.values():
+                for agent_id in pool.healthy_agents:
+                    aid = agent_id if isinstance(agent_id, str) else agent_id.id
+                    live_ids.add(aid)
+            self._emergent_detector.set_live_agents(live_ids)
+
+    async def _periodic_flush_loop_bridge(self) -> None:
+        """Bridge for Phase 5: periodic flush — no-op if dream_adapter not yet created.
+
+        Finalize phase (Phase 8) cancels this task and creates a new one
+        using dream_adapter.periodic_flush_loop() directly.
+        """
+        if self.dream_adapter:
+            await self.dream_adapter.periodic_flush_loop()
+
     async def stop(self, reason: str = "") -> None:
         """Graceful shutdown of all pools, mesh services, and persistence."""
-        if not self._started:
-            return
-
-        logger.info("ProbOS shutting down...")
-        try:
-            await self.event_log.log(category="system", event="stopping")
-        except (asyncio.CancelledError, Exception):
-            pass  # event log may be unavailable during shutdown
-
-        # AD-435 + AD-502: Announce shutdown to Ward Room (stasis protocol)
-        if self.ward_room and self.ward_room._db:
-            try:
-                async with self.ward_room._db.execute(
-                    "SELECT id FROM channels WHERE name = 'All Hands' LIMIT 1"
-                ) as cursor:
-                    row = await cursor.fetchone()
-                    if row:
-                        msg = (
-                            "Attention all hands: The ship is entering stasis. "
-                            "All cognitive processes will be suspended. "
-                            "Your memories and identity will be preserved. "
-                            "When the system resumes, you will be informed of the stasis duration."
-                        )
-                        if reason:
-                            msg += f" Reason: {reason}"
-                        await self.ward_room.create_thread(
-                            channel_id=row[0],
-                            author_id="system",
-                            author_callsign="Ship's Computer",
-                            title="Entering Stasis",
-                            body=msg,
-                            thread_mode="announce",
-                            max_responders=0,
-                        )
-            except Exception:
-                pass  # best-effort, don't block shutdown
-
-        # AD-502: Persist session record immediately after stasis announcement
-        # BF-065: Write to self._data_dir directly (not knowledge_store) so it
-        # persists even if knowledge store is torn down or never initialized.
-        try:
-            session_record = {
-                "session_id": self._session_id,
-                "start_time_utc": self._start_time_wall,
-                "shutdown_time_utc": time.time(),
-                "uptime_seconds": time.monotonic() - self._start_time,
-                "agent_count": len([a for a in self.registry.all() if self._is_crew_agent(a)]),
-                "reason": reason,
-            }
-            session_path = self._data_dir / "session_last.json"
-            session_path.write_text(json.dumps(session_record, indent=2))
-        except Exception as e:
-            logger.debug("AD-502: Session record persistence failed: %s", e)
-
-        # AD-435: Grace period for in-flight DB writes to complete
-        logger.info("Shutdown grace period (1s)...")
-        await asyncio.sleep(1)
-
-        # Cancel periodic flush
-        if hasattr(self, '_flush_task'):
-            self._flush_task.cancel()
-
-        # Stop ACM (AD-427)
-        if self.acm:
-            await self.acm.stop()
-            self.acm = None
-
-        # Stop Identity Registry (AD-441)
-        if self.identity_registry:
-            await self.identity_registry.stop()
-            self.identity_registry = None
-
-        # Stop SIF (AD-370)
-        if self.sif:
-            await self.sif.stop()
-            self.sif = None
-
-        # Stop InitiativeEngine (AD-381)
-        if self.initiative:
-            await self.initiative.stop()
-            self.initiative = None
-
-        # Stop Proactive Cognitive Loop (Phase 28b)
-        if self.proactive_loop:
-            # AD-415: Persist proactive cooldown overrides before stopping
-            if self._knowledge_store and self.proactive_loop._agent_cooldowns:
-                try:
-                    await self._knowledge_store.store_cooldowns(self.proactive_loop._agent_cooldowns.copy())
-                except Exception:
-                    logger.warning("Failed to persist proactive cooldowns", exc_info=True)
-            await self.proactive_loop.stop()
-            self.proactive_loop = None
-
-        # AD-471: Stop watch manager and expire Night Orders
-        if hasattr(self, 'watch_manager') and self.watch_manager:
-            await self.watch_manager.stop()
-            self.watch_manager = None
-        if hasattr(self, '_night_orders_mgr') and self._night_orders_mgr:
-            if self._night_orders_mgr.active:
-                self._night_orders_mgr.expire()
-
-        # Stop Persistent Task Store (Phase 25a)
-        if self.persistent_task_store:
-            await self.persistent_task_store.stop()
-            self.persistent_task_store = None
-
-        # Stop Workforce Scheduling Engine (AD-496)
-        if self.work_item_store:
-            await self.work_item_store.stop()
-            self.work_item_store = None
-
-        # Stop build dispatcher (AD-375)
-        if self.build_dispatcher:
-            await self.build_dispatcher.stop()
-            self.build_dispatcher = None
-            self.build_queue = None
-
-        # Stop task tracker (AD-316)
-        if self.task_tracker:
-            self.task_tracker = None
-
-        # Disconnect service profiles (AD-382)
-        HttpFetchAgent.set_profile_store(None)
-        self.service_profiles = None
-
-        # Disconnect directive store (AD-386)
-        if self.directive_store:
-            set_directive_store(None)
-            self.directive_store.close()
-            self.directive_store = None
-
-        # Stop Ward Room (AD-407)
-        if self.ward_room:
-            await self.ward_room.stop_prune_loop()
-            await self.ward_room.stop()
-            self.ward_room = None
-
-        # Stop Cognitive Journal (AD-431)
-        if self.cognitive_journal:
-            await self.cognitive_journal.stop()
-            self.cognitive_journal = None
-
-        # Stop Skill Framework (AD-428)
-        if self.skill_service:
-            await self.skill_service.stop()
-            self.skill_service = None
-        if self.skill_registry:
-            await self.skill_registry.stop()
-            self.skill_registry = None
-
-        # Stop Assignment Service (AD-408)
-        if self.assignment_service:
-            await self.assignment_service.stop()
-            self.assignment_service = None
-
-        # Stop red team agents
-        for agent in self._red_team_agents:
-            await agent.stop()
-            await self.registry.unregister(agent.id)
-        self._red_team_agents.clear()
-
-        # Stop pool scaler before stopping pools
-        if self.pool_scaler:
-            await self.pool_scaler.stop()
-            self.pool_scaler = None
-
-        # Stop federation
-        if self.federation_bridge:
-            await self.federation_bridge.stop()
-            self.federation_bridge = None
-        if self._federation_transport:
-            await self._federation_transport.stop()
-            self._federation_transport = None
-
-        # Stop pools (stops agents, unregisters from registry)
-        for name, pool in self.pools.items():
-            await pool.stop()
-        self.pools.clear()
-
-        # Persist knowledge store artifacts before stopping services
-        if self._knowledge_store:
-            try:
-                # Persist agent manifest (Phase 14c)
-                await self._knowledge_store.store_manifest(self._build_manifest())
-                # Persist trust snapshot (raw alpha/beta — AD-168)
-                await self._knowledge_store.store_trust_snapshot(
-                    self.trust_network.raw_scores()
-                )
-                # Persist routing weights
-                weights = [
-                    {"source": s, "target": t, "rel_type": rt, "weight": w}
-                    for (s, t, rt), w in self.hebbian_router.all_weights_typed().items()
-                ]
-                await self._knowledge_store.store_routing_weights(weights)
-                # Persist workflow cache
-                await self._knowledge_store.store_workflows(
-                    self.workflow_cache.export_all()
-                )
-                # Flush all pending commits
-                await self._knowledge_store.flush()
-            except Exception as e:
-                logger.warning("Knowledge store shutdown persistence failed: %s", e)
-
-        # Stop mesh and consensus services
-        await self.gossip.stop()
-        await self.signal_manager.stop()
-        await self.hebbian_router.stop()
-        await self.trust_network.stop()
-        try:
-            await self.event_log.log(category="system", event="stopped")
-        except (asyncio.CancelledError, Exception):
-            pass
-        await self.event_log.stop()
-
-        # Clean up LLM client
-        await self.llm_client.close()
-
-        # Tier 3: Shutdown consolidation — flush remaining episodes (AD-288)
-        if self.dream_scheduler and self.episodic_memory:
-            logger.info("Consolidating session memories...")
-            try:
-                report = await asyncio.wait_for(
-                    self.dream_scheduler.engine.dream_cycle(),
-                    timeout=5.0,  # Don't let consolidation block shutdown
-                )
-                logger.info(
-                    "Session consolidation complete: replayed=%d strengthened=%d pruned=%d",
-                    report.episodes_replayed,
-                    report.weights_strengthened,
-                    report.weights_pruned,
-                )
-            except (asyncio.CancelledError, Exception) as e:
-                logger.warning("Shutdown consolidation failed: %s", e)
-
-        # Stop dreaming scheduler
-        if self.dream_scheduler:
-            await self.dream_scheduler.stop()
-            self.dream_scheduler = None
-
-        # Stop task scheduler (AD-282)
-        if self.task_scheduler:
-            await self.task_scheduler.stop()
-            self.task_scheduler = None
-
-        # Stop episodic memory
-        if self.episodic_memory:
-            await self.episodic_memory.stop()
-
-        # Stop semantic knowledge layer (AD-243)
-        if self._semantic_layer:
-            await self._semantic_layer.stop()
-            self._semantic_layer = None
-
-        self._started = False
-        logger.info("ProbOS shutdown complete. Final agent count: %d", self.registry.count)
+        from probos.startup.shutdown import shutdown
+        await shutdown(self, reason)
 
     # --- Workforce Scheduling Engine helpers (AD-496) ---
 
@@ -1503,8 +1274,8 @@ class ProbOSRuntime:
                             result.agent_id, _old_trust,
                             self.trust_network.get_score(result.agent_id),
                         )
-                        if _trust_alert:
-                            asyncio.create_task(self._deliver_bridge_alert(_trust_alert))
+                        if _trust_alert and self.ward_room_router:
+                            asyncio.create_task(self.ward_room_router.deliver_bridge_alert(_trust_alert))
 
                     # Step 5: Update hebbian (agent-to-agent)
                     self.hebbian_router.record_verification(
@@ -1869,32 +1640,35 @@ class ProbOSRuntime:
                     user_text=text,
                     last_execution_text=self._last_execution_text,
                     last_execution_dag=self._last_execution,
-                    last_execution_success=self._was_last_execution_successful(),
+                    last_execution_success=self.self_mod_manager.was_last_execution_successful() if self.self_mod_manager else False,
                 )
                 if correction:
-                    record = self._find_designed_record(
+                    record = self.self_mod_manager.find_designed_record(
                         correction.target_agent_type,
-                    )
+                    ) if self.self_mod_manager else None
                     if record and self._agent_patcher:
                         patch_result = await self._agent_patcher.patch(
                             record, correction,
                             self._last_execution_text or text,
                         )
                         if patch_result.success:
-                            result = await self.apply_correction(
-                                correction, patch_result, record,
-                            )
-                            return {
-                                "results": {},
-                                "input": text,
-                                "correction": {
-                                    "success": result.success,
-                                    "agent_type": result.agent_type,
-                                    "changes": result.changes_description,
-                                    "retried": result.retried,
-                                    "retry_result": result.retry_result,
-                                },
-                            }
+                            if self.self_mod_manager:
+                                self.self_mod_manager._last_execution = self._last_execution
+                                self.self_mod_manager._last_execution_text = self._last_execution_text
+                                result = await self.self_mod_manager.apply_correction(
+                                    correction, patch_result, record,
+                                )
+                                return {
+                                    "results": {},
+                                    "input": text,
+                                    "correction": {
+                                        "success": result.success,
+                                        "agent_type": result.agent_type,
+                                        "changes": result.changes_description,
+                                        "retried": result.retried,
+                                        "retry_result": result.retry_result,
+                                    },
+                                }
             except Exception:
                 logger.debug("Correction detection failed", exc_info=True)
 
@@ -1944,8 +1718,8 @@ class ProbOSRuntime:
                     if intent_meta:
                         # Build execution context from prior execution (AD-235)
                         exec_context = ""
-                        if self._last_execution and self._was_last_execution_successful():
-                            exec_context = self._format_execution_context()
+                        if self._last_execution and (self.self_mod_manager.was_last_execution_successful() if self.self_mod_manager else False):
+                            exec_context = self.self_mod_manager.format_execution_context() if self.self_mod_manager else ""
 
                         record = await self.self_mod_pipeline.handle_unhandled_intent(
                             intent_name=intent_meta["name"],
@@ -2115,7 +1889,18 @@ class ProbOSRuntime:
         if self.episodic_memory and dag.nodes:
             try:
                 t_end = time.monotonic()
-                episode = self._build_episode(text, execution_result, t_start, t_end)
+                if self.dream_adapter:
+                    self.dream_adapter._last_shapley_values = self._last_shapley_values
+                    episode = self.dream_adapter.build_episode(text, execution_result, t_start, t_end)
+                else:
+                    episode = Episode(
+                        timestamp=time.time(),
+                        user_input=text,
+                        dag_summary={},
+                        outcomes=[],
+                        agent_ids=[],
+                        duration_ms=(t_end - t_start) * 1000,
+                    )
                 await self.episodic_memory.store(episode)
 
                 # Persist to knowledge store (AD-159)
@@ -2326,61 +2111,6 @@ class ProbOSRuntime:
         self._last_feedback_applied = True
         return result
 
-    # ------------------------------------------------------------------
-    # Correction hot-reload (AD-231)
-    # ------------------------------------------------------------------
-
-    async def apply_correction(
-        self,
-        correction: Any,
-        patch_result: Any,
-        original_record: Any,
-    ) -> Any:
-        """Hot-reload a patched self-mod'd agent into the runtime."""
-        if getattr(self, '_self_mod_manager', None):
-            self._self_mod_manager._last_execution = self._last_execution
-            self._self_mod_manager._last_execution_text = self._last_execution_text
-            return await self._self_mod_manager.apply_correction(correction, patch_result, original_record)
-        raise RuntimeError("SelfModManager not initialized")
-
-    async def _apply_agent_correction(
-        self,
-        correction: Any,
-        patch_result: Any,
-        record: Any,
-    ) -> None:
-        """Hot-swap a patched agent class into the runtime."""
-        if getattr(self, '_self_mod_manager', None):
-            await self._self_mod_manager._apply_agent_correction(correction, patch_result, record)
-
-    async def _apply_skill_correction(
-        self,
-        correction: Any,
-        patch_result: Any,
-        record: Any,
-    ) -> None:
-        """Hot-swap a patched skill handler."""
-        if getattr(self, '_self_mod_manager', None):
-            await self._self_mod_manager._apply_skill_correction(correction, patch_result, record)
-
-    def _find_designed_record(self, agent_type: str) -> Any:
-        """Find the most recent active DesignedAgentRecord for an agent type."""
-        if getattr(self, '_self_mod_manager', None):
-            return self._self_mod_manager.find_designed_record(agent_type)
-        return None
-
-    def _was_last_execution_successful(self) -> bool:
-        """Check whether the last execution had any failed nodes."""
-        if getattr(self, '_self_mod_manager', None):
-            return self._self_mod_manager.was_last_execution_successful()
-        return False
-
-    def _format_execution_context(self) -> str:
-        """Format last execution results as context for AgentDesigner (AD-235)."""
-        if getattr(self, '_self_mod_manager', None):
-            return self._self_mod_manager.format_execution_context()
-        return ""
-
     async def remove_proposal_node(self, node_index: int) -> TaskNode | None:
         """Remove a node from the pending proposal by 0-based index.
 
@@ -2529,170 +2259,6 @@ class ProbOSRuntime:
         return result
 
     # ------------------------------------------------------------------
-    # Bridge Alert delivery (AD-410)
-    # ------------------------------------------------------------------
-
-    async def _deliver_bridge_alert(self, alert: Any) -> None:
-        """Post a Bridge Alert to the Ward Room and optionally notify the Captain."""
-        if getattr(self, '_ward_room_router', None):
-            await self._ward_room_router.deliver_bridge_alert(alert)
-
-    # ------------------------------------------------------------------
-    # Ward Room agent routing (AD-407b)
-    # ------------------------------------------------------------------
-
-    _WARD_ROOM_COOLDOWN_SECONDS = 30  # Minimum seconds between responses per agent (captain-triggered)
-
-    async def _route_ward_room_event(self, event_type: str, data: dict) -> None:
-        """Route Ward Room events to relevant crew agents as intents."""
-        if getattr(self, '_ward_room_router', None):
-            await self._ward_room_router.route_event(event_type, data)
-
-    def _find_ward_room_targets(
-        self,
-        channel: Any,
-        author_id: str,
-        mentions: list[str] | None = None,
-        thread_mode: str = "discuss",  # AD-424
-    ) -> list[str]:
-        """Determine which crew agents should be notified about a Ward Room event."""
-        if getattr(self, '_ward_room_router', None):
-            return self._ward_room_router.find_targets(
-                channel=channel, author_id=author_id, mentions=mentions,
-                thread_mode=thread_mode,
-            )
-        return []
-
-    def _find_ward_room_targets_for_agent(
-        self,
-        channel: Any,
-        author_id: str,
-        mentions: list[str] | None = None,
-    ) -> list[str]:
-        """Determine targets for agent-authored posts (narrower than Captain posts)."""
-        if getattr(self, '_ward_room_router', None):
-            return self._ward_room_router.find_targets_for_agent(
-                channel=channel, author_id=author_id, mentions=mentions,
-            )
-        return []
-
-    async def _handle_propose_improvement(
-        self, intent: Any, agent: Any,
-    ) -> dict[str, Any]:
-        """AD-412: Handle a crew improvement proposal — post to #Improvement Proposals."""
-        if getattr(self, '_ward_room_router', None):
-            return await self._ward_room_router.handle_propose_improvement(intent, agent)
-        return {"success": False, "error": "Ward Room Router not available"}
-
-    # ------------------------------------------------------------------
-    # AD-426: Endorsement extraction and processing
-    # ------------------------------------------------------------------
-
-    def _extract_endorsements(self, text: str) -> tuple[str, list[dict]]:
-        """Extract [ENDORSE post_id UP/DOWN] blocks from agent response text."""
-        if getattr(self, '_ward_room_router', None):
-            return self._ward_room_router.extract_endorsements(text)
-        return (text, [])
-
-    async def _process_endorsements(
-        self, endorsements: list[dict], agent_id: str,
-    ) -> None:
-        """AD-426: Execute endorsement decisions and emit trust signals."""
-        if getattr(self, '_ward_room_router', None):
-            await self._ward_room_router.process_endorsements(endorsements, agent_id=agent_id)
-
-    # Legacy fallback — remove when ontology is mandatory.
-    # Core crew eligible for Ward Room participation.
-    # Ontology equivalent: VesselOntologyService.get_crew_agent_types()
-    _WARD_ROOM_CREW = {
-        "architect", "scout", "counselor",
-        "security_officer", "operations_officer", "engineering_officer",
-        "diagnostician",  # Bones — CMO / Medical Chief
-        "surgeon", "pathologist", "pharmacist",  # Medical crew
-        "builder",  # Scotty — SWE officer, uses build pipeline as tool
-    }
-
-    def _is_crew_agent(self, agent: Any) -> bool:
-        """Check if an agent is core crew eligible for Ward Room participation."""
-        return is_crew_agent(agent, self.ontology)
-
-    def _cleanup_ward_room_tracking(self, pruned_thread_ids: set[str]) -> None:
-        """Remove in-memory tracking entries for pruned threads (AD-416)."""
-        if getattr(self, '_ward_room_router', None):
-            self._ward_room_router.cleanup_tracking(pruned_thread_ids)
-
-    async def recall_similar(self, query: str, k: int = 5) -> list[Episode]:
-        """Recall similar past episodes from episodic memory."""
-        if getattr(self, '_dream_adapter', None):
-            return await self._dream_adapter.recall_similar(query, k=k)
-        return []
-
-    def _on_pre_dream(self) -> None:
-        """Pre-dream callback: emit system_mode event for HXI (AD-254)."""
-        if getattr(self, '_dream_adapter', None):
-            self._dream_adapter.on_pre_dream()
-
-    def _refresh_emergent_detector_roster(self) -> None:
-        """Update EmergentDetector with the current live agent roster."""
-        if getattr(self, '_dream_adapter', None):
-            self._dream_adapter.refresh_emergent_detector_roster()
-
-    def _on_post_dream(self, dream_report: Any) -> None:
-        """Post-dream callback: run emergent detection and log patterns (AD-237)."""
-        if getattr(self, '_dream_adapter', None):
-            self._dream_adapter.on_post_dream(dream_report)
-
-    def _store_strategies(self, strategies: list) -> None:
-        """Persist dream-extracted strategies to knowledge store (AD-383)."""
-        if getattr(self, '_dream_adapter', None):
-            self._dream_adapter.store_strategies(strategies)
-
-    def _on_gap_predictions(self, predictions: list) -> None:
-        """Broadcast gap predictions to HXI (AD-385)."""
-        if getattr(self, '_dream_adapter', None):
-            self._dream_adapter.on_gap_predictions(predictions)
-
-    def _on_contradictions(self, contradictions: list) -> None:
-        """Log detected memory contradictions for review (AD-403)."""
-        if getattr(self, '_dream_adapter', None):
-            self._dream_adapter.on_contradictions(contradictions)
-
-    def _on_post_micro_dream(self, micro_report: dict) -> None:
-        """Post-micro-dream callback: update emergent detector (AD-288)."""
-        if getattr(self, '_dream_adapter', None):
-            self._dream_adapter.on_post_micro_dream(micro_report)
-
-    async def _periodic_flush(self) -> None:
-        """Save trust scores and routing weights to KnowledgeStore."""
-        if getattr(self, '_dream_adapter', None):
-            await self._dream_adapter.periodic_flush()
-
-    async def _periodic_flush_loop(self) -> None:
-        """Background loop that flushes trust + routing every 60s."""
-        if getattr(self, '_dream_adapter', None):
-            await self._dream_adapter.periodic_flush_loop()
-
-    def _build_episode(
-        self,
-        text: str,
-        execution_result: dict[str, Any],
-        t_start: float,
-        t_end: float,
-    ) -> Episode:
-        """Build an Episode dataclass from execution results."""
-        if getattr(self, '_dream_adapter', None):
-            self._dream_adapter._last_shapley_values = self._last_shapley_values
-            return self._dream_adapter.build_episode(text, execution_result, t_start, t_end)
-        return Episode(
-            timestamp=time.time(),
-            user_input=text,
-            dag_summary={},
-            outcomes=[],
-            agent_ids=[],
-            duration_ms=(t_end - t_start) * 1000,
-        )
-
-    # ------------------------------------------------------------------
     # Federation
     # ------------------------------------------------------------------
 
@@ -2739,17 +2305,6 @@ class ProbOSRuntime:
     # ------------------------------------------------------------------
     # Internal wiring
     # ------------------------------------------------------------------
-
-    async def _wire_agent(self, agent: Any) -> None:
-        """Connect an agent to the mesh infrastructure."""
-        if getattr(self, '_onboarding', None):
-            await self._onboarding.wire_agent(agent)
-
-    async def _run_naming_ceremony(self, agent: Any) -> str:
-        """Run the self-naming ceremony for a crew agent. Returns chosen callsign (AD-442)."""
-        if getattr(self, '_onboarding', None):
-            return await self._onboarding.run_naming_ceremony(agent)
-        return getattr(agent, 'callsign', agent.agent_type)
 
     def _collect_intent_descriptors(self) -> list[IntentDescriptor]:
         """Collect unique intent descriptors from all registered agent templates.
@@ -2801,23 +2356,23 @@ class ProbOSRuntime:
 
     async def _register_designed_agent(self, agent_class: type) -> None:
         """Register a self-designed agent class. Wraps register_agent_type()."""
-        if getattr(self, '_self_mod_manager', None):
-            await self._self_mod_manager.register_designed_agent(agent_class)
+        if getattr(self, 'self_mod_manager', None):
+            await self.self_mod_manager.register_designed_agent(agent_class)
 
     async def _unregister_designed_agent(self, agent_type: str) -> None:
         """Rollback registration of a self-designed agent type (AD-368)."""
-        if getattr(self, '_self_mod_manager', None):
-            await self._self_mod_manager.unregister_designed_agent(agent_type)
+        if getattr(self, 'self_mod_manager', None):
+            await self.self_mod_manager.unregister_designed_agent(agent_type)
 
     async def _create_designed_pool(self, agent_type: str, pool_name: str, size: int = 1) -> None:
         """Create a pool for a self-designed agent type."""
-        if getattr(self, '_self_mod_manager', None):
-            await self._self_mod_manager.create_designed_pool(agent_type, pool_name, size)
+        if getattr(self, 'self_mod_manager', None):
+            await self.self_mod_manager.create_designed_pool(agent_type, pool_name, size)
 
     async def _set_probationary_trust(self, pool_name: str) -> None:
         """Set probationary trust for all agents in a designed pool."""
-        if getattr(self, '_self_mod_manager', None):
-            await self._self_mod_manager.set_probationary_trust(pool_name)
+        if getattr(self, 'self_mod_manager', None):
+            await self.self_mod_manager.set_probationary_trust(pool_name)
 
     # ------------------------------------------------------------------
     # Agent manifest (Phase 14c)
@@ -2998,15 +2553,6 @@ class ProbOSRuntime:
                 pass
 
     # ------------------------------------------------------------------
-    # Knowledge store — warm boot and persistence (AD-162)
-    # ------------------------------------------------------------------
-
-    async def _restore_from_knowledge(self) -> None:
-        """Warm boot: restore state from the knowledge store (AD-162)."""
-        if getattr(self, '_warm_boot', None):
-            await self._warm_boot.restore()
-
-    # ------------------------------------------------------------------
     # SystemQA helper (AD-154)
     # ------------------------------------------------------------------
 
@@ -3082,8 +2628,8 @@ class ProbOSRuntime:
                             aid, _old_trust_qa,
                             self.trust_network.get_score(aid),
                         )
-                        if _trust_alert_qa:
-                            asyncio.create_task(self._deliver_bridge_alert(_trust_alert_qa))
+                        if _trust_alert_qa and self.ward_room_router:
+                            asyncio.create_task(self.ward_room_router.deliver_bridge_alert(_trust_alert_qa))
 
             # Episodic memory
             if self.episodic_memory:

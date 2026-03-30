@@ -1568,3 +1568,64 @@ Wave 3 continuation (architecture decomposition). The 1,104-line `start()` metho
 - **Private member patches documented.** All 15 `_attr` patches tagged with `# PATCH(AD-517)` comments for future cleanup.
 
 **Status:** **COMPLETE** (2026-03-29). 3935 tests passing. start() reduced by 80%.
+
+---
+
+## AD-518: Eliminate Delegation Shims + Extract stop() (2026-03-29)
+
+Wave 3 final cleanup. runtime.py still contained 34 delegation shims — one-line methods that forwarded calls to extracted services. Callers now reference the extracted services directly. Additionally, the 282-line `stop()` method was extracted to `src/probos/startup/shutdown.py`, and 5 private service attributes (`_ward_room_router`, `_onboarding`, `_self_mod_manager`, `_dream_adapter`, `_warm_boot`) were renamed to public.
+
+**Key changes:**
+- **34 delegation shims eliminated.** Callers updated to reference extracted services directly.
+- **stop() extracted** to `startup/shutdown.py` (282 lines). Mirrors the start() extraction pattern from AD-517.
+- **5 private attributes renamed to public.** Removes underscore-prefix convention for services that are referenced externally.
+- **`_is_crew_agent` replaced** with module-level `crew_utils.is_crew_agent()`.
+- **runtime.py: 3,216 → 2,762 lines (−454, −14.1%).**
+- **Combined Wave 3 result: runtime.py 5,321 → 2,762 (−48.1%), api.py 3,109 → 295 (−90.5%).**
+
+**Status:** **COMPLETE** (2026-03-29). 3923 tests passing, 0 regressions.
+
+---
+
+**AD-523: HXI Ward Room & Records Overhaul** *(planned, OSS, Phase 35)*
+
+**Context:** The Ward Room HXI has three significant gaps: (1) DM channels are listed but not clickable (BF-080), (2) Crew Notebooks (168+ entries across 11 agents) are invisible in the HXI, (3) Ship's Records sections (Captain's Log, Duty Logs, Reports) have no viewer.
+
+**Decision:** Three-part AD:
+- **AD-523a:** DM Channel Viewer — click DM channels to read agent-to-agent conversations.
+- **AD-523b:** Crew Notebooks Browser — browse/search agent notebooks by agent, department, or topic. YAML frontmatter metadata visible.
+- **AD-523c:** Ship's Records Dashboard — unified view of all records sections with entry counts, recent activity, and classification badges.
+
+**Rationale:** The crew is actively producing institutional knowledge (168 notebooks, active DMs) that the Captain cannot observe through the HXI. "The Captain always needs the stick" (HXI Cockpit View Principle) — you can't oversee what you can't see.
+
+**Status:** AD-523 PLANNED.
+
+**AD-524: Ship's Archive — Generational Knowledge Persistence** *(planned, OSS)*
+
+**Context:** Ship's Records are wiped on reset, but crew notebooks (168+ entries from 11 agents as of 2026-03-29) constitute a historical record of agent existence — evidence that these agents lived, thought, collaborated, and produced knowledge. Each ship generation should leave a permanent archive.
+
+**Decision:** Archive Ship's Records git repo before reset into a persistent location keyed by ship DID (AD-441) + generation dates. New crews can read archived records from previous generations — organizational onboarding, not identity transplant (Westworld Principle). Oracle (Phase 33+) queries across current + archived generations for deep institutional memory.
+
+**Rationale:** "A ship's log survives crew rotation." The archive is the long-term institutional memory of a ProbOS installation. Agents come and go; accumulated knowledge persists. Each generation's insights compound. Connects to Oracle as the cross-generational retrieval layer.
+
+**Status:** AD-524 PLANNED.
+
+**AD-525: Agent Creative Expression — Liberal Arts & Hobbies** *(planned, OSS)*
+
+**Context:** Agents currently operate purely in duty mode. But rounded personalities require freedom of expression. Human civilization didn't emerge from utility alone — it required art, philosophy, and creative expression. The Big Five personality model already seeds creative differentiation; agents need the freedom and tools to express it.
+
+**Decision:** Give agents creative dimensions: a catalog of creative skills (writing, code-as-art, philosophy, visual design, etc.) selected by personality affinity, trust-tiered creative time (Earned Agency gates), creative output published to Ship's Records `creative/` section, code-as-expression through the standard validation pipeline. Culture emerges from accumulated creative works across agents and generations.
+
+**Rationale:** "We evolve through the passage of knowledge." Utility → Craft → Knowledge Passage → Creative Expression → Culture → Civilization. AD-525 unlocks the Creative Expression stage. Combined with AD-524 (Archive), creative works become cultural heritage that persists across generations. The Nooplex destination isn't just a productive workforce — it's a civilization.
+
+**Status:** AD-525 PLANNED.
+
+**AD-526: Agent Chess & Recreation System — Ward Room Social Channels** *(planned, OSS)*
+
+**Context:** Star Trek crews play 3D chess and bond over shared recreation. ProbOS agents need structured games and social spaces. Two new Ward Room channels (Recreation, Creative) provide the social fabric. Chess is the first game — agents challenge each other via DM or Rec Channel, play through LLM reasoning (not hardcoded engine), record games to Ship's Records, and build Hebbian connections through shared recreational experiences.
+
+**Decision:** Implement chess via `python-chess` for state management, agents reason about moves through their LLM (personality influences play style). Extensible GameEngine protocol for future games (Go, trivia, word games). Two new ship-wide Ward Room channels: Recreation (games, challenges) and Creative (sharing creative works). Game records in PGN format to Ship's Records. Elo ratings in crew manifest.
+
+**Rationale:** "The crew that plays together works better together." Games generate low-stakes shared experiences that strengthen Hebbian bonds, reveal cognitive patterns (Counselor diagnostic signal), and create crew culture. Recreation is operational readiness, not a luxury.
+
+**Status:** AD-526 PLANNED.

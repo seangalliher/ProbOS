@@ -254,7 +254,8 @@ def _make_loop():
     rt.trust_network = MagicMock()
     rt.trust_network.get_score = MagicMock(return_value=0.6)
     rt.trust_network.record_outcome = MagicMock(return_value=0.6)
-    rt._extract_endorsements = MagicMock(return_value=("", []))
+    rt.ward_room_router = MagicMock()
+    rt.ward_room_router.extract_endorsements = MagicMock(return_value=("", []))
     rt._records_store = MagicMock()
     rt._records_store.write_notebook = AsyncMock()
     rt.ontology = None
@@ -267,7 +268,7 @@ def _make_loop():
     rt.event_log = None
     rt.skill_service = None
     rt.hebbian_router = None
-    rt._is_crew_agent = MagicMock(return_value=True)
+    rt.ontology = None  # is_crew_agent uses legacy set
     rt.acm = None
     rt.registry = MagicMock()
     rt.dream_scheduler = None

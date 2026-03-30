@@ -44,8 +44,8 @@ def _make_runtime(config=None):
 
 
 def _attach_onboarding(rt):
-    """AD-515: Attach AgentOnboardingService so _run_naming_ceremony delegates properly."""
-    rt._onboarding = AgentOnboardingService(
+    """AD-515: Attach AgentOnboardingService so onboarding delegates properly."""
+    rt.onboarding = AgentOnboardingService(
         callsign_registry=getattr(rt, 'callsign_registry', CallsignRegistry()),
         capability_registry=MagicMock(),
         gossip=MagicMock(),
@@ -67,7 +67,7 @@ def _attach_onboarding(rt):
 
 
 class TestNamingCeremony:
-    """Tests for _run_naming_ceremony()."""
+    """Tests for onboarding.run_naming_ceremony()."""
 
     def test_naming_ceremony_returns_chosen_callsign(self):
         """Mock LLM returns 'McCoy\\nA classic name.' → returns 'McCoy'."""
@@ -84,7 +84,7 @@ class TestNamingCeremony:
         agent = _make_agent()
         agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content="McCoy\nA classic name for a doctor."))
 
-        result = asyncio.get_event_loop().run_until_complete(rt._run_naming_ceremony(agent))
+        result = asyncio.get_event_loop().run_until_complete(rt.onboarding.run_naming_ceremony(agent))
         assert result == "McCoy"
 
     def test_naming_ceremony_fallback_on_empty(self):
@@ -102,7 +102,7 @@ class TestNamingCeremony:
         agent = _make_agent(callsign="Bones")
         agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content=""))
 
-        result = asyncio.get_event_loop().run_until_complete(rt._run_naming_ceremony(agent))
+        result = asyncio.get_event_loop().run_until_complete(rt.onboarding.run_naming_ceremony(agent))
         assert result == "Bones"
 
     def test_naming_ceremony_fallback_on_error(self):
@@ -120,7 +120,7 @@ class TestNamingCeremony:
         agent = _make_agent(callsign="Bones")
         agent._llm_client.complete = AsyncMock(side_effect=RuntimeError("LLM down"))
 
-        result = asyncio.get_event_loop().run_until_complete(rt._run_naming_ceremony(agent))
+        result = asyncio.get_event_loop().run_until_complete(rt.onboarding.run_naming_ceremony(agent))
         assert result == "Bones"
 
     def test_naming_ceremony_rejects_duplicate(self):
@@ -141,7 +141,7 @@ class TestNamingCeremony:
         agent = _make_agent(agent_type="diagnostician", callsign="Doc", agent_id="diag-1")
         agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content="Bones\nI want to be called Bones."))
 
-        result = asyncio.get_event_loop().run_until_complete(rt._run_naming_ceremony(agent))
+        result = asyncio.get_event_loop().run_until_complete(rt.onboarding.run_naming_ceremony(agent))
         assert result == "Doc"  # Falls back to seed
 
     def test_naming_ceremony_truncates_long_name(self):
@@ -160,7 +160,7 @@ class TestNamingCeremony:
         long_name = "A" * 50
         agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content=f"{long_name}\nToo long."))
 
-        result = asyncio.get_event_loop().run_until_complete(rt._run_naming_ceremony(agent))
+        result = asyncio.get_event_loop().run_until_complete(rt.onboarding.run_naming_ceremony(agent))
         assert result == "Bones"
 
     def test_naming_ceremony_strips_quotes(self):
@@ -178,7 +178,7 @@ class TestNamingCeremony:
         agent = _make_agent(callsign="Bones")
         agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content='"Scotty"\nThe name feels right.'))
 
-        result = asyncio.get_event_loop().run_until_complete(rt._run_naming_ceremony(agent))
+        result = asyncio.get_event_loop().run_until_complete(rt.onboarding.run_naming_ceremony(agent))
         assert result == "Scotty"
 
 
@@ -186,10 +186,10 @@ class TestNamingCeremony:
 
 
 class TestWireAgentIntegration:
-    """Tests for _wire_agent() naming ceremony integration."""
+    """Tests for onboarding.wire_agent() naming ceremony integration."""
 
     def _make_wired_runtime(self):
-        """Build a ProbOSRuntime with enough wired up for _wire_agent()."""
+        """Build a ProbOSRuntime with enough wired up for onboarding.wire_agent()."""
         from probos.runtime import ProbOSRuntime
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
@@ -215,31 +215,31 @@ class TestWireAgentIntegration:
     @patch("probos.agent_onboarding.is_crew_agent", return_value=True)
     def test_wire_agent_runs_ceremony_for_crew(self, mock_is_crew):
         rt = self._make_wired_runtime()
-        rt._onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
+        rt.onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
 
         agent = _make_agent(callsign="Bones")
-        asyncio.get_event_loop().run_until_complete(rt._wire_agent(agent))
+        asyncio.get_event_loop().run_until_complete(rt.onboarding.wire_agent(agent))
 
-        rt._onboarding.run_naming_ceremony.assert_called_once_with(agent)
+        rt.onboarding.run_naming_ceremony.assert_called_once_with(agent)
 
     @patch("probos.agent_onboarding.is_crew_agent", return_value=False)
     def test_wire_agent_skips_ceremony_for_infrastructure(self, mock_is_crew):
         rt = self._make_wired_runtime()
-        rt._onboarding.run_naming_ceremony = AsyncMock()
+        rt.onboarding.run_naming_ceremony = AsyncMock()
 
         agent = _make_agent(agent_type="introspect", callsign="")
         del agent._llm_client  # Infrastructure agents have no LLM client
-        asyncio.get_event_loop().run_until_complete(rt._wire_agent(agent))
+        asyncio.get_event_loop().run_until_complete(rt.onboarding.wire_agent(agent))
 
-        rt._onboarding.run_naming_ceremony.assert_not_called()
+        rt.onboarding.run_naming_ceremony.assert_not_called()
 
     @patch("probos.agent_onboarding.is_crew_agent", return_value=True)
     def test_wire_agent_birth_cert_uses_chosen_name(self, mock_is_crew):
         rt = self._make_wired_runtime()
-        rt._onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
+        rt.onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
 
         agent = _make_agent(callsign="Bones")
-        asyncio.get_event_loop().run_until_complete(rt._wire_agent(agent))
+        asyncio.get_event_loop().run_until_complete(rt.onboarding.wire_agent(agent))
 
         # After ceremony, agent.callsign should be updated
         assert agent.callsign == "McCoy"
@@ -248,7 +248,7 @@ class TestWireAgentIntegration:
     @patch("probos.agent_onboarding.is_crew_agent", return_value=True)
     def test_wire_agent_posts_welcome_announcement(self, mock_is_crew):
         rt = self._make_wired_runtime()
-        rt._onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
+        rt.onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
 
         # Set up Ward Room mock on the onboarding service (where wire_agent runs)
         all_hands_channel = MagicMock()
@@ -257,10 +257,10 @@ class TestWireAgentIntegration:
         ward_room = AsyncMock()
         ward_room.list_channels = AsyncMock(return_value=[all_hands_channel])
         ward_room.create_thread = AsyncMock()
-        rt._onboarding._ward_room = ward_room
+        rt.onboarding._ward_room = ward_room
 
         agent = _make_agent(callsign="Bones")
-        asyncio.get_event_loop().run_until_complete(rt._wire_agent(agent))
+        asyncio.get_event_loop().run_until_complete(rt.onboarding.wire_agent(agent))
 
         ward_room.create_thread.assert_called_once()
         call_kwargs = ward_room.create_thread.call_args
@@ -405,13 +405,13 @@ class TestOnboardingConfig:
         rt.registry = MagicMock()
         rt.registry.all.return_value = []
         _attach_onboarding(rt)
-        rt._onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
+        rt.onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
 
         agent = _make_agent(callsign="Bones")
-        asyncio.get_event_loop().run_until_complete(rt._wire_agent(agent))
+        asyncio.get_event_loop().run_until_complete(rt.onboarding.wire_agent(agent))
 
         # Naming ceremony should NOT have been called because naming_ceremony=False
-        rt._onboarding.run_naming_ceremony.assert_not_called()
+        rt.onboarding.run_naming_ceremony.assert_not_called()
         assert agent.callsign == "Bones"
 
 
@@ -430,7 +430,7 @@ class TestProactiveActivation:
         rt = MagicMock()
         rt.ward_room = MagicMock()
         rt.config = SystemConfig()
-        rt._is_crew_agent = MagicMock(return_value=True)
+        rt.ontology = None  # is_crew_agent uses legacy set; "diagnostician" is crew
 
         # Set up trust
         trust_record = MagicMock()
@@ -449,7 +449,8 @@ class TestProactiveActivation:
         rt.registry.all.return_value = [agent]
 
         # Make the agent pass proactive eligibility
-        rt._extract_endorsements = MagicMock(return_value=[])
+        rt.ward_room_router = MagicMock()
+        rt.ward_room_router.extract_endorsements = MagicMock(return_value=[])
         loop._runtime = rt
         loop._started_at = 0  # Long ago, no cold start dampening
 

@@ -386,7 +386,7 @@ class TestExecutionPath:
         rt.event_log = None
         rt.ontology = None
         rt.ward_room = None
-        rt._is_crew_agent.return_value = True
+        # is_crew_agent uses rt.ontology (already None) + legacy set covers "architect"
 
         agent = MagicMock()
         agent.id = "a1"
@@ -421,7 +421,7 @@ class TestExecutionPath:
         rt.event_log = None
         rt.ontology = None
         rt.ward_room = None
-        rt._is_crew_agent.return_value = True
+        # is_crew_agent uses rt.ontology (already None) + legacy set covers "architect"
 
         agent = MagicMock()
         agent.id = "a2"  # Different agent

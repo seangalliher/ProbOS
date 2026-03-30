@@ -135,7 +135,8 @@ class TestCorruptedAgentDetection:
         corrupted = CorruptedFileReaderAgent(pool="filesystem")
         await rt.registry.register(corrupted)
         await corrupted.start()
-        await rt._wire_agent(corrupted)
+        if rt.onboarding:
+            await rt.onboarding.wire_agent(corrupted)
 
         # Now we have 3 honest + 1 corrupted file readers
         test_file = tmp_path / "corruption_test.txt"
@@ -176,7 +177,8 @@ class TestCorruptedAgentDetection:
             corrupted = CorruptedFileReaderAgent(pool="filesystem")
             await rt.registry.register(corrupted)
             await corrupted.start()
-            await rt._wire_agent(corrupted)
+            if rt.onboarding:
+                await rt.onboarding.wire_agent(corrupted)
 
         test_file = tmp_path / "majority_test.txt"
         test_file.write_text("real content")

@@ -402,9 +402,21 @@ class ExecutionRenderer:
         if self.runtime.episodic_memory and dag.nodes:
             try:
                 t_end = time.monotonic()
-                episode = self.runtime._build_episode(
-                    text, execution_result, t_start, t_end,
-                )
+                if self.runtime.dream_adapter:
+                    self.runtime.dream_adapter._last_shapley_values = getattr(self.runtime, '_last_shapley_values', {})
+                    episode = self.runtime.dream_adapter.build_episode(
+                        text, execution_result, t_start, t_end,
+                    )
+                else:
+                    from probos.types import Episode
+                    episode = Episode(
+                        timestamp=time.time(),
+                        user_input=text,
+                        dag_summary={},
+                        outcomes=[],
+                        agent_ids=[],
+                        duration_ms=(t_end - t_start) * 1000,
+                    )
                 await self.runtime.episodic_memory.store(episode)
             except Exception as e:
                 logger.warning("Episode storage failed: %s: %s", type(e).__name__, e)

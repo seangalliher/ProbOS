@@ -692,7 +692,7 @@ class ProbOSShell:
             user_text=arg,
             last_execution_text=self.runtime._last_execution_text,
             last_execution_dag=self.runtime._last_execution,
-            last_execution_success=self.runtime._was_last_execution_successful(),
+            last_execution_success=self.runtime.self_mod_manager.was_last_execution_successful() if self.runtime.self_mod_manager else False,
         )
 
         if correction is None:
@@ -703,7 +703,7 @@ class ProbOSShell:
             return
 
         # Find designed agent record
-        record = self.runtime._find_designed_record(correction.target_agent_type)
+        record = self.runtime.self_mod_manager.find_designed_record(correction.target_agent_type) if self.runtime.self_mod_manager else None
         if record is None:
             self.console.print(
                 f"[yellow]No designed agent found for '{correction.target_agent_type}'. "
@@ -733,9 +733,15 @@ class ProbOSShell:
             return
 
         # Apply correction (hot-reload + retry)
-        result = await self.runtime.apply_correction(
-            correction, patch_result, record,
-        )
+        if self.runtime.self_mod_manager:
+            self.runtime.self_mod_manager._last_execution = self.runtime._last_execution
+            self.runtime.self_mod_manager._last_execution_text = self.runtime._last_execution_text
+            result = await self.runtime.self_mod_manager.apply_correction(
+                correction, patch_result, record,
+            )
+        else:
+            self.console.print("[yellow]SelfModManager not initialized.[/yellow]")
+            return
 
         if result.success:
             self.console.print(

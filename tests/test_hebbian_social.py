@@ -155,7 +155,7 @@ class TestHebbianSocial:
         target = MagicMock()
         target.agent_type = "diagnostician"
         target.id = "diag-001"
-        rt._agents = [target]
+        rt.registry.all.return_value = [target]
 
         loop._runtime = rt
 

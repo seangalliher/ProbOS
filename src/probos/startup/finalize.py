@@ -102,10 +102,10 @@ async def finalize_startup(
     # Agent Onboarding Service — patch in late-init dependencies
     # PATCH(AD-517): These are set via private attrs because onboarding
     # is created before these services exist.
-    runtime._onboarding._ontology = runtime.ontology
-    runtime._onboarding._ward_room = runtime.ward_room
-    runtime._onboarding._acm = runtime.acm
-    runtime._onboarding._start_time_wall = runtime._start_time_wall
+    runtime.onboarding._ontology = runtime.ontology
+    runtime.onboarding._ward_room = runtime.ward_room
+    runtime.onboarding._acm = runtime.acm
+    runtime.onboarding._start_time_wall = runtime._start_time_wall
 
     # Self-Modification Manager
     if runtime.self_mod_pipeline:

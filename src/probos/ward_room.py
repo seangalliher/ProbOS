@@ -1452,6 +1452,50 @@ class WardRoomService:
                 counts[row[0]] = row[1]
         return counts
 
+    async def get_unread_dms(self, agent_id: str, limit: int = 3) -> list[dict]:
+        """Return DM threads where agent_id is a participant but hasn't replied.
+
+        BF-082: A thread is 'unread' if:
+        1. It's in a DM channel (channel_type = 'dm')
+        2. The agent's ID prefix appears in the channel name (they're a participant)
+        3. The agent has NOT authored any posts in that thread
+        4. The thread is not archived
+        5. The agent did NOT author the thread (don't flag own threads)
+
+        Returns list of dicts with thread_id, channel_id, author_id,
+        author_callsign, title, body, created_at.
+        """
+        if not self._db:
+            return []
+        prefix = agent_id[:8]
+        async with self._db.execute(
+            "SELECT t.id, t.channel_id, t.author_id, t.author_callsign, "
+            "       t.title, t.body, t.created_at "
+            "FROM threads t "
+            "JOIN channels c ON c.id = t.channel_id "
+            "LEFT JOIN posts p ON p.thread_id = t.id AND p.author_id = ? "
+            "WHERE c.channel_type = 'dm' "
+            "  AND c.name LIKE ? "
+            "  AND (t.archived = 0 OR t.archived IS NULL) "
+            "  AND t.author_id != ? "
+            "  AND p.id IS NULL "
+            "ORDER BY t.created_at DESC "
+            "LIMIT ?",
+            (agent_id, f"%{prefix}%", agent_id, limit),
+        ) as cursor:
+            results = []
+            async for row in cursor:
+                results.append({
+                    "thread_id": row[0],
+                    "channel_id": row[1],
+                    "author_id": row[2],
+                    "author_callsign": row[3],
+                    "title": row[4],
+                    "body": row[5],
+                    "created_at": row[6],
+                })
+            return results
+
     # ------------------------------------------------------------------
     # Credibility operations
     # ------------------------------------------------------------------

@@ -273,7 +273,7 @@ class WardRoomRouter:
                         # BF-016b: Increment per-thread response count
                         self._agent_thread_responses[thread_agent_key] = prior_responses + 1
             except Exception as e:
-                logger.debug("Ward Room agent notification failed for %s: %s", agent_id, e)
+                logger.warning("Ward Room agent notification failed for %s: %s", agent_id, e)
 
         # Increment round counter if any agent responded to an agent post
         if is_agent_post and responded_this_event:
@@ -352,8 +352,9 @@ class WardRoomRouter:
 
         AD-407d: Agent posts only notify:
         1. @mentioned agents (always)
-        2. Department peers (if in a department channel)
-        3. Never ship-wide broadcast for agent-to-agent
+        2. DM channel: the other participant
+        3. Department peers (if in a department channel)
+        4. Never ship-wide broadcast for agent-to-agent
         """
         target_ids: list[str] = []
 
@@ -364,7 +365,22 @@ class WardRoomRouter:
                 if resolved and resolved["agent_id"] and resolved["agent_id"] != author_id:
                     target_ids.append(resolved["agent_id"])
 
-        # 2. Department channel: notify department peers
+        # 2. DM channel: notify the other participant
+        if channel.channel_type == "dm":
+            # Find the other agent in this DM channel by checking all agents
+            for agent in self._registry.all():
+                if (agent.id != author_id
+                        and agent.is_alive
+                        and hasattr(agent, 'handle_intent')
+                        and is_crew_agent(agent, self._ontology)):
+                    # Check if this agent's ID prefix appears in the DM channel name
+                    if agent.id[:8] in channel.name:
+                        if agent.id not in target_ids:
+                            target_ids.append(agent.id)
+                        break
+            return target_ids
+
+        # 3. Department channel: notify department peers
         if channel.channel_type == "department" and channel.department:
             from probos.cognitive.standing_orders import get_department
             for agent in self._registry.all():

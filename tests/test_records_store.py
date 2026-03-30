@@ -467,7 +467,8 @@ class TestProactiveNotebookTag:
         rt.ward_room.get_endorsements_for = AsyncMock(return_value=[])
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.9)
-        rt._extract_endorsements = MagicMock(return_value=(None, []))
+        rt.ward_room_router = MagicMock()
+        rt.ward_room_router.extract_endorsements = MagicMock(return_value=(None, []))
 
         loop = ProactiveCognitiveLoop(interval=60)
         loop._runtime = rt

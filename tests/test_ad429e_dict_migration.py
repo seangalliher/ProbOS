@@ -41,47 +41,42 @@ def _mock_agent(agent_type: str, agent_id: str = "agent-1", is_alive: bool = Tru
     return agent
 
 
-# ---- Test 1: _is_crew_agent prefers ontology ----
+# ---- Test 1: is_crew_agent prefers ontology ----
 
 class TestIsCrewAgentOntologyPreference:
     def test_is_crew_agent_prefers_ontology(self):
-        """When ontology is available, _is_crew_agent uses it instead of legacy set."""
-        from probos.runtime import ProbOSRuntime
+        """When ontology is available, is_crew_agent uses it instead of legacy set."""
+        from probos.crew_utils import is_crew_agent
 
-        rt = ProbOSRuntime.__new__(ProbOSRuntime)
-        rt.ontology = _mock_ontology(crew_types={"security_officer", "counselor"})
+        ontology = _mock_ontology(crew_types={"security_officer", "counselor"})
 
         agent = _mock_agent("security_officer")
-        assert rt._is_crew_agent(agent) is True
+        assert is_crew_agent(agent, ontology) is True
 
         # builder IS in the legacy _WARD_ROOM_CREW but NOT in ontology crew_types
         builder = _mock_agent("builder")
-        assert rt._is_crew_agent(builder) is False
+        assert is_crew_agent(builder, ontology) is False
 
     def test_is_crew_agent_falls_back_without_ontology(self):
-        """When ontology is None, _is_crew_agent falls back to legacy set."""
-        from probos.runtime import ProbOSRuntime
-
-        rt = ProbOSRuntime.__new__(ProbOSRuntime)
-        rt.ontology = None
+        """When ontology is None, is_crew_agent falls back to legacy set."""
+        from probos.crew_utils import is_crew_agent
 
         # builder is in _WARD_ROOM_CREW legacy set
         builder = _mock_agent("builder")
-        assert rt._is_crew_agent(builder) is True
+        assert is_crew_agent(builder, None) is True
 
         # random_agent is NOT in legacy set
         random = _mock_agent("random_agent")
-        assert rt._is_crew_agent(random) is False
+        assert is_crew_agent(random, None) is False
 
     def test_is_crew_agent_no_agent_type(self):
         """Agent without agent_type attribute returns False."""
-        from probos.runtime import ProbOSRuntime
+        from probos.crew_utils import is_crew_agent
 
-        rt = ProbOSRuntime.__new__(ProbOSRuntime)
-        rt.ontology = _mock_ontology(crew_types={"security_officer"})
+        ontology = _mock_ontology(crew_types={"security_officer"})
 
         agent = MagicMock(spec=[])  # no agent_type attribute
-        assert rt._is_crew_agent(agent) is False
+        assert is_crew_agent(agent, ontology) is False
 
 
 # ---- Test 3-4: Department lookup ----
@@ -185,13 +180,13 @@ class TestOntologyCrewMatchesLegacy:
 
         import asyncio
         from probos.ontology import VesselOntologyService
-        from probos.runtime import ProbOSRuntime
+        from probos.crew_utils import _WARD_ROOM_CREW
 
         svc = VesselOntologyService(ontology_dir, data_dir=Path(__file__).parent)
         asyncio.get_event_loop().run_until_complete(svc.initialize())
 
         ontology_crew = svc.get_crew_agent_types()
-        legacy_crew = ProbOSRuntime._WARD_ROOM_CREW
+        legacy_crew = _WARD_ROOM_CREW
 
         # Both should have the same crew-tier agent types
         # (minor differences possible if ontology has been updated)

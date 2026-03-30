@@ -100,7 +100,7 @@ class TestLoopPrevention:
             intent_id="x", agent_id="agent-1", success=True, result="[NO_RESPONSE]",
         ))
 
-        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         runtime.intent_bus.send.assert_called()
 
     async def test_agent_posts_capped_by_depth_limit(self):
@@ -110,7 +110,7 @@ class TestLoopPrevention:
         runtime._ward_room_thread_rounds["t1"] = 3
 
         data = {"author_id": "agent-scotty", "channel_id": "ch1", "thread_id": "t1"}
-        await runtime._route_ward_room_event("ward_room_post_created", data)
+        await runtime.ward_room_router.route_event("ward_room_post_created", data)
         # At round limit — intent_bus.send never called
         runtime.intent_bus.send.assert_not_called()
 
@@ -138,7 +138,7 @@ class TestRateLimiting:
         runtime.callsign_registry.get_callsign.return_value = "Number One"
         runtime.callsign_registry.resolve.return_value = None
 
-        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         # Agent on cooldown — intent_bus.send not called
         runtime.intent_bus.send.assert_not_called()
 
@@ -170,7 +170,7 @@ class TestAgentResponses:
             "author_id": "captain", "channel_id": ch.id,
             "thread_id": thread.id, "title": "Test",
         }
-        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         # Verify no post was created (thread still has 0 replies)
         detail = await ward_room_svc.get_thread(thread.id)
         assert detail["thread"]["reply_count"] == 0
@@ -200,7 +200,7 @@ class TestAgentResponses:
             "author_id": "captain", "channel_id": ch.id,
             "thread_id": thread.id, "title": "Engineering report",
         }
-        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         # Verify post WAS created
         detail = await ward_room_svc.get_thread(thread.id)
         assert detail["thread"]["reply_count"] == 1
@@ -232,7 +232,7 @@ class TestChannelTargeting:
                 "architect": "science",
             }.get(t)
 
-            targets = runtime._find_ward_room_targets(
+            targets = runtime.ward_room_router.find_targets(
                 channel=channel, author_id="captain",
             )
 
@@ -252,7 +252,7 @@ class TestChannelTargeting:
         runtime.registry.all.return_value = agents
         runtime.callsign_registry.get_callsign.return_value = "SomeCallsign"
 
-        targets = runtime._find_ward_room_targets(
+        targets = runtime.ward_room_router.find_targets(
             channel=channel, author_id="captain",
         )
 
@@ -292,7 +292,7 @@ class TestAgentToAgentRouting:
             "author_id": "agent-a", "thread_id": "t1",
             "mentions": ["numberone"], "author_callsign": "Scotty",
         }
-        await runtime._route_ward_room_event("ward_room_post_created", data)
+        await runtime.ward_room_router.route_event("ward_room_post_created", data)
         runtime.intent_bus.send.assert_called_once()
         # Verify intent was sent to agent-b
         call_args = runtime.intent_bus.send.call_args[0][0]
@@ -320,7 +320,7 @@ class TestAgentToAgentRouting:
             "author_id": "a1", "thread_id": "t1",
             "mentions": [], "author_callsign": "Number One",
         }
-        await runtime._route_ward_room_event("ward_room_post_created", data)
+        await runtime.ward_room_router.route_event("ward_room_post_created", data)
         # No broadcast — intent_bus.send not called
         runtime.intent_bus.send.assert_not_called()
 
@@ -359,7 +359,7 @@ class TestAgentToAgentRouting:
                 "author_id": "eng1", "thread_id": "t1",
                 "mentions": [], "author_callsign": "LaForge",
             }
-            await runtime._route_ward_room_event("ward_room_post_created", data)
+            await runtime.ward_room_router.route_event("ward_room_post_created", data)
 
         # eng2 (same dept) should be reached, sci1 (different dept) should not
         runtime.intent_bus.send.assert_called_once()
@@ -387,7 +387,7 @@ class TestAgentToAgentRouting:
         ))
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1"}
-        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         # Both agents should be reached
         assert runtime.intent_bus.send.call_count == 2
 
@@ -425,7 +425,7 @@ class TestThreadDepthTracking:
             "mentions": ["numberone"], "author_callsign": "Scotty",
         }
         assert runtime._ward_room_thread_rounds.get("t1", 0) == 0
-        await runtime._route_ward_room_event("ward_room_post_created", data)
+        await runtime.ward_room_router.route_event("ward_room_post_created", data)
         assert runtime._ward_room_thread_rounds.get("t1", 0) == 1
 
     async def test_round_capped_at_max(self):
@@ -434,7 +434,7 @@ class TestThreadDepthTracking:
         runtime._ward_room_thread_rounds["t1"] = 3  # At limit
 
         data = {"author_id": "agent-a", "thread_id": "t1", "mentions": []}
-        await runtime._route_ward_room_event("ward_room_post_created", data)
+        await runtime.ward_room_router.route_event("ward_room_post_created", data)
         runtime.intent_bus.send.assert_not_called()
 
     async def test_captain_post_resets_round(self):
@@ -459,7 +459,7 @@ class TestThreadDepthTracking:
         ))
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1"}
-        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         # Round reset to 0
         assert runtime._ward_room_thread_rounds["t1"] == 0
         # Old participants cleared (t1:1 gone; t1:0 re-created empty by current round)
@@ -491,7 +491,7 @@ class TestThreadDepthTracking:
             "author_id": "agent-a", "thread_id": "t1",
             "mentions": ["numberone"], "author_callsign": "Scotty",
         }
-        await runtime._route_ward_room_event("ward_room_post_created", data)
+        await runtime.ward_room_router.route_event("ward_room_post_created", data)
         # No actual response -> round stays at 0
         assert runtime._ward_room_thread_rounds.get("t1", 0) == 0
 
@@ -524,7 +524,7 @@ class TestRoundParticipation:
             "author_id": "agent-a", "thread_id": "t1",
             "mentions": ["numberone"], "author_callsign": "Scotty",
         }
-        await runtime._route_ward_room_event("ward_room_post_created", data)
+        await runtime.ward_room_router.route_event("ward_room_post_created", data)
         # agent-b already in round participants — skipped
         runtime.intent_bus.send.assert_not_called()
 
@@ -560,7 +560,7 @@ class TestRoundParticipation:
             "author_id": "agent-a", "thread_id": "t1",
             "mentions": ["numberone"], "author_callsign": "Scotty",
         }
-        await runtime._route_ward_room_event("ward_room_post_created", data)
+        await runtime.ward_room_router.route_event("ward_room_post_created", data)
         # agent-b NOT in round 1 participants yet — should be reached
         runtime.intent_bus.send.assert_called_once()
 
@@ -576,7 +576,6 @@ def _make_mock_runtime(ward_room=None):
 
     runtime = MagicMock()
     runtime.ward_room = ward_room or MagicMock()
-    runtime._WARD_ROOM_COOLDOWN_SECONDS = 30
     # Config mock
     runtime.config = MagicMock()
     runtime.config.ward_room.max_agent_rounds = 3
@@ -612,7 +611,7 @@ def _make_mock_runtime(ward_room=None):
         notify_fn=None,
         proactive_loop=None,
     )
-    runtime._ward_room_router = router
+    runtime.ward_room_router = router
 
     # Expose router state through runtime attrs so tests can inspect/manipulate
     runtime._ward_room_cooldowns = router._cooldowns
@@ -620,31 +619,6 @@ def _make_mock_runtime(ward_room=None):
     runtime._ward_room_round_participants = router._round_participants
     runtime._ward_room_agent_thread_responses = router._agent_thread_responses
 
-    # Bind real methods so self.method() calls work on the mock
-    import types
-    runtime._route_ward_room_event = types.MethodType(
-        ProbOSRuntime._route_ward_room_event, runtime,
-    )
-    runtime._find_ward_room_targets = types.MethodType(
-        ProbOSRuntime._find_ward_room_targets, runtime,
-    )
-    runtime._find_ward_room_targets_for_agent = types.MethodType(
-        ProbOSRuntime._find_ward_room_targets_for_agent, runtime,
-    )
-    runtime._is_crew_agent = types.MethodType(
-        ProbOSRuntime._is_crew_agent, runtime,
-    )
-    # BF-038: Bind endorsement/cleanup methods used by _route_ward_room_event
-    runtime._extract_endorsements = types.MethodType(
-        ProbOSRuntime._extract_endorsements, runtime,
-    )
-    runtime._process_endorsements = types.MethodType(
-        ProbOSRuntime._process_endorsements, runtime,
-    )
-    runtime._cleanup_ward_room_tracking = types.MethodType(
-        ProbOSRuntime._cleanup_ward_room_tracking, runtime,
-    )
-    runtime._WARD_ROOM_CREW = ProbOSRuntime._WARD_ROOM_CREW
     return runtime
 
 
@@ -691,7 +665,7 @@ class TestThreadModeRouting:
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
                 "thread_mode": "inform"}
-        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         runtime.intent_bus.send.assert_not_called()
 
     @pytest.mark.asyncio
@@ -715,7 +689,7 @@ class TestThreadModeRouting:
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
                 "thread_mode": "discuss"}
-        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         runtime.intent_bus.send.assert_called()
 
     @pytest.mark.asyncio
@@ -729,7 +703,7 @@ class TestThreadModeRouting:
         agent = _make_agent("agent-1", "architect")
         runtime.registry.all.return_value = [agent]
 
-        targets = runtime._find_ward_room_targets(
+        targets = runtime.ward_room_router.find_targets(
             channel=channel, author_id="captain",
             mentions=None, thread_mode="discuss",
         )
@@ -762,7 +736,7 @@ class TestThreadModeRouting:
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
                 "thread_mode": "action", "mentions": ["numberone"]}
-        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         # Only agent-1 (mentioned) should get notified
         assert runtime.intent_bus.send.call_count == 1
 
@@ -788,23 +762,23 @@ class TestThreadModeRouting:
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
                 "thread_mode": "discuss", "max_responders": 2}
-        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         assert runtime.intent_bus.send.call_count <= 2
 
     @pytest.mark.asyncio
     async def test_inform_not_passed_to_targets(self):
-        """INFORM threads short-circuit before _find_ward_room_targets."""
+        """INFORM threads short-circuit before find_targets."""
         runtime = _make_mock_runtime()
-        # Patch _find_ward_room_targets to track if called
+        # Patch find_targets on the router to track if called
         import types
-        original = runtime._find_ward_room_targets
+        original = runtime.ward_room_router.find_targets
         call_tracker = {"called": False}
 
-        def tracking_targets(self, *a, **kw):
+        def tracking_targets(*a, **kw):
             call_tracker["called"] = True
             return original(*a, **kw)
 
-        runtime._find_ward_room_targets = types.MethodType(tracking_targets, runtime)
+        runtime.ward_room_router.find_targets = tracking_targets
 
         runtime.ward_room.list_channels = AsyncMock(return_value=[
             _make_channel("ch1", "ship"),
@@ -812,5 +786,5 @@ class TestThreadModeRouting:
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
                 "thread_mode": "inform"}
-        await runtime._route_ward_room_event("ward_room_thread_created", data)
+        await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         assert not call_tracker["called"]

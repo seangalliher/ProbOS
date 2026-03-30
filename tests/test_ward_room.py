@@ -1296,7 +1296,7 @@ class TestEndorsementActivation:
         """AD-515: Attach WardRoomRouter so delegation methods work."""
         from unittest.mock import AsyncMock, MagicMock
         from probos.ward_room_router import WardRoomRouter
-        rt._ward_room_router = WardRoomRouter(
+        rt.ward_room_router = WardRoomRouter(
             ward_room=ward_room or getattr(rt, 'ward_room', MagicMock()),
             registry=MagicMock(),
             intent_bus=MagicMock(),
@@ -1315,7 +1315,7 @@ class TestEndorsementActivation:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         self._attach_router(rt)
         text = "Great discussion!\n[ENDORSE abc123 UP]"
-        cleaned, endorsements = rt._extract_endorsements(text)
+        cleaned, endorsements = rt.ward_room_router.extract_endorsements(text)
         assert cleaned == "Great discussion!"
         assert len(endorsements) == 1
         assert endorsements[0] == {"post_id": "abc123", "direction": "up"}
@@ -1326,7 +1326,7 @@ class TestEndorsementActivation:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         self._attach_router(rt)
         text = "My reply here.\n[ENDORSE post1 UP]\n[ENDORSE post2 DOWN]\n[ENDORSE post3 UP]"
-        cleaned, endorsements = rt._extract_endorsements(text)
+        cleaned, endorsements = rt.ward_room_router.extract_endorsements(text)
         assert "My reply here" in cleaned
         assert len(endorsements) == 3
         assert endorsements[1]["direction"] == "down"
@@ -1337,7 +1337,7 @@ class TestEndorsementActivation:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         self._attach_router(rt)
         text = "Just a normal reply, no endorsements."
-        cleaned, endorsements = rt._extract_endorsements(text)
+        cleaned, endorsements = rt.ward_room_router.extract_endorsements(text)
         assert cleaned == text
         assert endorsements == []
 
@@ -1347,7 +1347,7 @@ class TestEndorsementActivation:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         self._attach_router(rt)
         text = "[NO_RESPONSE]\n[ENDORSE xyz789 UP]"
-        cleaned, endorsements = rt._extract_endorsements(text)
+        cleaned, endorsements = rt.ward_room_router.extract_endorsements(text)
         assert len(endorsements) == 1
         assert endorsements[0]["post_id"] == "xyz789"
 
@@ -1375,7 +1375,7 @@ class TestEndorsementActivation:
         rt.trust_network = None
         self._attach_router(rt, ward_room=ward_room)
 
-        await rt._process_endorsements(
+        await rt.ward_room_router.process_endorsements(
             [{"post_id": post.id, "direction": "up"}], agent_id="worf",
         )
 
@@ -1412,7 +1412,7 @@ class TestEndorsementActivation:
         self._attach_router(rt, ward_room=ward_room, trust_network=trust)
         self._attach_router(rt, ward_room=ward_room, trust_network=trust)
 
-        await rt._process_endorsements(
+        await rt.ward_room_router.process_endorsements(
             [{"post_id": post.id, "direction": "up"}], agent_id="worf",
         )
 
@@ -1441,7 +1441,7 @@ class TestEndorsementActivation:
         self._attach_router(rt, ward_room=ward_room)
 
         # Should not raise
-        await rt._process_endorsements(
+        await rt.ward_room_router.process_endorsements(
             [{"post_id": post.id, "direction": "up"}], agent_id="worf",
         )
 
@@ -1477,7 +1477,7 @@ class TestEndorsementActivation:
         rt.trust_network = trust
         self._attach_router(rt, ward_room=ward_room, trust_network=trust)
 
-        await rt._process_endorsements(
+        await rt.ward_room_router.process_endorsements(
             [{"post_id": post.id, "direction": "up"}], agent_id="worf",
         )
 

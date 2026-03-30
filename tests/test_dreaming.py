@@ -1047,7 +1047,7 @@ class TestDreamSchedulerProactiveAwareness:
         rt.dream_scheduler = MagicMock()
 
         # AD-515: Create DreamAdapter used by delegation
-        rt._dream_adapter = DreamAdapter(
+        rt.dream_adapter = DreamAdapter(
             dream_scheduler=rt.dream_scheduler,
             emergent_detector=rt._emergent_detector,
             episodic_memory=None,
@@ -1066,10 +1066,10 @@ class TestDreamSchedulerProactiveAwareness:
 
         # When proactively busy — skip analysis
         type(rt.dream_scheduler).is_proactively_busy = PropertyMock(return_value=True)
-        rt._on_post_micro_dream({"episodes_replayed": 5})
+        rt.dream_adapter.on_post_micro_dream({"episodes_replayed": 5})
         rt._emergent_detector.analyze.assert_not_called()
 
         # When not busy — run analysis
         type(rt.dream_scheduler).is_proactively_busy = PropertyMock(return_value=False)
-        rt._on_post_micro_dream({"episodes_replayed": 5})
+        rt.dream_adapter.on_post_micro_dream({"episodes_replayed": 5})
         rt._emergent_detector.analyze.assert_called_once()

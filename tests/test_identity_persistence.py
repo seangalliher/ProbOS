@@ -68,7 +68,7 @@ def _make_runtime(identity_cert=None, has_ontology=False):
         rt.ontology = None
 
     # AD-515: Create onboarding service for delegation
-    rt._onboarding = AgentOnboardingService(
+    rt.onboarding = AgentOnboardingService(
         callsign_registry=rt.callsign_registry,
         capability_registry=MagicMock(),
         gossip=MagicMock(),
@@ -101,7 +101,8 @@ class TestBF057IdentityPersistence:
         agent = _make_agent(callsign="LaForge")  # seed callsign
 
         # The logic under test: check identity before naming ceremony
-        is_crew = rt._is_crew_agent(agent)
+        from probos.crew_utils import is_crew_agent
+        is_crew = is_crew_agent(agent, rt.ontology)
         _existing = ""
         if is_crew and rt.identity_registry:
             existing_cert = rt.identity_registry.get_by_slot(agent.id)
@@ -126,7 +127,8 @@ class TestBF057IdentityPersistence:
         )
 
         # The logic: no existing identity → ceremony runs
-        is_crew = rt._is_crew_agent(agent)
+        from probos.crew_utils import is_crew_agent
+        is_crew = is_crew_agent(agent, rt.ontology)
         _existing = ""
         if is_crew and rt.identity_registry:
             existing_cert = rt.identity_registry.get_by_slot(agent.id)
@@ -137,7 +139,7 @@ class TestBF057IdentityPersistence:
 
         # Verify ceremony would produce the right name
         result = asyncio.get_event_loop().run_until_complete(
-            rt._run_naming_ceremony(agent)
+            rt.onboarding.run_naming_ceremony(agent)
         )
         assert result == "Forge"
         agent._llm_client.complete.assert_called_once()

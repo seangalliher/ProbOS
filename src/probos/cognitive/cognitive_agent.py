@@ -759,7 +759,10 @@ class CognitiveAgent(BaseAgent):
             return observation
         if not hasattr(self._runtime, 'episodic_memory') or not self._runtime.episodic_memory:
             return observation
-        if not hasattr(self._runtime, '_is_crew_agent') or not self._runtime._is_crew_agent(self):
+        if not hasattr(self._runtime, 'ontology'):
+            return observation
+        from probos.crew_utils import is_crew_agent as _is_crew
+        if not _is_crew(self, getattr(self._runtime, 'ontology', None)):
             return observation
 
         try:
@@ -843,7 +846,10 @@ class CognitiveAgent(BaseAgent):
             return
         if not hasattr(self._runtime, 'episodic_memory') or not self._runtime.episodic_memory:
             return
-        if not hasattr(self._runtime, '_is_crew_agent') or not self._runtime._is_crew_agent(self):
+        if not hasattr(self._runtime, 'ontology'):
+            return
+        from probos.crew_utils import is_crew_agent as _is_crew
+        if not _is_crew(self, getattr(self._runtime, 'ontology', None)):
             return
 
         try:

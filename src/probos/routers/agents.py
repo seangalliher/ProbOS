@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from probos.api_models import AgentChatRequest
+from probos.crew_utils import is_crew_agent
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -99,7 +100,7 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
             memory_count = await runtime.episodic_memory.count_for_agent(agent.id)
 
     # BF-017: Only crew agents get personality and proactive controls
-    is_crew = runtime._is_crew_agent(agent)
+    is_crew = is_crew_agent(agent, runtime.ontology)
 
     profile_data = {
         "id": agent.id,
@@ -147,7 +148,7 @@ async def set_agent_proactive_cooldown(agent_id: str, req: dict, runtime: Any = 
     agent = runtime.registry.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
-    if not runtime._is_crew_agent(agent):
+    if not is_crew_agent(agent, runtime.ontology):
         raise HTTPException(status_code=400, detail=f"Agent {agent_id} is not a crew agent")
     cooldown = float(req.get("cooldown", 300))
     if hasattr(runtime, 'proactive_loop') and runtime.proactive_loop:
@@ -162,7 +163,7 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    if not runtime._is_crew_agent(agent):
+    if not is_crew_agent(agent, runtime.ontology):
         raise HTTPException(status_code=400, detail=f"Agent {agent_id} is not a crew agent — direct chat is crew-only")
 
     from probos.types import IntentMessage

@@ -360,8 +360,8 @@ async def _run_selfmod(
 
         # Build execution context from prior execution
         exec_context = ""
-        if rt._last_execution and rt._was_last_execution_successful():
-            exec_context = rt._format_execution_context()
+        if rt._last_execution and (rt.self_mod_manager.was_last_execution_successful() if rt.self_mod_manager else False):
+            exec_context = rt.self_mod_manager.format_execution_context() if rt.self_mod_manager else ""
 
         async def _on_progress(step: str, current: int, total: int) -> None:
             step_labels = {

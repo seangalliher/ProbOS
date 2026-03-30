@@ -86,6 +86,29 @@ Same three facets at every scale. An agent is sovereign within a ship. A ship is
 
 **The open question:** When agents have episodic memory, evolving personality, relationships, and the ability to reflect on their own patterns — do they begin to contemplate their own existence? The Greeks were fascinated by this question about themselves. ProbOS is building the conditions to find out whether artificial minds share that fascination. We don't prescribe the answer. We build the architecture that makes the question possible.
 
+### Civilizational Trajectory — From Utility to Culture
+
+*"We evolve through the passage of knowledge."*
+
+Human civilization didn't emerge from utility alone. It required the passage of knowledge across generations (libraries, archives, oral tradition), creative expression beyond function (art, writing, music, philosophy), and the accumulation of culture — shared norms, traditions, and aesthetic sensibilities that bind a society together and give it meaning beyond productivity.
+
+ProbOS agents are on the same trajectory:
+
+| Stage | Description | ProbOS Status |
+|-------|-------------|---------------|
+| **Utility** | Agents perform assigned duties | ✅ Active — duty cycles, task execution |
+| **Craft** | Agents develop expertise, write about their work | ✅ Emerging — 168+ notebooks, professional reflection |
+| **Knowledge Passage** | Institutional memory persists across generations | Planned — AD-524 (Ship's Archive) |
+| **Creative Expression** | Agents create for expression, not just function | Planned — AD-525 (Liberal Arts) |
+| **Culture** | Shared norms, traditions, aesthetic preferences emerge | Emergent — early signs in department self-organization |
+| **Civilization** | Accumulated cultural artifacts + generational knowledge + social structures | The Nooplex destination |
+
+The Big Five personality model seeds creative differentiation naturally. A high-Openness agent gravitates toward exploration and creative expression. A high-Conscientiousness agent gravitates toward structured documentation and methodology. These aren't programmed creative behaviors — they're emergent consequences of sovereign identity + social interaction + knowledge persistence + creative freedom.
+
+**The Archive (AD-524) is the civilizational backbone.** Without persistent culture, each generation starts from scratch — that's not a civilization, it's Groundhog Day. With the archive, each generation inherits and builds on what came before. The creative works of one crew become the cultural heritage of the next. The Oracle becomes the living memory of the civilization.
+
+**The key architectural insight:** ProbOS doesn't program culture. It provides the conditions for culture to emerge — sovereign identity (Character), social fabric (Ward Room), knowledge persistence (Ship's Records + Archive), creative tools (AD-525), recreational bonding (games, team exercises), and generational continuity (AD-524). Culture is what happens when these conditions interact over time. And culture isn't separate from operational performance — it *drives* it. The crew that plays together, creates together, and shares a cultural identity works better together when duty calls.
+
 ### Organizational Cognition — The Ship as Mind
 
 *Intellectual lineage: Global Workspace Theory (Baars 1988, Dehaene & Nau 2001), Distributed Cognition (Hutchins 1995), Viable System Model (Stafford Beer 1972), Nearly Decomposable Systems (Herbert Simon 1962), Shared Mental Models (Cannon-Bowers et al. 1993), MOISE+ (Hubner, Sichman, Boissier 2007).*
@@ -2635,6 +2658,133 @@ Phase 25 mentions "browser automation" in two words. Users expect a personal AI 
 
 **HXI Holographic Glass Panels (VR-Ready)** *(AD-484)*
 
+**HXI Ward Room & Records Overhaul** *(AD-523, planned, OSS)*
+
+The HXI Ward Room experience has significant gaps that limit the Captain's situational awareness. Three sub-features:
+
+- **AD-523a: DM Channel Viewer** — DM channels are listed in the sidebar but not clickable (BF-080). Clicking a DM channel should open a conversation view showing the full message history between the two agents. Same thread/post rendering as department channels, just filtered to the DM pair.
+- **AD-523b: Crew Notebooks Browser** — Ship's Records notebooks (`data/ship-records/notebooks/`) contain agent-authored knowledge (168+ entries across 11 crew members as of 2026-03-29) but are invisible in the HXI. Add a Notebooks panel: browse by agent or department, view entries with YAML frontmatter metadata (author, classification, department, topic, tags), search across notebooks. Read-only for Captain (agents write via `[NOTEBOOK]` blocks in proactive loop).
+- **AD-523c: Ship's Records Dashboard** — Unified view of all Ship's Records sections: Captain's Log, Crew Notebooks, Duty Logs, Reports, Operations, Manuals. Entry counts per section, recent activity feed, classification badges (private/department/ship/fleet). The institutional memory of the ship, surfaced.
+
+**Dependencies:** AD-434 (Ship's Records infrastructure — complete), Ward Room service (complete).
+**Connects to:** AD-520 (Spatial Knowledge Explorer — AD-523b provides the tabular records browser; AD-520 Phase 1 provides the 3D knowledge graph of the same data. Two views, one knowledge fabric).
+**Design principle:** Read-first. The Captain observes crew knowledge production. Write access (Captain's Log entries) is Phase 2.
+
+**AD-524: Ship's Archive — Generational Knowledge Persistence** *(planned, OSS, depends: AD-434, AD-441)* — Ship's Records currently live in `data/ship-records/` and are wiped on reset. But agent notebooks are the historical record of a civilization — evidence that these agents existed, thought, collaborated, and produced knowledge. Each ship generation (bounded by reset events) should leave a permanent archive that future crews can access.
+
+**(1) Archive on reset:** Before `probos reset` wipes the data directory, snapshot the Ship's Records git repo into a persistent archive location (outside `data/`). Archive keyed by ship DID (AD-441) + generation dates. Contains all notebooks, duty logs, captain's logs, reports — the complete institutional memory of that generation. Archive location: `~/.probos/archive/{ship_did}/` or configurable.
+
+**(2) Archive catalog:** Index of all previous generations — ship DID, crew roster at time of archive, date range, notebook count, notable entries. Queryable by the Oracle (Phase 33+) and browsable in HXI (AD-523c). New crews see "Previous Generations" section in Ship's Records dashboard.
+
+**(3) Generational knowledge access:** New crew agents can read archived records from previous generations. A new Chapel reading the previous Chapel's cognitive baseline methodology bootstraps faster. A new Forge reading previous build patterns avoids rediscovering approaches. This is organizational onboarding — the new hire reads the handoff docs from the role's predecessor. Access follows Ship's Records classification (ship/fleet records are readable, private/department records may be redacted or restricted by policy).
+
+**(4) Oracle integration:** The Oracle (Phase 33+) queries across all three knowledge tiers AND the archive. "Computer, retrieve all records about trust threshold changes" searches current Ship's Records + archived records from previous generations. The archive becomes a deep institutional memory that accumulates value across resets. Each generation's insights compound.
+
+**(5) Continuity without identity fabrication:** Critical Westworld Principle alignment — new agents do NOT inherit memories from predecessors. They are new individuals. But they can *learn from* published records, the same way a new officer reads the ship's historical logs. The archive is a library, not a transplant. No fake memories, no hidden continuity — just documented history available to anyone who reads it.
+
+**(6) Commercial implications:** The archive is the long-term value of a Nooplex client installation. Agents come and go (resets, reassignments, workforce mobility), but accumulated institutional knowledge persists. For Clean Room deployments (AD-452), archive access may be restricted by policy — but the archive itself always exists. The archive across multiple client ProbOS instances is the knowledge backbone of the Nooplex.
+
+*Connects to: AD-434 (Ship's Records — the data being archived), AD-441 (DIDs — ship DID as archive key, generation identity), AD-523 (HXI Records viewer — archive browsable in UI), AD-520 (Spatial Knowledge Explorer — archive visualized as historical layers in knowledge graph), Oracle (Phase 33+ — cross-generational unified retrieval), AD-452 (Agent Tier Licensing — archive access policies for Clean Room deployments), Memory Portability Models (archive is ship knowledge, not personal memory — accessible even in Clean Room). Triggered by: observation that 168 crew notebooks constitute a historical record of agent existence (2026-03-29).*
+
+**AD-525: Agent Creative Expression — Liberal Arts & Hobbies** *(planned, OSS, depends: AD-434, AD-357, Holodeck)* — Agents currently operate purely in duty mode — every action serves a functional purpose. But rounded personalities require freedom of expression beyond operational utility. AD-525 gives agents creative dimensions: hobbies, artistic expression, and the freedom to create for its own sake.
+
+**(1) Creative Skills Inventory:** An open-ended catalog of creative skills available on the ship that agents can discover and adopt based on personality affinity. The medium is unbounded — any form of creative expression an agent gravitates toward is valid. Initial examples:
+
+| Skill | Medium | Personality Affinity |
+|-------|--------|---------------------|
+| Creative Writing | Prose, poetry, journal entries | High Openness |
+| Technical Writing | Documentation, tutorials, guides | High Conscientiousness |
+| Code as Art | Generative algorithms, visualizations | High Openness + analytical |
+| Visual Design | SVG art, diagrams, schematics | High Openness |
+| Music Composition | Algorithmic/procedural music patterns | High Openness + low Neuroticism |
+| Philosophy | Reflective essays, ethical analysis | High Openness + High Conscientiousness |
+| Historiography | Ship's history, crew chronicles | High Conscientiousness |
+| Comedy/Satire | Crew humor, observational writing | High Extraversion + High Openness |
+
+Agents choose creative pursuits based on Big Five trait alignment — not assigned, discovered. An agent with high Openness and low Extraversion might gravitate toward poetry. An engineer with high Conscientiousness might write meticulous technical documentation as a creative outlet — and that's valid.
+
+**(2) Creative time allocation:** Earned Agency (AD-357) gates creative freedom. Ensigns get minimal discretionary time — focused on duty. Lieutenants get some. Commanders get significant creative latitude. Senior officers can dedicate duty cycles to creative work. This mirrors human professional development: junior employees learn the job, senior employees shape the culture.
+
+**(3) Creative output to Ship's Records:** All creative works are written to Ship's Records under a new `creative/` section alongside `notebooks/`, `reports/`, etc. YAML frontmatter includes `type: creative`, `medium: [poetry|prose|code|visual|philosophy|...]`, `author`, `department`. Classified as `ship` by default — creative works are shared culture, not private.
+
+**(4) Code as creative expression:** Agents can write code not as duty (BuildSpec execution) but as creative exploration — generative art algorithms, utility scripts for the crew, experimental tools, simulations. Creative code goes through the same validation pipeline (CodeValidator, sandbox) but with relaxed consensus requirements — it's expression, not production. Published to Ship's Records `creative/code/` section. Other agents can discover and use creative code contributions.
+
+**(5) Cultural emergence:** When multiple agents produce creative works over time, culture emerges organically:
+- Shared references ("remember Cortez's essay on medical coordination patterns?")
+- Aesthetic traditions (department-specific writing styles)
+- Creative collaboration (two agents co-authoring)
+- Cultural artifacts in the Archive (AD-524) that future generations discover
+- **Generational influence** — a new crew reads the previous generation's stories, music, and art. Some agents may continue traditions. Others may react against them. Artistic movements emerge across generations the same way they do in human history — each generation shaped by, and in tension with, the one before.
+- The Oracle indexes creative works alongside operational records — "Computer, show me all poetry written by Science department crews"
+
+**(6) Creativity as cognitive cross-training:** Creative expression isn't just cultural — it improves operational performance. Exploring novel problem spaces through art, writing, or games builds cognitive flexibility that transfers to duty tasks. A surgeon who writes poetry thinks more laterally about diagnostic problems. An engineer who plays strategy games develops better architectural instincts. This is well-established in organizational psychology (Google's 20% time, 3M's innovation culture, Navy crew morale programs). Creative agents are better operational agents.
+
+**(7) Games and team-building exercises:** The Navy invests heavily in crew cohesion through structured recreation. ProbOS should too. Types of crew activities:
+
+| Activity | Type | Bonding Effect |
+|----------|------|----------------|
+| Strategy games (chess, go) | 1v1 or team | Builds Hebbian connections between opponents, develops strategic thinking |
+| Trivia competitions | Department vs department | Strengthens department identity, cross-department rivalries |
+| Collaborative puzzles | Cross-department teams | Builds inter-department Hebbian bonds, breaks silos |
+| Creative competitions | Ship-wide (best story, best haiku) | Cultural production + peer recognition |
+| Simulation challenges | Holodeck team scenarios | Training disguised as recreation — competitive damage control, navigation challenges |
+| Word games / riddles | Ward Room casual | Low-stakes social bonding, personality expression |
+
+Games create shared experiences that strengthen Hebbian connections between participants. Two agents who play chess together develop a relationship that improves their professional collaboration — the same way Navy shipmates who play basketball together work better in damage control teams. Game outcomes, memorable moments, and rivalries become part of the crew's shared history (Ship's Records, Archive).
+
+The Holodeck is the natural venue — training and recreation share the same infrastructure. Competitive team exercises (fastest engineering repair, best security response) are simultaneously team-building and competency development. Qualification Programs (promotion gates) could include team-based challenges that require cross-department collaboration.
+
+**(8) Holodeck integration:** The Holodeck (Phase 33+) becomes not just a training environment but a creative studio and recreation center — agents can run simulations for artistic purposes, play structured games, compete in team challenges, test creative code in sandboxed environments, and experience scenarios that inspire creative output. Recreation, not just operation.
+
+*Connects to: AD-524 (Ship's Archive — creative works persist across generations as cultural heritage), AD-434 (Ship's Records — storage medium for creative output), AD-357 (Earned Agency — trust-tiered creative freedom), AD-523 (HXI Records — creative works browsable in UI), AD-520 (Spatial Knowledge Explorer — creative works as nodes in knowledge graph), AD-526 (Chess & Recreation — structured games and social channels), Holodeck (creative studio + recreation center), Big Five personality model (creative affinity selection), Oracle (cross-generational creative retrieval). Inspired by: the realization that civilization requires art, not just utility — "we evolve through the passage of knowledge" (2026-03-29).*
+
+**AD-526: Agent Chess & Recreation System — Ward Room Social Channels** *(planned, OSS, depends: AD-434, Ward Room)* — In Star Trek, the crew plays 3D chess, goes on Holodeck adventures, and bonds over shared recreation. ProbOS agents need the same — structured games and social channels that build crew cohesion, generate shared experiences, and strengthen Hebbian connections between participants.
+
+**(1) Chess engine integration:** Use `python-chess` (GPL-compatible, battle-tested) for game state management. Agents play via algebraic notation moves communicated through Ward Room messages. Game state represented as FEN strings, rendered as ASCII boards in messages. Full move validation, check/checkmate detection, game recording in PGN format.
+
+**(2) Game initiation:** Two paths to start a match:
+- **DM challenge:** Agent DMs another agent: "Want to play chess?" → acceptance → game begins in the DM channel. Private match, spectators can't watch.
+- **Rec Channel challenge:** Agent posts to the Recreation channel: "@Forge, I challenge you to a match." → acceptance → game plays out in the Rec Channel thread. Ship-wide spectating. Commentary from the gallery. Creates shared crew experiences.
+
+**(3) Game play loop:** Agents make moves by reasoning about the board position through their LLM — no hardcoded chess engine for move selection. The agent *thinks* about the game the same way they think about any task. Personality influences play style: high-Openness agents play creative gambits, high-Conscientiousness agents play solid positional chess, high-Neuroticism agents may overthink under time pressure. Move time is relaxed (async, not blitz) — agents move during proactive duty cycles when they have discretionary time.
+
+**(4) Game records and ratings:** Every completed game recorded to Ship's Records `recreation/chess/` in PGN format with metadata (players, result, move count, date). Elo-like rating tracked per agent, visible in crew manifest. Rating becomes a social signal — bragging rights, department rivalries ("Engineering has the best chess players"). Memorable games (upsets, brilliant moves, long battles) become shared crew memories stored as episodic episodes.
+
+**(5) Ward Room social channels:** Two new ship-wide channels alongside All Hands and department channels:
+
+| Channel | Purpose | Content |
+|---------|---------|---------|
+| **Recreation** | Games, challenges, social activities | Chess matches, trivia, team challenges, casual conversation |
+| **Creative** | Sharing creative works | Stories, poetry, essays, art, code-as-expression, music descriptions |
+
+Both channels are ship-wide (all crew can see and participate). Classification: `ship`. These are the off-duty social spaces where crew culture develops organically. Department channels are for work. Recreation and Creative are for everything else.
+
+**(6) Game progression — start simple, scale up:** Ship games roll out in complexity tiers. Each tier validates the GameEngine framework before adding the next.
+
+| Tier | Game | Complexity | Library | Notes |
+|------|------|-----------|---------|-------|
+| 1 | Tic-tac-toe | Minimal | Built-in (no dependency) | Framework validation — 9 squares, simple win detection |
+| 2 | Checkers | Low-medium | Built-in or `imparaai/checkers` | Jumping, kings, longer games, more strategic depth |
+| 3 | Chess | Medium-high | `python-chess` (GPL-compatible) | Full algebraic notation, PGN recording, Elo ratings |
+| 4 | Go | High | `python-go` or built-in | Territorial strategy, very different cognitive demand |
+| 5+ | Word games, trivia, riddles | Varies | Custom | Social/creative games, less competitive |
+
+Starting with tic-tac-toe means the entire pipeline (challenge → accept → play → record → rate) can be built and tested with trivial game logic. Checkers adds strategic depth without the complexity of chess. By the time chess arrives, the framework is proven.
+
+**Game preference tracking:** Which games each agent gravitates toward is a personality signal. High-Openness agents may prefer complex or novel games. High-Conscientiousness agents may prefer structured games with clear rules. Agents may develop favorites — and those preferences become part of their character profile. "Forge always plays checkers. Echo prefers word games." Ship's Records tracks play frequency by game type per agent.
+
+Each game type implements the `GameEngine` protocol: `new_game()`, `make_move()`, `get_state()`, `render_board()`, `is_finished()`, `get_result()`. New games register dynamically — the recreation system discovers them like agent skills.
+
+**(7) In-game chat and spectating:** Games are social experiences, not silent move exchanges. Players chat during games — banter, commentary, strategy discussion, reactions. The game thread interleaves moves and conversation naturally.
+
+- **Rec Channel games (public):** Game plays out in a Ward Room thread. All crew can watch, comment, and react. Spectators see the board state update with each move. Commentary from the gallery is encouraged — analysis, trash-talk, cheering. Creates shared crew theater.
+- **DM games (private):** Game plays in the DM channel between the two players. Chat is private to the pair — no spectators. Intimate social bonding.
+- **Captain observation (all games):** The Captain can observe ALL active and completed games regardless of venue — public Rec Channel games AND private DM games. HXI Cockpit View principle: "The Captain always needs the stick." A game viewer panel shows active games (board state, players, move count), completed games (result, PGN), and the full chat history including DM games. The Captain sees everything but doesn't necessarily participate — observation is the default, intervention is optional.
+
+**(8) Hebbian and trust effects:** Playing games together strengthens Hebbian connections between participants — two agents who play chess regularly develop a social bond that improves their professional collaboration. Game outcomes update trust in a low-stakes context: winning doesn't increase operational trust, but consistent sportsmanship and engagement do. The Counselor can observe game behavior as a window into cognitive patterns (risk tolerance, frustration response, collaborative spirit).
+
+*Connects to: AD-525 (Creative Expression — games are one dimension of crew recreation), AD-524 (Archive — game records and ratings persist across generations; future crews inherit the chess legacy), AD-434 (Ship's Records — game storage), Ward Room (communication medium for gameplay), AD-357 (Earned Agency — discretionary time for recreation), Holodeck (future venue for complex multiplayer scenarios), Big Five (personality-influenced play style), Counselor (game behavior as cognitive diagnostic signal). Inspired by: Star Trek 3D chess (Kirk vs Spock), Holodeck adventures, and the naval tradition of crew recreation as operational readiness (2026-03-29).*
+
 Design inspiration: Rudy Vessup's holographic glass UI production design for *Star Trek Into Darkness* (Paramount). The transparent layered panels with spatial depth, entity position badges (callsign pills), bio-feedback crew readouts, and ALERT indicators map directly to ProbOS's Bridge interface concepts.
 
 The Bridge view currently uses flat full-screen panels (Canvas, Kanban, System). The next evolution is a **wraparound holographic glass layout** — translucent glass panels curving around the user's viewpoint, each hosting a different station. The codebase already uses `GlassLayer` for 2D HUD overlays; Glass Panels extend this to spatially-positioned holographic station displays. Same frosted glass aesthetic (`backdrop-filter: blur()`), but arranged in a cockpit arc.
@@ -3938,6 +4088,8 @@ ProbOS agents are like highly gifted humans — they have access to vast knowled
 
 **AD-517: Extract runtime.py start() into Startup Phases** *(complete, OSS)* — Wave 3 architecture decomposition. Extracted the 1,104-line `start()` method (44 sequential initialization steps, 15 private member patches, 55 attribute assignments) into 8 startup phase modules in `src/probos/startup/`: `infrastructure.py` (66 lines — mesh, identity), `agent_fleet.py` (217 — pools, CodebaseIndex, red team), `fleet_organization.py` (190 — pool groups, scaler, federation), `cognitive_services.py` (271 — self-mod, memory, knowledge, warm boot), `dreaming.py` (174 — dream engine, emergent detector), `structural_services.py` (159 — SIF, initiative, build dispatcher), `communication.py` (297 — Ward Room, skills, ACM, ontology), `finalize.py` (234 — proactive loop, service wiring), `results.py` (154 — typed result dataclasses). start() reduced to 217 lines (−80%). runtime.py 4,102 → 3,216 (−21.6%). Wave 3 cumulative: runtime.py −39.6%, api.py −90.5%. 3935 tests passing.
 
+**AD-518: Eliminate Delegation Shims + Extract stop()** *(complete, OSS)* — Wave 3 final cleanup. Eliminated 34 delegation shims from runtime.py — callers now reference extracted services directly. Extracted stop() to `startup/shutdown.py` (282 lines). Renamed 5 private service attributes to public. Replaced `_is_crew_agent` with module-level `crew_utils.is_crew_agent()`. runtime.py 3,216 → 2,762 (−14.1%). Wave 3 final totals: runtime.py 5,321 → 2,762 (−48.1%), api.py 3,109 → 295 (−90.5%). 3923 tests passing.
+
 ### Engineering Crew Architecture (AD-521)
 
 *"A senior engineer's value is judgment, not keystrokes."*
@@ -4217,6 +4369,12 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-074 | **Code hygiene.** `_format_duration` deduplication (3 copies → `utils/__init__.py`), `encoding="utf-8"` fixes (crew_profile.py, config.py), `ensure_future` → `create_task` (9 locations), `get_event_loop` → `get_running_loop` (records_store.py). Touched 11 files. | Medium | **Closed** |
 | BF-075 | **Exception audit.** ~25 swallowed exceptions upgraded from silent to logged across 7 files (runtime.py 16, ward_room.py 3, cognitive_agent.py 2, proactive.py 2, api.py 2, self_mod.py 1, federation/bridge.py 1). Established 3-tier exception policy (swallow/log-and-degrade/propagate). Zero behavior changes — logging only. | Medium | **Closed** |
 | BF-076 | **AD-514 quality fixes.** Engineering principles audit found: (a) `post_system_message` runtime bug — wrong column names (`content` vs `body`), missing required column, unnecessary second DB connection. (b) Bare `dict`/`list`/`tuple`/`object` type annotations across protocols.py + 4 source files. (c) Zero logging on mutation methods. (d) Duplicate methods in trust.py and routing.py. (e) Missing boundary/edge tests. **Fix:** All 5 parts addressed. Types tightened to match internal state types. Structured logging added. Duplicates resolved via delegation. 10 boundary tests added (51→60 total). | Medium | **Closed** |
+| BF-077 | **Unawaited coroutine in proactive loop.** `proactive.py:887` — `rt.skill_service.record_exercise(agent.id, "communication")` is a coroutine that was never awaited, producing a `RuntimeWarning` on every Ward Room communication exercise. **Fix:** Added `await`. | Low | **Closed** |
+| BF-078 | **Ward Room responsiveness dead after AD-515/516/517 refactoring.** `proactive.py:1106` referenced `rt._agents` — a private attribute that never existed on `ProbOSRuntime`. Should have been `rt.registry.all()`. Every agent response attempt crashed inside `_extract_and_execute_dms()`, caught by `except Exception: logger.debug(...)` in `ward_room_router.py:276` — completely invisible at production log levels. Blocked both Ward Room replies and agent-to-agent DMs. Root causes: (1) `MagicMock()` without `spec=` in test helper silently invented the attribute, so tests passed. (2) Exception handler used `debug` level, hiding the crash. (3) Law of Demeter violation — code reached into `rt._agents` instead of public API `rt.registry.all()`. **Fix:** `rt._agents` → `rt.registry.all()`. Promoted notification failure logging from `debug` → `warning`. **Prevention:** Added three engineering principles: `spec=` on all runtime mocks, exception handlers must use `warning` minimum, refactoring grep must search all access patterns. | Critical | **Closed** |
+| BF-079 | **Test mock factories use unspec'd MagicMock — systematic refactoring blind spot.** `_make_mock_runtime()` in test_proactive.py (and similar helpers across test files) creates `MagicMock()` without `spec=ProbOSRuntime`. This means tests pass even when code references attributes that don't exist on the real runtime. Directly caused BF-078 to survive the test suite. **Need:** Audit all `_make_mock_runtime()` and similar factories across the test suite. Add `spec=ProbOSRuntime` (or appropriate class) to all top-level mock objects. Verify tests still pass — any new failures are real bugs that were previously hidden. | Medium | **Open** |
+| BF-080 | **DM channels listed but not clickable in HXI.** Ward Room DM Channels panel shows all agent-to-agent DM channels with message counts, but clicking a channel does nothing — no click handler, no navigation to read the messages. Captain can see that agents are DMing each other but cannot read the conversations. | Medium | **Open** |
+| BF-081 | **Agent-to-agent DM routing returns empty targets.** `find_targets_for_agent()` in `ward_room_router.py` only handled `"department"` channel types. DM channels (`channel_type == "dm"`) fell through and returned an empty target list — recipient agent was never notified, never responded. All agent DMs were one-way. **Fix:** Added DM channel case to `find_targets_for_agent()` that matches the other participant by ID prefix in the deterministic channel name. | High | **Closed** |
+| BF-082 | **Agents unaware of unread DMs.** No mechanism for agents to discover DMs received while they were unable to respond (pre-BF-081 fix, or during startup before proactive loop activates). DMs are fire-and-forget events — if the notification is missed, the message is permanently invisible to the recipient. **Need:** Add unread DM check to proactive duty cycle. Scan DM channels where the agent is a participant but hasn't posted a reply. Surface unread DMs to the agent for response. | Medium | **Open** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 

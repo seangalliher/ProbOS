@@ -460,7 +460,9 @@ class TestMemoryRecall:
     def _make_crew_runtime(self, *, has_memory=True, recall_result=None, recall_side_effect=None):
         """Create a mock runtime with episodic memory for crew agents."""
         rt = MagicMock()
-        rt._is_crew_agent.return_value = True
+        # is_crew_agent checks ontology.get_crew_agent_types() — include test agent type
+        rt.ontology = MagicMock()
+        rt.ontology.get_crew_agent_types.return_value = {"test_cognitive", "custom_act", "custom_perceive", "custom_tier"}
         rt.callsign_registry.get_callsign.return_value = "Wesley"
         if has_memory:
             rt.episodic_memory = MagicMock()
@@ -524,7 +526,8 @@ class TestMemoryRecall:
     async def test_memory_recall_skips_non_crew(self):
         """Memory recall skips non-crew agents."""
         rt = self._make_crew_runtime()
-        rt._is_crew_agent.return_value = False
+        # Exclude test_cognitive from crew types so is_crew_agent returns False
+        rt.ontology.get_crew_agent_types.return_value = set()
         llm = MockLLMClient()
         agent = SampleCogAgent(llm_client=llm, runtime=rt)
 
@@ -575,7 +578,8 @@ class TestActStoreHook:
     def _make_crew_runtime(self, *, store_side_effect=None):
         """Create a mock runtime with episodic memory for crew agents."""
         rt = MagicMock()
-        rt._is_crew_agent.return_value = True
+        rt.ontology = MagicMock()
+        rt.ontology.get_crew_agent_types.return_value = {"analyzer", "test_cognitive"}
         rt.callsign_registry.get_callsign.return_value = "Wesley"
         rt.episodic_memory = MagicMock()
         rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
@@ -807,7 +811,8 @@ class TestMemoryRecallFallback:
     def _make_crew_runtime_with_fallback(self, *, recall_result=None, recent_result=None):
         """Create mock runtime with both recall_for_agent and recent_for_agent."""
         rt = MagicMock()
-        rt._is_crew_agent.return_value = True
+        rt.ontology = MagicMock()
+        rt.ontology.get_crew_agent_types.return_value = {"test_cognitive", "analyzer"}
         rt.callsign_registry.get_callsign.return_value = "Wesley"
         rt.episodic_memory = MagicMock()
         rt.episodic_memory.recall_for_agent = AsyncMock(return_value=recall_result or [])
@@ -880,7 +885,8 @@ class TestRecallQueryEnrichment:
 
     def _make_crew_runtime(self, *, callsign=None, has_registry=True, recall_result=None, recent_result=None):
         rt = MagicMock()
-        rt._is_crew_agent.return_value = True
+        rt.ontology = MagicMock()
+        rt.ontology.get_crew_agent_types.return_value = {"test_cognitive", "analyzer"}
         rt.episodic_memory = MagicMock()
         rt.episodic_memory.recall_for_agent = AsyncMock(return_value=recall_result or [])
         rt.episodic_memory.recent_for_agent = AsyncMock(return_value=recent_result or [])
@@ -1009,7 +1015,7 @@ class TestEndToEndWardRoomRecall:
         await mem.store(ep)
 
         rt = MagicMock()
-        rt._is_crew_agent.return_value = True
+        rt.ontology = None  # "counselor" is in legacy crew set
         rt.episodic_memory = mem
         rt.callsign_registry = MagicMock()
         rt.callsign_registry.get_callsign.return_value = "Counselor"
@@ -1054,7 +1060,8 @@ class TestEndToEndWardRoomRecall:
         ep2.timestamp = 0
 
         rt = MagicMock()
-        rt._is_crew_agent.return_value = True
+        rt.ontology = MagicMock()
+        rt.ontology.get_crew_agent_types.return_value = {"test_cognitive"}
         rt.callsign_registry = MagicMock()
         rt.callsign_registry.get_callsign.return_value = "Bones"
         rt.episodic_memory = MagicMock()

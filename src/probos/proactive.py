@@ -9,6 +9,7 @@ import time
 from typing import Any, Callable
 
 from probos.crew_profile import Rank
+from probos.crew_utils import is_crew_agent
 from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
@@ -54,6 +55,8 @@ class ProactiveCognitiveLoop:
         self._config: Any = None   # Set via set_config()
         self._duty_tracker: DutyScheduleTracker | None = None
         self._circuit_breaker = CognitiveCircuitBreaker()
+        self._notified_dm_threads: set[str] = set()  # BF-082: dedup guard
+        self._notified_dm_threads_reset: float = time.monotonic()  # hourly reset
 
     def set_runtime(self, runtime: Any) -> None:
         """Wire the runtime reference (provides registry, trust, WR, memory, etc.)."""
@@ -149,7 +152,7 @@ class ProactiveCognitiveLoop:
             return
 
         for agent in rt.registry.all():
-            if not rt._is_crew_agent(agent):
+            if not is_crew_agent(agent, rt.ontology):
                 continue
             if not agent.is_alive:
                 continue
@@ -206,6 +209,52 @@ class ProactiveCognitiveLoop:
                     agent.confidence,
                     exc_info=True,
                 )
+
+            # --- BF-082: Unread DM check ---
+            await self._check_unread_dms(agent, rt)
+
+    async def _check_unread_dms(self, agent: Any, rt: Any) -> None:
+        """Check for and route unread DMs for an agent."""
+        if not rt.ward_room or not rt.ward_room_router:
+            return
+
+        # Hourly reset of dedup set to allow re-notification of stale DMs
+        if time.monotonic() - self._notified_dm_threads_reset > 3600:
+            self._notified_dm_threads.clear()
+            self._notified_dm_threads_reset = time.monotonic()
+
+        try:
+            unread_dms = await rt.ward_room.get_unread_dms(agent.id, limit=2)
+            if not unread_dms:
+                return
+
+            for dm in unread_dms:
+                tid = dm["thread_id"]
+                if tid in self._notified_dm_threads:
+                    continue
+                self._notified_dm_threads.add(tid)
+                # Route through existing notification pipeline
+                event_data = {
+                    "thread_id": tid,
+                    "channel_id": dm["channel_id"],
+                    "author_id": dm["author_id"],
+                    "author_callsign": dm["author_callsign"],
+                    "title": dm["title"],
+                    "body": dm["body"],
+                }
+                await rt.ward_room_router.route_event(
+                    "ward_room_thread_created", event_data,
+                )
+            logger.info(
+                "BF-082: %s has %d unread DMs, notified",
+                getattr(agent, 'callsign', agent.agent_type),
+                len(unread_dms),
+            )
+        except Exception as exc:
+            logger.warning(
+                "BF-082: Unread DM check failed for %s: %s",
+                agent.agent_type, exc,
+            )
 
     async def _think_for_agent(self, agent: Any, rank: Rank, trust_score: float) -> None:
         """Gather context, send proactive_think intent, post result if meaningful.
@@ -792,7 +841,8 @@ class ProactiveCognitiveLoop:
                 },
                 context=f"Proactive proposal from {getattr(agent, 'agent_type', 'unknown')}",
             )
-            await rt._handle_propose_improvement(intent, agent)
+            if rt.ward_room_router:
+                await rt.ward_room_router.handle_propose_improvement(intent, agent)
         except Exception:
             logger.debug("Failed to post improvement proposal from %s", getattr(agent, 'agent_type', 'unknown'), exc_info=True)
 
@@ -872,9 +922,9 @@ class ProactiveCognitiveLoop:
 
         # --- Endorsements (Lieutenant+) ---
         if rank.value != Rank.ENSIGN.value:
-            cleaned, endorsements = rt._extract_endorsements(text)
+            cleaned, endorsements = rt.ward_room_router.extract_endorsements(text) if rt.ward_room_router else (text, [])
             if endorsements:
-                await rt._process_endorsements(endorsements, agent.id)
+                await rt.ward_room_router.process_endorsements(endorsements, agent_id=agent.id)
                 actions_executed.extend(
                     {"type": "endorse", "target": e["post_id"], "direction": e["direction"]}
                     for e in endorsements
@@ -884,7 +934,7 @@ class ProactiveCognitiveLoop:
                 # AD-428: Record exercise of Communication PCC
                 if hasattr(rt, 'skill_service') and rt.skill_service:
                     try:
-                        rt.skill_service.record_exercise(agent.id, "communication")
+                        await rt.skill_service.record_exercise(agent.id, "communication")
                     except Exception:
                         pass  # best-effort
 
@@ -1103,7 +1153,7 @@ class ProactiveCognitiveLoop:
 
             # Resolve target's full agent ID
             target_full_id = None
-            for a in rt._agents:
+            for a in rt.registry.all():
                 if a.agent_type == target_agent_type:
                     target_full_id = a.id
                     break

@@ -57,11 +57,12 @@ class TestProactiveEndorsementExtraction:
         runtime.ward_room = MagicMock()
         runtime.trust_network = MagicMock()
         runtime.trust_network.get_score.return_value = 0.6  # Lieutenant
-        runtime._extract_endorsements.return_value = (
+        runtime.ward_room_router = MagicMock()
+        runtime.ward_room_router.extract_endorsements.return_value = (
             "I noticed a pattern in the trust data.",
             [{"post_id": "abc123", "direction": "up"}],
         )
-        runtime._process_endorsements = AsyncMock()
+        runtime.ward_room_router.process_endorsements = AsyncMock()
         runtime.is_cold_start = False
 
         loop = ProactiveCognitiveLoop(interval=60)
@@ -76,7 +77,7 @@ class TestProactiveEndorsementExtraction:
         )
 
         assert "[ENDORSE" not in cleaned
-        runtime._process_endorsements.assert_called_once()
+        runtime.ward_room_router.process_endorsements.assert_called_once()
         assert len(actions) == 1
         assert actions[0]["type"] == "endorse"
 
@@ -121,8 +122,9 @@ class TestProactiveReplyExtraction:
         runtime.ward_room.create_post = AsyncMock(return_value=MagicMock(id="new-post"))
         runtime.trust_network = MagicMock()
         runtime.trust_network.get_score.return_value = 0.75  # Commander
-        runtime._extract_endorsements.return_value = ("text", [])
-        runtime._process_endorsements = AsyncMock()
+        runtime.ward_room_router = MagicMock()
+        runtime.ward_room_router.extract_endorsements.return_value = ("text", [])
+        runtime.ward_room_router.process_endorsements = AsyncMock()
         runtime.is_cold_start = False
         runtime.callsign_registry = MagicMock()
         runtime.callsign_registry.get_callsign.return_value = "Worf"
@@ -187,8 +189,9 @@ class TestProactiveReplyExtraction:
         runtime.ward_room = MagicMock()
         runtime.trust_network = MagicMock()
         runtime.trust_network.get_score.return_value = 0.3  # Ensign
-        runtime._extract_endorsements.return_value = ("text", [])
-        runtime._process_endorsements = AsyncMock()
+        runtime.ward_room_router = MagicMock()
+        runtime.ward_room_router.extract_endorsements.return_value = ("text", [])
+        runtime.ward_room_router.process_endorsements = AsyncMock()
         runtime.is_cold_start = False
         runtime._records_store = MagicMock()
         runtime._records_store.write_notebook = AsyncMock()
@@ -226,11 +229,12 @@ class TestSkillReinforcement:
         runtime.ward_room = MagicMock()
         runtime.trust_network = MagicMock()
         runtime.trust_network.get_score.return_value = 0.6  # Lieutenant
-        runtime._extract_endorsements.return_value = (
+        runtime.ward_room_router = MagicMock()
+        runtime.ward_room_router.extract_endorsements.return_value = (
             "Clean text.",
             [{"post_id": "abc", "direction": "up"}],
         )
-        runtime._process_endorsements = AsyncMock()
+        runtime.ward_room_router.process_endorsements = AsyncMock()
         runtime.skill_service = MagicMock()
         runtime.skill_service.record_exercise = MagicMock()
         runtime.is_cold_start = False
