@@ -128,6 +128,37 @@ class RecordsStore:
         logger.info("Record written: %s by %s (%s)", path, author, classification)
         return path
 
+    async def seed_manuals(self, source_dir: Path) -> int:
+        """Seed manuals from source directory into ship-records/manuals/.
+
+        BF-084: Copies markdown files from config/manuals/ to manuals/ with
+        ship-classified frontmatter. Overwrites existing (shipyard-managed).
+        Returns count of seeded manuals.
+        """
+        if not source_dir.is_dir():
+            logger.info("BF-084: Manual source dir %s not found, skipping", source_dir)
+            return 0
+
+        count = 0
+        for md_file in sorted(source_dir.glob("*.md")):
+            content = md_file.read_text(encoding="utf-8")
+            path = f"manuals/{md_file.name}"
+            await self.write_entry(
+                author="shipyard",
+                path=path,
+                content=content,
+                message=f"Seed manual: {md_file.stem}",
+                classification="ship",
+                status="published",
+                topic=md_file.stem,
+                tags=["manual"],
+            )
+            count += 1
+
+        if count:
+            logger.info("BF-084: Seeded %d manual(s) into Ship's Records", count)
+        return count
+
     async def append_captains_log(self, content: str, message: str = "") -> str:
         """Append an entry to the Captain's Log.
 

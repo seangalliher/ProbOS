@@ -616,7 +616,7 @@ class ProactiveCognitiveLoop:
                                 {
                                     "type": a["type"],
                                     "author": a["author"],
-                                    "body": a.get("title", a.get("body", ""))[:150],
+                                    "body": a.get("title", a.get("body", ""))[:500],
                                     "net_score": a.get("net_score", 0),       # AD-426
                                     "post_id": a.get("post_id", a.get("id", "")),  # AD-426
                                     "thread_id": a.get("thread_id", ""),  # AD-437
@@ -647,7 +647,7 @@ class ProactiveCognitiveLoop:
                                 {
                                     "type": item["type"],
                                     "author": item.get("author", "unknown"),
-                                    "body": item.get("body", "")[:150],
+                                    "body": item.get("body", "")[:500],
                                     "channel": "All Hands",
                                     "net_score": item.get("net_score", 0),       # AD-426
                                     "post_id": item.get("post_id", item.get("id", "")),  # AD-426

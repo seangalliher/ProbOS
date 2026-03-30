@@ -233,6 +233,11 @@ async def init_cognitive_services(
                 rcfg = rcfg.model_copy(update={"repo_path": str(data_dir / "ship-records")})
             records_store = RecordsStore(rcfg, ontology=None)
             await records_store.initialize()
+            # BF-084: Seed manuals from config/manuals/ into ship-records
+            manuals_dir = Path(__file__).resolve().parent.parent.parent.parent / "config" / "manuals"
+            seeded = await records_store.seed_manuals(manuals_dir)
+            if seeded:
+                logger.info("Seeded %d manual(s) into Ship's Records", seeded)
             logger.info("ship-records started")
         except Exception as e:
             logger.warning("Ship's Records failed to start: %s — continuing without records", e)

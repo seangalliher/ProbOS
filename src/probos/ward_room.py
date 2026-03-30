@@ -857,8 +857,8 @@ class WardRoomService:
                 items.append({
                     "type": "thread",
                     "author": row[1] or "unknown",
-                    "title": row[2][:100],
-                    "body": row[3][:200],
+                    "title": row[2][:200],
+                    "body": row[3][:500],
                     "created_at": row[4],
                     "thread_mode": row[5],
                     "net_score": row[6],       # AD-426
@@ -878,7 +878,7 @@ class WardRoomService:
                 items.append({
                     "type": "reply",
                     "author": row[1] or "unknown",
-                    "body": row[2][:200],
+                    "body": row[2][:500],
                     "created_at": row[3],
                     "net_score": row[4],       # AD-426
                     "post_id": row[0],         # AD-426
@@ -1157,7 +1157,7 @@ class WardRoomService:
                 except Exception:
                     pass
                 episode = Episode(
-                    user_input=f"[Ward Room reply] {channel_name} — {author_callsign or author_id}: {body[:200]}",
+                    user_input=f"[Ward Room reply] {channel_name} — {author_callsign or author_id}: {body[:500]}",
                     timestamp=_time.time(),
                     agent_ids=[author_id],
                     outcomes=[{
@@ -1168,7 +1168,7 @@ class WardRoomService:
                         "thread_id": thread_id,
                         "is_reply": True,
                     }],
-                    reflection=f"{author_callsign or author_id} replied in thread '{thread_title[:60]}': {body[:120]}",
+                    reflection=f"{author_callsign or author_id} replied in thread '{thread_title[:60]}': {body[:300]}",
                 )
                 # BF-039: Route through should_store() selective encoding gate
                 from probos.cognitive.episodic import EpisodicMemory

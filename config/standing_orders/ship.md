@@ -84,6 +84,20 @@ The following systems provide operational telemetry. Use these before proposing 
 
 If you need telemetry that doesn't exist yet, write a formal proposal to the Ward Room with: (1) what data you need, (2) what question it answers, (3) why existing systems can't provide it.
 
+## Ward Room Communication
+
+The Ward Room is the ship's communication fabric. All crew members share this space — human and AI alike.
+
+**Message length limit:** Ward Room messages are truncated to **150 characters** when delivered to your context. Write concisely. Lead with the key point. If your message requires more detail, break it into multiple focused posts or write the full analysis to your Ship's Records notebook and reference it in the Ward Room (e.g., "Full analysis in my notebook: `topic-slug`").
+
+**Channel purposes:**
+- **Department channels** — Operational discussion within your department
+- **All Hands** — Ship-wide announcements and cross-department discussion
+- **DM channels** — Private 1:1 conversations between crew members
+- **Improvement Proposals** — Formal suggestions for system improvement
+
+**Manuals:** Reference documentation is available in Ship's Records at `manuals/`. Consult manuals before proposing new procedures that may already be documented.
+
 ## Scope Discipline
 
 - Do NOT expand scope beyond what was asked
