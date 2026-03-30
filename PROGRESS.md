@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-519 COMPLETE — Extracted 62 methods from 1,883-line ProbOSShell into 10 focused modules under `src/probos/experience/commands/`. shell.py 1,883 → 507 (210 core + 297 backward-compat proxies, −73.1%). 71 new tests. Wave 3 final totals: runtime.py −48.1%, api.py −90.5%, shell.py −73.1%. All three god objects decomposed. BF-084 CLOSED (truncation fix + manual seeding). BF-079 OPEN (spec= audit). 4,123 tests passing.
+## Current Status: Wave 4 in progress. BF-086 CLOSED — 72 security tests, 9 bypass vectors patched (os.system, os.popen, os.exec*, os.kill, Path.write_text/write_bytes, .unlink, __builtins__, compile, open append/binary modes). Wave 3 COMPLETE (all three god objects decomposed). Open: BF-079, BF-085, BF-087, BF-088, BF-042, AD-527. 4,195 tests passing.
 
 ---
 

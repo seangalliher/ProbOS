@@ -1602,6 +1602,28 @@ Wave 3 final god object. `ProbOSShell` was 1,883 lines with 62 methods — every
 
 ---
 
+## Wave 4: Code Review Closure (2026-03-30)
+
+Decision to close all remaining findings from the 2026-03-29 comprehensive code review. Wave 1+2 fixed immediate/short-term issues. Wave 3 decomposed all three god objects. Wave 4 addresses the remaining 7 open findings.
+
+**AD-527: Typed Event System** — Code review finding #13. Replace scattered string-literal event types with formal event registry and typed event dataclasses. Eliminates silent typo bugs, adds IDE discoverability, enables event catalog generation.
+
+**New BFs filed:**
+- **BF-085:** Type safety audit — replace ~70 remaining `Any` annotations (finding #11)
+- **BF-086:** Security tests for code_validator.py and sandbox.py (finding #14) — **CLOSED.** 72 tests, 9 bypass vectors patched.
+- **BF-087:** Reset integration tests — full state-create-reset-verify cycle (finding #15)
+- **BF-088:** Test sleep cleanup — replace 10-second sleeps (finding #18)
+
+**Existing BFs folded into Wave 4:**
+- **BF-079:** Mock discipline audit — `spec=` on all mock factories (finding #17)
+- **BF-042:** Frontend component rendering tests (finding #16)
+
+**Score at Wave 4 creation:** 11/18 closed, 2 partial (now tracked), 5 open (now tracked). Target: 18/18.
+
+**Status:** PLANNED.
+
+---
+
 **Context:** The Ward Room HXI has three significant gaps: (1) DM channels are listed but not clickable (BF-080), (2) Crew Notebooks (168+ entries across 11 agents) are invisible in the HXI, (3) Ship's Records sections (Captain's Log, Duty Logs, Reports) have no viewer.
 
 **Decision:** Three-part AD:

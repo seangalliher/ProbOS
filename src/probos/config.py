@@ -222,7 +222,13 @@ class SelfModConfig(BaseModel):
     forbidden_patterns: list[str] = [
         r"subprocess", r"shutil\.rmtree", r"os\.remove", r"os\.unlink",
         r"eval\s*\(", r"exec\s*\(", r"__import__",
-        r"open\s*\(.*['\"]w['\"]", r"socket\b", r"ctypes\b",
+        r"open\s*\(.*['\"][waxWAX]", r"socket\b", r"ctypes\b",
+        # BF-086: Close security gaps found by bypass testing
+        r"os\.system", r"os\.popen", r"os\.exec", r"os\.kill",
+        r"\.write_text\s*\(", r"\.write_bytes\s*\(",
+        r"\.unlink\s*\(",
+        r"__builtins__",
+        r"compile\s*\(",
     ]
     research_enabled: bool = False  # Opt-in web research before design
     research_domain_whitelist: list[str] = [

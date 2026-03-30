@@ -4092,6 +4092,41 @@ ProbOS agents are like highly gifted humans — they have access to vast knowled
 
 **AD-519: Extract shell.py Command Handlers** *(complete, OSS)* — Wave 3 architecture decomposition, final god object. Extracted 62 methods from the 1,883-line `ProbOSShell` into 10 focused modules under `src/probos/experience/commands/`: `commands_status.py` (system status & info), `commands_plan.py` (plan lifecycle — heaviest handlers), `commands_directives.py` (standing orders & directives), `commands_autonomous.py` (autonomous ops), `commands_memory.py` (memory & history), `commands_knowledge.py` (knowledge store & search), `commands_llm.py` (LLM config & model registry), `commands_introspection.py` (agent introspection & events), `session.py` (1:1 @callsign sessions via `SessionManager` class), `approval_callbacks.py` (user approval prompts). Shell.py reduced to 507 lines (210 core dispatcher + 297 backward-compat proxies). Pattern: standalone `cmd_name(runtime, console, args)` functions — no reference back to ProbOSShell. 71 new tests across 9 test files. Wave 3 final totals: runtime.py −48.1%, api.py −90.5%, shell.py −73.1%. 4,123 tests passing.
 
+### Wave 4: Code Review Closure (AD-527, BF-079/085–088)
+
+*"No debt left behind."*
+
+Closes all remaining findings from the 2026-03-29 comprehensive code review. Wave 1+2 fixed immediate/short-term issues (BF-071–076). Wave 3 decomposed all three god objects (AD-514–519). Wave 4 addresses the remaining architecture, type safety, security, and test quality findings.
+
+**AD-527: Typed Event System** *(planned, OSS)* — Code review finding #13. Replace scattered string-literal event types (`"self_mod_started"`, `"trust_update"`, `"ward_room_post"`, etc.) with a formal event type registry and typed event classes. Currently `_emit_event()` accepts arbitrary dicts with no schema — consumers discover event shapes at runtime.
+
+**(1) Current state:**
+- Events are plain dicts: `{"type": "trust_update", "agent_id": ..., "score": ...}`
+- Event types are string literals scattered across 15+ files
+- `_emit_event()` is synchronous but triggers async WebSocket broadcasts
+- No schema validation, no type checking, no event catalog
+- Consumers (`api.py` WebSocket, `dream_adapter.py`, `sif.py`) do unchecked `event.get("type")`
+
+**(2) Target architecture:**
+- `EventType` enum or registry — single source of truth for all event types
+- Typed event dataclasses: `TrustUpdateEvent`, `SelfModEvent`, `WardRoomPostEvent`, etc.
+- `emit(event: BaseEvent)` with type-checked payloads
+- Event catalog generated from code — documents all events, their payloads, and consumers
+- Backward-compatible — old dict consumers still work during migration
+
+**(3) Benefits:** Type safety at event boundaries, discoverable event catalog, IDE autocomplete on event payloads, eliminates silent typo bugs in event type strings.
+
+**Open BFs (Wave 4 scope):**
+
+| BF | Finding # | Summary | Priority |
+|----|-----------|---------|----------|
+| BF-079 | #17 | Mock discipline audit — `spec=` on all mock factories | Medium |
+| BF-085 | #11 | Type safety audit — replace ~70 remaining `Any` annotations | Medium |
+| BF-086 | #14 | Security tests — 9 bypass vectors found and patched | High | **Closed** |
+| BF-087 | #15 | Reset integration tests — full state-create-reset-verify cycle | Medium |
+| BF-088 | #18 | Test sleep cleanup — replace 10-second sleeps | Low |
+| BF-042 | #16 | Frontend component rendering tests (pre-existing) | Medium |
+
 
 ### Engineering Crew Architecture (AD-521)
 
@@ -4380,6 +4415,10 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-082 | **Agents unaware of unread DMs.** No mechanism for agents to discover DMs received while they were unable to respond (pre-BF-081 fix, or during startup before proactive loop activates). DMs are fire-and-forget events — if the notification is missed, the message is permanently invisible to the recipient. **Fix:** Added `get_unread_dms()` to `ward_room.py` + `_check_unread_dms()` to proactive loop. Deduplication via `_notified_dm_threads` set with hourly reset. Routes through ward_room_router, limits 2 DMs per cycle. 8 tests. | Medium | **Closed** |
 | BF-083 | **Agent identity grounding — agents don't know their own names.** Agents infer their callsign from Star Trek context rather than knowing it. Chapel introduces herself as "Bones" (wrong callsign). Counselor "corrects" someone by claiming callsign is "Troi" when actual system callsign is "Echo." **Need:** Inject callsign, role, department, rank, birth date into agent `perceive()` context so agents have authoritative self-knowledge rather than guessing from thematic context. | High | **Open** |
 | BF-084 | **Ward Room message truncation — agents can't read full messages.** Multiple truncation layers cut messages before agents see them: `get_recent_activity()` truncates to 200 chars, proactive context injection truncates to **150 chars** (`proactive.py:619,650`), episode reflections truncated to 120 chars. Crew identified the issue independently (Cortez: `message-truncation-analysis.md`, Sinclair: "clean cuts at character boundaries", Chapel CMO escalation to Captain). **Fix:** Raised proactive context injection 150→500, `get_recent_activity()` body 200→500, episode reflection 120→300. Added `seed_manuals()` to RecordsStore — copies `config/manuals/*.md` to `ship-records/manuals/` with ship classification at startup. First manual: Ward Room Manual. 6 tests. | High | **Closed** |
+| BF-085 | **Type safety audit — 95 `Any` annotations across 30 files.** Code review finding #11. BF-076 tightened protocols.py and public APIs but ~70 `Any` annotations remain, primarily in `runtime.py` service attributes, `proactive.py` context dicts, and `ward_room.py` handler signatures. `Any` defeats static analysis and hides type errors at refactoring boundaries. **Need:** Replace remaining `Any` with concrete types (Protocol, Union, specific classes). Start with runtime.py service attributes (highest-impact). | Medium | **Open** |
+| BF-086 | **Security test coverage — code_validator.py and sandbox.py.** Code review finding #14. Added 72 dedicated security tests across 2 files (55 validator, 17 sandbox). Found and fixed 9 bypass vectors: `os.system`, `os.popen`, `os.exec*`, `os.kill`, `Path.write_text/write_bytes`, `.unlink()`, `__builtins__`, `compile()`. Broadened `open()` pattern to catch append/exclusive/binary write modes. | High | **Closed** |
+| BF-087 | **Reset integration tests — no full state-create-reset-verify cycle.** Code review finding #15. BF-070 added tiered reset with tests for reset distribution logic, but no test creates realistic state (trust, episodes, Ward Room, identity), runs reset, and verifies all state is correctly cleared per tier. **Need:** Integration test that creates state across all subsystems, runs each reset tier, and asserts post-reset invariants. | Medium | **Open** |
+| BF-088 | **Test sleep cleanup — 10-second sleeps in test suites.** Code review finding #18. `test_builder_agent.py:654` and `test_decomposer.py:586` contain `asyncio.sleep(10)` that inflate test runtime. **Need:** Replace with `asyncio.Event()` or mock-based synchronization. | Low | **Open** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 
