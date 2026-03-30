@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-518 COMPLETE — Eliminated 34 delegation shims from runtime.py, extracted stop() to startup/shutdown.py (282 lines), renamed 5 private attributes to public. runtime.py 3,216 → 2,762 (−14.1%). Wave 3 cumulative: runtime.py 5,321 → 2,762 (−48.1%), api.py 3,109 → 295 (−90.5%). AD-515/516/517 also complete. BF-079 OPEN (spec= audit). 3923 tests passing.
+## Current Status: AD-519 COMPLETE — Extracted 62 methods from 1,883-line ProbOSShell into 10 focused modules under `src/probos/experience/commands/`. shell.py 1,883 → 507 (210 core + 297 backward-compat proxies, −73.1%). 71 new tests. Wave 3 final totals: runtime.py −48.1%, api.py −90.5%, shell.py −73.1%. All three god objects decomposed. BF-084 CLOSED (truncation fix + manual seeding). BF-079 OPEN (spec= audit). 4,123 tests passing.
 
 ---
 

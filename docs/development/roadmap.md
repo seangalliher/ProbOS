@@ -4090,6 +4090,9 @@ ProbOS agents are like highly gifted humans — they have access to vast knowled
 
 **AD-518: Eliminate Delegation Shims + Extract stop()** *(complete, OSS)* — Wave 3 final cleanup. Eliminated 34 delegation shims from runtime.py — callers now reference extracted services directly. Extracted stop() to `startup/shutdown.py` (282 lines). Renamed 5 private service attributes to public. Replaced `_is_crew_agent` with module-level `crew_utils.is_crew_agent()`. runtime.py 3,216 → 2,762 (−14.1%). Wave 3 final totals: runtime.py 5,321 → 2,762 (−48.1%), api.py 3,109 → 295 (−90.5%). 3923 tests passing.
 
+**AD-519: Extract shell.py Command Handlers** *(complete, OSS)* — Wave 3 architecture decomposition, final god object. Extracted 62 methods from the 1,883-line `ProbOSShell` into 10 focused modules under `src/probos/experience/commands/`: `commands_status.py` (system status & info), `commands_plan.py` (plan lifecycle — heaviest handlers), `commands_directives.py` (standing orders & directives), `commands_autonomous.py` (autonomous ops), `commands_memory.py` (memory & history), `commands_knowledge.py` (knowledge store & search), `commands_llm.py` (LLM config & model registry), `commands_introspection.py` (agent introspection & events), `session.py` (1:1 @callsign sessions via `SessionManager` class), `approval_callbacks.py` (user approval prompts). Shell.py reduced to 507 lines (210 core dispatcher + 297 backward-compat proxies). Pattern: standalone `cmd_name(runtime, console, args)` functions — no reference back to ProbOSShell. 71 new tests across 9 test files. Wave 3 final totals: runtime.py −48.1%, api.py −90.5%, shell.py −73.1%. 4,123 tests passing.
+
+
 ### Engineering Crew Architecture (AD-521)
 
 *"A senior engineer's value is judgment, not keystrokes."*

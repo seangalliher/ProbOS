@@ -1587,7 +1587,20 @@ Wave 3 final cleanup. runtime.py still contained 34 delegation shims — one-lin
 
 ---
 
-**AD-523: HXI Ward Room & Records Overhaul** *(planned, OSS, Phase 35)*
+## AD-519: Extract shell.py Command Handlers (2026-03-30)
+
+Wave 3 final god object. `ProbOSShell` was 1,883 lines with 62 methods — every slash command handler, 1:1 session management, approval callbacks, and REPL lifecycle mixed into a single class. Lowest test coverage in the codebase (64%).
+
+**Key changes:**
+- **10 modules extracted** to `src/probos/experience/commands/`: `commands_status.py`, `commands_plan.py`, `commands_directives.py`, `commands_autonomous.py`, `commands_memory.py`, `commands_knowledge.py`, `commands_llm.py`, `commands_introspection.py`, `session.py` (`SessionManager` class), `approval_callbacks.py`.
+- **Pattern:** standalone `cmd_name(runtime, console, args)` functions — no reference back to ProbOSShell. Commands that need additional state (renderer, start_time) take explicit parameters.
+- **shell.py: 1,883 → 507 lines** (210 core dispatcher + 297 backward-compat proxies, −73.1%).
+- **71 new tests** across 9 test files.
+- **Wave 3 complete:** runtime.py −48.1%, api.py −90.5%, shell.py −73.1%. All three god objects decomposed.
+
+**Status:** **COMPLETE** (2026-03-30). 4,123 tests passing, 0 regressions.
+
+---
 
 **Context:** The Ward Room HXI has three significant gaps: (1) DM channels are listed but not clickable (BF-080), (2) Crew Notebooks (168+ entries across 11 agents) are invisible in the HXI, (3) Ship's Records sections (Captain's Log, Duty Logs, Reports) have no viewer.
 

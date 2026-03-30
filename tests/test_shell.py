@@ -160,7 +160,7 @@ class TestProbOSShell:
     @pytest.mark.asyncio
     async def test_cmd_orders_no_directory(self, shell, mock_console):
         """Test /orders when standing orders directory does not exist."""
-        with patch("probos.experience.shell._DEFAULT_ORDERS_DIR", "/nonexistent/path"):
+        with patch("probos.cognitive.standing_orders._DEFAULT_ORDERS_DIR", "/nonexistent/path"):
             await shell._cmd_orders("")
 
         calls = [str(c) for c in mock_console.print.call_args_list]
@@ -170,7 +170,7 @@ class TestProbOSShell:
     async def test_cmd_orders_empty_directory(self, shell, mock_console):
         """Test /orders when directory exists but has no .md files."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("probos.experience.shell._DEFAULT_ORDERS_DIR", tmpdir):
+            with patch("probos.cognitive.standing_orders._DEFAULT_ORDERS_DIR", tmpdir):
                 await shell._cmd_orders("")
 
         calls = [str(c) for c in mock_console.print.call_args_list]
@@ -185,7 +185,7 @@ class TestProbOSShell:
             (tmppath / "ship.md").write_text("# Ship\nInstance config.", encoding="utf-8")
             (tmppath / "engineering.md").write_text("# Engineering\nBuild standards.", encoding="utf-8")
 
-            with patch("probos.experience.shell._DEFAULT_ORDERS_DIR", tmpdir):
+            with patch("probos.cognitive.standing_orders._DEFAULT_ORDERS_DIR", tmpdir):
                 await shell._cmd_orders("")
 
         # Should have printed a Table object

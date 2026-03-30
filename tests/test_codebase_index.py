@@ -362,10 +362,11 @@ class TestImportGraph:
         assert len(index._reverse_import_graph) > 0
 
     def test_get_imports_shell(self, index: CodebaseIndex):
-        """get_imports('experience/shell.py') includes panels.py."""
+        """get_imports('experience/shell.py') includes command modules."""
         imports = index.get_imports("experience/shell.py")
         assert isinstance(imports, list)
-        assert any("panels" in p for p in imports)
+        # After AD-519, shell.py imports from commands subpackage, not panels directly
+        assert any("commands" in p or "session" in p for p in imports)
 
     def test_get_imports_unknown_file(self, index: CodebaseIndex):
         """get_imports() returns [] for unknown file."""
