@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 from probos.mesh.routing import HebbianRouter, REL_SOCIAL
 from probos.runtime import ProbOSRuntime
+from probos.substrate.agent import BaseAgent
 from probos.ward_room import WardRoomService
 
 
@@ -153,7 +154,7 @@ class TestHebbianSocial:
         rt.callsign_registry.resolve = MagicMock(return_value={"agent_type": "diagnostician"})
         rt.callsign_registry.get_callsign = MagicMock(return_value="Bones")
 
-        target = MagicMock()
+        target = MagicMock(spec=BaseAgent)
         target.agent_type = "diagnostician"
         target.id = "diag-001"
         rt.registry = MagicMock()
@@ -161,7 +162,7 @@ class TestHebbianSocial:
 
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.agent_type = "counselor"
         agent.id = "couns-001"
         agent.callsign = "Troi"

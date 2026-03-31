@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from probos.cognitive.llm_client import MockLLMClient
+from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient
+from probos.runtime import ProbOSRuntime
 from probos.crew_profile import CallsignRegistry
 from probos.types import IntentMessage, IntentResult
 
@@ -32,7 +33,7 @@ class TestDirectMessagePassthrough:
         from unittest.mock import patch
         with patch("probos.cognitive.builder._should_use_visiting_builder", return_value=False):
             from probos.cognitive.builder import BuilderAgent
-            agent = BuilderAgent(agent_id="builder-dm-0", llm_client=MagicMock(), runtime=MagicMock())
+            agent = BuilderAgent(agent_id="builder-dm-0", llm_client=AsyncMock(spec=BaseLLMClient), runtime=MagicMock(spec=ProbOSRuntime))
             decision = {"intent": "direct_message", "llm_output": "Aye, Captain."}
             result = await agent.act(decision)
             assert result["success"] is True
@@ -41,7 +42,7 @@ class TestDirectMessagePassthrough:
     @pytest.mark.asyncio
     async def test_architect_direct_message(self):
         from probos.cognitive.architect import ArchitectAgent
-        agent = ArchitectAgent(agent_id="arch-dm-0", llm_client=MagicMock())
+        agent = ArchitectAgent(agent_id="arch-dm-0", llm_client=AsyncMock(spec=BaseLLMClient))
         decision = {"intent": "direct_message", "llm_output": "Understood, sir."}
         result = await agent.act(decision)
         assert result["success"] is True
@@ -50,7 +51,7 @@ class TestDirectMessagePassthrough:
     @pytest.mark.asyncio
     async def test_surgeon_direct_message(self):
         from probos.agents.medical.surgeon import SurgeonAgent
-        agent = SurgeonAgent(llm_client=MagicMock(), runtime=MagicMock())
+        agent = SurgeonAgent(llm_client=AsyncMock(spec=BaseLLMClient), runtime=MagicMock(spec=ProbOSRuntime))
         decision = {"intent": "direct_message", "llm_output": "Patient stable."}
         result = await agent.act(decision)
         assert result["success"] is True
@@ -59,7 +60,7 @@ class TestDirectMessagePassthrough:
     @pytest.mark.asyncio
     async def test_counselor_direct_message(self):
         from probos.cognitive.counselor import CounselorAgent
-        agent = CounselorAgent(llm_client=MagicMock())
+        agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         decision = {"intent": "direct_message", "llm_output": "How are you feeling?"}
         result = await agent.act(decision)
         assert result["success"] is True
@@ -96,7 +97,7 @@ class TestConversationalPassthrough:
         from unittest.mock import patch
         with patch("probos.cognitive.builder._should_use_visiting_builder", return_value=False):
             from probos.cognitive.builder import BuilderAgent
-            agent = BuilderAgent(agent_id="builder-wr-0", llm_client=MagicMock(), runtime=MagicMock())
+            agent = BuilderAgent(agent_id="builder-wr-0", llm_client=AsyncMock(spec=BaseLLMClient), runtime=MagicMock(spec=ProbOSRuntime))
             decision = {"intent": "ward_room_notification", "llm_output": "Noted, Captain."}
             result = await agent.act(decision)
             assert result["success"] is True
@@ -107,7 +108,7 @@ class TestConversationalPassthrough:
         from unittest.mock import patch
         with patch("probos.cognitive.builder._should_use_visiting_builder", return_value=False):
             from probos.cognitive.builder import BuilderAgent
-            agent = BuilderAgent(agent_id="builder-pt-0", llm_client=MagicMock(), runtime=MagicMock())
+            agent = BuilderAgent(agent_id="builder-pt-0", llm_client=AsyncMock(spec=BaseLLMClient), runtime=MagicMock(spec=ProbOSRuntime))
             decision = {"intent": "proactive_think", "llm_output": "Build pipeline nominal."}
             result = await agent.act(decision)
             assert result["success"] is True
@@ -116,7 +117,7 @@ class TestConversationalPassthrough:
     @pytest.mark.asyncio
     async def test_architect_ward_room_notification(self):
         from probos.cognitive.architect import ArchitectAgent
-        agent = ArchitectAgent(agent_id="arch-wr-0", llm_client=MagicMock())
+        agent = ArchitectAgent(agent_id="arch-wr-0", llm_client=AsyncMock(spec=BaseLLMClient))
         decision = {"intent": "ward_room_notification", "llm_output": "Design reviewed."}
         result = await agent.act(decision)
         assert result["success"] is True
@@ -125,7 +126,7 @@ class TestConversationalPassthrough:
     @pytest.mark.asyncio
     async def test_architect_proactive_think(self):
         from probos.cognitive.architect import ArchitectAgent
-        agent = ArchitectAgent(agent_id="arch-pt-0", llm_client=MagicMock())
+        agent = ArchitectAgent(agent_id="arch-pt-0", llm_client=AsyncMock(spec=BaseLLMClient))
         decision = {"intent": "proactive_think", "llm_output": "Architecture stable."}
         result = await agent.act(decision)
         assert result["success"] is True
@@ -134,7 +135,7 @@ class TestConversationalPassthrough:
     @pytest.mark.asyncio
     async def test_surgeon_ward_room_notification(self):
         from probos.agents.medical.surgeon import SurgeonAgent
-        agent = SurgeonAgent(llm_client=MagicMock(), runtime=MagicMock())
+        agent = SurgeonAgent(llm_client=AsyncMock(spec=BaseLLMClient), runtime=MagicMock(spec=ProbOSRuntime))
         decision = {"intent": "ward_room_notification", "llm_output": "Ready for surgery."}
         result = await agent.act(decision)
         assert result["success"] is True
@@ -143,7 +144,7 @@ class TestConversationalPassthrough:
     @pytest.mark.asyncio
     async def test_surgeon_proactive_think(self):
         from probos.agents.medical.surgeon import SurgeonAgent
-        agent = SurgeonAgent(llm_client=MagicMock(), runtime=MagicMock())
+        agent = SurgeonAgent(llm_client=AsyncMock(spec=BaseLLMClient), runtime=MagicMock(spec=ProbOSRuntime))
         decision = {"intent": "proactive_think", "llm_output": "All patients stable."}
         result = await agent.act(decision)
         assert result["success"] is True
@@ -152,7 +153,7 @@ class TestConversationalPassthrough:
     @pytest.mark.asyncio
     async def test_counselor_ward_room_notification(self):
         from probos.cognitive.counselor import CounselorAgent
-        agent = CounselorAgent(llm_client=MagicMock())
+        agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         decision = {"intent": "ward_room_notification", "llm_output": "Crew morale noted."}
         result = await agent.act(decision)
         assert result["success"] is True
@@ -161,7 +162,7 @@ class TestConversationalPassthrough:
     @pytest.mark.asyncio
     async def test_counselor_proactive_think(self):
         from probos.cognitive.counselor import CounselorAgent
-        agent = CounselorAgent(llm_client=MagicMock())
+        agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         decision = {"intent": "proactive_think", "llm_output": "No concerns."}
         result = await agent.act(decision)
         assert result["success"] is True
@@ -249,7 +250,7 @@ class TestNewAgentInstantiation:
 
     def test_security_agent_attributes(self):
         from probos.cognitive.security_officer import SecurityAgent
-        agent = SecurityAgent(llm_client=MagicMock(), runtime=MagicMock())
+        agent = SecurityAgent(llm_client=AsyncMock(spec=BaseLLMClient), runtime=MagicMock(spec=ProbOSRuntime))
         assert agent.agent_type == "security_officer"
         assert agent.tier == "domain"
         assert agent.instructions  # non-empty
@@ -258,7 +259,7 @@ class TestNewAgentInstantiation:
 
     def test_operations_agent_attributes(self):
         from probos.cognitive.operations_officer import OperationsAgent
-        agent = OperationsAgent(llm_client=MagicMock(), runtime=MagicMock())
+        agent = OperationsAgent(llm_client=AsyncMock(spec=BaseLLMClient), runtime=MagicMock(spec=ProbOSRuntime))
         assert agent.agent_type == "operations_officer"
         assert agent.tier == "domain"
         assert agent.instructions  # non-empty
@@ -267,7 +268,7 @@ class TestNewAgentInstantiation:
 
     def test_engineering_agent_attributes(self):
         from probos.cognitive.engineering_officer import EngineeringAgent
-        agent = EngineeringAgent(llm_client=MagicMock(), runtime=MagicMock())
+        agent = EngineeringAgent(llm_client=AsyncMock(spec=BaseLLMClient), runtime=MagicMock(spec=ProbOSRuntime))
         assert agent.agent_type == "engineering_officer"
         assert agent.tier == "domain"
         assert agent.instructions  # non-empty
@@ -286,7 +287,7 @@ class TestNewAgentsDirectMessage:
     async def test_security_agent_direct_message(self):
         from probos.cognitive.security_officer import SecurityAgent
         llm = MockLLMClient()
-        agent = SecurityAgent(llm_client=llm, runtime=MagicMock())
+        agent = SecurityAgent(llm_client=llm, runtime=MagicMock(spec=ProbOSRuntime))
         intent = IntentMessage(
             intent="direct_message",
             params={"message": "What threats do you see?"},
@@ -301,7 +302,7 @@ class TestNewAgentsDirectMessage:
     async def test_operations_agent_direct_message(self):
         from probos.cognitive.operations_officer import OperationsAgent
         llm = MockLLMClient()
-        agent = OperationsAgent(llm_client=llm, runtime=MagicMock())
+        agent = OperationsAgent(llm_client=llm, runtime=MagicMock(spec=ProbOSRuntime))
         intent = IntentMessage(
             intent="direct_message",
             params={"message": "Status report?"},
@@ -316,7 +317,7 @@ class TestNewAgentsDirectMessage:
     async def test_engineering_agent_direct_message(self):
         from probos.cognitive.engineering_officer import EngineeringAgent
         llm = MockLLMClient()
-        agent = EngineeringAgent(llm_client=llm, runtime=MagicMock())
+        agent = EngineeringAgent(llm_client=llm, runtime=MagicMock(spec=ProbOSRuntime))
         intent = IntentMessage(
             intent="direct_message",
             params={"message": "How are the engines?"},
@@ -340,7 +341,7 @@ class TestIntentPropagation:
         """Verify decision dict has 'intent' key after handle_intent()."""
         from probos.cognitive.security_officer import SecurityAgent
         llm = MockLLMClient()
-        agent = SecurityAgent(llm_client=llm, runtime=MagicMock())
+        agent = SecurityAgent(llm_client=llm, runtime=MagicMock(spec=ProbOSRuntime))
 
         captured_decisions = []
         original_act = agent.act
@@ -362,7 +363,7 @@ class TestIntentPropagation:
         """Verify direct_message intent is propagated to act()."""
         from probos.cognitive.security_officer import SecurityAgent
         llm = MockLLMClient()
-        agent = SecurityAgent(llm_client=llm, runtime=MagicMock())
+        agent = SecurityAgent(llm_client=llm, runtime=MagicMock(spec=ProbOSRuntime))
 
         captured_decisions = []
         original_act = agent.act

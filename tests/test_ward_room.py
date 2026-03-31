@@ -6,6 +6,7 @@ import time
 import pytest
 import pytest_asyncio
 
+from probos.cognitive.llm_client import BaseLLMClient
 from probos.ward_room import (
     WardRoomService, WardRoomChannel, WardRoomThread,
     WardRoomPost, WardRoomEndorsement, WardRoomCredibility,
@@ -1624,7 +1625,7 @@ class TestEndorsementActivation:
             agent_type = "science"
 
         captured_prompts = []
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         async def capture_complete(request):
             captured_prompts.append(request.system_prompt)
             return LLMResponse(content="[NO_RESPONSE]", tier="standard", model="test")
@@ -1664,7 +1665,7 @@ class TestEndorsementActivation:
             agent_type = "science"
 
         captured_prompts = []
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         async def capture_complete(request):
             captured_prompts.append(request.system_prompt)
             return LLMResponse(content="[NO_RESPONSE]", tier="standard", model="test")

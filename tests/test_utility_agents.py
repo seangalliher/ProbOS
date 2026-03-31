@@ -21,6 +21,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from probos.runtime import ProbOSRuntime
+
 from probos.agents.utility import (
     CalculatorAgent,
     NewsAgent,
@@ -632,7 +634,7 @@ class TestUtilityPersistence:
     async def test_todo_agent_persists_to_disk(self, tmp_path):
         """TodoAgent.act() should write todos to a real file."""
         todo_path = tmp_path / "todos.json"
-        agent = _make_agent(TodoAgent, runtime=MagicMock())
+        agent = _make_agent(TodoAgent, runtime=MagicMock(spec=ProbOSRuntime))
         agent._TODO_PATH = str(todo_path)
 
         decision = {
@@ -653,7 +655,7 @@ class TestUtilityPersistence:
     async def test_note_taker_persists_to_disk(self, tmp_path):
         """NoteTakerAgent.act() should write notes to a real file."""
         notes_dir = tmp_path / "notes"
-        agent = _make_agent(NoteTakerAgent, runtime=MagicMock())
+        agent = _make_agent(NoteTakerAgent, runtime=MagicMock(spec=ProbOSRuntime))
         agent._NOTES_DIR = str(notes_dir)
 
         decision = {
@@ -674,7 +676,7 @@ class TestUtilityPersistence:
     async def test_scheduler_persists_reminders_to_disk(self, tmp_path):
         """SchedulerAgent.act() should write reminders to a real file."""
         reminders_path = tmp_path / "reminders.json"
-        agent = _make_agent(SchedulerAgent, runtime=MagicMock())
+        agent = _make_agent(SchedulerAgent, runtime=MagicMock(spec=ProbOSRuntime))
         agent._REMINDERS_PATH = str(reminders_path)
 
         decision = {
@@ -694,7 +696,7 @@ class TestUtilityPersistence:
     @pytest.mark.asyncio
     async def test_write_failure_propagates(self):
         """If FileWriterAgent.commit_write fails, act() should report failure."""
-        agent = _make_agent(TodoAgent, runtime=MagicMock())
+        agent = _make_agent(TodoAgent, runtime=MagicMock(spec=ProbOSRuntime))
         agent._TODO_PATH = "/nonexistent/deep/path/that/requires/root/todos.json"
 
         decision = {

@@ -1433,10 +1433,10 @@ class TestSelfModErrorPaths:
         from probos.cognitive.behavioral_monitor import BehavioralMonitor
         from probos.cognitive.code_validator import CodeValidator
         from probos.cognitive.sandbox import SandboxRunner
-        from probos.cognitive.llm_client import MockLLMClient
+        from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient
 
         config = SelfModConfig(enabled=True, require_user_approval=False)
-        llm = MagicMock()
+        llm = MagicMock(spec=BaseLLMClient)
         llm.complete = AsyncMock(side_effect=RuntimeError("LLM timeout"))
         designer = AgentDesigner(llm, config)
 

@@ -300,9 +300,9 @@ class TestShapleyPanelIntegration:
         """render_agent_table works without Shapley (backward compat)."""
         from unittest.mock import MagicMock
         from probos.experience.panels import render_agent_table
-        from probos.substrate.agent import AgentState
+        from probos.substrate.agent import AgentState, BaseAgent
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "abc12345"
         agent.agent_type = "file_reader"
         agent.tier = "core"
@@ -317,9 +317,9 @@ class TestShapleyPanelIntegration:
         """render_agent_table shows Shapley column when values present."""
         from unittest.mock import MagicMock
         from probos.experience.panels import render_agent_table
-        from probos.substrate.agent import AgentState
+        from probos.substrate.agent import AgentState, BaseAgent
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "abc12345"
         agent.agent_type = "file_reader"
         agent.tier = "core"

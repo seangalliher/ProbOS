@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from probos.agents.introspect import IntrospectionAgent
+from probos.cognitive.codebase_index import CodebaseIndex
 from probos.runtime import ProbOSRuntime
 from probos.types import IntentMessage
 
@@ -14,7 +15,7 @@ from probos.types import IntentMessage
 def _make_rt_with_codebase():
     """Create a mock runtime with a codebase_index."""
     rt = MagicMock(spec=ProbOSRuntime)
-    rt.codebase_index = MagicMock()
+    rt.codebase_index = MagicMock(spec=CodebaseIndex)
     rt.codebase_index.query.return_value = {
         "matching_files": [
             {"path": "consensus/trust.py", "docstring": "Trust network", "relevance": 5},
@@ -167,7 +168,7 @@ class TestIntrospectDesign:
         # Simulate medical disabled but codebase_index still present
         rt.config = MagicMock()
         rt.config.medical.enabled = False
-        rt.codebase_index = MagicMock()
+        rt.codebase_index = MagicMock(spec=CodebaseIndex)
         rt.codebase_index.query.return_value = {
             "matching_files": [],
             "matching_agents": [],
@@ -195,7 +196,7 @@ class TestIntrospectDesign:
     async def test_introspect_design_uses_section_reading_for_docs(self):
         """Doc files use read_doc_sections instead of read_source (AD-300)."""
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.codebase_index = MagicMock()
+        rt.codebase_index = MagicMock(spec=CodebaseIndex)
         rt.codebase_index.query.return_value = {
             "matching_files": [
                 {"path": "docs:docs/development/roadmap.md", "docstring": "Roadmap", "relevance": 5},

@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 import pytest
 
+from probos.cognitive.llm_client import BaseLLMClient
+
 
 class TestCognitiveBaseline:
     def test_roundtrip_dict(self) -> None:
@@ -88,15 +90,15 @@ class TestCognitiveProfile:
 class TestCounselorAgent:
     def test_init(self) -> None:
         from probos.cognitive.counselor import CounselorAgent
-        from unittest.mock import MagicMock
-        agent = CounselorAgent(llm_client=MagicMock())
+        from unittest.mock import AsyncMock, MagicMock
+        agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         assert agent.agent_type == "counselor"
         assert agent.pool == "bridge"
 
     def test_get_or_create_profile(self) -> None:
         from probos.cognitive.counselor import CounselorAgent
-        from unittest.mock import MagicMock
-        agent = CounselorAgent(llm_client=MagicMock())
+        from unittest.mock import AsyncMock, MagicMock
+        agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         p = agent.get_or_create_profile("agent-1", "builder")
         assert p.agent_id == "agent-1"
         # Get again returns same
@@ -105,8 +107,8 @@ class TestCounselorAgent:
 
     def test_set_baseline(self) -> None:
         from probos.cognitive.counselor import CounselorAgent, CognitiveBaseline
-        from unittest.mock import MagicMock
-        agent = CounselorAgent(llm_client=MagicMock())
+        from unittest.mock import AsyncMock, MagicMock
+        agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         baseline = CognitiveBaseline(trust_score=0.7, confidence=0.85)
         agent.set_baseline("agent-1", baseline)
         profile = agent.get_profile("agent-1")
@@ -115,8 +117,8 @@ class TestCounselorAgent:
 
     def test_assess_healthy_agent(self) -> None:
         from probos.cognitive.counselor import CounselorAgent, CognitiveBaseline
-        from unittest.mock import MagicMock
-        agent = CounselorAgent(llm_client=MagicMock())
+        from unittest.mock import AsyncMock, MagicMock
+        agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         agent.set_baseline("agent-1", CognitiveBaseline(
             trust_score=0.7, confidence=0.8,
         ))
@@ -130,8 +132,8 @@ class TestCounselorAgent:
 
     def test_assess_degraded_agent(self) -> None:
         from probos.cognitive.counselor import CounselorAgent, CognitiveBaseline
-        from unittest.mock import MagicMock
-        agent = CounselorAgent(llm_client=MagicMock())
+        from unittest.mock import AsyncMock, MagicMock
+        agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         agent.set_baseline("agent-1", CognitiveBaseline(
             trust_score=0.8, confidence=0.9,
         ))
@@ -145,8 +147,8 @@ class TestCounselorAgent:
 
     def test_assess_promotion_candidate(self) -> None:
         from probos.cognitive.counselor import CounselorAgent, CognitiveBaseline
-        from unittest.mock import MagicMock
-        agent = CounselorAgent(llm_client=MagicMock())
+        from unittest.mock import AsyncMock, MagicMock
+        agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         agent.set_baseline("agent-1", CognitiveBaseline(
             trust_score=0.7, confidence=0.8,
         ))
@@ -159,8 +161,8 @@ class TestCounselorAgent:
 
     def test_agents_at_alert(self) -> None:
         from probos.cognitive.counselor import CounselorAgent, CognitiveBaseline
-        from unittest.mock import MagicMock
-        agent = CounselorAgent(llm_client=MagicMock())
+        from unittest.mock import AsyncMock, MagicMock
+        agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         # Create a healthy and unhealthy agent
         agent.set_baseline("healthy", CognitiveBaseline(trust_score=0.7))
         agent.assess_agent("healthy", current_trust=0.75, success_rate=0.9)
@@ -172,8 +174,8 @@ class TestCounselorAgent:
     @pytest.mark.asyncio
     async def test_act_assess(self) -> None:
         from probos.cognitive.counselor import CounselorAgent, CognitiveBaseline, CounselorAssessment
-        from unittest.mock import MagicMock
-        agent = CounselorAgent(llm_client=MagicMock())
+        from unittest.mock import AsyncMock, MagicMock
+        agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         agent.set_baseline("agent-1", CognitiveBaseline(trust_score=0.7))
         result = await agent.act({
             "action": "assess",
@@ -187,8 +189,8 @@ class TestCounselorAgent:
     @pytest.mark.asyncio
     async def test_report_assessment(self) -> None:
         from probos.cognitive.counselor import CounselorAgent, CounselorAssessment
-        from unittest.mock import MagicMock
-        agent = CounselorAgent(llm_client=MagicMock())
+        from unittest.mock import AsyncMock, MagicMock
+        agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         assessment = CounselorAssessment(agent_id="test", wellness_score=0.9)
         result = await agent.report(assessment)
         assert result["type"] == "counselor_assessment"

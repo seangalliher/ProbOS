@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from probos.cognitive.code_reviewer import CodeReviewAgent, ReviewResult
+from probos.cognitive.llm_client import BaseLLMClient
 
 
 class TestCodeReviewAgent:
@@ -22,7 +23,7 @@ class TestCodeReviewAgent:
     @pytest.mark.asyncio
     async def test_review_approves_clean_code(self, reviewer):
         """Mock LLM returns approved review."""
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete = AsyncMock(return_value=MagicMock(
             content=json.dumps({
                 "approved": True,
@@ -45,7 +46,7 @@ class TestCodeReviewAgent:
     @pytest.mark.asyncio
     async def test_review_rejects_with_issues(self, reviewer):
         """Mock LLM returns issues."""
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete = AsyncMock(return_value=MagicMock(
             content=json.dumps({
                 "approved": False,
@@ -68,7 +69,7 @@ class TestCodeReviewAgent:
     @pytest.mark.asyncio
     async def test_review_error_approves_with_warning(self, reviewer):
         """LLM error results in approved with warning."""
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete = AsyncMock(side_effect=RuntimeError("LLM down"))
 
         result = await reviewer.review(
@@ -162,7 +163,7 @@ class TestReviewUsesStandingOrders:
             agent_id="code_reviewer",
             name="CodeReviewAgent",
         )
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete = AsyncMock(return_value=MagicMock(
             content='{"approved": true, "issues": [], "suggestions": [], "summary": "ok"}',
         ))

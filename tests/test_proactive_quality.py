@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from probos.runtime import ProbOSRuntime
+from probos.substrate.agent import BaseAgent
 
 
 # ── BF-060: Notebook stripping ──
@@ -45,7 +46,7 @@ class TestNotebookStripping:
         engine, rt = _make_engine_and_rt(trust_score=0.3)  # Ensign — only notebook runs
         rt._records_store.write_notebook = AsyncMock()
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.callsign = "Atlas"
         agent.agent_type = "scout"
         agent.id = "scout_001"
@@ -69,7 +70,7 @@ class TestNotebookStripping:
         engine, rt = _make_engine_and_rt(trust_score=0.3)
         rt._records_store.write_notebook = AsyncMock()
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.callsign = "Cora"
         agent.agent_type = "counselor"
         agent.id = "counselor_001"
@@ -92,7 +93,7 @@ class TestNotebookStripping:
         """Notebook content IS written to records_store despite stripping."""
         engine, rt = _make_engine_and_rt(trust_score=0.3)
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.callsign = "Pascal"
         agent.agent_type = "architect"
         agent.id = "arch_001"
@@ -162,7 +163,7 @@ class TestReplyPatternAndRank:
         rt.ward_room.list_channels = AsyncMock(return_value=[])
         engine._resolve_thread_id = AsyncMock(return_value=full_tid)
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.agent_type = "scout"
         agent.id = "scout_001"
         agent.callsign = "Minerva"
@@ -224,7 +225,7 @@ class TestSimilarityGate:
         ])
         engine._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "agent1"
         agent.agent_type = "counselor"
 
@@ -255,7 +256,7 @@ class TestSimilarityGate:
         rt.ward_room.get_recent_activity = AsyncMock(return_value=posts)
         engine._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "agent1"
         agent.agent_type = "counselor"
 
@@ -284,7 +285,7 @@ class TestSimilarityGate:
         ])
         engine._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "agent1"
         agent.agent_type = "engineer"
 

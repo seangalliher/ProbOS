@@ -7,6 +7,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from dataclasses import dataclass
 
+from probos.substrate.agent import BaseAgent
+
 
 # ---- Helpers ----
 
@@ -34,7 +36,7 @@ def _mock_ontology(crew_types: set[str] | None = None, dept_map: dict[str, str] 
 
 def _mock_agent(agent_type: str, agent_id: str = "agent-1", is_alive: bool = True):
     """Create a mock agent."""
-    agent = MagicMock()
+    agent = MagicMock(spec=BaseAgent)
     agent.agent_type = agent_type
     agent.id = agent_id
     agent.is_alive = is_alive

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 from rich.console import Console
 
+from probos.cognitive.llm_client import BaseLLMClient
 from probos.experience.commands import commands_llm
 from probos.runtime import ProbOSRuntime
 
@@ -24,7 +25,7 @@ def get_output(console: Console) -> str:
 @pytest.fixture
 def mock_runtime():
     rt = MagicMock(spec=ProbOSRuntime)
-    rt.llm_client = MagicMock()
+    rt.llm_client = MagicMock(spec=BaseLLMClient)
     # Make it NOT an OpenAICompatibleClient by default
     type(rt.llm_client).__name__ = "MockLLMClient"
     return rt

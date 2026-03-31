@@ -9,6 +9,7 @@ import pytest
 from probos.cognitive.architect import ArchitectAgent, ArchitectProposal
 from probos.cognitive.builder import BuildSpec
 from probos.cognitive.codebase_index import CodebaseIndex
+from probos.cognitive.llm_client import BaseLLMClient
 from probos.runtime import ProbOSRuntime
 from probos.types import IntentDescriptor, IntentMessage
 
@@ -316,7 +317,7 @@ class TestPerceiveWithRuntime:
     @pytest.mark.asyncio
     async def test_perceive_gathers_context(self):
         """perceive() populates codebase_context from runtime's codebase_index."""
-        mock_index = MagicMock()
+        mock_index = MagicMock(spec=CodebaseIndex)
         mock_index.query.return_value = {
             "matching_files": [
                 {"path": "src/probos/mesh/routing.py", "relevance": 5, "docstring": "Routing"},
@@ -342,7 +343,7 @@ class TestPerceiveWithRuntime:
         mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
 
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.return_value = MagicMock(content="src/probos/mesh/routing.py")
 
         agent = ArchitectAgent(
@@ -466,7 +467,7 @@ def _make_agent(mock_index, mock_runtime=None):
     if mock_runtime is None:
         mock_runtime = MagicMock(spec=ProbOSRuntime)
     mock_runtime.codebase_index = mock_index
-    mock_llm = AsyncMock()
+    mock_llm = AsyncMock(spec=BaseLLMClient)
     mock_llm.complete.return_value = MagicMock(content="")
     return ArchitectAgent(
         agent_id="test-arch-q",
@@ -654,7 +655,7 @@ class TestPerceiveGracefulDegradation:
     @pytest.mark.asyncio
     async def test_layer_failures_dont_crash(self):
         """All layers wrapped in try/except — failures don't crash perceive."""
-        mock_index = MagicMock()
+        mock_index = MagicMock(spec=CodebaseIndex)
         mock_index.get_layer_map.side_effect = RuntimeError("boom")
         mock_index.query.side_effect = RuntimeError("boom")
         mock_index.get_agent_map.side_effect = RuntimeError("boom")
@@ -668,7 +669,7 @@ class TestPerceiveGracefulDegradation:
         mock_index.find_importers.side_effect = RuntimeError("boom")
         mock_index._file_tree = {}
 
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.side_effect = RuntimeError("boom")
 
         mock_runtime = MagicMock(spec=ProbOSRuntime)
@@ -689,7 +690,7 @@ class TestPerceiveGracefulDegradation:
     @pytest.mark.asyncio
     async def test_partial_failure_keeps_other_layers(self):
         """If one layer fails, other layers still contribute to context."""
-        mock_index = MagicMock()
+        mock_index = MagicMock(spec=CodebaseIndex)
         mock_index.get_layer_map.side_effect = RuntimeError("layer boom")
         mock_index.query.return_value = {"matching_files": [], "matching_methods": []}
         mock_index.get_agent_map.return_value = [
@@ -705,7 +706,7 @@ class TestPerceiveGracefulDegradation:
         mock_index.find_importers.return_value = []
         mock_index._file_tree = {}
 
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.return_value = MagicMock(content="")
 
         mock_runtime = MagicMock(spec=ProbOSRuntime)
@@ -766,7 +767,7 @@ class TestDeepLocalize:
         mock_index.read_source.return_value = long_source
 
         # Mock the LLM client to return a file selection
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.return_value = MagicMock(content="cognitive/builder.py")
 
         mock_runtime = MagicMock(spec=ProbOSRuntime)
@@ -806,7 +807,7 @@ class TestDeepLocalize:
             },
         )
 
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.return_value = MagicMock(content="mesh/registry.py")
 
         mock_runtime = MagicMock(spec=ProbOSRuntime)
@@ -838,7 +839,7 @@ class TestDeepLocalize:
         )
         mock_index.read_source.return_value = "# test file header"
 
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.return_value = MagicMock(content="experience/panels.py")
 
         mock_runtime = MagicMock(spec=ProbOSRuntime)
@@ -870,7 +871,7 @@ class TestDeepLocalize:
         )
         mock_index.read_source.return_value = "class AgentRegistry:\n    pass"
 
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.return_value = MagicMock(content="substrate/registry.py")
 
         mock_runtime = MagicMock(spec=ProbOSRuntime)
@@ -906,7 +907,7 @@ class TestDeepLocalize:
         mock_index.read_source.return_value = "# source"
 
         # Mock LLM to raise an exception on fast-tier call
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.side_effect = RuntimeError("LLM unavailable")
 
         mock_runtime = MagicMock(spec=ProbOSRuntime)
@@ -939,7 +940,7 @@ class TestDeepLocalize:
         )
         mock_index.read_source.return_value = huge_source
 
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.side_effect = RuntimeError("skip")
 
         mock_runtime = MagicMock(spec=ProbOSRuntime)
@@ -994,7 +995,7 @@ class TestImportTracing:
         mock_index.get_imports.return_value = ["experience/panels.py"]
         mock_index.find_importers.return_value = []
 
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.return_value = MagicMock(content="experience/shell.py")
 
         mock_runtime = MagicMock(spec=ProbOSRuntime)
@@ -1028,7 +1029,7 @@ class TestImportTracing:
         mock_index.get_imports.return_value = ["experience/panels.py"]
         mock_index.find_importers.return_value = ["api.py"]
 
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.return_value = MagicMock(content="experience/shell.py")
 
         mock_runtime = MagicMock(spec=ProbOSRuntime)

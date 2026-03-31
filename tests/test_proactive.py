@@ -669,7 +669,7 @@ class TestProactiveWardRoomContext:
 
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "eng-1"
         agent.agent_type = "builder"
 
@@ -706,7 +706,7 @@ class TestProactiveWardRoomContext:
 
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "eng-1"
         agent.agent_type = "builder"
 
@@ -747,7 +747,7 @@ class TestProactiveWardRoomContext:
 
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "eng-1"
         agent.agent_type = "builder"
 
@@ -791,9 +791,10 @@ class TestProactiveTrustSignal:
         return loop, rt
 
     def _make_agent(self, response_text="Observation: systems nominal"):
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "scout-1"
         agent.agent_type = "scout"
+        agent.confidence = 0.8
         agent.handle_intent = AsyncMock(return_value=MagicMock(
             success=True, result=response_text,
         ))
@@ -860,9 +861,10 @@ class TestProactiveTrustSignal:
     async def test_failed_think_no_negative_trust(self):
         """Failed handle_intent does not emit any trust signal."""
         loop, rt = self._make_loop_with_config()
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "scout-1"
         agent.agent_type = "scout"
+        agent.confidence = 0.8
         agent.handle_intent = AsyncMock(return_value=MagicMock(
             success=False, result=None,
         ))
@@ -1212,7 +1214,7 @@ class TestProposalExtraction:
         rt.ward_room_router.handle_propose_improvement = AsyncMock(return_value={"success": True})
         loop.set_runtime(rt)
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.agent_type = "engineering_officer"
         agent.id = "eng-001"
 
@@ -1246,7 +1248,8 @@ class TestProposalExtraction:
         rt.ward_room_router.handle_propose_improvement = AsyncMock()
         loop.set_runtime(rt)
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
+        agent.id = "test"
         await loop._extract_and_post_proposal(agent, "Just a regular observation.")
 
         rt.ward_room_router.handle_propose_improvement.assert_not_called()
@@ -1260,7 +1263,8 @@ class TestProposalExtraction:
         rt.ward_room_router.handle_propose_improvement = AsyncMock()
         loop.set_runtime(rt)
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
+        agent.id = "test"
         text = (
             "[PROPOSAL]\n"
             "Rationale: Something is broken\n"
@@ -1281,7 +1285,8 @@ class TestProposalExtraction:
         rt.ward_room_router.handle_propose_improvement = AsyncMock()
         loop.set_runtime(rt)
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
+        agent.id = "test"
         text = (
             "[PROPOSAL]\n"
             "Title: Fix something\n"
@@ -1302,7 +1307,7 @@ class TestProposalExtraction:
         rt.ward_room_router.handle_propose_improvement = AsyncMock(return_value={"success": True})
         loop.set_runtime(rt)
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.agent_type = "science_officer"
         agent.id = "sci-001"
 
@@ -1368,7 +1373,7 @@ class TestHandleProposeImprovement:
         # Use the router's handle_propose_improvement directly
         handler = rt.ward_room_router.handle_propose_improvement
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.agent_type = "engineering_officer"
         agent.id = "eng-001"
 
@@ -1418,7 +1423,8 @@ class TestHandleProposeImprovement:
 
         intent = MagicMock()
         intent.params = {"title": "Something", "rationale": "", "affected_systems": []}
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
+        agent.id = "test"
 
         result = await handler(intent, agent)
         assert result["success"] is False
@@ -1547,7 +1553,7 @@ class TestSelfPostFiltering:
         rt.ward_room.update_last_seen = AsyncMock()
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "eng-1"
         agent.agent_type = "engineering_officer"
 
@@ -1578,7 +1584,7 @@ class TestSimilarPostSuppression:
         ])
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "scout-1"
         agent.agent_type = "scout"
 
@@ -1603,7 +1609,7 @@ class TestSimilarPostSuppression:
         ])
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "scout-1"
         agent.agent_type = "scout"
 
@@ -1626,7 +1632,7 @@ class TestSimilarPostSuppression:
         rt.ward_room.get_recent_activity = AsyncMock(return_value=[])
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "scout-1"
         agent.agent_type = "scout"
 
@@ -1689,10 +1695,11 @@ class TestProactiveDedup:
         loop.set_runtime(rt)
         loop._config = None
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "agent-bones"
         agent.agent_type = "medical_officer"
         agent.is_alive = True
+        agent.confidence = 0.8
         agent.handle_intent = AsyncMock(return_value=IntentResult(
             intent_id="x", agent_id="agent-bones",
             result="Status looks normal", success=True,

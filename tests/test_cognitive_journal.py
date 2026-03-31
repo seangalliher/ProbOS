@@ -538,7 +538,7 @@ class TestPerceiveIntentId:
     async def test_perceive_includes_intent_id(self):
         """Test 14: perceive() includes intent_id from IntentMessage."""
         from probos.types import IntentMessage
-        agent = _TestAgent(llm_client=MockLLMClient(), runtime=MagicMock())
+        agent = _TestAgent(llm_client=MockLLMClient(), runtime=MagicMock(spec=ProbOSRuntime))
         msg = IntentMessage(intent="test", params={"q": "hello"}, context="ctx")
         obs = await agent.perceive(msg)
         assert "intent_id" in obs
@@ -547,6 +547,6 @@ class TestPerceiveIntentId:
     @pytest.mark.asyncio
     async def test_perceive_dict_no_intent_id(self):
         """Test 15: perceive() dict fallback does NOT add intent_id."""
-        agent = _TestAgent(llm_client=MockLLMClient(), runtime=MagicMock())
+        agent = _TestAgent(llm_client=MockLLMClient(), runtime=MagicMock(spec=ProbOSRuntime))
         obs = await agent.perceive({"intent": "test", "params": {}, "context": ""})
         assert "intent_id" not in obs

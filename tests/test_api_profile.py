@@ -6,12 +6,13 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from types import SimpleNamespace
 
 from probos.runtime import ProbOSRuntime
+from probos.substrate.agent import BaseAgent
 
 
 @pytest.fixture
 def mock_agent():
     """Create a mock agent for testing."""
-    agent = MagicMock()
+    agent = MagicMock(spec=BaseAgent)
     agent.id = "agent-123"
     agent.agent_type = "scout"
     agent.confidence = 0.85

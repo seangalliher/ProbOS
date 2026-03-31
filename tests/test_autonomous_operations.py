@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from probos.substrate.agent import BaseAgent
+
 import pytest
 
 from probos.conn import ConnManager, ConnState
@@ -394,7 +396,7 @@ class TestExecutionPath:
         rt.ward_room = None
         # is_crew_agent uses rt.ontology (already None) + legacy set covers "architect"
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "a1"
         agent.agent_type = "architect"
 
@@ -429,7 +431,7 @@ class TestExecutionPath:
         rt.ward_room = None
         # is_crew_agent uses rt.ontology (already None) + legacy set covers "architect"
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "a2"  # Different agent
         agent.agent_type = "counselor"
 

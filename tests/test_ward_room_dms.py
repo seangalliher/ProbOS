@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 from probos.ward_room import WardRoomService
 from probos.runtime import ProbOSRuntime
+from probos.substrate.agent import BaseAgent
 
 
 @pytest.fixture
@@ -75,7 +76,7 @@ class TestDmActionTag:
 
         # Set up agents list
         rt.registry = MagicMock()
-        target_agent = MagicMock()
+        target_agent = MagicMock(spec=BaseAgent)
         target_agent.agent_type = "diagnostician"
         target_agent.id = "diag-001"
         rt.registry.all.return_value = [target_agent]
@@ -84,7 +85,7 @@ class TestDmActionTag:
 
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.agent_type = "counselor"
         agent.id = "couns-001"
         agent.callsign = "Troi"
@@ -110,7 +111,7 @@ class TestDmActionTag:
         rt.registry.all.return_value = []
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.agent_type = "counselor"
         agent.id = "couns-001"
 
@@ -131,7 +132,7 @@ class TestDmActionTag:
         rt.registry.all.return_value = []
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.agent_type = "counselor"
         agent.id = "couns-001"
 
@@ -206,7 +207,7 @@ class TestAD485CaptainDmAndArchival:
         rt.hebbian_router = None
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.agent_type = "diagnostician"
         agent.id = "diag-001-full-uuid"
         agent.callsign = "Bones"

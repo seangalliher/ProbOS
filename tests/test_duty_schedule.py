@@ -7,6 +7,7 @@ import pytest
 
 from probos.duty_schedule import DutyScheduleTracker, DutyStatus
 from probos.runtime import ProbOSRuntime
+from probos.substrate.agent import BaseAgent
 
 
 def _make_duty(duty_id: str, interval: float = 3600, cron: str = "", priority: int = 2):
@@ -140,9 +141,10 @@ class TestProactiveLoopDutyIntegration:
         loop._runtime = rt
 
         # Mock agent
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "scout-1"
         agent.agent_type = "scout"
+        agent.confidence = 0.8
         agent.handle_intent = AsyncMock(return_value=MagicMock(
             success=True, result="[NO_RESPONSE]"
         ))
@@ -177,9 +179,10 @@ class TestProactiveLoopDutyIntegration:
         rt.ward_room.get_recent_activity = AsyncMock(return_value=[])
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "scout-1"
         agent.agent_type = "scout"
+        agent.confidence = 0.8
         agent.handle_intent = AsyncMock(return_value=MagicMock(
             success=True, result="[NO_RESPONSE]"
         ))
@@ -214,9 +217,10 @@ class TestProactiveLoopDutyIntegration:
         rt.ward_room.get_recent_activity = AsyncMock(return_value=[])
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "scout-1"
         agent.agent_type = "scout"
+        agent.confidence = 0.8
         agent.handle_intent = AsyncMock(return_value=MagicMock(
             success=True, result="[NO_RESPONSE]"
         ))
@@ -252,9 +256,10 @@ class TestProactiveLoopDutyIntegration:
         rt.ward_room.get_recent_activity = AsyncMock(return_value=[])
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "scout-1"
         agent.agent_type = "scout"
+        agent.confidence = 0.8
         agent.handle_intent = AsyncMock(return_value=MagicMock(
             success=True, result="[NO_RESPONSE]"
         ))

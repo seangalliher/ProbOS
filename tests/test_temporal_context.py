@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from probos.runtime import ProbOSRuntime
+from probos.substrate.agent import BaseAgent
 
 # ---------------------------------------------------------------------------
 # Duration Formatter Tests
@@ -563,7 +564,7 @@ class TestProactiveTemporalContext:
 
     def test_post_count_injection(self):
         """Agent should get _recent_post_count before proactive think."""
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "agent-1"
         # Simulate what proactive.py does
         agent._recent_post_count = 0

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from probos.runtime import ProbOSRuntime
+from probos.substrate.agent import BaseAgent
 from probos.cognitive.circuit_breaker import (
     BreakerState,
     CognitiveCircuitBreaker,
@@ -285,11 +286,12 @@ class TestProactiveIntegration:
         """Agent with OPEN breaker is skipped in _run_cycle."""
         loop, rt = _make_loop()
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "agent_001"
         agent.agent_type = "scout"
         agent.callsign = "Atlas"
         agent.is_alive = True
+        agent.confidence = 0.8
         agent.handle_intent = AsyncMock()
         rt.registry.all = MagicMock(return_value=[agent])
 
@@ -312,7 +314,7 @@ class TestProactiveIntegration:
             velocity_threshold=2, velocity_window_seconds=300.0,
         )
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "agent_001"
         agent.agent_type = "scout"
         agent.callsign = "Atlas"
@@ -360,7 +362,7 @@ class TestProactiveIntegration:
         """After breaker recovery, _gather_context includes redirect."""
         loop, rt = _make_loop()
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "agent_001"
         agent.agent_type = "scout"
         agent.is_alive = True
@@ -399,9 +401,10 @@ class TestCircuitBreakerAPI:
         rt.proactive_loop = proactive_loop
 
         # Mock agent for callsign enrichment
-        mock_agent = MagicMock()
+        mock_agent = MagicMock(spec=BaseAgent)
         mock_agent.callsign = "Atlas"
         mock_agent.agent_type = "scout"
+        mock_agent.id = "agent_001"
         rt.registry.get = MagicMock(return_value=mock_agent)
 
         app = create_app(rt)

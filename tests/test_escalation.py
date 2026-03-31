@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from probos.cognitive.llm_client import MockLLMClient
+from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient
 from probos.consensus.escalation import ARBITRATION_PROMPT, EscalationManager
 from probos.experience.panels import render_dag_result
 from probos.runtime import ProbOSRuntime
@@ -162,7 +162,7 @@ class TestEscalationManagerTier2:
         runtime = _make_mock_runtime(
             submit_intent_side_effect=AsyncMock(return_value=_fail_intent_results()),
         )
-        llm = MagicMock()
+        llm = MagicMock(spec=BaseLLMClient)
         llm.__class__.__name__ = "FakeLLMClient"
         resp = MagicMock()
         resp.error = None
@@ -184,7 +184,7 @@ class TestEscalationManagerTier2:
         runtime = _make_mock_runtime(
             submit_intent_side_effect=AsyncMock(return_value=_fail_intent_results()),
         )
-        llm = MagicMock()
+        llm = MagicMock(spec=BaseLLMClient)
         llm.__class__.__name__ = "FakeLLMClient"
         resp = MagicMock()
         resp.error = None
@@ -210,7 +210,7 @@ class TestEscalationManagerTier2:
             side_effect=[_fail_intent_results(), _success_intent_results()],
         )
 
-        llm = MagicMock()
+        llm = MagicMock(spec=BaseLLMClient)
         llm.__class__.__name__ = "FakeLLMClient"
         resp = MagicMock()
         resp.error = None

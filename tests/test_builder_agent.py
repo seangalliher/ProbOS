@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from probos.runtime import ProbOSRuntime
+
 from probos.cognitive.builder import (
     BuildBlueprint,
     BuilderAgent,
@@ -47,6 +49,7 @@ from probos.cognitive.builder import (
     validate_assembly,
 )
 from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.cognitive.llm_client import BaseLLMClient
 from probos.types import IntentMessage
 
 
@@ -1342,7 +1345,7 @@ class TestTransporterBuild:
             title="test build", description="test",
             target_files=["src/foo.py"],
         )
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         # Decompose call will raise → fallback to 1 chunk
         # Execute calls complete() → needs error=None and valid content
         mock_response = MagicMock(
@@ -1361,7 +1364,7 @@ class TestTransporterBuild:
     def test_returns_empty_on_total_failure(self):
         """Returns empty list when all chunks fail."""
         spec = BuildSpec(title="t", description="d", target_files=["a.py"])
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.side_effect = Exception("LLM down")
         mock_llm.generate = AsyncMock(side_effect=Exception("LLM down"))
 
@@ -1378,7 +1381,7 @@ class TestTransporterBuild:
             events.append(event_type)
 
         spec = BuildSpec(title="t", description="d", target_files=["a.py"])
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_response = MagicMock(
             error=None,
             content="===FILE: a.py===\n===CREATE===\nx = 1\n===END FILE==="
@@ -1394,7 +1397,7 @@ class TestTransporterBuild:
     def test_works_without_on_event(self):
         """transporter_build works with on_event=None (default)."""
         spec = BuildSpec(title="t", description="d", target_files=["a.py"])
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_response = MagicMock(
             error=None,
             content="===FILE: a.py===\n===CREATE===\nx = 1\n===END FILE==="
@@ -1410,7 +1413,7 @@ class TestTransporterBuild:
     def test_validation_failure_still_returns_blocks(self):
         """When validation finds errors, blocks are still returned."""
         spec = BuildSpec(title="t", description="d", target_files=["a.py"])
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         # Return syntactically invalid Python — validation will flag it
         mock_response = MagicMock(
             error=None,
@@ -1488,7 +1491,7 @@ class TestBuilderAgent:
         agent = BuilderAgent(
             agent_id="builder-0",
             llm_client=MagicMock(),
-            runtime=MagicMock(),
+            runtime=MagicMock(spec=ProbOSRuntime),
         )
         assert agent._resolve_tier() == "deep"
 
@@ -1544,7 +1547,7 @@ class TestBuildUserMessage:
         agent = BuilderAgent(
             agent_id="builder-0",
             llm_client=MagicMock(),
-            runtime=MagicMock(),
+            runtime=MagicMock(spec=ProbOSRuntime),
         )
         obs = {
             "params": {
@@ -1570,7 +1573,7 @@ class TestBuildUserMessage:
         agent = BuilderAgent(
             agent_id="builder-0",
             llm_client=MagicMock(),
-            runtime=MagicMock(),
+            runtime=MagicMock(spec=ProbOSRuntime),
         )
         obs = {"params": {"title": "Minimal"}}
         msg = agent._build_user_message(obs)
@@ -1587,7 +1590,7 @@ class TestPerceive:
         agent = BuilderAgent(
             agent_id="builder-0",
             llm_client=MagicMock(),
-            runtime=MagicMock(),
+            runtime=MagicMock(spec=ProbOSRuntime),
         )
 
         intent = IntentMessage(
@@ -1603,7 +1606,7 @@ class TestPerceive:
         agent = BuilderAgent(
             agent_id="builder-0",
             llm_client=MagicMock(),
-            runtime=MagicMock(),
+            runtime=MagicMock(spec=ProbOSRuntime),
         )
 
         intent = IntentMessage(
@@ -1622,7 +1625,7 @@ class TestAct:
         agent = BuilderAgent(
             agent_id="builder-0",
             llm_client=MagicMock(),
-            runtime=MagicMock(),
+            runtime=MagicMock(spec=ProbOSRuntime),
         )
         decision = {
             "llm_output": "===FILE: src/test.py===\nprint('hi')\n===END FILE===",
@@ -1637,7 +1640,7 @@ class TestAct:
         agent = BuilderAgent(
             agent_id="builder-0",
             llm_client=MagicMock(),
-            runtime=MagicMock(),
+            runtime=MagicMock(spec=ProbOSRuntime),
         )
         decision = {"llm_output": "No blocks here"}
         result = await agent.act(decision)
@@ -1650,7 +1653,7 @@ class TestAct:
         agent = BuilderAgent(
             agent_id="builder-0",
             llm_client=MagicMock(),
-            runtime=MagicMock(),
+            runtime=MagicMock(spec=ProbOSRuntime),
         )
         decision = {"action": "error", "reason": "LLM failed"}
         result = await agent.act(decision)
@@ -2091,7 +2094,7 @@ class TestPerceiveTargetFiles:
         agent = BuilderAgent(
             agent_id="builder-0",
             llm_client=MagicMock(),
-            runtime=MagicMock(),
+            runtime=MagicMock(spec=ProbOSRuntime),
         )
 
         intent = IntentMessage(
@@ -2108,7 +2111,7 @@ class TestPerceiveTargetFiles:
         agent = BuilderAgent(
             agent_id="builder-0",
             llm_client=MagicMock(),
-            runtime=MagicMock(),
+            runtime=MagicMock(spec=ProbOSRuntime),
         )
 
         intent = IntentMessage(
@@ -2131,7 +2134,7 @@ class TestPerceiveTargetFiles:
         agent = BuilderAgent(
             agent_id="builder-0",
             llm_client=MagicMock(),
-            runtime=MagicMock(),
+            runtime=MagicMock(spec=ProbOSRuntime),
         )
 
         intent = IntentMessage(
@@ -2579,7 +2582,7 @@ class TestTransporterBuildEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_decomposition_returns_empty(self):
         """transporter_build() returns empty when decomposition yields no chunks."""
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete = AsyncMock(return_value=MagicMock(
             error=None,
             content="No chunks could be identified.",
@@ -2678,7 +2681,7 @@ class TestCommitGate:
             {"path": "module.py", "content": "x = 2\n", "mode": "create", "after_line": None},
         ]
 
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete = AsyncMock(return_value=MagicMock(
             error=None,
             content="No changes needed.",
@@ -2745,7 +2748,7 @@ class TestCodeReviewIntegration:
             {"path": "module.py", "content": "x = 2\n", "mode": "create", "after_line": None},
         ]
 
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete = AsyncMock(return_value=MagicMock(
             error=None,
             content='{"approved": true, "issues": [], "suggestions": [], "summary": "ok"}',
@@ -2794,7 +2797,7 @@ class TestCodeReviewIntegration:
                 return review_response
             return pass_response
 
-        mock_llm = AsyncMock()
+        mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete = AsyncMock(side_effect=mock_complete)
 
         mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")

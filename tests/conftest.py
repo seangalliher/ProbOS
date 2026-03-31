@@ -56,6 +56,9 @@ def mock_runtime():
     from probos.substrate.event_log import EventLog
     from probos.config import SystemConfig
     from probos.task_tracker import NotificationQueue
+    from probos.cognitive.llm_client import BaseLLMClient
+    from probos.mesh.gossip import GossipProtocol
+    from probos.substrate.pool_group import PoolGroupRegistry
 
     rt = MagicMock(spec=ProbOSRuntime)
 
@@ -92,13 +95,13 @@ def mock_runtime():
 
     rt.spawner = MagicMock(spec=AgentSpawner)
     rt.pools = {}
-    rt.pool_groups = MagicMock()
+    rt.pool_groups = MagicMock(spec=PoolGroupRegistry)
 
     rt.notification_queue = MagicMock(spec=NotificationQueue)
-    rt.llm_client = AsyncMock()
+    rt.llm_client = AsyncMock(spec=BaseLLMClient)
 
     # Gossip protocol
-    rt.gossip = MagicMock()
+    rt.gossip = MagicMock(spec=GossipProtocol)
 
     # Deferred services (None by default, tests set as needed)
     rt.ontology = None

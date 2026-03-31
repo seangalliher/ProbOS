@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from probos.substrate.agent import BaseAgent
 from probos.substrate.identity import generate_pool_ids
 
 
@@ -88,7 +89,7 @@ class TestDeterministicCrewIds:
         mock_registry.get_by_slot = MagicMock(return_value=mock_cert)
 
         # Mock agent with deterministic ID
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = slot_id
         agent.agent_type = "builder"
         agent.callsign = "Builder"

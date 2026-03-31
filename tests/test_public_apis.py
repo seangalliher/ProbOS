@@ -8,6 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from probos.cognitive.llm_client import BaseLLMClient
+from probos.runtime import ProbOSRuntime
+
 
 # ---------------------------------------------------------------------------
 # 1. AgentSpawner
@@ -331,7 +334,7 @@ class TestIntentDecomposerPublicAPI:
     def _make_decomposer(self):
         from probos.cognitive.decomposer import IntentDecomposer
         from probos.cognitive.working_memory import WorkingMemoryManager
-        llm = MagicMock()
+        llm = AsyncMock(spec=BaseLLMClient)
         wm = WorkingMemoryManager()
         return IntentDecomposer(llm, wm)
 
@@ -381,7 +384,7 @@ class TestCapabilityRegistryPublicAPI:
 class TestEscalationManagerPublicAPI:
     def test_set_surge_callback(self):
         from probos.consensus.escalation import EscalationManager
-        em = EscalationManager(runtime=MagicMock(), llm_client=MagicMock())
+        em = EscalationManager(runtime=MagicMock(spec=ProbOSRuntime), llm_client=AsyncMock(spec=BaseLLMClient))
         fn = AsyncMock()
         em.set_surge_callback(fn)
         assert em._surge_fn is fn
@@ -486,7 +489,7 @@ class TestBaseAgentPublicAPI:
 
     def test_has_llm_client_true(self):
         agent = self._make_agent()
-        agent._llm_client = MagicMock()
+        agent._llm_client = AsyncMock(spec=BaseLLMClient)
         assert agent.has_llm_client is True
 
     def test_llm_client_none(self):
@@ -495,7 +498,7 @@ class TestBaseAgentPublicAPI:
 
     def test_llm_client_present(self):
         agent = self._make_agent()
-        mock_client = MagicMock()
+        mock_client = AsyncMock(spec=BaseLLMClient)
         agent._llm_client = mock_client
         assert agent.llm_client is mock_client
 
@@ -513,7 +516,7 @@ class TestBaseAgentPublicAPI:
 class TestVitalsMonitorPublicAPI:
     def _make_monitor(self):
         from probos.agents.medical.vitals_monitor import VitalsMonitorAgent
-        return VitalsMonitorAgent(pool="medical", runtime=MagicMock())
+        return VitalsMonitorAgent(pool="medical", runtime=MagicMock(spec=ProbOSRuntime))
 
     def test_latest_vitals_empty(self):
         vm = self._make_monitor()

@@ -9,6 +9,7 @@ import pytest
 from probos.crew_profile import Rank
 from probos.earned_agency import can_perform_action
 from probos.runtime import ProbOSRuntime
+from probos.substrate.agent import BaseAgent
 
 
 # ---------- Earned Agency action gating ----------
@@ -69,7 +70,7 @@ class TestProactiveEndorsementExtraction:
         loop = ProactiveCognitiveLoop(interval=60)
         loop.set_runtime(runtime)
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "test-agent"
         agent.agent_type = "security_officer"
 
@@ -96,7 +97,7 @@ class TestProactiveEndorsementExtraction:
         loop = ProactiveCognitiveLoop(interval=60)
         loop.set_runtime(runtime)
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "test-agent"
         agent.agent_type = "security_officer"
 
@@ -134,7 +135,7 @@ class TestProactiveReplyExtraction:
         loop.set_runtime(runtime)
         loop._resolve_thread_id = AsyncMock(return_value="thread-abc")
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "test-agent"
         agent.agent_type = "security_officer"
 
@@ -171,7 +172,7 @@ class TestProactiveReplyExtraction:
         loop.set_runtime(runtime)
         loop._resolve_thread_id = AsyncMock(return_value="locked-thread")
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "test-agent"
         agent.agent_type = "security_officer"
 
@@ -205,7 +206,7 @@ class TestProactiveReplyExtraction:
         loop = ProactiveCognitiveLoop(interval=60)
         loop.set_runtime(runtime)
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "test-agent"
         agent.agent_type = "security_officer"
 
@@ -243,7 +244,7 @@ class TestSkillReinforcement:
         loop = ProactiveCognitiveLoop(interval=60)
         loop.set_runtime(runtime)
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "agent-123"
         agent.agent_type = "security_officer"
 

@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from probos.runtime import ProbOSRuntime
+from probos.substrate.agent import BaseAgent
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +477,7 @@ class TestProactiveNotebookTag:
         loop = ProactiveCognitiveLoop(interval=60)
         loop._runtime = rt
 
-        agent = MagicMock()
+        agent = MagicMock(spec=BaseAgent)
         agent.id = "test-agent"
         agent.callsign = "Bones"
         agent.agent_type = "medical"

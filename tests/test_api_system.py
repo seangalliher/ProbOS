@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import MagicMock
 
+from probos.cognitive.codebase_index import CodebaseIndex
 from probos.runtime import ProbOSRuntime
 
 
@@ -21,7 +22,7 @@ def mock_runtime():
     runtime.trust_network = MagicMock()
     runtime._knowledge_store = MagicMock()
     runtime.cognitive_journal = MagicMock()
-    runtime.codebase_index = MagicMock()
+    runtime.codebase_index = MagicMock(spec=CodebaseIndex)
     runtime.skill_registry = MagicMock()
     runtime.skill_service = MagicMock()
     runtime.acm = MagicMock()
