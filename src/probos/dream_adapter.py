@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from probos.config import format_trust
 from probos.events import EventType
 from probos.types import Episode
 
@@ -112,7 +113,7 @@ class DreamAdapter:
         if not self._emergent_detector:
             return
         try:
-            patterns = self._emergent_detector.analyze(dream_report=dream_report)
+            patterns = self._emergent_detector.analyze(dream_report=dream_report, duty_completions=[])
             for pattern in patterns:
                 # Fire-and-forget event logging (sync context, schedule coroutine)
                 try:
@@ -214,7 +215,7 @@ class DreamAdapter:
         if self._dream_scheduler and self._dream_scheduler.is_proactively_busy:
             return
         try:
-            self._emergent_detector.analyze(dream_report=micro_report)
+            self._emergent_detector.analyze(dream_report=micro_report, duty_completions=[])
         except Exception as e:
             logger.debug("Post-micro-dream analysis failed: %s", e)
 
@@ -295,9 +296,9 @@ class DreamAdapter:
             trust_deltas = [
                 {
                     "agent_id": e.agent_id,
-                    "old": round(e.old_score, 4),
-                    "new": round(e.new_score, 4),
-                    "weight": round(e.weight, 4),
+                    "old": format_trust(e.old_score),
+                    "new": format_trust(e.new_score),
+                    "weight": format_trust(e.weight),
                 }
                 for e in recent_events
             ]

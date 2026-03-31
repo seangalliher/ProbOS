@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from probos.cognitive.llm_client import BaseLLMClient
+from probos.knowledge.store import KnowledgeStore
+from probos.ontology import VesselOntologyService
 from probos.runtime import ProbOSRuntime
+from probos.substrate.registry import AgentRegistry
+from probos.substrate.spawner import AgentSpawner
 
 
 # ---------------------------------------------------------------------------
@@ -19,7 +23,7 @@ from probos.runtime import ProbOSRuntime
 class TestAgentSpawnerPublicAPI:
     def _make_spawner(self):
         from probos.substrate.spawner import AgentSpawner
-        registry = MagicMock()
+        registry = MagicMock(spec=AgentRegistry)
         spawner = AgentSpawner(registry)
         return spawner
 
@@ -141,7 +145,7 @@ class TestWardRoomPublicAPI:
     def test_set_ontology(self):
         from probos.ward_room import WardRoomService
         ws = WardRoomService()
-        mock_onto = MagicMock()
+        mock_onto = MagicMock(spec=VesselOntologyService)
         ws.set_ontology(mock_onto)
         assert ws._ontology is mock_onto
 
@@ -172,8 +176,8 @@ class TestResourcePoolPublicAPI:
     def _make_pool(self):
         from probos.substrate.pool import ResourcePool
         from probos.config import PoolConfig
-        spawner = MagicMock()
-        registry = MagicMock()
+        spawner = MagicMock(spec=AgentSpawner)
+        registry = MagicMock(spec=AgentRegistry)
         config = PoolConfig()
         pool = ResourcePool("test", "scout", spawner, registry, config)
         return pool
@@ -268,7 +272,7 @@ class TestProactiveLoopPublicAPI:
     def test_set_knowledge_store(self):
         from probos.proactive import ProactiveCognitiveLoop
         loop = ProactiveCognitiveLoop()
-        store = MagicMock()
+        store = MagicMock(spec=KnowledgeStore)
         loop.set_knowledge_store(store)
         assert loop._knowledge_store is store
 

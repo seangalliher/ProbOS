@@ -11,8 +11,13 @@ import pytest
 from probos.cognitive.agent_patcher import CorrectionResult, PatchResult
 from probos.cognitive.correction_detector import CorrectionSignal
 from probos.cognitive.feedback import FeedbackEngine, FeedbackResult
+from probos.cognitive.episodic import EpisodicMemory
+from probos.cognitive.self_mod import SelfModificationPipeline
 from probos.consensus.trust import TrustNetwork
+from probos.mesh.capability import CapabilityRegistry
 from probos.mesh.routing import HebbianRouter
+from probos.substrate.event_log import EventLog
+from probos.substrate.registry import AgentRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +102,7 @@ class TestFindDesignedRecord:
         from probos.runtime import ProbOSRuntime
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
-        rt.self_mod_pipeline = MagicMock()
+        rt.self_mod_pipeline = MagicMock(spec=SelfModificationPipeline)
         r1 = _FakeRecord(status="active")
         r2 = _FakeRecord(status="active")
         rt.self_mod_pipeline._records = [r1, r2]
@@ -110,7 +115,7 @@ class TestFindDesignedRecord:
         from probos.runtime import ProbOSRuntime
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
-        rt.self_mod_pipeline = MagicMock()
+        rt.self_mod_pipeline = MagicMock(spec=SelfModificationPipeline)
         rt.self_mod_pipeline._records = [_FakeRecord(agent_type="other")]
         _attach_self_mod_manager(rt)
 
@@ -130,7 +135,7 @@ class TestFindDesignedRecord:
         from probos.runtime import ProbOSRuntime
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
-        rt.self_mod_pipeline = MagicMock()
+        rt.self_mod_pipeline = MagicMock(spec=SelfModificationPipeline)
         r = _FakeRecord(status="patched")
         rt.self_mod_pipeline._records = [r]
         _attach_self_mod_manager(rt)
@@ -340,7 +345,7 @@ class TestCorrectionFeedback:
         """Correction episode stored in episodic memory."""
         trust = TrustNetwork()
         hebbian = HebbianRouter()
-        episodic = AsyncMock()
+        episodic = AsyncMock(spec=EpisodicMemory)
         episodic.store = AsyncMock()
         engine = FeedbackEngine(
             trust_network=trust,
@@ -365,7 +370,7 @@ class TestCorrectionFeedback:
         """Correction event logged."""
         trust = TrustNetwork()
         hebbian = HebbianRouter()
-        event_log = AsyncMock()
+        event_log = AsyncMock(spec=EventLog)
         event_log.log = AsyncMock()
         engine = FeedbackEngine(
             trust_network=trust,
@@ -432,11 +437,11 @@ class TestCorrectionBeforeDecompose:
         rt.working_memory = MagicMock()
         rt.working_memory.assemble = MagicMock(return_value=MagicMock(to_text=lambda: ""))
         rt.episodic_memory = None
-        rt.capability_registry = MagicMock()
+        rt.capability_registry = MagicMock(spec=CapabilityRegistry)
         rt.capability_registry._capabilities = {}
-        rt.registry = MagicMock()
-        rt.trust_network = MagicMock()
-        rt.hebbian_router = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
+        rt.trust_network = MagicMock(spec=TrustNetwork)
+        rt.hebbian_router = MagicMock(spec=HebbianRouter)
 
         # Correction detector returns a signal
         rt._correction_detector = AsyncMock()

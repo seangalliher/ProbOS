@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Wave 4 COMPLETE (18/18). Codebase scorecard: B+ overall. Wave 6 PLANNED (AD-542, BF-089–095) — 8 items targeting systemic debts: emergent detector false positives (crew-reported), Dependency Inversion (D→B+), Exception Handling (C→B+), Mock Discipline (C-→B), DRY (B→A-), API validation (A-→A), async discipline (B+→A), god objects (B→A-). AD-531–539 designs updated with OpenSpace prior art (6 patterns absorbed). AD-540 + AD-541 drafted (Cognitive Clarity Stack). 4,144 tests passing (4,035 pytest + 176 vitest).
+## Current Status: Wave 6 IN PROGRESS (5/8). BF-089, AD-542, BF-090, BF-092, BF-091 CLOSED. Next: BF-093 + BF-094 (parallel), then BF-095. 4,243 tests passing (4,094 pytest + 149 vitest).
 
 ---
 

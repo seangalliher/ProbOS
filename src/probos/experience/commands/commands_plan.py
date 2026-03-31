@@ -172,6 +172,7 @@ async def cmd_approve(runtime: ProbOSRuntime, console: Console, renderer: Any, a
                 )
                 execution_result["reflection"] = reflection
             except Exception:
+                logger.debug("Plan context failed", exc_info=True)
                 execution_result["reflection"] = (
                     "(Reflection unavailable -- results shown above)"
                 )

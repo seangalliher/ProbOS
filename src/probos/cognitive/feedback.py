@@ -55,6 +55,13 @@ class FeedbackEngine:
         self._feedback_hebbian_reward = feedback_hebbian_reward
         self._feedback_trust_weight = feedback_trust_weight
 
+    async def _safe_log_event(self, event_log, *args, **kwargs) -> None:
+        """Best-effort event logging — never blocks feedback processing."""
+        try:
+            await event_log.log(*args, **kwargs)
+        except Exception:
+            logger.debug("Event log write failed", exc_info=True)
+
     async def apply_execution_feedback(
         self,
         dag: TaskDAG,
@@ -88,17 +95,15 @@ class FeedbackEngine:
 
         # Event: Hebbian update (AD-222)
         if self._event_log and intent_agent_pairs:
-            try:
-                await self._event_log.log(
-                    category="cognitive",
-                    event="feedback_hebbian_update",
-                    detail=json.dumps({
-                        "pairs": intent_agent_pairs,
-                        "positive": positive,
-                    }),
-                )
-            except Exception:
-                pass
+            await self._safe_log_event(
+                self._event_log,
+                category="cognitive",
+                event="feedback_hebbian_update",
+                detail=json.dumps({
+                    "pairs": intent_agent_pairs,
+                    "positive": positive,
+                }),
+            )
 
         # 2. Trust updates — one observation per agent
         for agent_id in agent_ids:
@@ -106,17 +111,15 @@ class FeedbackEngine:
 
         # Event: Trust update (AD-222)
         if self._event_log and agent_ids:
-            try:
-                await self._event_log.log(
-                    category="cognitive",
-                    event="feedback_trust_update",
-                    detail=json.dumps({
-                        "agents": agent_ids,
-                        "positive": positive,
-                    }),
-                )
-            except Exception:
-                pass
+            await self._safe_log_event(
+                self._event_log,
+                category="cognitive",
+                event="feedback_trust_update",
+                detail=json.dumps({
+                    "agents": agent_ids,
+                    "positive": positive,
+                }),
+            )
 
         # 3. Episodic memory — feedback-tagged episode
         episode_stored = False
@@ -128,18 +131,16 @@ class FeedbackEngine:
         # Event: feedback applied (AD-222)
         if self._event_log:
             event_name = "feedback_positive" if positive else "feedback_negative"
-            try:
-                await self._event_log.log(
-                    category="cognitive",
-                    event=event_name,
-                    detail=json.dumps({
-                        "agents": agent_ids,
-                        "intent_count": len(dag.nodes),
-                        "text": original_text[:200],
-                    }),
-                )
-            except Exception:
-                pass
+            await self._safe_log_event(
+                self._event_log,
+                category="cognitive",
+                event=event_name,
+                detail=json.dumps({
+                    "agents": agent_ids,
+                    "intent_count": len(dag.nodes),
+                    "text": original_text[:200],
+                }),
+            )
 
         result = FeedbackResult(
             feedback_type=feedback_type,
@@ -233,21 +234,19 @@ class FeedbackEngine:
                 if retry_success
                 else "feedback_correction_failed"
             )
-            try:
-                await self._event_log.log(
-                    category="cognitive",
-                    event=event_name,
-                    detail=json.dumps({
-                        "agent_type": agent_type,
-                        "correction_type": correction_type,
-                        "corrected_values": corrected_values,
-                        "changes_description": changes_description,
-                        "retry_success": retry_success,
-                        "text": original_text[:200],
-                    }),
-                )
-            except Exception:
-                pass
+            await self._safe_log_event(
+                self._event_log,
+                category="cognitive",
+                event=event_name,
+                detail=json.dumps({
+                    "agent_type": agent_type,
+                    "correction_type": correction_type,
+                    "corrected_values": corrected_values,
+                    "changes_description": changes_description,
+                    "retry_success": retry_success,
+                    "text": original_text[:200],
+                }),
+            )
 
         return FeedbackResult(
             feedback_type="correction_applied" if retry_success else "correction_failed",
@@ -275,17 +274,15 @@ class FeedbackEngine:
 
         # Event: plan rejected (AD-222)
         if self._event_log:
-            try:
-                await self._event_log.log(
-                    category="cognitive",
-                    event="feedback_plan_rejected",
-                    detail=json.dumps({
-                        "intent_count": len(dag.nodes),
-                        "text": proposal_text[:200],
-                    }),
-                )
-            except Exception:
-                pass
+            await self._safe_log_event(
+                self._event_log,
+                category="cognitive",
+                event="feedback_plan_rejected",
+                detail=json.dumps({
+                    "intent_count": len(dag.nodes),
+                    "text": proposal_text[:200],
+                }),
+            )
 
         result = FeedbackResult(
             feedback_type="rejected_plan",

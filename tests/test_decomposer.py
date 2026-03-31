@@ -7,6 +7,10 @@ import pytest
 from probos.cognitive.decomposer import IntentDecomposer, DAGExecutor
 from probos.cognitive.llm_client import MockLLMClient
 from probos.cognitive.working_memory import WorkingMemoryManager, WorkingMemorySnapshot
+from probos.consensus.trust import TrustNetwork
+from probos.mesh.routing import HebbianRouter
+from probos.substrate.pool_group import PoolGroupRegistry
+from probos.substrate.registry import AgentRegistry
 from probos.types import IntentDescriptor, LLMRequest, LLMResponse, TaskDAG, TaskNode
 
 
@@ -868,7 +872,7 @@ class TestShipsComputerIdentity:
         group = MagicMock()
         group.display_name = "Engineering"
         group.pool_names = ["filesystem", "shell"]
-        runtime.pool_groups = MagicMock()
+        runtime.pool_groups = MagicMock(spec=PoolGroupRegistry)
         runtime.pool_groups.all_groups.return_value = [group]
 
         # Decomposer descriptors
@@ -976,7 +980,7 @@ class TestSystemSelfModel:
         group = MagicMock()
         group.display_name = "Engineering"
         group.pool_names = ["filesystem", "shell"]
-        runtime.pool_groups = MagicMock()
+        runtime.pool_groups = MagicMock(spec=PoolGroupRegistry)
         runtime.pool_groups.all_groups.return_value = [group]
 
         runtime.decomposer = MagicMock()
@@ -1007,7 +1011,7 @@ class TestSystemSelfModel:
 
         runtime = MagicMock(spec=ProbOSRuntime)
         runtime.pools = {}
-        runtime.pool_groups = MagicMock()
+        runtime.pool_groups = MagicMock(spec=PoolGroupRegistry)
         runtime.pool_groups.all_groups.return_value = []
         runtime.decomposer = MagicMock()
         runtime.decomposer._intent_descriptors = []
@@ -1029,7 +1033,7 @@ class TestSystemSelfModel:
 
         runtime = MagicMock(spec=ProbOSRuntime)
         runtime.pools = {}
-        runtime.pool_groups = MagicMock()
+        runtime.pool_groups = MagicMock(spec=PoolGroupRegistry)
         runtime.pool_groups.all_groups.return_value = []
         runtime.decomposer = MagicMock()
         runtime.decomposer._intent_descriptors = []
@@ -1346,15 +1350,15 @@ class TestIntrospectionDelegation:
         rt.decomposer._intent_descriptors = intent_descriptors or []
 
         # Registry, trust, etc. for handle_intent tests
-        rt.registry = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
         rt.registry.all.return_value = []
         rt.registry.count = agent_count
-        rt.trust_network = MagicMock()
+        rt.trust_network = MagicMock(spec=TrustNetwork)
         rt.trust_network.all_scores.return_value = {}
-        rt.hebbian_router = MagicMock()
+        rt.hebbian_router = MagicMock(spec=HebbianRouter)
         rt.hebbian_router.all_weights_typed.return_value = {}
         rt.hebbian_router.weight_count = 0
-        rt.pool_groups = MagicMock()
+        rt.pool_groups = MagicMock(spec=PoolGroupRegistry)
         rt.pool_groups.all_groups.return_value = []
         rt.pool_groups.get_group.return_value = None
         rt.attention = MagicMock()

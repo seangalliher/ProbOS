@@ -7,12 +7,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
-from probos.crew_profile import Rank
+from probos.bridge_alerts import BridgeAlertService
+from probos.cognitive.episodic import EpisodicMemory
+from probos.config import SystemConfig
+from probos.consensus.trust import TrustNetwork
+from probos.crew_profile import CallsignRegistry, Rank
 from probos.earned_agency import can_think_proactively, agency_from_rank, AgencyLevel
+from probos.knowledge.store import KnowledgeStore
+from probos.mesh.intent import IntentBus
 from probos.proactive import ProactiveCognitiveLoop
 from probos.runtime import ProbOSRuntime
 from probos.substrate.agent import BaseAgent
+from probos.substrate.event_log import EventLog
+from probos.substrate.registry import AgentRegistry
 from probos.types import IntentMessage, IntentResult
+from probos.ward_room import WardRoomService
+from probos.ward_room_router import WardRoomRouter
 
 
 def _make_loop(**kwargs) -> ProactiveCognitiveLoop:
@@ -92,9 +102,9 @@ def _make_mock_runtime(agents=None, trust_scores=None, ward_room=True):
     rt.acm = None  # AD-442: Checked directly in _run_cycle
 
     # Initialize sub-mocks for instance attributes not in dir(ProbOSRuntime)
-    rt.registry = MagicMock()
-    rt.trust_network = MagicMock()
-    rt.callsign_registry = MagicMock()
+    rt.registry = MagicMock(spec=AgentRegistry)
+    rt.trust_network = MagicMock(spec=TrustNetwork)
+    rt.callsign_registry = MagicMock(spec=CallsignRegistry)
 
     if agents is None:
         agents = [_make_mock_agent()]
@@ -110,7 +120,7 @@ def _make_mock_runtime(agents=None, trust_scores=None, ward_room=True):
 
     # Ward Room
     if ward_room:
-        rt.ward_room = MagicMock()
+        rt.ward_room = MagicMock(spec=WardRoomService)
         rt.ward_room.list_channels = AsyncMock(return_value=[
             MagicMock(id="ch1", channel_type="department", department="science", name="Science"),
             MagicMock(id="ch2", channel_type="ship", department="", name="All Hands"),
@@ -123,19 +133,19 @@ def _make_mock_runtime(agents=None, trust_scores=None, ward_room=True):
     rt.callsign_registry.get_callsign = MagicMock(return_value="Number One")
 
     # Episodic memory
-    rt.episodic_memory = MagicMock()
+    rt.episodic_memory = MagicMock(spec=EpisodicMemory)
     rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
 
     # Bridge alerts
-    rt.bridge_alerts = MagicMock()
+    rt.bridge_alerts = MagicMock(spec=BridgeAlertService)
     rt.bridge_alerts.get_recent_alerts = MagicMock(return_value=[])
 
     # Event log
-    rt.event_log = MagicMock()
+    rt.event_log = AsyncMock(spec=EventLog)
     rt.event_log.query = AsyncMock(return_value=[])
 
     # AD-437: Endorsement extraction (default: no endorsements found)
-    rt.ward_room_router = MagicMock()
+    rt.ward_room_router = MagicMock(spec=WardRoomRouter)
     rt.ward_room_router.extract_endorsements = MagicMock(side_effect=lambda text: (text, []))
     rt.ward_room_router.process_endorsements = AsyncMock()
 
@@ -777,11 +787,11 @@ class TestProactiveTrustSignal:
         rt.ward_room = AsyncMock()
         rt.ward_room.list_channels = AsyncMock(return_value=[])
         rt.ward_room.get_recent_activity = AsyncMock(return_value=[])
-        rt.trust_network = MagicMock()
+        rt.trust_network = MagicMock(spec=TrustNetwork)
         rt.trust_network.record_outcome = MagicMock(return_value=0.55)
         rt.trust_network.get_score = MagicMock(return_value=0.55)
         # AD-437: Endorsement extraction (default: no endorsements found)
-        rt.ward_room_router = MagicMock()
+        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
         rt.ward_room_router.extract_endorsements = MagicMock(side_effect=lambda text: (text, []))
         rt.ward_room_router.process_endorsements = AsyncMock()
         rt.is_cold_start = False
@@ -1063,7 +1073,7 @@ class TestCooldownPersistence:
     async def test_set_agent_cooldown_persists_to_store(self):
         """Test 1: set_agent_cooldown writes through to KnowledgeStore."""
         loop = ProactiveCognitiveLoop(cooldown=300.0)
-        mock_store = MagicMock()
+        mock_store = MagicMock(spec=KnowledgeStore)
         mock_store.store_cooldowns = AsyncMock()
         loop._knowledge_store = mock_store
 
@@ -1079,7 +1089,7 @@ class TestCooldownPersistence:
     async def test_restore_cooldowns_loads_from_store(self):
         """Test 2: restore_cooldowns loads saved overrides."""
         loop = ProactiveCognitiveLoop(cooldown=300.0)
-        mock_store = MagicMock()
+        mock_store = MagicMock(spec=KnowledgeStore)
         mock_store.load_cooldowns = AsyncMock(return_value={"agent-1": 450.0, "agent-2": 120.0})
         loop._knowledge_store = mock_store
 
@@ -1092,7 +1102,7 @@ class TestCooldownPersistence:
     async def test_restore_cooldowns_clamps_values(self):
         """Test 3: restore_cooldowns clamps values to [60, 1800]."""
         loop = ProactiveCognitiveLoop(cooldown=300.0)
-        mock_store = MagicMock()
+        mock_store = MagicMock(spec=KnowledgeStore)
         mock_store.load_cooldowns = AsyncMock(return_value={"agent-1": 30.0, "agent-2": 5000.0})
         loop._knowledge_store = mock_store
 
@@ -1115,7 +1125,7 @@ class TestCooldownPersistence:
     async def test_restore_cooldowns_load_failure_noop(self):
         """Test 5: restore_cooldowns with load failure doesn't crash."""
         loop = ProactiveCognitiveLoop(cooldown=300.0)
-        mock_store = MagicMock()
+        mock_store = MagicMock(spec=KnowledgeStore)
         mock_store.load_cooldowns = AsyncMock(side_effect=RuntimeError("disk error"))
         loop._knowledge_store = mock_store
 
@@ -1210,7 +1220,7 @@ class TestProposalExtraction:
         """Valid [PROPOSAL] block is parsed and posted."""
         loop = _make_loop()
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room_router = MagicMock()
+        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
         rt.ward_room_router.handle_propose_improvement = AsyncMock(return_value={"success": True})
         loop.set_runtime(rt)
 
@@ -1244,7 +1254,7 @@ class TestProposalExtraction:
         """Text without [PROPOSAL] block is ignored."""
         loop = _make_loop()
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room_router = MagicMock()
+        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
         rt.ward_room_router.handle_propose_improvement = AsyncMock()
         loop.set_runtime(rt)
 
@@ -1259,7 +1269,7 @@ class TestProposalExtraction:
         """Incomplete proposal (no title) is silently skipped."""
         loop = _make_loop()
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room_router = MagicMock()
+        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
         rt.ward_room_router.handle_propose_improvement = AsyncMock()
         loop.set_runtime(rt)
 
@@ -1281,7 +1291,7 @@ class TestProposalExtraction:
         """Incomplete proposal (no rationale) is silently skipped."""
         loop = _make_loop()
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room_router = MagicMock()
+        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
         rt.ward_room_router.handle_propose_improvement = AsyncMock()
         loop.set_runtime(rt)
 
@@ -1303,7 +1313,7 @@ class TestProposalExtraction:
         """Multiline rationale is captured correctly."""
         loop = _make_loop()
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room_router = MagicMock()
+        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
         rt.ward_room_router.handle_propose_improvement = AsyncMock(return_value={"success": True})
         loop.set_runtime(rt)
 
@@ -1353,21 +1363,21 @@ class TestHandleProposeImprovement:
         # Build a minimal runtime mock with real Ward Room
         rt = MagicMock(spec=ProbOSRuntime)
         rt.ward_room = wr
-        rt.callsign_registry = MagicMock()
+        rt.callsign_registry = MagicMock(spec=CallsignRegistry)
         rt.callsign_registry.get_callsign = MagicMock(return_value="LaForge")
 
         # AD-515: Create WardRoomRouter so delegation works
         rt.ward_room_router = WardRoomRouter(
             ward_room=wr,
-            registry=MagicMock(),
-            intent_bus=MagicMock(),
-            trust_network=MagicMock(),
+            registry=MagicMock(spec=AgentRegistry),
+            intent_bus=MagicMock(spec=IntentBus),
+            trust_network=MagicMock(spec=TrustNetwork),
             ontology=None,
             callsign_registry=rt.callsign_registry,
             episodic_memory=None,
             event_emitter=MagicMock(),
             event_log=AsyncMock(),
-            config=MagicMock(),
+            config=MagicMock(spec=SystemConfig),
         )
 
         # Use the router's handle_propose_improvement directly
@@ -1404,20 +1414,20 @@ class TestHandleProposeImprovement:
     async def test_handle_propose_improvement_no_rationale(self):
         """Missing rationale returns error."""
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room = MagicMock()
+        rt.ward_room = MagicMock(spec=WardRoomService)
         # AD-515: Set up router so validation delegates properly
         from probos.ward_room_router import WardRoomRouter
         rt.ward_room_router = WardRoomRouter(
             ward_room=rt.ward_room,
-            registry=MagicMock(),
-            intent_bus=MagicMock(),
-            trust_network=MagicMock(),
+            registry=MagicMock(spec=AgentRegistry),
+            intent_bus=MagicMock(spec=IntentBus),
+            trust_network=MagicMock(spec=TrustNetwork),
             ontology=None,
-            callsign_registry=MagicMock(),
+            callsign_registry=MagicMock(spec=CallsignRegistry),
             episodic_memory=None,
             event_emitter=MagicMock(),
             event_log=AsyncMock(),
-            config=MagicMock(),
+            config=MagicMock(spec=SystemConfig),
         )
         handler = rt.ward_room_router.handle_propose_improvement
 
@@ -1535,7 +1545,7 @@ class TestSelfPostFiltering:
         rt.bridge_alerts = None
         rt.event_log = None
         rt.ontology = None  # AD-429e
-        rt.callsign_registry = MagicMock()
+        rt.callsign_registry = MagicMock(spec=CallsignRegistry)
         rt.callsign_registry.get_callsign = MagicMock(return_value="LaForge")
 
         dept_ch = MagicMock()
@@ -1678,7 +1688,7 @@ class TestProactiveDedup:
         """When Ward Room is available, proactive path does NOT store its own episode."""
         loop = ProactiveCognitiveLoop(cooldown=0)
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.trust_network = MagicMock()
+        rt.trust_network = MagicMock(spec=TrustNetwork)
         rt.trust_network.get_score = MagicMock(return_value=0.8)
         rt.trust_network.record_outcome = MagicMock(return_value=0.8)
 
@@ -1687,10 +1697,10 @@ class TestProactiveDedup:
         rt.ward_room.list_channels = AsyncMock(return_value=[])
         rt.episodic_memory = AsyncMock()
         rt.episodic_memory.store = AsyncMock()
-        rt.callsign_registry = MagicMock()
+        rt.callsign_registry = MagicMock(spec=CallsignRegistry)
         rt.callsign_registry.get_callsign = MagicMock(return_value="Bones")
         rt.ontology = None
-        rt.ward_room_router = MagicMock()
+        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
         rt.ward_room_router.extract_endorsements = MagicMock(return_value=("Status looks normal", []))
         loop.set_runtime(rt)
         loop._config = None

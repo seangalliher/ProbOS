@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient
+from probos.cognitive.episodic import EpisodicMemory
 from probos.consensus.escalation import ARBITRATION_PROMPT, EscalationManager
 from probos.experience.panels import render_dag_result
 from probos.runtime import ProbOSRuntime
@@ -468,7 +469,7 @@ class TestDAGExecutorEscalation:
         runtime.submit_intent = AsyncMock(side_effect=RuntimeError("boom"))
 
         # Create an escalation manager that resolves at Tier 1
-        esc_mgr = MagicMock()
+        esc_mgr = MagicMock(spec=EscalationManager)
         esc_result = EscalationResult(
             tier=EscalationTier.RETRY,
             resolved=True,
@@ -501,7 +502,7 @@ class TestDAGExecutorEscalation:
             return_value=rejected_result,
         )
 
-        esc_mgr = MagicMock()
+        esc_mgr = MagicMock(spec=EscalationManager)
         esc_result = EscalationResult(
             tier=EscalationTier.USER,
             resolved=False,
@@ -563,7 +564,7 @@ class TestDAGExecutorEscalation:
         runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent = AsyncMock(side_effect=RuntimeError("boom"))
 
-        esc_mgr = MagicMock()
+        esc_mgr = MagicMock(spec=EscalationManager)
         esc_result = EscalationResult(
             tier=EscalationTier.USER,
             resolved=False,
@@ -593,7 +594,7 @@ class TestDAGExecutorEscalation:
         runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent = AsyncMock(side_effect=RuntimeError("boom"))
 
-        esc_mgr = MagicMock()
+        esc_mgr = MagicMock(spec=EscalationManager)
         esc_result = EscalationResult(
             tier=EscalationTier.RETRY,
             resolved=True,
@@ -662,7 +663,7 @@ class TestRuntimeEscalation:
         from probos.runtime import ProbOSRuntime
 
         # Build a runtime with episodic memory
-        mem = MagicMock()
+        mem = MagicMock(spec=EpisodicMemory)
         mem.start = AsyncMock()
         mem.stop = AsyncMock()
         mem.recall = AsyncMock(return_value=[])

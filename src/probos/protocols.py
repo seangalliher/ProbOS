@@ -6,10 +6,27 @@ enabling decomposition of ProbOSRuntime into focused modules.
 
 from __future__ import annotations
 
-from typing import Any, Callable, TYPE_CHECKING, Protocol, runtime_checkable
+from typing import Any, Callable, Iterable, Sequence, TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from probos.events import BaseEvent
+
+
+# ── EventEmitterMixin (BF-092) ─────────────────────────────────────
+
+
+class EventEmitterMixin:
+    """Shared _emit() for services that hold an _emit_event callback.
+
+    Expects the subclass ``__init__`` to set ``self._emit_event`` to a
+    ``Callable[[str, dict], None] | None``.
+    """
+
+    _emit_event: Callable[..., Any] | None
+
+    def _emit(self, event_type: str, data: dict[str, Any]) -> None:
+        if self._emit_event:
+            self._emit_event(event_type, data)
 
 if TYPE_CHECKING:
     from probos.cognitive.self_mod import DesignedAgentRecord
@@ -87,3 +104,56 @@ class EventEmitterProtocol(Protocol):
     def emit_event(self, event: BaseEvent | str, data: dict[str, Any] | None = None) -> None: ...
     def add_event_listener(self, fn: Callable[..., Any]) -> None: ...
     def remove_event_listener(self, fn: Callable[..., Any]) -> None: ...
+
+
+# ── Database abstraction (AD-542) ──────────────────────────────────
+
+
+@runtime_checkable
+class DatabaseConnection(Protocol):
+    """Abstract async database connection.
+
+    Mirrors the aiosqlite.Connection API surface used throughout ProbOS.
+    Commercial overlays implement this protocol for Postgres/cloud backends.
+    """
+
+    async def execute(self, sql: str, parameters: Sequence[Any] = ...) -> Any:
+        """Execute a single SQL statement."""
+        ...
+
+    async def executemany(self, sql: str, parameters: Iterable[Sequence[Any]]) -> Any:
+        """Execute a SQL statement for each set of parameters."""
+        ...
+
+    async def executescript(self, sql_script: str) -> None:
+        """Execute a multi-statement SQL script."""
+        ...
+
+    async def fetchone(self) -> Any:
+        """Fetch the next row from the last executed query."""
+        ...
+
+    async def fetchall(self) -> Any:
+        """Fetch all remaining rows from the last executed query."""
+        ...
+
+    async def commit(self) -> None:
+        """Commit the current transaction."""
+        ...
+
+    async def close(self) -> None:
+        """Close the connection."""
+        ...
+
+
+@runtime_checkable
+class ConnectionFactory(Protocol):
+    """Factory for creating database connections.
+
+    Default implementation wraps aiosqlite.connect().
+    Commercial overlays provide Postgres/cloud implementations.
+    """
+
+    async def connect(self, db_path: str) -> DatabaseConnection:
+        """Create and return a new database connection."""
+        ...

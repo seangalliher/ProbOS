@@ -5,8 +5,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from probos.config import SystemConfig
+from probos.consensus.trust import TrustNetwork
+from probos.crew_profile import CallsignRegistry
+from probos.knowledge.records_store import RecordsStore
 from probos.runtime import ProbOSRuntime
 from probos.substrate.agent import BaseAgent
+from probos.ward_room import WardRoomService
+from probos.ward_room_router import WardRoomRouter
 
 
 # ── BF-060: Notebook stripping ──
@@ -20,18 +26,18 @@ def _make_engine_and_rt(trust_score=0.55):
     engine = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
     engine._circuit_breaker = CognitiveCircuitBreaker()
     rt = MagicMock(spec=ProbOSRuntime)
-    rt.ward_room = MagicMock()
+    rt.ward_room = MagicMock(spec=WardRoomService)
     rt.ward_room.list_channels = AsyncMock(return_value=[])
-    rt.trust_network = MagicMock()
+    rt.trust_network = MagicMock(spec=TrustNetwork)
     rt.trust_network.get_score = MagicMock(return_value=trust_score)
-    rt.ward_room_router = MagicMock()
+    rt.ward_room_router = MagicMock(spec=WardRoomRouter)
     rt.ward_room_router.extract_endorsements = MagicMock(return_value=("", []))
-    rt._records_store = MagicMock()
+    rt._records_store = MagicMock(spec=RecordsStore)
     rt._records_store.write_notebook = AsyncMock()
     rt.ontology = None
-    rt.callsign_registry = MagicMock()
+    rt.callsign_registry = MagicMock(spec=CallsignRegistry)
     rt.callsign_registry.get_callsign = MagicMock(return_value="TestAgent")
-    rt.config = MagicMock()
+    rt.config = MagicMock(spec=SystemConfig)
     rt.config.communications = MagicMock(dm_min_rank="ensign")
     engine._runtime = rt
     return engine, rt
@@ -183,7 +189,7 @@ class TestReplyPatternAndRank:
         engine._circuit_breaker = CognitiveCircuitBreaker()
         rt = MagicMock(spec=ProbOSRuntime)
         full_tid = "65a0cf3e-1234-5678-abcd-ef0123456789"
-        rt.ward_room = MagicMock()
+        rt.ward_room = MagicMock(spec=WardRoomService)
         rt.ward_room.get_thread = AsyncMock(side_effect=lambda tid: {"thread": {}} if tid == full_tid else None)
         ch = MagicMock()
         ch.id = "ch1"
@@ -212,7 +218,7 @@ class TestSimilarityGate:
         engine = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
         engine._circuit_breaker = CognitiveCircuitBreaker()
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room = MagicMock()
+        rt.ward_room = MagicMock(spec=WardRoomService)
         rt.ontology = MagicMock()
         rt.ontology.get_agent_department = MagicMock(return_value=None)
 
@@ -243,7 +249,7 @@ class TestSimilarityGate:
         engine = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
         engine._circuit_breaker = CognitiveCircuitBreaker()
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room = MagicMock()
+        rt.ward_room = MagicMock(spec=WardRoomService)
         rt.ontology = MagicMock()
         rt.ontology.get_agent_department = MagicMock(return_value=None)
 
@@ -273,7 +279,7 @@ class TestSimilarityGate:
         engine = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
         engine._circuit_breaker = CognitiveCircuitBreaker()
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room = MagicMock()
+        rt.ward_room = MagicMock(spec=WardRoomService)
         rt.ontology = MagicMock()
         rt.ontology.get_agent_department = MagicMock(return_value=None)
 

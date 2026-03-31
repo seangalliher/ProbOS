@@ -23,7 +23,7 @@ async def cmd_status(runtime: ProbOSRuntime, console: Console, args: str) -> Non
         try:
             status["episodic_stats"] = await runtime.episodic_memory.get_stats()
         except Exception:
-            pass
+            logger.debug("Status command context failed", exc_info=True)
     console.print(panels.render_status_panel(status))
 
 

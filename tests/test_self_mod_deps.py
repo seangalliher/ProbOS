@@ -10,6 +10,7 @@ import pytest
 
 from probos.config import SelfModConfig
 from probos.cognitive.dependency_resolver import DependencyResolver, DependencyResult
+from probos.substrate.event_log import EventLog
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +166,7 @@ class TestPipelineDependencyResolution:
     @pytest.mark.asyncio
     async def test_resolver_called_after_validator(self):
         """Pipeline calls resolve() after CodeValidator."""
-        resolver = MagicMock()
+        resolver = MagicMock(spec=DependencyResolver)
         resolver.detect_missing = MagicMock(return_value=[])
         resolver.resolve = AsyncMock(return_value=DependencyResult(success=True))
         pipeline = _make_pipeline(dependency_resolver=resolver)
@@ -181,7 +182,7 @@ class TestPipelineDependencyResolution:
     @pytest.mark.asyncio
     async def test_pipeline_aborts_on_declined(self):
         """Pipeline aborts when dependencies are declined."""
-        resolver = MagicMock()
+        resolver = MagicMock(spec=DependencyResolver)
         resolver.detect_missing = MagicMock(return_value=["feedparser"])
         resolver.resolve = AsyncMock(return_value=DependencyResult(
             success=False, declined=["feedparser"],
@@ -201,7 +202,7 @@ class TestPipelineDependencyResolution:
     @pytest.mark.asyncio
     async def test_pipeline_aborts_on_install_failure(self):
         """Pipeline aborts when dependency install fails."""
-        resolver = MagicMock()
+        resolver = MagicMock(spec=DependencyResolver)
         resolver.detect_missing = MagicMock(return_value=["feedparser"])
         resolver.resolve = AsyncMock(return_value=DependencyResult(
             success=False, failed=["feedparser"], error="install failed",
@@ -221,7 +222,7 @@ class TestPipelineDependencyResolution:
     @pytest.mark.asyncio
     async def test_pipeline_continues_on_success(self):
         """Pipeline continues to sandbox when deps resolved."""
-        resolver = MagicMock()
+        resolver = MagicMock(spec=DependencyResolver)
         resolver.detect_missing = MagicMock(return_value=[])
         resolver.resolve = AsyncMock(return_value=DependencyResult(success=True))
         pipeline = _make_pipeline(dependency_resolver=resolver)
@@ -250,7 +251,7 @@ class TestSkillDependencyResolution:
         from probos.cognitive.skill_validator import SkillValidator
         from probos.cognitive.llm_client import MockLLMClient
 
-        resolver = MagicMock()
+        resolver = MagicMock(spec=DependencyResolver)
         resolver.detect_missing = MagicMock(return_value=[])
         resolver.resolve = AsyncMock(return_value=DependencyResult(success=True))
 
@@ -286,10 +287,10 @@ class TestDependencyEventLog:
     @pytest.mark.asyncio
     async def test_dependency_check_event(self):
         """dependency_check event logged."""
-        event_log = MagicMock()
+        event_log = MagicMock(spec=EventLog)
         event_log.log = AsyncMock()
 
-        resolver = MagicMock()
+        resolver = MagicMock(spec=DependencyResolver)
         resolver.detect_missing = MagicMock(return_value=["feedparser"])
         resolver.resolve = AsyncMock(return_value=DependencyResult(
             success=False, declined=["feedparser"],
@@ -314,10 +315,10 @@ class TestDependencyEventLog:
     @pytest.mark.asyncio
     async def test_dependency_declined_event(self):
         """dependency_install_declined event logged when user says no."""
-        event_log = MagicMock()
+        event_log = MagicMock(spec=EventLog)
         event_log.log = AsyncMock()
 
-        resolver = MagicMock()
+        resolver = MagicMock(spec=DependencyResolver)
         resolver.detect_missing = MagicMock(return_value=["feedparser"])
         resolver.resolve = AsyncMock(return_value=DependencyResult(
             success=False, declined=["feedparser"],
@@ -342,10 +343,10 @@ class TestDependencyEventLog:
     @pytest.mark.asyncio
     async def test_dependency_approved_and_success_events(self):
         """dependency_install_approved and dependency_install_success logged."""
-        event_log = MagicMock()
+        event_log = MagicMock(spec=EventLog)
         event_log.log = AsyncMock()
 
-        resolver = MagicMock()
+        resolver = MagicMock(spec=DependencyResolver)
         resolver.detect_missing = MagicMock(return_value=["feedparser"])
         resolver.resolve = AsyncMock(return_value=DependencyResult(
             success=True, installed=["feedparser"],
@@ -368,10 +369,10 @@ class TestDependencyEventLog:
     @pytest.mark.asyncio
     async def test_dependency_install_failed_event(self):
         """dependency_install_failed event logged on install failure."""
-        event_log = MagicMock()
+        event_log = MagicMock(spec=EventLog)
         event_log.log = AsyncMock()
 
-        resolver = MagicMock()
+        resolver = MagicMock(spec=DependencyResolver)
         resolver.detect_missing = MagicMock(return_value=["feedparser"])
         resolver.resolve = AsyncMock(return_value=DependencyResult(
             success=False, failed=["feedparser"], error="timeout",

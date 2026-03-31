@@ -14,6 +14,8 @@ import pytest
 
 from probos.runtime import ProbOSRuntime
 from probos.cognitive.builder import BuildSpec, BuildResult, _should_use_visiting_builder
+from probos.cognitive.codebase_index import CodebaseIndex
+from probos.mesh.routing import HebbianRouter
 from probos.cognitive.copilot_adapter import (
     CopilotBuilderAdapter,
     CopilotBuildResult,
@@ -189,7 +191,7 @@ class TestCopilotBuilderAdapterToolList:
         with patch("probos.cognitive.copilot_adapter._SDK_AVAILABLE", True):
             mock_tool_cls = MagicMock()
             with patch("probos.cognitive.copilot_adapter.Tool", mock_tool_cls, create=True):
-                mock_ci = MagicMock()
+                mock_ci = MagicMock(spec=CodebaseIndex)
                 mock_rt = MagicMock(spec=ProbOSRuntime)
                 adapter = CopilotBuilderAdapter(codebase_index=mock_ci, runtime=mock_rt)
                 tools = adapter._build_mcp_tools()
@@ -214,7 +216,7 @@ class TestMCPToolHandlers:
 
     @pytest.mark.asyncio
     async def test_handle_codebase_query(self):
-        mock_ci = MagicMock()
+        mock_ci = MagicMock(spec=CodebaseIndex)
         mock_ci.query.return_value = {"matching_files": ["foo.py"]}
         adapter = CopilotBuilderAdapter(codebase_index=mock_ci)
         result = await adapter._handle_codebase_query(_make_invocation(concept="trust"))
@@ -228,7 +230,7 @@ class TestMCPToolHandlers:
 
     @pytest.mark.asyncio
     async def test_handle_find_callers(self):
-        mock_ci = MagicMock()
+        mock_ci = MagicMock(spec=CodebaseIndex)
         mock_ci.find_callers.return_value = [{"file": "bar.py", "line": 10}]
         adapter = CopilotBuilderAdapter(codebase_index=mock_ci)
         result = await adapter._handle_find_callers(_make_invocation(method_name="decide"))
@@ -236,7 +238,7 @@ class TestMCPToolHandlers:
 
     @pytest.mark.asyncio
     async def test_handle_get_imports(self):
-        mock_ci = MagicMock()
+        mock_ci = MagicMock(spec=CodebaseIndex)
         mock_ci.get_imports.return_value = ["probos.types", "probos.mesh.routing"]
         adapter = CopilotBuilderAdapter(codebase_index=mock_ci)
         result = await adapter._handle_get_imports(_make_invocation(file_path="cognitive/builder.py"))
@@ -244,7 +246,7 @@ class TestMCPToolHandlers:
 
     @pytest.mark.asyncio
     async def test_handle_find_tests(self):
-        mock_ci = MagicMock()
+        mock_ci = MagicMock(spec=CodebaseIndex)
         mock_ci.find_tests_for.return_value = ["tests/test_builder.py"]
         adapter = CopilotBuilderAdapter(codebase_index=mock_ci)
         result = await adapter._handle_find_tests(_make_invocation(file_path="cognitive/builder.py"))
@@ -252,7 +254,7 @@ class TestMCPToolHandlers:
 
     @pytest.mark.asyncio
     async def test_handle_read_source(self):
-        mock_ci = MagicMock()
+        mock_ci = MagicMock(spec=CodebaseIndex)
         mock_ci.read_source.return_value = "def foo():\n    pass\n"
         adapter = CopilotBuilderAdapter(codebase_index=mock_ci)
         result = await adapter._handle_read_source(_make_invocation(file_path="cognitive/builder.py"))
@@ -315,7 +317,7 @@ class TestShouldUseVisitingBuilder:
 
     def test_hebbian_prefers_native(self):
         spec = BuildSpec(title="Test", description="")
-        mock_router = MagicMock()
+        mock_router = MagicMock(spec=HebbianRouter)
         mock_router.get_weight.side_effect = lambda src, tgt, rel_type=None: {
             "native": 0.8,
             "visiting": 0.3,
@@ -326,7 +328,7 @@ class TestShouldUseVisitingBuilder:
 
     def test_hebbian_prefers_visiting(self):
         spec = BuildSpec(title="Test", description="")
-        mock_router = MagicMock()
+        mock_router = MagicMock(spec=HebbianRouter)
         mock_router.get_weight.side_effect = lambda src, tgt, rel_type=None: {
             "native": 0.3,
             "visiting": 0.8,
@@ -338,7 +340,7 @@ class TestShouldUseVisitingBuilder:
     def test_hebbian_insufficient_history(self):
         """Both weights below 0.1 → bootstrap default (True)."""
         spec = BuildSpec(title="Test", description="")
-        mock_router = MagicMock()
+        mock_router = MagicMock(spec=HebbianRouter)
         mock_router.get_weight.return_value = 0.05
 
         with patch("probos.cognitive.copilot_adapter._SDK_AVAILABLE", True):

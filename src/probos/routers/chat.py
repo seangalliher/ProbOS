@@ -216,7 +216,7 @@ async def chat(
                     )
                 logger.warning("LLM connectivity: %s", connectivity)
             except Exception:
-                pass
+                logger.debug("Chat context failed", exc_info=True)
 
         if diag_parts:
             response_text = " | ".join(diag_parts)
@@ -317,6 +317,7 @@ async def enrich_selfmod(
         ))
         enriched = response.content.strip() if response and response.content else req.user_guidance
     except Exception:
+        logger.debug("Chat fallback", exc_info=True)
         enriched = req.user_guidance
 
     return {

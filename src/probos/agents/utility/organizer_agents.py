@@ -260,7 +260,7 @@ class SchedulerAgent(_BundledMixin, CognitiveAgent):
                     else:
                         parts.append("Persistent scheduled tasks: none")
                 except Exception:
-                    pass
+                    logger.debug("Organizer context failed", exc_info=True)
             obs["fetched_content"] = "\n\n".join(parts)
         return obs
 

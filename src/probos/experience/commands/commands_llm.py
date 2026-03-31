@@ -115,7 +115,7 @@ async def cmd_registry(runtime: ProbOSRuntime, console: Console, args: str) -> N
                 try:
                     await adapter.stop()
                 except Exception:
-                    pass
+                    pass  # Teardown cleanup — errors expected and harmless
 
             if models:
                 for m in models:

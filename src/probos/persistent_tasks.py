@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from typing import Any, Callable, Awaitable
 import aiosqlite
 
 from probos.events import EventType
+from probos.protocols import ConnectionFactory, DatabaseConnection, EventEmitterMixin
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +92,7 @@ _VALID_SCHEDULE_TYPES = {"once", "interval", "cron"}
 # Service
 # ---------------------------------------------------------------------------
 
-class PersistentTaskStore:
+class PersistentTaskStore(EventEmitterMixin):
     """SQLite-backed persistent task scheduling.
 
     Follows the AssignmentService lifecycle pattern: start() opens DB +
@@ -105,9 +107,10 @@ class PersistentTaskStore:
         process_fn: Callable[..., Awaitable[dict]] | None = None,
         tick_interval: float = 5.0,
         checkpoint_dir: Any = None,    # Path to DAG checkpoint directory
+        connection_factory: ConnectionFactory | None = None,
     ):
         self.db_path = db_path
-        self._db: aiosqlite.Connection | None = None
+        self._db: DatabaseConnection | None = None
         self._emit_event = emit_event
         self._process_fn = process_fn
         self._tick_interval = tick_interval
@@ -115,6 +118,10 @@ class PersistentTaskStore:
         self._tick_task: asyncio.Task | None = None
         self._snapshot_cache: list[dict[str, Any]] = []
         self._running = False
+        self._connection_factory = connection_factory
+        if self._connection_factory is None:
+            from probos.storage.sqlite_factory import default_factory
+            self._connection_factory = default_factory
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -123,7 +130,7 @@ class PersistentTaskStore:
     async def start(self) -> None:
         """Open DB, create schema, scan for stale DAG checkpoints."""
         if self.db_path:
-            self._db = await aiosqlite.connect(self.db_path)
+            self._db = await self._connection_factory.connect(self.db_path)
             await self._db.execute("PRAGMA foreign_keys = ON")
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
@@ -133,8 +140,8 @@ class PersistentTaskStore:
             try:
                 await self._db.execute("ALTER TABLE scheduled_tasks ADD COLUMN agent_hint TEXT")
                 await self._db.commit()
-            except Exception:
-                pass  # Column already exists
+            except sqlite3.OperationalError:
+                pass  # Column already exists — migration idempotency
 
         # Scan for stale DAG checkpoints and emit events
         await self._scan_stale_checkpoints()
@@ -161,14 +168,6 @@ class PersistentTaskStore:
             await self._db.close()
             self._db = None
         logger.info("PersistentTaskStore stopped")
-
-    # ------------------------------------------------------------------
-    # Event emission
-    # ------------------------------------------------------------------
-
-    def _emit(self, event_type: str, data: dict[str, Any]) -> None:
-        if self._emit_event:
-            self._emit_event(event_type, data)
 
     # ------------------------------------------------------------------
     # Task CRUD

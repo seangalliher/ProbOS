@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from probos.types import AgentID, AgentMeta, AgentState, CapabilityDescriptor, IntentDescriptor
+from probos.config import format_trust
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,8 @@ class BaseAgent(ABC):
         self.sovereign_id: str = ""   # AD-441: Permanent UUID, set by identity registry
         self.did: str = ""            # AD-441: W3C DID, set by identity registry
         self.confidence: float = self.initial_confidence
-        self.trust_score: float = 0.5
+        from probos.config import TRUST_DEFAULT
+        self.trust_score: float = TRUST_DEFAULT
         self.capabilities: list[CapabilityDescriptor] = list(self.default_capabilities)
         self.connections: dict[AgentID, float] = {}
         self.state = AgentState.SPAWNING
@@ -118,7 +120,8 @@ class BaseAgent(ABC):
         self.confidence = max(0.01, min(1.0, self.confidence))
 
         # If confidence drops too low, mark degraded
-        if self.confidence < 0.2:
+        from probos.config import TRUST_DEGRADED
+        if self.confidence < TRUST_DEGRADED:
             if self.state != AgentState.DEGRADED:
                 self.state = AgentState.DEGRADED
                 logger.warning(
@@ -161,12 +164,12 @@ class BaseAgent(ABC):
             "callsign": self.callsign,  # BF-013
             "pool": self.pool,
             "state": self.state.value,
-            "confidence": round(self.confidence, 4),
-            "trust_score": round(self.trust_score, 4),
+            "confidence": format_trust(self.confidence),
+            "trust_score": format_trust(self.trust_score),
             "capabilities": [c.can for c in self.capabilities],
             "operations": self.meta.total_operations,
             "success_rate": (
-                round(self.meta.success_count / self.meta.total_operations, 4)
+                format_trust(self.meta.success_count / self.meta.total_operations)
                 if self.meta.total_operations > 0
                 else None
             ),

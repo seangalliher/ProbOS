@@ -36,11 +36,12 @@ class Rank(Enum):
     @classmethod
     def from_trust(cls, trust_score: float) -> "Rank":
         """Determine rank tier from current trust score."""
-        if trust_score >= 0.85:
+        from probos.config import TRUST_SENIOR, TRUST_COMMANDER, TRUST_LIEUTENANT
+        if trust_score >= TRUST_SENIOR:
             return cls.SENIOR
-        elif trust_score >= 0.7:
+        elif trust_score >= TRUST_COMMANDER:
             return cls.COMMANDER
-        elif trust_score >= 0.5:
+        elif trust_score >= TRUST_LIEUTENANT:
             return cls.LIEUTENANT
         return cls.ENSIGN
 
@@ -328,6 +329,7 @@ class CallsignRegistry:
                 with open(yaml_file, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f) or {}
             except Exception:
+                logger.debug("Skipping unreadable profile", exc_info=True)
                 continue
             callsign = data.get("callsign", "")
             if not callsign:

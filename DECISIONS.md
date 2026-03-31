@@ -1665,7 +1665,14 @@ Post-Wave 4 codebase scorecard graded the codebase at **B+** overall. All 18 cod
 
 **Build sequence:** BF-089 first (crew-reported, quick calibration fix) → AD-542 (unblocks commercial + Protocols) → BF-090 + BF-092 (parallel) → BF-091 (benefits from AD-542) → BF-093 + BF-094 (parallel, small) → BF-095 (largest scope).
 
-**Score:** 0/8. **Status:** PLANNED.
+**Score:** 5/8. **Status:** IN PROGRESS.
+
+**Completed:**
+- **BF-089 CLOSED** (2026-03-31): Adaptive baselines + temporal smoothing + configurable sustain window. Causal attribution test fixes. 4,243 tests passing.
+- **AD-542 CLOSED** (2026-03-31): `DatabaseConnection` + `ConnectionFactory` Protocols in `protocols.py`. `SQLiteConnectionFactory` in `src/probos/storage/sqlite_factory.py`. All 12 DB modules refactored with constructor injection (default=SQLite, swappable). Zero `aiosqlite.connect()` outside `sqlite_factory.py`. 10 new tests. 4,243 total passing.
+- **BF-090 CLOSED** (2026-03-31): 71 silent swallows fixed (43 `logger.debug` + 4 narrowed to `sqlite3.OperationalError` + 24 justified with comments). 42 bare catches fixed (`exc_info=True` added). DRY helper `_safe_log_event()` extracted in `feedback.py`. 4,242 total passing.
+- **BF-092 CLOSED** (2026-03-31): 19 named trust constants in `config.py` replacing ~30 magic numbers across 9 files. `format_trust()` utility replacing 52+ `round(x, 4)` calls across 13 files. `EventEmitterMixin` in `protocols.py` deduplicating 4 identical `_emit()` methods. DRY scorecard B→A-. 4,240 total passing.
+- **BF-091 CLOSED** (2026-03-31): Mock spec compliance 22.6% → 51.9% (target ≥50% met). +222 spec'd mocks across 19 files (top 20 minus test_dependency_resolver.py). 3 real bugs caught by spec= (BF-078 class): `BaseLLMClient.generate()` phantom → `complete()`, `TrustNetwork.get_trust()` phantom → `get_record()`, `TrustNetwork.get_trust_score()` phantom → `get_score()`. 4,243 total passing.
 
 ---
 

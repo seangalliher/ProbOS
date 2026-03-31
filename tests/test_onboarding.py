@@ -13,8 +13,17 @@ from probos.agent_onboarding import AgentOnboardingService
 from probos.config import OnboardingConfig, SystemConfig
 from probos.crew_profile import CallsignRegistry
 from probos.runtime import ProbOSRuntime
+from probos.cognitive.llm_client import BaseLLMClient
+from probos.consensus.trust import TrustNetwork
+from probos.mesh.capability import CapabilityRegistry
+from probos.mesh.gossip import GossipProtocol
+from probos.mesh.intent import IntentBus
 from probos.substrate.agent import BaseAgent
+from probos.substrate.event_log import EventLog
+from probos.substrate.registry import AgentRegistry
 from probos.types import LLMResponse
+from probos.ward_room import WardRoomService
+from probos.ward_room_router import WardRoomRouter
 
 
 # ── Fixtures / Helpers ──────────────────────────────────────────────
@@ -30,7 +39,7 @@ def _make_agent(agent_type: str = "diagnostician", callsign: str = "Bones", agen
     agent.confidence = 0.9
     agent.capabilities = []
     agent.is_alive = True
-    agent._llm_client = AsyncMock()
+    agent._llm_client = AsyncMock(spec=BaseLLMClient)
     return agent
 
 
@@ -40,7 +49,7 @@ def _make_runtime(config=None):
     rt.config = config or SystemConfig()
     rt.ontology = None
     rt.identity_registry = None
-    rt.registry = MagicMock()
+    rt.registry = MagicMock(spec=AgentRegistry)
     rt.registry.all.return_value = []
     return rt
 
@@ -49,11 +58,11 @@ def _attach_onboarding(rt):
     """AD-515: Attach AgentOnboardingService so onboarding delegates properly."""
     rt.onboarding = AgentOnboardingService(
         callsign_registry=getattr(rt, 'callsign_registry', CallsignRegistry()),
-        capability_registry=MagicMock(),
-        gossip=MagicMock(),
-        intent_bus=MagicMock(),
-        trust_network=MagicMock(),
-        event_log=AsyncMock(),
+        capability_registry=MagicMock(spec=CapabilityRegistry),
+        gossip=MagicMock(spec=GossipProtocol),
+        intent_bus=MagicMock(spec=IntentBus),
+        trust_network=MagicMock(spec=TrustNetwork),
+        event_log=AsyncMock(spec=EventLog),
         identity_registry=getattr(rt, 'identity_registry', None),
         ontology=getattr(rt, 'ontology', None),
         event_emitter=MagicMock(),
@@ -79,7 +88,7 @@ class TestNamingCeremony:
         rt.config = SystemConfig()
         rt.ontology = None
         rt.identity_registry = None
-        rt.registry = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
         rt.registry.all.return_value = []
         _attach_onboarding(rt)
 
@@ -97,7 +106,7 @@ class TestNamingCeremony:
         rt.config = SystemConfig()
         rt.ontology = None
         rt.identity_registry = None
-        rt.registry = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
         rt.registry.all.return_value = []
         _attach_onboarding(rt)
 
@@ -115,7 +124,7 @@ class TestNamingCeremony:
         rt.config = SystemConfig()
         rt.ontology = None
         rt.identity_registry = None
-        rt.registry = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
         rt.registry.all.return_value = []
         _attach_onboarding(rt)
 
@@ -136,7 +145,7 @@ class TestNamingCeremony:
 
         # Existing crew member already named "Bones"
         existing = _make_agent(agent_type="other", callsign="Bones", agent_id="other-1")
-        rt.registry = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
         rt.registry.all.return_value = [existing]
         _attach_onboarding(rt)
 
@@ -154,7 +163,7 @@ class TestNamingCeremony:
         rt.config = SystemConfig()
         rt.ontology = None
         rt.identity_registry = None
-        rt.registry = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
         rt.registry.all.return_value = []
         _attach_onboarding(rt)
 
@@ -173,7 +182,7 @@ class TestNamingCeremony:
         rt.config = SystemConfig()
         rt.ontology = None
         rt.identity_registry = None
-        rt.registry = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
         rt.registry.all.return_value = []
         _attach_onboarding(rt)
 
@@ -197,19 +206,19 @@ class TestWireAgentIntegration:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt.config = SystemConfig()
         rt.callsign_registry = CallsignRegistry()
-        rt.capability_registry = MagicMock()
-        rt.gossip = MagicMock()
-        rt.trust_network = MagicMock()
+        rt.capability_registry = MagicMock(spec=CapabilityRegistry)
+        rt.gossip = MagicMock(spec=GossipProtocol)
+        rt.trust_network = MagicMock(spec=TrustNetwork)
         rt.trust_network.get_or_create.return_value = None
         rt.trust_network.get_score.return_value = 0.5
         rt._emit_event = MagicMock()
-        rt.event_log = AsyncMock()
-        rt.intent_bus = MagicMock()
+        rt.event_log = AsyncMock(spec=EventLog)
+        rt.intent_bus = MagicMock(spec=IntentBus)
         rt.identity_registry = None
         rt.acm = None
         rt.ward_room = None
         rt.ontology = None
-        rt.registry = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
         rt.registry.all.return_value = []
         _attach_onboarding(rt)
         return rt
@@ -256,7 +265,7 @@ class TestWireAgentIntegration:
         all_hands_channel = MagicMock()
         all_hands_channel.name = "All Hands"
         all_hands_channel.id = "ch-all-hands"
-        ward_room = AsyncMock()
+        ward_room = AsyncMock(spec=WardRoomService)
         ward_room.list_channels = AsyncMock(return_value=[all_hands_channel])
         ward_room.create_thread = AsyncMock()
         rt.onboarding._ward_room = ward_room
@@ -392,19 +401,19 @@ class TestOnboardingConfig:
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
         rt.config = config
         rt.callsign_registry = CallsignRegistry()
-        rt.capability_registry = MagicMock()
-        rt.gossip = MagicMock()
-        rt.trust_network = MagicMock()
+        rt.capability_registry = MagicMock(spec=CapabilityRegistry)
+        rt.gossip = MagicMock(spec=GossipProtocol)
+        rt.trust_network = MagicMock(spec=TrustNetwork)
         rt.trust_network.get_or_create.return_value = None
         rt.trust_network.get_score.return_value = 0.5
         rt._emit_event = MagicMock()
-        rt.event_log = AsyncMock()
-        rt.intent_bus = MagicMock()
+        rt.event_log = AsyncMock(spec=EventLog)
+        rt.intent_bus = MagicMock(spec=IntentBus)
         rt.identity_registry = None
         rt.acm = None
         rt.ward_room = None
         rt.ontology = None
-        rt.registry = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
         rt.registry.all.return_value = []
         _attach_onboarding(rt)
         rt.onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
@@ -430,16 +439,16 @@ class TestProactiveActivation:
         loop = ProactiveCognitiveLoop(interval=60, cooldown=0)
 
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room = MagicMock()
+        rt.ward_room = AsyncMock(spec=WardRoomService)
         rt.config = SystemConfig()
         rt.ontology = None  # is_crew_agent uses legacy set; "diagnostician" is crew
 
         # Set up trust
         trust_record = MagicMock()
         trust_record.score = 0.70
-        rt.trust_network = MagicMock()
+        rt.trust_network = MagicMock(spec=TrustNetwork)
         rt.trust_network.get_score.return_value = 0.70
-        rt.trust_network.get_trust.return_value = trust_record
+        rt.trust_network.get_record.return_value = trust_record
 
         # Set up ACM
         rt.acm = AsyncMock()
@@ -447,11 +456,11 @@ class TestProactiveActivation:
 
         # Set up agent
         agent = _make_agent()
-        rt.registry = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
         rt.registry.all.return_value = [agent]
 
         # Make the agent pass proactive eligibility
-        rt.ward_room_router = MagicMock()
+        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
         rt.ward_room_router.extract_endorsements = MagicMock(return_value=[])
         loop._runtime = rt
         loop._started_at = 0  # Long ago, no cold start dampening

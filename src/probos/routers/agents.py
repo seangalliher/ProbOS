@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from probos.api_models import AgentChatRequest
+from probos.config import format_trust
 from probos.crew_utils import is_crew_agent
 from probos.routers.deps import get_runtime
 
@@ -68,7 +69,8 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
         department = department or seed.get("department", "")
 
     # Trust
-    trust_score = 0.5
+    from probos.config import TRUST_DEFAULT
+    trust_score = TRUST_DEFAULT
     trust_history: list[float] = []
     agency_level = "ensign"
     if hasattr(runtime, 'trust_network'):
@@ -87,7 +89,7 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
                 other_id = target if source == agent.id else source
                 hebbian_connections.append({
                     "targetId": other_id,
-                    "weight": round(weight, 4),
+                    "weight": format_trust(weight),
                     "relType": rel_type,
                 })
         hebbian_connections.sort(key=lambda c: c["weight"], reverse=True)
@@ -114,9 +116,9 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
         "department": department,
         "personality": personality if is_crew else {},
         "specialization": specialization,
-        "trust": round(trust_score, 4),
+        "trust": format_trust(trust_score),
         "trustHistory": trust_history,
-        "confidence": round(agent.confidence, 4),
+        "confidence": format_trust(agent.confidence),
         "state": agent.state.value if hasattr(agent.state, 'value') else str(agent.state),
         "tier": agent.tier if hasattr(agent, 'tier') else "domain",
         "pool": agent.pool,

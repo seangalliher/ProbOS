@@ -71,7 +71,7 @@ from probos.knowledge.semantic import SemanticKnowledgeLayer
 from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient, OpenAICompatibleClient
 from probos.cognitive.working_memory import WorkingMemoryManager
 from probos.cognitive.workflow_cache import WorkflowCache
-from probos.config import KnowledgeConfig, SystemConfig, load_config
+from probos.config import KnowledgeConfig, SystemConfig, load_config, TRUST_DEFAULT, TRUST_FLOOR_CONN, format_trust
 from probos.utils import format_duration
 from probos.consensus.escalation import EscalationManager
 from probos.consensus.quorum import QuorumEngine
@@ -643,7 +643,7 @@ class ProbOSRuntime:
             return False
 
         # Check rank — Rank is in crew_profile, not earned_agency
-        trust = 0.5
+        trust = TRUST_DEFAULT
         if self.trust_network:
             trust = self.trust_network.get_trust_score(agent.id)
         from probos.crew_profile import Rank
@@ -693,7 +693,7 @@ class ProbOSRuntime:
         if trigger == "trust_drop" and details:
             # Only escalate if trust dropped below floor
             new_trust = details.get("new_trust", 1.0)
-            if new_trust >= 0.6:  # Not below floor
+            if new_trust >= TRUST_FLOOR_CONN:  # Not below floor
                 return
         if trigger == "red_alert" and details:
             new_level = details.get("new_level", "")
@@ -763,7 +763,7 @@ class ProbOSRuntime:
                 "pool": agent.pool,
                 "state": agent.state.value if hasattr(agent.state, "value") else str(agent.state),
                 "confidence": agent.confidence,
-                "trust": round(trust_score, 4),
+                "trust": format_trust(trust_score),
                 "tier": getattr(agent, "tier", "core"),
                 "agency": agency_from_rank(Rank.from_trust(trust_score)).value,
             })
@@ -774,7 +774,7 @@ class ProbOSRuntime:
                 "source": source,
                 "target": target,
                 "rel_type": rel_type,
-                "weight": round(weight, 4),
+                "weight": format_trust(weight),
             })
 
         pools = []
@@ -808,8 +808,8 @@ class ProbOSRuntime:
             "connections": connections,
             "pools": pools,
             "system_mode": system_mode,
-            "tc_n": round(tc_n, 4),
-            "routing_entropy": round(routing_entropy, 4),
+            "tc_n": format_trust(tc_n),
+            "routing_entropy": format_trust(routing_entropy),
             "fresh_boot": self._fresh_boot or self._lifecycle_state == "reset",
             "temporal": {
                 "current_time_utc": datetime.now(timezone.utc).isoformat(),
@@ -1296,7 +1296,7 @@ class ProbOSRuntime:
             self._emit_event(EventType.HEBBIAN_UPDATE, {
                 "source": intent,
                 "target": result.agent_id,
-                "weight": round(self.hebbian_router.get_weight(intent, result.agent_id), 4),
+                "weight": format_trust(self.hebbian_router.get_weight(intent, result.agent_id)),
                 "rel_type": "intent",
             })
 
@@ -1356,7 +1356,7 @@ class ProbOSRuntime:
             self._emit_event(EventType.HEBBIAN_UPDATE, {
                 "source": intent,
                 "target": result.agent_id,
-                "weight": round(self.hebbian_router.get_weight(intent, result.agent_id), 4),
+                "weight": format_trust(self.hebbian_router.get_weight(intent, result.agent_id)),
                 "rel_type": "intent",
             })
 
@@ -1367,7 +1367,7 @@ class ProbOSRuntime:
         self._emit_event(EventType.CONSENSUS, {
             "intent": intent,
             "outcome": consensus.outcome.value,
-            "approval_ratio": round(consensus.approval_ratio, 4),
+            "approval_ratio": format_trust(consensus.approval_ratio),
             "votes": len(results),
             "shapley": consensus.shapley_values or {},
         })
@@ -1420,7 +1420,7 @@ class ProbOSRuntime:
 
                     self._emit_event(EventType.TRUST_UPDATE, {
                         "agent_id": result.agent_id,
-                        "new_score": round(self.trust_network.get_score(result.agent_id), 4),
+                        "new_score": format_trust(self.trust_network.get_score(result.agent_id)),
                         "success": vr.verified,
                     })
 
@@ -1584,7 +1584,7 @@ class ProbOSRuntime:
         try:
             intent_count = len(self.decomposer._intent_descriptors)
         except Exception:
-            pass
+            logger.debug("Intent count tracking failed", exc_info=True)
 
         return SystemSelfModel(
             pool_count=len(self.pools),
@@ -1919,7 +1919,7 @@ class ProbOSRuntime:
                                         source_snippet=record.source_code[:200] if record.source_code else "",
                                     )
                                 except Exception:
-                                    pass
+                                    logger.debug("Semantic layer indexing failed", exc_info=True)
                         elif record:
                             self_mod_result = {
                                 "status": record.status,
@@ -2237,7 +2237,7 @@ class ProbOSRuntime:
                     proposal_text, proposal_dag,
                 )
             except Exception:
-                pass  # Never block on feedback failure
+                logger.debug("Rejection feedback failed", exc_info=True)  # Never block on feedback failure
 
         return True
 
@@ -2706,7 +2706,7 @@ class ProbOSRuntime:
                     target_agent=getattr(skill, "target_agent", ""),
                 )
             except Exception:
-                pass
+                logger.debug("Semantic skill indexing failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # SystemQA helper (AD-154)
@@ -2755,7 +2755,7 @@ class ProbOSRuntime:
                         pass_rate=report.passed / report.total_tests if report.total_tests > 0 else 0.0,
                     )
                 except Exception:
-                    pass
+                    logger.debug("Semantic QA report indexing failed", exc_info=True)
 
             # Trust updates (AD-155)
             for agent_id_or_agent in pool.healthy_agents:
@@ -2774,7 +2774,7 @@ class ProbOSRuntime:
                     # Emit trust_update for HXI (AD-254)
                     self._emit_event(EventType.TRUST_UPDATE, {
                         "agent_id": aid,
-                        "new_score": round(self.trust_network.get_score(aid), 4),
+                        "new_score": format_trust(self.trust_network.get_score(aid)),
                         "success": test["passed"],
                     })
 

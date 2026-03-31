@@ -130,6 +130,7 @@ class DependencyResolver:
                     ]
                 )
             except Exception:
+                logger.warning("Approval callback failed", exc_info=True)
                 approved = False
             if not approved:
                 return DependencyResult(success=False, declined=packages)
@@ -221,6 +222,6 @@ class DependencyResolver:
                 if result.returncode == 0:
                     return True, result.stdout + result.stderr
             except Exception:
-                pass
+                logger.debug("Dependency resolution context failed", exc_info=True)
 
         return False, f"All installation methods failed for {package_name}"

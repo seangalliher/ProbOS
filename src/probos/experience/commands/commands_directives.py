@@ -63,6 +63,7 @@ async def cmd_orders(runtime: ProbOSRuntime, console: Console, args: str) -> Non
             file_size = len(file_path.read_text(encoding='utf-8'))
             size_str = str(file_size)
         except Exception:
+            logger.debug("Directive parsing failed", exc_info=True)
             file_size = 0
             size_str = "0"
 
@@ -85,6 +86,7 @@ async def cmd_orders(runtime: ProbOSRuntime, console: Console, args: str) -> Non
                 summary = "[dim](no summary)[/dim]"
 
         except Exception:
+            logger.debug("Directive parsing failed", exc_info=True)
             summary = f"[red]Error: {filename}[/red]"
 
         # Add row to table
@@ -341,5 +343,5 @@ def get_callsign(agent_type: str) -> str:
         if seed and seed.get("callsign"):
             return seed["callsign"]
     except Exception:
-        pass
+        pass  # Explicit fallback path
     return agent_type.replace("_", " ").title()

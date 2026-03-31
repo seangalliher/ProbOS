@@ -5,7 +5,11 @@ from __future__ import annotations
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from probos.bridge_alerts import BridgeAlertService
 from probos.substrate.agent import BaseAgent
+from probos.substrate.registry import AgentRegistry
+from probos.consensus.trust import TrustNetwork
+from probos.ontology import VesselOntologyService
 
 import pytest
 
@@ -48,11 +52,11 @@ class TestConn:
     def test_conn_qualification_commander_required(self):
         """Agent with LIEUTENANT rank fails is_conn_qualified()."""
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.registry = MagicMock()
-        rt.trust_network = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
+        rt.trust_network = MagicMock(spec=TrustNetwork)
         rt.registry.get.return_value = MagicMock(id="a1", agent_type="architect")
-        rt.trust_network.get_trust_score.return_value = 0.55  # LIEUTENANT
-        rt.ontology = MagicMock()
+        rt.trust_network.get_score.return_value = 0.55  # LIEUTENANT
+        rt.ontology = MagicMock(spec=VesselOntologyService)
 
         # Import the function we're testing
         from probos.crew_profile import Rank
@@ -65,11 +69,11 @@ class TestConn:
     def test_conn_qualification_post_required(self):
         """COMMANDER-rank agent not on bridge/chief post fails qualification."""
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.registry = MagicMock()
-        rt.trust_network = MagicMock()
-        rt.ontology = MagicMock()
+        rt.registry = MagicMock(spec=AgentRegistry)
+        rt.trust_network = MagicMock(spec=TrustNetwork)
+        rt.ontology = MagicMock(spec=VesselOntologyService)
         rt.registry.get.return_value = MagicMock(id="a1", agent_type="scout")
-        rt.trust_network.get_trust_score.return_value = 0.8  # COMMANDER
+        rt.trust_network.get_score.return_value = 0.8  # COMMANDER
 
         post = MagicMock()
         post.id = "scout_post"  # Not in CONN_ELIGIBLE_POSTS
@@ -371,7 +375,7 @@ class TestExecutionPath:
             can_change_alert_yellow=True,
             can_issue_orders=True,
         )
-        rt.conn_manager = MagicMock()
+        rt.conn_manager = MagicMock(spec=ConnManager)
         rt.conn_manager.is_active = True
         rt.conn_manager.state = conn_state
 
@@ -420,13 +424,12 @@ class TestExecutionPath:
             holder_agent_id="a1",  # Agent a1 holds conn
             active=True,
         )
-        rt.conn_manager = MagicMock()
+        rt.conn_manager = MagicMock(spec=ConnManager)
         rt.conn_manager.is_active = True
         rt.conn_manager.state = conn_state
 
         rt.episodic_memory = None
         rt.bridge_alerts = None
-        rt.event_log = None
         rt.ontology = None
         rt.ward_room = None
         # is_crew_agent uses rt.ontology (already None) + legacy set covers "architect"
@@ -452,7 +455,7 @@ class TestExecutionPath:
         rt.conn_manager = ConnManager()
 
         # Mock bridge alerts
-        rt.bridge_alerts = MagicMock()
+        rt.bridge_alerts = MagicMock(spec=BridgeAlertService)
 
         # Simulate the escalation check
         # Test the escalation logic directly on the manager

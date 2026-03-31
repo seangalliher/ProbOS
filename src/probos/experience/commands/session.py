@@ -82,7 +82,7 @@ class SessionManager:
                         "text": f"[Your memory of a previous conversation] {ep.user_input}",
                     })
             except Exception:
-                pass
+                logger.debug("Loading past episodic memory failed", exc_info=True)
 
         if message:
             await self.handle_message(message, runtime, console)
@@ -156,7 +156,7 @@ class SessionManager:
                 )
                 await runtime.episodic_memory.store(episode)
             except Exception:
-                pass
+                logger.debug("Storing conversation episode failed", exc_info=True)
 
     def exit_session(self, console: Console) -> None:
         """Return to bridge — exit 1:1 session (/bridge)."""

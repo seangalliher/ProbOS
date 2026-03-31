@@ -326,4 +326,4 @@ class HttpFetchAgent(BaseAgent):
             profile.record_request(latency_ms, status_code)
             self._profile_store.save(profile)
         except Exception:
-            pass  # Profile recording is best-effort
+            logger.debug("HTTP fetch context failed", exc_info=True)

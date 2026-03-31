@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from probos.runtime import ProbOSRuntime
+from probos.skill_framework import SkillProfile
 from probos.acm import (
     AgentCapitalService,
     LifecycleState,
@@ -186,7 +187,7 @@ class TestConsolidatedProfile:
         """Consolidated profile contains skill_count and avg_proficiency."""
         await acm.onboard("a1", "scout", "pool", "science")
 
-        mock_skill_profile = MagicMock()
+        mock_skill_profile = MagicMock(spec=SkillProfile)
         mock_skill_profile.total_skills = 5
         mock_skill_profile.avg_proficiency = 3.2
 

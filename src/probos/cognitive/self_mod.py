@@ -135,6 +135,7 @@ class SelfModificationPipeline:
             try:
                 approved = await self._user_approval_fn(description)
             except Exception:
+                logger.warning("Approval callback failed, treating as declined", exc_info=True)
                 approved = False
             if not approved:
                 record = DesignedAgentRecord(
@@ -164,7 +165,7 @@ class SelfModificationPipeline:
             try:
                 await on_progress("designing", 1, 5)
             except Exception:
-                pass
+                pass  # UI progress callback — client may have disconnected
         try:
             source_code = await self._designer.design_agent(
                 intent_name=intent_name,
@@ -196,7 +197,7 @@ class SelfModificationPipeline:
             try:
                 await on_progress("validating", 2, 5)
             except Exception:
-                pass
+                pass  # UI progress callback — client may have disconnected
         errors = self._validator.validate(source_code)
         if errors:
             # Check if failures are ONLY about forbidden imports
@@ -208,6 +209,7 @@ class SelfModificationPipeline:
                 try:
                     approved = await self._import_approval_fn(import_names)
                 except Exception:
+                    logger.warning("Approval callback failed, treating as declined", exc_info=True)
                     approved = False
                 if approved:
                     for name in import_names:
@@ -287,7 +289,7 @@ class SelfModificationPipeline:
             try:
                 await on_progress("testing", 3, 5)
             except Exception:
-                pass
+                pass  # UI progress callback — client may have disconnected
         sandbox_result = await self._sandbox.test_agent(
             source_code, intent_name, test_params=parameters or {},
         )
@@ -311,7 +313,7 @@ class SelfModificationPipeline:
             try:
                 await on_progress("deploying", 4, 5)
             except Exception:
-                pass
+                pass  # UI progress callback — client may have disconnected
         agent_class = sandbox_result.agent_class
         try:
             await self._register_fn(agent_class)

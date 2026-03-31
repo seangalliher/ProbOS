@@ -7,6 +7,14 @@ from unittest.mock import MagicMock, AsyncMock
 from probos.bridge_alerts import (
     AlertSeverity, BridgeAlert, BridgeAlertService,
 )
+from probos.ward_room import WardRoomService
+from probos.ward_room_router import WardRoomRouter
+from probos.substrate.event_log import EventLog
+from probos.substrate.registry import AgentRegistry
+from probos.consensus.trust import TrustNetwork
+from probos.mesh.intent import IntentBus
+from probos.crew_profile import CallsignRegistry
+from probos.config import SystemConfig
 
 
 # ---------------------------------------------------------------------------
@@ -255,9 +263,8 @@ class TestBehavioralAlerts:
 class TestAlertDelivery:
     async def test_advisory_posts_to_all_hands(self):
         """Advisory alert posts to ship channel + info notification."""
-        from probos.ward_room_router import WardRoomRouter
 
-        ward_room = MagicMock()
+        ward_room = MagicMock(spec=WardRoomService)
         ship_channel = MagicMock()
         ship_channel.channel_type = "ship"
         ship_channel.id = "ship-ch"
@@ -268,20 +275,20 @@ class TestAlertDelivery:
         ward_room.list_channels = AsyncMock(return_value=[ship_channel, dept_channel])
         ward_room.create_thread = AsyncMock()
         notify_fn = MagicMock()
-        event_log = MagicMock()
+        event_log = MagicMock(spec=EventLog)
         event_log.log = AsyncMock()
 
         router = WardRoomRouter(
             ward_room=ward_room,
-            registry=MagicMock(),
-            intent_bus=MagicMock(),
-            trust_network=MagicMock(),
+            registry=MagicMock(spec=AgentRegistry),
+            intent_bus=MagicMock(spec=IntentBus),
+            trust_network=MagicMock(spec=TrustNetwork),
             ontology=None,
-            callsign_registry=MagicMock(),
+            callsign_registry=MagicMock(spec=CallsignRegistry),
             episodic_memory=None,
             event_emitter=MagicMock(),
             event_log=event_log,
-            config=MagicMock(),
+            config=MagicMock(spec=SystemConfig),
             notify_fn=notify_fn,
             proactive_loop=None,
         )
@@ -309,29 +316,28 @@ class TestAlertDelivery:
 
     async def test_alert_posts_with_action_required(self):
         """Alert severity posts to ship channel + action_required notification."""
-        from probos.ward_room_router import WardRoomRouter
 
-        ward_room = MagicMock()
+        ward_room = MagicMock(spec=WardRoomService)
         ship_channel = MagicMock()
         ship_channel.channel_type = "ship"
         ship_channel.id = "ship-ch"
         ward_room.list_channels = AsyncMock(return_value=[ship_channel])
         ward_room.create_thread = AsyncMock()
         notify_fn = MagicMock()
-        event_log = MagicMock()
+        event_log = MagicMock(spec=EventLog)
         event_log.log = AsyncMock()
 
         router = WardRoomRouter(
             ward_room=ward_room,
-            registry=MagicMock(),
-            intent_bus=MagicMock(),
-            trust_network=MagicMock(),
+            registry=MagicMock(spec=AgentRegistry),
+            intent_bus=MagicMock(spec=IntentBus),
+            trust_network=MagicMock(spec=TrustNetwork),
             ontology=None,
-            callsign_registry=MagicMock(),
+            callsign_registry=MagicMock(spec=CallsignRegistry),
             episodic_memory=None,
             event_emitter=MagicMock(),
             event_log=event_log,
-            config=MagicMock(),
+            config=MagicMock(spec=SystemConfig),
             notify_fn=notify_fn,
             proactive_loop=None,
         )
@@ -356,9 +362,8 @@ class TestAlertDelivery:
 
     async def test_info_posts_to_department_channel(self):
         """Info severity posts to department channel, no Captain notification."""
-        from probos.ward_room_router import WardRoomRouter
 
-        ward_room = MagicMock()
+        ward_room = MagicMock(spec=WardRoomService)
         ship_channel = MagicMock()
         ship_channel.channel_type = "ship"
         ship_channel.id = "ship-ch"
@@ -369,20 +374,20 @@ class TestAlertDelivery:
         ward_room.list_channels = AsyncMock(return_value=[ship_channel, eng_channel])
         ward_room.create_thread = AsyncMock()
         notify_fn = MagicMock()
-        event_log = MagicMock()
+        event_log = MagicMock(spec=EventLog)
         event_log.log = AsyncMock()
 
         router = WardRoomRouter(
             ward_room=ward_room,
-            registry=MagicMock(),
-            intent_bus=MagicMock(),
-            trust_network=MagicMock(),
+            registry=MagicMock(spec=AgentRegistry),
+            intent_bus=MagicMock(spec=IntentBus),
+            trust_network=MagicMock(spec=TrustNetwork),
             ontology=None,
-            callsign_registry=MagicMock(),
+            callsign_registry=MagicMock(spec=CallsignRegistry),
             episodic_memory=None,
             event_emitter=MagicMock(),
             event_log=event_log,
-            config=MagicMock(),
+            config=MagicMock(spec=SystemConfig),
             notify_fn=notify_fn,
             proactive_loop=None,
         )

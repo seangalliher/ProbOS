@@ -13,6 +13,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.config import (
+    COUNSELOR_CONFIDENCE_LOW,
+    COUNSELOR_TRUST_DRIFT_CONCERN,
+    COUNSELOR_TRUST_PROMOTION,
+    COUNSELOR_WELLNESS_FIT,
+    COUNSELOR_WELLNESS_YELLOW,
+    TRUST_DEFAULT,
+)
 from probos.types import IntentDescriptor
 
 logger = logging.getLogger(__name__)
@@ -25,7 +33,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CognitiveBaseline:
     """Snapshot of an agent's cognitive metrics at time of baselining."""
-    trust_score: float = 0.5
+    trust_score: float = TRUST_DEFAULT
     confidence: float = 0.8
     hebbian_avg: float = 0.0
     success_rate: float = 0.0
@@ -119,7 +127,7 @@ class CognitiveProfile:
         # Update alert level based on latest assessment
         if not assessment.fit_for_duty:
             self.alert_level = "red"
-        elif assessment.wellness_score < 0.5 or len(assessment.concerns) >= 3:
+        elif assessment.wellness_score < COUNSELOR_WELLNESS_YELLOW or len(assessment.concerns) >= 3:
             self.alert_level = "yellow"
         else:
             self.alert_level = "green"
@@ -282,14 +290,14 @@ class CounselorAgent(CognitiveAgent):
         recommendations: list[str] = []
 
         # Trust degradation
-        if trust_drift < -0.2:
+        if trust_drift < COUNSELOR_TRUST_DRIFT_CONCERN:
             concerns.append(f"Trust dropped significantly ({trust_drift:+.2f} from baseline)")
             recommendations.append("Investigate recent task failures")
         elif trust_drift < -0.1:
             concerns.append(f"Trust trending downward ({trust_drift:+.2f})")
 
         # Confidence collapse
-        if current_confidence < 0.3:
+        if current_confidence < COUNSELOR_CONFIDENCE_LOW:
             concerns.append(f"Low confidence ({current_confidence:.2f})")
             recommendations.append("Consider targeted dream cycle for pattern consolidation")
 
@@ -318,10 +326,10 @@ class CounselorAgent(CognitiveAgent):
             wellness -= 0.2
         wellness = max(0.0, min(1.0, wellness))
 
-        fit_for_duty = wellness >= 0.3 and len(concerns) < 4
+        fit_for_duty = wellness >= COUNSELOR_WELLNESS_FIT and len(concerns) < 4
         fit_for_promotion = (
             wellness >= 0.8
-            and current_trust >= 0.7
+            and current_trust >= COUNSELOR_TRUST_PROMOTION
             and len(concerns) == 0
             and success_rate >= 0.7
         )

@@ -88,7 +88,7 @@ class CalculatorAgent(_BundledMixin, CognitiveAgent):
                     confidence=self.confidence,
                 )
             except Exception:
-                pass  # Fall through to LLM
+                pass  # LLM fallback — explicit programmatic fallback
 
         # Fall through to cognitive lifecycle (LLM handles complex math)
         return await super().handle_intent(intent)

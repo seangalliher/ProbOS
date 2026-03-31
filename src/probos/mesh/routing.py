@@ -7,8 +7,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-import aiosqlite
-
+from probos.protocols import ConnectionFactory, DatabaseConnection
 from probos.types import AgentID
 
 logger = logging.getLogger(__name__)
@@ -53,6 +52,7 @@ class HebbianRouter:
         decay_rate: float = 0.995,
         reward: float = 0.05,
         db_path: str | Path | None = None,
+        connection_factory: ConnectionFactory | None = None,
     ) -> None:
         self.decay_rate = decay_rate
         self.reward = reward
@@ -61,12 +61,16 @@ class HebbianRouter:
         self._weights: dict[_FullKey, float] = {}
         # Backward-compat view: (source, target) → weight (aggregated)
         self._compat_weights: dict[_WeightKey, float] = {}
-        self._db: aiosqlite.Connection | None = None
+        self._db: DatabaseConnection | None = None
+        self._connection_factory = connection_factory
+        if self._connection_factory is None:
+            from probos.storage.sqlite_factory import default_factory
+            self._connection_factory = default_factory
 
     async def start(self) -> None:
         """Initialize — load weights from SQLite if configured."""
         if self.db_path:
-            self._db = await aiosqlite.connect(self.db_path)
+            self._db = await self._connection_factory.connect(self.db_path)
             await self._db.execute("PRAGMA foreign_keys = ON")
             await self._db.execute(_SCHEMA)
             await self._db.commit()

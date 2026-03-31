@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from probos.substrate.agent import BaseAgent
+from probos.config import TRUST_OUTLIER_LOW, TRUST_OUTLIER_HIGH, format_trust
 
 if TYPE_CHECKING:
     from probos.runtime import ProbOSRuntime
@@ -139,6 +140,7 @@ class IntrospectionAgent(BaseAgent):
         try:
             model = rt._build_system_self_model()
         except Exception:
+            logger.debug("Introspection fallback", exc_info=True)
             return ""
 
         try:
@@ -187,7 +189,7 @@ class IntrospectionAgent(BaseAgent):
                     intent_names = sorted(d.name for d in descriptors)
                     parts.append(f"\nAvailable intents: {', '.join(intent_names)}")
             except Exception:
-                pass
+                logger.debug("Introspection context failed", exc_info=True)
 
             # Health signals
             if model.recent_errors:
@@ -197,6 +199,7 @@ class IntrospectionAgent(BaseAgent):
 
             return "\n".join(parts)
         except Exception:
+            logger.debug("Introspection fallback", exc_info=True)
             return ""
 
     async def _explain_last(self, rt: ProbOSRuntime) -> dict[str, Any]:
@@ -222,7 +225,7 @@ class IntrospectionAgent(BaseAgent):
                         },
                     }
             except Exception:
-                pass
+                logger.debug("Introspection context failed", exc_info=True)
 
         return {"success": True, "data": {"explanation": "No execution history available."}}
 
@@ -322,7 +325,7 @@ class IntrospectionAgent(BaseAgent):
 
             # Add trust score
             trust = rt.trust_network.get_score(agent.id)
-            info["trust_score"] = round(trust, 4)
+            info["trust_score"] = format_trust(trust)
 
             # Add Hebbian weight context
             all_weights = rt.hebbian_router.all_weights_typed()
@@ -337,8 +340,8 @@ class IntrospectionAgent(BaseAgent):
                 reverse=True,
             )[:3]
             info["hebbian"] = {
-                "incoming_top3": [{"source": s, "weight": round(w, 4)} for s, w in incoming],
-                "outgoing_top3": [{"target": t, "weight": round(w, 4)} for t, w in outgoing],
+                "incoming_top3": [{"source": s, "weight": format_trust(w)} for s, w in incoming],
+                "outgoing_top3": [{"target": t, "weight": format_trust(w)} for t, w in outgoing],
                 "total_connections": sum(
                     1 for k in all_weights if k[0] == agent.id or k[1] == agent.id
                 ),
@@ -425,7 +428,7 @@ class IntrospectionAgent(BaseAgent):
                     continue
                 info: dict[str, Any] = agent.info()
                 trust = rt.trust_network.get_score(agent_id)
-                info["trust_score"] = round(trust, 4)
+                info["trust_score"] = format_trust(trust)
                 info["pool"] = pool_name
                 agent_details.append(info)
 
@@ -440,7 +443,7 @@ class IntrospectionAgent(BaseAgent):
                 "health": {
                     "total_agents": health.get("total_agents", 0),
                     "healthy_agents": health.get("healthy_agents", 0),
-                    "health_ratio": round(health.get("health_ratio", 1.0), 4),
+                    "health_ratio": format_trust(health.get("health_ratio", 1.0)),
                 },
                 "pools": health.get("pools", {}),
                 "agents": agent_details,
@@ -470,10 +473,10 @@ class IntrospectionAgent(BaseAgent):
         trust_outliers = []
         all_scores = rt.trust_network.all_scores()
         for agent_id, score in all_scores.items():
-            if score < 0.3:
-                trust_outliers.append({"agent_id": agent_id, "trust": round(score, 4), "flag": "low trust"})
-            elif score > 0.9:
-                trust_outliers.append({"agent_id": agent_id, "trust": round(score, 4), "flag": "high trust"})
+            if score < TRUST_OUTLIER_LOW:
+                trust_outliers.append({"agent_id": agent_id, "trust": format_trust(score), "flag": "low trust"})
+            elif score > TRUST_OUTLIER_HIGH:
+                trust_outliers.append({"agent_id": agent_id, "trust": format_trust(score), "flag": "high trust"})
 
         # Attention depth
         attention_depth = rt.attention.queue_size if rt.attention else 0
@@ -518,8 +521,8 @@ class IntrospectionAgent(BaseAgent):
                 "trust_outliers": trust_outliers,
                 "attention_depth": attention_depth,
                 "cache_stats": cache_stats,
-                "hebbian_density": round(hebbian_density, 4),
-                "overall_health": round(overall_health, 4),
+                "hebbian_density": format_trust(hebbian_density),
+                "overall_health": format_trust(overall_health),
                 "dreaming": dreaming_info,
             },
         }
@@ -545,6 +548,7 @@ class IntrospectionAgent(BaseAgent):
         try:
             episodes = await rt.episodic_memory.recall(question, k=5)
         except Exception:
+            logger.debug("Introspection fallback", exc_info=True)
             episodes = []
 
         matching_episodes = []
@@ -569,9 +573,9 @@ class IntrospectionAgent(BaseAgent):
                 reverse=True,
             )[:3]
             agent_context[aid] = {
-                "trust_score": round(trust_score, 4),
+                "trust_score": format_trust(trust_score),
                 "top_connections": [
-                    {"target": t, "weight": round(w, 4)} for t, w in top_connections
+                    {"target": t, "weight": format_trust(w)} for t, w in top_connections
                 ],
             }
 
@@ -632,9 +636,9 @@ class IntrospectionAgent(BaseAgent):
             "agent_count": len(trust_values),
         }
         if trust_values:
-            trust_summary["mean"] = round(sum(trust_values) / len(trust_values), 4)
-            trust_summary["min"] = round(min(trust_values), 4)
-            trust_summary["max"] = round(max(trust_values), 4)
+            trust_summary["mean"] = format_trust(sum(trust_values) / len(trust_values))
+            trust_summary["min"] = format_trust(min(trust_values))
+            trust_summary["max"] = format_trust(max(trust_values))
 
         # Hebbian routing
         hebbian_weight_count = rt.hebbian_router.weight_count
@@ -720,20 +724,20 @@ class IntrospectionAgent(BaseAgent):
         # Build trend data from snapshot history
         trends: dict[str, list] = {"tc_n": [], "routing_entropy": []}
         for snap in list(detector._history)[-10:]:
-            trends["tc_n"].append(round(snap.tc_n, 4))
-            trends["routing_entropy"].append(round(snap.routing_entropy, 4))
+            trends["tc_n"].append(format_trust(snap.tc_n))
+            trends["routing_entropy"].append(format_trust(snap.routing_entropy))
 
         return {
             "success": True,
             "data": {
                 "snapshot": {
-                    "tc_n": round(snapshot.tc_n, 4),
-                    "routing_entropy": round(snapshot.routing_entropy, 4),
+                    "tc_n": format_trust(snapshot.tc_n),
+                    "routing_entropy": format_trust(snapshot.routing_entropy),
                     "capability_count": snapshot.capability_count,
                     "cooperation_clusters": len(snapshot.cooperation_clusters),
                     "dream_consolidation_rate": round(snapshot.dream_consolidation_rate, 2),
                     "trust_distribution": {
-                        k: round(v, 4) if isinstance(v, float) else v
+                        k: format_trust(v) if isinstance(v, float) else v
                         for k, v in snapshot.trust_distribution.items()
                         if k != "per_agent"
                     },

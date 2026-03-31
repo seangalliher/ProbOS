@@ -217,7 +217,7 @@ class CopilotBuilderAdapter:
                 })
             return results
         except Exception:
-            logger.debug("Failed to list Copilot SDK models")
+            logger.debug("Failed to list Copilot SDK models", exc_info=True)
             return []
 
     # ── System message ─────────────────────────────────────────────────

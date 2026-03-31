@@ -1184,8 +1184,9 @@ class TestTransporterEvents:
         bp.chunks = [
             ChunkSpec(chunk_id="c1", description="d1", target_file="f1.py", what_to_generate="code"),
         ]
-        mock_llm = AsyncMock()
-        mock_llm.generate.return_value = MagicMock(
+        mock_llm = AsyncMock(spec=BaseLLMClient)
+        mock_llm.complete.return_value = MagicMock(
+            error=None,
             content="===FILE: f1.py===\n===CREATE===\ndef foo(): pass\n===END==="
         )
         asyncio.get_event_loop().run_until_complete(
@@ -1202,8 +1203,9 @@ class TestTransporterEvents:
         bp.chunks = [
             ChunkSpec(chunk_id="c1", description="d1", target_file="f1.py", what_to_generate="code"),
         ]
-        mock_llm = AsyncMock()
-        mock_llm.generate.return_value = MagicMock(
+        mock_llm = AsyncMock(spec=BaseLLMClient)
+        mock_llm.complete.return_value = MagicMock(
+            error=None,
             content="===FILE: f1.py===\n===CREATE===\ndef foo(): pass\n===END==="
         )
         result = asyncio.get_event_loop().run_until_complete(
@@ -1223,8 +1225,9 @@ class TestTransporterEvents:
             ChunkSpec(chunk_id="c1", description="d1", target_file="f1.py", what_to_generate="code"),
             ChunkSpec(chunk_id="c2", description="d2", target_file="f2.py", what_to_generate="code"),
         ]
-        mock_llm = AsyncMock()
-        mock_llm.generate.return_value = MagicMock(
+        mock_llm = AsyncMock(spec=BaseLLMClient)
+        mock_llm.complete.return_value = MagicMock(
+            error=None,
             content="===FILE: f1.py===\n===CREATE===\ndef foo(): pass\n===END==="
         )
         asyncio.get_event_loop().run_until_complete(
@@ -1247,8 +1250,8 @@ class TestTransporterEvents:
         bp.chunks = [
             ChunkSpec(chunk_id="c1", description="d1", target_file="f1.py", what_to_generate="code"),
         ]
-        mock_llm = AsyncMock()
-        mock_llm.generate.side_effect = Exception("LLM error")
+        mock_llm = AsyncMock(spec=BaseLLMClient)
+        mock_llm.complete.side_effect = Exception("LLM error")
         asyncio.get_event_loop().run_until_complete(
             execute_chunks(bp, mock_llm, on_event=capture_event)
         )
@@ -1267,8 +1270,9 @@ class TestTransporterEvents:
         bp.chunks = [
             ChunkSpec(chunk_id="c1", description="d1", target_file="f1.py", what_to_generate="code"),
         ]
-        mock_llm = AsyncMock()
-        mock_llm.generate.return_value = MagicMock(
+        mock_llm = AsyncMock(spec=BaseLLMClient)
+        mock_llm.complete.return_value = MagicMock(
+            error=None,
             content="===FILE: f1.py===\n===CREATE===\ndef foo(): pass\n===END==="
         )
         asyncio.get_event_loop().run_until_complete(
@@ -1366,7 +1370,6 @@ class TestTransporterBuild:
         spec = BuildSpec(title="t", description="d", target_files=["a.py"])
         mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.side_effect = Exception("LLM down")
-        mock_llm.generate = AsyncMock(side_effect=Exception("LLM down"))
 
         result = asyncio.get_event_loop().run_until_complete(
             transporter_build(spec, mock_llm)
@@ -2189,7 +2192,7 @@ class TestTestFixLoop:
         ]
 
         # LLM returns a MODIFY block to fix the issue
-        llm_client = AsyncMock()
+        llm_client = AsyncMock(spec=BaseLLMClient)
         llm_fix_response = MagicMock()
         llm_fix_response.content = (
             "===MODIFY: fixme.py===\n"
@@ -2232,7 +2235,7 @@ class TestTestFixLoop:
             {"path": "broken.py", "content": "x = 1\n", "mode": "create", "after_line": None},
         ]
 
-        llm_client = AsyncMock()
+        llm_client = AsyncMock(spec=BaseLLMClient)
         llm_fix_response = MagicMock()
         llm_fix_response.content = (
             "===MODIFY: broken.py===\n"
@@ -2264,7 +2267,7 @@ class TestTestFixLoop:
             {"path": "empty.py", "content": "x = 1\n", "mode": "create", "after_line": None},
         ]
 
-        llm_client = AsyncMock()
+        llm_client = AsyncMock(spec=BaseLLMClient)
         llm_fix_response = MagicMock()
         llm_fix_response.content = "I'm not sure what to fix."  # no file blocks
         llm_client.complete = AsyncMock(return_value=llm_fix_response)
@@ -2319,7 +2322,7 @@ class TestTestFixLoop:
             {"path": "noop.py", "content": "x = 1\n", "mode": "create", "after_line": None},
         ]
 
-        llm_client = AsyncMock()
+        llm_client = AsyncMock(spec=BaseLLMClient)
 
         mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"main\n", stderr=b"")
 

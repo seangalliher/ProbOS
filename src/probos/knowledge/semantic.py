@@ -295,6 +295,7 @@ class SemanticKnowledgeLayer:
             try:
                 result[name] = col.count()
             except Exception:
+                logger.debug("Semantic search failed", exc_info=True)
                 result[name] = 0
         return result
 

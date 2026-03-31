@@ -6,7 +6,13 @@ from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
 
 import pytest
 
-from probos.crew_profile import Rank
+from probos.config import SystemConfig
+from probos.consensus.trust import TrustNetwork
+from probos.crew_profile import CallsignRegistry, Rank
+from probos.knowledge.records_store import RecordsStore
+from probos.skill_framework import AgentSkillService
+from probos.ward_room import WardRoomService
+from probos.ward_room_router import WardRoomRouter
 from probos.earned_agency import can_perform_action
 from probos.runtime import ProbOSRuntime
 from probos.substrate.agent import BaseAgent
@@ -56,10 +62,10 @@ class TestProactiveEndorsementExtraction:
         from probos.proactive import ProactiveCognitiveLoop
 
         runtime = MagicMock(spec=ProbOSRuntime)
-        runtime.ward_room = MagicMock()
-        runtime.trust_network = MagicMock()
+        runtime.ward_room = MagicMock(spec=WardRoomService)
+        runtime.trust_network = MagicMock(spec=TrustNetwork)
         runtime.trust_network.get_score.return_value = 0.6  # Lieutenant
-        runtime.ward_room_router = MagicMock()
+        runtime.ward_room_router = MagicMock(spec=WardRoomRouter)
         runtime.ward_room_router.extract_endorsements.return_value = (
             "I noticed a pattern in the trust data.",
             [{"post_id": "abc123", "direction": "up"}],
@@ -89,8 +95,8 @@ class TestProactiveEndorsementExtraction:
         from probos.proactive import ProactiveCognitiveLoop
 
         runtime = MagicMock(spec=ProbOSRuntime)
-        runtime.ward_room = MagicMock()
-        runtime.trust_network = MagicMock()
+        runtime.ward_room = MagicMock(spec=WardRoomService)
+        runtime.trust_network = MagicMock(spec=TrustNetwork)
         runtime.trust_network.get_score.return_value = 0.3  # Ensign
         runtime.is_cold_start = False
 
@@ -119,16 +125,16 @@ class TestProactiveReplyExtraction:
         from probos.proactive import ProactiveCognitiveLoop
 
         runtime = MagicMock(spec=ProbOSRuntime)
-        runtime.ward_room = MagicMock()
+        runtime.ward_room = MagicMock(spec=WardRoomService)
         runtime.ward_room.get_thread = AsyncMock(return_value={"thread": {"locked": False}})
         runtime.ward_room.create_post = AsyncMock(return_value=MagicMock(id="new-post"))
-        runtime.trust_network = MagicMock()
+        runtime.trust_network = MagicMock(spec=TrustNetwork)
         runtime.trust_network.get_score.return_value = 0.75  # Commander
-        runtime.ward_room_router = MagicMock()
+        runtime.ward_room_router = MagicMock(spec=WardRoomRouter)
         runtime.ward_room_router.extract_endorsements.return_value = ("text", [])
         runtime.ward_room_router.process_endorsements = AsyncMock()
         runtime.is_cold_start = False
-        runtime.callsign_registry = MagicMock()
+        runtime.callsign_registry = MagicMock(spec=CallsignRegistry)
         runtime.callsign_registry.get_callsign.return_value = "Worf"
 
         loop = ProactiveCognitiveLoop(interval=60)
@@ -161,10 +167,10 @@ class TestProactiveReplyExtraction:
         from probos.proactive import ProactiveCognitiveLoop
 
         runtime = MagicMock(spec=ProbOSRuntime)
-        runtime.ward_room = MagicMock()
+        runtime.ward_room = MagicMock(spec=WardRoomService)
         runtime.ward_room.get_thread = AsyncMock(return_value={"thread": {"locked": True}})
         runtime.ward_room.create_post = AsyncMock()
-        runtime.trust_network = MagicMock()
+        runtime.trust_network = MagicMock(spec=TrustNetwork)
         runtime.trust_network.get_score.return_value = 0.75
         runtime.is_cold_start = False
 
@@ -188,19 +194,19 @@ class TestProactiveReplyExtraction:
         from probos.proactive import ProactiveCognitiveLoop
 
         runtime = MagicMock(spec=ProbOSRuntime)
-        runtime.ward_room = MagicMock()
-        runtime.trust_network = MagicMock()
+        runtime.ward_room = MagicMock(spec=WardRoomService)
+        runtime.trust_network = MagicMock(spec=TrustNetwork)
         runtime.trust_network.get_score.return_value = 0.3  # Ensign
-        runtime.ward_room_router = MagicMock()
+        runtime.ward_room_router = MagicMock(spec=WardRoomRouter)
         runtime.ward_room_router.extract_endorsements.return_value = ("text", [])
         runtime.ward_room_router.process_endorsements = AsyncMock()
         runtime.is_cold_start = False
-        runtime._records_store = MagicMock()
+        runtime._records_store = MagicMock(spec=RecordsStore)
         runtime._records_store.write_notebook = AsyncMock()
         runtime.ontology = None
-        runtime.callsign_registry = MagicMock()
+        runtime.callsign_registry = MagicMock(spec=CallsignRegistry)
         runtime.callsign_registry.get_callsign.return_value = "TestAgent"
-        runtime.config = MagicMock()
+        runtime.config = MagicMock(spec=SystemConfig)
         runtime.config.communications = MagicMock(dm_min_rank="ensign")
 
         loop = ProactiveCognitiveLoop(interval=60)
@@ -228,16 +234,16 @@ class TestSkillReinforcement:
         from probos.proactive import ProactiveCognitiveLoop
 
         runtime = MagicMock(spec=ProbOSRuntime)
-        runtime.ward_room = MagicMock()
-        runtime.trust_network = MagicMock()
+        runtime.ward_room = MagicMock(spec=WardRoomService)
+        runtime.trust_network = MagicMock(spec=TrustNetwork)
         runtime.trust_network.get_score.return_value = 0.6  # Lieutenant
-        runtime.ward_room_router = MagicMock()
+        runtime.ward_room_router = MagicMock(spec=WardRoomRouter)
         runtime.ward_room_router.extract_endorsements.return_value = (
             "Clean text.",
             [{"post_id": "abc", "direction": "up"}],
         )
         runtime.ward_room_router.process_endorsements = AsyncMock()
-        runtime.skill_service = MagicMock()
+        runtime.skill_service = MagicMock(spec=AgentSkillService)
         runtime.skill_service.record_exercise = MagicMock()
         runtime.is_cold_start = False
 

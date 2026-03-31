@@ -147,7 +147,7 @@ class SelfModManager:
                     source_snippet=patch_result.patched_source[:200] if patch_result.patched_source else "",
                 )
             except Exception:
-                pass
+                logger.debug("Semantic layer indexing failed", exc_info=True)
 
         # Auto-retry the original request
         retry_result = None
@@ -175,7 +175,7 @@ class SelfModManager:
                     retry_success=retry_success,
                 )
             except Exception:
-                pass
+                logger.debug("Feedback recording failed", exc_info=True)
 
         return CorrectionResult(
             success=True,

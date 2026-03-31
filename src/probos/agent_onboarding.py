@@ -10,6 +10,7 @@ import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from probos.config import format_trust
 from probos.crew_utils import is_crew_agent
 from probos.events import EventType
 from probos.substrate.heartbeat import HeartbeatAgent
@@ -109,7 +110,7 @@ class AgentOnboardingService:
             "pool": agent.pool,
             "state": agent.state.value if hasattr(agent.state, "value") else str(agent.state),
             "confidence": agent.confidence,
-            "trust": round(self._trust_network.get_score(agent.id), 4),
+            "trust": format_trust(self._trust_network.get_score(agent.id)),
         })
 
         await self._event_log.log(

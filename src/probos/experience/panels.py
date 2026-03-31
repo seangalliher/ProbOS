@@ -8,6 +8,7 @@ runtime APIs to gather data, then passes it here for display.
 from __future__ import annotations
 
 import json
+import logging
 import statistics
 from collections import Counter
 from datetime import datetime, timezone
@@ -18,6 +19,8 @@ from rich.table import Table
 from rich.text import Text
 
 from probos.types import AgentState, DreamReport, FocusSnapshot, TaskDAG, WorkflowCacheEntry
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Colour constants
@@ -30,8 +33,10 @@ STATE_COLORS: dict[AgentState, str] = {
     AgentState.SPAWNING: "blue",
 }
 
-_TRUST_GREEN = 0.6
-_TRUST_YELLOW = 0.4
+from probos.config import TRUST_COLOR_GREEN, TRUST_COLOR_YELLOW
+
+_TRUST_GREEN = TRUST_COLOR_GREEN
+_TRUST_YELLOW = TRUST_COLOR_YELLOW
 _HEALTH_GREEN = 0.7
 _HEALTH_YELLOW = 0.4
 
@@ -675,6 +680,7 @@ def render_dag_result(result: dict[str, Any], debug: bool = False) -> Panel:
             try:
                 debug_results[nid] = str(nres)[:500]
             except Exception:
+                logger.debug("Display fallback", exc_info=True)
                 debug_results[nid] = "<unserializable>"
         lines.append(json.dumps(debug_results, indent=2, default=str))
 
@@ -738,6 +744,7 @@ def render_workflow_cache_panel(
             dag_data = _json.loads(entry.dag_json)
             intents = ", ".join(n.get("intent", "?") for n in dag_data.get("nodes", []))
         except Exception:
+            logger.debug("Display fallback", exc_info=True)
             intents = "?"
 
         pattern = entry.pattern[:40]

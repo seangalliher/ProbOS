@@ -119,6 +119,7 @@ class CognitiveAgent(BaseAgent):
                         parts.append(f"{dn}: {members}")
                     _dm_crew_list = "Available crew to DM:\n" + "\n".join(parts) + "\n"
             except Exception:
+                logger.debug("Cognitive agent context failed", exc_info=True)
                 try:
                     _all_cs = _rt.callsign_registry.all_callsigns()
                     _self_atype = getattr(self, 'agent_type', '')
@@ -127,7 +128,7 @@ class CognitiveAgent(BaseAgent):
                     if _crew_entries:
                         _dm_crew_list = f"Available crew to DM: {', '.join(sorted(_crew_entries))}\n"
                 except Exception:
-                    pass
+                    logger.debug("Crew list building failed", exc_info=True)
         elif hasattr(_rt, 'callsign_registry'):
             try:
                 _all_cs = _rt.callsign_registry.all_callsigns()
@@ -137,7 +138,7 @@ class CognitiveAgent(BaseAgent):
                 if _crew_entries:
                     _dm_crew_list = f"Available crew to DM: {', '.join(sorted(_crew_entries))}\n"
             except Exception:
-                pass
+                logger.debug("Crew list building failed", exc_info=True)
 
         if brief:
             return (
@@ -192,7 +193,7 @@ class CognitiveAgent(BaseAgent):
                             cached=True,
                         )
                     except Exception:
-                        pass
+                        logger.debug("Journal recording failed", exc_info=True)
                 return {**decision, "cached": True}
             else:
                 del cache[cache_key]
@@ -362,7 +363,7 @@ class CognitiveAgent(BaseAgent):
                     response_hash=hashlib.md5(response.content[:500].encode()).hexdigest()[:12],
                 )
             except Exception:
-                pass  # Non-critical — never block agent cognition
+                logger.debug("Journal recording failed", exc_info=True)  # Non-critical — never block agent cognition
 
         # Record strategy outcomes (AD-384)
         if applied_strategy_ids and self._strategy_advisor:

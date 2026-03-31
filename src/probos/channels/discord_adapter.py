@@ -172,12 +172,12 @@ class DiscordAdapter(ChannelAdapter):
                         asyncio.wait_for(bot.close(), timeout=2.0)
                     )
                 except Exception:
-                    pass
+                    pass  # Teardown cleanup — errors expected and harmless
                 finally:
                     try:
                         loop.close()
                     except Exception:
-                        pass
+                        pass  # Teardown cleanup — errors expected and harmless
 
             # Force-close the HTTP session if still open
             if bot and hasattr(bot, "http"):
@@ -188,12 +188,12 @@ class DiscordAdapter(ChannelAdapter):
                     try:
                         loop2.run_until_complete(session.close())
                     except Exception:
-                        pass
+                        pass  # Teardown cleanup — errors expected and harmless
                     finally:
                         try:
                             loop2.close()
                         except Exception:
-                            pass
+                            pass  # Teardown cleanup — errors expected and harmless
 
         # Run teardown in a thread with a hard 3-second wall-clock deadline.
         # threading.Thread.join(timeout) is a real OS timeout that can't be

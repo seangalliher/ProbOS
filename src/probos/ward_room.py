@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sqlite3
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -17,7 +18,11 @@ from typing import Any
 
 import aiosqlite
 
+from probos.config import format_trust
+from probos.protocols import EventEmitterMixin
+
 from probos.events import EventType
+from probos.protocols import ConnectionFactory, DatabaseConnection
 
 logger = logging.getLogger(__name__)
 
@@ -208,22 +213,26 @@ _MENTION_PATTERN = re.compile(r'@(\w+)')
 # Service
 # ---------------------------------------------------------------------------
 
-class WardRoomService:
+class WardRoomService(EventEmitterMixin):
     """Ship's Computer communication fabric — Reddit-style threaded discussions."""
 
-    def __init__(self, db_path: str | None = None, emit_event: Any = None, episodic_memory: Any = None, ontology: Any = None, hebbian_router: Any = None):
+    def __init__(self, db_path: str | None = None, emit_event: Any = None, episodic_memory: Any = None, ontology: Any = None, hebbian_router: Any = None, connection_factory: ConnectionFactory | None = None):
         self.db_path = db_path
-        self._db: aiosqlite.Connection | None = None
+        self._db: DatabaseConnection | None = None
         self._emit_event = emit_event  # Callback for WebSocket broadcasting
         self._episodic_memory = episodic_memory  # AD-430a: For storing conversation episodes
         self._ontology = ontology  # AD-429e: Vessel ontology for department queries
         self._hebbian_router = hebbian_router  # AD-453: Hebbian social recording
         self._channel_cache: list[dict[str, Any]] = []  # Sync cache for state_snapshot
+        self._connection_factory = connection_factory
+        if self._connection_factory is None:
+            from probos.storage.sqlite_factory import default_factory
+            self._connection_factory = default_factory
 
     async def start(self) -> None:
         """Open DB, run schema, create default channels."""
         if self.db_path:
-            self._db = await aiosqlite.connect(self.db_path)
+            self._db = await self._connection_factory.connect(self.db_path)
             await self._db.execute("PRAGMA foreign_keys = ON")
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
@@ -231,17 +240,17 @@ class WardRoomService:
             # AD-424: Schema migration — add thread_mode and max_responders if missing
             try:
                 await self._db.execute("ALTER TABLE threads ADD COLUMN thread_mode TEXT NOT NULL DEFAULT 'discuss'")
-            except Exception:
-                pass  # Column already exists
+            except sqlite3.OperationalError:
+                pass  # Column already exists — migration idempotency
             try:
                 await self._db.execute("ALTER TABLE threads ADD COLUMN max_responders INTEGER NOT NULL DEFAULT 0")
-            except Exception:
-                pass  # Column already exists
+            except sqlite3.OperationalError:
+                pass  # Column already exists — migration idempotency
             # AD-485: archived flag for DM message archival
             try:
                 await self._db.execute("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
-            except Exception:
-                pass  # Column already exists
+            except sqlite3.OperationalError:
+                pass  # Column already exists — migration idempotency
             await self._db.commit()
         await self._ensure_default_channels()
         await self._refresh_channel_cache()
@@ -503,15 +512,6 @@ class WardRoomService:
                 pass
             self._prune_task = None
 
-    # ------------------------------------------------------------------
-    # Event emission
-    # ------------------------------------------------------------------
-
-    def _emit(self, event_type: str, data: dict[str, Any]) -> None:
-        """Wrapper that calls emit_event callback if set."""
-        if self._emit_event:
-            self._emit_event(event_type, data)
-
     def _extract_mentions(self, text: str) -> list[str]:
         """Extract @callsign mentions from text."""
         return _MENTION_PATTERN.findall(text)
@@ -621,7 +621,8 @@ class WardRoomService:
 
         # Check credibility
         cred = await self.get_credibility(created_by)
-        if cred.credibility_score < 0.3:
+        from probos.config import TRUST_FLOOR_CREDIBILITY
+        if cred.credibility_score < TRUST_FLOOR_CREDIBILITY:
             raise ValueError("Insufficient credibility to create channels")
 
         now = time.time()
@@ -1157,7 +1158,7 @@ class WardRoomService:
                         thread_title = row[0] or ""
                         channel_name = row[1] or ""
                 except Exception:
-                    pass
+                    logger.debug("Thread title lookup failed", exc_info=True)
                 episode = Episode(
                     user_input=f"[Ward Room reply] {channel_name} — {author_callsign or author_id}: {body[:500]}",
                     timestamp=_time.time(),
@@ -1195,7 +1196,7 @@ class WardRoomService:
                     )
                     self._emit(EventType.HEBBIAN_UPDATE, {
                         "source": author_id, "target": trow[0],
-                        "weight": round(self._hebbian_router.get_weight(author_id, trow[0]), 4),
+                        "weight": format_trust(self._hebbian_router.get_weight(author_id, trow[0])),
                         "rel_type": "social",
                     })
                 # @mention connections
@@ -1210,7 +1211,7 @@ class WardRoomService:
                             )
                             self._emit(EventType.HEBBIAN_UPDATE, {
                                 "source": author_id, "target": mid,
-                                "weight": round(self._hebbian_router.get_weight(author_id, mid), 4),
+                                "weight": format_trust(self._hebbian_router.get_weight(author_id, mid)),
                                 "rel_type": "social",
                             })
             except Exception:

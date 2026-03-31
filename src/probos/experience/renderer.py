@@ -395,6 +395,7 @@ class ExecutionRenderer:
                     )
                     execution_result["reflection"] = reflection
                 except Exception:
+                    logger.debug("Renderer fallback", exc_info=True)
                     execution_result["reflection"] = (
                         "(Reflection unavailable — results shown above)"
                     )

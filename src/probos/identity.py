@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import aiosqlite
+from probos.protocols import ConnectionFactory, DatabaseConnection
 
 logger = logging.getLogger(__name__)
 
@@ -374,14 +374,18 @@ class AgentIdentityRegistry:
     'ACM is the HR department. The Identity Registry is the vital records office.'
     """
 
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, connection_factory: ConnectionFactory | None = None) -> None:
         self._data_dir = data_dir
-        self._db: aiosqlite.Connection | None = None
+        self._db: DatabaseConnection | None = None
         self._uuid_cache: dict[str, AgentBirthCertificate] = {}  # agent_uuid -> cert
         self._slot_cache: dict[str, AgentBirthCertificate] = {}  # slot_id -> cert
         self._ship_certificate: ShipBirthCertificate | None = None
         self._asset_cache: dict[str, AssetTag] = {}  # slot_id -> AssetTag
         self._ledger_lock = asyncio.Lock()
+        self._connection_factory = connection_factory
+        if self._connection_factory is None:
+            from probos.storage.sqlite_factory import default_factory
+            self._connection_factory = default_factory
 
     async def start(self, instance_id: str = "", vessel_name: str = "ProbOS", version: str = "") -> None:
         """Initialize identity database and load existing certificates.
@@ -393,7 +397,7 @@ class AgentIdentityRegistry:
         if not self._db:
             self._data_dir.mkdir(parents=True, exist_ok=True)
             db_path = self._data_dir / "identity.db"
-            self._db = await aiosqlite.connect(str(db_path))
+            self._db = await self._connection_factory.connect(str(db_path))
             await self._db.execute("PRAGMA foreign_keys = ON")
             await self._db.executescript(_IDENTITY_SCHEMA)
             await self._db.commit()

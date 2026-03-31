@@ -342,6 +342,7 @@ async def _run_build(
             try:
                 result_data = _json.loads(result_data)
             except Exception:
+                logger.debug("Build context failed", exc_info=True)
                 result_data = {"llm_output": result_data, "file_changes": [], "change_count": 0}
 
         file_changes = result_data.get("file_changes", [])

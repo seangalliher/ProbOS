@@ -76,7 +76,7 @@ class DutyScheduleTracker:
                     if next_fire <= now:
                         is_due = True
                 except Exception:
-                    logger.debug("Invalid cron for duty %s: %s", duty.duty_id, duty.cron)
+                    logger.debug("Invalid cron for duty %s: %s", duty.duty_id, duty.cron, exc_info=True)
             elif duty.interval_seconds > 0:
                 if now - last >= duty.interval_seconds:
                     is_due = True

@@ -277,6 +277,7 @@ class RecordsStore:
                 raw = md_file.read_text(encoding="utf-8")
                 fm, _ = self._parse_document(raw)
             except Exception:
+                logger.debug("Skipping unreadable file", exc_info=True)
                 continue
 
             # Apply filters
@@ -314,6 +315,7 @@ class RecordsStore:
                     })
             return entries
         except Exception:
+            logger.debug("Git query failed", exc_info=True)
             return []
 
     async def publish(self, path: str, author: str) -> None:
@@ -352,6 +354,7 @@ class RecordsStore:
             try:
                 raw = md_file.read_text(encoding="utf-8")
             except Exception:
+                logger.debug("Skipping unreadable file", exc_info=True)
                 continue
 
             # Simple keyword match
@@ -380,6 +383,7 @@ class RecordsStore:
             commit_count_str = await self._git("rev-list", "--count", "HEAD")
             commit_count = int(commit_count_str.strip())
         except Exception:
+            logger.debug("Git query failed", exc_info=True)
             commit_count = 0
 
         # Count by directory

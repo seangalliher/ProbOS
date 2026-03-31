@@ -231,7 +231,7 @@ class BuildDispatcher:
                 try:
                     contents[path] = full.read_text(encoding="utf-8")
                 except Exception:
-                    pass
+                    logger.debug("Build dispatch failed", exc_info=True)
         return contents
 
     # -- captain actions -----------------------------------------------------

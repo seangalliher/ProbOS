@@ -192,7 +192,7 @@ class StrategyRecommender:
             if sim > 0.0:
                 return sim
         except Exception:
-            pass
+            pass  # Keyword fallback — embedding unavailable
 
         # Fallback: keyword overlap (Jaccard)
         tokens_a = self._tokenize(text_a)

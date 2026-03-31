@@ -125,7 +125,7 @@ class CapabilityRegistry:
                 if sim >= 0.5:
                     return 0.6 * sim + 0.3  # Scale to 0.6-0.9 range
             except Exception:
-                pass
+                logger.debug("Capability context failed", exc_info=True)
 
         # Keyword overlap (fallback)
         can_keywords = set(can_lower.replace("_", " ").split())

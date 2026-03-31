@@ -78,15 +78,23 @@ def _make_detector(
     trust_records: dict | None = None,
     episodic_memory: Any = None,
     max_history: int = 100,
+    **kwargs: Any,
 ) -> EmergentDetector:
-    """Create an EmergentDetector with fake dependencies."""
+    """Create an EmergentDetector with fake dependencies.
+
+    Defaults trust_anomaly_min_count=1 so legacy tests that call
+    detect_trust_anomalies() once still get results. New BF-089 tests
+    set this explicitly to exercise the temporal buffer.
+    """
     router = _FakeRouter(weights)
     trust = _FakeTrustNetwork(trust_records)
+    kwargs.setdefault("trust_anomaly_min_count", 1)
     return EmergentDetector(
         hebbian_router=router,  # type: ignore[arg-type]
         trust_network=trust,  # type: ignore[arg-type]
         episodic_memory=episodic_memory,
         max_history=max_history,
+        **kwargs,
     )
 
 
@@ -855,7 +863,7 @@ class TestPatternDeduplication:
         """Trust anomalies for same agent are suppressed across analyze() calls."""
         router = HebbianRouter()
         trust = TrustNetwork()
-        detector = EmergentDetector(router, trust)
+        detector = EmergentDetector(router, trust, trust_anomaly_min_count=1)
         detector.set_pattern_cooldown(600.0)
 
         # Create agents with divergent trust to trigger anomalies
@@ -1016,3 +1024,215 @@ class TestBF036TrustFloodingFix:
             if p.pattern_type == "trust_anomaly" and "σ" in p.description
         ]
         assert len(sigma_patterns) == 0
+
+
+# ===========================================================================
+# BF-089: Emergent detector false positive reduction
+# ===========================================================================
+
+
+def _outlier_records() -> dict[str, dict]:
+    """Build trust records with a clear outlier (score ≈ 0.90) vs population (score ≈ 0.50)."""
+    records: dict[str, dict] = {}
+    for i in range(7):
+        records[f"agent_{i}"] = {"alpha": 5.0, "beta": 5.0, "observations": 6.0}
+    records["outlier"] = {"alpha": 18.0, "beta": 2.0, "observations": 16.0}
+    return records
+
+
+class TestBF089TemporalBuffer:
+    """BF-089: Temporal buffer requires sustained anomaly before emitting."""
+
+    def test_temporal_buffer_suppresses_single_occurrence(self) -> None:
+        """A single trust anomaly trigger does NOT produce an EmergentPattern."""
+        records = _outlier_records()
+        d = _make_detector(trust_records=records, trust_anomaly_min_count=3)
+        patterns = d.detect_trust_anomalies()
+        sigma_patterns = [p for p in patterns if "σ" in p.description]
+        assert len(sigma_patterns) == 0
+
+    def test_temporal_buffer_promotes_sustained_anomaly(self) -> None:
+        """An agent triggering 3+ times within the window DOES produce a pattern."""
+        records = _outlier_records()
+        d = _make_detector(
+            trust_records=records,
+            trust_anomaly_min_count=3,
+            trust_anomaly_window=600.0,
+        )
+        # Call three times to accumulate observations
+        d.detect_trust_anomalies()
+        d.detect_trust_anomalies()
+        patterns = d.detect_trust_anomalies()
+        sigma_patterns = [p for p in patterns if "σ" in p.description]
+        assert len(sigma_patterns) >= 1
+
+    def test_temporal_buffer_window_expiry(self) -> None:
+        """Old anomaly counts expire after the window elapses."""
+        records = _outlier_records()
+        d = _make_detector(
+            trust_records=records,
+            trust_anomaly_min_count=3,
+            trust_anomaly_window=600.0,
+        )
+        # Simulate two old observations then prune
+        now = time.monotonic()
+        d._trust_anomaly_counts["sigma:outlier:high"] = [now - 700, now - 650]
+        d._prune_stale_anomaly_counts()
+        # Both should have been pruned (older than 600s window)
+        assert "sigma:outlier:high" not in d._trust_anomaly_counts
+
+
+class TestBF089AdaptiveBaselines:
+    """BF-089: EMA smoothing for sigma detection."""
+
+    def test_adaptive_baseline_smooths_noise(self) -> None:
+        """EMA mean/std are updated across multiple analyze() calls."""
+        records = _outlier_records()
+        d = _make_detector(trust_records=records, trust_anomaly_min_count=1)
+
+        # First call initializes EMA
+        d.detect_trust_anomalies()
+        first_mean = d._ema_trust_mean
+        assert first_mean is not None
+
+        # Second call — same data — EMA updates (alpha blend)
+        d.detect_trust_anomalies()
+        second_mean = d._ema_trust_mean
+        # With identical data, EMA should converge toward same value
+        assert second_mean is not None
+        assert abs(second_mean - first_mean) < 0.01  # Stable convergence
+
+
+class TestBF089BatchLimiting:
+    """BF-089: Per-analysis batch limiting."""
+
+    def test_batch_limiting(self) -> None:
+        """When >max anomalies detected, only top N by confidence are emitted."""
+        # Create many agents with extreme trust to trigger multiple anomalies
+        records: dict[str, dict] = {}
+        for i in range(7):
+            records[f"normal_{i}"] = {"alpha": 5.0, "beta": 5.0, "observations": 6.0}
+        # Four outliers with different deviations
+        records["out_a"] = {"alpha": 18.0, "beta": 2.0, "observations": 16.0}
+        records["out_b"] = {"alpha": 19.0, "beta": 1.0, "observations": 16.0}
+        records["out_c"] = {"alpha": 1.0, "beta": 19.0, "observations": 16.0}
+        records["out_d"] = {"alpha": 0.5, "beta": 20.0, "observations": 19.0}
+
+        d = _make_detector(
+            trust_records=records,
+            trust_anomaly_min_count=1,
+            max_trust_anomalies_per_pass=2,
+        )
+        patterns = d.detect_trust_anomalies()
+        assert len(patterns) <= 2
+
+
+class TestBF089DutyCorrelation:
+    """BF-089: Duty cycle correlation awareness."""
+
+    def test_duty_correlation_suppression(self) -> None:
+        """Trust change coinciding with duty completion is suppressed for change-point."""
+        records = {
+            "agent_0": {"alpha": 5.0, "beta": 2.0, "observations": 3.0},
+            "agent_1": {"alpha": 2.0, "beta": 2.0, "observations": 0.0},
+        }
+        d = _make_detector(trust_records=records, trust_anomaly_min_count=1)
+        # Create previous snapshot
+        prev_snapshot = SystemDynamicsSnapshot(
+            trust_distribution={
+                "mean": 0.5,
+                "std": 0.1,
+                "per_agent": {
+                    "agent_0": 0.4,  # delta ≈ 0.31 → normally triggers change-point
+                    "agent_1": 0.5,
+                },
+            },
+        )
+        d._history.append(prev_snapshot)
+
+        # With duty completion for agent_0 — change-point should be suppressed
+        now = time.monotonic()
+        patterns = d.detect_trust_anomalies(duty_completions=[("agent_0", now - 30.0)])
+        change_points = [p for p in patterns if "change point" in p.description and "agent_0" in p.description]
+        assert len(change_points) == 0
+
+    def test_duty_correlation_sigma_elevation(self) -> None:
+        """Trust sigma during duty cycle requires 3.0σ (significant) instead of 2.0σ (notable)."""
+        records = _outlier_records()
+        d = _make_detector(trust_records=records, trust_anomaly_min_count=1)
+        now = time.monotonic()
+
+        # First: without duty — should fire at 2.0σ
+        patterns_no_duty = d.detect_trust_anomalies(duty_completions=[])
+        sigma_no_duty = [p for p in patterns_no_duty if "σ" in p.description]
+
+        # Reset dedup cache for second call
+        d._last_pattern_fired.clear()
+
+        # With duty completion for outlier — threshold elevated to 3.0σ
+        patterns_with_duty = d.detect_trust_anomalies(
+            duty_completions=[("outlier", now - 30.0)]
+        )
+        sigma_with_duty = [
+            p for p in patterns_with_duty
+            if "σ" in p.description and "outlier" in p.description
+        ]
+        # Either fewer alerts, or the ones that remain are at higher sigma
+        # The key assertion: with duty correlation, the outlier is held to a stricter standard
+        if sigma_no_duty:
+            # If it fired without duty, it should fire less (or not at all, or only at significant level) with duty
+            for p in sigma_with_duty:
+                assert p.evidence.get("deviation_sigma", 0) > 3.0 or len(sigma_with_duty) < len(sigma_no_duty)
+
+
+class TestBF089ConfigurableThresholds:
+    """BF-089: Constructor parameters override defaults."""
+
+    def test_configurable_thresholds(self) -> None:
+        """Custom thresholds are stored and used."""
+        d = _make_detector(
+            trust_sigma_threshold=4.0,
+            trust_change_threshold=0.25,
+            trust_min_std=0.10,
+            trust_min_observations=12.0,
+            trust_min_deviation=0.20,
+            trust_ema_alpha=0.5,
+            trust_anomaly_window=300.0,
+            trust_anomaly_min_count=5,
+            max_trust_anomalies_per_pass=1,
+            duty_correlation_window=60.0,
+        )
+        assert d._trust_sigma_threshold == 4.0
+        assert d._trust_change_threshold == 0.25
+        assert d._trust_min_std == 0.10
+        assert d._trust_min_observations == 12.0
+        assert d._trust_min_deviation == 0.20
+        assert d._trust_ema_alpha == 0.5
+        assert d._trust_anomaly_window == 300.0
+        assert d._trust_anomaly_min_count == 5
+        assert d._max_trust_anomalies_per_pass == 1
+        assert d._duty_correlation_window == 60.0
+
+
+class TestBF089RegressionGuards:
+    """BF-089: Ensure existing behavior is not broken."""
+
+    def test_cold_start_suppression_still_works(self) -> None:
+        """BF-034 cold-start suppression is unaffected by the temporal buffer."""
+        records = _outlier_records()
+        d = _make_detector(trust_records=records, trust_anomaly_min_count=1)
+        d.set_cold_start_suppression(9999.0)  # Suppress for a long time
+        patterns = d.detect_trust_anomalies()
+        assert len(patterns) == 0
+
+    def test_cooperation_clusters_unaffected(self) -> None:
+        """Cooperation cluster detection is unchanged by BF-089."""
+        weights = {
+            ("intent_a", "agent_pool_0_abc", REL_INTENT): 0.5,
+            ("intent_a", "agent_pool_1_def", REL_INTENT): 0.3,
+        }
+        d = _make_detector(weights=weights, trust_anomaly_min_count=5)
+        clusters = d.detect_cooperation_clusters()
+        # Cooperation clusters are independent of trust anomaly settings
+        assert len(clusters) == 1
+        assert clusters[0]["size"] == 3

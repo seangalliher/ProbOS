@@ -8,6 +8,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
+from probos.config import format_trust
 from probos.crew_profile import Rank
 from probos.crew_utils import is_crew_agent
 from probos.events import EventType
@@ -304,13 +305,13 @@ class ProactiveCognitiveLoop:
             else:
                 agent._recent_post_count = 0
         except Exception:
-            pass  # Non-critical
+            logger.debug("Recent post count tracking failed", exc_info=True)
 
         intent = IntentMessage(
             intent="proactive_think",
             params={
                 "context_parts": context_parts,
-                "trust_score": round(trust_score, 4),
+                "trust_score": format_trust(trust_score),
                 "agency_level": agency_from_rank(rank).value,
                 "rank": rank.value,  # AD-437: for action space awareness
                 "agent_type": agent.agent_type,
@@ -634,7 +635,7 @@ class ProactiveCognitiveLoop:
                             try:
                                 await rt.ward_room.update_last_seen(agent.id, dept_channel.id)
                             except Exception:
-                                pass  # Non-critical
+                                logger.debug("update_last_seen failed", exc_info=True)
 
                     # AD-425: Also include recent All Hands activity (ship-wide)
                     if all_hands_ch and (not dept_channel or all_hands_ch.id != dept_channel.id):
@@ -666,7 +667,7 @@ class ProactiveCognitiveLoop:
                             try:
                                 await rt.ward_room.update_last_seen(agent.id, all_hands_ch.id)
                             except Exception:
-                                pass  # Non-critical
+                                logger.debug("update_last_seen failed", exc_info=True)
             except Exception:
                 logger.debug("Ward Room context fetch failed for %s", agent.id, exc_info=True)
 
@@ -753,6 +754,7 @@ class ProactiveCognitiveLoop:
                             if body:
                                 agent_posts.append(body)
                 except Exception:
+                    logger.debug("Skipping channel", exc_info=True)
                     continue
 
             if not agent_posts:
@@ -942,7 +944,7 @@ class ProactiveCognitiveLoop:
                     try:
                         await rt.skill_service.record_exercise(agent.id, "communication")
                     except Exception:
-                        pass  # best-effort
+                        logger.debug("Skill exercise recording failed", exc_info=True)
 
         # --- Replies (Lieutenant+) --- BF-061
         if rank.value != Rank.ENSIGN.value:
@@ -1016,6 +1018,7 @@ class ProactiveCognitiveLoop:
                         if tid and tid.startswith(thread_id):
                             return tid
                 except Exception:
+                    logger.debug("Skipping channel", exc_info=True)
                     continue
         return None
 
@@ -1201,7 +1204,7 @@ class ProactiveCognitiveLoop:
                     )
                     rt._emit_event(EventType.HEBBIAN_UPDATE, {
                         "source": agent.id, "target": target_full_id,
-                        "weight": round(rt.hebbian_router.get_weight(agent.id, target_full_id), 4),
+                        "weight": format_trust(rt.hebbian_router.get_weight(agent.id, target_full_id)),
                         "rel_type": "social",
                     })
             except Exception as e:

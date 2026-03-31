@@ -60,7 +60,8 @@ class ConnManager:
     def __init__(self) -> None:
         self._state = ConnState()
         self._conn_log: list[dict[str, Any]] = []  # Audit trail
-        self._trust_floor: float = 0.6              # Default escalation threshold
+        from probos.config import TRUST_FLOOR_CONN
+        self._trust_floor: float = TRUST_FLOOR_CONN  # Default escalation threshold
 
     @property
     def is_active(self) -> bool:

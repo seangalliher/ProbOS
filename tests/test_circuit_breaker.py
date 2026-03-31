@@ -5,8 +5,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from probos.config import SystemConfig
+from probos.consensus.trust import TrustNetwork
+from probos.crew_profile import CallsignRegistry
+from probos.knowledge.records_store import RecordsStore
 from probos.runtime import ProbOSRuntime
 from probos.substrate.agent import BaseAgent
+from probos.substrate.registry import AgentRegistry
+from probos.ward_room import WardRoomService
+from probos.ward_room_router import WardRoomRouter
 from probos.cognitive.circuit_breaker import (
     BreakerState,
     CognitiveCircuitBreaker,
@@ -248,22 +255,22 @@ def _make_loop():
 
     loop = ProactiveCognitiveLoop(interval=60, cooldown=60)
     rt = MagicMock(spec=ProbOSRuntime)
-    rt.ward_room = MagicMock()
+    rt.ward_room = MagicMock(spec=WardRoomService)
     rt.ward_room.list_channels = AsyncMock(return_value=[])
     rt.ward_room.create_thread = AsyncMock()
     rt.ward_room.get_thread = AsyncMock(return_value=None)
     rt.ward_room.get_recent_activity = AsyncMock(return_value=[])
-    rt.trust_network = MagicMock()
+    rt.trust_network = MagicMock(spec=TrustNetwork)
     rt.trust_network.get_score = MagicMock(return_value=0.6)
     rt.trust_network.record_outcome = MagicMock(return_value=0.6)
-    rt.ward_room_router = MagicMock()
+    rt.ward_room_router = MagicMock(spec=WardRoomRouter)
     rt.ward_room_router.extract_endorsements = MagicMock(return_value=("", []))
-    rt._records_store = MagicMock()
+    rt._records_store = MagicMock(spec=RecordsStore)
     rt._records_store.write_notebook = AsyncMock()
     rt.ontology = None
-    rt.callsign_registry = MagicMock()
+    rt.callsign_registry = MagicMock(spec=CallsignRegistry)
     rt.callsign_registry.get_callsign = MagicMock(return_value="TestAgent")
-    rt.config = MagicMock()
+    rt.config = MagicMock(spec=SystemConfig)
     rt.config.communications = MagicMock(dm_min_rank="ensign")
     rt.episodic_memory = None
     rt.bridge_alerts = None
@@ -272,7 +279,7 @@ def _make_loop():
     rt.hebbian_router = None
     rt.ontology = None  # is_crew_agent uses legacy set
     rt.acm = None
-    rt.registry = MagicMock()
+    rt.registry = MagicMock(spec=AgentRegistry)
     rt.dream_scheduler = None
     loop.set_runtime(rt)
     return loop, rt
@@ -390,8 +397,8 @@ class TestCircuitBreakerAPI:
         from httpx import AsyncClient, ASGITransport
 
         rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room = MagicMock()
-        rt.registry = MagicMock()
+        rt.ward_room = MagicMock(spec=WardRoomService)
+        rt.registry = MagicMock(spec=AgentRegistry)
 
         # Create a mock proactive loop with circuit breaker
         proactive_loop = MagicMock()

@@ -45,7 +45,7 @@ class TestCausalBackReferences:
     def test_trust_anomaly_has_causal_events(self):
         """Trust anomaly patterns include causal_events from the event log."""
         tn, router = _setup_anomaly_scenario()
-        detector = EmergentDetector(hebbian_router=router, trust_network=tn)
+        detector = EmergentDetector(hebbian_router=router, trust_network=tn, trust_anomaly_min_count=1)
 
         patterns = detector.detect_trust_anomalies()
 
@@ -104,7 +104,7 @@ class TestCausalBackReferences:
         from probos.agents.introspect import IntrospectionAgent
 
         tn, router = _setup_anomaly_scenario()
-        detector = EmergentDetector(hebbian_router=router, trust_network=tn)
+        detector = EmergentDetector(hebbian_router=router, trust_network=tn, trust_anomaly_min_count=1)
 
         # Build a mock runtime with the detector
         rt = MagicMock(spec=ProbOSRuntime)

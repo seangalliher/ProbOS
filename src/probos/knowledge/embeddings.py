@@ -119,7 +119,7 @@ def embed_text(text: str) -> list[float]:
             if result and len(result) > 0:
                 return list(result[0])
         except Exception:
-            pass
+            pass  # Embedding unavailable — falls through to keyword search
     return _keyword_embedding(text)
 
 
@@ -139,7 +139,7 @@ def compute_similarity(text_a: str, text_b: str) -> float:
             if embeddings and len(embeddings) >= 2:
                 return _cosine_similarity(list(embeddings[0]), list(embeddings[1]))
         except Exception:
-            pass
+            pass  # Embedding unavailable — falls through to keyword search
 
     # Fallback to keyword overlap
     emb_a = _keyword_embedding(text_a)

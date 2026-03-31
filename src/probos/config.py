@@ -8,6 +8,40 @@ import yaml
 from pydantic import BaseModel
 
 
+# ─── Trust Threshold Constants ─────────────────────────────────────
+# Canonical trust boundaries used across the system.
+# Rank thresholds define promotion gates in crew_profile.py.
+# Other thresholds reference these for consistency.
+
+TRUST_SENIOR = 0.85        # Senior rank promotion threshold
+TRUST_COMMANDER = 0.7      # Commander rank promotion threshold
+TRUST_LIEUTENANT = 0.5     # Lieutenant rank promotion threshold
+TRUST_DEFAULT = 0.5        # Default trust for new/unknown agents
+TRUST_FLOOR_CONN = 0.6     # Minimum trust for Conn eligibility
+TRUST_FLOOR_CREDIBILITY = 0.3  # Minimum credibility for channel creation
+TRUST_DEGRADED = 0.2       # Agent degraded state threshold
+TRUST_OUTLIER_LOW = 0.3    # Trust outlier detection — low flag
+TRUST_OUTLIER_HIGH = 0.9   # Trust outlier detection — high flag
+
+# Display
+TRUST_DISPLAY_PRECISION = 4  # Decimal places for trust/score display
+TRUST_COLOR_GREEN = 0.6      # HXI trust color: green above this
+TRUST_COLOR_YELLOW = 0.4     # HXI trust color: yellow above this
+
+# Counselor assessment
+COUNSELOR_TRUST_PROMOTION = 0.7    # Min trust for promotion fitness
+COUNSELOR_WELLNESS_PROMOTION = 0.8  # Min wellness for promotion fitness
+COUNSELOR_WELLNESS_YELLOW = 0.5    # Yellow alert wellness threshold
+COUNSELOR_WELLNESS_FIT = 0.3       # Minimum wellness for fit-for-duty
+COUNSELOR_CONFIDENCE_LOW = 0.3     # Low confidence concern threshold
+COUNSELOR_TRUST_DRIFT_CONCERN = -0.2  # Significant trust drop
+
+
+def format_trust(value: float, precision: int = TRUST_DISPLAY_PRECISION) -> float:
+    """Round a trust/score value for display. Centralizes precision."""
+    return round(value, precision)
+
+
 class PoolConfig(BaseModel):
     """Agent pool configuration."""
 

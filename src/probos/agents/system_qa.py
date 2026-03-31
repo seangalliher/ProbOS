@@ -298,7 +298,7 @@ class SystemQAAgent(BaseAgent):
                     detail=f"{record.agent_type}: {len(cases)} tests",
                 )
             except Exception:
-                pass
+                logger.debug("Event log write failed", exc_info=True)
 
         test_details: list[dict] = []
         passed = 0
@@ -359,7 +359,7 @@ class SystemQAAgent(BaseAgent):
                     detail=f"{record.agent_type}: {passed}/{total_tests}",
                 )
             except Exception:
-                pass
+                logger.debug("Event log write failed", exc_info=True)
 
         return QAReport(
             agent_type=record.agent_type,

@@ -14,9 +14,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-import aiosqlite
-
 from probos.events import EventType
+from probos.protocols import ConnectionFactory, DatabaseConnection, EventEmitterMixin
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_assignments_status ON assignments(status);
 # Service
 # ---------------------------------------------------------------------------
 
-class AssignmentService:
+class AssignmentService(EventEmitterMixin):
     """Dynamic assignment groups — transient team overlays on the static department structure."""
 
     def __init__(
@@ -82,16 +81,21 @@ class AssignmentService:
         db_path: str | None = None,
         emit_event: Any = None,
         ward_room: Any = None,
+        connection_factory: ConnectionFactory | None = None,
     ):
         self.db_path = db_path
-        self._db: aiosqlite.Connection | None = None
+        self._db: DatabaseConnection | None = None
         self._emit_event = emit_event
         self._ward_room = ward_room  # WardRoomService reference for auto-channel creation
         self._snapshot_cache: list[dict[str, Any]] = []  # Sync cache for build_state_snapshot
+        self._connection_factory = connection_factory
+        if self._connection_factory is None:
+            from probos.storage.sqlite_factory import default_factory
+            self._connection_factory = default_factory
 
     async def start(self) -> None:
         if self.db_path:
-            self._db = await aiosqlite.connect(self.db_path)
+            self._db = await self._connection_factory.connect(self.db_path)
             await self._db.execute("PRAGMA foreign_keys = ON")
             await self._db.executescript(_SCHEMA)
             await self._db.commit()
@@ -102,14 +106,6 @@ class AssignmentService:
         if self._db:
             await self._db.close()
             self._db = None
-
-    # ------------------------------------------------------------------
-    # Event emission
-    # ------------------------------------------------------------------
-
-    def _emit(self, event_type: str, data: dict[str, Any]) -> None:
-        if self._emit_event:
-            self._emit_event(event_type, data)
 
     # ------------------------------------------------------------------
     # Snapshot cache (sync access for build_state_snapshot)

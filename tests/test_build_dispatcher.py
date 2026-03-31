@@ -11,7 +11,8 @@ import pytest
 
 from probos.build_queue import BuildQueue, QueuedBuild
 from probos.cognitive.builder import BuildResult, BuildSpec
-from probos.worktree_manager import WorktreeInfo
+from probos.cognitive.copilot_adapter import CopilotBuilderAdapter
+from probos.worktree_manager import WorktreeInfo, WorktreeManager
 
 
 def _spec(
@@ -49,7 +50,7 @@ def _make_dispatcher(**kwargs):
     from probos.build_dispatcher import BuildDispatcher
 
     queue = kwargs.pop("queue", BuildQueue())
-    wm = kwargs.pop("worktree_mgr", MagicMock())
+    wm = kwargs.pop("worktree_mgr", MagicMock(spec=WorktreeManager))
     return BuildDispatcher(queue=queue, worktree_mgr=wm, **kwargs)
 
 
@@ -61,7 +62,7 @@ class TestBuildDispatcher:
         q = BuildQueue()
         q.enqueue(_spec("low"), priority=10)
         q.enqueue(_spec("high"), priority=1)
-        d = BuildDispatcher(queue=q, worktree_mgr=MagicMock())
+        d = BuildDispatcher(queue=q, worktree_mgr=MagicMock(spec=WorktreeManager))
         build = d._find_dispatchable()
         assert build is not None
         assert build.spec.title == "high"
@@ -75,7 +76,7 @@ class TestBuildDispatcher:
         q.update_status(a.id, "dispatched")  # A is active, touches a.py
         q.enqueue(_spec("B", target_files=["a.py"]), priority=1)  # conflicts
         q.enqueue(_spec("C", target_files=["b.py"]), priority=5)  # no conflict
-        d = BuildDispatcher(queue=q, worktree_mgr=MagicMock())
+        d = BuildDispatcher(queue=q, worktree_mgr=MagicMock(spec=WorktreeManager))
         build = d._find_dispatchable()
         assert build is not None
         assert build.spec.title == "C"
@@ -85,7 +86,7 @@ class TestBuildDispatcher:
         from probos.build_dispatcher import BuildDispatcher
 
         q = BuildQueue()
-        d = BuildDispatcher(queue=q, worktree_mgr=MagicMock())
+        d = BuildDispatcher(queue=q, worktree_mgr=MagicMock(spec=WorktreeManager))
         assert d._find_dispatchable() is None
 
     @pytest.mark.asyncio
@@ -97,7 +98,7 @@ class TestBuildDispatcher:
         build = q.enqueue(_spec("test build", target_files=["foo.py"]))
         q.update_status(build.id, "dispatched")
 
-        wm = MagicMock()
+        wm = MagicMock(spec=WorktreeManager)
         wm.create = AsyncMock(return_value=_worktree_info(build.id))
 
         mock_copilot_result = MagicMock()
@@ -105,7 +106,7 @@ class TestBuildDispatcher:
         mock_copilot_result.file_blocks = [{"path": "foo.py", "content": "x = 1"}]
         mock_copilot_result.error = ""
 
-        mock_adapter = MagicMock()
+        mock_adapter = MagicMock(spec=CopilotBuilderAdapter)
         mock_adapter.start = AsyncMock()
         mock_adapter.stop = AsyncMock()
         mock_adapter.execute = AsyncMock(return_value=mock_copilot_result)
@@ -130,7 +131,7 @@ class TestBuildDispatcher:
         build = q.enqueue(_spec("fail build"))
         q.update_status(build.id, "dispatched")
 
-        wm = MagicMock()
+        wm = MagicMock(spec=WorktreeManager)
         wm.create = AsyncMock(return_value=_worktree_info(build.id))
 
         mock_copilot_result = MagicMock()
@@ -138,7 +139,7 @@ class TestBuildDispatcher:
         mock_copilot_result.file_blocks = []
         mock_copilot_result.error = "LLM timeout"
 
-        mock_adapter = MagicMock()
+        mock_adapter = MagicMock(spec=CopilotBuilderAdapter)
         mock_adapter.start = AsyncMock()
         mock_adapter.stop = AsyncMock()
         mock_adapter.execute = AsyncMock(return_value=mock_copilot_result)
@@ -161,7 +162,7 @@ class TestBuildDispatcher:
         build = q.enqueue(_spec("wt fail"))
         q.update_status(build.id, "dispatched")
 
-        wm = MagicMock()
+        wm = MagicMock(spec=WorktreeManager)
         wm.create = AsyncMock(side_effect=RuntimeError("git worktree add failed"))
 
         d = BuildDispatcher(queue=q, worktree_mgr=wm)
@@ -181,7 +182,7 @@ class TestBuildDispatcher:
         q.update_status(build.id, "building")
         q.update_status(build.id, "reviewing")
 
-        wm = MagicMock()
+        wm = MagicMock(spec=WorktreeManager)
         wm.merge_to_main = AsyncMock(return_value=(True, "abc123def"))
         wm.remove = AsyncMock(return_value=True)
 
@@ -204,7 +205,7 @@ class TestBuildDispatcher:
         q.update_status(build.id, "building")
         q.update_status(build.id, "reviewing")
 
-        wm = MagicMock()
+        wm = MagicMock(spec=WorktreeManager)
         wm.remove = AsyncMock(return_value=True)
 
         d = BuildDispatcher(queue=q, worktree_mgr=wm)
@@ -224,7 +225,7 @@ class TestBuildDispatcher:
         build = q.enqueue(_spec("callback test"))
         q.update_status(build.id, "dispatched")
 
-        wm = MagicMock()
+        wm = MagicMock(spec=WorktreeManager)
         wm.create = AsyncMock(side_effect=RuntimeError("fail for test"))
 
         callback = AsyncMock()
@@ -268,7 +269,7 @@ class TestBuildDispatcher:
             reference_files=["src/bar.py", "src/missing.py"],
         )
 
-        d = BuildDispatcher(queue=BuildQueue(), worktree_mgr=MagicMock())
+        d = BuildDispatcher(queue=BuildQueue(), worktree_mgr=MagicMock(spec=WorktreeManager))
         contents = d._read_source_files(spec, str(tmp_path))
 
         assert contents["src/foo.py"] == "x = 1\n"

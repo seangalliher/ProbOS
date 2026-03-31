@@ -267,7 +267,7 @@ Recipe: NEW API ENDPOINT
                             tree_lines.append(f"  {f}")
                     context_parts.append("\n".join(tree_lines))
             except Exception:
-                pass
+                logger.debug("Context layer architecture tree unavailable", exc_info=True)
 
             # Layer 2a: LLM-guided file selection (AD-311)
             try:
@@ -319,7 +319,7 @@ Recipe: NEW API ENDPOINT
                         if len(selected_paths) >= 8:
                             break
                 except Exception:
-                    logger.debug("Fast-tier file selection failed, falling back to keyword top-5")
+                    logger.debug("Fast-tier file selection failed, falling back to keyword top-5", exc_info=True)
 
                 # Fallback: top 5 keyword matches if LLM selection failed/empty
                 if not selected_paths:
@@ -446,7 +446,7 @@ Recipe: NEW API ENDPOINT
                         "## Import Graph\n" + "\n".join(import_lines)
                     )
             except Exception:
-                pass
+                logger.debug("Context layer file selection and source analysis unavailable", exc_info=True)
 
             # Layer 3: Existing slash commands
             try:
@@ -456,7 +456,7 @@ Recipe: NEW API ENDPOINT
                 if shell_source:
                     context_parts.append(f"## Existing Slash Commands (shell.py)\n```\n{shell_source}\n```")
             except Exception:
-                pass
+                logger.debug("Context layer slash commands unavailable", exc_info=True)
 
             context_parts.append(
                 "## Inline API Commands (not in shell.py COMMANDS)\n"
@@ -479,7 +479,7 @@ Recipe: NEW API ENDPOINT
                     if routes:
                         context_parts.append("## Existing API Routes\n" + "\n".join(routes))
             except Exception:
-                pass
+                logger.debug("Context layer API routes unavailable", exc_info=True)
 
             # Layer 5: Agent map + pool/crew structure
             try:
@@ -490,7 +490,7 @@ Recipe: NEW API ENDPOINT
                         for a in agent_map
                     ))
             except Exception:
-                pass
+                logger.debug("Context layer agent map unavailable", exc_info=True)
 
             try:
                 runtime = getattr(self, "_runtime", None)
@@ -504,7 +504,7 @@ Recipe: NEW API ENDPOINT
                             pool_lines.append(f"- {display}: pools={pools}")
                         context_parts.append("\n".join(pool_lines))
             except Exception:
-                pass
+                logger.debug("Context layer pool groups unavailable", exc_info=True)
 
             # Layer 6: Documentation context
             try:
@@ -518,7 +518,7 @@ Recipe: NEW API ENDPOINT
                 if sections:
                     context_parts.append(f"## Roadmap Context\n{sections}")
             except Exception:
-                pass
+                logger.debug("Context layer roadmap unavailable", exc_info=True)
 
             try:
                 progress_path = "docs:PROGRESS.md"
@@ -531,7 +531,7 @@ Recipe: NEW API ENDPOINT
                 if progress_sections:
                     context_parts.append(f"## Progress Context\n{progress_sections}")
             except Exception:
-                pass
+                logger.debug("Context layer progress unavailable", exc_info=True)
 
             try:
                 decisions_content = codebase_index.read_source(
@@ -542,7 +542,7 @@ Recipe: NEW API ENDPOINT
                     tail = "\n".join(lines[-40:])
                     context_parts.append(f"## Recent Decisions (last 40 lines)\n{tail}")
             except Exception:
-                pass
+                logger.debug("Context layer decisions unavailable", exc_info=True)
 
         obs["codebase_context"] = "\n\n".join(context_parts)
         return obs

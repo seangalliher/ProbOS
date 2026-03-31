@@ -18,7 +18,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import aiosqlite
+from probos.config import format_trust
+
+from probos.protocols import ConnectionFactory, DatabaseConnection
 
 logger = logging.getLogger(__name__)
 
@@ -92,10 +94,14 @@ class AgentCapitalService:
     into a unified agent management layer.
     """
 
-    def __init__(self, data_dir: str | Path) -> None:
+    def __init__(self, data_dir: str | Path, connection_factory: ConnectionFactory | None = None) -> None:
         self._data_dir = Path(data_dir)
-        self._db: aiosqlite.Connection | None = None
+        self._db: DatabaseConnection | None = None
         self._identity_registry: Any = None  # AD-441
+        self._connection_factory = connection_factory
+        if self._connection_factory is None:
+            from probos.storage.sqlite_factory import default_factory
+            self._connection_factory = default_factory
 
     def set_identity_registry(self, registry: Any) -> None:
         """Wire the identity registry for birth certificate access."""
@@ -104,7 +110,7 @@ class AgentCapitalService:
     async def start(self) -> None:
         """Initialize ACM database."""
         self._data_dir.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(str(self._data_dir / "acm.db"))
+        self._db = await self._connection_factory.connect(str(self._data_dir / "acm.db"))
         await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
@@ -308,7 +314,7 @@ class AgentCapitalService:
 
         # 3. Trust (Phase 17)
         if hasattr(runtime, 'trust_network'):
-            profile["trust"] = round(runtime.trust_network.get_score(agent_id), 4)
+            profile["trust"] = format_trust(runtime.trust_network.get_score(agent_id))
 
         # 4. Earned Agency (AD-357)
         agent = runtime.registry.get(agent_id) if hasattr(runtime, 'registry') else None
@@ -323,7 +329,7 @@ class AgentCapitalService:
                 profile["skill_count"] = skill_profile.total_skills
                 profile["avg_proficiency"] = skill_profile.avg_proficiency
             except Exception:
-                pass
+                logger.debug("Skill profile fetch failed", exc_info=True)
 
         # 6. Episodic memory count
         if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
@@ -331,6 +337,6 @@ class AgentCapitalService:
                 try:
                     profile["episode_count"] = await runtime.episodic_memory.count_for_agent(agent_id)
                 except Exception:
-                    pass
+                    logger.debug("Episode count failed", exc_info=True)
 
         return profile

@@ -18,6 +18,8 @@ import collections
 import logging
 import math
 import time
+
+from probos.config import format_trust
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -105,12 +107,44 @@ class EmergentDetector:
         episodic_memory: Any = None,
         max_history: int = 100,
         trend_threshold: float = 0.005,
+        # BF-089: Configurable trust anomaly thresholds
+        trust_sigma_threshold: float = 2.0,
+        trust_sigma_significant: float = 3.0,
+        trust_change_threshold: float = 0.15,
+        trust_min_std: float = 0.05,
+        trust_min_observations: float = 8.0,
+        trust_min_deviation: float = 0.10,
+        trust_ema_alpha: float = 0.3,
+        trust_anomaly_window: float = 600.0,
+        trust_anomaly_min_count: int = 3,
+        max_trust_anomalies_per_pass: int = 3,
+        duty_correlation_window: float = 120.0,
     ) -> None:
         self._router = hebbian_router
         self._trust = trust_network
         self._episodic_memory = episodic_memory
         self._max_history = max_history
         self._trend_threshold = trend_threshold
+
+        # BF-089: Trust anomaly detection thresholds
+        self._trust_sigma_threshold = trust_sigma_threshold
+        self._trust_sigma_significant = trust_sigma_significant
+        self._trust_change_threshold = trust_change_threshold
+        self._trust_min_std = trust_min_std
+        self._trust_min_observations = trust_min_observations
+        self._trust_min_deviation = trust_min_deviation
+        self._trust_ema_alpha = trust_ema_alpha
+        self._trust_anomaly_window = trust_anomaly_window
+        self._trust_anomaly_min_count = trust_anomaly_min_count
+        self._max_trust_anomalies_per_pass = max_trust_anomalies_per_pass
+        self._duty_correlation_window = duty_correlation_window
+
+        # BF-089: Adaptive EMA baselines for sigma detection
+        self._ema_trust_mean: float | None = None
+        self._ema_trust_std: float | None = None
+
+        # BF-089: Temporal buffer — per-agent anomaly observation timestamps
+        self._trust_anomaly_counts: dict[str, list[float]] = {}
 
         # Live agent roster — set via set_live_agents() from runtime at startup.
         # When set, cooperation cluster detection filters out defunct agents.
@@ -173,7 +207,7 @@ class EmergentDetector:
         for k in stale_keys:
             del self._last_pattern_fired[k]
 
-    def analyze(self, dream_report: Any = None) -> list[EmergentPattern]:
+    def analyze(self, dream_report: Any = None, duty_completions: list[tuple[str, float]] | None = None) -> list[EmergentPattern]:
         """Main analysis entry point. Runs all detectors and returns detected patterns."""
         now = time.monotonic()
 
@@ -212,7 +246,7 @@ class EmergentDetector:
                 severity="notable" if cluster["size"] >= 3 else "info",
             ))
 
-        patterns.extend(self.detect_trust_anomalies())
+        patterns.extend(self.detect_trust_anomalies(duty_completions=duty_completions or []))
         patterns.extend(self.detect_routing_shifts())
         patterns.extend(self.detect_consolidation_anomalies(dream_report))
 
@@ -230,7 +264,7 @@ class EmergentDetector:
                             "direction": t.direction.value,
                             "slope": round(t.slope, 6),
                             "r_squared": round(t.r_squared, 3),
-                            "current": round(t.current_value, 4),
+                            "current": format_trust(t.current_value),
                         }
                         for t in trend_report.significant_trends
                     ],
@@ -304,7 +338,7 @@ class EmergentDetector:
                 if total < 10:
                     return []
             except Exception:
-                pass
+                logger.debug("Emergent detection context failed", exc_info=True)
 
         weights = self._router.all_weights_typed()
         intent_weights = {k: v for k, v in weights.items() if k[2] == REL_INTENT}
@@ -378,7 +412,34 @@ class EmergentDetector:
 
         return clusters
 
-    def detect_trust_anomalies(self) -> list[EmergentPattern]:
+    def _prune_stale_anomaly_counts(self) -> None:
+        """Remove anomaly count entries older than the temporal window."""
+        cutoff = time.monotonic() - self._trust_anomaly_window
+        for agent_id in list(self._trust_anomaly_counts):
+            self._trust_anomaly_counts[agent_id] = [
+                t for t in self._trust_anomaly_counts[agent_id] if t > cutoff
+            ]
+            if not self._trust_anomaly_counts[agent_id]:
+                del self._trust_anomaly_counts[agent_id]
+
+    def _record_anomaly_observation(self, agent_key: str) -> bool:
+        """Record a trust anomaly observation and return True if it should be promoted.
+
+        An observation is promoted to a pattern only if the agent has triggered
+        at least ``_trust_anomaly_min_count`` times within ``_trust_anomaly_window``.
+        """
+        now = time.monotonic()
+        self._trust_anomaly_counts.setdefault(agent_key, []).append(now)
+        count = len(self._trust_anomaly_counts[agent_key])
+        if count >= self._trust_anomaly_min_count:
+            return True
+        logger.debug(
+            "Trust anomaly observation for %s (%d/%d within window) — suppressed",
+            agent_key, count, self._trust_anomaly_min_count,
+        )
+        return False
+
+    def detect_trust_anomalies(self, duty_completions: list[tuple[str, float]] | None = None) -> list[EmergentPattern]:
         """Detect agents whose trust deviates significantly from the population."""
         now = time.monotonic()
         patterns: list[EmergentPattern] = []
@@ -387,42 +448,72 @@ class EmergentDetector:
         if time.monotonic() < self._suppress_trust_until:
             return patterns
 
+        # BF-089: Prune stale temporal buffer entries
+        self._prune_stale_anomaly_counts()
+
+        # Build duty completion lookup: agent_id → latest completion timestamp
+        duty_map: dict[str, float] = {}
+        for agent_id, ts in (duty_completions or []):
+            if agent_id not in duty_map or ts > duty_map[agent_id]:
+                duty_map[agent_id] = ts
+
         raw = self._trust.raw_scores()
         if len(raw) < 2:
             return patterns
 
         # Compute population statistics
         scores = [r["alpha"] / (r["alpha"] + r["beta"]) for r in raw.values()]
-        mean = sum(scores) / len(scores)
-        variance = sum((s - mean) ** 2 for s in scores) / len(scores)
-        std = math.sqrt(variance) if variance > 0 else 0.0
+        current_mean = sum(scores) / len(scores)
+        variance = sum((s - current_mean) ** 2 for s in scores) / len(scores)
+        current_std = math.sqrt(variance) if variance > 0 else 0.0
 
-        if std < 0.05:
+        # BF-089: Update adaptive EMA baselines
+        alpha = self._trust_ema_alpha
+        if self._ema_trust_mean is None:
+            self._ema_trust_mean = current_mean
+            self._ema_trust_std = current_std
+        else:
+            self._ema_trust_mean = alpha * current_mean + (1 - alpha) * self._ema_trust_mean
+            self._ema_trust_std = alpha * current_std + (1 - alpha) * (self._ema_trust_std or current_std)
+
+        # Use EMA values for sigma detection
+        mean = self._ema_trust_mean
+        std = self._ema_trust_std or current_std
+
+        if std < self._trust_min_std:
             # Population trust spread too narrow for sigma analysis to be meaningful.
-            # With 55 agents and normal early-session variance, small absolute
-            # differences produce enormous sigma values. Skip until the population
-            # has genuinely diverged.
             pass
         else:
-            # Flag agents > 2 std from mean
+            # Flag agents > threshold sigma from mean
             for agent_id, record in raw.items():
                 score = record["alpha"] / (record["alpha"] + record["beta"])
 
                 # Skip agents with too few observations — trust hasn't stabilized
                 total_observations = record["alpha"] + record["beta"]
-                if total_observations < 8.0:  # prior is 4.0, so <8 means <4 actual observations
+                if total_observations < self._trust_min_observations:
                     continue
 
                 # Skip if absolute deviation is negligible regardless of sigma
                 abs_deviation = abs(score - mean)
-                if abs_deviation < 0.10:
+                if abs_deviation < self._trust_min_deviation:
                     continue
 
                 deviation = abs_deviation / std
 
-                if deviation > 2.0:
+                # BF-089: Duty correlation — elevate sigma threshold during duty cycle
+                agent_duty_ts = duty_map.get(agent_id)
+                effective_sigma = self._trust_sigma_threshold
+                if agent_duty_ts is not None and (now - agent_duty_ts) < self._duty_correlation_window:
+                    effective_sigma = self._trust_sigma_significant
+
+                if deviation > effective_sigma:
                     direction = "high" if score > mean else "low"
-                    severity = "significant" if deviation > 3.0 else "notable"
+                    severity = "significant" if deviation > self._trust_sigma_significant else "notable"
+
+                    # BF-089: Temporal buffer — require sustained anomaly before emitting
+                    anomaly_key = f"sigma:{agent_id}:{direction}"
+                    if not self._record_anomaly_observation(anomaly_key):
+                        continue
 
                     # AD-411: Suppress duplicate trust anomaly for same agent+direction
                     dedup_key = f"{agent_id}:{direction}"
@@ -435,8 +526,8 @@ class EmergentDetector:
                         {
                             "intent_type": event.intent_type,
                             "success": event.success,
-                            "weight": round(event.weight, 4),
-                            "score_change": round(event.new_score - event.old_score, 4),
+                            "weight": format_trust(event.weight),
+                            "score_change": format_trust(event.new_score - event.old_score),
                             "episode_id": event.episode_id,
                         }
                         for event in recent_events
@@ -498,7 +589,21 @@ class EmergentDetector:
                     if prev_record_score is not None:
                         current_score = record["alpha"] / (record["alpha"] + record["beta"])
                         delta = abs(current_score - prev_record_score)
-                        if delta > 0.15:
+                        if delta > self._trust_change_threshold:
+                            # BF-089: Duty correlation — skip change-point during duty cycle
+                            agent_duty_ts = duty_map.get(agent_id)
+                            if agent_duty_ts is not None and (now - agent_duty_ts) < self._duty_correlation_window:
+                                logger.debug(
+                                    "Change-point for %s suppressed — duty completed %.1fs ago",
+                                    agent_id[:8], now - agent_duty_ts,
+                                )
+                                continue
+
+                            # BF-089: Temporal buffer for change-point
+                            cp_key = f"changepoint:{agent_id}"
+                            if not self._record_anomaly_observation(cp_key):
+                                continue
+
                             direction = "increased" if current_score > prev_record_score else "decreased"
                             # AD-411: Suppress duplicate change-point alerts
                             if self._is_duplicate_pattern("trust_anomaly", f"changepoint:{agent_id}"):
@@ -516,6 +621,16 @@ class EmergentDetector:
                                 timestamp=now,
                                 severity="notable",
                             ))
+
+        # BF-089: Batch limiting — keep only top N by confidence
+        if len(patterns) > self._max_trust_anomalies_per_pass:
+            total = len(patterns)
+            patterns.sort(key=lambda p: p.confidence, reverse=True)
+            patterns = patterns[:self._max_trust_anomalies_per_pass]
+            logger.info(
+                "Trust anomaly detection: %d candidates, reporting top %d",
+                total, self._max_trust_anomalies_per_pass,
+            )
 
         return patterns
 
@@ -548,8 +663,8 @@ class EmergentDetector:
                         "intent": intent,
                         "agent": agent,
                         "is_new_connection": True,
-                        "agent_trust": round(agent_trust, 4),
-                        "hebbian_weight": round(hebbian_weight, 4),
+                        "agent_trust": format_trust(agent_trust),
+                        "hebbian_weight": format_trust(hebbian_weight),
                     },
                     timestamp=now,
                     severity="notable",

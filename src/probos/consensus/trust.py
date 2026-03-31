@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-import aiosqlite
-
+from probos.config import format_trust
+from probos.protocols import ConnectionFactory, DatabaseConnection
 from probos.types import AgentID
 
 logger = logging.getLogger(__name__)
@@ -91,19 +91,24 @@ class TrustNetwork:
         prior_beta: float = 2.0,
         decay_rate: float = 0.999,
         db_path: str | None = None,
+        connection_factory: ConnectionFactory | None = None,
     ) -> None:
         self.prior_alpha = prior_alpha
         self.prior_beta = prior_beta
         self.decay_rate = decay_rate
         self.db_path = db_path
         self._records: dict[AgentID, TrustRecord] = {}
-        self._db: aiosqlite.Connection | None = None
+        self._db: DatabaseConnection | None = None
         self._event_log: deque[TrustEvent] = deque(maxlen=500)
+        self._connection_factory = connection_factory
+        if self._connection_factory is None:
+            from probos.storage.sqlite_factory import default_factory
+            self._connection_factory = default_factory
 
     async def start(self) -> None:
         """Initialize — load trust scores from SQLite if configured."""
         if self.db_path:
-            self._db = await aiosqlite.connect(self.db_path)
+            self._db = await self._connection_factory.connect(self.db_path)
             await self._db.execute("PRAGMA foreign_keys = ON")
             await self._db.execute(_SCHEMA)
             await self._db.commit()
@@ -270,10 +275,10 @@ class TrustNetwork:
         return [
             {
                 "agent_id": r.agent_id,
-                "score": round(r.score, 4),
-                "alpha": round(r.alpha, 2),
-                "beta": round(r.beta, 2),
-                "uncertainty": round(r.uncertainty, 4),
+                "score": format_trust(r.score),
+                "alpha": format_trust(r.alpha, 2),
+                "beta": format_trust(r.beta, 2),
+                "uncertainty": format_trust(r.uncertainty),
                 "observations": round(r.observations, 1),
             }
             for r in sorted(

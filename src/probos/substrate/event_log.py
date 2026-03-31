@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-import aiosqlite
+from probos.protocols import ConnectionFactory, DatabaseConnection
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +34,17 @@ class EventLog:
     and system events (startup, shutdown, pool health check).
     """
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, connection_factory: ConnectionFactory | None = None) -> None:
         self.db_path = str(db_path)
-        self._db: aiosqlite.Connection | None = None
+        self._db: DatabaseConnection | None = None
+        self._connection_factory = connection_factory
+        if self._connection_factory is None:
+            from probos.storage.sqlite_factory import default_factory
+            self._connection_factory = default_factory
 
     async def start(self) -> None:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path)
+        self._db = await self._connection_factory.connect(self.db_path)
         await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.executescript(_SCHEMA)
         await self._db.commit()

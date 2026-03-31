@@ -258,6 +258,7 @@ def create_app(runtime: Any) -> FastAPI:
             try:
                 await ws.send_json(data)
             except Exception:
+                logger.debug("WS client prune failed", exc_info=True)
                 # Client disconnected or errored — prune from list
                 if ws in _ws_clients:
                     _ws_clients.remove(ws)

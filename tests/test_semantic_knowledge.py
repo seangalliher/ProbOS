@@ -17,7 +17,9 @@ from probos.cognitive.llm_client import MockLLMClient
 from probos.consensus.trust import TrustNetwork
 from probos.experience.panels import render_search_panel
 from probos.experience.shell import ProbOSShell
+from probos.cognitive.episodic import EpisodicMemory
 from probos.knowledge.semantic import SemanticKnowledgeLayer
+from probos.knowledge.store import KnowledgeStore
 from probos.mesh.routing import HebbianRouter, REL_INTENT
 from probos.runtime import ProbOSRuntime
 from probos.substrate.identity import (
@@ -71,9 +73,9 @@ class TestParseAgentId:
 class TestAllPatternsCap:
     def test_all_patterns_capped_at_500(self) -> None:
         """EmergentDetector._all_patterns stays bounded after many analyze() calls."""
-        router = MagicMock()
+        router = MagicMock(spec=HebbianRouter)
         router.all_weights_typed.return_value = {}
-        trust = MagicMock()
+        trust = MagicMock(spec=TrustNetwork)
         trust.raw_scores.return_value = {}
         d = EmergentDetector(
             hebbian_router=router,
@@ -336,7 +338,7 @@ class TestCrossTypeSearch:
     @pytest.mark.asyncio
     async def test_search_includes_episodes(self, tmp_path) -> None:
         """Episodes included when episodic memory available."""
-        mock_em = AsyncMock()
+        mock_em = AsyncMock(spec=EpisodicMemory)
         mock_episode = MagicMock()
         mock_episode.id = "ep1"
         mock_episode.user_input = "test query input"
@@ -388,7 +390,7 @@ class TestBulkReindex:
         l = SemanticKnowledgeLayer(db_path=tmp_path / "semantic")
         await l.start()
         try:
-            mock_ks = AsyncMock()
+            mock_ks = AsyncMock(spec=KnowledgeStore)
             mock_ks.load_agents.return_value = [
                 ({"agent_type": "foo", "intent_name": "bar", "strategy": "new_agent"}, "class Foo: pass"),
             ]
@@ -408,7 +410,7 @@ class TestBulkReindex:
         l = SemanticKnowledgeLayer(db_path=tmp_path / "semantic")
         await l.start()
         try:
-            mock_ks = AsyncMock()
+            mock_ks = AsyncMock(spec=KnowledgeStore)
             mock_ks.load_agents.return_value = []
             mock_ks.load_skills.return_value = [
                 ("count_words", "async def handle_count_words(): pass", {"description": "Count words"}),
@@ -427,7 +429,7 @@ class TestBulkReindex:
         l = SemanticKnowledgeLayer(db_path=tmp_path / "semantic")
         await l.start()
         try:
-            mock_ks = AsyncMock()
+            mock_ks = AsyncMock(spec=KnowledgeStore)
             mock_ks.load_agents.return_value = []
             mock_ks.load_skills.return_value = []
             mock_ks._read_json = AsyncMock(return_value=[])
@@ -806,7 +808,7 @@ class TestSemanticIndexing:
         for name in ["agents", "skills", "workflows", "qa_reports"]:
             layer._collections[name] = MagicMock()
 
-        store = MagicMock()
+        store = MagicMock(spec=KnowledgeStore)
         store.load_agents = AsyncMock(return_value=[])
         store.load_skills = AsyncMock(return_value=[])
         store._read_json = MagicMock(return_value=[])

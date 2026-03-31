@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from probos.runtime import ProbOSRuntime
 from probos.substrate.agent import BaseAgent
+from probos.cognitive.episodic import EpisodicMemory
 
 
 @pytest.fixture
@@ -184,7 +185,7 @@ def test_chat_history_capped_at_10(client, mock_runtime):
 
 def test_chat_stores_episode(client, mock_runtime):
     """HXI chat stores an episode in episodic memory."""
-    mock_runtime.episodic_memory = MagicMock()
+    mock_runtime.episodic_memory = MagicMock(spec=EpisodicMemory)
     mock_runtime.episodic_memory.store = AsyncMock()
     resp = client.post(
         "/api/agent/agent-123/chat",
@@ -213,7 +214,7 @@ def test_chat_works_without_episodic_memory(client, mock_runtime):
 
 def test_chat_episode_failure_does_not_block(client, mock_runtime):
     """Episode storage failure doesn't block the chat response."""
-    mock_runtime.episodic_memory = MagicMock()
+    mock_runtime.episodic_memory = MagicMock(spec=EpisodicMemory)
     mock_runtime.episodic_memory.store = AsyncMock(side_effect=RuntimeError("ChromaDB down"))
     resp = client.post(
         "/api/agent/agent-123/chat",

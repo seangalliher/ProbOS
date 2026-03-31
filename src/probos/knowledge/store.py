@@ -411,7 +411,7 @@ class KnowledgeStore:
                 version_str = result.stdout.strip()
                 log.debug("Git version: %s", version_str)
             except Exception:
-                log.warning("Could not determine Git version")
+                log.warning("Could not determine Git version", exc_info=True)
 
             await self._git_run("init")
             await self._git_run("config", "user.email", "probos@localhost")
@@ -536,6 +536,7 @@ class KnowledgeStore:
             )
             commits = [c.strip() for c in result.stdout.strip().split("\n") if c.strip()]
         except Exception:
+            log.debug("Git operation failed", exc_info=True)
             return False
 
         if len(commits) < 2:
@@ -549,6 +550,7 @@ class KnowledgeStore:
                 return False
             previous_content = result.stdout
         except Exception:
+            log.debug("Git operation failed", exc_info=True)
             return False
 
         # Write the previous version
@@ -592,6 +594,7 @@ class KnowledgeStore:
                     })
             return entries
         except Exception:
+            log.debug("Git operation failed", exc_info=True)
             return []
 
     def _artifact_path(self, artifact_type: str, identifier: str) -> Path | None:
@@ -639,6 +642,7 @@ class KnowledgeStore:
                     })
             return entries
         except Exception:
+            log.debug("Git operation failed", exc_info=True)
             return []
 
     async def commit_count(self) -> int:
@@ -649,6 +653,7 @@ class KnowledgeStore:
             result = await self._git_run("rev-list", "--count", "HEAD")
             return int(result.stdout.strip()) if result.returncode == 0 else 0
         except Exception:
+            log.debug("Git operation failed", exc_info=True)
             return 0
 
     async def meta_info(self) -> dict | None:

@@ -151,6 +151,7 @@ async def _run_design(
             try:
                 result_data = _json.loads(result_data)
             except Exception:
+                logger.debug("Design context failed", exc_info=True)
                 result_data = {"proposal": {}, "llm_output": result_data}
 
         proposal = result_data.get("proposal", {})

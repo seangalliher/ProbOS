@@ -14,6 +14,8 @@ from typing import Any
 
 import aiosqlite
 
+from probos.protocols import ConnectionFactory, DatabaseConnection
+
 logger = logging.getLogger(__name__)
 
 
@@ -314,15 +316,19 @@ class SkillRegistry:
     and prerequisite DAG queries.
     """
 
-    def __init__(self, db_path: str | None = None):
+    def __init__(self, db_path: str | None = None, connection_factory: ConnectionFactory | None = None):
         self._db_path = db_path
-        self._db: aiosqlite.Connection | None = None
+        self._db: DatabaseConnection | None = None
         # In-memory cache for fast lookup
         self._cache: dict[str, SkillDefinition] = {}
+        self._connection_factory = connection_factory
+        if self._connection_factory is None:
+            from probos.storage.sqlite_factory import default_factory
+            self._connection_factory = default_factory
 
     async def start(self) -> None:
         if self._db_path:
-            self._db = await aiosqlite.connect(self._db_path)
+            self._db = await self._connection_factory.connect(self._db_path)
             await self._db.execute("PRAGMA foreign_keys = ON")
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
@@ -417,14 +423,18 @@ class AgentSkillService:
     produces SkillProfiles.
     """
 
-    def __init__(self, db_path: str | None = None, registry: SkillRegistry | None = None):
+    def __init__(self, db_path: str | None = None, registry: SkillRegistry | None = None, connection_factory: ConnectionFactory | None = None):
         self._db_path = db_path
-        self._db: aiosqlite.Connection | None = None
+        self._db: DatabaseConnection | None = None
         self._registry = registry
+        self._connection_factory = connection_factory
+        if self._connection_factory is None:
+            from probos.storage.sqlite_factory import default_factory
+            self._connection_factory = default_factory
 
     async def start(self) -> None:
         if self._db_path:
-            self._db = await aiosqlite.connect(self._db_path)
+            self._db = await self._connection_factory.connect(self._db_path)
             await self._db.execute("PRAGMA foreign_keys = ON")
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)

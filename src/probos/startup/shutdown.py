@@ -57,7 +57,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                         max_responders=0,
                     )
         except Exception:
-            pass  # best-effort, don't block shutdown
+            pass  # Shutdown cleanup — don't block shutdown
 
     # AD-502: Persist session record immediately after stasis announcement
     # BF-065: Write to runtime._data_dir directly (not knowledge_store) so it

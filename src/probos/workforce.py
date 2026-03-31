@@ -28,6 +28,7 @@ from typing import Any, Callable
 import aiosqlite
 
 from probos.events import EventType
+from probos.protocols import ConnectionFactory, DatabaseConnection, EventEmitterMixin
 
 logger = logging.getLogger(__name__)
 
@@ -548,7 +549,7 @@ class TemplateStore:
                 self._templates[t.template_id] = t
                 count += 1
             except Exception:
-                logger.warning("Failed to load custom template: %s", td.get("template_id", "?"))
+                logger.warning("Failed to load custom template: %s", td.get("template_id", "?"), exc_info=True)
         return count
 
 # (1) WorkItem
@@ -900,7 +901,7 @@ _IMMUTABLE_FIELDS = frozenset({"id", "created_at", "created_by"})
 # WorkItemStore — SQLite-backed persistence
 # ---------------------------------------------------------------------------
 
-class WorkItemStore:
+class WorkItemStore(EventEmitterMixin):
     """SQLite-backed workforce scheduling engine.
 
     Follows the PersistentTaskStore lifecycle pattern.
@@ -912,11 +913,16 @@ class WorkItemStore:
         emit_event: Callable[..., Any] | None = None,
         tick_interval: float = 10.0,
         config: dict | None = None,
+        connection_factory: ConnectionFactory | None = None,
     ):
         self.db_path = db_path
-        self._db: aiosqlite.Connection | None = None
+        self._db: DatabaseConnection | None = None
         self._emit_event = emit_event
         self._tick_interval = tick_interval
+        self._connection_factory = connection_factory
+        if self._connection_factory is None:
+            from probos.storage.sqlite_factory import default_factory
+            self._connection_factory = default_factory
         self._tick_task: asyncio.Task[None] | None = None
         self._running = False
         # In-memory registries (populated from ACM at startup)
@@ -936,19 +942,19 @@ class WorkItemStore:
                     ct["terminal_statuses"] = frozenset(ct.get("terminal_statuses", []))
                     self.work_type_registry.register(WorkTypeDefinition(**ct))
                 except Exception:
-                    logger.warning("Failed to load custom work type: %s", ct.get("type_id", "?"))
+                    logger.warning("Failed to load custom work type: %s", ct.get("type_id", "?"), exc_info=True)
             for td in config.get("custom_templates", []):
                 try:
                     self.template_store.register(WorkItemTemplate(**td))
                 except Exception:
-                    logger.warning("Failed to load custom template: %s", td.get("template_id", "?"))
+                    logger.warning("Failed to load custom template: %s", td.get("template_id", "?"), exc_info=True)
 
     # -- Lifecycle --
 
     async def start(self) -> None:
         """Open DB, create schema, start tick loop."""
         if self.db_path:
-            self._db = await aiosqlite.connect(self.db_path)
+            self._db = await self._connection_factory.connect(self.db_path)
             await self._db.execute("PRAGMA foreign_keys = ON")
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
@@ -972,12 +978,6 @@ class WorkItemStore:
             await self._db.close()
             self._db = None
         logger.info("WorkItemStore stopped")
-
-    # -- Event emission --
-
-    def _emit(self, event_type: str, data: dict[str, Any]) -> None:
-        if self._emit_event:
-            self._emit_event(event_type, data)
 
     # ======================================================================
     # WorkItem CRUD

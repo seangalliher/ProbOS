@@ -815,7 +815,7 @@ def _cmd_reset(args: argparse.Namespace) -> None:
             row = cursor.fetchone()
             active_task_count = row["cnt"] if row else 0
         except Exception:
-            pass  # DB may not exist or have wrong schema
+            pass  # DB may not exist yet — best-effort count
         finally:
             if conn:
                 conn.close()
@@ -908,7 +908,7 @@ def _cmd_reset(args: argparse.Namespace) -> None:
                 capture_output=True, encoding="utf-8", errors="replace", timeout=30,
             )
         except Exception:
-            pass  # Best-effort commit
+            pass  # Best-effort git commit during reset
 
     # ── Summary output ──
     tier_names = {1: "Reboot", 2: "Recommissioning", 3: "Maiden Voyage"}

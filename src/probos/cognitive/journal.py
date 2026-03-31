@@ -8,9 +8,12 @@ AD-431.
 from __future__ import annotations
 
 import logging
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any
+
+from probos.protocols import ConnectionFactory, DatabaseConnection
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +53,13 @@ CREATE INDEX IF NOT EXISTS idx_journal_intent_id ON journal(intent_id);
 class CognitiveJournal:
     """Append-only SQLite journal for LLM reasoning traces."""
 
-    def __init__(self, db_path: str | None = None) -> None:
+    def __init__(self, db_path: str | None = None, connection_factory: ConnectionFactory | None = None) -> None:
         self.db_path = db_path
         self._db: Any = None
+        self._connection_factory = connection_factory
+        if self._connection_factory is None:
+            from probos.storage.sqlite_factory import default_factory
+            self._connection_factory = default_factory
 
     async def start(self) -> None:
         if not self.db_path:
@@ -60,7 +67,7 @@ class CognitiveJournal:
         import aiosqlite
         db_dir = Path(self.db_path).parent
         db_dir.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path)
+        self._db = await self._connection_factory.connect(self.db_path)
         await self._db.execute("PRAGMA foreign_keys = ON")
         self._db.row_factory = __import__("aiosqlite").Row
         # AD-432: Migrate columns BEFORE full schema (indexes reference them)
@@ -73,8 +80,8 @@ class CognitiveJournal:
         ]:
             try:
                 await self._db.execute(f"ALTER TABLE journal ADD COLUMN {col} {typedef}")
-            except Exception:
-                pass  # Column already exists
+            except sqlite3.OperationalError:
+                pass  # Column already exists — migration idempotency
         await self._db.commit()
         # Now create indexes that depend on migrated columns
         await self._db.executescript(_SCHEMA_INDEXES)

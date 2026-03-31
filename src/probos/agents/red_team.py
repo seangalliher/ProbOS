@@ -391,6 +391,7 @@ class RedTeamAgent(BaseAgent):
             proc.kill()
             return None
         except Exception:
+            logger.debug("Subprocess failed", exc_info=True)
             return None
 
     async def _verify_http_fetch(

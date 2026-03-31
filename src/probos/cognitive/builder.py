@@ -585,7 +585,7 @@ async def decompose_blueprint(
                 if importers:
                     import_lines.append(f"{path} imported by: {', '.join(importers)}")
             except Exception:
-                pass
+                logger.debug("Builder context failed", exc_info=True)
         if import_lines:
             import_context = "\n## Import Relationships\n" + "\n".join(import_lines)
 

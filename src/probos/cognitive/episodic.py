@@ -58,7 +58,7 @@ class EpisodicMemory:
             try:
                 self._client.close()
             except Exception:
-                pass
+                pass  # Teardown cleanup — errors expected and harmless
         self._collection = None
         self._client = None
 
@@ -88,7 +88,7 @@ class EpisodicMemory:
             if result and result["ids"]:
                 existing_ids = set(result["ids"])
         except Exception:
-            pass
+            logger.debug("Checking existing episode IDs failed", exc_info=True)
 
         for ep in episodes:
             if ep.id in existing_ids:
@@ -246,6 +246,7 @@ class EpisodicMemory:
                 include=["metadatas", "documents"],
             )
         except Exception:
+            logger.debug("Episodic memory operation failed", exc_info=True)
             return False
         episode_words = set(episode.user_input.lower().split())
         for i, meta in enumerate(recent.get("metadatas") or []):
@@ -406,6 +407,7 @@ class EpisodicMemory:
                 include=["metadatas", "documents"],
             )
         except Exception:
+            logger.debug("Episodic memory operation failed", exc_info=True)
             # Fallback: get all and filter manually
             result = self._collection.get(include=["metadatas", "documents"])
 
