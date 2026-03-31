@@ -1686,3 +1686,13 @@ Motivated by ["Agents of Chaos"](https://arxiv.org/abs/2602.20021) (2026) — a 
 **Rationale:** "The crew that plays together works better together." Games generate low-stakes shared experiences that strengthen Hebbian bonds, reveal cognitive patterns (Counselor diagnostic signal), and create crew culture. Recreation is operational readiness, not a luxury.
 
 **Status:** AD-526 PLANNED.
+
+**AD-540: Memory Provenance Boundary — Knowledge Source Attribution** *(planned, OSS)*
+
+**Context:** Counselor 1:1 self-diagnosis (2026-03-30): LLM training knowledge contaminates episodic recall. Agent referenced "Data and Worf dynamics" from Star Trek training data as if observed on the ship. Fleet-wide problem — every agent's cognitive context (`_build_user_message()` in cognitive_agent.py) mixes episodic memories with LLM training data in the same text stream with no structural separation. The Westworld Principle states "Knowledge ≠ Memory" but the architecture doesn't enforce it.
+
+**Decision:** Structural provenance boundary in agent cognitive context. (1) Provenance-tagged memory injection: recalled episodes wrapped in `=== SHIP MEMORY (verified observations) ===` boundaries with explicit "everything else is training data" footer. (2) Source attribution standing order at Ship tier: agents must distinguish "[observed]" / "[training]" / "[inferred]" claims. (3) Counselor contamination detection: new `knowledge_integration_score` metric in CognitiveProfile. (4) Connects to AD-487 (Self-Distillation) to form cognitive clarity stack: Personal Ontology (what I know from training) + Ship Memory (what I've experienced) + Provenance Boundary (which am I using) + Scoped Cognition (what's relevant now).
+
+**Rationale:** "A Memory Integrity Field" — the cognitive equivalent of SIF. LLM attention blending is the warp stress; provenance tags are the containment. Without structural separation, training knowledge warps into false episodic recall. Intellectual lineage: Johnson & Raye (1981) reality monitoring, Loftus (1979) misinformation effect. Minimum viable: L1 (boundary injection) + L2 (standing order) — 2 files, 4 code points.
+
+**Status:** AD-540 PLANNED.

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Wave 4 in progress. BF-079 CLOSED — all 3 phases complete (419 spec= mocks, 39.1% compliance). AD-464 decomposed into AD-531–539 (Cognitive JIT build chain). BF-085 CLOSED. BF-083 CLOSED. BF-086 CLOSED. Wave 3 COMPLETE. Open: BF-087, BF-088, BF-042, AD-527. 4,081 tests passing.
+## Current Status: Wave 4 in progress. BF-079 CLOSED — all 3 phases complete (419 spec= mocks, 39.1% compliance). AD-464 decomposed into AD-531–539 (Cognitive JIT build chain). AD-540 (Memory Provenance Boundary) drafted — Counselor-triggered cognitive clarity AD. BF-085 CLOSED. BF-083 CLOSED. BF-086 CLOSED. Wave 3 COMPLETE. Open: BF-087, BF-088, BF-042, AD-527, AD-540. 4,081 tests passing.
 
 ---
 

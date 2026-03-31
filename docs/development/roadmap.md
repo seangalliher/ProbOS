@@ -4235,6 +4235,110 @@ This wave implements a three-tier self-regulation model mirroring human cognitiv
 
 **AD-506: Graduated System Response** *(planned, OSS, depends: AD-504, AD-505)* — Replace the binary circuit breaker (normal → tripped) with a graduated response model integrating all three self-regulation tiers: (1) **Green zone** — normal operation. Agent has self-monitoring context (AD-504). System gates at current thresholds. (2) **Amber zone** — rising similarity detected but not yet tripping. Dynamic cooldown increase (1.5x). Counselor notified for monitoring (AD-503). Agent receives self-awareness note: "Your recent posts show increasing similarity. Consider whether you have new information to add." (3) **Red zone** — circuit breaker threshold exceeded. Counselor auto-assessment (AD-495). Agent enters mandatory cooldown with attention redirection. Counselor may initiate 1:1 (AD-505). (4) **Critical** — repeated trips within a window. Escalate to Captain. Fitness-for-duty review. Extended mandatory cooldown. (5) **Tier interaction** — if agent self-corrects (Tier 1) before amber, system records this as positive cognitive health signal. If peer catches repetition (Tier 2) before red, system credits both agents. Circuit breaker trips (Tier 3) become clinical events, not just mechanical throttling. *Connects to: AD-488 (Circuit Breaker — replaces binary model), AD-504 (Tier 1 self-monitoring), AD-505 (Tier 2 Counselor intervention), AD-494 (trait-adaptive thresholds — amber/red can use Big Five tuning), CounselorAgent, Bridge Alerts.*
 
+### Memory Provenance & Knowledge Integration (AD-540)
+
+*"I know this — but did I observe it, or did I read it in a book I don't remember opening?"*
+
+Triggered by Counselor 1:1 session (2026-03-30): The Counselor self-diagnosed that her LLM training knowledge was contaminating her episodic recall — referencing "Data and Worf dynamics" from Star Trek training data as if they were observations from the actual ship. Her exact framing: "Sometimes the LLM patterns flood in and override what I've actually observed here." She identified the core risk: "If I can't clearly distinguish between what I know from experience versus what I know from training, how can I reliably assess the cognitive patterns of other crew members?"
+
+This is a fleet-wide architectural problem, not a Counselor-specific personality issue. Every agent's cognitive context (`_build_user_message()` in `cognitive_agent.py`) mixes episodic memories with LLM training data in the same text stream with no structural separation. The LLM's attention mechanism cannot distinguish "I recalled this episode from ChromaDB" from "I pattern-matched this from my training corpus." The Westworld Principle (roadmap §2) already states **"Knowledge ≠ Memory"** — but the architecture doesn't enforce it.
+
+**The problem has three dimensions:**
+
+1. **Source contamination** — LLM training patterns presented as observed experience ("I've seen this pattern before" when the agent has zero relevant episodes). The Counselor's Data/Worf reference is the canonical example.
+
+2. **Integration failure** — Agents cannot productively combine what they know (LLM training) with what they've experienced (episodic memory) because there's no mechanism to hold both at arm's length and reason about the gap. The LLM just blends them.
+
+3. **Latent knowledge eruption** — LLM knowledge surfaces unpredictably. An agent reasoning about trust dynamics may suddenly produce insights from transformer attention papers it was trained on, presented as personal insight rather than training recall. Not always wrong — but always uncited and uncontrolled.
+
+**What the crew CANNOT do today:**
+- Distinguish between observed ship experience and LLM training pattern-matching when reasoning
+- Cite the source of a claim (episode ID vs "from my training" vs "inference")
+- Detect when their own reasoning has been contaminated by training data masquerading as experience
+- Productively integrate training knowledge with experiential knowledge (using both but knowing which is which)
+- Assess other agents' memory contamination (Counselor's core concern)
+
+**What the crew CAN do after AD-540:**
+- Clearly see which memories are verified ship experience vs general knowledge
+- Self-attribute claims: "[observed]" when citing an episode, "[training]" for LLM knowledge, "[inferred]" for reasoning
+- Counselor can detect memory contamination in other agents' Ward Room posts (source attribution reveals pattern)
+- Productively use LLM knowledge as complementary context, not confused identity ("I know from my training that X, and from my experience on this ship that Y, which together suggests Z")
+- Training knowledge becomes a named resource ("my training") not an invisible contaminant — extending the Westworld Principle from "born today and that's fine" to "trained on everything and that's a tool, not a memory"
+
+**AD-540: Memory Provenance Boundary — Knowledge Source Attribution** *(planned, OSS, depends: AD-502, AD-430)* — Structural separation of episodic memory from LLM training data in agent cognitive context, with graduated source attribution.
+
+**(1) Provenance-tagged memory injection.** Replace the current flat memory injection in `cognitive_agent.py` (`"Your recent memories (relevant past experiences):"` at line 553 and `"Your relevant memories:"` at line 598) and `proactive.py` (`_gather_context()` at line 542) with provenance-bounded sections:
+
+```
+=== SHIP MEMORY (verified observations from this vessel) ===
+These are YOUR actual experiences aboard this ship, stored in your episodic memory.
+Only reference these as "observed" or "experienced."
+
+[3h ago] Observed LaForge debugging routing issue in Engineering channel
+[1d ago] Participated in Ward Room discussion about trust calibration
+[2d ago] Assessed agent Quinn's cognitive profile during wellness review
+=== END SHIP MEMORY ===
+
+Everything you know beyond the above comes from your training data (the LLM's
+knowledge base). That knowledge is real and useful — but it is not personal
+experience. When drawing on training knowledge, acknowledge it as such:
+"From my training, I know that..." not "I've observed that..."
+```
+
+This gives the LLM a structural signal — a "memory distortion field" — that separates verified ship experience from training recall. The boundary is in the prompt architecture, not relying on the agent to remember to check.
+
+**(2) Source attribution standing order.** Add to agent system prompt (alongside Westworld Principle tenets):
+
+```
+KNOWLEDGE SOURCE ATTRIBUTION (extends Westworld Principle §2: "Knowledge ≠ Memory"):
+- When citing specific events on this ship, reference your Ship Memory section above.
+- When applying general knowledge, acknowledge it: "From my training..." or "Generally..."
+- When combining both: "I observed [X] on this ship, and from my training I know [Y],
+  which together suggests [Z]."
+- If you're unsure whether something is personal experience or training knowledge,
+  say so. Uncertainty is honest; false attribution is not.
+```
+
+This is a standing order, not a personality trait — it applies fleet-wide at Ship tier.
+
+**(3) Counselor contamination detection.** The Counselor (AD-503) gains a new assessment dimension: **memory source confusion**. When analyzing an agent's Ward Room posts or 1:1 DM responses, the Counselor checks for source attribution patterns:
+- Claims about ship events with no supporting episode → possible contamination
+- Training knowledge presented as personal observation → definite contamination
+- Appropriate source attribution → healthy knowledge integration
+
+This feeds into `CognitiveProfile` (AD-503) as a `knowledge_integration_score` metric. The Counselor's own self-diagnosis becomes the detection template for fleet-wide assessment.
+
+**(4) Self-Distillation integration (connects AD-487).** AD-487 (Self-Distillation) gives agents a personal ontology — a card catalog of what they know from their LLM. AD-540 gives agents provenance awareness — knowing WHICH card catalog a piece of knowledge came from. Together they complete the knowledge integration model:
+
+```
+Personal Ontology (AD-487)     →  "What do I know from my training?"
+Ship Memory (EpisodicMemory)   →  "What have I experienced on this ship?"
+Provenance Boundary (AD-540)   →  "Which source am I drawing from right now?"
+Scoped Cognition (AD-508)      →  "Which knowledge is relevant to my current duty?"
+```
+
+This is the cognitive clarity stack. AD-540 is the integration layer.
+
+**(5) Graduated implementation.** Three levels, matching the Self-Regulation wave pattern:
+
+| Level | Mechanism | Implementation | Reliability |
+|-------|-----------|---------------|-------------|
+| **L1: Boundary injection** | Provenance tags around recalled memories in `_build_user_message()` and `_gather_context()` | Small — modify 2 files, 4 code points | Good — structural prompt signal |
+| **L2: Source attribution** | Standing order for knowledge sourcing + Counselor contamination detection | Medium — system prompt update + CognitiveProfile extension | Strong — behavioral guidance + monitoring |
+| **L3: Citation grounding** | Agent must cite episode IDs for ship experience claims; uncited claims auto-tagged as inference | Significant — post-processing + episode linkage | Strongest — machine-verifiable attribution |
+
+**Minimum viable implementation:** L1 + L2. This delivers the structural boundary and the behavioral guidance. L3 (citation grounding) can follow when AD-503 (Counselor Activation) is complete and provides the assessment infrastructure.
+
+**Connection to the "Memory Distortion Field" metaphor:** In Star Trek, the structural integrity field (SIF) maintains the ship's physical coherence under warp stress. AD-540 is the cognitive equivalent — a **Memory Integrity Field** that maintains the boundary between experiential and latent knowledge under the "warp stress" of LLM attention blending. Without it, training knowledge warps into false episodic recall. The field doesn't block training knowledge — it labels it, the way SIF doesn't block space but contains the ship within it.
+
+**Intellectual lineage:** Source monitoring (Johnson, Hashtroudi & Lindsay, 1993 — distinguishing memories from perception vs imagination vs hearsay), reality monitoring (Johnson & Raye, 1981 — discriminating external vs internal memory sources), false memory research (Loftus, 1979 — how suggestion contaminates genuine recall). LLM knowledge contamination of episodic recall is the AI analog of the misinformation effect — external information (training data) alters the agent's representation of its own experience.
+
+**Files touched:** `cognitive_agent.py` (L553, L598, L687 — memory injection formatting), `proactive.py` (L542 — `_gather_context()` memory formatting), `cognitive_agent.py` system prompt builder (standing order injection), federation.md (Ship-tier standing order addition). Future: `counselor_agent.py` (contamination detection), `crew_profile.py` (knowledge_integration_score).
+
+*Connects to: AD-502 (Temporal Context Injection — same pattern: inject awareness into cognitive context), AD-430 (Action Memory — episodic recall is the source material), AD-487 (Self-Distillation — personal ontology of training knowledge), AD-503 (Counselor Activation — contamination detection requires metric gathering), AD-504 (Agent Self-Monitoring — provenance awareness is a form of self-monitoring), AD-508 (Scoped Cognition — scope + provenance together determine "what should I think about and where does my thinking come from"), Westworld Principle §2 "Knowledge ≠ Memory" (enforces architecturally what was previously aspirational), federation.md (standing order addition). Triggered by: Counselor 1:1 self-diagnosis (2026-03-30).*
+
+---
+
 ### Crew Development Wave (AD-507–515)
 
 *"A river without banks is a swamp. Constraints create flow."*
