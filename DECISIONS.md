@@ -1650,21 +1650,22 @@ Motivated by ["Agents of Chaos"](https://arxiv.org/abs/2602.20021) (2026) — a 
 
 ## Wave 6: Codebase Quality — Scorecard Audit (2026-03-31)
 
-Post-Wave 4 codebase scorecard graded the codebase at **B+** overall. All 18 code review findings closed, but the audit exposed three systemic debts (Dependency Inversion = D, Exception Handling = C, Mock Discipline = C-) and three moderate gaps (DRY, API validation, async discipline). Wave 6 closes these to move toward A-.
+Post-Wave 4 codebase scorecard graded the codebase at **B+** overall. All 18 code review findings closed, but the audit exposed systemic debts (Dependency Inversion = D, Exception Handling = C, Mock Discipline = C-) and moderate gaps (DRY, API validation, async discipline). Crew independently reported emergent detector false positives (BF-089). Wave 6 closes these to move toward A-.
 
 | Item | Description |
 |------|-------------|
+| BF-089 | **Emergent Detector Trust Anomaly False Positives** — Crew-reported (Forge + Reyes, confirmed 2026-03-30/31). Seven rapid-fire alerts during normal duty cycles. Detector evaluates trust deltas in isolation; needs temporal buffer + adaptive baselines. |
 | AD-542 | **Abstract Database Connection Interface** — 12 DB modules hardcode `aiosqlite.connect()`. 7 Protocols defined in AD-514 but zero consumed. Create `ConnectionFactory` Protocol, inject into all 12 modules, wire `protocols.py` into consumers. Unblocks commercial Cloud-Ready Storage. |
-| BF-089 | **Exception Audit Phase 2** — 71 silent `except Exception: pass` across 32 files + 187 bare catches without `as e`. Upgrade all to logged degradation or justify inline. Worst: architect.py (9), feedback.py (5), runtime.py (5). |
-| BF-090 | **Mock Discipline Phase 2** — 622 bare `MagicMock()` across 76 files (31.8% spec rate). Raise to ≥70%. Prioritize runtime, agent, and service mocks. |
-| BF-091 | **Trust Threshold Constants** — Trust thresholds (0.85/0.7/0.5/0.3) hardcoded in 12+ files. `round(trust, 4)` repeated 15×. `_emit()` triplicated. Extract named constants + utilities. |
-| BF-092 | **API Boundary Validation** — 3-4 raw-dict API endpoints (ACM, cooldown). ACM returns 200+error JSON. Add Pydantic models + proper HTTP status codes. |
-| BF-093 | **Sync File I/O in Async** — `ontology.py`, `ward_room.py`, `crew_profile.py` use sync `open()` in async methods. Wrap in `run_in_executor()` or use `aiofiles`. |
-| BF-094 | **God Object Reduction** — VesselOntologyService (53 methods) and WardRoomService (40 methods). Extract focused sub-services following Wave 3 decomposition pattern. |
+| BF-090 | **Exception Audit Phase 2** — 71 silent `except Exception: pass` across 32 files + 187 bare catches without `as e`. Upgrade all to logged degradation or justify inline. Worst: architect.py (9), feedback.py (5), runtime.py (5). |
+| BF-091 | **Mock Discipline Phase 2** — 622 bare `MagicMock()` across 76 files (31.8% spec rate). Raise to ≥70%. Prioritize runtime, agent, and service mocks. |
+| BF-092 | **Trust Threshold Constants** — Trust thresholds (0.85/0.7/0.5/0.3) hardcoded in 12+ files. `round(trust, 4)` repeated 15×. `_emit()` triplicated. Extract named constants + utilities. |
+| BF-093 | **API Boundary Validation** — 3-4 raw-dict API endpoints (ACM, cooldown). ACM returns 200+error JSON. Add Pydantic models + proper HTTP status codes. |
+| BF-094 | **Sync File I/O in Async** — `ontology.py`, `ward_room.py`, `crew_profile.py` use sync `open()` in async methods. Wrap in `run_in_executor()` or use `aiofiles`. |
+| BF-095 | **God Object Reduction** — VesselOntologyService (53 methods) and WardRoomService (40 methods). Extract focused sub-services following Wave 3 decomposition pattern. |
 
-**Build sequence:** AD-542 first → BF-089 + BF-091 (parallel) → BF-090 (benefits from AD-542 Protocols) → BF-092 + BF-093 (parallel, small) → BF-094 (largest scope, lowest urgency).
+**Build sequence:** BF-089 first (crew-reported, quick calibration fix) → AD-542 (unblocks commercial + Protocols) → BF-090 + BF-092 (parallel) → BF-091 (benefits from AD-542) → BF-093 + BF-094 (parallel, small) → BF-095 (largest scope).
 
-**Score:** 0/7. **Status:** PLANNED.
+**Score:** 0/8. **Status:** PLANNED.
 
 ---
 

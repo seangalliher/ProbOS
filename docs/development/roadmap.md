@@ -4734,7 +4734,13 @@ Motivated by findings in ["Agents of Chaos"](https://arxiv.org/abs/2602.20021) (
 
 *"Measure twice, cut once. Then measure again."*
 
-Post-Wave 4 codebase scorecard (2026-03-31) graded the codebase at **B+** overall. All 18 code review findings are closed, but the audit exposed three systemic debts and three moderate gaps that the original review didn't fully address. Wave 6 closes these gaps to move the codebase from B+ toward A-.
+Post-Wave 4 codebase scorecard (2026-03-31) graded the codebase at **B+** overall. All 18 code review findings are closed, but the audit exposed systemic debts in dependency inversion, exception handling, and mock discipline, plus moderate gaps in DRY, API validation, async discipline, and remaining god objects. A crew-reported false positive pattern in the emergent detector (BF-089) rounds out the wave. Wave 6 closes these gaps to move the codebase from B+ toward A-.
+
+**BF-089: Emergent Detector Trust Anomaly False Positives** *(planned, OSS)* — Crew-reported (Forge + Reyes, confirmed across two observation periods 2026-03-30/31). The emergent detector fires seven trust anomaly alerts in quick succession during normal duty cycle completions. Hebbian weight adjustments during peer evaluation are flagged as pathological behavior. Cooperation cluster detections interspersed with trust anomalies indicate the detector evaluates each event in isolation rather than smoothing over a time horizon.
+
+- **Root cause:** Detector's sampling window is too narrow. Trust networks naturally oscillate — agents complete tasks, get trust bumps, then idle periods bring them toward baseline. Fixed thresholds treat normal variance as anomalies.
+- **Target:** (1) Temporal buffer in anomaly detector — require sustained deviation over a configurable window (e.g., 5 minutes) before alerting. (2) Adaptive baselines — use rolling mean/stddev rather than fixed thresholds. (3) Correlation awareness — trust changes clustered around duty cycle completions should be weighted as expected behavior, not anomalies.
+- **Risk:** Low — threshold calibration. Must ensure genuine anomalies still trigger alerts (don't over-dampen).
 
 **AD-542: Abstract Database Connection Interface** *(planned, OSS)* — Scorecard grade: **D** (Dependency Inversion). The single largest SOLID debt in the codebase. 12 DB modules hardcode `aiosqlite.connect()` directly. Zero abstract connection interface exists. 7 Protocol interfaces were defined in AD-514 (`protocols.py`) but zero are consumed anywhere — all consumers import concrete classes. This blocks the commercial overlay's Cloud-Ready Storage principle (SQLite → Postgres swap).
 
@@ -4751,32 +4757,32 @@ Post-Wave 4 codebase scorecard (2026-03-31) graded the codebase at **B+** overal
 
 **(3) Benefits:** Commercial overlay can swap storage backends by injecting a different `ConnectionFactory` at startup. Protocol consumption enables proper dependency inversion and mock discipline (mocks can use `spec=Protocol` instead of `spec=ConcreteClass`). Closes the Cloud-Ready Storage principle gap established in project memory.
 
-**BF-089: Exception Audit Phase 2 — Silent Swallows** *(planned, OSS)* — Scorecard grade: **C** (Exception Handling). BF-075 addressed ~25 swallowed exceptions but 71 silent `except Exception: pass` blocks remain across 32 files. 187 bare `except Exception:` (without `as e`) cannot log exception details even if the handler does more than `pass`. The project's own Fail Fast principle says "Builder must justify every `except Exception: pass`."
+**BF-090: Exception Audit Phase 2 — Silent Swallows** *(planned, OSS)* — Scorecard grade: **C** (Exception Handling). BF-075 addressed ~25 swallowed exceptions but 71 silent `except Exception: pass` blocks remain across 32 files. 187 bare `except Exception:` (without `as e`) cannot log exception details even if the handler does more than `pass`. The project's own Fail Fast principle says "Builder must justify every `except Exception: pass`."
 
 - **Worst offenders:** `cognitive/architect.py` (9 consecutive silent catches in context assembly), `cognitive/feedback.py` (5 — trust events silently dropped), `runtime.py` (5), `proactive.py` (4), `cognitive/cognitive_agent.py` (4), `channels/discord_adapter.py` (4), `cognitive/self_mod.py` (4), `ward_room.py` (4, 3 are justified DB migration)
 - **Target:** Every `except Exception: pass` upgraded to minimum `except Exception: logger.debug("...", exc_info=True)` or justified with inline comment (`# Migration idempotency — column may already exist`). Every bare `except Exception:` gains `as e` binding.
 - **Risk:** Zero behavior changes — logging only. Same approach as BF-075 Phase 1.
 
-**BF-090: Mock Discipline Phase 2 — Spec Coverage** *(planned, OSS)* — Scorecard grade: **C-** (Mock Discipline). BF-079 Phase 1 achieved 419 spec'd mocks (39.1% compliance). 622 bare `MagicMock()` calls remain across 76 files. Zero `create_autospec` usage. The BF-078 incident proved unspecced mocks cause real production bugs (Ward Room dead for an entire release cycle because `MagicMock()` silently invented `rt._agents`).
+**BF-091: Mock Discipline Phase 2 — Spec Coverage** *(planned, OSS)* — Scorecard grade: **C-** (Mock Discipline). BF-079 Phase 1 achieved 419 spec'd mocks (39.1% compliance). 622 bare `MagicMock()` calls remain across 76 files. Zero `create_autospec` usage. The BF-078 incident proved unspecced mocks cause real production bugs (Ward Room dead for an entire release cycle because `MagicMock()` silently invented `rt._agents`).
 
 - **Target:** Raise spec coverage from 31.8% to ≥70%. Prioritize: runtime mocks (highest blast radius), agent mocks, service sub-mocks. Skip: data objects, simple callbacks, patch targets (correctly identified as low-risk in BF-079).
 - **Approach:** Systematic file-by-file audit. Shared `conftest.py` factories with spec= for common mock patterns. `create_autospec` for complex objects.
 
-**BF-091: Trust Threshold Constants** *(planned, OSS)* — Scorecard grade: **B** (DRY). Trust thresholds (0.85, 0.7, 0.5, 0.3, 0.65) are hardcoded in 12+ files across 6 modules (`crew_profile.py`, `counselor.py`, `circuit_breaker.py`, `standing_orders.py`, `ward_room.py`, `strategy_advisor.py`, `introspect.py`, `bridge_alerts.py`, `vitals_monitor.py`, `acm.py`, `mesh/capability.py`, `runtime.py`). The `round(trust, 4)` display pattern repeats 15+ times. The `_emit()` event boilerplate is triplicated in `assignment.py`, `persistent_tasks.py`, `task_tracker.py`.
+**BF-092: Trust Threshold Constants** *(planned, OSS)* — Scorecard grade: **B** (DRY). Trust thresholds (0.85, 0.7, 0.5, 0.3, 0.65) are hardcoded in 12+ files across 6 modules (`crew_profile.py`, `counselor.py`, `circuit_breaker.py`, `standing_orders.py`, `ward_room.py`, `strategy_advisor.py`, `introspect.py`, `bridge_alerts.py`, `vitals_monitor.py`, `acm.py`, `mesh/capability.py`, `runtime.py`). The `round(trust, 4)` display pattern repeats 15+ times. The `_emit()` event boilerplate is triplicated in `assignment.py`, `persistent_tasks.py`, `task_tracker.py`.
 
 - **Target:** Centralize trust thresholds as named constants in `config.py` (e.g., `TRUST_COMMANDER = 0.85`, `TRUST_LIEUTENANT = 0.7`). Extract `TrustDisplay.format(score)` utility. Extract `EventEmitterMixin` for the `_emit()` pattern.
 - **Risk:** Very low — constant extraction is mechanical.
 
-**BF-092: API Boundary Validation** *(planned, OSS)* — Scorecard grade: **A-** with gaps. Most API endpoints use Pydantic models, but 3-4 endpoints accept raw `dict` payloads with no validation: ACM endpoints (`routers/acm.py` — `decommission_agent`, `suspend_agent`, `reinstate_agent`), cooldown endpoint (`routers/agents.py:146` — no range enforcement despite documented 60–1800 range). ACM endpoints return `200 OK` with `{"error": ...}` instead of proper `HTTPException` status codes.
+**BF-093: API Boundary Validation** *(planned, OSS)* — Scorecard grade: **A-** with gaps. Most API endpoints use Pydantic models, but 3-4 endpoints accept raw `dict` payloads with no validation: ACM endpoints (`routers/acm.py` — `decommission_agent`, `suspend_agent`, `reinstate_agent`), cooldown endpoint (`routers/agents.py:146` — no range enforcement despite documented 60–1800 range). ACM endpoints return `200 OK` with `{"error": ...}` instead of proper `HTTPException` status codes.
 
 - **Target:** Pydantic request models for all remaining raw-dict endpoints. Range validation on cooldown (60–1800). ACM error responses use proper HTTP status codes (400/404/409).
 - **Risk:** Low — API contract tightening. No behavior change for valid requests.
 
-**BF-093: Sync File I/O in Async Methods** *(planned, OSS)* — Scorecard grade: **B+** (Async Discipline). Zero `time.sleep()` in production code (excellent). But synchronous `open()` calls exist inside `async def` methods: `ontology.py` (7 sync `_load_*()` methods called from `async initialize()`), `ward_room.py:336` (sync file write in thread pruning), `crew_profile.py` (2 sync file ops). The codebase already uses `run_in_executor()` correctly in `approval_callbacks.py` and `renderer.py` — the pattern exists but isn't applied consistently.
+**BF-094: Sync File I/O in Async Methods** *(planned, OSS)* — Scorecard grade: **B+** (Async Discipline). Zero `time.sleep()` in production code (excellent). But synchronous `open()` calls exist inside `async def` methods: `ontology.py` (7 sync `_load_*()` methods called from `async initialize()`), `ward_room.py:336` (sync file write in thread pruning), `crew_profile.py` (2 sync file ops). The codebase already uses `run_in_executor()` correctly in `approval_callbacks.py` and `renderer.py` — the pattern exists but isn't applied consistently.
 
 - **Target:** Wrap sync file I/O in `asyncio.get_running_loop().run_in_executor(None, ...)` or switch to `aiofiles`. Ontology loading during startup is low-priority (single-threaded at that point). Ward Room thread pruning and crew profile writes are higher priority (can block event loop during normal operation).
 
-**BF-094: God Object Reduction — VesselOntologyService and WardRoomService** *(planned, OSS)* — Scorecard grade: **B** (SRP). Wave 3 decomposed the three largest god objects (runtime.py, api.py, shell.py). Five classes with 39+ methods remain: `ProbOSShell` (69), `ProbOSRuntime` (61), `VesselOntologyService` (53), `WorkItemStore` (42), `WardRoomService` (40). Shell and Runtime are hard to decompose further without architectural change. Ontology and WardRoom are tractable.
+**BF-095: God Object Reduction — VesselOntologyService and WardRoomService** *(planned, OSS)* — Scorecard grade: **B** (SRP). Wave 3 decomposed the three largest god objects (runtime.py, api.py, shell.py). Five classes with 39+ methods remain: `ProbOSShell` (69), `ProbOSRuntime` (61), `VesselOntologyService` (53), `WorkItemStore` (42), `WardRoomService` (40). Shell and Runtime are hard to decompose further without architectural change. Ontology and WardRoom are tractable.
 
 - **VesselOntologyService (53 methods, 1,045 lines):** Manages vessel structure, departments, ranks, promotions, agent classification, and YAML loading. Natural splits: `OntologyLoader` (YAML I/O), `RankService` (promotions, rank transitions), `DepartmentService` (department management, assignments).
 - **WardRoomService (40 methods, 1,596 lines):** Manages channels, threads, posts, DMs, permissions, and persistence. Natural splits: `ChannelManager` (CRUD), `ThreadManager` (thread lifecycle, pruning), `MessageStore` (persistence, archival).
@@ -4786,15 +4792,16 @@ Post-Wave 4 codebase scorecard (2026-03-31) graded the codebase at **B+** overal
 
 | Item | Finding | Severity | Scorecard Grade | Target Grade |
 |------|---------|----------|:---:|:---:|
+| BF-089 | Emergent detector trust anomaly false positives | Medium | — | Fixed |
 | AD-542 | 12 direct aiosqlite.connect(), 0 Protocol consumption | Critical | D | B+ |
-| BF-089 | 71 silent `except Exception: pass`, 187 bare catches | High | C | B+ |
-| BF-090 | 622 bare MagicMock(), 31.8% spec rate | Medium | C- | B |
-| BF-091 | Trust thresholds scattered, `_emit()` triplicated | Low | B | A- |
-| BF-092 | 3-4 raw-dict API endpoints, ACM error anti-pattern | Low | A- | A |
-| BF-093 | Sync file I/O in 3 async modules | Low | B+ | A |
-| BF-094 | VesselOntologyService (53), WardRoomService (40) | Medium | B | A- |
+| BF-090 | 71 silent `except Exception: pass`, 187 bare catches | High | C | B+ |
+| BF-091 | 622 bare MagicMock(), 31.8% spec rate | Medium | C- | B |
+| BF-092 | Trust thresholds scattered, `_emit()` triplicated | Low | B | A- |
+| BF-093 | 3-4 raw-dict API endpoints, ACM error anti-pattern | Low | A- | A |
+| BF-094 | Sync file I/O in 3 async modules | Low | B+ | A |
+| BF-095 | VesselOntologyService (53), WardRoomService (40) | Medium | B | A- |
 
-**Build sequence:** AD-542 first (unblocks commercial overlay + Protocol consumption). BF-089 and BF-091 are independent (can run in parallel). BF-090 benefits from AD-542 (Protocol types available for spec=). BF-092 and BF-093 are independent small fixes. BF-094 last (largest scope, lowest urgency).
+**Build sequence:** BF-089 first (crew-reported, quick calibration fix). AD-542 next (unblocks commercial overlay + Protocol consumption). BF-090 and BF-092 are independent (can run in parallel). BF-091 benefits from AD-542 (Protocol types available for spec=). BF-093 and BF-094 are independent small fixes. BF-095 last (largest scope, lowest urgency).
 
 
 ### Engineering Crew Architecture (AD-521)
@@ -5088,12 +5095,13 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-086 | **Security test coverage — code_validator.py and sandbox.py.** Code review finding #14. Added 72 dedicated security tests across 2 files (55 validator, 17 sandbox). Found and fixed 9 bypass vectors: `os.system`, `os.popen`, `os.exec*`, `os.kill`, `Path.write_text/write_bytes`, `.unlink()`, `__builtins__`, `compile()`. Broadened `open()` pattern to catch append/exclusive/binary write modes. | High | **Closed** |
 | BF-087 | **Reset integration tests — full state-create-reset-verify cycle.** Code review finding #15. 7 tests across 4 classes (`test_reset_integration.py`). Creates real SQLite databases across all tiers, runs each reset tier via `_cmd_reset`, verifies tier targets cleared + other tiers preserved with data intact. Fixed `assignments.db` gap (added to Tier 2). Tests: tier boundary preservation, archive-before-delete, idempotent reset, archives never cleared. | Medium | **Closed** |
 | BF-088 | **Test sleep cleanup — 3× asyncio.sleep(10) → asyncio.Event().wait().** Code review finding #18. `test_builder_agent.py:657`, `test_decomposer.py:586`, `test_targeted_dispatch.py:61`. Same timeout behavior, zero CPU waste, clean cancellation. | Low | **Closed** |
-| BF-089 | **Exception audit Phase 2 — silent swallows.** 71 `except Exception: pass` blocks across 32 files. 187 bare `except Exception:` without `as e`. Upgrade to logged degradation or justify with inline comment. Worst clusters: architect.py (9), feedback.py (5), runtime.py (5), proactive.py (4). | High | **Open** |
-| BF-090 | **Mock discipline Phase 2 — spec coverage.** 622 bare `MagicMock()` across 76 files. Raise spec rate from 31.8% to ≥70%. Prioritize runtime + agent + service mocks. | Medium | **Open** |
-| BF-091 | **Trust threshold constants + DRY cleanup.** Trust thresholds (0.85/0.7/0.5/0.3) hardcoded in 12+ files. `round(trust, 4)` repeated 15×. `_emit()` triplicated. Extract to named constants + utilities. | Low | **Open** |
-| BF-092 | **API boundary validation gaps.** 3-4 raw-dict API endpoints (ACM decommission/suspend/reinstate, cooldown). ACM returns 200+error JSON instead of HTTPException. Add Pydantic models + proper status codes. | Low | **Open** |
-| BF-093 | **Sync file I/O in async methods.** `ontology.py` (7 sync loads in async initialize), `ward_room.py:336` (sync write in pruning), `crew_profile.py` (2 sync ops). Wrap in `run_in_executor()` or use `aiofiles`. | Low | **Open** |
-| BF-094 | **God object reduction — VesselOntologyService (53 methods) and WardRoomService (40 methods).** Extract focused sub-services: OntologyLoader/RankService/DepartmentService and ChannelManager/ThreadManager/MessageStore. Target ≤20 methods each. | Medium | **Open** |
+| BF-089 | **Emergent detector trust anomaly false positives.** Crew-reported (Forge + Reyes, 2026-03-30/31). Seven rapid-fire alerts during normal duty cycle completions. Hebbian weight adjustments flagged as pathological. Sampling window too narrow, no temporal smoothing. Add adaptive baselines + temporal buffer. | Medium | **Open** |
+| BF-090 | **Exception audit Phase 2 — silent swallows.** 71 `except Exception: pass` blocks across 32 files. 187 bare `except Exception:` without `as e`. Upgrade to logged degradation or justify with inline comment. Worst clusters: architect.py (9), feedback.py (5), runtime.py (5), proactive.py (4). | High | **Open** |
+| BF-091 | **Mock discipline Phase 2 — spec coverage.** 622 bare `MagicMock()` across 76 files. Raise spec rate from 31.8% to ≥70%. Prioritize runtime + agent + service mocks. | Medium | **Open** |
+| BF-092 | **Trust threshold constants + DRY cleanup.** Trust thresholds (0.85/0.7/0.5/0.3) hardcoded in 12+ files. `round(trust, 4)` repeated 15×. `_emit()` triplicated. Extract to named constants + utilities. | Low | **Open** |
+| BF-093 | **API boundary validation gaps.** 3-4 raw-dict API endpoints (ACM decommission/suspend/reinstate, cooldown). ACM returns 200+error JSON instead of HTTPException. Add Pydantic models + proper status codes. | Low | **Open** |
+| BF-094 | **Sync file I/O in async methods.** `ontology.py` (7 sync loads in async initialize), `ward_room.py:336` (sync write in pruning), `crew_profile.py` (2 sync ops). Wrap in `run_in_executor()` or use `aiofiles`. | Low | **Open** |
+| BF-095 | **God object reduction — VesselOntologyService (53 methods) and WardRoomService (40 methods).** Extract focused sub-services: OntologyLoader/RankService/DepartmentService and ChannelManager/ThreadManager/MessageStore. Target ≤20 methods each. | Medium | **Open** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 
