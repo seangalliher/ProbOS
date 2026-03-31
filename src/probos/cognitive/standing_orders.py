@@ -115,12 +115,16 @@ _TRAIT_GUIDANCE: dict[str, dict[str, str]] = {
 
 
 @lru_cache(maxsize=32)
-def _build_personality_block(agent_type: str, department: str | None = None) -> str:
+def _build_personality_block(agent_type: str, department: str | None = None, callsign_override: str | None = None) -> str:
     """Build a personality & identity section from crew profile YAML (AD-393).
 
     Returns a formatted markdown section to insert between Tier 1 (hardcoded
     identity) and Tier 2 (Federation Constitution). Returns empty string if
     no profile exists or if the profile has no useful content.
+
+    Args:
+        callsign_override: Runtime callsign from naming ceremony (BF-083).
+            Takes precedence over the seed callsign in the YAML profile.
     """
     profile = load_seed_profile(agent_type)
     if not profile:
@@ -128,8 +132,8 @@ def _build_personality_block(agent_type: str, department: str | None = None) -> 
 
     lines: list[str] = ["## Crew Identity & Personality", ""]
 
-    # Identity line
-    callsign = profile.get("callsign", "")
+    # Identity line — BF-083: prefer runtime callsign over YAML seed default
+    callsign = callsign_override or profile.get("callsign", "")
     display_name = profile.get("display_name", agent_type.replace("_", " ").title())
     role_raw = profile.get("role", "")
     dept = department or profile.get("department", "")
@@ -190,6 +194,7 @@ def compose_instructions(
     *,
     orders_dir: Path | None = None,
     department: str | None = None,
+    callsign: str | None = None,
 ) -> str:
     """Compose an agent's complete instructions from all tiers.
 
@@ -200,6 +205,8 @@ def compose_instructions(
             to ``config/standing_orders/`` relative to the project root.
         department: Override department name. If None, looks up from
             ``_AGENT_DEPARTMENTS`` mapping.
+        callsign: Runtime callsign from naming ceremony (BF-083). If
+            provided, overrides the seed callsign from YAML profile.
 
     Returns:
         The composed instructions string with all applicable tiers.
@@ -212,9 +219,9 @@ def compose_instructions(
     if hardcoded_instructions:
         parts.append(hardcoded_instructions.strip())
 
-    # 1.5 Crew personality & identity (AD-393)
+    # 1.5 Crew personality & identity (AD-393, BF-083)
     dept = department or get_department(agent_type)
-    personality_block = _build_personality_block(agent_type, dept)
+    personality_block = _build_personality_block(agent_type, dept, callsign)
     if personality_block:
         parts.append(personality_block)
 

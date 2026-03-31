@@ -230,6 +230,7 @@ class CognitiveAgent(BaseAgent):
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
                 hardcoded_instructions="",
+                callsign=self.callsign or None,
             )
             if observation.get("intent") == "ward_room_notification":
                 composed += (
@@ -316,6 +317,7 @@ class CognitiveAgent(BaseAgent):
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
                 hardcoded_instructions=self.instructions or "",
+                callsign=self.callsign or None,
             )
 
         request = LLMRequest(
