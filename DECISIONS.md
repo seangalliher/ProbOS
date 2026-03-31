@@ -1612,14 +1612,14 @@ Decision to close all remaining findings from the 2026-03-29 comprehensive code 
 - **BF-085:** Type safety audit — **CLOSED.** ~200 `Any` annotations replaced with concrete types across 22 files. 87 ProbOSRuntime class-level attribute annotations added. Unblocks BF-079 Phase 2/3 (spec=ProbOSRuntime now works on mocks). 7 phases: runtime.py annotations, protocols.py signatures, deps.py gateway, 5 adapter constructors, 9 command modules, 5 cognitive files.
 - **BF-083:** Agent callsign identity grounding — **CLOSED.** Agents didn't know their own callsigns after naming ceremony. `_build_personality_block()` read from seed YAML, ignoring runtime callsign registry. Fixed by threading runtime callsign through `compose_instructions()`. Cortez knows it's Cortez, Echo knows it's Echo.
 - **BF-086:** Security tests for code_validator.py and sandbox.py (finding #14) — **CLOSED.** 72 tests, 9 bypass vectors patched.
-- **BF-087:** Reset integration tests — full state-create-reset-verify cycle (finding #15)
-- **BF-088:** Test sleep cleanup — replace 10-second sleeps (finding #18)
+- **BF-087:** Reset integration tests — **CLOSED.** 7 tests across 4 classes (`test_reset_integration.py`). Real SQLite state creation, per-tier reset verification, tier boundary preservation. Fixed `assignments.db` gap (added to Tier 2 RESET_TIERS). Archive-before-delete confirmed, idempotent reset verified.
+- **BF-088:** Test sleep cleanup — **CLOSED.** 3× `asyncio.sleep(10)` → `asyncio.Event().wait()` in test_builder_agent.py, test_decomposer.py, test_targeted_dispatch.py. Same timeout behavior, zero CPU waste.
 
 **Existing BFs folded into Wave 4:**
 - **BF-079:** Mock discipline audit — **CLOSED.** All 3 phases complete. Phase 1: 18 factories spec'd (14 files). Phase 2: 140 inline runtime mocks spec'd (49 files), shared `mock_runtime` conftest fixture. Phase 3: 158 agent/LLM/runtime/index mocks spec'd (29 files). Total: 419 spec= mocks, 39.1% compliance. Bugs found: wrong spec type on alert mock, missing rt.acm on factory, hidden `.confidence` attribute bug.
-- **BF-042:** Frontend component rendering tests (finding #16)
+- **BF-042:** Frontend component rendering tests (finding #16) — **CLOSED.** 27 rendering tests across 5 components (ScanLineOverlay, BriefingCard, ViewSwitcher, WelcomeOverlay, AgentTooltip). New `renderWithStore()` helper resets Zustand to initial snapshot + applies overrides. 176/176 vitest passing.
 
-**Score:** 14/18 closed (was 13/18). Remaining: BF-087, BF-088, BF-042, AD-527.
+**Score:** 18/18 closed. **Wave 4 COMPLETE.**
 
 **Status:** PLANNED.
 
@@ -1716,3 +1716,21 @@ Motivated by ["Agents of Chaos"](https://arxiv.org/abs/2602.20021) (2026) — a 
 **Rationale:** Type safety at event boundaries. Discoverable event catalog. IDE autocomplete on event payloads. Eliminates silent typo bugs. `str, Enum` ensures `EventType.X == "x"` is True — wire format unchanged, HXI frontend needs zero changes.
 
 **Status:** AD-527 CLOSED. 927 insertions, 131 deletions. 30 new tests. 4,111 total passing.
+
+---
+
+**AD-531–539: Cognitive JIT — OpenSpace Prior Art Absorption** *(design update, OSS)*
+
+**Context:** HKUDS/OpenSpace (MIT License) is a self-evolving skill engine with production-validated procedure lifecycle machinery. Their skill evolution engine implements core mechanics that ProbOS designed in AD-531–539 but has not built: version DAG storage, three evolution types, post-execution analysis, per-procedure quality metrics. OpenSpace lacks ProbOS's governance (trust, chain of command, Standing Orders), identity (sovereign agents with DIDs), collaborative intelligence (Ward Room, observational learning), and graduated compilation (five Dreyfus levels). Honest assessment: they built the engine, we designed the ship.
+
+**Decision:** Absorb six implementation patterns from OpenSpace into AD-531–534 designs while preserving ProbOS's architectural superiority:
+1. **Post-execution analysis + fuzzy ID correction** → AD-531 (Episode Clustering). Tool-use-enabled LLM analysis of execution recordings. Levenshtein distance correction for hallucinated IDs.
+2. **Three evolution types (FIX/DERIVED/CAPTURED) + three triggers + apply-retry + confirmation gates** → AD-532 (Procedure Extraction). Extends ProbOS's single dream-consolidation trigger to three independent lines of defense. Apply-retry (3 attempts with LLM correction) replaces single-shot extraction.
+3. **Version DAG schema (SQLite + parent links + content snapshots + quality counters + anti-loop guards)** → AD-533 (Procedure Store). Hybrid: Ship's Records (Git-backed YAML) for governance/auditability + SQLite index for fast DAG traversal and quality metrics.
+4. **Per-procedure quality metrics + metric-based health diagnosis** → AD-534 (Replay-First Dispatch). Four rates (applied/completion/effective/fallback) feed dispatch decisions alongside compilation level and trust tier.
+5. **Self-mod apply-retry** — standalone improvement to SelfModificationPipeline. Independent of AD-531+.
+6. **CodebaseIndex hybrid ranking** — BM25 + embedding fusion. Independent of AD-531+.
+
+**Rationale:** "Take their implementation patterns as the engineering foundation, wrap them in ProbOS's architectural framework." OpenSpace validates the core Cognitive JIT thesis (extract → version → evolve → replay at reduced tokens). Their 46% token reduction on real-world tasks confirms commercial value. ProbOS's unique layers (sovereignty, trust governance, dream consolidation, observational learning, chain of command) transform the same mechanics into a civilization-governed system.
+
+**Status:** DESIGN UPDATE. No code change — roadmap.md AD-531–534 sections updated with absorption notes. Full technical analysis in commercial research repo.

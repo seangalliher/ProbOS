@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Wave 4 in progress. AD-527 CLOSED — typed event system (55 EventType enum, 24 dataclasses, 0 orphaned string literals). BF-079 CLOSED — all 3 phases (419 spec= mocks). AD-464 decomposed into AD-531–539 (Cognitive JIT). AD-540 + AD-541 drafted (Cognitive Clarity Stack). BF-085, BF-083, BF-086 CLOSED. Wave 3 COMPLETE. Open: BF-087, BF-088, BF-042. Wave 4 score: 15/18. 4,111 tests passing.
+## Current Status: Wave 4 COMPLETE (18/18). BF-042 CLOSED — frontend rendering tests (27 tests, 5 components, renderWithStore helper). AD-527 CLOSED — typed event system. BF-079 CLOSED — mock discipline (419 spec= mocks). BF-087 CLOSED — reset integration tests. BF-088 CLOSED — test sleep cleanup. AD-464 decomposed into AD-531–539 (Cognitive JIT, designs updated with OpenSpace prior art). AD-540 + AD-541 drafted (Cognitive Clarity Stack). BF-085, BF-083, BF-086 CLOSED. Wave 3 COMPLETE. 4,144 tests passing (4,035 pytest + 27 vitest component + 149 vitest store = 176 vitest).
 
 ---
 

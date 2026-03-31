@@ -541,6 +541,7 @@ RESET_TIERS = {
             "hebbian_weights.db", "trust.db", "service_profiles.db",
             # Identity
             "identity.db", "acm.db", "skills.db", "directives.db",
+            "assignments.db",
         ],
         "dirs": ["semantic"],
         "special": ["chromadb_uuid_dirs", "knowledge_subdirs", "ontology_instance_id"],

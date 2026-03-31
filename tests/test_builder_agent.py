@@ -654,7 +654,7 @@ class TestExecuteSingleChunk:
 
         class _SlowLLM:
             async def complete(self, request):
-                await asyncio.sleep(10)
+                await asyncio.Event().wait()  # blocks until timeout cancels
                 return LLMResponse(content="")
 
         spec = BuildSpec(title="T", description="D")

@@ -58,7 +58,7 @@ class TestTargetedDispatch:
     async def test_send_timeout(self, intent_bus):
         """Agent handler that sleeps too long returns timeout result."""
         async def slow_handler(msg):
-            await asyncio.sleep(10)  # way too slow
+            await asyncio.Event().wait()  # blocks until timeout cancels
             return IntentResult(
                 intent_id=msg.id,
                 agent_id="slow-agent",

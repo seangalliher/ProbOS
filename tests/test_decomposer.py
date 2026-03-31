@@ -583,7 +583,7 @@ class TestReflectHardeningExtended:
 
         class SlowLLM(MockLLMClient):
             async def complete(self, request):
-                await asyncio.sleep(10)
+                await asyncio.Event().wait()  # blocks until timeout cancels
                 return await super().complete(request)
 
         decomposer = IntentDecomposer(
