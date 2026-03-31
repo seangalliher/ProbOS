@@ -8,6 +8,7 @@ import pytest
 
 from probos.cognitive.architect import ArchitectAgent, ArchitectProposal
 from probos.cognitive.builder import BuildSpec
+from probos.cognitive.codebase_index import CodebaseIndex
 from probos.types import IntentDescriptor, IntentMessage
 
 
@@ -443,7 +444,7 @@ class TestActNoProposalBlock:
 
 def _make_mock_index(**overrides):
     """Helper to build a MagicMock codebase_index with sensible defaults."""
-    mock = MagicMock()
+    mock = MagicMock(spec=CodebaseIndex)
     mock.query.return_value = overrides.get("query", {"matching_files": [], "matching_methods": []})
     mock.get_agent_map.return_value = overrides.get("agent_map", [])
     mock.get_layer_map.return_value = overrides.get("layer_map", {})
@@ -727,7 +728,7 @@ class TestPerceiveGracefulDegradation:
 
 def _make_mock_index_with_source(**overrides):
     """Helper to build a MagicMock codebase_index with deep-localize methods."""
-    mock = MagicMock()
+    mock = MagicMock(spec=CodebaseIndex)
     mock.query.return_value = overrides.get("query", {"matching_files": [], "matching_methods": []})
     mock.get_agent_map.return_value = overrides.get("agent_map", [])
     mock.get_layer_map.return_value = overrides.get("layer_map", {})

@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Wave 4 in progress. BF-086 CLOSED — 72 security tests, 9 bypass vectors patched (os.system, os.popen, os.exec*, os.kill, Path.write_text/write_bytes, .unlink, __builtins__, compile, open append/binary modes). Wave 3 COMPLETE (all three god objects decomposed). Open: BF-079, BF-085, BF-087, BF-088, BF-042, AD-527. 4,195 tests passing.
+## Current Status: Wave 4 in progress. BF-079 Phase 1 CLOSED — 18 mock factories spec'd across 14 test files, found hidden bug (missing .confidence on agent mocks). Phase 2/3 blocked: ProbOSRuntime defines all attributes as instance-only, spec=ProbOSRuntime blocks access to every service attribute. Fix: add class-level annotations (folded into BF-085). BF-086 CLOSED. Wave 3 COMPLETE. Open: BF-085, BF-087, BF-088, BF-042, AD-527. 4,184 tests passing.
 
 ---
 

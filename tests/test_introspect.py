@@ -14,6 +14,7 @@ from probos.cognitive.llm_client import MockLLMClient
 from probos.cognitive.working_memory import WorkingMemoryManager
 from probos.experience.shell import ProbOSShell
 from probos.runtime import ProbOSRuntime
+from probos.substrate.agent import BaseAgent
 from probos.types import Episode, IntentMessage, TaskDAG, TaskNode
 
 
@@ -65,7 +66,7 @@ def _mock_runtime(
 
 def _make_agent(agent_type="file_reader", agent_id="abc123"):
     """Create a simple mock agent."""
-    agent = MagicMock()
+    agent = MagicMock(spec=BaseAgent)
     agent.id = agent_id
     agent.agent_type = agent_type
     agent.pool = "filesystem"

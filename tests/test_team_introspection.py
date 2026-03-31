@@ -8,6 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from probos.agents.introspect import IntrospectionAgent
+from probos.substrate.agent import BaseAgent
+from probos.substrate.pool import ResourcePool
 from probos.substrate.pool_group import PoolGroup, PoolGroupRegistry
 from probos.types import IntentMessage
 
@@ -19,7 +21,7 @@ from probos.types import IntentMessage
 
 def _make_agent(agent_type: str, agent_id: str, pool: str):
     """Create a mock agent with .info() and .id."""
-    agent = MagicMock()
+    agent = MagicMock(spec=BaseAgent)
     agent.id = agent_id
     agent.agent_type = agent_type
     agent.pool = pool
@@ -38,7 +40,7 @@ def _make_agent(agent_type: str, agent_id: str, pool: str):
 
 def _make_pool(agent_ids, agent_type: str = "unknown"):
     """Create a mock pool holding the given agent IDs (matching real ResourcePool)."""
-    pool = MagicMock()
+    pool = MagicMock(spec=ResourcePool)
     pool.healthy_agents = agent_ids
     pool.target_size = len(agent_ids)
     pool.info.return_value = {

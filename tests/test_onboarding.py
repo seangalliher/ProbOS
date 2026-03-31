@@ -12,6 +12,8 @@ from probos.acm import AgentCapitalService, LifecycleState
 from probos.agent_onboarding import AgentOnboardingService
 from probos.config import OnboardingConfig, SystemConfig
 from probos.crew_profile import CallsignRegistry
+from probos.runtime import ProbOSRuntime
+from probos.substrate.agent import BaseAgent
 from probos.types import LLMResponse
 
 
@@ -19,7 +21,7 @@ from probos.types import LLMResponse
 
 
 def _make_agent(agent_type: str = "diagnostician", callsign: str = "Bones", agent_id: str = "diag-1"):
-    agent = MagicMock()
+    agent = MagicMock(spec=BaseAgent)
     agent.agent_type = agent_type
     agent.callsign = callsign
     agent.id = agent_id

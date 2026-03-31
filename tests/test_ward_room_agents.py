@@ -5,7 +5,8 @@ import pytest
 import pytest_asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from probos.ward_room import WardRoomService, _MENTION_PATTERN
+from probos.substrate.agent import BaseAgent
+from probos.ward_room import WardRoomChannel, WardRoomService, _MENTION_PATTERN
 from probos.types import IntentMessage, IntentResult
 
 
@@ -624,7 +625,7 @@ def _make_mock_runtime(ward_room=None):
 
 def _make_agent(agent_id: str, agent_type: str):
     """Create a mock agent."""
-    agent = MagicMock()
+    agent = MagicMock(spec=BaseAgent)
     agent.id = agent_id
     agent.agent_type = agent_type
     agent.is_alive = True
@@ -634,7 +635,7 @@ def _make_agent(agent_id: str, agent_type: str):
 
 def _make_channel(channel_id: str, channel_type: str, department: str = ""):
     """Create a mock channel."""
-    ch = MagicMock()
+    ch = MagicMock(spec=WardRoomChannel)
     ch.id = channel_id
     ch.channel_type = channel_type
     ch.department = department

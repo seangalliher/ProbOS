@@ -10,6 +10,7 @@ from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.crew_profile import Rank
 from probos.earned_agency import can_think_proactively, agency_from_rank, AgencyLevel
 from probos.proactive import ProactiveCognitiveLoop
+from probos.substrate.agent import BaseAgent
 from probos.types import IntentMessage, IntentResult
 
 
@@ -68,7 +69,7 @@ class TestProactiveCognitiveLoopLifecycle:
 
 def _make_mock_agent(agent_type="architect", agent_id="a1", alive=True):
     """Create a mock crew agent."""
-    agent = MagicMock()
+    agent = MagicMock(spec=BaseAgent)
     agent.agent_type = agent_type
     agent.id = agent_id
     agent.is_alive = alive
@@ -76,6 +77,7 @@ def _make_mock_agent(agent_type="architect", agent_id="a1", alive=True):
     agent.callsign = agent_type.title()
     agent.sovereign_id = ""  # AD-441: prevent MagicMock auto-truthy
     agent.did = ""
+    agent.confidence = 0.8  # BF-079: was missing — spec= caught it
     return agent
 
 

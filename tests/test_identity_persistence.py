@@ -11,6 +11,7 @@ import pytest
 
 from probos.config import SystemConfig
 from probos.crew_profile import CallsignRegistry
+from probos.substrate.agent import BaseAgent
 from probos.types import LLMResponse
 
 
@@ -18,7 +19,7 @@ from probos.types import LLMResponse
 
 def _make_agent(agent_type: str = "engineering_officer", callsign: str = "LaForge",
                 agent_id: str = "eng_engineering_officer_0_abc12345"):
-    agent = MagicMock()
+    agent = MagicMock(spec=BaseAgent)
     agent.agent_type = agent_type
     agent.callsign = callsign
     agent.id = agent_id

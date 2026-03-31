@@ -8,6 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from probos.cognitive.feedback import FeedbackEngine, FeedbackResult
+from probos.cognitive.episodic import EpisodicMemory
+from probos.consensus.trust import TrustNetwork
+from probos.mesh.routing import HebbianRouter
+from probos.substrate.event_log import EventLog
 from probos.types import IntentResult, TaskDAG, TaskNode
 
 
@@ -18,14 +22,14 @@ from probos.types import IntentResult, TaskDAG, TaskNode
 
 def _make_trust() -> MagicMock:
     """Create a mock TrustNetwork."""
-    trust = MagicMock()
+    trust = MagicMock(spec=TrustNetwork)
     trust.record_outcome = MagicMock(return_value=0.5)
     return trust
 
 
 def _make_hebbian(reward: float = 0.05) -> MagicMock:
     """Create a mock HebbianRouter."""
-    router = MagicMock()
+    router = MagicMock(spec=HebbianRouter)
     router.reward = reward
     router.record_interaction = MagicMock(return_value=0.1)
     return router
@@ -33,14 +37,14 @@ def _make_hebbian(reward: float = 0.05) -> MagicMock:
 
 def _make_episodic() -> AsyncMock:
     """Create a mock EpisodicMemory."""
-    mem = AsyncMock()
+    mem = AsyncMock(spec=EpisodicMemory)
     mem.store = AsyncMock()
     return mem
 
 
 def _make_event_log() -> AsyncMock:
     """Create a mock EventLog."""
-    log = AsyncMock()
+    log = AsyncMock(spec=EventLog)
     log.log = AsyncMock()
     return log
 

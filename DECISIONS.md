@@ -1615,7 +1615,7 @@ Decision to close all remaining findings from the 2026-03-29 comprehensive code 
 - **BF-088:** Test sleep cleanup — replace 10-second sleeps (finding #18)
 
 **Existing BFs folded into Wave 4:**
-- **BF-079:** Mock discipline audit — `spec=` on all mock factories (finding #17)
+- **BF-079:** Mock discipline audit — Phase 1 COMPLETE. 18 factories spec'd across 14 files. Found hidden bug (missing `.confidence` on agent mocks). Phase 2/3 blocked on ProbOSRuntime class-level annotations → folded into BF-085.
 - **BF-042:** Frontend component rendering tests (finding #16)
 
 **Score at Wave 4 creation:** 11/18 closed, 2 partial (now tracked), 5 open (now tracked). Target: 18/18.

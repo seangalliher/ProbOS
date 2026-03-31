@@ -7,7 +7,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from probos.consensus.trust import TrustNetwork
+from probos.mesh.routing import HebbianRouter
 from probos.sif import SIFCheckResult, SIFReport, StructuralIntegrityField
+from probos.substrate.pool import ResourcePool
+from probos.substrate.spawner import AgentSpawner
 
 
 # ---------------------------------------------------------------------------
@@ -16,20 +20,21 @@ from probos.sif import SIFCheckResult, SIFReport, StructuralIntegrityField
 
 
 def _make_trust_network(scores: dict[str, float]) -> MagicMock:
-    tn = MagicMock()
+    tn = MagicMock(spec=TrustNetwork)
     tn.all_scores.return_value = scores
     return tn
 
 
 def _make_hebbian_router(weights: dict) -> MagicMock:
-    hr = MagicMock()
+    hr = MagicMock(spec=HebbianRouter)
     hr._weights = weights
     return hr
 
 
 def _make_spawner(templates: list[str], registered_ids: set[str] | None = None) -> MagicMock:
-    sp = MagicMock()
+    sp = MagicMock(spec=AgentSpawner)
     sp.available_templates = templates
+    sp.registry = MagicMock()  # BF-079: instance attr — must set explicitly
     if registered_ids is not None:
         agent_mocks = [MagicMock(id=aid) for aid in registered_ids]
         sp.registry.all.return_value = agent_mocks
@@ -39,7 +44,7 @@ def _make_spawner(templates: list[str], registered_ids: set[str] | None = None) 
 
 
 def _make_pool(agent_type: str) -> MagicMock:
-    pool = MagicMock()
+    pool = MagicMock(spec=ResourcePool)
     pool.agent_type = agent_type
     return pool
 
