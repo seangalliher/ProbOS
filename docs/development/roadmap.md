@@ -1182,23 +1182,249 @@ ChromaDB is the right default for OSS (embedded, zero config, works offline), bu
 - Persist CognitiveAgent decision caches to KnowledgeStore for warm boot — returning users get instant responses for previously-seen patterns
 - Feedback-driven cache eviction: `/feedback bad` invalidates cached decisions for involved agents, preventing stale bad judgments from persisting
 
-**Procedural Learning / Cognitive JIT** *(AD-464)*
+**Procedural Learning / Cognitive JIT** *(AD-464 umbrella)*
 
 *"I've done this before. I know how."*
 
-Agents learn deterministic procedures from successful LLM-guided actions. First time: the LLM reasons through the task. Second time: replay the procedure without an LLM call (zero tokens, sub-millisecond). If the replay fails: fall back to the LLM, learn the new variant. Over time, agents build a library of compiled procedures — the cognitive equivalent of JIT compilation.
+Agents learn deterministic procedures from successful LLM-guided actions. First time: the LLM reasons through the task. Subsequent times: replay at graduated levels of autonomy — from LLM-with-hints to fully deterministic at zero tokens. Over time, agents build a library of compiled procedures — the cognitive equivalent of JIT compilation.
 
 Validated in production: ERP system configuration agents. Once an agent figured out how to configure a chart of accounts, it didn't need the LLM again. Deterministic replay handled identical configurations at zero cost.
 
-- **Procedure extraction** — after a successful LLM-guided action sequence, extract the steps as a deterministic procedure. Cognitive Journal (Phase 32) provides the execution trace. Dream consolidation identifies repeatable patterns
-- **Procedure store** — compiled procedures stored in KnowledgeStore (shared library). Tagged with: task pattern, preconditions, success criteria, confidence from N successful replays, origin agent, extraction date
-- **Replay-first dispatch** — `CognitiveAgent.decide()` checks procedural memory *before* invoking the LLM: "Do I already have a procedure for this?" Match by semantic similarity to task description + precondition check
-- **Fallback on failure** — if deterministic replay hits an unexpected state, fall back to LLM. The failed replay + LLM resolution becomes a new learning. Old procedure updated or forked for the new variant
-- **Decision escalation** — when an agent encounters a state where neither a procedure nor the LLM produces sufficient confidence, escalate to the Captain as a structured decision request. Captain's decision is captured as a learning and incorporated into future procedures
-- **Trust-based escalation threshold** — the confidence threshold for triggering a human decision adjusts with trust. New agents (Ensign) escalate frequently. Experienced agents (Senior) only escalate genuine novelty. Maps directly to Earned Agency tiers
-- **Procedure provenance** — every compiled procedure traces back to the original LLM-guided episode, the agent who learned it, how many successful replays it's had, and any human decisions that shaped it. Published to the shared library so all agents benefit
+**Landscape survey** (17 projects): Voyager (code-as-skills, compositional JS), DSPy (prompt optimization), Reflexion (verbal RL), ExpeL (experience-driven rules), Mengram (NL workflow versioning with failure evolution), Letta (self-editing memory blocks), Cradle (pre-authored skills per environment). NONE does LLM-to-deterministic compilation. NONE has trust-gated learning. NONE has multi-agent collaborative procedure building. ProbOS's unique advantage is the civilization layer — identity, trust, memory, chain of command — that enables collaborative learning no single-agent system can replicate. Full research: `docs/research/cognitive-jit-procedural-learning-research.md`.
 
-Dependencies: Cognitive Journal (Phase 32, provides execution traces), Earned Agency (AD-357, trust thresholds), KnowledgeStore (already built, provides the shared library).
+**What the crew CANNOT do today:**
+- Re-use past successful reasoning. Every identical task costs the same tokens as the first time.
+- Learn from each other's successes/failures. Hebbian routing strengthens agent selection but not task execution.
+- Build institutional knowledge that survives agent resets (procedures are crew knowledge, not individual memory).
+- Identify systematic capability gaps and train to close them.
+- Operate at graduated autonomy levels — it's full LLM or nothing.
+
+**What the crew CAN do after AD-464 is complete:**
+- Zero-token replay of previously solved problems (Level 4-5 procedures).
+- Graduated compilation: LLM-guided first attempt → LLM+hints → deterministic+validation → fully autonomous → can teach others.
+- Learn from watching other agents succeed/fail in Ward Room discussions (observational learning).
+- Multi-agent compound procedures (e.g., security-reviewed deployment: LaForge builds → Worf reviews → Architect validates → Builder deploys).
+- Negative procedures: codified anti-patterns that prevent repeating known mistakes.
+- Systematic gap identification → Qualification Program scenarios for Holodeck training.
+- Procedure lifecycle: decay unused, re-validate on codebase changes, dedup/merge similar, archive superseded.
+- Department chiefs handle routine procedure promotions; Captain handles critical (security, data integrity).
+- Institutional memory: procedures survive individual agent resets — they're Ship's knowledge, not personal.
+
+**Intellectual lineage:** Dreyfus (skill acquisition stages), Anderson (ACT-R: declarative→procedural compilation), Bandura (social/observational learning), Vygotsky (zone of proximal development — graduated scaffolding). The Dreyfus Level 3→4 transition (Competent to Enable) maps directly to Cognitive JIT — an agent that has internalized enough procedures through practice that it operates from pattern recognition rather than step-by-step reasoning.
+
+---
+
+#### AD-464 Decomposition — Build Sequence
+
+**Prerequisites (all COMPLETE):**
+- AD-430 (Action Memory) — agents record every action as an episode ✅
+- AD-431 (Cognitive Journal) — append-only trace of every LLM call ✅
+- AD-433 (Selective Encoding Gate) — filters noise episodes ✅
+- AD-434 (Ship's Records) — Git-backed institutional knowledge store ✅
+- Dream consolidation (existing) — replays episodes, adjusts Hebbian weights ✅
+
+**Dependency graph:**
+```
+AD-531 (Episode Clustering)
+  ↓
+AD-532 (Procedure Extraction)   ←  AD-431 (Cognitive Journal traces)
+  ↓                                 AD-430 (Action episodes)
+AD-533 (Procedure Store)        ←  AD-434 (Ship's Records backend)
+  ↓
+AD-534 (Replay Dispatch)        ←  AD-533 (stored procedures to match)
+  ↓
+AD-535 (Graduated Compilation)  ←  AD-534 (replay mechanism)
+  ↓                                 AD-357 (Earned Agency tiers)
+AD-536 (Trust-Gated Promotion)  ←  AD-535 (compilation levels to gate)
+  ↓                                 AD-339 (Standing Orders tiers)
+AD-537 (Observational Learning) ←  Ward Room (existing)
+  ↓                                 AD-532 (extraction from observed episodes)
+AD-538 (Procedure Lifecycle)    ←  AD-533 (store to manage)
+  ↓
+AD-539 (Gap → Qualification)    ←  AD-531 (clusters reveal gaps)
+                                    AD-538 (failed/decayed procedures)
+                                    Holodeck (future — generates training scenarios)
+```
+
+---
+
+**AD-531: Episode Clustering & Pattern Detection** — Roadmap.
+
+*Before:* Episodes are stored individually with no cross-episode analysis. Dream consolidation replays linearly, adjusting Hebbian weights but not identifying structural patterns.
+
+*After:* Episodes automatically cluster by semantic similarity. Repeated patterns surface as cluster centroids. Failure clusters reveal systematic weaknesses. The crew gains a "we've seen this N times" capability.
+
+- **Cluster engine** — run during dream cycle (extends `DreamingEngine.dream_cycle()`). Group episodes by embedding similarity (ChromaDB already stores embeddings via ONNX MiniLM). Threshold-based clustering (agglomerative, cosine distance < 0.15).
+- **Cluster metadata** — each cluster tracks: centroid embedding, episode count, success rate, participating agents, intent types, first/last occurrence, variance (how similar the episodes are).
+- **Success/failure split** — clusters are tagged as success-dominant (>80% positive outcomes) or failure-dominant (>50% negative). Success clusters feed procedure extraction. Failure clusters feed gap identification.
+- **Trigger threshold** — a cluster must have ≥3 episodes before it's considered actionable. Prevents overfitting to one-off events.
+- **Fix: dead strategy extraction** — `DreamingEngine.extract_strategies()` currently writes JSON to KnowledgeStore but nothing reads it. AD-531 replaces this dead code path with cluster-based pattern detection that feeds directly into AD-532. The existing `REL_STRATEGY` Hebbian relationship type gets connected to cluster centroids.
+
+Dependencies: EpisodicMemory (existing, provides episodes + embeddings), DreamingEngine (existing, provides dream cycle hook), AD-430 (sufficient episode volume).
+
+---
+
+**AD-532: Procedure Extraction** — Roadmap.
+
+*Before:* Dream consolidation identifies that agent X succeeded at task Y multiple times, but only records this as a Hebbian weight increase. The "how" is lost.
+
+*After:* When a success cluster reaches threshold, the system extracts a deterministic procedure — the specific steps the agent took, in order, with preconditions and postconditions. The "how" is preserved and replayable.
+
+- **Extraction trigger** — when AD-531 produces a success cluster with ≥3 episodes and >80% success rate, invoke extraction.
+- **Extraction method** — LLM-assisted: feed the Cognitive Journal traces (AD-431) for the clustered episodes to an LLM with the prompt "Extract the common deterministic procedure from these execution traces." Output: ordered step list with preconditions, postconditions, and invariants per step.
+- **Procedure schema** — `Procedure(id, name, steps: list[ProcedureStep], preconditions, postconditions, origin_cluster_id, origin_agent_id, extraction_date, compilation_level=1, success_count=0, failure_count=0, last_executed, provenance: list[episode_id])`. `ProcedureStep(action, expected_state, fallback_action, invariants)`.
+- **Negative procedure extraction** — from failure clusters and dream contradiction detection (existing): extract anti-patterns as `NegativeProcedure` — "when you see X, do NOT do Y because Z happened." Stored alongside positive procedures with a `is_negative=True` flag.
+- **Procedural context** — each procedure stores: preconditions (what must be true before execution), invariants (what must remain true during), failure modes (known ways this can break), provenance (original episodes, agent, human decisions that shaped it).
+- **Multi-agent extraction** — when a success cluster spans multiple agent IDs (e.g., a Ward Room discussion → decision → execution that involved Security + Engineering + Builder), extract as a compound procedure with agent role assignments per step.
+
+Dependencies: AD-531 (clusters to extract from), AD-431 (Cognitive Journal traces for step-level detail), AD-430 (episode provenance).
+
+---
+
+**AD-533: Procedure Store** — Roadmap.
+
+*Before:* No persistent storage for learned procedures. Every session starts from zero knowledge of how to accomplish tasks.
+
+*After:* Compiled procedures are stored in Ship's Records (AD-434), tagged, version-tracked, and queryable by semantic similarity. Procedures persist across resets — they're institutional knowledge.
+
+- **Storage backend** — Ship's Records (AD-434, Git-backed). Each procedure is a YAML document in `records/procedures/` with the `Procedure` schema from AD-532. Classification: `ship` level (available to all agents). Git versioning provides procedure history and diff.
+- **Semantic index** — procedure names + preconditions are embedded and stored in a dedicated ChromaDB collection (`procedures`). Enables semantic matching during dispatch (AD-534).
+- **Tagging** — procedures tagged with: intent types they handle, agent types that can execute them, domain (engineering, security, medical, etc.), compilation level, trust tier required.
+- **Version tracking** — when a procedure is updated (new variant, failure-driven fork), the old version is archived with a `superseded_by` pointer. Git history preserves the evolution.
+- **Negative procedure index** — negative procedures stored in `records/procedures/anti-patterns/` with the same semantic indexing for fast "don't do this" lookups during dispatch.
+
+Dependencies: AD-434 (Ship's Records backend), AD-532 (produces procedures to store).
+
+---
+
+**AD-534: Replay-First Dispatch** — Roadmap.
+
+*Before:* `CognitiveAgent.decide()` always invokes the LLM. Every task costs tokens regardless of whether the agent has solved it before.
+
+*After:* `decide()` checks procedural memory BEFORE the LLM call. If a matching procedure exists with sufficient confidence, replay deterministically at zero tokens. If no match or low confidence, fall back to LLM.
+
+- **Dispatch order** — `CognitiveAgent.decide()` gains a new first step: `_check_procedural_memory(intent)`. Semantic match against procedure index (AD-533). If match score > threshold AND procedure compilation level ≥ 3 (validated) AND agent trust tier meets procedure's minimum: attempt deterministic replay. Otherwise: LLM path.
+- **Replay execution** — iterate procedure steps, execute deterministically, validate postconditions after each step. If any step's postcondition fails: abort replay, fall back to LLM, record the failure for procedure evolution.
+- **Negative procedure check** — before executing, also check negative procedure index. If the current context matches a known anti-pattern: skip the bad approach, log a warning, use the LLM instead or select an alternative procedure.
+- **Metrics** — Cognitive Journal (AD-431) records procedure replays with `cached=True, procedure_id=...`. Token savings are measurable: `sum(estimated_tokens) for cached=True procedure replays`.
+- **Fallback learning** — when a replay fails and the LLM succeeds, the LLM's approach is compared to the failed procedure. If the procedure was wrong (postcondition permanently changed), update or fork. If the procedure was right but preconditions weren't met, annotate preconditions.
+
+Dependencies: AD-533 (procedure store to query), AD-431 (Cognitive Journal for recording replays).
+
+---
+
+**AD-535: Graduated Compilation Levels** — Roadmap.
+
+*Before:* Binary choice: full LLM or full deterministic. No middle ground. An agent either knows how to do something or doesn't.
+
+*After:* Five compilation levels with graduated scaffolding. Agents progress from novice (full LLM) through guided (LLM+hints) to autonomous (zero tokens) to expert (can teach others). The compilation level determines how much LLM support a procedure replay uses.
+
+Five levels (inspired by Dreyfus, mapped to Earned Agency):
+
+| Level | Label | LLM Usage | Behavior | Min. Trust Tier |
+|---|---|---|---|---|
+| 1 | **Novice** | Full LLM, no procedure | First encounter. LLM reasons from scratch. | Ensign |
+| 2 | **Guided** | LLM + procedure hints | Procedure steps injected into LLM prompt as guidance. LLM validates and fills gaps. ~40% token reduction. | Ensign |
+| 3 | **Validated** | Deterministic + LLM validation | Procedure executes deterministically. LLM called only to validate the final result. ~80% token reduction. Sweet spot. | Lieutenant |
+| 4 | **Autonomous** | Pure deterministic | Zero LLM tokens. Procedure executes start-to-finish without LLM. Full confidence. | Lieutenant+ |
+| 5 | **Expert** | Can teach others | Agent can extract and explain the procedure to other agents via Ward Room. Procedure published to shared library with agent's endorsement. | Commander+ |
+
+- **Level transitions** — upward: N consecutive successful uses at current level (configurable, default 3). Downward: any failure drops to Level 2 (Guided) for re-validation, not Level 1 (preserves the procedure, just adds LLM oversight).
+- **Level function** — `compilation_level = f(procedure.success_count, procedure.failure_count, agent.trust_tier, task.criticality)`. High-criticality tasks (security changes, data mutations) require higher success counts to advance and cap at Level 3 (Validated) unless Captain explicitly approves Level 4.
+- **Criticality classification** — task criticality inherited from Standing Orders (AD-339). Federation-tier standing orders can set minimum compilation levels for entire task categories.
+
+Dependencies: AD-534 (replay mechanism to graduate), AD-357 (Earned Agency trust tiers), AD-339 (Standing Orders for criticality classification).
+
+---
+
+**AD-536: Trust-Gated Procedure Promotion** — Roadmap.
+
+*Before:* No governance over which procedures enter the shared library. No approval workflow. No distinction between routine and critical procedures.
+
+*After:* Two-tier approval. Department chiefs approve routine procedure promotions within their domain (Engineering, Security, Medical, etc.). Captain approves critical procedures (security changes, data integrity, cross-department). Procedures not approved stay as agent-private knowledge.
+
+- **Promotion request** — when a procedure reaches Level 4 (Autonomous) or Level 5 (Expert), the agent generates a promotion request: procedure summary, provenance (episodes, success count), domain classification, criticality assessment.
+- **Approval routing** — routine (criticality ≤ medium + single department): routed to department chief. Critical (criticality > medium OR cross-department OR security/data integrity): routed to Captain via Bridge.
+- **Standing Orders integration** — approved procedures can be promoted to Standing Orders (AD-339) at the appropriate tier. Agent-tier standing orders are evolvable via this path: dream consolidation identifies pattern → procedure crystallizes → Captain approves → becomes a standing order.
+- **Rejection learning** — if a promotion is rejected with feedback, the feedback is stored as a negative procedure annotation. "Captain said don't do this because..." becomes institutional knowledge.
+- **Bulk promotion** — department chiefs can batch-approve during scheduled review periods (connects to Duty Schedule, existing).
+
+Dependencies: AD-535 (compilation levels to gate), AD-339 (Standing Orders integration), Chain of Command (existing).
+
+---
+
+**AD-537: Observational Learning (Ward Room Cross-Agent Learning)** — Roadmap.
+
+*Before:* Agents only learn from their own direct experience. If Security solves a problem that Engineering later encounters, Engineering starts from scratch.
+
+*After:* Agents learn from observing other agents' successes and failures in Ward Room discussions. When Agent A describes how they solved problem X, Agent B can extract a procedure from the discussion — even though B never performed the task. Bandura's social learning theory, implemented.
+
+- **Ward Room observation** — during dream consolidation, analyze Ward Room messages (AD-430 already stores Ward Room episodes) for success/failure narratives by other agents.
+- **Vicarious procedure extraction** — when a Ward Room discussion describes a successful approach with enough detail (determined by LLM analysis), extract a procedure attributed to the originating agent with a `learned_via=observational` provenance tag.
+- **Cross-department transfer** — an Engineering procedure observed by Security is tagged as cross-department. Starts at Level 1 (Novice) even if the originating agent had it at Level 5 — the observing agent hasn't validated it yet.
+- **Teaching protocol** — Level 5 (Expert) agents can explicitly teach procedures to specific agents via Ward Room DMs. The teaching interaction is stored as a high-weight episode with `learned_via=taught` provenance. Taught procedures start at Level 2 (Guided) — a head start over observation.
+
+Dependencies: Ward Room (existing), AD-532 (extraction mechanism), AD-430 (Ward Room episodes).
+
+---
+
+**AD-538: Procedure Lifecycle Management** — Roadmap.
+
+*Before:* Once created, procedures exist forever with no maintenance. Stale procedures for changed codebases silently fail at replay time.
+
+*After:* Procedures have a full lifecycle: creation → active use → decay → re-validation → archival/retirement. The procedure store stays fresh and relevant.
+
+- **Decay** — procedures not used within a configurable window (default: 30 days) lose one compilation level per decay period. A Level 4 unused for 30 days drops to Level 3. Decay never drops below Level 1. Mirrors Skill Decay (AD-428).
+- **Re-validation triggers** — when the codebase changes files that a procedure touches (detectable via CodebaseIndex file watchers), mark affected procedures as `needs_revalidation`. Next use drops to Level 2 (Guided) for LLM-supervised execution.
+- **Deduplication** — during dream cycle, compare procedure embeddings. Procedures with cosine similarity > 0.9 are flagged for merge. The variant with higher success count becomes primary; the other becomes an alias.
+- **Archival** — procedures that decay to Level 1 and remain unused for 90 days are archived. Archived procedures remain in Git history (Ship's Records) but are removed from the active semantic index. They can be restored if a similar pattern re-emerges.
+- **Version diff** — when a procedure is forked (failure-driven variant), Ship's Records Git backend provides structural diff showing what changed and why.
+
+Dependencies: AD-533 (procedure store), AD-534 (replay mechanism for re-validation), CodebaseIndex (existing, file change detection).
+
+---
+
+**AD-539: Knowledge Gap → Qualification Pipeline** — Roadmap.
+
+*Before:* Capability gaps are invisible. If an agent repeatedly fails at a task type, no one notices until the Captain observes it manually. No systematic training.
+
+*After:* Episode clustering and procedure failure analysis automatically identify systematic capability gaps. Gap reports feed Holodeck scenario generation for targeted training. The crew self-identifies what it doesn't know and trains to close gaps.
+
+- **Gap detection** — AD-531 failure clusters + AD-538 decayed/failed procedures → gap report. A gap is: "Agent type X fails at task type Y with >30% failure rate across ≥5 attempts."
+- **Gap classification** — LLM-assisted: classify each gap as (a) knowledge gap (agent doesn't know how — training helps), (b) capability gap (agent can't do this at all — escalation path needed), (c) data gap (agent lacks information — information routing problem).
+- **Qualification integration** — knowledge gaps feed directly into Qualification Programs (AD-428 Skill Framework). A gap in "code review for security vulnerabilities" generates a qualification requirement for the Security PCC.
+- **Holodeck scenario generation** — gap reports provide the specification for Holodeck training scenarios. "Agent Worf fails at static analysis interpretation 40% of the time" → generate 10 static analysis exercises with known answers.
+- **Counselor integration** — gap reports visible to CounselorAgent (AD-503) for wellness/capability assessment. Persistent gaps may indicate a fundamental agent configuration issue, not just a training need.
+- **Progress tracking** — gap closure measured by: procedure compilation level improvement, success rate increase, reduced escalation frequency. Tracked in Ship's Records.
+
+Dependencies: AD-531 (episode clustering for gap identification), AD-538 (procedure failures), AD-428 (Skill Framework for qualification integration), Holodeck (future — gap→scenario pipeline deferred until Holodeck exists, gap detection works independently).
+
+---
+
+#### AD-464 Build Sequence Summary
+
+| Order | AD | Name | Depends On | Key Outcome |
+|---|---|---|---|---|
+| 1 | AD-531 | Episode Clustering | AD-430 ✅, DreamingEngine ✅ | Repeating patterns surface automatically; fixes dead `extract_strategies()` code |
+| 2 | AD-532 | Procedure Extraction | AD-531, AD-431 ✅ | "How" is preserved as replayable steps, not just Hebbian weights |
+| 3 | AD-533 | Procedure Store | AD-532, AD-434 ✅ | Procedures persist and are queryable; institutional memory |
+| 4 | AD-534 | Replay-First Dispatch | AD-533, AD-431 ✅ | Zero-token replay of known procedures; `decide()` checks memory first |
+| 5 | AD-535 | Graduated Compilation | AD-534, AD-357, AD-339 | Five levels of autonomy, not binary; progressive trust |
+| 6 | AD-536 | Trust-Gated Promotion | AD-535, AD-339 | Governance over institutional knowledge; department chief + Captain approval |
+| 7 | AD-537 | Observational Learning | Ward Room ✅, AD-532 | Cross-agent learning; crew learns from each other, not just self |
+| 8 | AD-538 | Procedure Lifecycle | AD-533, AD-534 | Procedures stay fresh; decay, re-validate, dedup, archive |
+| 9 | AD-539 | Gap → Qualification | AD-531, AD-538, AD-428 | Systematic gap identification → targeted training |
+
+**Minimum viable slice:** AD-531 → AD-532 → AD-533 → AD-534. This delivers the core value: episodes cluster → procedures extract → procedures store → replay at zero tokens. Graduated compilation (AD-535) and governance (AD-536) can follow. Observational learning (AD-537), lifecycle (AD-538), and gap analysis (AD-539) are enrichments that multiply value but aren't blocking.
+
+**Connection to existing roadmap items:**
+- AD-428 (Skill Framework) — procedures provide evidence for proficiency progression; Level 3→4 Dreyfus transition is literally "agent has enough compiled procedures to operate from pattern recognition"
+- AD-357 (Earned Agency) — trust tiers gate compilation levels; Ensigns escalate more, Seniors operate autonomously
+- AD-339 (Standing Orders) — approved procedures can become standing orders; criticality classification comes from standing order tiers
+- AD-462 (Memory Architecture) — episode clustering is the first concrete implementation of the "Active Forgetting" and "Variable Recall" concepts from the biological memory model
+- AD-434 (Ship's Records) — procedure store backend; Git versioning provides procedure history
+- AD-503 (Counselor Activation) — gap reports visible to Counselor for crew wellness assessment
+- Commercial AD-C-021 (Pro Code Reviewer) — Semgrep rule compilation is a concrete instance of Cognitive JIT for the code review domain
 
 ---
 
@@ -2232,7 +2458,7 @@ AD-430 is the **prerequisite infrastructure** for Procedural Learning. The pipel
 
 1. **AD-430 (this):** Agents record every action as an episode → EpisodicMemory fills with operational history
 2. **Dream consolidation (existing):** Replays episodes, extracts patterns, strengthens Hebbian weights → identifies repeatable action patterns
-3. **Cognitive JIT (Phase 32, unnumbered):** When dream consolidation identifies a pattern that has succeeded N times with the same preconditions, it crystallizes into a deterministic procedure in KnowledgeStore → `decide()` checks procedural memory BEFORE invoking LLM → zero-token replay of known patterns
+3. **Cognitive JIT (AD-464, decomposed into AD-531–539):** When episode clustering (AD-531) identifies a pattern that has succeeded N times with the same preconditions, procedure extraction (AD-532) crystallizes it into a deterministic procedure stored in Ship's Records (AD-533) → `decide()` checks procedural memory BEFORE invoking LLM (AD-534) → graduated compilation from LLM+hints to zero-token autonomous replay (AD-535)
 4. **AD-428 (Skill Framework):** Crystallized procedures map to proficiency progression → agent demonstrably improves at specific skills → Level 3→4 transition (Competent → Enable)
 
 Without AD-430, dream consolidation has almost nothing to process (only DAG episodes). Cognitive JIT has no action history to crystallize. Skill progression has no evidence of practice. The entire developmental pipeline is bottlenecked on the memory gap.
@@ -2248,9 +2474,9 @@ With AD-430, episode generation increases significantly: 11 crew agents × ~12 p
 
 **AD-430 COMPLETE — all 5 pillars delivered.** Memory gap closed.
 
-*Connects to: Procedural Learning / Cognitive JIT (Phase 32 — requires action history to crystallize), AD-428 (Skill Framework — requires evidence of practice for proficiency), AD-416 (Ward Room Archival — memory growth management), AD-425 (Ward Room Browsing — related context gathering), Dream consolidation (existing — episode replay and pattern extraction), Nooplex Knowledge Model (private diary vs. shared library). The Episode dataclass is infrastructure; what agents DO with their memories defines their growth.*
+*Connects to: Procedural Learning / Cognitive JIT (AD-464, decomposed into AD-531–539 — requires action history to crystallize), AD-428 (Skill Framework — requires evidence of practice for proficiency), AD-416 (Ward Room Archival — memory growth management), AD-425 (Ward Room Browsing — related context gathering), Dream consolidation (existing — episode replay and pattern extraction), Nooplex Knowledge Model (private diary vs. shared library). The Episode dataclass is infrastructure; what agents DO with their memories defines their growth.*
 
-**AD-431: Cognitive Journal — Agent Reasoning Trace Service** — **COMPLETE**. Append-only SQLite store (`cognitive_journal.db`) recording every LLM call: `timestamp, agent_id, agent_type, tier, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, intent, success, cached, request_id, prompt_hash, response_length`. Ship's Computer infrastructure service (no identity). Single instrumentation point in `decide()` — wraps `llm_client.complete()` with `time.monotonic()` timing, fire-and-forget journal record. Cache hits also recorded (cached=True). `LLMResponse` gained `prompt_tokens` + `completion_tokens` fields; OpenAI and Ollama paths extract separate counts. Query API: `get_reasoning_chain(agent_id, limit)`, `get_token_usage(agent_id)`, `get_stats()`. REST endpoints: `GET /api/journal/stats`, `GET /api/agent/{id}/journal`, `GET /api/journal/tokens`. Does NOT store full prompt/response text (metadata only). Does NOT depend on Ship's Telemetry. Wiped on `probos reset`. 13 new tests. 3266 pytest + 118 vitest = 3384 total. *Connects to: Procedural Learning (Phase 32 — journal traces for pattern crystallization), Dream consolidation (future — journal-assisted hindsight replay), Qualification Programs (future — reasoning quality assessment), AD-430 (episodic memory — what happened vs. how they thought).*
+**AD-431: Cognitive Journal — Agent Reasoning Trace Service** — **COMPLETE**. Append-only SQLite store (`cognitive_journal.db`) recording every LLM call: `timestamp, agent_id, agent_type, tier, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, intent, success, cached, request_id, prompt_hash, response_length`. Ship's Computer infrastructure service (no identity). Single instrumentation point in `decide()` — wraps `llm_client.complete()` with `time.monotonic()` timing, fire-and-forget journal record. Cache hits also recorded (cached=True). `LLMResponse` gained `prompt_tokens` + `completion_tokens` fields; OpenAI and Ollama paths extract separate counts. Query API: `get_reasoning_chain(agent_id, limit)`, `get_token_usage(agent_id)`, `get_stats()`. REST endpoints: `GET /api/journal/stats`, `GET /api/agent/{id}/journal`, `GET /api/journal/tokens`. Does NOT store full prompt/response text (metadata only). Does NOT depend on Ship's Telemetry. Wiped on `probos reset`. 13 new tests. 3266 pytest + 118 vitest = 3384 total. *Connects to: Procedural Learning (AD-464/AD-532 — journal traces for procedure extraction), Dream consolidation (future — journal-assisted hindsight replay), Qualification Programs (future — reasoning quality assessment), AD-430 (episodic memory — what happened vs. how they thought).*
 
 **AD-432: Cognitive Journal Expansion — Traceability + Query Depth** — Roadmap. Closes the gaps between AD-431 MVP and the full Cognitive Journal spec. 8 steps: (1) Schema expansion — `intent_id`, `dag_node_id`, `response_hash` columns with idempotent migration. (2) Intent traceability — plumb `IntentMessage.id` through `perceive()` into journal records; currently discarded. (3) Time-range filtering — `get_reasoning_chain()` gains `since`/`until` params. (4) Grouped token usage — `get_token_usage_by(group_by)` breaks down by model, tier, agent, or intent (SQL injection safe via whitelist). (5) Decision points — `get_decision_points()` finds high-latency or failed LLM calls for anomaly detection. (6) Response hash — MD5 fingerprint for dedup detection. (7) API endpoints — `GET /api/journal/tokens/by`, `GET /api/journal/decisions`, time-range on existing agent journal endpoint. (8) `wipe()` method for `probos reset`. 15 tests. *Deferred: dag_node_id population (requires submit_intent plumbing), DreamingEngine integration, cost/pricing, full text storage, replay/summarize, retention policies.*
 
@@ -2303,8 +2529,8 @@ KnowledgeStore was intended to be the "shared library" but evolved into an opera
 | Nooplex Vision | Intended Implementation | Actual State |
 |---|---|---|
 | "Private memory = diary" | EpisodicMemory | **Working** (AD-430) ✅ |
-| "Shared knowledge = library" | KnowledgeStore | **Gap** — KnowledgeStore is operational state, not a library |
-| "Dream consolidation promotes patterns" | Dream → KnowledgeStore | **Gap** — dreams modify in-memory weights; strategies bypass API |
+| "Shared knowledge = library" | KnowledgeStore | **Gap** — KnowledgeStore is operational state, not a library. AD-533 (Procedure Store) uses Ship's Records (AD-434) instead, sidestepping this. |
+| "Dream consolidation promotes patterns" | Dream → KnowledgeStore | **Gap** — dreams modify in-memory weights; strategies bypass API. AD-531 (Episode Clustering) replaces the dead `extract_strategies()` path with cluster-based pattern detection feeding procedure extraction (AD-532). |
 | "All agents committed to writing" | Agent → KnowledgeStore | **Gap** — no agent write path exists |
 | "Same knowledge, different perspectives" | Shared access, sovereign interpretation | **Gap** — nothing curated to share |
 
