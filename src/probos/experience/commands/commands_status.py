@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.table import Table
 
+if TYPE_CHECKING:
+    from probos.runtime import ProbOSRuntime
+
 logger = logging.getLogger(__name__)
 
 
-async def cmd_status(runtime: Any, console: Console, args: str) -> None:
+async def cmd_status(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /status command."""
     from probos.experience import panels
 
@@ -24,7 +27,7 @@ async def cmd_status(runtime: Any, console: Console, args: str) -> None:
     console.print(panels.render_status_panel(status))
 
 
-async def cmd_agents(runtime: Any, console: Console, args: str) -> None:
+async def cmd_agents(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /agents command."""
     from probos.experience import panels
 
@@ -38,7 +41,7 @@ async def cmd_agents(runtime: Any, console: Console, args: str) -> None:
     ))
 
 
-async def cmd_ping(runtime: Any, console: Console, args: str) -> None:
+async def cmd_ping(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /ping command — show system uptime and basic health metrics (AD-337)."""
     from probos.types import AgentState
 
@@ -79,7 +82,7 @@ async def cmd_ping(runtime: Any, console: Console, args: str) -> None:
             console.print("[yellow]LLM Client: Disconnected[/yellow]")
 
 
-async def cmd_scaling(runtime: Any, console: Console, args: str) -> None:
+async def cmd_scaling(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /scaling command."""
     from probos.experience import panels
 
@@ -90,7 +93,7 @@ async def cmd_scaling(runtime: Any, console: Console, args: str) -> None:
     console.print(panels.render_scaling_panel(scaler.scaling_status()))
 
 
-async def cmd_federation(runtime: Any, console: Console, args: str) -> None:
+async def cmd_federation(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /federation command."""
     from probos.experience import panels
 
@@ -101,7 +104,7 @@ async def cmd_federation(runtime: Any, console: Console, args: str) -> None:
     console.print(panels.render_federation_panel(bridge.federation_status()))
 
 
-async def cmd_peers(runtime: Any, console: Console, args: str) -> None:
+async def cmd_peers(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /peers command."""
     from probos.experience import panels
 
@@ -113,7 +116,7 @@ async def cmd_peers(runtime: Any, console: Console, args: str) -> None:
     console.print(panels.render_peers_panel(status.get("peer_models", {})))
 
 
-async def cmd_credentials(runtime: Any, console: Console, args: str) -> None:
+async def cmd_credentials(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /credentials command."""
     store = getattr(runtime, "credential_store", None)
     if not store:
@@ -124,7 +127,7 @@ async def cmd_credentials(runtime: Any, console: Console, args: str) -> None:
         console.print(f"  {cred['name']}: {status} — {cred['description']}")
 
 
-async def cmd_debug(runtime: Any, console: Console, args: str, *, shell: Any) -> None:
+async def cmd_debug(runtime: ProbOSRuntime, console: Console, args: str, *, shell: Any) -> None:
     """Handle /debug command. Needs shell reference for debug toggle."""
     if args.lower() == "on":
         shell.debug = True
@@ -167,7 +170,7 @@ def format_uptime(seconds: float) -> str:
         return f"{minutes} minutes, {remaining_seconds} seconds"
 
 
-def _compute_health(runtime: Any) -> float:
+def _compute_health(runtime: ProbOSRuntime) -> float:
     """Average confidence of all ACTIVE agents."""
     from probos.types import AgentState
 

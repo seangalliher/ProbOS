@@ -3,14 +3,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from probos.runtime import ProbOSRuntime
 
 logger = logging.getLogger(__name__)
 
 
-async def cmd_weights(runtime: Any, console: Console, args: str) -> None:
+async def cmd_weights(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /weights command."""
     from probos.experience import panels
 
@@ -18,7 +21,7 @@ async def cmd_weights(runtime: Any, console: Console, args: str) -> None:
     console.print(panels.render_weight_table(weights))
 
 
-async def cmd_gossip(runtime: Any, console: Console, args: str) -> None:
+async def cmd_gossip(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /gossip command."""
     from probos.experience import panels
 
@@ -26,7 +29,7 @@ async def cmd_gossip(runtime: Any, console: Console, args: str) -> None:
     console.print(panels.render_gossip_panel(view))
 
 
-async def cmd_designed(runtime: Any, console: Console, args: str) -> None:
+async def cmd_designed(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /designed command."""
     from probos.experience import panels
 
@@ -40,7 +43,7 @@ async def cmd_designed(runtime: Any, console: Console, args: str) -> None:
         console.print("[yellow]Self-modification not enabled[/yellow]")
 
 
-async def cmd_qa(runtime: Any, console: Console, args: str) -> None:
+async def cmd_qa(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /qa command."""
     from probos.experience.qa_panel import render_qa_panel, render_qa_detail
 
@@ -59,7 +62,7 @@ async def cmd_qa(runtime: Any, console: Console, args: str) -> None:
         console.print(render_qa_panel(qa_reports, runtime.trust_network))
 
 
-async def cmd_prune(runtime: Any, console: Console, args: str) -> None:
+async def cmd_prune(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /prune command."""
     if not args:
         console.print("[yellow]Usage: /prune <agent_id>[/yellow]")
@@ -89,7 +92,7 @@ async def cmd_prune(runtime: Any, console: Console, args: str) -> None:
         console.print(f"[red]Failed to prune agent {agent_id}.[/red]")
 
 
-async def cmd_log(runtime: Any, console: Console, args: str) -> None:
+async def cmd_log(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /log command."""
     from probos.experience import panels
 
@@ -98,7 +101,7 @@ async def cmd_log(runtime: Any, console: Console, args: str) -> None:
     console.print(panels.render_event_log_table(events))
 
 
-async def cmd_attention(runtime: Any, console: Console, args: str) -> None:
+async def cmd_attention(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /attention command."""
     from probos.experience import panels
 
@@ -109,7 +112,7 @@ async def cmd_attention(runtime: Any, console: Console, args: str) -> None:
     ))
 
 
-async def cmd_cache(runtime: Any, console: Console, args: str) -> None:
+async def cmd_cache(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /cache command."""
     from probos.experience import panels
 

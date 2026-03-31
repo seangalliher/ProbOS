@@ -19,7 +19,9 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from probos.cognitive.builder import BuildSpec
     from probos.cognitive.codebase_index import CodebaseIndex
+    from probos.runtime import ProbOSRuntime
 
 _SDK_AVAILABLE = False
 try:
@@ -154,7 +156,7 @@ class CopilotBuilderAdapter:
         self,
         *,
         codebase_index: CodebaseIndex | None = None,
-        runtime: Any | None = None,
+        runtime: ProbOSRuntime | None = None,
         model: str = "claude-opus-4.6",
         cwd: str = "",
         github_token: str = "",
@@ -402,7 +404,7 @@ class CopilotBuilderAdapter:
 
     # ── Prompt construction ────────────────────────────────────────────
 
-    def _build_prompt(self, spec: Any, file_contents: dict[str, str]) -> str:
+    def _build_prompt(self, spec: BuildSpec, file_contents: dict[str, str]) -> str:
         """Translate a BuildSpec into a prompt for the Copilot session."""
         parts: list[str] = []
 
@@ -452,7 +454,7 @@ class CopilotBuilderAdapter:
 
     async def execute(
         self,
-        spec: Any,
+        spec: BuildSpec,
         file_contents: dict[str, str],
         *,
         timeout: float = 300.0,

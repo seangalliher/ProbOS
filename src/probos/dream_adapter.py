@@ -9,9 +9,26 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from probos.types import Episode
+
+if TYPE_CHECKING:
+    from probos.bridge_alerts import BridgeAlertService
+    from probos.cognitive.behavioral_monitor import BehavioralMonitor
+    from probos.cognitive.dreaming import DreamScheduler
+    from probos.cognitive.emergent_detector import EmergentDetector
+    from probos.cognitive.episodic import EpisodicMemory
+    from probos.cognitive.self_mod import SelfModificationPipeline
+    from probos.config import SystemConfig
+    from probos.consensus.trust import TrustNetwork
+    from probos.knowledge.store import KnowledgeStore
+    from probos.mesh.routing import HebbianRouter
+    from probos.substrate.event_log import EventLog
+    from probos.substrate.pool import ResourcePool
+    from probos.substrate.registry import AgentRegistry
+    from probos.ward_room import WardRoomService
 
 logger = logging.getLogger(__name__)
 
@@ -22,22 +39,22 @@ class DreamAdapter:
     def __init__(
         self,
         *,
-        dream_scheduler: Any | None,
-        emergent_detector: Any | None,
-        episodic_memory: Any | None,
-        knowledge_store: Any | None,
-        hebbian_router: Any,
-        trust_network: Any,
-        event_emitter: Any,
-        self_mod_pipeline: Any | None,
-        bridge_alerts: Any | None,
-        ward_room: Any | None,
-        registry: Any,
-        event_log: Any | None,
-        config: Any,
-        pools: dict[str, Any],
-        behavioral_monitor: Any | None = None,
-        deliver_bridge_alert_fn: Any | None = None,
+        dream_scheduler: DreamScheduler | None,
+        emergent_detector: EmergentDetector | None,
+        episodic_memory: EpisodicMemory | None,
+        knowledge_store: KnowledgeStore | None,
+        hebbian_router: HebbianRouter,
+        trust_network: TrustNetwork,
+        event_emitter: Callable,
+        self_mod_pipeline: SelfModificationPipeline | None,
+        bridge_alerts: BridgeAlertService | None,
+        ward_room: WardRoomService | None,
+        registry: AgentRegistry,
+        event_log: EventLog | None,
+        config: SystemConfig,
+        pools: dict[str, ResourcePool],
+        behavioral_monitor: BehavioralMonitor | None = None,
+        deliver_bridge_alert_fn: Callable | None = None,
     ) -> None:
         self._dream_scheduler = dream_scheduler
         self._emergent_detector = emergent_detector

@@ -10,7 +10,7 @@ import uuid as _uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from probos.agents.directory_list import DirectoryListAgent
 from probos.agents.file_reader import FileReaderAgent
@@ -107,6 +107,33 @@ from probos.self_mod_manager import SelfModManager
 from probos.ward_room_router import WardRoomRouter
 from probos.warm_boot import WarmBootService
 
+if TYPE_CHECKING:
+    from probos.acm import AgentCapitalService
+    from probos.assignment import AssignmentService
+    from probos.bridge_alerts import BridgeAlertService
+    from probos.cognitive.agent_patcher import AgentPatcher
+    from probos.cognitive.behavioral_monitor import BehavioralMonitor
+    from probos.cognitive.codebase_index import CodebaseIndex
+    from probos.cognitive.correction_detector import CorrectionDetector
+    from probos.cognitive.episodic import EpisodicMemory
+    from probos.cognitive.feedback import FeedbackEngine
+    from probos.cognitive.journal import CognitiveJournal
+    from probos.cognitive.self_mod import SelfModificationPipeline
+    from probos.cognitive.strategy_advisor import StrategyAdvisor
+    from probos.conn import ConnManager
+    from probos.federation.bridge import FederationBridge
+    from probos.federation.transport import FederationTransport
+    from probos.identity import AgentIdentityRegistry
+    from probos.knowledge.records_store import RecordsStore
+    from probos.knowledge.store import KnowledgeStore
+    from probos.ontology import VesselOntologyService
+    from probos.persistent_tasks import PersistentTaskStore
+    from probos.proactive import ProactiveCognitiveLoop
+    from probos.skill_framework import AgentSkillService, SkillRegistry
+    from probos.ward_room import WardRoomService
+    from probos.watch_rotation import NightOrdersManager, WatchManager
+    from probos.workforce import WorkItemStore
+
 logger = logging.getLogger(__name__)
 
 # Default paths (relative to project root)
@@ -118,12 +145,124 @@ _DEFAULT_DATA_DIR = _PROJECT_ROOT / "data"
 class ProbOSRuntime:
     """Top-level orchestrator. Wires substrate + mesh + consensus components, manages lifecycle."""
 
+    # --- Class-level type annotations (BF-085) ---
+    # Declared here for type safety and MagicMock(spec=ProbOSRuntime) support.
+    # All values are assigned in __init__(); these define the type contract only.
+
+    # Constructor params
+    config: SystemConfig
+
+    # Substrate layer
+    registry: AgentRegistry
+    spawner: AgentSpawner
+    pools: dict[str, ResourcePool]
+    pool_groups: PoolGroupRegistry
+
+    # Mesh layer
+    signal_manager: SignalManager
+    intent_bus: IntentBus
+    capability_registry: CapabilityRegistry
+    hebbian_router: HebbianRouter
+    gossip: GossipProtocol
+
+    # Event / Credential / Callsign
+    event_log: EventLog
+    credential_store: CredentialStore
+    callsign_registry: CallsignRegistry
+
+    # Consensus
+    quorum_engine: QuorumEngine
+    trust_network: TrustNetwork
+
+    # Cognitive
+    llm_client: BaseLLMClient
+    working_memory: WorkingMemoryManager
+    workflow_cache: WorkflowCache
+    decomposer: IntentDecomposer
+    attention: AttentionManager
+    escalation_manager: EscalationManager
+    dag_executor: DAGExecutor
+
+    # Deferred-init services (assigned in start())
+    episodic_memory: EpisodicMemory | None
+    ward_room: WardRoomService | None
+    ward_room_router: WardRoomRouter | None
+    assignment_service: AssignmentService | None
+    bridge_alerts: BridgeAlertService | None
+    dream_scheduler: DreamScheduler | None
+    task_scheduler: TaskScheduler | None
+    persistent_task_store: PersistentTaskStore | None
+    work_item_store: WorkItemStore | None
+    cognitive_journal: CognitiveJournal | None
+    skill_registry: SkillRegistry | None
+    skill_service: AgentSkillService | None
+    acm: AgentCapitalService | None
+    ontology: VesselOntologyService | None
+    identity_registry: AgentIdentityRegistry | None
+    pool_scaler: PoolScaler | None
+    federation_bridge: FederationBridge | None
+    self_mod_pipeline: SelfModificationPipeline | None
+    behavioral_monitor: BehavioralMonitor | None
+    onboarding: AgentOnboardingService | None
+    warm_boot: WarmBootService | None
+    self_mod_manager: SelfModManager | None
+    dream_adapter: DreamAdapter | None
+    feedback_engine: FeedbackEngine | None
+    proactive_loop: ProactiveCognitiveLoop | None
+    sif: StructuralIntegrityField | None
+    initiative: InitiativeEngine | None
+    build_queue: BuildQueue | None
+    build_dispatcher: BuildDispatcher | None
+    task_tracker: TaskTracker | None
+    service_profiles: ServiceProfileStore | None
+    directive_store: DirectiveStore | None
+    notification_queue: NotificationQueue
+    conn_manager: ConnManager | None
+    watch_manager: WatchManager | None
+    codebase_index: CodebaseIndex | None
+
+    # Private attributes
+    _data_dir: Path
+    _checkpoint_dir: Path
+    _red_team_agents: list[RedTeamAgent]
+    _cold_start: bool
+    _start_time: float
+    _recent_errors: list[str]
+    _last_capability_gap: str
+    _federation_transport: FederationTransport | None
+    _system_qa: SystemQAAgent | None
+    _qa_reports: dict[str, Any]
+    _knowledge_store: KnowledgeStore | None
+    _records_store: RecordsStore | None
+    _last_execution: dict[str, Any] | None
+    _previous_execution: dict[str, Any] | None
+    _pending_proposal: TaskDAG | None
+    _pending_proposal_text: str
+    _last_feedback_applied: bool
+    _last_execution_text: str | None
+    _last_shapley_values: dict[str, float] | None
+    _correction_detector: CorrectionDetector | None
+    _agent_patcher: AgentPatcher | None
+    _emergent_detector: EmergentDetector | None
+    _strategy_advisor: StrategyAdvisor | None
+    _semantic_layer: SemanticKnowledgeLayer | None
+    _event_listeners: list[Callable]
+    _started: bool
+    _fresh_boot: bool
+    _start_time_wall: float
+    _session_id: str
+    _lifecycle_state: str
+    _stasis_duration: float
+    _previous_session: dict | None
+    _night_orders_mgr: NightOrdersManager | None
+    _last_request_time: float
+
     def __init__(
         self,
         config: SystemConfig | None = None,
         data_dir: str | Path | None = None,
         llm_client: BaseLLMClient | None = None,
-        episodic_memory: Any | None = None,
+        episodic_memory: EpisodicMemory | None = None,
     ) -> None:
         self.config = config or load_config(_DEFAULT_CONFIG)
         self._data_dir = Path(data_dir) if data_dir else _DEFAULT_DATA_DIR
@@ -218,16 +357,16 @@ class ProbOSRuntime:
         self.episodic_memory = episodic_memory  # None = disabled
 
         # --- Ward Room (AD-407) ---
-        self.ward_room: Any | None = None  # Initialized in start()
+        self.ward_room: WardRoomService | None = None  # Initialized in start()
 
         # AD-515: Ward Room routing state is now managed by WardRoomRouter
         self.ward_room_router: WardRoomRouter | None = None
 
         # --- Assignment Service (AD-408) ---
-        self.assignment_service: Any | None = None  # Initialized in start()
+        self.assignment_service: AssignmentService | None = None  # Initialized in start()
 
         # --- Bridge Alerts (AD-410) ---
-        self.bridge_alerts: Any | None = None
+        self.bridge_alerts: BridgeAlertService | None = None
 
         # --- Dreaming ---
         self.dream_scheduler: DreamScheduler | None = None
@@ -237,26 +376,26 @@ class ProbOSRuntime:
         self.task_scheduler: TaskScheduler | None = None
 
         # --- Persistent Task Store (Phase 25a) ---
-        self.persistent_task_store: Any = None  # PersistentTaskStore | None
+        self.persistent_task_store: PersistentTaskStore | None = None
 
         # --- Workforce Scheduling Engine (AD-496) ---
-        self.work_item_store: Any = None  # WorkItemStore | None
+        self.work_item_store: WorkItemStore | None = None
 
         # --- Cognitive Journal (AD-431) ---
-        self.cognitive_journal: Any = None
+        self.cognitive_journal: CognitiveJournal | None = None
 
         # --- Skill Framework (AD-428) ---
-        self.skill_registry: Any = None
-        self.skill_service: Any = None
+        self.skill_registry: SkillRegistry | None = None
+        self.skill_service: AgentSkillService | None = None
 
         # --- Agent Capital Management (AD-427) ---
-        self.acm: Any = None
+        self.acm: AgentCapitalService | None = None
 
         # --- Vessel Ontology (AD-429a) ---
-        self.ontology: Any = None
+        self.ontology: VesselOntologyService | None = None
 
         # --- Sovereign Agent Identity (AD-441) ---
-        self.identity_registry: Any = None
+        self.identity_registry: AgentIdentityRegistry | None = None
 
         # BF-034: Cold-start flag — True when booting with empty state (post-reset)
         self._cold_start: bool = False
@@ -265,15 +404,15 @@ class ProbOSRuntime:
         self.pool_scaler: PoolScaler | None = None
 
         # --- Federation ---
-        self.federation_bridge: Any = None  # FederationBridge | None
-        self._federation_transport: Any = None
+        self.federation_bridge: FederationBridge | None = None
+        self._federation_transport: FederationTransport | None = None
         self._start_time: float = time.monotonic()
         self._recent_errors: list[str] = []    # last 5 error summaries (AD-318)
         self._last_capability_gap: str = ""    # last unhandled intent (AD-318)
 
         # --- Self-modification ---
-        self.self_mod_pipeline: Any = None  # SelfModificationPipeline | None
-        self.behavioral_monitor: Any = None  # BehavioralMonitor | None
+        self.self_mod_pipeline: SelfModificationPipeline | None = None
+        self.behavioral_monitor: BehavioralMonitor | None = None
 
         # AD-515: Extracted service instances (created in start())
         self.onboarding: AgentOnboardingService | None = None
@@ -282,14 +421,14 @@ class ProbOSRuntime:
         self.dream_adapter: DreamAdapter | None = None
 
         # --- SystemQA (AD-153) ---
-        self._system_qa: Any = None  # SystemQAAgent | None
+        self._system_qa: SystemQAAgent | None = None
         self._qa_reports: dict[str, Any] = {}  # AD-157: in-memory report store
 
         # --- Knowledge store (AD-159) ---
-        self._knowledge_store: Any = None  # KnowledgeStore | None
+        self._knowledge_store: KnowledgeStore | None = None
 
         # --- Records store (AD-434) ---
-        self._records_store: Any = None  # RecordsStore | None
+        self._records_store: RecordsStore | None = None
 
         # --- Execution history (for introspection) ---
         self._last_execution: dict[str, Any] | None = None
@@ -302,12 +441,12 @@ class ProbOSRuntime:
         # --- Feedback-to-learning (AD-219) ---
         self._last_feedback_applied: bool = False
         self._last_execution_text: str | None = None
-        self.feedback_engine: Any = None
+        self.feedback_engine: FeedbackEngine | None = None
         # --- Shapley attribution (AD-224) ---
         self._last_shapley_values: dict[str, float] | None = None
         # --- Correction feedback (AD-229-232) ---
-        self._correction_detector: Any = None
-        self._agent_patcher: Any = None
+        self._correction_detector: CorrectionDetector | None = None
+        self._agent_patcher: AgentPatcher | None = None
 
         # --- Emergent detection (AD-236) ---
         self._emergent_detector: EmergentDetector | None = None
@@ -319,10 +458,10 @@ class ProbOSRuntime:
         self.initiative: InitiativeEngine | None = None
 
         # --- Proactive Cognitive Loop (Phase 28b) ---
-        self.proactive_loop: Any = None
+        self.proactive_loop: ProactiveCognitiveLoop | None = None
 
         # --- Strategy Advisor (AD-384) ---
-        self._strategy_advisor: Any = None
+        self._strategy_advisor: StrategyAdvisor | None = None
 
         # --- Automated Builder Dispatch (AD-375) ---
         self.build_queue: BuildQueue | None = None
@@ -405,7 +544,7 @@ class ProbOSRuntime:
         self.spawner.register_template("engineering_officer", EngineeringAgent)
 
         # --- CodebaseIndex (AD-290) ---
-        self.codebase_index: Any = None
+        self.codebase_index: CodebaseIndex | None = None
 
     def register_agent_type(self, type_name: str, agent_class: type) -> None:
         """Register an agent class and refresh the decomposer's intent descriptors."""

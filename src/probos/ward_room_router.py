@@ -10,9 +10,22 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from probos.crew_utils import is_crew_agent
+
+if TYPE_CHECKING:
+    from probos.cognitive.episodic import EpisodicMemory
+    from probos.config import SystemConfig
+    from probos.consensus.trust import TrustNetwork
+    from probos.crew_profile import CallsignRegistry
+    from probos.mesh.intent import IntentBus
+    from probos.ontology import VesselOntologyService
+    from probos.proactive import ProactiveCognitiveLoop
+    from probos.substrate.event_log import EventLog
+    from probos.substrate.registry import AgentRegistry
+    from probos.ward_room import WardRoomService
 
 logger = logging.getLogger(__name__)
 
@@ -25,18 +38,18 @@ class WardRoomRouter:
     def __init__(
         self,
         *,
-        ward_room: Any,
-        registry: Any,
-        intent_bus: Any,
-        trust_network: Any,
-        ontology: Any | None,
-        callsign_registry: Any,
-        episodic_memory: Any | None,
-        event_emitter: Any,
-        event_log: Any,
-        config: Any,
-        notify_fn: Any = None,
-        proactive_loop: Any = None,
+        ward_room: WardRoomService,
+        registry: AgentRegistry,
+        intent_bus: IntentBus,
+        trust_network: TrustNetwork,
+        ontology: VesselOntologyService | None,
+        callsign_registry: CallsignRegistry,
+        episodic_memory: EpisodicMemory | None,
+        event_emitter: Callable,
+        event_log: EventLog,
+        config: SystemConfig,
+        notify_fn: Callable | None = None,
+        proactive_loop: ProactiveCognitiveLoop | None = None,
     ) -> None:
         self._ward_room = ward_room
         self._registry = registry

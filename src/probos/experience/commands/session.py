@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from probos.runtime import ProbOSRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +26,7 @@ class SessionManager:
     def active(self) -> bool:
         return bool(self.callsign)
 
-    async def handle_at(self, line: str, runtime: Any, console: Console) -> None:
+    async def handle_at(self, line: str, runtime: ProbOSRuntime, console: Console) -> None:
         """Parse @callsign and enter 1:1 session mode."""
         from probos.crew_profile import extract_callsign_mention
         mention = extract_callsign_mention(line)
@@ -33,7 +36,7 @@ class SessionManager:
         await self.handle_at_parsed(mention[0], mention[1], runtime, console)
 
     async def handle_at_parsed(
-        self, callsign: str, message: str, runtime: Any, console: Console
+        self, callsign: str, message: str, runtime: ProbOSRuntime, console: Console
     ) -> None:
         """Resolve callsign and enter 1:1 session mode (BF-009)."""
         if not callsign:
@@ -91,7 +94,7 @@ class SessionManager:
             )
 
     async def handle_message(
-        self, text: str, runtime: Any, console: Console
+        self, text: str, runtime: ProbOSRuntime, console: Console
     ) -> None:
         """Dispatch a message to the current 1:1 session agent."""
         if not self.agent_id or not self.callsign:

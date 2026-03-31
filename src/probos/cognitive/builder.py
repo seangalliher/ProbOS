@@ -18,9 +18,16 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from probos.cognitive.codebase_index import CodebaseIndex
+    from probos.cognitive.llm_client import BaseLLMClient
+    from probos.runtime import ProbOSRuntime
 
 
 # ---------------------------------------------------------------------------
@@ -524,10 +531,10 @@ def _build_chunk_context(
 
 async def decompose_blueprint(
     blueprint: BuildBlueprint,
-    llm_client: Any,
-    codebase_index: Any | None = None,
+    llm_client: BaseLLMClient,
+    codebase_index: CodebaseIndex | None = None,
     work_dir: str | None = None,
-    on_event: Any | None = None,
+    on_event: Callable | None = None,
 ) -> BuildBlueprint:
     """Decompose a BuildBlueprint into parallel ChunkSpecs (Dematerializer).
 
@@ -834,7 +841,7 @@ def _build_chunk_prompt(chunk: ChunkSpec, blueprint: BuildBlueprint) -> str:
 async def _execute_single_chunk(
     chunk: ChunkSpec,
     blueprint: BuildBlueprint,
-    llm_client: Any,
+    llm_client: BaseLLMClient,
     timeout: float,
     max_retries: int,
 ) -> ChunkResult:
@@ -911,10 +918,10 @@ async def _execute_single_chunk(
 
 async def execute_chunks(
     blueprint: BuildBlueprint,
-    llm_client: Any,
+    llm_client: BaseLLMClient,
     per_chunk_timeout: float = 120.0,
     max_retries: int = 1,
-    on_event: Any | None = None,
+    on_event: Callable | None = None,
 ) -> BuildBlueprint:
     """Execute all chunks in a decomposed BuildBlueprint in parallel (Matter Stream).
 
@@ -1286,10 +1293,10 @@ def _should_use_visiting_builder(
 
 async def transporter_build(
     spec: BuildSpec,
-    llm_client: Any,
+    llm_client: BaseLLMClient,
     work_dir: str | None = None,
-    codebase_index: Any | None = None,
-    on_event: Any | None = None,
+    codebase_index: CodebaseIndex | None = None,
+    on_event: Callable | None = None,
 ) -> list[dict[str, Any]]:
     """Run the full Transporter Pattern pipeline and return file blocks.
 
@@ -2471,10 +2478,10 @@ async def execute_approved_build(
     work_dir: str,
     run_tests: bool = True,
     max_fix_attempts: int = 2,
-    llm_client: Any | None = None,
-    escalation_hook: Any | None = None,
+    llm_client: BaseLLMClient | None = None,
+    escalation_hook: Callable | None = None,
     builder_source: str = "native",
-    runtime: Any | None = None,
+    runtime: ProbOSRuntime | None = None,
 ) -> BuildResult:
     """Execute an approved build: write files, run tests, create git branch.
 

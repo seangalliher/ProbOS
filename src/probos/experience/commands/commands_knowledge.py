@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from probos.runtime import ProbOSRuntime
 
 logger = logging.getLogger(__name__)
 
 
-async def cmd_knowledge(runtime: Any, console: Console, args: str) -> None:
+async def cmd_knowledge(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /knowledge command."""
     from probos.experience.knowledge_panel import render_knowledge_panel, render_knowledge_history
 
@@ -31,7 +34,7 @@ async def cmd_knowledge(runtime: Any, console: Console, args: str) -> None:
         ))
 
 
-async def cmd_rollback(runtime: Any, console: Console, args: str) -> None:
+async def cmd_rollback(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /rollback command."""
     from probos.experience.knowledge_panel import render_rollback_result
 
@@ -51,7 +54,7 @@ async def cmd_rollback(runtime: Any, console: Console, args: str) -> None:
     console.print(render_rollback_result(artifact_type, identifier, success))
 
 
-async def cmd_search(runtime: Any, console: Console, args: str) -> None:
+async def cmd_search(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /search command."""
     from probos.experience import panels
 
@@ -81,7 +84,7 @@ async def cmd_search(runtime: Any, console: Console, args: str) -> None:
     console.print(panels.render_search_panel(query, results, stats))
 
 
-async def cmd_anomalies(runtime: Any, console: Console, args: str) -> None:
+async def cmd_anomalies(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /anomalies command."""
     from probos.experience import panels
 
@@ -103,7 +106,7 @@ async def cmd_anomalies(runtime: Any, console: Console, args: str) -> None:
     console.print(panels.render_anomalies_panel(summary, pattern_dicts))
 
 
-async def cmd_scout(runtime: Any, console: Console, args: str) -> None:
+async def cmd_scout(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /scout command."""
     from probos.types import IntentMessage
 

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from fastapi import Request
 
+if TYPE_CHECKING:
+    from probos.runtime import ProbOSRuntime
 
-def get_runtime(request: Request) -> Any:
+
+def get_runtime(request: Request) -> ProbOSRuntime:
     """Inject ProbOSRuntime from app state."""
     return request.app.state.runtime
 

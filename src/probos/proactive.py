@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from probos.crew_profile import Rank
 from probos.crew_utils import is_crew_agent
@@ -15,6 +15,11 @@ from probos.earned_agency import agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.types import IntentMessage
 from probos.utils import format_duration
+
+if TYPE_CHECKING:
+    from probos.config import DutyScheduleConfig, ProactiveCognitiveConfig
+    from probos.knowledge.store import KnowledgeStore
+    from probos.runtime import ProbOSRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -48,21 +53,21 @@ class ProactiveCognitiveLoop:
         self._on_event = on_event
         self._last_proactive: dict[str, float] = {}  # agent_id -> monotonic timestamp
         self._agent_cooldowns: dict[str, float] = {}  # agent_id -> override cooldown (seconds)
-        self._knowledge_store: Any = None  # AD-415: Set by runtime for persistence
+        self._knowledge_store: KnowledgeStore | None = None  # AD-415: Set by runtime for persistence
         self._task: asyncio.Task | None = None
-        self._runtime: Any = None  # Set via set_runtime()
+        self._runtime: ProbOSRuntime | None = None  # Set via set_runtime()
         self._started_at: float = time.monotonic()  # BF-039: cold-start reference
-        self._config: Any = None   # Set via set_config()
+        self._config: ProactiveCognitiveConfig | None = None   # Set via set_config()
         self._duty_tracker: DutyScheduleTracker | None = None
         self._circuit_breaker = CognitiveCircuitBreaker()
         self._notified_dm_threads: set[str] = set()  # BF-082: dedup guard
         self._notified_dm_threads_reset: float = time.monotonic()  # hourly reset
 
-    def set_runtime(self, runtime: Any) -> None:
+    def set_runtime(self, runtime: ProbOSRuntime) -> None:
         """Wire the runtime reference (provides registry, trust, WR, memory, etc.)."""
         self._runtime = runtime
 
-    def set_config(self, config: Any) -> None:
+    def set_config(self, config: ProactiveCognitiveConfig) -> None:
         """Store ProactiveCognitiveConfig for trust signal weights (AD-414)."""
         self._config = config
 
@@ -75,7 +80,7 @@ class ProactiveCognitiveLoop:
     def _default_cooldown(self) -> float:
         return self._cooldown
 
-    def set_duty_schedule(self, config: Any) -> None:
+    def set_duty_schedule(self, config: DutyScheduleConfig | None) -> None:
         """Initialize duty schedule tracker from DutyScheduleConfig."""
         if config and config.enabled and config.schedules:
             self._duty_tracker = DutyScheduleTracker(config.schedules)

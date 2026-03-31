@@ -3,16 +3,19 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+if TYPE_CHECKING:
+    from probos.runtime import ProbOSRuntime
+
 logger = logging.getLogger(__name__)
 
 
-async def cmd_orders(runtime: Any, console: Console, args: str) -> None:
+async def cmd_orders(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Show Standing Orders hierarchy and file summaries."""
     from probos.cognitive.standing_orders import _DEFAULT_ORDERS_DIR, _load_file
 
@@ -91,7 +94,7 @@ async def cmd_orders(runtime: Any, console: Console, args: str) -> None:
     console.print(table)
 
 
-async def cmd_order(runtime: Any, console: Console, args: str) -> None:
+async def cmd_order(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Issue a Captain's order to an agent type."""
     if not args:
         console.print("[yellow]Usage: /order <agent_type> <instruction text>[/yellow]")
@@ -193,7 +196,7 @@ async def cmd_order(runtime: Any, console: Console, args: str) -> None:
             console.print(f"[red]Authorization failed: {reason}[/red]")
 
 
-async def cmd_directives(runtime: Any, console: Console, args: str) -> None:
+async def cmd_directives(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Show active directives, optionally filtered by agent type."""
     store = runtime.directive_store
     if not store:
@@ -225,7 +228,7 @@ async def cmd_directives(runtime: Any, console: Console, args: str) -> None:
         console.print(f"  [dim]by {d.issued_by} | priority {d.priority} | {d.id[:8]}[/dim]")
 
 
-async def cmd_revoke(runtime: Any, console: Console, args: str) -> None:
+async def cmd_revoke(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Revoke (countermand) a directive by ID."""
     if not args:
         console.print("[yellow]Usage: /revoke <directive_id>[/yellow]")
@@ -258,7 +261,7 @@ async def cmd_revoke(runtime: Any, console: Console, args: str) -> None:
         )
 
 
-async def cmd_amend(runtime: Any, console: Console, args: str) -> None:
+async def cmd_amend(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Amend (FRAGO) an existing directive — replace its content."""
     if not args:
         console.print("[yellow]Usage: /amend <directive_id> <new instruction text>[/yellow]")
@@ -296,7 +299,7 @@ async def cmd_amend(runtime: Any, console: Console, args: str) -> None:
         console.print(f"[red]Cannot amend — directive {directive_id[:8]} is not active[/red]")
 
 
-async def cmd_imports(runtime: Any, console: Console, args: str) -> None:
+async def cmd_imports(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """List, add, or remove allowed imports for self-mod."""
     config = runtime.config.self_mod
     parts = args.split(maxsplit=1)

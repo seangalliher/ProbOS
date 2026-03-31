@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from probos.runtime import ProbOSRuntime
 
 logger = logging.getLogger(__name__)
 
 
-async def cmd_models(runtime: Any, console: Console, args: str) -> None:
+async def cmd_models(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /models command."""
     from probos.cognitive.llm_client import OpenAICompatibleClient
     from rich.panel import Panel
@@ -55,7 +58,7 @@ async def cmd_models(runtime: Any, console: Console, args: str) -> None:
     console.print(Panel("\n".join(lines), title="LLM Configuration", border_style="cyan"))
 
 
-async def cmd_registry(runtime: Any, console: Console, args: str) -> None:
+async def cmd_registry(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Show all available models across all sources."""
     from rich.panel import Panel
     from rich.table import Table
@@ -127,7 +130,7 @@ async def cmd_registry(runtime: Any, console: Console, args: str) -> None:
         console.print("[dim]Copilot SDK not installed -- no external models available[/dim]")
 
 
-async def cmd_tier(runtime: Any, console: Console, args: str) -> None:
+async def cmd_tier(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /tier command."""
     from probos.cognitive.llm_client import OpenAICompatibleClient
 

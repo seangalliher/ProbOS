@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from probos.substrate.agent import BaseAgent
+
+if TYPE_CHECKING:
+    from probos.runtime import ProbOSRuntime
 from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
 logger = logging.getLogger(__name__)
@@ -196,7 +199,7 @@ class IntrospectionAgent(BaseAgent):
         except Exception:
             return ""
 
-    async def _explain_last(self, rt: Any) -> dict[str, Any]:
+    async def _explain_last(self, rt: ProbOSRuntime) -> dict[str, Any]:
         """Explain the most recent NL request."""
         prev = rt._previous_execution
         if prev is not None:
@@ -262,7 +265,7 @@ class IntrospectionAgent(BaseAgent):
             },
         }
 
-    def _agent_info(self, rt: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _agent_info(self, rt: ProbOSRuntime, params: dict[str, Any]) -> dict[str, Any]:
         """Return details about agents matching type or ID."""
         agent_type = params.get("agent_type")
         agent_id = params.get("agent_id")
@@ -350,7 +353,7 @@ class IntrospectionAgent(BaseAgent):
             data = {"agents": agent_infos}
         return {"success": True, "data": data}
 
-    def _team_info(self, rt: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _team_info(self, rt: ProbOSRuntime, params: dict[str, Any]) -> dict[str, Any]:
         """Return details about a crew team (pool group)."""
         team_name = params.get("team", "").strip().lower()
 
@@ -449,7 +452,7 @@ class IntrospectionAgent(BaseAgent):
             result["data"]["grounded_context"] = grounded
         return result
 
-    def _system_health(self, rt: Any) -> dict[str, Any]:
+    def _system_health(self, rt: ProbOSRuntime) -> dict[str, Any]:
         """Compute a structured health assessment."""
         # Pool health
         pool_health = []
@@ -526,7 +529,7 @@ class IntrospectionAgent(BaseAgent):
             result["data"]["grounded_context"] = grounded
         return result
 
-    async def _why(self, rt: Any, params: dict[str, Any]) -> dict[str, Any]:
+    async def _why(self, rt: ProbOSRuntime, params: dict[str, Any]) -> dict[str, Any]:
         """Answer a 'why' question about ProbOS behavior."""
         question = params.get("question", "")
 
@@ -580,7 +583,7 @@ class IntrospectionAgent(BaseAgent):
             },
         }
 
-    async def _introspect_memory(self, rt: Any) -> dict[str, Any]:
+    async def _introspect_memory(self, rt: ProbOSRuntime) -> dict[str, Any]:
         """Report episodic memory status."""
         if not rt.episodic_memory:
             return {
@@ -614,7 +617,7 @@ class IntrospectionAgent(BaseAgent):
             },
         }
 
-    def _introspect_system(self, rt: Any) -> dict[str, Any]:
+    def _introspect_system(self, rt: ProbOSRuntime) -> dict[str, Any]:
         """Report comprehensive system status."""
         # Agent count by tier
         tier_counts: dict[str, int] = {"core": 0, "utility": 0, "domain": 0}
@@ -673,7 +676,7 @@ class IntrospectionAgent(BaseAgent):
             result["data"]["grounded_context"] = grounded
         return result
 
-    def _system_anomalies(self, rt: Any) -> dict[str, Any]:
+    def _system_anomalies(self, rt: ProbOSRuntime) -> dict[str, Any]:
         """Report currently detected anomalies and patterns."""
         detector = getattr(rt, "_emergent_detector", None)
         if detector is None:
@@ -702,7 +705,7 @@ class IntrospectionAgent(BaseAgent):
             },
         }
 
-    def _emergent_patterns(self, rt: Any) -> dict[str, Any]:
+    def _emergent_patterns(self, rt: ProbOSRuntime) -> dict[str, Any]:
         """Report system dynamics overview including TC_N and trends."""
         detector = getattr(rt, "_emergent_detector", None)
         if detector is None:
@@ -740,7 +743,7 @@ class IntrospectionAgent(BaseAgent):
             },
         }
 
-    async def _search_knowledge(self, rt: Any, params: dict) -> dict[str, Any]:
+    async def _search_knowledge(self, rt: ProbOSRuntime, params: dict) -> dict[str, Any]:
         """Search across all ProbOS knowledge types."""
         query = params.get("query", "")
         if not query:
@@ -810,7 +813,7 @@ class IntrospectionAgent(BaseAgent):
             },
         }
 
-    def _introspect_design(self, rt: Any, params: dict[str, Any]) -> dict[str, Any]:
+    def _introspect_design(self, rt: ProbOSRuntime, params: dict[str, Any]) -> dict[str, Any]:
         """Answer architectural questions using codebase knowledge."""
         question = params.get("question", "")
         if not question:

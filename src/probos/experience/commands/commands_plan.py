@@ -3,14 +3,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from probos.runtime import ProbOSRuntime
 
 logger = logging.getLogger(__name__)
 
 
-async def cmd_plan(runtime: Any, console: Console, renderer: Any, args: str) -> None:
+async def cmd_plan(runtime: ProbOSRuntime, console: Console, renderer: Any, args: str) -> None:
     """Handle /plan command: propose, re-display, or remove nodes."""
     from probos.cognitive.decomposer import is_capability_gap
     from probos.experience.panels import render_dag_proposal
@@ -96,7 +99,7 @@ async def cmd_plan(runtime: Any, console: Console, renderer: Any, args: str) -> 
     )
 
 
-async def cmd_approve(runtime: Any, console: Console, renderer: Any, args: str) -> None:
+async def cmd_approve(runtime: ProbOSRuntime, console: Console, renderer: Any, args: str) -> None:
     """Execute the pending proposal."""
     if runtime._pending_proposal is None:
         console.print(
@@ -181,7 +184,7 @@ async def cmd_approve(runtime: Any, console: Console, renderer: Any, args: str) 
     runtime._last_execution = execution_result
 
 
-async def cmd_reject(runtime: Any, console: Console, args: str) -> None:
+async def cmd_reject(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Discard the pending proposal."""
     if await runtime.reject_proposal():
         console.print("[dim]Proposal discarded. Feedback recorded for future planning.[/dim]")
@@ -189,7 +192,7 @@ async def cmd_reject(runtime: Any, console: Console, args: str) -> None:
         console.print("[yellow]No pending proposal.[/yellow]")
 
 
-async def cmd_feedback(runtime: Any, console: Console, args: str) -> None:
+async def cmd_feedback(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Rate the last execution: /feedback good|bad."""
     args = args.strip().lower()
     if args not in ("good", "bad"):
@@ -223,7 +226,7 @@ async def cmd_feedback(runtime: Any, console: Console, args: str) -> None:
         console.print(f"[dim]Feedback ({label}) recorded.[/dim]")
 
 
-async def cmd_correct(runtime: Any, console: Console, args: str) -> None:
+async def cmd_correct(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Explicit correction command: /correct <what to fix>."""
     if not args:
         console.print(

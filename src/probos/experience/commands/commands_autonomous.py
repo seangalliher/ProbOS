@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from probos.runtime import ProbOSRuntime
 
 logger = logging.getLogger(__name__)
 
 
-async def cmd_conn(runtime: Any, console: Console, args: str) -> None:
+async def cmd_conn(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Manage the conn — temporary authority delegation."""
     rt = runtime
     if not rt.conn_manager:
@@ -102,7 +105,7 @@ async def cmd_conn(runtime: Any, console: Console, args: str) -> None:
         console.print(f"[bold cyan]{target_agent.callsign}[/bold cyan] has the conn.")
 
 
-async def cmd_night_orders(runtime: Any, console: Console, args: str) -> None:
+async def cmd_night_orders(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Set Night Orders — Captain-offline guidance."""
     rt = runtime
     if not hasattr(rt, '_night_orders_mgr') or not rt._night_orders_mgr:
@@ -168,7 +171,7 @@ async def cmd_night_orders(runtime: Any, console: Console, args: str) -> None:
         console.print("[bold]Night Orders set (custom, 8h TTL)[/bold]")
 
 
-async def cmd_watch(runtime: Any, console: Console, args: str) -> None:
+async def cmd_watch(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Show watch bill status."""
     rt = runtime
     if not hasattr(rt, 'watch_manager') or not rt.watch_manager:

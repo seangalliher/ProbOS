@@ -8,9 +8,26 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from probos.substrate.identity import generate_pool_ids
+
+if TYPE_CHECKING:
+    from probos.cognitive.decomposer import IntentDecomposer
+    from probos.cognitive.feedback import FeedbackEngine
+    from probos.cognitive.llm_client import BaseLLMClient
+    from probos.cognitive.self_mod import SelfModificationPipeline
+    from probos.config import SystemConfig
+    from probos.consensus.trust import TrustNetwork
+    from probos.knowledge.semantic import SemanticKnowledgeLayer
+    from probos.knowledge.store import KnowledgeStore
+    from probos.mesh.capability import CapabilityRegistry
+    from probos.mesh.intent import IntentBus
+    from probos.runtime import ProbOSRuntime
+    from probos.substrate.pool import ResourcePool
+    from probos.substrate.registry import AgentRegistry
+    from probos.substrate.spawner import AgentSpawner
 
 logger = logging.getLogger(__name__)
 
@@ -21,27 +38,27 @@ class SelfModManager:
     def __init__(
         self,
         *,
-        self_mod_pipeline: Any,
-        knowledge_store: Any | None,
-        trust_network: Any,
-        intent_bus: Any,
-        capability_registry: Any,
-        registry: Any,
-        pools: dict[str, Any],
-        spawner: Any,
-        decomposer: Any,
-        feedback_engine: Any | None,
-        llm_client: Any | None,
-        event_emitter: Any,
-        config: Any,
-        semantic_layer: Any | None,
-        collect_intent_descriptors_fn: Any,
-        process_natural_language_fn: Any,
-        add_skill_to_agents_fn: Any,
-        register_agent_type_fn: Any,
-        unregister_agent_type_fn: Any,
-        create_pool_fn: Any,
-        runtime: Any | None = None,
+        self_mod_pipeline: SelfModificationPipeline,
+        knowledge_store: KnowledgeStore | None,
+        trust_network: TrustNetwork,
+        intent_bus: IntentBus,
+        capability_registry: CapabilityRegistry,
+        registry: AgentRegistry,
+        pools: dict[str, ResourcePool],
+        spawner: AgentSpawner,
+        decomposer: IntentDecomposer,
+        feedback_engine: FeedbackEngine | None,
+        llm_client: BaseLLMClient | None,
+        event_emitter: Callable,
+        config: SystemConfig,
+        semantic_layer: SemanticKnowledgeLayer | None,
+        collect_intent_descriptors_fn: Callable,
+        process_natural_language_fn: Callable[..., Awaitable],
+        add_skill_to_agents_fn: Callable[..., Awaitable],
+        register_agent_type_fn: Callable,
+        unregister_agent_type_fn: Callable,
+        create_pool_fn: Callable,
+        runtime: ProbOSRuntime | None = None,
     ) -> None:
         self._self_mod_pipeline = self_mod_pipeline
         self._knowledge_store = knowledge_store

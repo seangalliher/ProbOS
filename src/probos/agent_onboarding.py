@@ -7,10 +7,27 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from probos.crew_utils import is_crew_agent
 from probos.substrate.heartbeat import HeartbeatAgent
+
+if TYPE_CHECKING:
+    from probos.acm import AgentCapitalService
+    from probos.cognitive.episodic import EpisodicMemory
+    from probos.cognitive.llm_client import BaseLLMClient
+    from probos.config import SystemConfig
+    from probos.consensus.trust import TrustNetwork
+    from probos.crew_profile import CallsignRegistry
+    from probos.identity import AgentIdentityRegistry
+    from probos.mesh.capability import CapabilityRegistry
+    from probos.mesh.gossip import GossipProtocol
+    from probos.mesh.intent import IntentBus
+    from probos.ontology import VesselOntologyService
+    from probos.substrate.event_log import EventLog
+    from probos.substrate.registry import AgentRegistry
+    from probos.ward_room import WardRoomService
 
 logger = logging.getLogger(__name__)
 
@@ -21,20 +38,20 @@ class AgentOnboardingService:
     def __init__(
         self,
         *,
-        callsign_registry: Any,
-        capability_registry: Any,
-        gossip: Any,
-        intent_bus: Any,
-        trust_network: Any,
-        event_log: Any,
-        identity_registry: Any,
-        ontology: Any | None,
-        event_emitter: Any,
-        config: Any,
-        llm_client: Any | None,
-        registry: Any,
-        ward_room: Any | None,
-        acm: Any | None,
+        callsign_registry: CallsignRegistry,
+        capability_registry: CapabilityRegistry,
+        gossip: GossipProtocol,
+        intent_bus: IntentBus,
+        trust_network: TrustNetwork,
+        event_log: EventLog,
+        identity_registry: AgentIdentityRegistry | None,
+        ontology: VesselOntologyService | None,
+        event_emitter: Callable,
+        config: SystemConfig,
+        llm_client: BaseLLMClient | None,
+        registry: AgentRegistry,
+        ward_room: WardRoomService | None,
+        acm: AgentCapitalService | None,
     ) -> None:
         self._callsign_registry = callsign_registry
         self._capability_registry = capability_registry

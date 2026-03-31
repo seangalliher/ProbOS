@@ -61,6 +61,8 @@ ALLOWED_EXCEPTIONS = {
     ("substrate/scaler.py", "probos.mesh.intent"),
     # experience → agents (QA panel renders agent reports)
     ("experience/qa_panel.py", "probos.agents.system_qa"),
+    # BF-085: cognitive → consensus.escalation — TYPE_CHECKING-only type annotation
+    ("cognitive/decomposer.py", "probos.consensus.escalation"),
 }
 
 

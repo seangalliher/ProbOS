@@ -17,7 +17,12 @@ from probos.cognitive.working_memory import WorkingMemoryManager, WorkingMemoryS
 from probos.types import ConsensusOutcome, IntentDescriptor, LLMRequest, TaskDAG, TaskNode, Episode, AttentionEntry
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
+
+    from probos.cognitive.attention import AttentionManager
+    from probos.cognitive.workflow_cache import WorkflowCache
+    from probos.consensus.escalation import EscalationManager
+    from probos.runtime import ProbOSRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +237,7 @@ class IntentDecomposer:
         llm_client: BaseLLMClient,
         working_memory: WorkingMemoryManager,
         timeout: float = 15.0,
-        workflow_cache: Any | None = None,
+        workflow_cache: WorkflowCache | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.working_memory = working_memory
@@ -470,7 +475,7 @@ class IntentDecomposer:
 
         return response.content.strip()
 
-    def _build_dag(self, data: dict, source_text: str, response: Any = None) -> TaskDAG:
+    def _build_dag(self, data: dict, source_text: str, response: str | None = None) -> TaskDAG:
         """Build a TaskDAG from validated decomposition data.
 
         Expects data to already contain a valid 'intents' list.
@@ -668,11 +673,11 @@ class DAGExecutor:
 
     def __init__(
         self,
-        runtime: Any,  # ProbOSRuntime (avoid circular import)
+        runtime: ProbOSRuntime,  # ProbOSRuntime (avoid circular import)
         timeout: float = 60.0,
-        attention: Any | None = None,  # AttentionManager (optional)
-        escalation_manager: Any | None = None,  # EscalationManager (optional)
-        checkpoint_dir: Any | None = None,  # AD-405
+        attention: AttentionManager | None = None,  # AttentionManager (optional)
+        escalation_manager: EscalationManager | None = None,  # EscalationManager (optional)
+        checkpoint_dir: Path | None = None,  # AD-405
     ) -> None:
         self.runtime = runtime
         self.timeout = timeout

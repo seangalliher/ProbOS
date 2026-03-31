@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.table import Table
 
+if TYPE_CHECKING:
+    from probos.runtime import ProbOSRuntime
+
 logger = logging.getLogger(__name__)
 
 
-async def cmd_memory(runtime: Any, console: Console, args: str) -> None:
+async def cmd_memory(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /memory command."""
     from probos.experience import panels
 
@@ -22,7 +25,7 @@ async def cmd_memory(runtime: Any, console: Console, args: str) -> None:
     console.print(panels.render_working_memory_panel(snapshot))
 
 
-async def cmd_history(runtime: Any, console: Console, args: str) -> None:
+async def cmd_history(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /history command."""
     mem = runtime.episodic_memory
     if not mem:
@@ -48,7 +51,7 @@ async def cmd_history(runtime: Any, console: Console, args: str) -> None:
     console.print(table)
 
 
-async def cmd_recall(runtime: Any, console: Console, args: str) -> None:
+async def cmd_recall(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /recall command."""
     mem = runtime.episodic_memory
     if not mem:
@@ -77,7 +80,7 @@ async def cmd_recall(runtime: Any, console: Console, args: str) -> None:
     console.print(table)
 
 
-async def cmd_dream(runtime: Any, console: Console, args: str) -> None:
+async def cmd_dream(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /dream command."""
     from probos.experience import panels
 

@@ -1716,7 +1716,7 @@ class WorkItemStore:
     # ======================================================================
 
     @staticmethod
-    def _row_to_work_item(row: Any) -> WorkItem:
+    def _row_to_work_item(row: aiosqlite.Row) -> WorkItem:
         """Convert aiosqlite Row to WorkItem."""
         return WorkItem(
             id=row["id"],
@@ -1746,7 +1746,7 @@ class WorkItemStore:
         )
 
     @staticmethod
-    def _row_to_booking(row: Any) -> Booking:
+    def _row_to_booking(row: aiosqlite.Row) -> Booking:
         """Convert aiosqlite Row to Booking."""
         return Booking(
             id=row["id"],
@@ -1762,7 +1762,7 @@ class WorkItemStore:
         )
 
     @staticmethod
-    def _row_to_timestamp(row: Any) -> BookingTimestamp:
+    def _row_to_timestamp(row: aiosqlite.Row) -> BookingTimestamp:
         """Convert aiosqlite Row to BookingTimestamp."""
         return BookingTimestamp(
             id=row["id"],
@@ -1773,7 +1773,7 @@ class WorkItemStore:
         )
 
     @staticmethod
-    def _row_to_journal(row: Any) -> BookingJournal:
+    def _row_to_journal(row: aiosqlite.Row) -> BookingJournal:
         """Convert aiosqlite Row to BookingJournal."""
         return BookingJournal(
             id=row["id"],
@@ -1787,7 +1787,7 @@ class WorkItemStore:
         )
 
     @staticmethod
-    def _row_to_requirement(row: Any) -> ResourceRequirement:
+    def _row_to_requirement(row: aiosqlite.Row) -> ResourceRequirement:
         """Convert aiosqlite Row to ResourceRequirement."""
         return ResourceRequirement(
             id=row["id"],
