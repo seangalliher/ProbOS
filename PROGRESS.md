@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Wave 4 in progress. BF-085 CLOSED — ~200 Any annotations replaced with concrete types across 22 files, ProbOSRuntime now has 87 class-level attribute annotations (unblocks BF-079 Phase 2/3). BF-083 CLOSED — agent callsign identity grounding fixed. BF-079 Phase 1 CLOSED. BF-086 CLOSED. Wave 3 COMPLETE. Open: BF-087, BF-088, BF-042, AD-527. 4,184 tests passing.
+## Current Status: Wave 4 in progress. BF-079 CLOSED — all 3 phases complete (419 spec= mocks, 39.1% compliance). AD-464 decomposed into AD-531–539 (Cognitive JIT build chain). BF-085 CLOSED. BF-083 CLOSED. BF-086 CLOSED. Wave 3 COMPLETE. Open: BF-087, BF-088, BF-042, AD-527. 4,081 tests passing.
 
 ---
 

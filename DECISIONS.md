@@ -1616,10 +1616,10 @@ Decision to close all remaining findings from the 2026-03-29 comprehensive code 
 - **BF-088:** Test sleep cleanup — replace 10-second sleeps (finding #18)
 
 **Existing BFs folded into Wave 4:**
-- **BF-079:** Mock discipline audit — Phase 1 COMPLETE. 18 factories spec'd across 14 files. Found hidden bug (missing `.confidence` on agent mocks). Phase 2/3 unblocked by BF-085.
+- **BF-079:** Mock discipline audit — **CLOSED.** All 3 phases complete. Phase 1: 18 factories spec'd (14 files). Phase 2: 140 inline runtime mocks spec'd (49 files), shared `mock_runtime` conftest fixture. Phase 3: 158 agent/LLM/runtime/index mocks spec'd (29 files). Total: 419 spec= mocks, 39.1% compliance. Bugs found: wrong spec type on alert mock, missing rt.acm on factory, hidden `.confidence` attribute bug.
 - **BF-042:** Frontend component rendering tests (finding #16)
 
-**Score:** 13/18 closed (was 11/18 at wave creation). Remaining: BF-079 Phase 2/3, BF-087, BF-088, BF-042, AD-527.
+**Score:** 14/18 closed (was 13/18). Remaining: BF-087, BF-088, BF-042, AD-527.
 
 **Status:** PLANNED.
 
