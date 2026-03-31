@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from rich.console import Console
 
 from probos.experience.commands import commands_status
+from probos.runtime import ProbOSRuntime
 
 
 @pytest.fixture
@@ -22,15 +23,17 @@ def get_output(console: Console) -> str:
 
 @pytest.fixture
 def mock_runtime():
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
     rt.status.return_value = {
         "total_agents": 3,
         "mesh": {"self_model": {"uptime_seconds": 120}},
         "cognitive": {"llm_client_ready": True},
     }
     rt.episodic_memory = None
+    rt.registry = MagicMock()
     rt.registry.all.return_value = []
     rt.registry.count = 3
+    rt.trust_network = MagicMock()
     rt.trust_network.all_scores.return_value = {}
     rt.pools = {}
     rt.pool_groups = {}

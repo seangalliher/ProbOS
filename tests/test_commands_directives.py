@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 from rich.console import Console
 
 from probos.experience.commands import commands_directives
+from probos.runtime import ProbOSRuntime
 
 
 @pytest.fixture
@@ -22,8 +23,9 @@ def get_output(console: Console) -> str:
 
 @pytest.fixture
 def mock_runtime():
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
     rt.directive_store = None
+    rt.config = MagicMock()
     rt.config.self_mod.allowed_imports = ["os", "json"]
     rt.self_mod_pipeline = None
     return rt

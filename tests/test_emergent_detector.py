@@ -22,6 +22,7 @@ from probos.consensus.trust import TrustNetwork
 from probos.experience.panels import render_anomalies_panel
 from probos.experience.shell import ProbOSShell
 from probos.mesh.routing import HebbianRouter, REL_INTENT
+from probos.runtime import ProbOSRuntime
 from probos.types import DreamReport, IntentMessage, LLMRequest
 
 
@@ -607,7 +608,7 @@ class TestRuntimeIntegration:
 
 class TestIntrospectionIntegration:
     def _mock_runtime_with_detector(self) -> MagicMock:
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         router = _FakeRouter()
         trust = _FakeTrustNetwork({"a": {"alpha": 2, "beta": 2, "observations": 0}})
         detector = EmergentDetector(

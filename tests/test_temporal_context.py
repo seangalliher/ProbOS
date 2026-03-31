@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from probos.runtime import ProbOSRuntime
+
 # ---------------------------------------------------------------------------
 # Duration Formatter Tests
 # ---------------------------------------------------------------------------
@@ -244,7 +246,8 @@ class TestTemporalContextHeader:
     def test_temporal_context_disabled_via_config(self):
         """Respects enabled=false."""
         from probos.config import TemporalConfig
-        mock_rt = MagicMock()
+        mock_rt = MagicMock(spec=ProbOSRuntime)
+        mock_rt.config = MagicMock()
         mock_rt.config.temporal = TemporalConfig(enabled=False)
         agent = self._make_agent(_runtime=mock_rt)
         ctx = agent._build_temporal_context()
@@ -333,7 +336,8 @@ class TestEpisodeTimestamps:
         """Episodes should get an 'age' field in formatted recall."""
         from probos.cognitive.cognitive_agent import CognitiveAgent
         agent = CognitiveAgent.__new__(CognitiveAgent)
-        agent._runtime = MagicMock()
+        agent._runtime = MagicMock(spec=ProbOSRuntime)
+        agent._runtime.config = MagicMock()
         agent._runtime.config.temporal.include_episode_timestamps = True
 
         ep = SimpleNamespace(

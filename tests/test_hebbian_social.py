@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock
 
 from probos.mesh.routing import HebbianRouter, REL_SOCIAL
+from probos.runtime import ProbOSRuntime
 from probos.ward_room import WardRoomService
 
 
@@ -143,7 +144,7 @@ class TestHebbianSocial:
         wr, router = wr_with_hebbian
         loop = ProactiveCognitiveLoop(interval=60)
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.ward_room = wr
         rt.hebbian_router = router
         rt._emit_event = MagicMock()
@@ -155,6 +156,7 @@ class TestHebbianSocial:
         target = MagicMock()
         target.agent_type = "diagnostician"
         target.id = "diag-001"
+        rt.registry = MagicMock()
         rt.registry.all.return_value = [target]
 
         loop._runtime = rt

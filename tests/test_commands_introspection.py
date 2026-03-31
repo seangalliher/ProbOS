@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from rich.console import Console
 
 from probos.experience.commands import commands_introspection
+from probos.runtime import ProbOSRuntime
 
 
 @pytest.fixture
@@ -22,7 +23,15 @@ def get_output(console: Console) -> str:
 
 @pytest.fixture
 def mock_runtime():
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
+    # Pre-init sub-service mocks (spec blocks auto-creation)
+    rt.hebbian_router = MagicMock()
+    rt.gossip = MagicMock()
+    rt.event_log = MagicMock()
+    rt.attention = MagicMock()
+    rt.workflow_cache = MagicMock()
+    rt.registry = MagicMock()
+
     rt.hebbian_router.all_weights_typed.return_value = []
     rt.gossip.get_view.return_value = {}
     rt.self_mod_pipeline = None

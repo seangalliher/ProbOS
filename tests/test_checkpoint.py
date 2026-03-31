@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from probos.runtime import ProbOSRuntime
 from probos.cognitive.checkpoint import (
     DAGCheckpoint,
     _serialize_result,
@@ -282,7 +283,7 @@ class TestDAGExecutorCheckpointing:
     @pytest.mark.asyncio
     async def test_executor_creates_and_deletes_checkpoint(self, tmp_path):
         """Execute DAG with checkpoint_dir. File created during, deleted after."""
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.submit_intent = AsyncMock(return_value=[
             IntentResult(intent_id="i", agent_id="a", success=True, result={"data": "ok"}),
         ])
@@ -305,7 +306,7 @@ class TestDAGExecutorCheckpointing:
         """Verify checkpoint file is updated after each node completes."""
         checkpoint_snapshots = []
 
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.submit_intent = AsyncMock(return_value=[
             IntentResult(intent_id="i", agent_id="a", success=True, result={"data": "ok"}),
         ])

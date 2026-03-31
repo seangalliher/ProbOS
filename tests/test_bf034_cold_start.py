@@ -7,6 +7,7 @@ import pytest
 
 from probos.cognitive.emergent_detector import EmergentDetector
 from probos.consensus.trust import TrustNetwork
+from probos.runtime import ProbOSRuntime
 
 
 # ---------- EmergentDetector suppression ----------
@@ -78,7 +79,7 @@ class TestColdStartContext:
         """When runtime.is_cold_start is True, context should include system_note."""
         from probos.proactive import ProactiveCognitiveLoop
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.is_cold_start = True
         runtime.ward_room = None
         runtime.episodic_memory = None
@@ -96,7 +97,7 @@ class TestColdStartContext:
         """When runtime.is_cold_start is False, no system_note."""
         from probos.proactive import ProactiveCognitiveLoop
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.is_cold_start = False
         runtime.ward_room = None
         runtime.episodic_memory = None

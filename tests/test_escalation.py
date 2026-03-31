@@ -11,6 +11,7 @@ import pytest
 from probos.cognitive.llm_client import MockLLMClient
 from probos.consensus.escalation import ARBITRATION_PROMPT, EscalationManager
 from probos.experience.panels import render_dag_result
+from probos.runtime import ProbOSRuntime
 from probos.types import (
     ConsensusOutcome,
     ConsensusResult,
@@ -44,7 +45,7 @@ def _make_mock_runtime(
     submit_write_with_consensus_side_effect=None,
 ):
     """Build a minimal mock runtime for EscalationManager tests."""
-    runtime = MagicMock()
+    runtime = MagicMock(spec=ProbOSRuntime)
     runtime.submit_intent = AsyncMock(
         side_effect=submit_intent_side_effect
     )
@@ -463,7 +464,7 @@ class TestDAGExecutorEscalation:
         """17. Node raises exception -> escalation triggered -> resolved."""
         from probos.cognitive.decomposer import DAGExecutor
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent = AsyncMock(side_effect=RuntimeError("boom"))
 
         # Create an escalation manager that resolves at Tier 1
@@ -495,7 +496,7 @@ class TestDAGExecutorEscalation:
             "consensus": MagicMock(outcome=ConsensusOutcome.REJECTED),
             "results": [],
         }
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent_with_consensus = AsyncMock(
             return_value=rejected_result,
         )
@@ -522,7 +523,7 @@ class TestDAGExecutorEscalation:
         """19. No escalation_manager -> node fails normally."""
         from probos.cognitive.decomposer import DAGExecutor
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent = AsyncMock(side_effect=RuntimeError("boom"))
 
         executor = DAGExecutor(runtime=runtime)
@@ -542,7 +543,7 @@ class TestDAGExecutorEscalation:
             "consensus": MagicMock(outcome=ConsensusOutcome.REJECTED),
             "results": [],
         }
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent_with_consensus = AsyncMock(
             return_value=rejected_result,
         )
@@ -559,7 +560,7 @@ class TestDAGExecutorEscalation:
         """21. on_event fires escalation_start and escalation_complete."""
         from probos.cognitive.decomposer import DAGExecutor
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent = AsyncMock(side_effect=RuntimeError("boom"))
 
         esc_mgr = MagicMock()
@@ -589,7 +590,7 @@ class TestDAGExecutorEscalation:
         """22. After escalation, node.escalation_result is a JSON-safe dict."""
         from probos.cognitive.decomposer import DAGExecutor
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent = AsyncMock(side_effect=RuntimeError("boom"))
 
         esc_mgr = MagicMock()
@@ -775,7 +776,7 @@ class TestEscalationReflectEndToEnd:
                 ),
             ],
         }
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent_with_consensus = AsyncMock(
             return_value=rejected_result,
         )
@@ -909,7 +910,7 @@ class TestEscalationReflectEndToEnd:
                 ),
             ],
         }
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent_with_consensus = AsyncMock(
             return_value=rejected_result,
         )
@@ -962,7 +963,7 @@ class TestEscalationReflectEndToEnd:
             "consensus": MagicMock(outcome=ConsensusOutcome.REJECTED),
             "results": [original_ir],
         }
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent_with_consensus = AsyncMock(
             return_value=rejected_result,
         )
@@ -1080,7 +1081,7 @@ class TestDAGTimeoutUserWait:
             await asyncio.sleep(0.5)
             return _success_intent_results()
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent = AsyncMock(side_effect=slow_submit)
 
         # Simulate an escalation manager where user waited 2 seconds
@@ -1128,7 +1129,7 @@ class TestDAGTimeoutUserWait:
             await asyncio.sleep(0.6)  # completes, but burns most of budget
             return _success_intent_results()
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent = AsyncMock(side_effect=slow_submit)
 
         executor = DAGExecutor(runtime=runtime, timeout=0.5)
@@ -1149,7 +1150,7 @@ class TestDAGTimeoutUserWait:
         """35. user_wait_seconds is reset to 0 at start of each execute()."""
         from probos.cognitive.decomposer import DAGExecutor
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.submit_intent = AsyncMock(return_value=_success_intent_results())
 
         esc_mgr = EscalationManager(

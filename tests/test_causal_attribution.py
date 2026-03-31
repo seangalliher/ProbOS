@@ -9,6 +9,7 @@ import pytest
 from probos.cognitive.emergent_detector import EmergentDetector, EmergentPattern
 from probos.consensus.trust import TrustNetwork
 from probos.mesh.routing import HebbianRouter
+from probos.runtime import ProbOSRuntime
 
 
 def _setup_anomaly_scenario() -> tuple[TrustNetwork, HebbianRouter]:
@@ -106,7 +107,7 @@ class TestCausalBackReferences:
         detector = EmergentDetector(hebbian_router=router, trust_network=tn)
 
         # Build a mock runtime with the detector
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt._emergent_detector = detector
 
         agent = IntrospectionAgent(agent_id="intro-0")

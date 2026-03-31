@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from probos.crew_profile import CallsignRegistry
+from probos.runtime import ProbOSRuntime
 from probos.types import IntentMessage, IntentResult
 
 
@@ -16,7 +17,8 @@ def _make_shell(session_agent_id="scout-123"):
     from probos.experience.shell import ProbOSShell
     from rich.console import Console
 
-    runtime = MagicMock()
+    runtime = MagicMock(spec=ProbOSRuntime)
+    runtime.registry = MagicMock()
     runtime.registry.count = 5
     runtime.registry.all.return_value = []
 
@@ -46,6 +48,7 @@ def _make_shell(session_agent_id="scout-123"):
     runtime.episodic_memory = None
 
     # Trust network (for _compute_health)
+    runtime.trust_network = MagicMock()
     runtime.trust_network.all_scores.return_value = {}
 
     # self_mod_pipeline

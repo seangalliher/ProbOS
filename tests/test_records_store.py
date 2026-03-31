@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
+from probos.runtime import ProbOSRuntime
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -459,10 +461,11 @@ class TestProactiveNotebookTag:
         """Proactive thought with [NOTEBOOK topic]...[/NOTEBOOK] creates a notebook entry."""
         from probos.proactive import ProactiveCognitiveLoop
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt._records_store = AsyncMock()
         rt._records_store.write_notebook = AsyncMock(return_value="notebooks/bones/analysis.md")
         rt._ontology = None
+        rt.ontology = None
         rt.ward_room = MagicMock()
         rt.ward_room.get_endorsements_for = AsyncMock(return_value=[])
         rt.trust_network = MagicMock()

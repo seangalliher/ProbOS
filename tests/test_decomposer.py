@@ -1303,6 +1303,7 @@ class TestIntrospectionDelegation:
         import time
         from unittest.mock import MagicMock
         from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
+        from probos.runtime import ProbOSRuntime
 
         if departments is None:
             departments = ["Engineering"]
@@ -1338,7 +1339,7 @@ class TestIntrospectionDelegation:
             last_capability_gap=last_capability_gap,
         )
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt._build_system_self_model.return_value = model
         rt.pools = mock_pools
         rt.decomposer = MagicMock()
@@ -1448,7 +1449,8 @@ class TestIntrospectionDelegation:
             uptime_seconds=60,
         )
         from unittest.mock import MagicMock
-        rt = MagicMock()
+        from probos.runtime import ProbOSRuntime
+        rt = MagicMock(spec=ProbOSRuntime)
         rt._build_system_self_model.return_value = model
         rt.decomposer = MagicMock()
         rt.decomposer._intent_descriptors = []

@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 
 from probos.assignment import AssignmentService
+from probos.runtime import ProbOSRuntime
 
 
 @pytest_asyncio.fixture
@@ -19,7 +20,7 @@ async def assignment_svc(tmp_path):
 def mock_runtime(assignment_svc):
     """Create a mock runtime with assignment_service."""
     from unittest.mock import MagicMock
-    runtime = MagicMock()
+    runtime = MagicMock(spec=ProbOSRuntime)
     runtime.assignment_service = assignment_svc
     runtime.ward_room = None
     runtime.add_event_listener = MagicMock()

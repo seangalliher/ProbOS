@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from probos.runtime import ProbOSRuntime
 from probos.cognitive.scout import ScoutAgent, _load_seen, _save_seen
 
 
@@ -77,7 +78,7 @@ class TestScoutDataDirectory:
 
     def test_scout_uses_runtime_data_dir(self, tmp_path: Path):
         """ScoutAgent resolves _data_dir from runtime when available."""
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime._data_dir = tmp_path / "data"
         agent = ScoutAgent(runtime=mock_runtime)
         assert agent._data_dir == tmp_path / "data"
@@ -97,7 +98,7 @@ class TestScoutDataDirectory:
 
     def test_reports_dir_uses_data_dir(self, tmp_path: Path):
         """ScoutAgent._reports_dir resolves from runtime data_dir."""
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime._data_dir = tmp_path / "data"
         agent = ScoutAgent(runtime=mock_runtime)
         assert agent._reports_dir == tmp_path / "data" / "scout_reports"

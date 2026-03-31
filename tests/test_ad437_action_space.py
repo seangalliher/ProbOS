@@ -8,6 +8,7 @@ import pytest
 
 from probos.crew_profile import Rank
 from probos.earned_agency import can_perform_action
+from probos.runtime import ProbOSRuntime
 
 
 # ---------- Earned Agency action gating ----------
@@ -53,7 +54,7 @@ class TestProactiveEndorsementExtraction:
         """[ENDORSE] tags should be stripped from text and executed."""
         from probos.proactive import ProactiveCognitiveLoop
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.ward_room = MagicMock()
         runtime.trust_network = MagicMock()
         runtime.trust_network.get_score.return_value = 0.6  # Lieutenant
@@ -86,7 +87,7 @@ class TestProactiveEndorsementExtraction:
         """Ensigns cannot endorse — tags should remain in text (they won't post anyway)."""
         from probos.proactive import ProactiveCognitiveLoop
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.ward_room = MagicMock()
         runtime.trust_network = MagicMock()
         runtime.trust_network.get_score.return_value = 0.3  # Ensign
@@ -116,7 +117,7 @@ class TestProactiveReplyExtraction:
         """[REPLY thread_id]...[/REPLY] should create a post in the thread."""
         from probos.proactive import ProactiveCognitiveLoop
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.ward_room = MagicMock()
         runtime.ward_room.get_thread = AsyncMock(return_value={"thread": {"locked": False}})
         runtime.ward_room.create_post = AsyncMock(return_value=MagicMock(id="new-post"))
@@ -158,7 +159,7 @@ class TestProactiveReplyExtraction:
         """Replies to locked threads should be silently skipped."""
         from probos.proactive import ProactiveCognitiveLoop
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.ward_room = MagicMock()
         runtime.ward_room.get_thread = AsyncMock(return_value={"thread": {"locked": True}})
         runtime.ward_room.create_post = AsyncMock()
@@ -185,7 +186,7 @@ class TestProactiveReplyExtraction:
         """Ensigns should not have reply actions processed (BF-061: gate is Lieutenant+)."""
         from probos.proactive import ProactiveCognitiveLoop
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.ward_room = MagicMock()
         runtime.trust_network = MagicMock()
         runtime.trust_network.get_score.return_value = 0.3  # Ensign
@@ -225,7 +226,7 @@ class TestSkillReinforcement:
         """Endorsing a post should exercise the Communication PCC."""
         from probos.proactive import ProactiveCognitiveLoop
 
-        runtime = MagicMock()
+        runtime = MagicMock(spec=ProbOSRuntime)
         runtime.ward_room = MagicMock()
         runtime.trust_network = MagicMock()
         runtime.trust_network.get_score.return_value = 0.6  # Lieutenant

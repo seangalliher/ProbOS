@@ -9,6 +9,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from probos.cognitive.journal import CognitiveJournal
+from probos.runtime import ProbOSRuntime
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +224,7 @@ class TestDecideJournalIntegration:
         """Test 9: decide() records entry with correct metadata."""
         mock_journal = MagicMock()
         mock_journal.record = AsyncMock()
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.cognitive_journal = mock_journal
 
         llm = MockLLMClient()
@@ -247,7 +248,7 @@ class TestDecideJournalIntegration:
         """Test 10: decide() cache hit records cached=True."""
         mock_journal = MagicMock()
         mock_journal.record = AsyncMock()
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.cognitive_journal = mock_journal
 
         llm = MockLLMClient()
@@ -267,7 +268,7 @@ class TestDecideJournalIntegration:
         """Test 11: journal.record() failure doesn't block decide()."""
         mock_journal = MagicMock()
         mock_journal.record = AsyncMock(side_effect=RuntimeError("DB error"))
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.cognitive_journal = mock_journal
 
         llm = MockLLMClient()

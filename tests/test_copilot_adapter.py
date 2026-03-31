@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from probos.runtime import ProbOSRuntime
 from probos.cognitive.builder import BuildSpec, BuildResult, _should_use_visiting_builder
 from probos.cognitive.copilot_adapter import (
     CopilotBuilderAdapter,
@@ -189,7 +190,7 @@ class TestCopilotBuilderAdapterToolList:
             mock_tool_cls = MagicMock()
             with patch("probos.cognitive.copilot_adapter.Tool", mock_tool_cls, create=True):
                 mock_ci = MagicMock()
-                mock_rt = MagicMock()
+                mock_rt = MagicMock(spec=ProbOSRuntime)
                 adapter = CopilotBuilderAdapter(codebase_index=mock_ci, runtime=mock_rt)
                 tools = adapter._build_mcp_tools()
                 # 1 standing_orders + 5 codebase + 1 system_self_model = 7
@@ -259,7 +260,7 @@ class TestMCPToolHandlers:
 
     @pytest.mark.asyncio
     async def test_handle_system_self_model(self):
-        mock_rt = MagicMock()
+        mock_rt = MagicMock(spec=ProbOSRuntime)
         mock_model = MagicMock()
         mock_model.to_context.return_value = "System: 5 pools, 42 agents"
         mock_rt._build_system_self_model.return_value = mock_model

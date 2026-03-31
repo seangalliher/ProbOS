@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from probos.config import SystemConfig, CommunicationsConfig
 from probos.earned_agency import Rank, can_perform_action
 from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.runtime import ProbOSRuntime
 
 
 class TestCommunicationsConfig:
@@ -75,7 +76,7 @@ class TestCommunicationsSettingsApi:
 
     @pytest.fixture
     def mock_runtime(self):
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.config = SystemConfig()
         return rt
 
@@ -112,7 +113,7 @@ def _make_agent_with_runtime(ontology=None):
     agent.agent_type = "science_officer"
     agent.id = "sci-001"
     agent.instructions = ""
-    agent._runtime = MagicMock()
+    agent._runtime = MagicMock(spec=ProbOSRuntime)
     agent._runtime.callsign_registry = MagicMock()
     agent._runtime.callsign_registry.all_callsigns = MagicMock(return_value={
         "science_officer": "Vega",

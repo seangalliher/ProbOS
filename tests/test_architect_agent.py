@@ -9,6 +9,7 @@ import pytest
 from probos.cognitive.architect import ArchitectAgent, ArchitectProposal
 from probos.cognitive.builder import BuildSpec
 from probos.cognitive.codebase_index import CodebaseIndex
+from probos.runtime import ProbOSRuntime
 from probos.types import IntentDescriptor, IntentMessage
 
 
@@ -338,7 +339,7 @@ class TestPerceiveWithRuntime:
             "src/probos/mesh/routing.py": {"classes": [], "docstring": "Routing"},
         }
 
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
 
         mock_llm = AsyncMock()
@@ -463,7 +464,7 @@ def _make_mock_index(**overrides):
 def _make_agent(mock_index, mock_runtime=None):
     """Helper to build an ArchitectAgent with mock runtime."""
     if mock_runtime is None:
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
     mock_runtime.codebase_index = mock_index
     mock_llm = AsyncMock()
     mock_llm.complete.return_value = MagicMock(content="")
@@ -601,8 +602,10 @@ class TestPerceivePoolGroups:
     async def test_pool_groups_in_context(self):
         """Layer 5: Pool group crew structure appears in context."""
         mock_index = _make_mock_index()
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
+        mock_runtime.pools = {}
+        mock_runtime.pool_groups = MagicMock()
         mock_runtime.pool_groups.status.return_value = {
             "engineering": {
                 "display_name": "Engineering",
@@ -668,7 +671,7 @@ class TestPerceiveGracefulDegradation:
         mock_llm = AsyncMock()
         mock_llm.complete.side_effect = RuntimeError("boom")
 
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
 
         agent = ArchitectAgent(
@@ -705,7 +708,7 @@ class TestPerceiveGracefulDegradation:
         mock_llm = AsyncMock()
         mock_llm.complete.return_value = MagicMock(content="")
 
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
 
         agent = ArchitectAgent(
@@ -766,7 +769,7 @@ class TestDeepLocalize:
         mock_llm = AsyncMock()
         mock_llm.complete.return_value = MagicMock(content="cognitive/builder.py")
 
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
 
         agent = ArchitectAgent(
@@ -806,7 +809,7 @@ class TestDeepLocalize:
         mock_llm = AsyncMock()
         mock_llm.complete.return_value = MagicMock(content="mesh/registry.py")
 
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
 
         agent = ArchitectAgent(
@@ -838,7 +841,7 @@ class TestDeepLocalize:
         mock_llm = AsyncMock()
         mock_llm.complete.return_value = MagicMock(content="experience/panels.py")
 
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
 
         agent = ArchitectAgent(
@@ -870,7 +873,7 @@ class TestDeepLocalize:
         mock_llm = AsyncMock()
         mock_llm.complete.return_value = MagicMock(content="substrate/registry.py")
 
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
 
         agent = ArchitectAgent(
@@ -906,7 +909,7 @@ class TestDeepLocalize:
         mock_llm = AsyncMock()
         mock_llm.complete.side_effect = RuntimeError("LLM unavailable")
 
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
 
         agent = ArchitectAgent(
@@ -939,7 +942,7 @@ class TestDeepLocalize:
         mock_llm = AsyncMock()
         mock_llm.complete.side_effect = RuntimeError("skip")
 
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
 
         agent = ArchitectAgent(
@@ -994,7 +997,7 @@ class TestImportTracing:
         mock_llm = AsyncMock()
         mock_llm.complete.return_value = MagicMock(content="experience/shell.py")
 
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
 
         agent = ArchitectAgent(
@@ -1028,7 +1031,7 @@ class TestImportTracing:
         mock_llm = AsyncMock()
         mock_llm.complete.return_value = MagicMock(content="experience/shell.py")
 
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.codebase_index = mock_index
 
         agent = ArchitectAgent(

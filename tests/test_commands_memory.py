@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from rich.console import Console
 
 from probos.experience.commands import commands_memory
+from probos.runtime import ProbOSRuntime
 
 
 @pytest.fixture
@@ -22,9 +23,13 @@ def get_output(console: Console) -> str:
 
 @pytest.fixture
 def mock_runtime():
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
     rt.episodic_memory = None
     rt.dream_scheduler = None
+    rt.registry = MagicMock()
+    rt.trust_network = MagicMock()
+    rt.hebbian_router = MagicMock()
+    rt.working_memory = MagicMock()
     rt.working_memory.assemble.return_value = {}
     return rt
 

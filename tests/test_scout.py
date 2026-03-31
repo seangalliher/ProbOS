@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from probos.runtime import ProbOSRuntime
+
 from probos.cognitive.scout import (
     ScoutAgent,
     ScoutFinding,
@@ -283,8 +285,9 @@ class TestGracefulNoDiscord:
     @pytest.mark.asyncio
     async def test_graceful_channel_id_zero(self):
         """No error when scout_channel_id is 0."""
-        mock_runtime = MagicMock()
+        mock_runtime = MagicMock(spec=ProbOSRuntime)
         mock_runtime.channel_adapters = {"discord": MagicMock(running=True)}
+        mock_runtime.config = MagicMock()
         mock_runtime.config.channels.discord.scout_channel_id = 0
 
         agent = ScoutAgent(runtime=mock_runtime)

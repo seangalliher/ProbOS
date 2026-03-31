@@ -5,6 +5,7 @@ import pytest
 import pytest_asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 
+from probos.runtime import ProbOSRuntime
 from probos.substrate.agent import BaseAgent
 from probos.ward_room import WardRoomChannel, WardRoomService, _MENTION_PATTERN
 from probos.types import IntentMessage, IntentResult
@@ -575,7 +576,7 @@ def _make_mock_runtime(ward_room=None):
     from probos.runtime import ProbOSRuntime
     from probos.ward_room_router import WardRoomRouter
 
-    runtime = MagicMock()
+    runtime = MagicMock(spec=ProbOSRuntime)
     runtime.ward_room = ward_room or MagicMock()
     # Config mock
     runtime.config = MagicMock()

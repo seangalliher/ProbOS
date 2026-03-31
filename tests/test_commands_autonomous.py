@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 from rich.console import Console
 
 from probos.experience.commands import commands_autonomous
+from probos.runtime import ProbOSRuntime
 
 
 @pytest.fixture
@@ -22,7 +23,7 @@ def get_output(console: Console) -> str:
 
 @pytest.fixture
 def mock_runtime():
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
     rt.conn_manager = None
     rt._night_orders_mgr = None
     rt.watch_manager = None

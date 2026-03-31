@@ -115,7 +115,7 @@ class TestDiscordShutdownHang:
         from unittest.mock import MagicMock, AsyncMock
 
         dc = DiscordConfig(enabled=True, token="fake-token")
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         adapter = DiscordAdapter(rt, dc)
 
         # Mock a bot whose close() hangs forever

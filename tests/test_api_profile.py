@@ -5,6 +5,8 @@ import time
 from unittest.mock import MagicMock, AsyncMock, patch
 from types import SimpleNamespace
 
+from probos.runtime import ProbOSRuntime
+
 
 @pytest.fixture
 def mock_agent():
@@ -25,7 +27,16 @@ def mock_agent():
 @pytest.fixture
 def mock_runtime(mock_agent):
     """Create a mock runtime with necessary services."""
-    runtime = MagicMock()
+    runtime = MagicMock(spec=ProbOSRuntime)
+
+    # Pre-init sub-service mocks (spec blocks auto-creation)
+    runtime.registry = MagicMock()
+    runtime.callsign_registry = MagicMock()
+    runtime.trust_network = MagicMock()
+    runtime.hebbian_router = MagicMock()
+    runtime.intent_bus = MagicMock()
+    runtime._start_time = 0.0
+
     runtime.registry.get.return_value = mock_agent
     runtime.registry.all.return_value = [mock_agent]
 

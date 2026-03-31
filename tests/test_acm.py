@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from probos.runtime import ProbOSRuntime
 from probos.acm import (
     AgentCapitalService,
     LifecycleState,
@@ -151,7 +152,7 @@ class TestConsolidatedProfile:
     async def test_profile_includes_lifecycle_state(self, acm):
         """Consolidated profile contains lifecycle_state field."""
         await acm.onboard("a1", "scout", "pool", "science")
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.65)
         rt.registry = MagicMock()
@@ -168,7 +169,7 @@ class TestConsolidatedProfile:
     async def test_profile_includes_trust(self, acm):
         """Consolidated profile contains trust from TrustNetwork."""
         await acm.onboard("a1", "scout", "pool", "science")
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.7523)
         rt.registry = MagicMock()
@@ -189,7 +190,7 @@ class TestConsolidatedProfile:
         mock_skill_profile.total_skills = 5
         mock_skill_profile.avg_proficiency = 3.2
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.7)
         rt.registry = MagicMock()
@@ -207,7 +208,7 @@ class TestConsolidatedProfile:
     async def test_profile_includes_episode_count(self, acm):
         """Consolidated profile contains episode_count from EpisodicMemory."""
         await acm.onboard("a1", "scout", "pool", "science")
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.7)
         rt.registry = MagicMock()
@@ -311,7 +312,7 @@ class TestACMEndpoints:
     async def test_get_profile_endpoint(self, acm):
         """get_consolidated_profile returns expected structure."""
         await acm.onboard("a1", "scout", "pool", "science")
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.7)
         rt.registry = MagicMock()

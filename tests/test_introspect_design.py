@@ -7,12 +7,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from probos.agents.introspect import IntrospectionAgent
+from probos.runtime import ProbOSRuntime
 from probos.types import IntentMessage
 
 
 def _make_rt_with_codebase():
     """Create a mock runtime with a codebase_index."""
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
     rt.codebase_index = MagicMock()
     rt.codebase_index.query.return_value = {
         "matching_files": [
@@ -162,8 +163,9 @@ class TestIntrospectDesign:
     @pytest.mark.asyncio
     async def test_codebase_index_always_available(self):
         """CodebaseIndex is available even when medical config is disabled (AD-297)."""
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         # Simulate medical disabled but codebase_index still present
+        rt.config = MagicMock()
         rt.config.medical.enabled = False
         rt.codebase_index = MagicMock()
         rt.codebase_index.query.return_value = {
@@ -192,7 +194,7 @@ class TestIntrospectDesign:
     @pytest.mark.asyncio
     async def test_introspect_design_uses_section_reading_for_docs(self):
         """Doc files use read_doc_sections instead of read_source (AD-300)."""
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.codebase_index = MagicMock()
         rt.codebase_index.query.return_value = {
             "matching_files": [

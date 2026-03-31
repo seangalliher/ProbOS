@@ -3,12 +3,15 @@
 import pytest
 from unittest.mock import MagicMock
 
+from probos.runtime import ProbOSRuntime
+
 
 @pytest.fixture
 def mock_runtime():
     """Minimal mock runtime for system endpoints."""
-    runtime = MagicMock()
+    runtime = MagicMock(spec=ProbOSRuntime)
     runtime._started = True
+    runtime.registry = MagicMock()
     runtime.registry.count = 0
     runtime.registry.all.return_value = []
 

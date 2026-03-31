@@ -7,13 +7,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from probos.runtime import ProbOSRuntime
+
 
 def _mock_runtime():
     """Create a minimal mock runtime with build dispatch wired."""
     from probos.build_queue import BuildQueue
     from probos.cognitive.builder import BuildSpec
 
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
     rt.build_queue = BuildQueue()
     rt.build_dispatcher = MagicMock()
     rt.build_dispatcher.approve_and_merge = AsyncMock(return_value=(True, "abc1234def"))
@@ -124,7 +126,7 @@ class TestDispatchAPI:
         from probos.api import create_app
         from fastapi.testclient import TestClient
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.build_dispatcher = None
         rt.build_queue = None
         app = create_app(rt)

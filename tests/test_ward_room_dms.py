@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from probos.ward_room import WardRoomService
+from probos.runtime import ProbOSRuntime
 
 
 @pytest.fixture
@@ -62,7 +63,7 @@ class TestDmActionTag:
         from probos.proactive import ProactiveCognitiveLoop
 
         loop = ProactiveCognitiveLoop(interval=60)
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.ward_room = wr
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.9)
@@ -73,6 +74,7 @@ class TestDmActionTag:
         rt.callsign_registry.get_callsign = MagicMock(return_value="Bones")
 
         # Set up agents list
+        rt.registry = MagicMock()
         target_agent = MagicMock()
         target_agent.agent_type = "diagnostician"
         target_agent.id = "diag-001"
@@ -101,9 +103,11 @@ class TestDmActionTag:
         from probos.proactive import ProactiveCognitiveLoop
 
         loop = ProactiveCognitiveLoop(interval=60)
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.callsign_registry = MagicMock()
         rt.callsign_registry.get_agent_type = MagicMock(return_value=None)
+        rt.registry = MagicMock()
+        rt.registry.all.return_value = []
         loop._runtime = rt
 
         agent = MagicMock()
@@ -120,9 +124,11 @@ class TestDmActionTag:
         from probos.proactive import ProactiveCognitiveLoop
 
         loop = ProactiveCognitiveLoop(interval=60)
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.callsign_registry = MagicMock()
         rt.callsign_registry.get_agent_type = MagicMock(return_value="counselor")
+        rt.registry = MagicMock()
+        rt.registry.all.return_value = []
         loop._runtime = rt
 
         agent = MagicMock()
@@ -188,13 +194,14 @@ class TestAD485CaptainDmAndArchival:
         from probos.proactive import ProactiveCognitiveLoop
 
         loop = ProactiveCognitiveLoop(interval=60)
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.ward_room = wr
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.9)
         rt.callsign_registry = MagicMock()
         rt.callsign_registry.get_callsign = MagicMock(return_value="Bones")
         rt.callsign_registry.resolve = MagicMock(return_value=None)
+        rt.registry = MagicMock()
         rt.registry.all.return_value = []
         rt.hebbian_router = None
         loop._runtime = rt

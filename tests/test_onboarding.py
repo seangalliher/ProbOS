@@ -36,7 +36,7 @@ def _make_agent(agent_type: str = "diagnostician", callsign: str = "Bones", agen
 
 def _make_runtime(config=None):
     """Build a minimal mock runtime for naming ceremony tests."""
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
     rt.config = config or SystemConfig()
     rt.ontology = None
     rt.identity_registry = None
@@ -429,7 +429,7 @@ class TestProactiveActivation:
 
         loop = ProactiveCognitiveLoop(interval=60, cooldown=0)
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.ward_room = MagicMock()
         rt.config = SystemConfig()
         rt.ontology = None  # is_crew_agent uses legacy set; "diagnostician" is crew

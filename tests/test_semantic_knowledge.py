@@ -19,6 +19,7 @@ from probos.experience.panels import render_search_panel
 from probos.experience.shell import ProbOSShell
 from probos.knowledge.semantic import SemanticKnowledgeLayer
 from probos.mesh.routing import HebbianRouter, REL_INTENT
+from probos.runtime import ProbOSRuntime
 from probos.substrate.identity import (
     _ID_REGISTRY,
     generate_agent_id,
@@ -551,7 +552,7 @@ class TestIntrospectionIntegration:
         await layer.start()
         try:
             await layer.index_agent("test_agent", "test_intent", "Test description", "new_agent")
-            rt = MagicMock()
+            rt = MagicMock(spec=ProbOSRuntime)
             rt._semantic_layer = layer
             agent._runtime = rt
 
@@ -572,7 +573,7 @@ class TestIntrospectionIntegration:
         try:
             await layer.index_agent("test_agent", "test_intent", "Test description", "new_agent")
             await layer.index_skill("test_skill", "A test skill")
-            rt = MagicMock()
+            rt = MagicMock(spec=ProbOSRuntime)
             rt._semantic_layer = layer
             agent._runtime = rt
 

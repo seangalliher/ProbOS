@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from probos.duty_schedule import DutyScheduleTracker, DutyStatus
+from probos.runtime import ProbOSRuntime
 
 
 def _make_duty(duty_id: str, interval: float = 3600, cron: str = "", priority: int = 2):
@@ -129,7 +130,7 @@ class TestProactiveLoopDutyIntegration:
         loop._duty_tracker = DutyScheduleTracker({"scout": [duty]})
 
         # Mock runtime
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.episodic_memory = None
         rt.bridge_alerts = None
         rt.event_log = None
@@ -167,7 +168,7 @@ class TestProactiveLoopDutyIntegration:
         from probos.duty_schedule import DutyScheduleTracker
         loop._duty_tracker = DutyScheduleTracker({})
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.episodic_memory = None
         rt.bridge_alerts = None
         rt.event_log = None
@@ -204,7 +205,7 @@ class TestProactiveLoopDutyIntegration:
         from probos.duty_schedule import DutyScheduleTracker
         loop._duty_tracker = DutyScheduleTracker({})
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.episodic_memory = None
         rt.bridge_alerts = None
         rt.event_log = None
@@ -242,7 +243,7 @@ class TestProactiveLoopDutyIntegration:
         from probos.duty_schedule import DutyScheduleTracker
         loop._duty_tracker = DutyScheduleTracker({"scout": [duty]})
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.episodic_memory = None
         rt.bridge_alerts = None
         rt.event_log = None

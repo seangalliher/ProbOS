@@ -8,6 +8,7 @@ from rich.console import Console
 from io import StringIO
 
 from probos.experience.commands.session import SessionManager
+from probos.runtime import ProbOSRuntime
 
 
 @pytest.fixture
@@ -22,9 +23,11 @@ def get_output(console: Console) -> str:
 
 @pytest.fixture
 def mock_runtime():
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
+    rt.callsign_registry = MagicMock()
     rt.callsign_registry.resolve.return_value = None
     rt.episodic_memory = None
+    rt.intent_bus = MagicMock()
     rt.intent_bus.send = AsyncMock(return_value=None)
     return rt
 

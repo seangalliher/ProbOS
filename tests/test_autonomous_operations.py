@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from probos.conn import ConnManager, ConnState
+from probos.runtime import ProbOSRuntime
 from probos.watch_rotation import (
     CaptainOrder,
     NightOrders,
@@ -44,7 +45,9 @@ class TestConn:
 
     def test_conn_qualification_commander_required(self):
         """Agent with LIEUTENANT rank fails is_conn_qualified()."""
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
+        rt.registry = MagicMock()
+        rt.trust_network = MagicMock()
         rt.registry.get.return_value = MagicMock(id="a1", agent_type="architect")
         rt.trust_network.get_trust_score.return_value = 0.55  # LIEUTENANT
         rt.ontology = MagicMock()
@@ -59,7 +62,10 @@ class TestConn:
 
     def test_conn_qualification_post_required(self):
         """COMMANDER-rank agent not on bridge/chief post fails qualification."""
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
+        rt.registry = MagicMock()
+        rt.trust_network = MagicMock()
+        rt.ontology = MagicMock()
         rt.registry.get.return_value = MagicMock(id="a1", agent_type="scout")
         rt.trust_network.get_trust_score.return_value = 0.8  # COMMANDER
 
@@ -351,7 +357,7 @@ class TestExecutionPath:
         from probos.proactive import ProactiveCognitiveLoop
 
         loop = ProactiveCognitiveLoop()
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
 
         # Set up conn manager
         conn_state = ConnState(
@@ -406,7 +412,7 @@ class TestExecutionPath:
         from probos.proactive import ProactiveCognitiveLoop
 
         loop = ProactiveCognitiveLoop()
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
 
         conn_state = ConnState(
             holder_agent_id="a1",  # Agent a1 holds conn
@@ -434,7 +440,7 @@ class TestExecutionPath:
 
     def test_night_orders_escalation_trust_drop(self):
         """Set Night Orders with trust_drop escalation. Verify bridge alert on low trust."""
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         night_mgr = NightOrdersManager()
         night_mgr.set_night_orders(
             instructions=[],
@@ -447,7 +453,6 @@ class TestExecutionPath:
         rt.bridge_alerts = MagicMock()
 
         # Simulate the escalation check
-        from probos.runtime import ProbOSRuntime
         # Test the escalation logic directly on the manager
         assert night_mgr.check_escalation("trust_drop") is True
 

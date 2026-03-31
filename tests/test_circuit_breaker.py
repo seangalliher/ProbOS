@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from probos.runtime import ProbOSRuntime
 from probos.cognitive.circuit_breaker import (
     BreakerState,
     CognitiveCircuitBreaker,
@@ -245,7 +246,7 @@ def _make_loop():
     from probos.proactive import ProactiveCognitiveLoop
 
     loop = ProactiveCognitiveLoop(interval=60, cooldown=60)
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
     rt.ward_room = MagicMock()
     rt.ward_room.list_channels = AsyncMock(return_value=[])
     rt.ward_room.create_thread = AsyncMock()
@@ -386,7 +387,7 @@ class TestCircuitBreakerAPI:
         from probos.api import create_app
         from httpx import AsyncClient, ASGITransport
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.ward_room = MagicMock()
         rt.registry = MagicMock()
 

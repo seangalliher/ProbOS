@@ -8,6 +8,7 @@ import pytest
 
 from probos.channels.base import ChannelAdapter, ChannelConfig, ChannelMessage
 from probos.crew_profile import extract_callsign_mention
+from probos.runtime import ProbOSRuntime
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +59,7 @@ class TestAPIChatCallsignRouting:
 
     @pytest.fixture
     def mock_runtime(self):
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.callsign_registry = MagicMock()
         rt.intent_bus = MagicMock()
         return rt
@@ -169,7 +170,9 @@ class TestChannelCallsignRouting:
             async def stop(self): pass
             async def send_response(self, channel_id, text): pass
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
+        rt.callsign_registry = MagicMock()
+        rt.intent_bus = MagicMock()
         rt.callsign_registry.resolve.return_value = {
             "agent_type": "scout",
             "callsign": "Wesley",
@@ -195,7 +198,8 @@ class TestChannelCallsignRouting:
             async def stop(self): pass
             async def send_response(self, channel_id, text): pass
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
+        rt.callsign_registry = MagicMock()
         rt.callsign_registry.resolve.return_value = None
         rt.process_natural_language = AsyncMock(return_value={
             "final_response": "NL response",
@@ -224,8 +228,9 @@ class TestSlashCommandRegression:
             async def stop(self): pass
             async def send_response(self, channel_id, text): pass
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         # If callsign routing fired, resolve would be called
+        rt.callsign_registry = MagicMock()
         rt.callsign_registry.resolve.return_value = None
 
         adapter = FakeAdapter(rt, ChannelConfig())
@@ -253,7 +258,8 @@ class TestNoMentionRegression:
             async def stop(self): pass
             async def send_response(self, channel_id, text): pass
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
+        rt.callsign_registry = MagicMock()
         rt.process_natural_language = AsyncMock(return_value={
             "final_response": "NL response",
         })

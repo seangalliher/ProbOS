@@ -30,20 +30,23 @@ def _mock_runtime(
     weights=None,
 ):
     """Build a lightweight mock runtime for IntrospectionAgent unit tests."""
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
     rt._previous_execution = previous_execution
     rt.episodic_memory = episodic_memory
 
     # Registry
+    rt.registry = MagicMock()
     rt.registry.all.return_value = agents or []
     rt.registry.get.return_value = None
     rt.registry.count = len(agents) if agents else 0
 
     # Trust network
+    rt.trust_network = MagicMock()
     rt.trust_network.get_score.return_value = 0.5
     rt.trust_network.all_scores.return_value = trust_scores or {}
 
     # Hebbian router
+    rt.hebbian_router = MagicMock()
     rt.hebbian_router.all_weights_typed.return_value = weights or {}
 
     # Pools

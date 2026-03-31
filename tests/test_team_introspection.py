@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from probos.agents.introspect import IntrospectionAgent
+from probos.runtime import ProbOSRuntime
 from probos.substrate.agent import BaseAgent
 from probos.substrate.pool import ResourcePool
 from probos.substrate.pool_group import PoolGroup, PoolGroupRegistry
@@ -53,7 +54,7 @@ def _make_pool(agent_ids, agent_type: str = "unknown"):
 
 def _build_runtime():
     """Build a mock runtime with pool groups and pools matching the real runtime."""
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
 
     # Agents
     med_vitals = _make_agent("vitals_monitor", "med-vm-0", "medical_vitals")
@@ -67,16 +68,19 @@ def _build_runtime():
     all_agents = [med_vitals, med_diag, med_surg, med_pharm, med_path, fs_reader, shell_agent]
 
     # Registry — resolve agent IDs to agent objects
+    rt.registry = MagicMock()
     rt.registry.all.return_value = all_agents
     agent_by_id = {a.id: a for a in all_agents}
     rt.registry.get.side_effect = lambda aid: agent_by_id.get(aid)
     rt.registry.count = len(all_agents)
 
     # Trust
+    rt.trust_network = MagicMock()
     rt.trust_network.get_score.return_value = 0.5
     rt.trust_network.all_scores.return_value = {a.id: 0.5 for a in all_agents}
 
     # Hebbian
+    rt.hebbian_router = MagicMock()
     rt.hebbian_router.all_weights_typed.return_value = {}
     rt.hebbian_router.weight_count = 0
 

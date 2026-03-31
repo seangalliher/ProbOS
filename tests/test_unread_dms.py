@@ -5,6 +5,7 @@ import time
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from probos.runtime import ProbOSRuntime
 from probos.ward_room import WardRoomService
 from probos.proactive import ProactiveCognitiveLoop
 
@@ -140,7 +141,7 @@ class TestProactiveCycleUnreadDms:
         agent.agent_type = "counselor"
         agent.callsign = "Troi"
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.ward_room = AsyncMock(spec=WardRoomService)
         rt.ward_room.get_unread_dms = AsyncMock(return_value=[
             {
@@ -182,7 +183,7 @@ class TestProactiveCycleUnreadDms:
         agent.agent_type = "counselor"
         agent.callsign = "Troi"
 
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.ward_room = AsyncMock(spec=WardRoomService)
         rt.ward_room.get_unread_dms = AsyncMock(return_value=[
             {

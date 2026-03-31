@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from probos.runtime import ProbOSRuntime
+
 
 # ── BF-060: Notebook stripping ──
 
@@ -16,7 +18,7 @@ def _make_engine_and_rt(trust_score=0.55):
 
     engine = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
     engine._circuit_breaker = CognitiveCircuitBreaker()
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
     rt.ward_room = MagicMock()
     rt.ward_room.list_channels = AsyncMock(return_value=[])
     rt.trust_network = MagicMock()
@@ -178,7 +180,7 @@ class TestReplyPatternAndRank:
 
         engine = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
         engine._circuit_breaker = CognitiveCircuitBreaker()
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         full_tid = "65a0cf3e-1234-5678-abcd-ef0123456789"
         rt.ward_room = MagicMock()
         rt.ward_room.get_thread = AsyncMock(side_effect=lambda tid: {"thread": {}} if tid == full_tid else None)
@@ -208,7 +210,7 @@ class TestSimilarityGate:
 
         engine = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
         engine._circuit_breaker = CognitiveCircuitBreaker()
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.ward_room = MagicMock()
         rt.ontology = MagicMock()
         rt.ontology.get_agent_department = MagicMock(return_value=None)
@@ -239,7 +241,7 @@ class TestSimilarityGate:
 
         engine = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
         engine._circuit_breaker = CognitiveCircuitBreaker()
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.ward_room = MagicMock()
         rt.ontology = MagicMock()
         rt.ontology.get_agent_department = MagicMock(return_value=None)
@@ -269,7 +271,7 @@ class TestSimilarityGate:
 
         engine = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
         engine._circuit_breaker = CognitiveCircuitBreaker()
-        rt = MagicMock()
+        rt = MagicMock(spec=ProbOSRuntime)
         rt.ward_room = MagicMock()
         rt.ontology = MagicMock()
         rt.ontology.get_agent_department = MagicMock(return_value=None)

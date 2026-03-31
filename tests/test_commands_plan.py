@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 from rich.console import Console
 
 from probos.experience.commands import commands_plan
+from probos.runtime import ProbOSRuntime
 
 
 @pytest.fixture
@@ -22,7 +23,7 @@ def get_output(console: Console) -> str:
 
 @pytest.fixture
 def mock_runtime():
-    rt = MagicMock()
+    rt = MagicMock(spec=ProbOSRuntime)
     rt._pending_proposal = None
     rt._last_execution = None
     rt._last_feedback_applied = False
