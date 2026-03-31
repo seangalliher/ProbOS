@@ -1696,3 +1696,13 @@ Motivated by ["Agents of Chaos"](https://arxiv.org/abs/2602.20021) (2026) — a 
 **Rationale:** "A Memory Integrity Field" — the cognitive equivalent of SIF. LLM attention blending is the warp stress; provenance tags are the containment. Without structural separation, training knowledge warps into false episodic recall. Intellectual lineage: Johnson & Raye (1981) reality monitoring, Loftus (1979) misinformation effect. Minimum viable: L1 (boundary injection) + L2 (standing order) — 2 files, 4 code points.
 
 **Status:** AD-540 PLANNED.
+
+**AD-541: Memory Integrity Verification — Anti-Confabulation & Therapeutic Recall** *(planned, OSS)*
+
+**Context:** AD-540 addresses source labeling (training vs experience) but not memory accuracy. Three gaps: (1) Confabulation — LLM can fabricate episode details during act-store, creating false memories in ChromaDB that AD-540's provenance tags would protect rather than flag. (2) Reconsolidation corruption — recalled memories processed through LLM during dream cycles or proactive think can be subtly modified. (3) Social contagion — hearing others' experiences in Ward Room creates secondhand memories that agents may recall as firsthand.
+
+**Decision:** Six-pillar memory integrity system: (1) Episode verification against EventLog ground truth (anti-confabulation). (2) Read-only memory framing during dream cycle LLM processing (reconsolidation protection). (3) MemorySource enum (DIRECT/SECONDHAND/SHIP_RECORDS/BRIEFING) on Episode dataclass (social provenance). (4) Active retrieval practice during dream cycles — Spaced Retrieval Therapy (Camp, 1989). (5) Counselor guided reminiscence protocol — validation therapy (Feil, 1993). (6) Memory reliability hierarchy standing order (EventLog > Ship's Records > Episodic > Ward Room > Training).
+
+**Rationale:** Clinical neuroscience provides validated interventions for exactly this class of problem. Reconsolidation theory (Nader & Hardt, 2009), social memory contagion (Roediger et al., 2001), errorless learning (Baddeley & Wilson, 1994), cognitive reserve (Stern, 2002). AD-540 is the artificial prefrontal cortex (source tags). AD-541 is the hippocampal integrity system (memory verification + consolidation protection). Together they form a complete memory health architecture.
+
+**Status:** AD-541 PLANNED.

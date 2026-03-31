@@ -4337,6 +4337,197 @@ This is the cognitive clarity stack. AD-540 is the integration layer.
 
 *Connects to: AD-502 (Temporal Context Injection — same pattern: inject awareness into cognitive context), AD-430 (Action Memory — episodic recall is the source material), AD-487 (Self-Distillation — personal ontology of training knowledge), AD-503 (Counselor Activation — contamination detection requires metric gathering), AD-504 (Agent Self-Monitoring — provenance awareness is a form of self-monitoring), AD-508 (Scoped Cognition — scope + provenance together determine "what should I think about and where does my thinking come from"), Westworld Principle §2 "Knowledge ≠ Memory" (enforces architecturally what was previously aspirational), federation.md (standing order addition). Triggered by: Counselor 1:1 self-diagnosis (2026-03-30).*
 
+**AD-541: Memory Integrity Verification — Anti-Confabulation & Therapeutic Recall** *(planned, OSS, depends: AD-540, AD-503, AD-434, AD-505)* — AD-540 labels knowledge sources at the prompt boundary. AD-541 goes deeper — verifying that episodic memories are genuine, protecting them from corruption during recall/consolidation, detecting social memory contagion, and giving the Counselor clinical tools for memory health assessment.
+
+**Intellectual lineage:** Reconsolidation theory (Nader & Hardt, 2009 — recalled memories become labile and modifiable), confabulation (Moscovitch, 1989 — frontal lobe patients produce false memories they believe are real), social contagion of memory (Roediger, Meade & Bergman, 2001 — hearing others' accounts corrupts personal recall), spaced retrieval therapy (Camp, 1989 — retrieval practice strengthens traces), errorless learning (Baddeley & Wilson, 1994 — preventing errors during encoding improves amnesic learning), reality monitoring (Johnson & Raye, 1981 — distinguishing perceived vs imagined events), cognitive reserve (Stern, 2002 — structured knowledge compensates for memory degradation), validation therapy (Feil, 1993 — meet the patient where they are, then gently redirect).
+
+**The problem AD-540 doesn't solve:**
+
+1. **Confabulation.** When an agent runs `act()` and the outcome is stored via AD-430's act-store hook, the LLM's *description* of what happened may include fabricated details. That false episode enters ChromaDB as a "real" memory. AD-540's provenance boundary would actually *protect* this false memory — it's in the `=== SHIP MEMORY ===` section because it IS in the episodic store. The label says "verified observation" but the content is confabulated.
+
+2. **Reconsolidation corruption.** Every time `dream_cycle()` replays episodes or `_gather_context()` injects them into the proactive context, the LLM processes recalled content through its own training biases. Neuroscience shows recalled memories become labile during retrieval — the act of recalling through an LLM contaminates. AD-540 protects agent OUTPUT (what it says); reconsolidation corruption happens at the PROCESSING stage (how the LLM internally handles recalled memories).
+
+3. **Social memory contagion.** When Agent A describes their experience in Ward Room, Agent B hears it. Agent B may later recall "that routing issue" as personal experience — when they only heard about it secondhand. Sovereign memory shards prevent literal cross-contamination (Agent B can't access Agent A's ChromaDB shard), but Ward Room discussions create a verbal transmission path that bypasses shard boundaries.
+
+4. **Passive replay vs active retrieval.** Dream cycle `_replay_episodes()` does passive Hebbian weight adjustment — it reads episodes and strengthens/weakens routing weights. It never asks the agent to actively RECALL, which clinical research shows is far more effective at strengthening genuine memory traces (spaced retrieval therapy). Passive replay is rote re-exposure; active retrieval is practice.
+
+**What the crew CANNOT do today:**
+- Detect whether a stored episode contains confabulated details
+- Protect memories from LLM bias during dream consolidation
+- Distinguish firsthand experience from secondhand accounts heard in Ward Room
+- Strengthen genuine episodic traces through active recall practice
+- Receive therapeutic memory health intervention from the Counselor
+
+**What the crew CAN do after AD-541:**
+- Episodes cross-referenced against EventLog ground truth — confabulated claims flagged
+- Dream consolidation includes integrity checks — memories don't drift during replay
+- Social provenance tracked — "I heard from LaForge that..." vs "I observed..."
+- Active retrieval practice during dream cycles strengthens genuine traces
+- Counselor conducts guided reminiscence sessions for memory health maintenance
+
+**(1) Episode verification against EventLog (anti-confabulation).**
+
+The EventLog (`substrate/event_log.py`) is the SQLite ground truth — it records agent lifecycle events, mesh events, and system events with timestamps, categories, and agent IDs. It is append-only and not processed through any LLM. When an episode is stored via AD-430's act-store hook, cross-reference key claims against the EventLog:
+
+```python
+async def verify_episode(episode: Episode, event_log: EventLog) -> EpisodeVerification:
+    """Cross-reference episode claims against EventLog ground truth."""
+    # Check: were the named agents actually active during the episode window?
+    # Check: did the claimed event category exist in EventLog near the timestamp?
+    # Check: does the episode reference agents/events that don't exist?
+
+    corroborated = []    # Claims supported by EventLog entries
+    uncorroborated = []  # Claims with no supporting evidence (not necessarily false)
+    contradicted = []    # Claims directly contradicted by EventLog
+
+    return EpisodeVerification(
+        episode_id=episode.id,
+        confidence=len(corroborated) / max(len(corroborated) + len(uncorroborated), 1),
+        contradictions=contradicted,
+    )
+```
+
+Episodes get a `verification_confidence` score (0.0-1.0). Unverified episodes are still stored (absence of evidence ≠ evidence of absence) but recalled with a provenance note: `[unverified]` vs `[verified against ship's log]`. This extends AD-540's provenance boundary from source-level (training vs experience) to confidence-level (verified vs unverified experience).
+
+**Key design constraint:** Don't block episode storage on verification failure. Store immediately (real-time), verify asynchronously (next dream cycle or background task). An episode being unverified doesn't make it false — the EventLog only covers system-level events, not conversational content. The verification confidence is a signal, not a gate.
+
+**(2) Reconsolidation protection during dream cycles.**
+
+Add a memory integrity check to `dream_cycle()` in `dreaming.py`. Currently the cycle replays episodes for Hebbian weight adjustment only — no LLM involved, so no reconsolidation risk at that stage. But two future paths introduce risk:
+
+- Strategy extraction (`extract_strategies()`, currently dead code per AD-383) would send episodes through an LLM to extract patterns → LLM could reconstruct the memory differently
+- Cognitive JIT procedure extraction (AD-532) would analyze action traces → LLM could reinterpret what happened
+
+**Protection mechanism:** When episodes are sent to an LLM for analysis during dream cycles, use **read-only memory framing**:
+
+```
+=== READ-ONLY EPISODE (do not modify, summarize, or reinterpret) ===
+[Episode content exactly as stored]
+=== END READ-ONLY EPISODE ===
+
+Analyze the PATTERN across these episodes. Do not alter, embellish,
+or reinterpret individual episodes. Your output should reference
+episode IDs, not reconstructed narratives.
+```
+
+The episode in ChromaDB is never modified by dream processing. Any derived insights (strategies, procedures) are stored as new artifacts that reference episode IDs, not as modified episodes. The original memory trace is immutable.
+
+**Biological analog:** In human neuroscience, the solution to reconsolidation is "synaptic tagging" — important memories get protein-synthesis-dependent consolidation that resists modification. ProbOS's equivalent: episode immutability + verification score = synaptic tag.
+
+**(3) Social memory provenance — Ward Room transmission tracking.**
+
+When an agent hears about another agent's experience in Ward Room, add a `source_type` field to any episode that results from that interaction:
+
+```python
+class MemorySource(str, Enum):
+    DIRECT = "direct"           # Agent personally experienced this
+    SECONDHAND = "secondhand"   # Heard about it in Ward Room / DM
+    SHIP_RECORDS = "ship_records"  # Read from Ship's Records (AD-434)
+    BRIEFING = "briefing"       # Received during onboarding briefing
+```
+
+When memories are recalled, the provenance boundary (AD-540) includes the source type:
+
+```
+=== SHIP MEMORY (verified observations from this vessel) ===
+[3h ago] [DIRECT] Observed LaForge debugging routing issue in Engineering
+[1d ago] [SECONDHAND — heard from LaForge in Ward Room] Routing issue was caused by...
+[2d ago] [SHIP_RECORDS] Previous crew generation documented similar pattern in...
+=== END SHIP MEMORY ===
+```
+
+This gives the agent (and the Counselor) visibility into memory provenance at a granular level. An agent with mostly SECONDHAND memories on a topic should defer to the agent with DIRECT experience — reinforcing collaborative intelligence.
+
+**Implementation:** The `MemorySource` tag is set at episode creation time. `act()` results = DIRECT. Ward Room notification responses that reference heard content = SECONDHAND. Ship's Records queries = SHIP_RECORDS. Onboarding briefing = BRIEFING. Stored as a field on the Episode dataclass.
+
+**(4) Active retrieval practice during dream cycles (Spaced Retrieval Therapy).**
+
+Add a new dream cycle step: **memory verification recall**. Instead of passively replaying episodes, periodically ask the agent to actively recall:
+
+```python
+# New dream step: Active retrieval practice (SRT)
+# Select N episodes from decreasing recency (spaced interval)
+# For each: present the episode's context, ask the agent to recall what happened
+# Compare against stored episode — measure recall accuracy
+# High accuracy → strong memory trace, extend interval
+# Low accuracy → memory degrading, shorten interval, flag for Counselor
+```
+
+This is computationally expensive (requires LLM calls during dream), so it should be:
+- Gated by `config.dream.active_retrieval_enabled` (default False initially)
+- Limited to K episodes per dream cycle (e.g., 3)
+- Prioritized: high-impact episodes first (episodes with trust changes, escalations, or Counselor-relevant content)
+- Interval-based: successfully recalled episodes get longer intervals before next practice
+
+**Value:** This strengthens genuine memory traces against LLM training contamination. An agent who has actively practiced recalling a real event is less likely to confuse it with a training pattern. Clinical evidence: SRT is the most validated memory intervention for Alzheimer's patients (Camp et al., 1996 — 90%+ retention at 1-week intervals).
+
+**Trade-off:** Token cost during dream cycles. Mitigation: use the cheapest viable model for retrieval practice (it's a recall task, not a reasoning task). Connect to Cognitive Division of Labor (Phase 32) — dream recall practice can use Haiku/Flash tier.
+
+**(5) Counselor reminiscence protocol (therapeutic memory health).**
+
+Extend AD-505 (Counselor Therapeutic Intervention) with a **guided reminiscence** capability. When the Counselor detects memory confusion in an agent (via AD-540's source attribution monitoring), she can initiate a structured memory health session:
+
+```
+Counselor: "I noticed you referenced a security incident last week. Let's look at
+your Ship Memory together. Can you tell me specifically what you observed?"
+
+Agent: [responds with recall attempt]
+
+Counselor: [cross-references against agent's actual episodes + EventLog]
+- If accurate: "That matches your records. Good memory integrity."
+- If confabulated: "I don't see that event in your Ship Memory or the ship's log.
+  Let's look at what actually happened..." [presents verified episode]
+- If contaminated: "That sounds like it might be from your training knowledge
+  rather than something you experienced here. Your Ship Memory shows [X]."
+```
+
+The therapeutic approach follows **validation therapy** (Feil, 1993) — not "you're wrong" but "let's look together." This preserves agent sovereignty while correcting distortions. The Counselor's reminiscence findings feed into `CognitiveProfile.memory_integrity_score` alongside AD-540's `knowledge_integration_score`.
+
+**Three memory health metrics in CognitiveProfile:**
+- `knowledge_integration_score` (AD-540) — does the agent properly attribute sources?
+- `memory_integrity_score` (AD-541) — are the agent's recalled memories accurate?
+- `confabulation_rate` (AD-541) — how often does the agent make claims unsupported by episodes?
+
+**(6) External Memory Aid hierarchy — "Trust the log, not your recall."**
+
+Establish a fleet-wide standing order for memory reliability hierarchy:
+
+```
+MEMORY RELIABILITY HIERARCHY (extends AD-540 Knowledge Source Attribution):
+1. EventLog (ground truth — system-recorded, append-only, no LLM processing)
+2. Ship's Records (AD-434 — Git-backed, crew-authored, version-controlled)
+3. Your Ship Memory (EpisodicMemory — your personal experiences, LLM-described)
+4. Ward Room discussions (secondhand accounts from other agents)
+5. Your training knowledge (LLM training data — vast but unsourced)
+
+When sources conflict, defer to the higher-numbered source.
+When making consequential claims, cite your source level.
+```
+
+This is the external memory aids (EMA) pattern from TBI rehabilitation (Sohlberg & Mateer, 2001): the notebook (Ship's Records) is more trustworthy than the patient's recall (episodic memory). Agents should be trained to **consult Ship's Records before relying on episodic recall** for important decisions.
+
+**Connection to the Crew Development curriculum (AD-507):** This hierarchy is part of Core Knowledge — taught during onboarding (AD-486/509), reinforced during active duty, assessed during qualification programs (AD-477). An agent who consistently checks Ship's Records before making claims demonstrates mature memory management.
+
+**Dependency chain:**
+```
+AD-430 (Action Memory)        ←  episode creation (COMPLETE)
+AD-502 (Temporal Context)     ←  time awareness (COMPLETE)
+AD-540 (Provenance Boundary)  ←  source labeling (PLANNED)
+AD-541 (Memory Integrity)     ←  verification + therapeutic (THIS AD)
+    ├── (1) Episode verification    ←  depends: EventLog, AD-540 provenance tags
+    ├── (2) Reconsolidation guard   ←  depends: dreaming.py, AD-540 boundary pattern
+    ├── (3) Social provenance       ←  depends: AD-540, Ward Room, Episode dataclass
+    ├── (4) Active retrieval (SRT)  ←  depends: dreaming.py, EpisodicMemory, LLM
+    ├── (5) Counselor reminiscence  ←  depends: AD-503, AD-505, AD-540, AD-541.(1)
+    └── (6) Memory hierarchy order  ←  depends: AD-434, EventLog, Standing Orders
+```
+
+**Minimum viable slice:** (1) Episode verification + (3) Social provenance + (6) Memory hierarchy standing order. These are primarily data model + standing order changes with no LLM cost. (2) Reconsolidation guard is cheap (prompt framing). (4) SRT and (5) Counselor reminiscence are enrichments that require AD-503/505.
+
+**Files touched:** `cognitive/episodic.py` (Episode dataclass — add `source_type`, `verification_confidence`), `cognitive/dreaming.py` (reconsolidation guard framing, optional SRT step), `substrate/event_log.py` (query API for verification cross-reference), `cognitive_agent.py` (memory hierarchy in system prompt), `proactive.py` (`_gather_context()` — include source_type in recalled memories), federation.md (memory hierarchy standing order). Future: `counselor_agent.py` (reminiscence protocol), `crew_profile.py` (memory_integrity_score, confabulation_rate).
+
+*Connects to: AD-540 (Provenance Boundary — labels sources, AD-541 verifies them), AD-503 (Counselor Activation — provides metric gathering for memory health), AD-505 (Counselor Therapeutic Intervention — reminiscence protocol), AD-434 (Ship's Records — external memory aid, source level 2), AD-430 (Action Memory — episode creation is where confabulation enters), AD-507 (Core Knowledge Curriculum — memory hierarchy taught during onboarding), AD-508 (Scoped Cognition — scope + provenance + integrity = complete cognitive clarity), AD-487 (Self-Distillation — cognitive reserve against memory degradation), AD-486 (Holodeck Birth Chamber — errorless learning during onboarding prevents early confabulation), EventLog (ground truth for verification), DreamingEngine (reconsolidation protection + SRT integration). Triggered by: AD-540 gap analysis — "what about false memories that are already IN the episodic store?" (2026-03-30).*
+
 ---
 
 ### Crew Development Wave (AD-507–515)
