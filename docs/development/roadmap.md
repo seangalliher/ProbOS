@@ -4619,7 +4619,7 @@ ProbOS agents are like highly gifted humans — they have access to vast knowled
 
 Closes all remaining findings from the 2026-03-29 comprehensive code review. Wave 1+2 fixed immediate/short-term issues (BF-071–076). Wave 3 decomposed all three god objects (AD-514–519). Wave 4 addresses the remaining architecture, type safety, security, and test quality findings.
 
-**AD-527: Typed Event System** *(planned, OSS)* — Code review finding #13. Replace scattered string-literal event types (`"self_mod_started"`, `"trust_update"`, `"ward_room_post"`, etc.) with a formal event type registry and typed event classes. Currently `_emit_event()` accepts arbitrary dicts with no schema — consumers discover event shapes at runtime.
+**AD-527: Typed Event System** *(done, OSS)* — Code review finding #13. Replaced 55 scattered string-literal event types with formal `EventType(str, Enum)` registry in `src/probos/events.py`. 24 typed event dataclasses for Priority A/B domains (build, self-mod, trust/routing, design, ward room). Updated `_emit_event()` to accept `BaseEvent | EventType | str` (three-way backward compat). Added public `emit_event()` API. Updated `EventEmitterProtocol`. Migrated all 15 producer files + renderer consumer. Zero orphaned string literals. Wire format unchanged. 30 new tests. 4,111 tests passing.
 
 **(1) Current state:**
 - Events are plain dicts: `{"type": "trust_update", "agent_id": ..., "score": ...}`

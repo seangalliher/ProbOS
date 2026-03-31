@@ -1706,3 +1706,13 @@ Motivated by ["Agents of Chaos"](https://arxiv.org/abs/2602.20021) (2026) — a 
 **Rationale:** Clinical neuroscience provides validated interventions for exactly this class of problem. Reconsolidation theory (Nader & Hardt, 2009), social memory contagion (Roediger et al., 2001), errorless learning (Baddeley & Wilson, 1994), cognitive reserve (Stern, 2002). AD-540 is the artificial prefrontal cortex (source tags). AD-541 is the hippocampal integrity system (memory verification + consolidation protection). Together they form a complete memory health architecture.
 
 **Status:** AD-541 PLANNED.
+
+**AD-527: Typed Event System** *(done, OSS)*
+
+**Context:** Code review finding #13. 55 unique event types scattered as string literals across 15 producer files. `_emit_event()` accepts arbitrary dicts with no schema. Consumers discover event shapes at runtime. Silent typo bugs in event type strings.
+
+**Decision:** `EventType(str, Enum)` registry with all 55 event types. 24 typed event dataclasses for Priority A/B domains (build, self-mod, trust/routing, design, ward room). Updated `_emit_event` to accept `BaseEvent | EventType | str` (three-way backward compat). Added public `emit_event()` API. Migrated all 15 producer files + renderer consumer.
+
+**Rationale:** Type safety at event boundaries. Discoverable event catalog. IDE autocomplete on event payloads. Eliminates silent typo bugs. `str, Enum` ensures `EventType.X == "x"` is True — wire format unchanged, HXI frontend needs zero changes.
+
+**Status:** AD-527 CLOSED. 927 insertions, 131 deletions. 30 new tests. 4,111 total passing.
