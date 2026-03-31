@@ -1064,7 +1064,7 @@ class TestSelfModDurability:
 
         source = inspect.getsource(chat_router_module)
         # Check that self_mod_success event includes agent_id
-        assert 'agent_id' in source[source.index('self_mod_success'):][:500], (
+        assert 'agent_id' in source[source.index('SELF_MOD_SUCCESS'):][:500], (
             "self_mod_success event should include agent_id field"
         )
 

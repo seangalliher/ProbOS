@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.events import EventType
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -639,7 +640,7 @@ async def decompose_blueprint(
             logger.warning("ChunkDecomposer: LLM error: %s, using fallback", response.error)
             blueprint = _fallback_decompose(blueprint)
             if on_event:
-                asyncio.create_task(on_event("transporter_decomposed", {
+                asyncio.create_task(on_event(EventType.TRANSPORTER_DECOMPOSED, {
                     "chunk_count": len(blueprint.chunks),
                     "chunks": [{"chunk_id": c.chunk_id, "description": c.description, "target_file": c.target_file} for c in blueprint.chunks],
                     "fallback": True,
@@ -660,7 +661,7 @@ async def decompose_blueprint(
             logger.warning("ChunkDecomposer: LLM returned empty chunks, using fallback")
             blueprint = _fallback_decompose(blueprint)
             if on_event:
-                asyncio.create_task(on_event("transporter_decomposed", {
+                asyncio.create_task(on_event(EventType.TRANSPORTER_DECOMPOSED, {
                     "chunk_count": len(blueprint.chunks),
                     "chunks": [{"chunk_id": c.chunk_id, "description": c.description, "target_file": c.target_file} for c in blueprint.chunks],
                     "fallback": True,
@@ -671,7 +672,7 @@ async def decompose_blueprint(
         logger.warning("ChunkDecomposer: failed (%s), using fallback decomposition", exc)
         blueprint = _fallback_decompose(blueprint)
         if on_event:
-            asyncio.create_task(on_event("transporter_decomposed", {
+            asyncio.create_task(on_event(EventType.TRANSPORTER_DECOMPOSED, {
                 "chunk_count": len(blueprint.chunks),
                 "chunks": [{"chunk_id": c.chunk_id, "description": c.description, "target_file": c.target_file} for c in blueprint.chunks],
                 "fallback": True,
@@ -714,7 +715,7 @@ async def decompose_blueprint(
         logger.warning("ChunkDecomposer: invalid DAG (%s), using fallback", err)
         blueprint = _fallback_decompose(blueprint)
         if on_event:
-            asyncio.create_task(on_event("transporter_decomposed", {
+            asyncio.create_task(on_event(EventType.TRANSPORTER_DECOMPOSED, {
                 "chunk_count": len(blueprint.chunks),
                 "chunks": [{"chunk_id": c.chunk_id, "description": c.description, "target_file": c.target_file} for c in blueprint.chunks],
                 "fallback": True,
@@ -741,7 +742,7 @@ async def decompose_blueprint(
         len(chunks), len(spec.target_files),
     )
     if on_event:
-        asyncio.create_task(on_event("transporter_decomposed", {
+        asyncio.create_task(on_event(EventType.TRANSPORTER_DECOMPOSED, {
             "chunk_count": len(blueprint.chunks),
             "chunks": [
                 {"chunk_id": c.chunk_id, "description": c.description, "target_file": c.target_file}
@@ -950,7 +951,7 @@ async def execute_chunks(
         wave_num += 1
 
         if on_event:
-            await on_event("transporter_wave_start", {
+            await on_event(EventType.TRANSPORTER_WAVE_START, {
                 "wave": wave_num,
                 "chunk_ids": [c.chunk_id for c in ready],
                 "message": f"Wave {wave_num}: executing {len(ready)} chunks in parallel",
@@ -976,7 +977,7 @@ async def execute_chunks(
             completed.add(chunk.chunk_id)
 
             if on_event:
-                await on_event("transporter_chunk_done", {
+                await on_event(EventType.TRANSPORTER_CHUNK_DONE, {
                     "chunk_id": chunk.chunk_id,
                     "success": result.success,
                     "confidence": result.confidence,
@@ -995,7 +996,7 @@ async def execute_chunks(
     logger.info("Matter Stream: %d/%d chunks succeeded", success_count, total)
 
     if on_event:
-        await on_event("transporter_execution_done", {
+        await on_event(EventType.TRANSPORTER_EXECUTION_DONE, {
             "total_chunks": len(blueprint.chunks),
             "successful": success_count,
             "failed": len(blueprint.chunks) - success_count,
@@ -1200,13 +1201,13 @@ async def _emit_transporter_events(
     Called after the transporter pipeline completes. Emits assembly
     and validation results so the UI can display the full chunk lifecycle.
     """
-    rt._emit_event("transporter_assembled", {
+    rt._emit_event(EventType.TRANSPORTER_ASSEMBLED, {
         "build_id": build_id,
         "file_count": len(assembled_blocks),
         "summary": assembly_summary(blueprint),
     })
 
-    rt._emit_event("transporter_validated", {
+    rt._emit_event(EventType.TRANSPORTER_VALIDATED, {
         "build_id": build_id,
         "valid": validation_result.valid,
         "errors": validation_result.errors,

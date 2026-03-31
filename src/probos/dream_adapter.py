@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from probos.events import EventType
 from probos.types import Episode
 
 if TYPE_CHECKING:
@@ -85,7 +86,7 @@ class DreamAdapter:
 
     def on_pre_dream(self) -> None:
         """Pre-dream callback: emit system_mode event for HXI (AD-254)."""
-        self._event_emitter("system_mode", {"mode": "dreaming", "previous": "idle"})
+        self._event_emitter(EventType.SYSTEM_MODE, {"mode": "dreaming", "previous": "idle"})
 
     def refresh_emergent_detector_roster(self) -> None:
         """Update EmergentDetector with the current live agent roster."""
@@ -106,7 +107,7 @@ class DreamAdapter:
             logger.info("BF-034: Cold start period ended — normal detection resumed")
 
         # Emit system_mode event for HXI (AD-254) — dream cycle ended
-        self._event_emitter("system_mode", {"mode": "idle", "previous": "dreaming"})
+        self._event_emitter(EventType.SYSTEM_MODE, {"mode": "idle", "previous": "dreaming"})
 
         if not self._emergent_detector:
             return
@@ -190,7 +191,7 @@ class DreamAdapter:
     def on_gap_predictions(self, predictions: list[Any]) -> None:
         """Broadcast gap predictions to HXI (AD-385)."""
         for p in predictions:
-            self._event_emitter("capability_gap_predicted", p.to_dict())
+            self._event_emitter(EventType.CAPABILITY_GAP_PREDICTED, p.to_dict())
         logger.info("Dream cycle predicted %d capability gaps", len(predictions))
 
     def on_contradictions(self, contradictions: list[Any]) -> None:

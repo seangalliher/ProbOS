@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
+from probos.events import EventType
+
 logger = logging.getLogger(__name__)
 
 
@@ -243,7 +245,7 @@ class InitiativeEngine:
         if self._on_proposal:
             self._on_proposal(proposal)
         if self._on_event:
-            self._on_event({"type": "initiative_proposal", "data": proposal.to_dict()})
+            self._on_event({"type": EventType.INITIATIVE_PROPOSAL.value, "data": proposal.to_dict()})
         logger.info("Initiative proposal: %s → %s (%s)", trigger.key, action_type.value, gate.value)
 
     def _classify_trigger(self, trigger: TriggerState) -> tuple[ActionType, ActionGate, str]:

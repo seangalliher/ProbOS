@@ -17,6 +17,8 @@ from typing import Any
 
 import aiosqlite
 
+from probos.events import EventType
+
 logger = logging.getLogger(__name__)
 
 
@@ -391,7 +393,7 @@ class WardRoomService:
             "archived_to": archive_path,
             "pruned_thread_ids": thread_ids,
         }
-        self._emit("ward_room_pruned", summary)
+        self._emit(EventType.WARD_ROOM_PRUNED, summary)
 
         # Update cached stats
         self._last_stats = await self._build_stats()
@@ -936,7 +938,7 @@ class WardRoomService:
         )
         await self._db.commit()
 
-        self._emit("ward_room_thread_created", {
+        self._emit(EventType.WARD_ROOM_THREAD_CREATED, {
             "thread_id": thread.id,
             "channel_id": channel_id,
             "author_id": author_id,
@@ -1016,7 +1018,7 @@ class WardRoomService:
                 author_callsign=row[13], channel_name=row[14],
             )
 
-        self._emit("ward_room_thread_updated", {
+        self._emit(EventType.WARD_ROOM_THREAD_UPDATED, {
             "thread_id": thread_id,
             "updates": filtered,
         })
@@ -1129,7 +1131,7 @@ class WardRoomService:
         )
         await self._db.commit()
 
-        self._emit("ward_room_post_created", {
+        self._emit(EventType.WARD_ROOM_POST_CREATED, {
             "post_id": post.id,
             "thread_id": thread_id,
             "author_id": author_id,
@@ -1191,7 +1193,7 @@ class WardRoomService:
                         source=author_id, target=trow[0],
                         success=True, rel_type=REL_SOCIAL,
                     )
-                    self._emit("hebbian_update", {
+                    self._emit(EventType.HEBBIAN_UPDATE, {
                         "source": author_id, "target": trow[0],
                         "weight": round(self._hebbian_router.get_weight(author_id, trow[0]), 4),
                         "rel_type": "social",
@@ -1206,7 +1208,7 @@ class WardRoomService:
                                 source=author_id, target=mid,
                                 success=True, rel_type=REL_SOCIAL,
                             )
-                            self._emit("hebbian_update", {
+                            self._emit(EventType.HEBBIAN_UPDATE, {
                                 "source": author_id, "target": mid,
                                 "weight": round(self._hebbian_router.get_weight(author_id, mid), 4),
                                 "rel_type": "social",
@@ -1379,7 +1381,7 @@ class WardRoomService:
             row = await cursor.fetchone()
             net_score = row[0] if row else 0
 
-        self._emit("ward_room_endorsement", {
+        self._emit(EventType.WARD_ROOM_ENDORSEMENT, {
             "target_id": target_id,
             "target_type": target_type,
             "voter_id": voter_id,

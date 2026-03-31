@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from probos.crew_profile import Rank
 from probos.crew_utils import is_crew_agent
+from probos.events import EventType
 from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
@@ -412,7 +413,7 @@ class ProactiveCognitiveLoop:
             if self._on_event:
                 callsign = getattr(agent, 'callsign', agent.agent_type)
                 self._on_event({
-                    "type": "bridge_alert",
+                    "type": EventType.BRIDGE_ALERT.value,
                     "source": "circuit_breaker",
                     "severity": "warning",
                     "title": f"Circuit Breaker: {callsign}",
@@ -438,7 +439,7 @@ class ProactiveCognitiveLoop:
                 )
                 if self._on_event:
                     self._on_event({
-                        "type": "trust_update",
+                        "type": EventType.TRUST_UPDATE.value,
                         "data": {
                             "agent_id": agent.id,
                             "agent_type": getattr(agent, "agent_type", "unknown"),
@@ -485,7 +486,7 @@ class ProactiveCognitiveLoop:
 
         if self._on_event:
             self._on_event({
-                "type": "proactive_thought",
+                "type": EventType.PROACTIVE_THOUGHT.value,
                 "data": {
                     "agent_id": agent.id,
                     "agent_type": agent.agent_type,
@@ -1198,7 +1199,7 @@ class ProactiveCognitiveLoop:
                         source=agent.id, target=target_full_id,
                         success=True, rel_type=REL_SOCIAL,
                     )
-                    rt._emit_event("hebbian_update", {
+                    rt._emit_event(EventType.HEBBIAN_UPDATE, {
                         "source": agent.id, "target": target_full_id,
                         "weight": round(rt.hebbian_router.get_weight(agent.id, target_full_id), 4),
                         "rel_type": "social",

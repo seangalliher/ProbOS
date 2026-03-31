@@ -9,6 +9,9 @@ from __future__ import annotations
 from typing import Any, Callable, TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from probos.events import BaseEvent
+
+if TYPE_CHECKING:
     from probos.cognitive.self_mod import DesignedAgentRecord
     from probos.consensus.trust import TrustRecord
     from probos.ontology import VesselOntologyService
@@ -81,6 +84,6 @@ class HebbianRouterProtocol(Protocol):
 class EventEmitterProtocol(Protocol):
     """What modules need to emit HXI events."""
 
-    def emit_event(self, event_type: str, data: dict[str, Any]) -> None: ...
+    def emit_event(self, event: BaseEvent | str, data: dict[str, Any] | None = None) -> None: ...
     def add_event_listener(self, fn: Callable[..., Any]) -> None: ...
     def remove_event_listener(self, fn: Callable[..., Any]) -> None: ...

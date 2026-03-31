@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
+from probos.events import EventType
+
 
 class TaskType(str, Enum):
     BUILD = "build"
@@ -200,7 +202,7 @@ class NotificationQueue:
             action_url=action_url,
         )
         self._notifications[n.id] = n
-        self._emit("notification", n)
+        self._emit(EventType.NOTIFICATION, n)
         return n
 
     def acknowledge(self, notification_id: str) -> bool:
@@ -208,7 +210,7 @@ class NotificationQueue:
         if not n:
             return False
         n.acknowledged = True
-        self._emit("notification_ack", n)
+        self._emit(EventType.NOTIFICATION_ACK, n)
         self._prune_acknowledged()
         return True
 
@@ -243,7 +245,7 @@ class NotificationQueue:
 
     def _emit_snapshot(self) -> None:
         if self._on_event:
-            self._on_event("notification_snapshot", {
+            self._on_event(EventType.NOTIFICATION_SNAPSHOT, {
                 "notifications": self.snapshot(),
                 "unread_count": self.unread_count(),
             })
@@ -292,14 +294,14 @@ class TaskTracker:
             metadata=metadata or {},
         )
         self._tasks[task.id] = task
-        self._emit("task_created", task)
+        self._emit(EventType.TASK_CREATED, task)
         return task
 
     def start_task(self, task_id: str) -> None:
         task = self._tasks.get(task_id)
         if task:
             task.start()
-            self._emit("task_updated", task)
+            self._emit(EventType.TASK_UPDATED, task)
 
     def advance_step(self, task_id: str, step_label: str) -> TaskStep | None:
         """Complete the current step (if any) and start a new one."""
@@ -313,7 +315,7 @@ class TaskTracker:
         # Start new step
         step = task.add_step(step_label)
         step.start()
-        self._emit("task_updated", task)
+        self._emit(EventType.TASK_UPDATED, task)
         return step
 
     def complete_step(self, task_id: str) -> None:
@@ -323,13 +325,13 @@ class TaskTracker:
             current = task.current_step()
             if current:
                 current.complete()
-            self._emit("task_updated", task)
+            self._emit(EventType.TASK_UPDATED, task)
 
     def set_review(self, task_id: str, action_type: str = "approve") -> None:
         task = self._tasks.get(task_id)
         if task:
             task.set_review(action_type)
-            self._emit("task_updated", task)
+            self._emit(EventType.TASK_UPDATED, task)
 
     def complete_task(self, task_id: str) -> None:
         task = self._tasks.get(task_id)
@@ -339,7 +341,7 @@ class TaskTracker:
             if current:
                 current.complete()
             task.complete()
-            self._emit("task_updated", task)
+            self._emit(EventType.TASK_UPDATED, task)
             self._prune_done()
 
     def fail_task(self, task_id: str, error: str = "") -> None:
@@ -349,7 +351,7 @@ class TaskTracker:
             if current:
                 current.fail()
             task.fail(error)
-            self._emit("task_updated", task)
+            self._emit(EventType.TASK_UPDATED, task)
 
     # --- Queries ---
 

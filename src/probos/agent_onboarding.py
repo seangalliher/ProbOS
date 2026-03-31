@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from probos.crew_utils import is_crew_agent
+from probos.events import EventType
 from probos.substrate.heartbeat import HeartbeatAgent
 
 if TYPE_CHECKING:
@@ -103,7 +104,7 @@ class AgentOnboardingService:
         self._trust_network.get_or_create(agent.id)
 
         # Emit agent_state event for HXI (AD-254)
-        self._event_emitter("agent_state", {
+        self._event_emitter(EventType.AGENT_STATE, {
             "agent_id": agent.id,
             "pool": agent.pool,
             "state": agent.state.value if hasattr(agent.state, "value") else str(agent.state),

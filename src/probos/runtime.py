@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from probos.events import BaseEvent, EventType
 from probos.agents.directory_list import DirectoryListAgent
 from probos.agents.file_reader import FileReaderAgent
 from probos.agents.file_search import FileSearchAgent
@@ -571,16 +572,32 @@ class ProbOSRuntime:
         except ValueError:
             pass
 
-    def _emit_event(self, event_type: str, data: dict[str, Any]) -> None:
-        """Fire-and-forget event to all registered listeners (AD-254)."""
-        event = {"type": event_type, "data": data, "timestamp": time.time()}
+    def _emit_event(self, event_type: str | EventType, data: dict[str, Any] | None = None) -> None:
+        """Fire-and-forget event to all registered listeners (AD-254).
+
+        Accepts typed ``BaseEvent`` instances, ``EventType`` enum values,
+        or legacy string + dict pairs (AD-527 backward compat).
+        """
+        if isinstance(event_type, BaseEvent):
+            event = event_type.to_dict()
+        elif isinstance(event_type, EventType):
+            event = {"type": event_type.value, "data": data or {}, "timestamp": time.time()}
+        else:
+            event = {"type": event_type, "data": data or {}, "timestamp": time.time()}
         for fn in self._event_listeners:
             try:
                 fn(event)
             except Exception:
-                logger.debug("Event listener failed for %s", event_type, exc_info=True)
+                logger.debug("Event listener failed for %s", event.get("type", "?"), exc_info=True)
         # AD-471: Check Night Orders escalation on every event
-        self._check_night_order_escalation(event_type, data)
+        self._check_night_order_escalation(event.get("type", ""), event.get("data", {}))
+
+    def emit_event(self, event: BaseEvent | str, data: dict[str, Any] | None = None) -> None:
+        """Public typed event emission (AD-527).  Delegates to _emit_event."""
+        if isinstance(event, BaseEvent):
+            self._emit_event(event)
+        else:
+            self._emit_event(event, data or {})
 
     # --- AD-471: Autonomous operations helpers ---
 
@@ -703,7 +720,7 @@ class ProbOSRuntime:
         from probos.build_queue import QueuedBuild
         if not isinstance(build, QueuedBuild):
             return
-        self._emit_event("build_queue_item", {
+        self._emit_event(EventType.BUILD_QUEUE_ITEM, {
             "item": {
                 "id": build.id,
                 "title": build.spec.title,
@@ -1276,7 +1293,7 @@ class ProbOSRuntime:
             )
 
             # Emit hebbian_update for HXI (AD-254)
-            self._emit_event("hebbian_update", {
+            self._emit_event(EventType.HEBBIAN_UPDATE, {
                 "source": intent,
                 "target": result.agent_id,
                 "weight": round(self.hebbian_router.get_weight(intent, result.agent_id), 4),
@@ -1336,7 +1353,7 @@ class ProbOSRuntime:
             )
 
             # Emit hebbian_update for HXI (AD-254)
-            self._emit_event("hebbian_update", {
+            self._emit_event(EventType.HEBBIAN_UPDATE, {
                 "source": intent,
                 "target": result.agent_id,
                 "weight": round(self.hebbian_router.get_weight(intent, result.agent_id), 4),
@@ -1347,7 +1364,7 @@ class ProbOSRuntime:
         consensus = self.quorum_engine.evaluate(results, policy=policy)
 
         # Emit consensus event for HXI (AD-254)
-        self._emit_event("consensus", {
+        self._emit_event(EventType.CONSENSUS, {
             "intent": intent,
             "outcome": consensus.outcome.value,
             "approval_ratio": round(consensus.approval_ratio, 4),
@@ -1401,7 +1418,7 @@ class ProbOSRuntime:
                         verifier_id=rt_agent.id,
                     )
 
-                    self._emit_event("trust_update", {
+                    self._emit_event(EventType.TRUST_UPDATE, {
                         "agent_id": result.agent_id,
                         "new_score": round(self.trust_network.get_score(result.agent_id), 4),
                         "success": vr.verified,
@@ -1742,7 +1759,7 @@ class ProbOSRuntime:
         self.attention.update_focus(intent=text, context=text)
 
         if on_event:
-            await on_event("decompose_start", {"text": text})
+            await on_event(EventType.DECOMPOSE_START, {"text": text})
 
         # 1. Assemble working memory context
         context = self.working_memory.assemble(
@@ -1836,7 +1853,7 @@ class ProbOSRuntime:
         )
 
         if on_event:
-            await on_event("decompose_complete", {"dag": dag})
+            await on_event(EventType.DECOMPOSE_COMPLETE, {"dag": dag})
 
         if not dag.nodes:
 
@@ -2755,7 +2772,7 @@ class ProbOSRuntime:
                     )
 
                     # Emit trust_update for HXI (AD-254)
-                    self._emit_event("trust_update", {
+                    self._emit_event(EventType.TRUST_UPDATE, {
                         "agent_id": aid,
                         "new_score": round(self.trust_network.get_score(aid), 4),
                         "success": test["passed"],

@@ -13,6 +13,7 @@ from probos.api_models import (
     BuildRequest, ChatRequest, DesignRequest,
     EnrichRequest, SelfModRequest,
 )
+from probos.events import EventType
 from probos.routers.deps import (
     get_pending_designs, get_runtime, get_task_tracker, get_ws_broadcast,
 )
@@ -335,7 +336,7 @@ async def _run_selfmod(
     original_approval_fn = None
     original_import_approval_fn = None
     try:
-        rt._emit_event("self_mod_started", {
+        rt._emit_event(EventType.SELF_MOD_STARTED, {
             "intent": req.intent_name,
             "description": req.intent_description,
             "message": f"Designing agent for '{req.intent_name}'...",
@@ -343,7 +344,7 @@ async def _run_selfmod(
 
         # Auto-approve imports in API mode — user already clicked Build Agent
         async def _auto_approve_imports(names: list[str]) -> bool:
-            rt._emit_event("self_mod_import_approved", {
+            rt._emit_event(EventType.SELF_MOD_IMPORT_APPROVED, {
                 "intent": req.intent_name,
                 "imports": names,
                 "message": f"Added to allowed imports: {', '.join(names)}",
@@ -370,7 +371,7 @@ async def _run_selfmod(
                 "testing": "\u25b3 Sandbox testing...",
                 "deploying": "\u25c8 Deploying to mesh...",
             }
-            rt._emit_event("self_mod_progress", {
+            rt._emit_event(EventType.SELF_MOD_PROGRESS, {
                 "intent": req.intent_name,
                 "step": step,
                 "step_label": step_labels.get(step, step),
@@ -469,7 +470,7 @@ async def _run_selfmod(
             if warnings:
                 success_msg += f" (warnings: {', '.join(warnings)})"
 
-            rt._emit_event("self_mod_success", {
+            rt._emit_event(EventType.SELF_MOD_SUCCESS, {
                 "intent": req.intent_name,
                 "agent_type": record.agent_type,
                 "agent_id": record.agent_id if hasattr(record, 'agent_id') else record.agent_type,
@@ -479,7 +480,7 @@ async def _run_selfmod(
 
             # Auto-retry the original request
             if req.original_message:
-                rt._emit_event("self_mod_progress", {
+                rt._emit_event(EventType.SELF_MOD_PROGRESS, {
                     "intent": req.intent_name,
                     "step": "executing",
                     "step_label": "\u26ac Executing your request...",
@@ -497,14 +498,14 @@ async def _run_selfmod(
                         or result.get("reflection", "")
                         or "Done."
                     )
-                    rt._emit_event("self_mod_retry_complete", {
+                    rt._emit_event(EventType.SELF_MOD_RETRY_COMPLETE, {
                         "intent": req.intent_name,
                         "response": response,
                         "message": response,
                     })
                 except Exception as retry_err:
                     logger.warning("Self-mod retry failed: %s", retry_err)
-                    rt._emit_event("self_mod_retry_complete", {
+                    rt._emit_event(EventType.SELF_MOD_RETRY_COMPLETE, {
                         "intent": req.intent_name,
                         "message": f"Agent deployed but retry failed: {retry_err}",
                     })
@@ -516,14 +517,14 @@ async def _run_selfmod(
             error_detail = getattr(record, 'error', '') if record else "design returned no result"
             status = getattr(record, 'status', 'unknown') if record else "failed"
             logger.warning("Self-mod failed for %s: status=%s error=%s", req.intent_name, status, error_detail)
-            rt._emit_event("self_mod_failure", {
+            rt._emit_event(EventType.SELF_MOD_FAILURE, {
                 "intent": req.intent_name,
                 "message": f"Agent design failed: {error_detail or status}",
                 "error": error_detail or status,
             })
     except Exception as e:
         logger.warning("Self-mod pipeline failed: %s", e, exc_info=True)
-        rt._emit_event("self_mod_failure", {
+        rt._emit_event(EventType.SELF_MOD_FAILURE, {
             "intent": req.intent_name,
             "message": f"Agent design failed: {e}",
         })

@@ -16,6 +16,8 @@ from typing import Any
 
 import aiosqlite
 
+from probos.events import EventType
+
 logger = logging.getLogger(__name__)
 
 
@@ -216,7 +218,7 @@ class AssignmentService:
         await self._db.commit()
         await self._refresh_snapshot_cache()
 
-        self._emit("assignment_created", {
+        self._emit(EventType.ASSIGNMENT_CREATED, {
             "id": assignment.id,
             "name": assignment.name,
             "assignment_type": assignment.assignment_type,
@@ -316,7 +318,7 @@ class AssignmentService:
         assignment.members.append(agent_id)
         await self._refresh_snapshot_cache()
 
-        self._emit("assignment_updated", {
+        self._emit(EventType.ASSIGNMENT_UPDATED, {
             "id": assignment_id,
             "action": "add_member",
             "agent_id": agent_id,
@@ -349,7 +351,7 @@ class AssignmentService:
 
         await self._refresh_snapshot_cache()
 
-        self._emit("assignment_updated", {
+        self._emit(EventType.ASSIGNMENT_UPDATED, {
             "id": assignment_id,
             "action": "remove_member",
             "agent_id": agent_id,
@@ -390,7 +392,7 @@ class AssignmentService:
         assignment.completed_at = now
         await self._refresh_snapshot_cache()
 
-        self._emit("assignment_completed", {
+        self._emit(EventType.ASSIGNMENT_COMPLETED, {
             "id": assignment_id,
             "status": "completed",
             "name": assignment.name,
@@ -428,7 +430,7 @@ class AssignmentService:
         assignment.completed_at = now
         await self._refresh_snapshot_cache()
 
-        self._emit("assignment_completed", {
+        self._emit(EventType.ASSIGNMENT_COMPLETED, {
             "id": assignment_id,
             "status": "dissolved",
             "name": assignment.name,

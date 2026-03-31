@@ -21,6 +21,7 @@ from rich.text import Text
 
 from probos.cognitive.decomposer import is_capability_gap
 from probos.cognitive.strategy import StrategyOption, StrategyRecommender
+from probos.events import EventType
 from probos.experience.panels import render_dag_result
 from probos.types import TaskDAG, TaskNode
 
@@ -450,17 +451,17 @@ class ExecutionRenderer:
         if not node:
             return
 
-        if event == "node_start":
+        if event == EventType.NODE_START:
             self._node_statuses[node.id] = "running"
-        elif event == "node_complete":
+        elif event == EventType.NODE_COMPLETE:
             self._node_statuses[node.id] = "completed"
-        elif event == "node_failed":
+        elif event == EventType.NODE_FAILED:
             self._node_statuses[node.id] = "failed"
-        elif event == "escalation_start":
+        elif event == EventType.ESCALATION_START:
             self._node_statuses[node.id] = "escalating"
-        elif event == "escalation_resolved":
+        elif event == EventType.ESCALATION_RESOLVED:
             self._node_statuses[node.id] = "completed"
-        elif event == "escalation_exhausted":
+        elif event == EventType.ESCALATION_EXHAUSTED:
             self._node_statuses[node.id] = "failed"
         elif event == "scale_up":
             pass  # Logged by scaler; no node status change needed

@@ -18,6 +18,8 @@ from typing import Any, Callable, Awaitable
 
 import aiosqlite
 
+from probos.events import EventType
+
 logger = logging.getLogger(__name__)
 
 
@@ -237,7 +239,7 @@ class PersistentTaskStore:
             )
             await self._db.commit()
 
-        self._emit("scheduled_task_created", self._task_to_dict(task))
+        self._emit(EventType.SCHEDULED_TASK_CREATED, self._task_to_dict(task))
         await self._refresh_snapshot_cache()
         logger.info("Created persistent task %s: %s (%s)", task.id, task.name, schedule_type)
         return task
@@ -252,7 +254,7 @@ class PersistentTaskStore:
         )
         await self._db.commit()
         if cursor.rowcount > 0:
-            self._emit("scheduled_task_cancelled", {"task_id": task_id})
+            self._emit(EventType.SCHEDULED_TASK_CANCELLED, {"task_id": task_id})
             await self._refresh_snapshot_cache()
             logger.info("Cancelled persistent task %s", task_id)
             return True
@@ -348,7 +350,7 @@ class PersistentTaskStore:
             )
             # Clean up checkpoint on success
             delete_checkpoint(Path(self._checkpoint_dir), dag_id)
-            self._emit("scheduled_task_dag_resumed", {
+            self._emit(EventType.SCHEDULED_TASK_DAG_RESUMED, {
                 "dag_id": dag_id,
                 "source_text": checkpoint.source_text[:100],
                 "result": str(result)[:200],
@@ -417,7 +419,7 @@ class PersistentTaskStore:
         )
         await self._db.commit()
 
-        self._emit("scheduled_task_fired", {
+        self._emit(EventType.SCHEDULED_TASK_FIRED, {
             "task_id": task.id,
             "name": task.name,
             "intent_text": task.intent_text[:100],
@@ -438,7 +440,7 @@ class PersistentTaskStore:
                 (result_json, time.time(), task.id),
             )
             await self._db.commit()
-            self._emit("scheduled_task_updated", {"task_id": task.id, "status": "failed"})
+            self._emit(EventType.SCHEDULED_TASK_UPDATED, {"task_id": task.id, "status": "failed"})
             await self._refresh_snapshot_cache()
             return
 
@@ -474,7 +476,7 @@ class PersistentTaskStore:
 
         await self._db.commit()
         final_status = "completed" if (task.schedule_type == "once" or (task.max_runs and new_run_count >= task.max_runs)) else "pending"
-        self._emit("scheduled_task_updated", {
+        self._emit(EventType.SCHEDULED_TASK_UPDATED, {
             "task_id": task.id,
             "status": final_status,
             "run_count": new_run_count,
@@ -504,7 +506,7 @@ class PersistentTaskStore:
                 1 for s in cp.node_states.values()
                 if s.get("status") == "completed"
             )
-            self._emit("scheduled_task_dag_stale", {
+            self._emit(EventType.SCHEDULED_TASK_DAG_STALE, {
                 "dag_id": cp.dag_id,
                 "source_text": cp.source_text[:100],
                 "completed_nodes": completed,

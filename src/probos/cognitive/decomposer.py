@@ -14,6 +14,7 @@ from probos.cognitive.checkpoint import write_checkpoint, delete_checkpoint
 from probos.cognitive.llm_client import BaseLLMClient
 from probos.cognitive.prompt_builder import PromptBuilder, get_platform_context
 from probos.cognitive.working_memory import WorkingMemoryManager, WorkingMemorySnapshot
+from probos.events import EventType
 from probos.types import ConsensusOutcome, IntentDescriptor, LLMRequest, TaskDAG, TaskNode, Episode, AttentionEntry
 
 if TYPE_CHECKING:
@@ -837,7 +838,7 @@ class DAGExecutor:
                 snapshot = self.attention.get_queue_snapshot()
                 scores = {e.task_id: e.score for e in snapshot}
                 event_data["attention_score"] = scores.get(node.id, 0.0)
-            await on_event("node_start", event_data)
+            await on_event(EventType.NODE_START, event_data)
 
         # Substitute dependency results into params if needed
         params = dict(node.params)
@@ -917,9 +918,9 @@ class DAGExecutor:
                 node.status = "completed" if success else "failed"
 
             if on_event and node.status == "completed":
-                await on_event("node_complete", {"node": node, "result": results.get(node.id)})
+                await on_event(EventType.NODE_COMPLETE, {"node": node, "result": results.get(node.id)})
             elif on_event and node.status == "failed":
-                await on_event("node_failed", {"node": node, "result": results.get(node.id)})
+                await on_event(EventType.NODE_FAILED, {"node": node, "result": results.get(node.id)})
 
             # Checkpoint after node state change (AD-405)
             if self._checkpoint_dir:
@@ -929,7 +930,7 @@ class DAGExecutor:
             logger.error("Node %s failed: %s", node.id, e)
             if self.escalation_manager is not None:
                 if on_event:
-                    await on_event("escalation_start", {
+                    await on_event(EventType.ESCALATION_START, {
                         "node": node, "error": str(e),
                         "category": "consensus", "event": "escalation_start",
                     })
@@ -943,42 +944,42 @@ class DAGExecutor:
                         results[node.id] = esc_result.resolution
                         node.status = "completed"
                         if on_event:
-                            await on_event("escalation_resolved", {
+                            await on_event(EventType.ESCALATION_RESOLVED, {
                                 "node": node, "escalation": node.escalation_result,
                                 "category": "consensus", "event": "escalation_resolved",
                             })
-                            await on_event("node_complete", {"node": node, "result": results.get(node.id)})
+                            await on_event(EventType.NODE_COMPLETE, {"node": node, "result": results.get(node.id)})
                     elif esc_result.user_approved is False:
                         node.status = "failed"
                         results[node.id] = {"error": "User rejected the operation"}
                         if on_event:
-                            await on_event("escalation_exhausted", {
+                            await on_event(EventType.ESCALATION_EXHAUSTED, {
                                 "node": node, "escalation": node.escalation_result,
                                 "category": "consensus", "event": "escalation_exhausted",
                             })
-                            await on_event("node_failed", {"node": node, "error": "User rejected"})
+                            await on_event(EventType.NODE_FAILED, {"node": node, "error": "User rejected"})
                     else:
                         node.status = "completed"
                         if on_event:
-                            await on_event("escalation_resolved", {
+                            await on_event(EventType.ESCALATION_RESOLVED, {
                                 "node": node, "escalation": node.escalation_result,
                                 "category": "consensus", "event": "escalation_resolved",
                             })
-                            await on_event("node_complete", {"node": node, "result": results.get(node.id)})
+                            await on_event(EventType.NODE_COMPLETE, {"node": node, "result": results.get(node.id)})
                 else:
                     node.status = "failed"
                     results[node.id] = {"error": str(e)}
                     if on_event:
-                        await on_event("escalation_exhausted", {
+                        await on_event(EventType.ESCALATION_EXHAUSTED, {
                             "node": node, "escalation": node.escalation_result,
                             "category": "consensus", "event": "escalation_exhausted",
                         })
-                        await on_event("node_failed", {"node": node, "error": str(e)})
+                        await on_event(EventType.NODE_FAILED, {"node": node, "error": str(e)})
             else:
                 node.status = "failed"
                 results[node.id] = {"error": str(e)}
                 if on_event:
-                    await on_event("node_failed", {"node": node, "error": str(e)})
+                    await on_event(EventType.NODE_FAILED, {"node": node, "error": str(e)})
 
             # Checkpoint after exception handling (AD-405)
             if self._checkpoint_dir:
@@ -995,7 +996,7 @@ class DAGExecutor:
         """Handle a consensus-rejected node: escalate or mark failed."""
         if self.escalation_manager is not None:
             if on_event:
-                await on_event("escalation_start", {
+                await on_event(EventType.ESCALATION_START, {
                     "node": node, "error": error,
                     "category": "consensus", "event": "escalation_start",
                 })
@@ -1021,38 +1022,38 @@ class DAGExecutor:
                     results[node.id] = resolution
                     node.status = "completed"
                     if on_event:
-                        await on_event("escalation_resolved", {
+                        await on_event(EventType.ESCALATION_RESOLVED, {
                             "node": node, "escalation": node.escalation_result,
                             "category": "consensus", "event": "escalation_resolved",
                         })
-                        await on_event("node_complete", {"node": node, "result": results.get(node.id)})
+                        await on_event(EventType.NODE_COMPLETE, {"node": node, "result": results.get(node.id)})
                 elif esc_result.user_approved is False:
                     # User explicitly rejected — treat as failure.
                     node.status = "failed"
                     results[node.id] = {"error": "User rejected the operation"}
                     if on_event:
-                        await on_event("escalation_exhausted", {
+                        await on_event(EventType.ESCALATION_EXHAUSTED, {
                             "node": node, "escalation": node.escalation_result,
                             "category": "consensus", "event": "escalation_exhausted",
                         })
-                        await on_event("node_failed", {"node": node, "error": "User rejected"})
+                        await on_event(EventType.NODE_FAILED, {"node": node, "error": "User rejected"})
                 else:
                     node.status = "completed"
                     if on_event:
-                        await on_event("escalation_resolved", {
+                        await on_event(EventType.ESCALATION_RESOLVED, {
                             "node": node, "escalation": node.escalation_result,
                             "category": "consensus", "event": "escalation_resolved",
                         })
-                        await on_event("node_complete", {"node": node, "result": results.get(node.id)})
+                        await on_event(EventType.NODE_COMPLETE, {"node": node, "result": results.get(node.id)})
             else:
                 node.status = "failed"
                 if on_event:
-                    await on_event("escalation_exhausted", {
+                    await on_event(EventType.ESCALATION_EXHAUSTED, {
                         "node": node, "escalation": node.escalation_result,
                         "category": "consensus", "event": "escalation_exhausted",
                     })
-                    await on_event("node_failed", {"node": node, "error": error})
+                    await on_event(EventType.NODE_FAILED, {"node": node, "error": error})
         else:
             node.status = "failed"
             if on_event:
-                await on_event("node_failed", {"node": node, "error": error})
+                await on_event(EventType.NODE_FAILED, {"node": node, "error": error})

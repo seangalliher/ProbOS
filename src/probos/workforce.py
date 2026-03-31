@@ -27,6 +27,8 @@ from typing import Any, Callable
 
 import aiosqlite
 
+from probos.events import EventType
+
 logger = logging.getLogger(__name__)
 
 
@@ -1040,7 +1042,7 @@ class WorkItemStore:
             )
             await self._db.commit()
         await self._refresh_snapshot_cache()
-        self._emit("work_item_created", {"work_item": item.to_dict()})
+        self._emit(EventType.WORK_ITEM_CREATED, {"work_item": item.to_dict()})
         return item
 
     async def get_work_item(self, work_item_id: str) -> WorkItem | None:
@@ -1125,7 +1127,7 @@ class WorkItemStore:
         await self._db.commit()
         updated = await self.get_work_item(work_item_id)
         await self._refresh_snapshot_cache()
-        self._emit("work_item_updated", {"work_item": updated.to_dict() if updated else {}})
+        self._emit(EventType.WORK_ITEM_UPDATED, {"work_item": updated.to_dict() if updated else {}})
         return updated
 
     async def transition_work_item(
@@ -1153,7 +1155,7 @@ class WorkItemStore:
         await self._db.commit()
         updated = await self.get_work_item(work_item_id)
         await self._refresh_snapshot_cache()
-        self._emit("work_item_status_changed", {
+        self._emit(EventType.WORK_ITEM_STATUS_CHANGED, {
             "work_item": updated.to_dict() if updated else {},
             "old_status": old_status,
             "new_status": new_status,
@@ -1261,7 +1263,7 @@ class WorkItemStore:
             )
             await self._db.commit()
         await self._refresh_snapshot_cache()
-        self._emit("work_item_assigned", {
+        self._emit(EventType.WORK_ITEM_ASSIGNED, {
             "work_item": (await self.get_work_item(work_item_id) or item).to_dict(),
             "booking": booking.to_dict(),
             "resource": resource.to_dict(),
@@ -1300,7 +1302,7 @@ class WorkItemStore:
                 booking = await self.assign_work_item(item.id, resource_id, source="agent")
                 if booking:
                     updated_item = await self.get_work_item(item.id) or item
-                    self._emit("work_item_claimed", {
+                    self._emit(EventType.WORK_ITEM_CLAIMED, {
                         "work_item": updated_item.to_dict(),
                         "booking": booking.to_dict(),
                         "resource": resource.to_dict(),
@@ -1358,7 +1360,7 @@ class WorkItemStore:
         await self._db.commit()
         await self._refresh_snapshot_cache()
         updated = await self.get_booking(booking_id)
-        self._emit("booking_started", {"booking": updated.to_dict() if updated else {}})
+        self._emit(EventType.BOOKING_STARTED, {"booking": updated.to_dict() if updated else {}})
         return updated
 
     async def pause_booking(self, booking_id: str) -> Booking | None:
@@ -1414,7 +1416,7 @@ class WorkItemStore:
             await self._db.commit()
         await self._refresh_snapshot_cache()
         updated = await self.get_booking(booking_id)
-        self._emit("booking_completed", {
+        self._emit(EventType.BOOKING_COMPLETED, {
             "booking": updated.to_dict() if updated else {},
             "journal": [j.to_dict() for j in journal],
         })
@@ -1434,7 +1436,7 @@ class WorkItemStore:
         await self._db.commit()
         await self._refresh_snapshot_cache()
         updated = await self.get_booking(booking_id)
-        self._emit("booking_cancelled", {"booking": updated.to_dict() if updated else {}})
+        self._emit(EventType.BOOKING_CANCELLED, {"booking": updated.to_dict() if updated else {}})
         return updated
 
     async def get_booking(self, booking_id: str) -> Booking | None:
