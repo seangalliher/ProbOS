@@ -1609,16 +1609,17 @@ Decision to close all remaining findings from the 2026-03-29 comprehensive code 
 **AD-527: Typed Event System** — Code review finding #13. Replace scattered string-literal event types with formal event registry and typed event dataclasses. Eliminates silent typo bugs, adds IDE discoverability, enables event catalog generation.
 
 **New BFs filed:**
-- **BF-085:** Type safety audit — replace ~70 remaining `Any` annotations (finding #11)
+- **BF-085:** Type safety audit — **CLOSED.** ~200 `Any` annotations replaced with concrete types across 22 files. 87 ProbOSRuntime class-level attribute annotations added. Unblocks BF-079 Phase 2/3 (spec=ProbOSRuntime now works on mocks). 7 phases: runtime.py annotations, protocols.py signatures, deps.py gateway, 5 adapter constructors, 9 command modules, 5 cognitive files.
+- **BF-083:** Agent callsign identity grounding — **CLOSED.** Agents didn't know their own callsigns after naming ceremony. `_build_personality_block()` read from seed YAML, ignoring runtime callsign registry. Fixed by threading runtime callsign through `compose_instructions()`. Cortez knows it's Cortez, Echo knows it's Echo.
 - **BF-086:** Security tests for code_validator.py and sandbox.py (finding #14) — **CLOSED.** 72 tests, 9 bypass vectors patched.
 - **BF-087:** Reset integration tests — full state-create-reset-verify cycle (finding #15)
 - **BF-088:** Test sleep cleanup — replace 10-second sleeps (finding #18)
 
 **Existing BFs folded into Wave 4:**
-- **BF-079:** Mock discipline audit — Phase 1 COMPLETE. 18 factories spec'd across 14 files. Found hidden bug (missing `.confidence` on agent mocks). Phase 2/3 blocked on ProbOSRuntime class-level annotations → folded into BF-085.
+- **BF-079:** Mock discipline audit — Phase 1 COMPLETE. 18 factories spec'd across 14 files. Found hidden bug (missing `.confidence` on agent mocks). Phase 2/3 unblocked by BF-085.
 - **BF-042:** Frontend component rendering tests (finding #16)
 
-**Score at Wave 4 creation:** 11/18 closed, 2 partial (now tracked), 5 open (now tracked). Target: 18/18.
+**Score:** 13/18 closed (was 11/18 at wave creation). Remaining: BF-079 Phase 2/3, BF-087, BF-088, BF-042, AD-527.
 
 **Status:** PLANNED.
 

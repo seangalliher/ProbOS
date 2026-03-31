@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Wave 4 in progress. BF-079 Phase 1 CLOSED — 18 mock factories spec'd across 14 test files, found hidden bug (missing .confidence on agent mocks). Phase 2/3 blocked: ProbOSRuntime defines all attributes as instance-only, spec=ProbOSRuntime blocks access to every service attribute. Fix: add class-level annotations (folded into BF-085). BF-086 CLOSED. Wave 3 COMPLETE. Open: BF-085, BF-087, BF-088, BF-042, AD-527. 4,184 tests passing.
+## Current Status: Wave 4 in progress. BF-085 CLOSED — ~200 Any annotations replaced with concrete types across 22 files, ProbOSRuntime now has 87 class-level attribute annotations (unblocks BF-079 Phase 2/3). BF-083 CLOSED — agent callsign identity grounding fixed. BF-079 Phase 1 CLOSED. BF-086 CLOSED. Wave 3 COMPLETE. Open: BF-087, BF-088, BF-042, AD-527. 4,184 tests passing.
 
 ---
 
