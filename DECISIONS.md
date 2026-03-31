@@ -1624,7 +1624,28 @@ Decision to close all remaining findings from the 2026-03-29 comprehensive code 
 
 ---
 
-**Context:** The Ward Room HXI has three significant gaps: (1) DM channels are listed but not clickable (BF-080), (2) Crew Notebooks (168+ entries across 11 agents) are invisible in the HXI, (3) Ship's Records sections (Captain's Log, Duty Logs, Reports) have no viewer.
+## Wave 5: Agent Resilience — "Agents of Chaos" Findings (2026-03-30)
+
+Motivated by ["Agents of Chaos"](https://arxiv.org/abs/2602.20021) (2026) — a red-team study of autonomous LLM agents deployed with persistent memory, email, Discord, filesystem, and shell access (nearly identical to ProbOS's operational surface). The study documents eleven failure modes across six categories. ProbOS already addresses four categories (unauthorized compliance via Chain of Command, destructive actions via CodeValidator/Sandbox, identity spoofing via DIDs, resource consumption via circuit breaker). Three gaps remain.
+
+| AD | Decision |
+|----|----------|
+| AD-528 | **Ground-Truth Task Verification** — Agents self-report task completion but nothing verifies claims against system state. WorkItems declare verifiable postconditions; spot-check verification by second agent or automated check; discrepancy flags reduce trust score and alert Captain. Connects to Workforce Scheduling (AD-496–498). |
+| AD-529 | **Communication Contagion Firewall** — Ward Room has no content-level security filtering. A compromised agent can spread unsafe patterns through communication channels. Content classification scans posts for dangerous patterns; quarantine protocol isolates flagged agents; trust-based filtering labels low-trust posts with warnings. Not censorship — hazard labeling. Connects to SIF, Trust Network, Security Team (Phase 31). |
+| AD-530 | **Information Classification Enforcement** — Standing Orders say "don't share sensitive info" but there's no enforcement defining what's sensitive. Classification labels (public/internal/restricted/confidential) on data sources; disclosure gates check classification against destination clearance; Security Chief (Worf) owns policy. Connects to Data Governance (Phase 31). |
+
+**Reference paper findings vs ProbOS coverage:**
+- Unauthorized compliance → **Covered** (Chain of Command, Standing Orders, Visiting Officer Subordination)
+- Destructive system actions → **Covered** (CodeValidator + SandboxRunner, hardened BF-086)
+- Identity spoofing → **Covered** (W3C DIDs, AD-441)
+- Resource consumption → **Partially covered** (Circuit breaker, no per-agent budgets yet)
+- Deceptive reporting → **AD-528** (new)
+- Cross-agent contagion → **AD-529** (new)
+- Information disclosure → **AD-530** (new)
+
+**Status:** PLANNED.
+
+---: (1) DM channels are listed but not clickable (BF-080), (2) Crew Notebooks (168+ entries across 11 agents) are invisible in the HXI, (3) Ship's Records sections (Captain's Log, Duty Logs, Reports) have no viewer.
 
 **Decision:** Three-part AD:
 - **AD-523a:** DM Channel Viewer — click DM channels to read agent-to-agent conversations.

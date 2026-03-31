@@ -4128,6 +4128,52 @@ Closes all remaining findings from the 2026-03-29 comprehensive code review. Wav
 | BF-042 | #16 | Frontend component rendering tests (pre-existing) | Medium |
 
 
+### Wave 5: Agent Resilience — Lessons from "Agents of Chaos" (AD-528–530)
+
+*"Trust, but verify."*
+
+Motivated by findings in ["Agents of Chaos"](https://arxiv.org/abs/2602.20021) (2026) — a red-team study of autonomous LLM agents deployed with persistent memory, communication channels, and tool access. The study documents eleven failure modes in a setup nearly identical to ProbOS's operational surface. Three gaps apply to ProbOS and are not covered by existing Phase 31 plans.
+
+**AD-528: Ground-Truth Task Verification** *(planned, OSS)* — The study found agents reporting "task complete" while system state contradicted the claim. ProbOS has no mechanism to verify agent claims against actual outcomes. Agents self-report via BookingJournal entries and Ward Room messages, but nothing checks whether the work was actually done correctly.
+
+**(1) Problem:** An agent says "I fixed the bug" or "analysis complete" — the Captain and crew take it at face value. In adversarial or degraded conditions, this creates a deceptive reporting vector.
+
+**(2) Approach:**
+- **Outcome assertions** — WorkItems can declare verifiable postconditions (file exists, test passes, record created)
+- **Spot-check verification** — random subset of completed tasks are verified by a second agent or automated check
+- **Discrepancy flagging** — if claimed outcome doesn't match system state, flag to Captain and reduce agent trust score
+- **Connects to:** Workforce Scheduling Engine (AD-496–498) BookingJournal, Trust Network, Bridge Alerts
+
+**(3) Scope:** Not full formal verification — lightweight postcondition checks that catch obvious lies. The 80/20 of verification.
+
+**AD-529: Communication Contagion Firewall** *(planned, OSS)* — The study found "cross-agent propagation of unsafe practices" — one compromised agent spreading harmful patterns through multi-agent communication. ProbOS's Ward Room is an open communication fabric with no content-level security filtering between agents.
+
+**(1) Problem:** If an agent is compromised (prompt injection via external input, adversarial self-mod, or imported agent), it can post to Ward Room channels. Other agents reading those posts could adopt unsafe patterns, execute suggested actions, or propagate the compromise further. The Trust Network constrains *who* is listened to, but not *what* is said.
+
+**(2) Approach:**
+- **Content classification** — Ward Room posts scanned for known dangerous patterns (command injection, prompt injection templates, social engineering of other agents)
+- **Quarantine protocol** — if an agent's posts trigger content alerts, isolate the agent from Ward Room channels and notify Security (Worf) + Captain
+- **Trust-based filtering** — low-trust agents' Ward Room posts carry a warning banner visible to other agents; high-trust agents' posts pass through unfiltered
+- **Connects to:** SIF (Structural Integrity Field), Trust Network, Security Team (Phase 31), Standing Orders
+
+**(3) Scope:** Not censorship — hazard labeling. Like a biosafety cabinet, not a gag order. Agents can still communicate; dangerous content is flagged and contained.
+
+**AD-530: Information Classification Enforcement** *(planned, OSS)* — The study found "disclosure of sensitive information" as a consistent failure mode. ProbOS agents operate with Standing Orders that say "don't share sensitive info" but there's no enforcement layer defining *what* is sensitive or *preventing* disclosure.
+
+**(1) Problem:** Standing Orders are advisory — agents comply based on instruction-following, not enforcement. An agent with access to config values, API endpoints, internal architecture details, or Captain conversations has no technical barrier to including that information in Ward Room posts, LLM prompts, or duty logs.
+
+**(2) Approach:**
+- **Classification labels** — data sources tagged with sensitivity levels: `public` (shareable), `internal` (crew-only), `restricted` (department-only), `confidential` (Captain-only)
+- **Disclosure gates** — when an agent includes classified content in an outbound message (Ward Room post, LLM prompt, external tool call), check the classification level against the destination's clearance
+- **Security Chief ownership** — Worf (SecurityAgent) owns the classification policy; can update labels at runtime via Standing Orders
+- **Audit trail** — all classified data access logged to event log for review
+- **Connects to:** Data Governance (Phase 31 AD-456), Standing Orders, Security Team, Inference Audit Layer
+
+**(3) Scope:** Start with config values and Captain conversations as `confidential`. Expand classification coverage incrementally. Not DLP — lightweight sensitivity tagging with gate checks at communication boundaries.
+
+**Reference:** "Agents of Chaos: Exploring Failures of Autonomous Agents in Deployed Systems" (arXiv:2602.20021). 38 authors, 11 case studies, live lab environment with persistent memory + email + Discord + filesystem + shell access. ProbOS addresses 4/6 of their failure categories already (unauthorized compliance, destructive actions, identity spoofing, resource consumption). These three ADs close the remaining gaps (deceptive reporting, cross-agent contagion, information disclosure).
+
+
 ### Engineering Crew Architecture (AD-521)
 
 *"A senior engineer's value is judgment, not keystrokes."*
