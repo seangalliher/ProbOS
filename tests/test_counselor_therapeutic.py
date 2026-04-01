@@ -70,8 +70,14 @@ class TestTherapeuticDM:
         ward_room.get_or_create_dm_channel = AsyncMock(return_value=channel)
         ward_room.create_thread = AsyncMock()
         c = _make_counselor(ward_room=ward_room)
+        # Ensure DM_COOLDOWN_SECONDS is accessible (class variable on CounselorAgent)
+        c.DM_COOLDOWN_SECONDS = 3600
         result = await c._send_therapeutic_dm("agent-1", "Worf", "Hello")
-        assert result is True
+        assert result is True, (
+            f"Expected True but got {result}. "
+            f"ward_room calls: get_or_create_dm_channel={ward_room.get_or_create_dm_channel.call_count}, "
+            f"create_thread={ward_room.create_thread.call_count}"
+        )
         ward_room.get_or_create_dm_channel.assert_called_once_with(
             agent_a_id="counselor-001",
             agent_b_id="agent-1",

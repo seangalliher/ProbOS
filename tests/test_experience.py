@@ -346,6 +346,7 @@ class TestShellQuit:
 # Shell NL input
 # ---------------------------------------------------------------------------
 
+@pytest.mark.timeout(60)
 class TestShellNLInput:
 
     @pytest.mark.asyncio

@@ -80,7 +80,8 @@ def _attach_onboarding(rt):
 class TestNamingCeremony:
     """Tests for onboarding.run_naming_ceremony()."""
 
-    def test_naming_ceremony_returns_chosen_callsign(self):
+    @pytest.mark.asyncio
+    async def test_naming_ceremony_returns_chosen_callsign(self):
         """Mock LLM returns 'McCoy\\nA classic name.' → returns 'McCoy'."""
         from probos.runtime import ProbOSRuntime
 
@@ -95,10 +96,11 @@ class TestNamingCeremony:
         agent = _make_agent()
         agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content="McCoy\nA classic name for a doctor."))
 
-        result = asyncio.get_event_loop().run_until_complete(rt.onboarding.run_naming_ceremony(agent))
+        result = await rt.onboarding.run_naming_ceremony(agent)
         assert result == "McCoy"
 
-    def test_naming_ceremony_fallback_on_empty(self):
+    @pytest.mark.asyncio
+    async def test_naming_ceremony_fallback_on_empty(self):
         """Empty LLM response → seed callsign returned."""
         from probos.runtime import ProbOSRuntime
 
@@ -113,10 +115,11 @@ class TestNamingCeremony:
         agent = _make_agent(callsign="Bones")
         agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content=""))
 
-        result = asyncio.get_event_loop().run_until_complete(rt.onboarding.run_naming_ceremony(agent))
+        result = await rt.onboarding.run_naming_ceremony(agent)
         assert result == "Bones"
 
-    def test_naming_ceremony_fallback_on_error(self):
+    @pytest.mark.asyncio
+    async def test_naming_ceremony_fallback_on_error(self):
         """LLM raises exception → seed callsign returned."""
         from probos.runtime import ProbOSRuntime
 
@@ -131,10 +134,11 @@ class TestNamingCeremony:
         agent = _make_agent(callsign="Bones")
         agent._llm_client.complete = AsyncMock(side_effect=RuntimeError("LLM down"))
 
-        result = asyncio.get_event_loop().run_until_complete(rt.onboarding.run_naming_ceremony(agent))
+        result = await rt.onboarding.run_naming_ceremony(agent)
         assert result == "Bones"
 
-    def test_naming_ceremony_rejects_duplicate(self):
+    @pytest.mark.asyncio
+    async def test_naming_ceremony_rejects_duplicate(self):
         """Duplicate callsign → seed callsign used instead."""
         from probos.runtime import ProbOSRuntime
 
@@ -152,10 +156,11 @@ class TestNamingCeremony:
         agent = _make_agent(agent_type="diagnostician", callsign="Doc", agent_id="diag-1")
         agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content="Bones\nI want to be called Bones."))
 
-        result = asyncio.get_event_loop().run_until_complete(rt.onboarding.run_naming_ceremony(agent))
+        result = await rt.onboarding.run_naming_ceremony(agent)
         assert result == "Doc"  # Falls back to seed
 
-    def test_naming_ceremony_truncates_long_name(self):
+    @pytest.mark.asyncio
+    async def test_naming_ceremony_truncates_long_name(self):
         """50-char name → seed callsign used as fallback."""
         from probos.runtime import ProbOSRuntime
 
@@ -171,10 +176,11 @@ class TestNamingCeremony:
         long_name = "A" * 50
         agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content=f"{long_name}\nToo long."))
 
-        result = asyncio.get_event_loop().run_until_complete(rt.onboarding.run_naming_ceremony(agent))
+        result = await rt.onboarding.run_naming_ceremony(agent)
         assert result == "Bones"
 
-    def test_naming_ceremony_strips_quotes(self):
+    @pytest.mark.asyncio
+    async def test_naming_ceremony_strips_quotes(self):
         """LLM returns '"Scotty"' with quotes → stripped to 'Scotty'."""
         from probos.runtime import ProbOSRuntime
 
@@ -189,7 +195,7 @@ class TestNamingCeremony:
         agent = _make_agent(callsign="Bones")
         agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content='"Scotty"\nThe name feels right.'))
 
-        result = asyncio.get_event_loop().run_until_complete(rt.onboarding.run_naming_ceremony(agent))
+        result = await rt.onboarding.run_naming_ceremony(agent)
         assert result == "Scotty"
 
 
@@ -223,41 +229,45 @@ class TestWireAgentIntegration:
         _attach_onboarding(rt)
         return rt
 
+    @pytest.mark.asyncio
     @patch("probos.agent_onboarding.is_crew_agent", return_value=True)
-    def test_wire_agent_runs_ceremony_for_crew(self, mock_is_crew):
+    async def test_wire_agent_runs_ceremony_for_crew(self, mock_is_crew):
         rt = self._make_wired_runtime()
         rt.onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
 
         agent = _make_agent(callsign="Bones")
-        asyncio.get_event_loop().run_until_complete(rt.onboarding.wire_agent(agent))
+        await rt.onboarding.wire_agent(agent)
 
         rt.onboarding.run_naming_ceremony.assert_called_once_with(agent)
 
+    @pytest.mark.asyncio
     @patch("probos.agent_onboarding.is_crew_agent", return_value=False)
-    def test_wire_agent_skips_ceremony_for_infrastructure(self, mock_is_crew):
+    async def test_wire_agent_skips_ceremony_for_infrastructure(self, mock_is_crew):
         rt = self._make_wired_runtime()
         rt.onboarding.run_naming_ceremony = AsyncMock()
 
         agent = _make_agent(agent_type="introspect", callsign="")
         del agent._llm_client  # Infrastructure agents have no LLM client
-        asyncio.get_event_loop().run_until_complete(rt.onboarding.wire_agent(agent))
+        await rt.onboarding.wire_agent(agent)
 
         rt.onboarding.run_naming_ceremony.assert_not_called()
 
+    @pytest.mark.asyncio
     @patch("probos.agent_onboarding.is_crew_agent", return_value=True)
-    def test_wire_agent_birth_cert_uses_chosen_name(self, mock_is_crew):
+    async def test_wire_agent_birth_cert_uses_chosen_name(self, mock_is_crew):
         rt = self._make_wired_runtime()
         rt.onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
 
         agent = _make_agent(callsign="Bones")
-        asyncio.get_event_loop().run_until_complete(rt.onboarding.wire_agent(agent))
+        await rt.onboarding.wire_agent(agent)
 
         # After ceremony, agent.callsign should be updated
         assert agent.callsign == "McCoy"
         assert rt.callsign_registry.get_callsign("diagnostician") == "McCoy"
 
+    @pytest.mark.asyncio
     @patch("probos.agent_onboarding.is_crew_agent", return_value=True)
-    def test_wire_agent_posts_welcome_announcement(self, mock_is_crew):
+    async def test_wire_agent_posts_welcome_announcement(self, mock_is_crew):
         rt = self._make_wired_runtime()
         rt.onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
 
@@ -271,7 +281,7 @@ class TestWireAgentIntegration:
         rt.onboarding._ward_room = ward_room
 
         agent = _make_agent(callsign="Bones")
-        asyncio.get_event_loop().run_until_complete(rt.onboarding.wire_agent(agent))
+        await rt.onboarding.wire_agent(agent)
 
         ward_room.create_thread.assert_called_once()
         call_kwargs = ward_room.create_thread.call_args
@@ -317,66 +327,55 @@ class TestCallsignRegistrySetCallsign:
 class TestACMActivation:
     """Tests for AgentCapitalService.check_activation()."""
 
-    def test_check_activation_promotes_at_threshold(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_check_activation_promotes_at_threshold(self, tmp_path):
         """trust=0.65 → PROBATIONARY → ACTIVE."""
         acm = AgentCapitalService(tmp_path)
-        asyncio.get_event_loop().run_until_complete(acm.start())
+        await acm.start()
 
         # Onboard to get to PROBATIONARY
-        asyncio.get_event_loop().run_until_complete(
-            acm.onboard("agent-1", "diagnostician", "diagnostician", "medical")
-        )
-        state = asyncio.get_event_loop().run_until_complete(acm.get_lifecycle_state("agent-1"))
+        await acm.onboard("agent-1", "diagnostician", "diagnostician", "medical")
+        state = await acm.get_lifecycle_state("agent-1")
         assert state == LifecycleState.PROBATIONARY
 
-        result = asyncio.get_event_loop().run_until_complete(
-            acm.check_activation("agent-1", trust_score=0.65)
-        )
+        result = await acm.check_activation("agent-1", trust_score=0.65)
         assert result is True
 
-        state = asyncio.get_event_loop().run_until_complete(acm.get_lifecycle_state("agent-1"))
+        state = await acm.get_lifecycle_state("agent-1")
         assert state == LifecycleState.ACTIVE
 
-        asyncio.get_event_loop().run_until_complete(acm.stop())
+        await acm.stop()
 
-    def test_check_activation_no_op_below_threshold(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_check_activation_no_op_below_threshold(self, tmp_path):
         """trust=0.50 → stays PROBATIONARY."""
         acm = AgentCapitalService(tmp_path)
-        asyncio.get_event_loop().run_until_complete(acm.start())
+        await acm.start()
 
-        asyncio.get_event_loop().run_until_complete(
-            acm.onboard("agent-1", "diagnostician", "diagnostician", "medical")
-        )
+        await acm.onboard("agent-1", "diagnostician", "diagnostician", "medical")
 
-        result = asyncio.get_event_loop().run_until_complete(
-            acm.check_activation("agent-1", trust_score=0.50)
-        )
+        result = await acm.check_activation("agent-1", trust_score=0.50)
         assert result is False
 
-        state = asyncio.get_event_loop().run_until_complete(acm.get_lifecycle_state("agent-1"))
+        state = await acm.get_lifecycle_state("agent-1")
         assert state == LifecycleState.PROBATIONARY
 
-        asyncio.get_event_loop().run_until_complete(acm.stop())
+        await acm.stop()
 
-    def test_check_activation_no_op_if_already_active(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_check_activation_no_op_if_already_active(self, tmp_path):
         """Already ACTIVE → returns False."""
         acm = AgentCapitalService(tmp_path)
-        asyncio.get_event_loop().run_until_complete(acm.start())
+        await acm.start()
 
-        asyncio.get_event_loop().run_until_complete(
-            acm.onboard("agent-1", "diagnostician", "diagnostician", "medical")
-        )
+        await acm.onboard("agent-1", "diagnostician", "diagnostician", "medical")
         # Manually activate
-        asyncio.get_event_loop().run_until_complete(
-            acm.transition("agent-1", LifecycleState.ACTIVE, reason="manual")
-        )
+        await acm.transition("agent-1", LifecycleState.ACTIVE, reason="manual")
 
-        result = asyncio.get_event_loop().run_until_complete(
-            acm.check_activation("agent-1", trust_score=0.90)
-        )
+        result = await acm.check_activation("agent-1", trust_score=0.90)
         assert result is False
 
-        asyncio.get_event_loop().run_until_complete(acm.stop())
+        await acm.stop()
 
 
 # ── Config Tests ───────────────────────────────────────────────────
@@ -390,8 +389,9 @@ class TestOnboardingConfig:
         assert cfg.naming_ceremony is True
         assert cfg.activation_trust_threshold == 0.65
 
+    @pytest.mark.asyncio
     @patch("probos.agent_onboarding.is_crew_agent", return_value=True)
-    def test_ceremony_skipped_when_disabled(self, mock_is_crew):
+    async def test_ceremony_skipped_when_disabled(self, mock_is_crew):
         """naming_ceremony=False → no LLM call, seed callsign kept."""
         from probos.runtime import ProbOSRuntime
 
@@ -419,7 +419,7 @@ class TestOnboardingConfig:
         rt.onboarding.run_naming_ceremony = AsyncMock(return_value="McCoy")
 
         agent = _make_agent(callsign="Bones")
-        asyncio.get_event_loop().run_until_complete(rt.onboarding.wire_agent(agent))
+        await rt.onboarding.wire_agent(agent)
 
         # Naming ceremony should NOT have been called because naming_ceremony=False
         rt.onboarding.run_naming_ceremony.assert_not_called()
