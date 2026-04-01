@@ -40,7 +40,7 @@ def _make_counselor(**kwargs: Any) -> CounselorAgent:
 
     Uses object.__new__ to skip the full __init__ chain (which requires
     instructions, pool, LLM client, etc.), then manually sets the
-    attributes that _send_therapeutic_dm and other tested methods need.
+    attributes that tested methods need.
     """
     agent = object.__new__(CounselorAgent)
     agent._agent_type = "counselor"
@@ -77,12 +77,10 @@ class TestTherapeuticDM:
         ward_room.get_or_create_dm_channel = AsyncMock(return_value=channel)
         ward_room.create_thread = AsyncMock()
         c = _make_counselor(ward_room=ward_room)
-        result = await c._send_therapeutic_dm("agent-1", "Worf", "Hello")
-        assert result is True, (
-            f"Expected True but got {result}. "
-            f"ward_room calls: get_or_create_dm_channel={ward_room.get_or_create_dm_channel.call_count}, "
-            f"create_thread={ward_room.create_thread.call_count}"
-        )
+        # Call unbound method directly to avoid any CI-specific attribute
+        # lookup issues with __new__-created instances
+        result = await CounselorAgent._send_therapeutic_dm(c, "agent-1", "Worf", "Hello")
+        assert result is True
         ward_room.get_or_create_dm_channel.assert_called_once_with(
             agent_a_id="counselor-001",
             agent_b_id="agent-1",
@@ -103,16 +101,16 @@ class TestTherapeuticDM:
         ward_room.create_thread = AsyncMock()
         c = _make_counselor(ward_room=ward_room)
         # First DM succeeds
-        assert await c._send_therapeutic_dm("agent-1", "Worf", "Hello") is True
+        assert await CounselorAgent._send_therapeutic_dm(c, "agent-1", "Worf", "Hello") is True
         # Second DM within cooldown returns False
-        assert await c._send_therapeutic_dm("agent-1", "Worf", "Hello again") is False
+        assert await CounselorAgent._send_therapeutic_dm(c, "agent-1", "Worf", "Hello again") is False
         # Only one thread created
         assert ward_room.create_thread.call_count == 1
 
     @pytest.mark.asyncio
     async def test_send_therapeutic_dm_no_ward_room(self) -> None:
         c = _make_counselor(ward_room=None)
-        result = await c._send_therapeutic_dm("agent-1", "Worf", "Hello")
+        result = await CounselorAgent._send_therapeutic_dm(c, "agent-1", "Worf", "Hello")
         assert result is False
 
     @pytest.mark.asyncio
