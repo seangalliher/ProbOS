@@ -61,7 +61,10 @@ def _make_counselor(**kwargs: Any) -> CounselorAgent:
     agent._episodic_memory = None
     agent._add_event_listener_fn = None
     agent._profile_store = None
-    agent.DM_COOLDOWN_SECONDS = 3600
+    # DM_COOLDOWN_SECONDS = 0 for tests: time.monotonic() on fresh CI
+    # runners can be < 3600, causing the cooldown check (now - 0.0 < DM_COOLDOWN_SECONDS)
+    # to falsely reject DMs when last_dm defaults to 0.0.
+    agent.DM_COOLDOWN_SECONDS = 0
     agent._intervention_targets = set()
     return agent
 
@@ -80,12 +83,7 @@ class TestTherapeuticDM:
         # Call unbound method directly to avoid any CI-specific attribute
         # lookup issues with __new__-created instances
         result = await CounselorAgent._send_therapeutic_dm(c, "agent-1", "Worf", "Hello")
-        assert result is True, (
-            f"result={result}, _ward_room={c._ward_room!r}, "
-            f"type={type(c._ward_room)}, bool={bool(c._ward_room)}, "
-            f"hasattr={hasattr(c, '_ward_room')}, "
-            f"dict_keys={list(c.__dict__.keys()) if hasattr(c, '__dict__') else 'NO DICT'}"
-        )
+        assert result is True
         ward_room.get_or_create_dm_channel.assert_called_once_with(
             agent_a_id="counselor-001",
             agent_b_id="agent-1",
@@ -105,6 +103,7 @@ class TestTherapeuticDM:
         ward_room.get_or_create_dm_channel = AsyncMock(return_value=channel)
         ward_room.create_thread = AsyncMock()
         c = _make_counselor(ward_room=ward_room)
+        c.DM_COOLDOWN_SECONDS = 3600  # enable rate limiting for this test
         # First DM succeeds
         assert await CounselorAgent._send_therapeutic_dm(c, "agent-1", "Worf", "Hello") is True
         # Second DM within cooldown returns False
@@ -695,6 +694,7 @@ class TestIntegration:
         ward_room.create_thread = AsyncMock()
 
         c = _make_counselor(ward_room=ward_room)
+        c.DM_COOLDOWN_SECONDS = 3600  # enable rate limiting for this test
         assessment = _make_assessment(wellness=0.2, fit=False)
 
         # First DM (circuit breaker trigger)
