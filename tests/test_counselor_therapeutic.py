@@ -103,10 +103,10 @@ class TestTherapeuticDM:
         ward_room.get_or_create_dm_channel = AsyncMock(return_value=channel)
         ward_room.create_thread = AsyncMock()
         c = _make_counselor(ward_room=ward_room)
-        c.DM_COOLDOWN_SECONDS = 3600  # enable rate limiting for this test
-        # First DM succeeds
+        # First DM succeeds (DM_COOLDOWN_SECONDS=0 from helper)
         assert await CounselorAgent._send_therapeutic_dm(c, "agent-1", "Worf", "Hello") is True
-        # Second DM within cooldown returns False
+        # Now enable rate limiting — second DM within cooldown returns False
+        c.DM_COOLDOWN_SECONDS = 3600
         assert await CounselorAgent._send_therapeutic_dm(c, "agent-1", "Worf", "Hello again") is False
         # Only one thread created
         assert ward_room.create_thread.call_count == 1
@@ -694,13 +694,13 @@ class TestIntegration:
         ward_room.create_thread = AsyncMock()
 
         c = _make_counselor(ward_room=ward_room)
-        c.DM_COOLDOWN_SECONDS = 3600  # enable rate limiting for this test
         assessment = _make_assessment(wellness=0.2, fit=False)
 
-        # First DM (circuit breaker trigger)
+        # First DM (circuit breaker trigger) — DM_COOLDOWN_SECONDS=0 from helper
         await c._maybe_send_therapeutic_dm("agent-1", "Worf", assessment, "circuit_breaker")
         assert ward_room.create_thread.call_count == 1
 
-        # Second DM attempt (sweep trigger) within cooldown
+        # Now enable rate limiting — second DM within cooldown should be skipped
+        c.DM_COOLDOWN_SECONDS = 3600
         await c._maybe_send_therapeutic_dm("agent-1", "Worf", assessment, "sweep")
         assert ward_room.create_thread.call_count == 1  # Still 1, rate limited
