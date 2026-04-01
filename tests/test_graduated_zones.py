@@ -60,7 +60,7 @@ def _add_unique_events(cb, agent_id: str, count: int):
 def _make_counselor(registry=None, **kwargs):
     """Create a minimal CounselorAgent for testing."""
     from probos.cognitive.counselor import CounselorAgent
-    c = CounselorAgent.__new__(CounselorAgent)
+    c = object.__new__(CounselorAgent)
     c.id = "counselor-test"
     c.callsign = "Troi"
     c._agent_type = "counselor"

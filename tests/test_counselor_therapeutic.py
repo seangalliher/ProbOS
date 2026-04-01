@@ -36,8 +36,13 @@ def _make_assessment(
 
 
 def _make_counselor(**kwargs: Any) -> CounselorAgent:
-    """Create a minimal CounselorAgent for testing."""
-    agent = CounselorAgent.__new__(CounselorAgent)
+    """Create a minimal CounselorAgent for testing.
+
+    Uses object.__new__ to skip the full __init__ chain (which requires
+    instructions, pool, LLM client, etc.), then manually sets the
+    attributes that _send_therapeutic_dm and other tested methods need.
+    """
+    agent = object.__new__(CounselorAgent)
     agent._agent_type = "counselor"
     agent.id = "counselor-001"
     agent.callsign = "Counselor"
@@ -56,6 +61,8 @@ def _make_counselor(**kwargs: Any) -> CounselorAgent:
     agent._episodic_memory = None
     agent._add_event_listener_fn = None
     agent._profile_store = None
+    agent.DM_COOLDOWN_SECONDS = 3600
+    agent._intervention_targets = set()
     return agent
 
 
@@ -70,8 +77,6 @@ class TestTherapeuticDM:
         ward_room.get_or_create_dm_channel = AsyncMock(return_value=channel)
         ward_room.create_thread = AsyncMock()
         c = _make_counselor(ward_room=ward_room)
-        # Ensure DM_COOLDOWN_SECONDS is accessible (class variable on CounselorAgent)
-        c.DM_COOLDOWN_SECONDS = 3600
         result = await c._send_therapeutic_dm("agent-1", "Worf", "Hello")
         assert result is True, (
             f"Expected True but got {result}. "
