@@ -80,7 +80,12 @@ class TestTherapeuticDM:
         # Call unbound method directly to avoid any CI-specific attribute
         # lookup issues with __new__-created instances
         result = await CounselorAgent._send_therapeutic_dm(c, "agent-1", "Worf", "Hello")
-        assert result is True
+        assert result is True, (
+            f"result={result}, _ward_room={c._ward_room!r}, "
+            f"type={type(c._ward_room)}, bool={bool(c._ward_room)}, "
+            f"hasattr={hasattr(c, '_ward_room')}, "
+            f"dict_keys={list(c.__dict__.keys()) if hasattr(c, '__dict__') else 'NO DICT'}"
+        )
         ward_room.get_or_create_dm_channel.assert_called_once_with(
             agent_a_id="counselor-001",
             agent_b_id="agent-1",
