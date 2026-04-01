@@ -334,3 +334,26 @@ medical:
   health_floor: 0.6
   max_trust_outliers: 3
   scheduled_diagnosis_interval: 300.0
+
+# --- Counselor (AD-503) ---
+counselor:
+  enabled: true
+  profile_retention_days: 90
+  trust_delta_threshold: 0.15
+  sweep_max_agents: 50
+  alert_on_red: true
+  alert_on_yellow: false
+
+circuit_breaker:
+  # velocity_threshold: 8
+  # velocity_window_seconds: 300.0
+  # similarity_threshold: 0.6
+  # base_cooldown_seconds: 900.0
+  # max_cooldown_seconds: 3600.0
+  # amber_similarity_ratio: 0.25
+  # amber_velocity_ratio: 0.6
+  # amber_decay_seconds: 900.0
+  # red_decay_seconds: 1800.0
+  # critical_decay_seconds: 3600.0
+  # critical_trip_window_seconds: 3600.0
+  # critical_trip_count: 3

@@ -44,10 +44,10 @@ class TestOperationsSchemaLoading:
     @pytest.mark.asyncio
     async def test_load_operations_yaml(self, service: VesselOntologyService) -> None:
         """operations.yaml parses successfully."""
-        assert len(service._standing_order_tiers) > 0
-        assert len(service._watch_types) > 0
-        assert len(service._alert_procedures) > 0
-        assert len(service._duty_categories) > 0
+        assert len(service.get_standing_order_tiers()) > 0
+        assert len(service.get_watch_types()) > 0
+        assert service.get_alert_procedure("GREEN") is not None
+        assert len(service.get_duty_categories()) > 0
 
 
 class TestStandingOrderTiers:
@@ -112,9 +112,9 @@ class TestDutyCategories:
 class TestCommunicationSchemaLoading:
     @pytest.mark.asyncio
     async def test_load_communication_yaml(self, service: VesselOntologyService) -> None:
-        assert len(service._channel_types) > 0
-        assert len(service._thread_modes) > 0
-        assert len(service._message_patterns) > 0
+        assert len(service.get_channel_types()) > 0
+        assert len(service.get_thread_modes()) > 0
+        assert len(service.get_message_patterns()) > 0
 
 
 class TestChannelTypes:
@@ -168,9 +168,9 @@ class TestMessagePatterns:
 class TestResourcesSchemaLoading:
     @pytest.mark.asyncio
     async def test_load_resources_yaml(self, service: VesselOntologyService) -> None:
-        assert len(service._model_tiers) > 0
-        assert len(service._tool_capabilities) > 0
-        assert len(service._knowledge_sources) > 0
+        assert len(service.get_model_tiers()) > 0
+        assert len(service.get_tool_capabilities()) > 0
+        assert len(service.get_knowledge_sources()) > 0
 
 
 class TestModelTiers:
@@ -224,11 +224,11 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_full_initialize_loads_all_domains(self, service: VesselOntologyService) -> None:
         """All domain counts > 0 after full initialization."""
-        assert len(service._departments) > 0
-        assert len(service._posts) > 0
-        assert len(service._standing_order_tiers) > 0
-        assert len(service._channel_types) > 0
-        assert len(service._model_tiers) > 0
+        assert len(service.get_departments()) > 0
+        assert len(service.get_posts()) > 0
+        assert len(service.get_standing_order_tiers()) > 0
+        assert len(service.get_channel_types()) > 0
+        assert len(service.get_model_tiers()) > 0
 
     @pytest.mark.asyncio
     async def test_crew_context_includes_alert_info(self, service: VesselOntologyService) -> None:

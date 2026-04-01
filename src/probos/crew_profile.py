@@ -10,6 +10,7 @@ Every ProbOS agent is a crew member with a personnel file. This module provides:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -418,6 +419,12 @@ def load_seed_profile(agent_type: str, profiles_dir: str = "") -> dict[str, Any]
     import yaml
     with open(target, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+async def load_seed_profile_async(agent_type: str, profiles_dir: str = "") -> dict[str, Any]:
+    """Async wrapper for load_seed_profile — runs file I/O in executor."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, load_seed_profile, agent_type)
 
 
 def extract_callsign_mention(text: str) -> tuple[str, str] | None:

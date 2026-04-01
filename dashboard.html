@@ -406,11 +406,11 @@ body {
 <!-- STATS BAR -->
 <div class="stats">
   <div class="stat">
-    <div class="stat-value">4243</div>
+    <div class="stat-value">4549</div>
     <div class="stat-label">Total Tests</div>
   </div>
   <div class="stat">
-    <div class="stat-value" style="font-size:1rem;margin-top:4px">4094 py · 149 ts</div>
+    <div class="stat-value" style="font-size:1rem;margin-top:4px">4400 py · 149 ts</div>
     <div class="stat-label">pytest · vitest</div>
   </div>
   <div class="stat">
@@ -430,11 +430,11 @@ body {
     <div class="stat-label">Northstar II Chunks</div>
   </div>
   <div class="stat">
-    <div class="stat-value green">3</div>
+    <div class="stat-value green">1</div>
     <div class="stat-label">Open Bugs</div>
   </div>
   <div class="stat">
-    <div class="stat-value violet">BF-091</div>
+    <div class="stat-value violet">AD-531</div>
     <div class="stat-label">Latest Completed</div>
   </div>
 </div>
@@ -442,7 +442,7 @@ body {
 <!-- TAB NAV -->
 <nav class="tabs">
   <div class="tab active" data-tab="priority">Priority Queue<span class="tab-badge">11</span></div>
-  <div class="tab" data-tab="bugs">Bugs<span class="tab-badge">4</span></div>
+  <div class="tab" data-tab="bugs">Bugs<span class="tab-badge">0</span></div>
   <div class="tab" data-tab="roadmap">OSS Roadmap</div>
   <div class="tab" data-tab="commercial">Commercial</div>
   <div class="tab" data-tab="timeline">Timeline</div>
@@ -698,36 +698,9 @@ body {
 
   <div class="section">
     <div class="section-head">
-      <span class="section-label sl-yellow">Wave 6 Open</span>
+      <span class="section-label sl-green">Wave 6 Complete</span>
       <span class="section-rule"></span>
-      <span class="section-count">3 open bugs</span>
-    </div>
-
-    <div style="max-width:700px;display:flex;flex-direction:column;gap:0.5rem">
-      <div class="card bug-card">
-        <div class="card-row">
-          <div class="card-title">BF-093 — API Boundary Validation</div>
-          <span class="tag t-low">Low</span>
-        </div>
-        <div class="card-desc">3-4 raw-dict API endpoints (ACM, cooldown). ACM returns 200+error JSON. Add Pydantic models + proper HTTP status codes.</div>
-        <div class="card-meta"><span class="tag t-team">API Validation A-→A</span></div>
-      </div>
-      <div class="card bug-card">
-        <div class="card-row">
-          <div class="card-title">BF-094 — Sync File I/O in Async</div>
-          <span class="tag t-low">Low</span>
-        </div>
-        <div class="card-desc">ontology.py, ward_room.py, crew_profile.py use sync open() in async methods. Wrap in run_in_executor() or aiofiles.</div>
-        <div class="card-meta"><span class="tag t-team">Async Discipline B+→A</span></div>
-      </div>
-      <div class="card bug-card">
-        <div class="card-row">
-          <div class="card-title">BF-095 — God Object Reduction</div>
-          <span class="tag t-medium">Medium</span>
-        </div>
-        <div class="card-desc">VesselOntologyService (53 methods) and WardRoomService (40 methods). Extract focused sub-services. Target ≤20 methods each.</div>
-        <div class="card-meta"><span class="tag t-team">SRP B→A-</span></div>
-      </div>
+      <span class="section-count">0 open bugs — Wave 6 COMPLETE (8/8)</span>
     </div>
   </div>
 
@@ -735,10 +708,34 @@ body {
     <div class="section-head">
       <span class="section-label sl-green">Wave 6 Closed</span>
       <span class="section-rule"></span>
-      <span class="section-count">4 closed</span>
+      <span class="section-count">7 closed</span>
     </div>
 
     <div style="max-width:700px;display:flex;flex-direction:column;gap:0.5rem">
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-095 — God Object Reduction</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">ontology.py (1,060 lines, 53 methods) → ontology/ package (5 files). ward_room.py (1,612 lines, 39 methods) → ward_room/ package (6 files). 7 LoD violations fixed. Dead code removed. 2 import compat tests added.</div>
+        <div class="card-meta"><span class="tag t-team">SRP B→A-</span></div>
+      </div>
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-094 — Sync File I/O in Async</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">All sync open() in async paths eliminated. _read_yaml_sync() + _write_archive_sync() + load_seed_profile_async() via run_in_executor. 3 modules fixed. 2 new tests.</div>
+        <div class="card-meta"><span class="tag t-team">Async Discipline B+→A</span></div>
+      </div>
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-093 — API Boundary Validation</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">All raw-dict endpoints eliminated. AgentLifecycleRequest + SetCooldownRequest Pydantic models. ACM errors → HTTPException(503/409). Cooldown range 60–1800 enforced. 15 new tests.</div>
+        <div class="card-meta"><span class="tag t-team">API Validation A-→A</span></div>
+      </div>
       <div class="card bug-card closed">
         <div class="card-row">
           <div class="card-title">BF-091 — Mock Discipline Phase 2</div>
@@ -1262,7 +1259,11 @@ body {
       <div class="tl-item">Security Team — threat detection, sandboxing, secrets, egress policy (AD-455–456)</div>
       <div class="tl-item">Engineering — telemetry, memory architecture, model diversity, cognitive JIT (AD-457–464)</div>
       <div class="tl-item">Workforce Scheduling Engine — core data model, assignment engine (AD-496 ✓), HXI Scrumban (AD-497 ✓), Work Type Registry (AD-498 ✓)</div>
-      <div class="tl-item">Cognitive Self-Regulation Wave — temporal context (AD-502), Counselor activation (AD-503), auto-assessment (AD-495), self-monitoring (AD-504), therapeutic intervention (AD-505), graduated response (AD-506)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-531: Episode Clustering — agglomerative clustering during dream cycles, dead strategy_extraction.py removed, EpisodeCluster dataclass, 40 tests</div>
+      <div class="tl-item">Cognitive JIT pipeline — procedure extraction (AD-532), procedure store (AD-533), replay-first dispatch (AD-534)</div>
+      <div class="tl-item">Cognitive Self-Regulation Wave COMPLETE — temporal context (AD-502 ✓), Counselor activation (AD-503 ✓), auto-assessment (AD-495 ✓), self-monitoring (AD-504 ✓), therapeutic intervention (AD-505 ✓), graduated response (AD-506a ✓), peer repetition &amp; tier credits (AD-506b ✓)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-540: Memory Provenance Boundary — SHIP MEMORY boundary markers + [observed]/[training]/[inferred] standing order</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-541: Memory Integrity MVP — MemorySource enum, EventLog verification at recall, reliability hierarchy standing order</div>
       <div class="tl-item">Operations — EPS, IntentBus priority, The Conn, Night Orders (AD-467–471)</div>
       <div class="tl-item">Communications — channel adapters, mobile PWA, voice interaction (AD-472–474)</div>
       <div class="tl-item">Naval Organization — qualifications, 3M, damage control, SORM (AD-477)</div>
@@ -1300,6 +1301,69 @@ body {
       <span class="section-label sl-green">Era IV: Evolution — AD milestones</span>
       <span class="section-rule"></span>
       <span class="section-count">Most recent first</span>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-531</div>
+        <div class="ci-title">Episode Clustering &amp; Pattern Detection</div>
+        <div class="ci-tests">4400 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 1/9. Dead code cleanup: strategy_extraction.py + test_strategy_extraction.py deleted, strategy_store_fn removed from DreamingEngine/startup/runtime, DreamAdapter.store_strategies() removed. EpisodeCluster dataclass + cluster_episodes() pure function (agglomerative, average-linkage, cosine distance). EpisodicMemory.get_embeddings() for ChromaDB retrieval. Dream Step 6 replaced: embeddings → clustering → in-memory storage. DreamReport.strategies_extracted → clusters_found + clusters. Log-and-degrade on failure. 40 new tests, 24/24 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-506b</div>
+        <div class="ci-title">Peer Repetition &amp; Tier Credits</div>
+        <div class="ci-tests">4374 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Self-Regulation Wave 7/7 — WAVE COMPLETE. BF-098 fix (_save_profile_and_assessment async). ZONE_RECOVERY event + proactive loop emission. check_peer_similarity() in create_thread()/create_post() — cross-agent repetition detection (detection, not suppression). PEER_REPETITION_DETECTED event. 4 tier credit fields on CognitiveProfile (self_correction, peer_detection, peer_caught, total). Counselor ZONE_RECOVERY + PEER_REPETITION handlers. Peer repetition Episode storage (intent=peer_repetition). Schema migration (5 ALTER TABLE). 32 new tests, 24/24 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-506a</div>
+        <div class="ci-title">Graduated System Response — Zone Model</div>
+        <div class="ci-tests">4341 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Self-Regulation Wave 6a/6. BF-097 fix (get_posts_by_author table names). CircuitBreakerConfig Pydantic model (13 tunable fields). CognitiveZone state machine (GREEN/AMBER/RED/CRITICAL). _compute_signals() refactor + _update_zone() transitions + time-based decay. SELF_MONITORING_CONCERN EventType + proactive loop emission. Zone-aware self-monitoring context for all Earned Agency tiers. Counselor amber zone handler + _classify_trip_severity() zone override + post-dream re-assessment. Standing orders reconciliation ([Clinical Authority] + [Cognitive Zones]). 39 new tests, 24/24 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-505</div>
+        <div class="ci-title">Counselor Therapeutic Intervention</div>
+        <div class="ci-tests">4302 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Self-Regulation Wave 5/6. BF-096 fix (ward_room_router wiring race). _send_therapeutic_dm() rate-limited DMs. Trigger-specific therapeutic templates. Cooldown reason tracking (set_agent_cooldown reason= param). counselor_recommendation BridgeAlert. COUNSELOR_GUIDANCE directive issuance (24h, max 3). _apply_intervention() orchestrator. 40 new tests, 18/18 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-504</div>
+        <div class="ci-title">Agent Self-Monitoring Context</div>
+        <div class="ci-tests">4263 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Self-Regulation Wave 4/6. Jaccard DRY to similarity.py. get_posts_by_author() query. _build_self_monitoring_context() (8 capabilities). Earned Agency TIER_CONFIG scaling. [READ_NOTEBOOK] two-cycle pattern. Memory state calibration. Standing orders [Self-Monitoring] section. 45 new tests, 14/14 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-495</div>
+        <div class="ci-title">Circuit Breaker → Counselor Bridge</div>
+        <div class="ci-tests">4217 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Self-Regulation Wave 3/6. Trip reason tracking (velocity/rumination/both). _classify_trip_severity() 4-level escalation (AD-506 override point). Ward Room posting via BridgeAlert pipeline. DRY _save_profile_and_assessment() helper. Trigger values fixed. 27 new tests, 5 classes, 10/10 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-503</div>
+        <div class="ci-title">Counselor Activation — Data Gathering &amp; Profile Persistence</div>
+        <div class="ci-tests">4196 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Self-Regulation Wave 2/6. Type-filtered event subscriptions (reusable infra). 3 new EventTypes + typed dataclasses. CounselorProfileStore (SQLite, ConnectionFactory). _gather_agent_metrics(), _run_wellness_sweep(), event-driven assessment. InitiativeEngine dead wire lit up. 6 REST endpoints. 61 new tests, 11 test classes, 24/24 checklist PASS.</div>
     </div>
 
     <div class="completed-item">

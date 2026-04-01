@@ -368,3 +368,161 @@ class TestACMEndpoints:
         # PROBATIONARY → SUSPENDED is illegal
         with pytest.raises(ValueError):
             await acm.transition("a1", LifecycleState.SUSPENDED)
+
+
+# ---------------------------------------------------------------------------
+# ACM Router Endpoint Tests (BF-093)
+# ---------------------------------------------------------------------------
+
+
+class TestACMRouterEndpoints:
+    """BF-093: ACM endpoints use Pydantic models and proper HTTPException."""
+
+    @pytest.mark.asyncio
+    async def test_decommission_accepts_model(self, acm):
+        """Decommission endpoint accepts AgentLifecycleRequest and returns transition."""
+        from probos.routers.acm import decommission_agent
+        from probos.api_models import AgentLifecycleRequest
+
+        await acm.onboard("a1", "scout", "pool", "science")
+        await acm.transition("a1", LifecycleState.ACTIVE)
+
+        rt = MagicMock()
+        rt.acm = acm
+        req = AgentLifecycleRequest(reason="Test decommission")
+        result = await decommission_agent("a1", req, rt)
+        assert result["status"] == "decommissioned"
+        assert result["transition"]["to_state"] == "decommissioned"
+
+    @pytest.mark.asyncio
+    async def test_decommission_default_reason(self, acm):
+        """Decommission endpoint uses default reason when empty."""
+        from probos.routers.acm import decommission_agent
+        from probos.api_models import AgentLifecycleRequest
+
+        await acm.onboard("a1", "scout", "pool", "science")
+        await acm.transition("a1", LifecycleState.ACTIVE)
+
+        rt = MagicMock()
+        rt.acm = acm
+        req = AgentLifecycleRequest()  # empty body
+        result = await decommission_agent("a1", req, rt)
+        assert result["status"] == "decommissioned"
+        assert result["transition"]["reason"] == "Decommissioned by Captain"
+
+    @pytest.mark.asyncio
+    async def test_decommission_503_when_acm_unavailable(self):
+        """Decommission raises HTTPException(503) when ACM is None."""
+        from fastapi import HTTPException
+        from probos.routers.acm import decommission_agent
+        from probos.api_models import AgentLifecycleRequest
+
+        rt = MagicMock()
+        rt.acm = None
+        with pytest.raises(HTTPException) as exc_info:
+            await decommission_agent("a1", AgentLifecycleRequest(), rt)
+        assert exc_info.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_decommission_409_on_illegal_transition(self, acm):
+        """Decommission raises HTTPException(409) on illegal state transition."""
+        from fastapi import HTTPException
+        from probos.routers.acm import decommission_agent
+        from probos.api_models import AgentLifecycleRequest
+
+        await acm.onboard("a1", "scout", "pool", "science")
+        await acm.transition("a1", LifecycleState.ACTIVE)
+        await acm.decommission("a1")  # already decommissioned
+
+        rt = MagicMock()
+        rt.acm = acm
+        with pytest.raises(HTTPException) as exc_info:
+            await decommission_agent("a1", AgentLifecycleRequest(), rt)
+        assert exc_info.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_suspend_accepts_model(self, acm):
+        """Suspend endpoint accepts AgentLifecycleRequest."""
+        from probos.routers.acm import suspend_agent
+        from probos.api_models import AgentLifecycleRequest
+
+        await acm.onboard("a1", "scout", "pool", "science")
+        await acm.transition("a1", LifecycleState.ACTIVE)
+
+        rt = MagicMock()
+        rt.acm = acm
+        result = await suspend_agent("a1", AgentLifecycleRequest(reason="Investigation"), rt)
+        assert result["status"] == "suspended"
+
+    @pytest.mark.asyncio
+    async def test_suspend_503_when_acm_unavailable(self):
+        """Suspend raises HTTPException(503) when ACM is None."""
+        from fastapi import HTTPException
+        from probos.routers.acm import suspend_agent
+        from probos.api_models import AgentLifecycleRequest
+
+        rt = MagicMock()
+        rt.acm = None
+        with pytest.raises(HTTPException) as exc_info:
+            await suspend_agent("a1", AgentLifecycleRequest(), rt)
+        assert exc_info.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_suspend_409_on_illegal_transition(self, acm):
+        """Suspend raises HTTPException(409) on illegal state transition."""
+        from fastapi import HTTPException
+        from probos.routers.acm import suspend_agent
+        from probos.api_models import AgentLifecycleRequest
+
+        await acm.onboard("a1", "scout", "pool", "science")
+        # PROBATIONARY → SUSPENDED is illegal
+        rt = MagicMock()
+        rt.acm = acm
+        with pytest.raises(HTTPException) as exc_info:
+            await suspend_agent("a1", AgentLifecycleRequest(), rt)
+        assert exc_info.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_reinstate_accepts_model(self, acm):
+        """Reinstate endpoint accepts AgentLifecycleRequest."""
+        from probos.routers.acm import reinstate_agent
+        from probos.api_models import AgentLifecycleRequest
+
+        await acm.onboard("a1", "scout", "pool", "science")
+        await acm.transition("a1", LifecycleState.ACTIVE)
+        await acm.transition("a1", LifecycleState.SUSPENDED)
+
+        rt = MagicMock()
+        rt.acm = acm
+        result = await reinstate_agent("a1", AgentLifecycleRequest(reason="Cleared"), rt)
+        assert result["status"] == "active"
+
+    @pytest.mark.asyncio
+    async def test_reinstate_503_when_acm_unavailable(self):
+        """Reinstate raises HTTPException(503) when ACM is None."""
+        from fastapi import HTTPException
+        from probos.routers.acm import reinstate_agent
+        from probos.api_models import AgentLifecycleRequest
+
+        rt = MagicMock()
+        rt.acm = None
+        with pytest.raises(HTTPException) as exc_info:
+            await reinstate_agent("a1", AgentLifecycleRequest(), rt)
+        assert exc_info.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_reinstate_409_on_illegal_transition(self, acm):
+        """Reinstate raises HTTPException(409) on illegal state transition."""
+        from fastapi import HTTPException
+        from probos.routers.acm import reinstate_agent
+        from probos.api_models import AgentLifecycleRequest
+
+        await acm.onboard("a1", "scout", "pool", "science")
+        await acm.transition("a1", LifecycleState.ACTIVE)
+        await acm.decommission("a1")  # DECOMMISSIONED → ACTIVE is illegal
+
+        rt = MagicMock()
+        rt.acm = acm
+        with pytest.raises(HTTPException) as exc_info:
+            await reinstate_agent("a1", AgentLifecycleRequest(), rt)
+        assert exc_info.value.status_code == 409

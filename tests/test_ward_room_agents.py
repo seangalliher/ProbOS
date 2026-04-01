@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 from probos.runtime import ProbOSRuntime
 from probos.substrate.agent import BaseAgent
-from probos.ward_room import WardRoomChannel, WardRoomService, _MENTION_PATTERN
+from probos.ward_room import WardRoomChannel, WardRoomService, _MENTION_PATTERN, extract_mentions
 from probos.types import IntentMessage, IntentResult
 
 
@@ -32,12 +32,12 @@ async def ward_room_svc(tmp_path):
 class TestMentionExtraction:
     async def test_mention_extraction(self, ward_room_svc):
         """Extract multiple @mentions from text."""
-        result = ward_room_svc._extract_mentions("Hello @wesley and @worf")
+        result = extract_mentions("Hello @wesley and @worf")
         assert result == ["wesley", "worf"]
 
     async def test_mention_extraction_empty(self, ward_room_svc):
         """No mentions returns empty list."""
-        result = ward_room_svc._extract_mentions("No mentions here")
+        result = extract_mentions("No mentions here")
         assert result == []
 
     async def test_thread_event_includes_mentions(self, ward_room_svc):

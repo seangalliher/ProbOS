@@ -33,14 +33,14 @@ class TestEventListenerLifecycle:
         """Event listener is registered."""
         fn = MagicMock()
         runtime.add_event_listener(fn)
-        assert fn in runtime._event_listeners
+        assert any(f is fn for f, _ in runtime._event_listeners)
 
     def test_remove_event_listener(self, runtime):
         """Event listener can be removed."""
         fn = MagicMock()
         runtime.add_event_listener(fn)
         runtime.remove_event_listener(fn)
-        assert fn not in runtime._event_listeners
+        assert not any(f is fn for f, _ in runtime._event_listeners)
 
     def test_remove_nonexistent_listener(self, runtime):
         """Removing a non-registered listener doesn't crash."""

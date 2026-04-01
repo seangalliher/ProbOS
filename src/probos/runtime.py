@@ -7,7 +7,7 @@ import json
 import logging
 import time
 import uuid as _uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -247,7 +247,7 @@ class ProbOSRuntime:
     _emergent_detector: EmergentDetector | None
     _strategy_advisor: StrategyAdvisor | None
     _semantic_layer: SemanticKnowledgeLayer | None
-    _event_listeners: list[Callable]
+    _event_listeners: list[tuple[Callable[..., Any], frozenset[str] | None]]
     _started: bool
     _fresh_boot: bool
     _start_time_wall: float
@@ -385,6 +385,9 @@ class ProbOSRuntime:
         # --- Cognitive Journal (AD-431) ---
         self.cognitive_journal: CognitiveJournal | None = None
 
+        # --- Counselor Profile Store (AD-503) ---
+        self._counselor_profile_store: Any = None
+
         # --- Skill Framework (AD-428) ---
         self.skill_registry: SkillRegistry | None = None
         self.skill_service: AgentSkillService | None = None
@@ -484,7 +487,7 @@ class ProbOSRuntime:
         self._semantic_layer: SemanticKnowledgeLayer | None = None
 
         # --- HXI event listeners (AD-254) ---
-        self._event_listeners: list[Callable] = []
+        self._event_listeners: list[tuple[Callable[..., Any], frozenset[str] | None]] = []
 
         self._started = False
         self._fresh_boot = False
@@ -561,22 +564,34 @@ class ProbOSRuntime:
 
     # --- HXI event emission (AD-254) ---
 
-    def add_event_listener(self, fn: Callable) -> None:
-        """Register a listener for HXI events."""
-        self._event_listeners.append(fn)
+    def add_event_listener(
+        self,
+        fn: Callable[..., Any],
+        event_types: Iterable[str] | None = None,
+    ) -> None:
+        """Register a listener for HXI events.
 
-    def remove_event_listener(self, fn: Callable) -> None:
+        Args:
+            fn: Callback receiving event dict. May be a coroutine function —
+                if so, it will be scheduled as an asyncio task.
+            event_types: If provided, listener only fires for these event types.
+                If None, listener receives ALL events (backwards compatible).
+        """
+        type_filter = frozenset(str(t) for t in event_types) if event_types else None
+        self._event_listeners.append((fn, type_filter))
+
+    def remove_event_listener(self, fn: Callable[..., Any]) -> None:
         """Remove a previously registered event listener."""
-        try:
-            self._event_listeners.remove(fn)
-        except ValueError:
-            pass
+        self._event_listeners = [
+            (f, tf) for f, tf in self._event_listeners if f is not fn
+        ]
 
     def _emit_event(self, event_type: str | EventType, data: dict[str, Any] | None = None) -> None:
         """Fire-and-forget event to all registered listeners (AD-254).
 
         Accepts typed ``BaseEvent`` instances, ``EventType`` enum values,
         or legacy string + dict pairs (AD-527 backward compat).
+        AD-503: Supports type-filtered and async listeners.
         """
         if isinstance(event_type, BaseEvent):
             event = event_type.to_dict()
@@ -584,11 +599,17 @@ class ProbOSRuntime:
             event = {"type": event_type.value, "data": data or {}, "timestamp": time.time()}
         else:
             event = {"type": event_type, "data": data or {}, "timestamp": time.time()}
-        for fn in self._event_listeners:
+        type_str = event.get("type", "")
+        for fn, type_filter in self._event_listeners:
+            if type_filter is not None and type_str not in type_filter:
+                continue
             try:
-                fn(event)
+                if asyncio.iscoroutinefunction(fn):
+                    asyncio.create_task(fn(event))
+                else:
+                    fn(event)
             except Exception:
-                logger.debug("Event listener failed for %s", event.get("type", "?"), exc_info=True)
+                logger.debug("Event listener failed for %s", type_str, exc_info=True)
         # AD-471: Check Night Orders escalation on every event
         self._check_night_order_escalation(event.get("type", ""), event.get("data", {}))
 
@@ -1077,7 +1098,6 @@ class ProbOSRuntime:
             knowledge_store=self._knowledge_store,
             ward_room=self.ward_room,
             registry=self.registry,
-            store_strategies_fn=lambda s: self.dream_adapter.store_strategies(s) if self.dream_adapter else None,
             on_gap_predictions_fn=lambda p: self.dream_adapter.on_gap_predictions(p) if self.dream_adapter else None,
             on_contradictions_fn=lambda c: self.dream_adapter.on_contradictions(c) if self.dream_adapter else None,
             on_post_dream_fn=lambda r: self.dream_adapter.on_post_dream(r) if self.dream_adapter else None,
@@ -1086,6 +1106,7 @@ class ProbOSRuntime:
             process_natural_language_fn=self.process_natural_language,
             periodic_flush_loop_fn=self._periodic_flush_loop_bridge,
             refresh_emergent_detector_roster_fn=self._refresh_roster_bridge,
+            emit_event_fn=self._emit_event,  # AD-503
         )
         self.dream_scheduler = dream_result.dream_scheduler
         self._emergent_detector = dream_result.emergent_detector
@@ -1151,7 +1172,7 @@ class ProbOSRuntime:
 
         # PATCH(AD-517): Wire ontology into WardRoom (constructed before ontology init)
         if self.ontology and self.ward_room:
-            self.ward_room._ontology = self.ontology
+            self.ward_room.set_ontology(self.ontology)
 
         # Phase 8: Finalization (AD-517)
         from probos.startup.finalize import finalize_startup
@@ -2056,6 +2077,7 @@ class ProbOSRuntime:
                         outcomes=[],
                         agent_ids=[],
                         duration_ms=(t_end - t_start) * 1000,
+                        source="direct",
                     )
                 await self.episodic_memory.store(episode)
 
@@ -2814,6 +2836,7 @@ class ProbOSRuntime:
                     ],
                     duration_ms=report.duration_ms,
                     embedding=[],
+                    source="direct",
                 )
                 from probos.cognitive.episodic import EpisodicMemory
                 if EpisodicMemory.should_store(episode):

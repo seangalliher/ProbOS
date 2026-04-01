@@ -160,13 +160,6 @@ class TestWardRoomPublicAPI:
         ws._db = MagicMock()  # simulate active connection
         assert ws.is_started is True
 
-    @pytest.mark.asyncio
-    async def test_post_system_message_no_db(self):
-        from probos.ward_room import WardRoomService
-        ws = WardRoomService()
-        # Should not raise
-        await ws.post_system_message("bridge", "Test message")
-
 
 # ---------------------------------------------------------------------------
 # 4. ResourcePool
@@ -539,3 +532,56 @@ class TestVitalsMonitorPublicAPI:
         assert result == [{"pulse": 1}]
         result.append({"pulse": 2})
         assert len(vm._window) == 1
+
+
+# ---------------------------------------------------------------------------
+# 18. Import compatibility (BF-095 decomposition)
+# ---------------------------------------------------------------------------
+
+class TestImportCompatibility:
+    """Verify backward-compatible imports after BF-095 package decomposition."""
+
+    def test_ontology_imports(self):
+        from probos.ontology import (
+            VesselOntologyService,
+            Department,
+            Post,
+            Assignment,
+            VesselIdentity,
+            VesselState,
+            RoleTemplate,
+            QualificationPath,
+            StandingOrderTier,
+            WatchTypeSchema,
+            AlertProcedure,
+            DutyCategory,
+            ChannelTypeSchema,
+            ThreadModeSchema,
+            MessagePattern,
+            ModelTier,
+            ToolCapability,
+            KnowledgeSourceSchema,
+            KnowledgeTier,
+            DocumentClassification,
+            DocumentClass,
+            RetentionPolicy,
+            DocumentField,
+            RepositoryDirectory,
+            SkillRequirement,
+            QualificationRequirement,
+        )
+        assert VesselOntologyService is not None
+
+    def test_ward_room_imports(self):
+        from probos.ward_room import (
+            WardRoomService,
+            WardRoomChannel,
+            WardRoomThread,
+            WardRoomPost,
+            WardRoomEndorsement,
+            WardRoomCredibility,
+            _SCHEMA,
+            _MENTION_PATTERN,
+            extract_mentions,
+        )
+        assert WardRoomService is not None

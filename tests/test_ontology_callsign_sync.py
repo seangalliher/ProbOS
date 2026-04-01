@@ -3,15 +3,21 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from probos.ontology import VesselOntologyService, Assignment, Post, Department
+from probos.ontology.loader import OntologyLoader
+from probos.ontology.departments import DepartmentService
+from probos.ontology.ranks import RankService
 
 
 def _build_ontology_with_agents():
     """Build a minimal ontology with 2 agents in engineering department."""
     onto = VesselOntologyService.__new__(VesselOntologyService)
-    onto._departments = {
+
+    # Build loader with data attributes
+    loader = OntologyLoader.__new__(OntologyLoader)
+    loader.departments = {
         "engineering": Department(id="engineering", name="Engineering", description=""),
     }
-    onto._posts = {
+    loader.posts = {
         "chief_engineer": Post(
             id="chief_engineer", title="Chief Engineer",
             department_id="engineering", reports_to="first_officer",
@@ -28,7 +34,7 @@ def _build_ontology_with_agents():
             authority_over=["chief_engineer"], tier="crew",
         ),
     }
-    onto._assignments = {
+    loader.assignments = {
         "engineering_agent": Assignment(
             agent_type="engineering_agent", post_id="chief_engineer",
             callsign="LaForge", agent_id="eng-001",
@@ -42,33 +48,33 @@ def _build_ontology_with_agents():
             callsign="Number One", agent_id="fo-001",
         ),
     }
-    # Minimal attrs to avoid errors
-    onto._config_dir = None
-    onto._data_dir = None
-    onto._vessel_identity = None
-    onto._alert_condition = "GREEN"
-    onto._valid_alert_conditions = ["GREEN", "YELLOW", "RED"]
-    onto._started_at = 0.0
-    onto._role_templates = {}
-    onto._qualification_paths = {}
-    onto._skill_service = None
-    onto._standing_order_tiers = []
-    onto._watch_types = []
-    onto._alert_procedures = {}
-    onto._duty_categories = []
-    onto._channel_types = []
-    onto._thread_modes = []
-    onto._message_patterns = []
-    onto._model_tiers = []
-    onto._tool_capabilities = []
-    onto._knowledge_sources = []
-    onto._knowledge_tiers = []
-    onto._classifications = []
-    onto._document_classes = []
-    onto._retention_policies = []
-    onto._document_fields_required = []
-    onto._document_fields_optional = []
-    onto._repository_directories = []
+    loader.vessel_identity = None
+    loader.alert_condition = "GREEN"
+    loader.valid_alert_conditions = ["GREEN", "YELLOW", "RED"]
+    loader._started_at = 0.0
+    loader.role_templates = {}
+    loader.qualification_paths = {}
+    loader.standing_order_tiers = []
+    loader.watch_types = []
+    loader.alert_procedures = {}
+    loader.duty_categories = []
+    loader.channel_types = []
+    loader.thread_modes = []
+    loader.message_patterns = []
+    loader.model_tiers = []
+    loader.tool_capabilities = []
+    loader.knowledge_sources = []
+    loader.knowledge_tiers = []
+    loader.classifications = []
+    loader.document_classes = []
+    loader.retention_policies = []
+    loader.document_fields_required = []
+    loader.document_fields_optional = []
+    loader.repository_directories = []
+
+    onto._loader = loader
+    onto._dept = DepartmentService(loader.departments, loader.posts, loader.assignments)
+    onto._ranks = RankService(loader.role_templates, loader.qualification_paths, loader.assignments)
     return onto
 
 

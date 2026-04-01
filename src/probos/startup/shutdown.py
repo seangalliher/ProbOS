@@ -32,13 +32,10 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         pass  # event log may be unavailable during shutdown
 
     # AD-435 + AD-502: Announce shutdown to Ward Room (stasis protocol)
-    if runtime.ward_room and runtime.ward_room._db:
+    if runtime.ward_room and runtime.ward_room.is_started:
         try:
-            async with runtime.ward_room._db.execute(
-                "SELECT id FROM channels WHERE name = 'All Hands' LIMIT 1"
-            ) as cursor:
-                row = await cursor.fetchone()
-                if row:
+            all_hands = await runtime.ward_room.get_channel_by_name("All Hands")
+            if all_hands:
                     msg = (
                         "Attention all hands: The ship is entering stasis. "
                         "All cognitive processes will be suspended. "
@@ -48,7 +45,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                     if reason:
                         msg += f" Reason: {reason}"
                     await runtime.ward_room.create_thread(
-                        channel_id=row[0],
+                        channel_id=all_hands.id,
                         author_id="system",
                         author_callsign="Ship's Computer",
                         title="Entering Stasis",
@@ -166,6 +163,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     if runtime.cognitive_journal:
         await runtime.cognitive_journal.stop()
         runtime.cognitive_journal = None
+
+    # Stop Counselor Profile Store (AD-503)
+    if runtime._counselor_profile_store:
+        await runtime._counselor_profile_store.stop()
+        runtime._counselor_profile_store = None
 
     # Stop Skill Framework (AD-428)
     if runtime.skill_service:

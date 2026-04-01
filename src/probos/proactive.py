@@ -13,7 +13,7 @@ from probos.crew_profile import Rank
 from probos.crew_utils import is_crew_agent
 from probos.events import EventType
 from probos.duty_schedule import DutyScheduleTracker
-from probos.earned_agency import agency_from_rank, can_think_proactively
+from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.types import IntentMessage
 from probos.utils import format_duration
@@ -55,6 +55,7 @@ class ProactiveCognitiveLoop:
         self._on_event = on_event
         self._last_proactive: dict[str, float] = {}  # agent_id -> monotonic timestamp
         self._agent_cooldowns: dict[str, float] = {}  # agent_id -> override cooldown (seconds)
+        self._cooldown_reasons: dict[str, str] = {}  # agent_id -> reason text (AD-505)
         self._knowledge_store: KnowledgeStore | None = None  # AD-415: Set by runtime for persistence
         self._task: asyncio.Task | None = None
         self._runtime: ProbOSRuntime | None = None  # Set via set_runtime()
@@ -64,14 +65,18 @@ class ProactiveCognitiveLoop:
         self._circuit_breaker = CognitiveCircuitBreaker()
         self._notified_dm_threads: set[str] = set()  # BF-082: dedup guard
         self._notified_dm_threads_reset: float = time.monotonic()  # hourly reset
+        self._pending_notebook_reads: dict[str, str] = {}  # AD-504: agent_id -> topic_slug
 
     def set_runtime(self, runtime: ProbOSRuntime) -> None:
         """Wire the runtime reference (provides registry, trust, WR, memory, etc.)."""
         self._runtime = runtime
 
-    def set_config(self, config: ProactiveCognitiveConfig) -> None:
+    def set_config(self, config: ProactiveCognitiveConfig, cb_config: Any = None) -> None:
         """Store ProactiveCognitiveConfig for trust signal weights (AD-414)."""
         self._config = config
+        if cb_config:
+            from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
+            self._circuit_breaker = CognitiveCircuitBreaker(config=cb_config)
 
     @property
     def circuit_breaker(self) -> CognitiveCircuitBreaker:
@@ -95,10 +100,26 @@ class ProactiveCognitiveLoop:
         """Get effective cooldown for an agent (override or global default)."""
         return self._agent_cooldowns.get(agent_id, self._cooldown)
 
-    def set_agent_cooldown(self, agent_id: str, cooldown: float) -> None:
+    def get_cooldown_reason(self, agent_id: str) -> str:
+        """Return the reason for a cooldown override, or empty string."""
+        return self._cooldown_reasons.get(agent_id, "")
+
+    def clear_counselor_cooldown(self, agent_id: str) -> None:
+        """Remove a Counselor-set cooldown override, restoring the default."""
+        if agent_id in self._agent_cooldowns:
+            del self._agent_cooldowns[agent_id]
+        if agent_id in self._cooldown_reasons:
+            del self._cooldown_reasons[agent_id]
+        self._persist_cooldowns()
+
+    def set_agent_cooldown(self, agent_id: str, cooldown: float, reason: str = "") -> None:
         """Set per-agent proactive cooldown override. Clamp to [60, 1800]."""
         cooldown = max(60.0, min(1800.0, cooldown))
         self._agent_cooldowns[agent_id] = cooldown
+        if reason:
+            self._cooldown_reasons[agent_id] = reason
+        elif agent_id in self._cooldown_reasons:
+            del self._cooldown_reasons[agent_id]
         # AD-415: Write-through to KnowledgeStore
         self._persist_cooldowns()
 
@@ -346,7 +367,7 @@ class ProactiveCognitiveLoop:
             # AD-430a: Store no-response as episodic memory (prevents redundant re-analysis)
             if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
                 try:
-                    from probos.types import Episode
+                    from probos.types import Episode, MemorySource
                     callsign = ""
                     if hasattr(rt, 'callsign_registry'):
                         callsign = rt.callsign_registry.get_callsign(agent.agent_type)
@@ -362,6 +383,7 @@ class ProactiveCognitiveLoop:
                             "agent_type": agent.agent_type,
                         }],
                         reflection=f"{callsign or agent.agent_type} reviewed context but had nothing to report.",
+                        source=MemorySource.DIRECT,
                     )
                     from probos.cognitive.episodic import EpisodicMemory
                     if EpisodicMemory.should_store(episode):
@@ -425,6 +447,53 @@ class ProactiveCognitiveLoop:
                         "Forced cooldown applied — not punishment, health protection."
                     ),
                 })
+            # AD-503/AD-495: Emit circuit_breaker_trip event for Counselor subscription
+            if self._on_event:
+                breaker_status = self._circuit_breaker.get_status(agent.id)
+                self._on_event({
+                    "type": EventType.CIRCUIT_BREAKER_TRIP.value,
+                    "data": {
+                        "agent_id": agent.id,
+                        "agent_type": agent.agent_type,
+                        "callsign": getattr(agent, "callsign", ""),
+                        "trip_count": breaker_status.get("trip_count", 1),
+                        "cooldown_seconds": breaker_status.get("cooldown_seconds", 900.0),
+                        "trip_reason": breaker_status.get("trip_reason", "unknown"),
+                        "zone": breaker_status.get("zone", "red"),  # AD-506a
+                    },
+                })
+        else:
+            # AD-506a: Check zone and emit concern if amber (not tripped)
+            zone = self._circuit_breaker.get_zone(agent.id)
+            if zone == "amber" and self._on_event:
+                status = self._circuit_breaker.get_status(agent.id)
+                self._on_event({
+                    "type": EventType.SELF_MONITORING_CONCERN.value,
+                    "data": {
+                        "agent_id": agent.id,
+                        "agent_callsign": getattr(agent, "callsign", ""),
+                        "zone": "amber",
+                        "similarity_ratio": status.get("similarity_ratio", 0.0),
+                        "velocity_ratio": status.get("velocity_ratio", 0.0),
+                    },
+                })
+
+        # AD-506b: Emit zone recovery event
+        transition = self._circuit_breaker.get_last_zone_transition(agent.id)
+        if transition and self._on_event:
+            old_zone, new_zone = transition
+            # Recovery = zone improved (lower severity)
+            zone_order = {"green": 0, "amber": 1, "red": 2, "critical": 3}
+            if zone_order.get(new_zone, 0) < zone_order.get(old_zone, 0):
+                self._on_event({
+                    "type": EventType.ZONE_RECOVERY.value,
+                    "data": {
+                        "agent_id": agent.id,
+                        "agent_callsign": getattr(agent, "callsign", ""),
+                        "old_zone": old_zone,
+                        "new_zone": new_zone,
+                    },
+                })
 
         # AD-414: Emit attenuated trust signal for successful proactive think
         if self._config:
@@ -478,6 +547,7 @@ class ProactiveCognitiveLoop:
                         "agent_type": agent.agent_type,
                     }],
                     reflection=f"{callsign or agent.agent_type} observed: {thought_summary}",
+                    source=MemorySource.DIRECT,
                 )
                 from probos.cognitive.episodic import EpisodicMemory
                 if EpisodicMemory.should_store(episode):
@@ -698,6 +768,17 @@ class ProactiveCognitiveLoop:
         if redirect:
             context["circuit_breaker_redirect"] = redirect
 
+        # AD-504: Self-monitoring context
+        try:
+            callsign = ""
+            if hasattr(rt, 'callsign_registry'):
+                callsign = rt.callsign_registry.get_callsign(agent.agent_type)
+            self_monitoring = await self._build_self_monitoring_context(agent, callsign, rt)
+            if self_monitoring:
+                context["self_monitoring"] = self_monitoring
+        except Exception:
+            logger.debug("Self-monitoring context failed for %s", agent.id, exc_info=True)
+
         # AD-471: Night Orders context for conn-holder
         if hasattr(rt, 'conn_manager') and rt.conn_manager and rt.conn_manager.is_active:
             conn_state = rt.conn_manager.state
@@ -723,6 +804,186 @@ class ProactiveCognitiveLoop:
                 context["conn_authority"] = night_ctx
 
         return context
+
+    async def _build_self_monitoring_context(
+        self,
+        agent: Any,
+        callsign: str,
+        rt: Any,
+    ) -> dict[str, Any]:
+        """AD-504: Build self-monitoring context for agent self-regulation.
+
+        Returns dict with keys: recent_posts, self_similarity, notebook_index,
+        notebook_content, memory_state. All values are optional/nullable.
+        Earned Agency tier controls verbosity.
+        """
+        result: dict[str, Any] = {}
+        rank = getattr(agent, 'rank', None)
+        agency = agency_from_rank(rank) if rank else AgencyLevel.REACTIVE
+
+        # Tier-based feature gating
+        TIER_CONFIG = {
+            AgencyLevel.REACTIVE: {"posts": 0, "notebooks": False, "similarity": False},
+            AgencyLevel.SUGGESTIVE: {"posts": 3, "notebooks": False, "similarity": True},
+            AgencyLevel.AUTONOMOUS: {"posts": 5, "notebooks": True, "similarity": True},
+            AgencyLevel.UNRESTRICTED: {"posts": 5, "notebooks": True, "similarity": True},
+        }
+        tier = TIER_CONFIG.get(agency, TIER_CONFIG[AgencyLevel.SUGGESTIVE])
+
+        # --- AD-506a: Cognitive zone awareness (before tier gating) ---
+        if hasattr(self, '_circuit_breaker'):
+            zone = self._circuit_breaker.get_zone(agent.id)
+            if zone != "green":
+                result["cognitive_zone"] = zone
+                if zone == "amber":
+                    result["zone_note"] = (
+                        "Your recent posts show increasing similarity to each other. "
+                        "This is a natural signal to pause and consider: do you have "
+                        "genuinely new information to contribute, or are you circling "
+                        "the same ground? If unsure, try [NO_RESPONSE] or write to "
+                        "your notebook instead."
+                    )
+                elif zone == "red":
+                    result["zone_note"] = (
+                        "Your cognitive circuit breaker has activated. This is health "
+                        "protection, not punishment. The Counselor has been notified. "
+                        "Focus on a different aspect of operations or respond with "
+                        "[NO_RESPONSE] until you have a genuinely fresh perspective."
+                    )
+                elif zone == "critical":
+                    result["zone_note"] = (
+                        "Critical cognitive state — repeated pattern loops detected. "
+                        "The Captain has been notified. Extended mandatory cooldown is "
+                        "in effect. When you return, deliberately choose a completely "
+                        "different topic. Your previous train of thought needs rest."
+                    )
+
+        if tier["posts"] == 0:
+            return result
+
+        # --- (1) Recent output window ---
+        try:
+            if hasattr(rt, 'ward_room') and rt.ward_room:
+                since = time.time() - 3600  # Last hour
+                limit = tier["posts"]
+                posts = await rt.ward_room.get_posts_by_author(callsign, limit=limit, since=since)
+                if posts:
+                    result["recent_posts"] = [
+                        {
+                            "body": p["body"][:150],
+                            "age": format_duration(time.time() - p["created_at"]),
+                        }
+                        for p in posts
+                    ]
+        except Exception:
+            logger.debug("Self-monitoring: failed to get recent posts for %s", callsign, exc_info=True)
+
+        # --- (2) Self-similarity score ---
+        if tier["similarity"]:
+            try:
+                posts_for_sim = result.get("recent_posts", [])
+                if len(posts_for_sim) >= 2:
+                    from probos.cognitive.similarity import jaccard_similarity, text_to_words
+                    word_sets = [text_to_words(p["body"]) for p in posts_for_sim]
+                    total_sim = 0.0
+                    pair_count = 0
+                    for j in range(len(word_sets)):
+                        for k in range(j + 1, len(word_sets)):
+                            total_sim += jaccard_similarity(word_sets[j], word_sets[k])
+                            pair_count += 1
+                    if pair_count > 0:
+                        result["self_similarity"] = round(total_sim / pair_count, 2)
+            except Exception:
+                logger.debug("Self-monitoring: similarity calc failed for %s", callsign, exc_info=True)
+
+        # --- (4) Dynamic cooldown ("take a breath") ---
+        sim = result.get("self_similarity", 0.0)
+        if sim >= 0.5:
+            current_cooldown = self.get_agent_cooldown(agent.id)
+            new_cooldown = min(current_cooldown * 1.5, 1800)
+            if new_cooldown > current_cooldown:
+                self.set_agent_cooldown(agent.id, new_cooldown)
+                result["cooldown_increased"] = True
+
+        # AD-505: Include cooldown reason if set
+        reason = self.get_cooldown_reason(agent.id)
+        if reason:
+            result["cooldown_reason"] = reason
+
+        # --- (7) Memory state awareness ---
+        try:
+            if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
+                episode_count = await rt.episodic_memory.count_for_agent(
+                    getattr(agent, 'sovereign_id', agent.id)
+                )
+                lifecycle = getattr(rt, '_lifecycle_state', 'first_boot')
+                uptime = time.time() - getattr(rt, '_start_time_wall', time.time())
+                result["memory_state"] = {
+                    "episode_count": episode_count,
+                    "lifecycle": lifecycle,
+                    "uptime_hours": round(uptime / 3600, 1),
+                }
+        except Exception:
+            logger.debug("Self-monitoring: memory state failed for %s", callsign, exc_info=True)
+
+        # --- (8) Notebook continuity ---
+        if tier["notebooks"]:
+            try:
+                if hasattr(rt, '_records_store') and rt._records_store:
+                    entries = await rt._records_store.list_entries(
+                        f"notebooks/{callsign}",
+                        author=callsign,
+                    )
+                    if entries:
+                        # Index: last 5 entries by updated time
+                        sorted_entries = sorted(
+                            entries,
+                            key=lambda e: e.get("frontmatter", {}).get("updated", 0),
+                            reverse=True,
+                        )[:5]
+                        result["notebook_index"] = [
+                            {
+                                "topic": e.get("frontmatter", {}).get("topic", e["path"].split("/")[-1].replace(".md", "")),
+                                "updated": e.get("frontmatter", {}).get("updated", ""),
+                            }
+                            for e in sorted_entries
+                        ]
+
+                    # Semantic pull: search notebooks for content relevant to current think
+                    dept = getattr(agent, 'department', '')
+                    if dept and entries:
+                        search_results = await rt._records_store.search(
+                            dept, scope=f"notebooks/{callsign}",
+                        )
+                        if search_results:
+                            top = search_results[0]
+                            result["notebook_content"] = {
+                                "topic": top.get("path", "").split("/")[-1].replace(".md", ""),
+                                "snippet": top.get("snippet", "")[:300],
+                            }
+            except Exception:
+                logger.debug("Self-monitoring: notebook query failed for %s", callsign, exc_info=True)
+
+            # --- Pending notebook reads from previous cycle ---
+            pending_key = agent.id
+            if pending_key in self._pending_notebook_reads:
+                topic_slug = self._pending_notebook_reads.pop(pending_key)
+                try:
+                    if hasattr(rt, '_records_store') and rt._records_store:
+                        entry = await rt._records_store.read_entry(
+                            f"notebooks/{callsign}/{topic_slug}.md",
+                            reader_id=callsign,
+                            reader_department=getattr(agent, 'department', ''),
+                        )
+                        if entry:
+                            result["notebook_content"] = {
+                                "topic": topic_slug,
+                                "snippet": entry.get("content", "")[:500],
+                            }
+                except Exception:
+                    logger.debug("Self-monitoring: notebook read failed for %s/%s", callsign, topic_slug, exc_info=True)
+
+        return result
 
     async def _is_similar_to_recent_posts(self, agent: Any, text: str, threshold: float = 0.5) -> bool:
         """BF-032: Check if proposed post is too similar to agent's recent Ward Room posts.
@@ -997,6 +1258,15 @@ class ProactiveCognitiveLoop:
         # BF-060: Strip ALL notebook blocks from text using regex (not string replace)
         # text.replace() failed because .strip() on captured content caused whitespace mismatch
         text = re.sub(notebook_pattern, '', text, flags=re.DOTALL).strip()
+
+        # AD-504: [READ_NOTEBOOK topic-slug] — queue for next cycle injection
+        read_nb_pattern = r'\[READ_NOTEBOOK\s+([\w-]+)\]'
+        for match in re.finditer(read_nb_pattern, text):
+            topic_slug = match.group(1)
+            self._pending_notebook_reads[agent.id] = topic_slug
+            logger.debug("Queued notebook read for %s: %s",
+                        getattr(agent, 'callsign', agent.agent_type), topic_slug)
+        text = re.sub(read_nb_pattern, '', text).strip()
 
         return text, actions_executed
 

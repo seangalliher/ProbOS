@@ -64,7 +64,7 @@ async def finalize_startup(
             on_event=lambda evt: runtime._emit_event(evt.get("type", ""), evt.get("data", {})),
         )
         proactive_loop.set_runtime(runtime)
-        proactive_loop.set_config(config.proactive_cognitive)
+        proactive_loop.set_config(config.proactive_cognitive, cb_config=config.circuit_breaker)
         if config.proactive_cognitive.duty_schedule.enabled:
             proactive_loop.set_duty_schedule(config.proactive_cognitive.duty_schedule)
         # PATCH(AD-517): Wire knowledge store for cooldown persistence
@@ -169,6 +169,34 @@ async def finalize_startup(
         runtime._flush_task.cancel()
     runtime._flush_task = asyncio.create_task(dream_adapter.periodic_flush_loop())
 
+    # --- AD-503: Counselor activation — initialize + wire initiative engine ---
+    counselor_agent = None
+    if "counselor" in runtime.pools:
+        agents = runtime.registry.get_by_pool("counselor")
+        if agents:
+            counselor_agent = agents[0]
+            await counselor_agent.initialize(
+                trust_network=runtime.trust_network,
+                hebbian_router=runtime.hebbian_router,
+                registry=runtime.registry,
+                crew_profiles=getattr(runtime, 'acm', None),
+                episodic_memory=runtime.episodic_memory,
+                emit_event_fn=runtime._emit_event,
+                add_event_listener_fn=runtime.add_event_listener,
+                ward_room_router=ward_room_router if runtime.ward_room else None,  # AD-505: fixed wiring
+                ward_room=runtime.ward_room,  # AD-505: for DM channel creation
+                directive_store=getattr(runtime, 'directive_store', None),  # AD-505
+                dream_scheduler=getattr(runtime, 'dream_scheduler', None),  # AD-505
+                proactive_loop=proactive_loop,  # AD-505: for cooldown adjustment
+            )
+            logger.info("AD-503: Counselor agent initialized")
+
+    # AD-503: Wire InitiativeEngine counselor_fn
+    if runtime.initiative and counselor_agent:
+        def _counselor_alert_fn() -> list:
+            return counselor_agent.agents_at_alert("yellow")
+        runtime.initiative.set_counselor_fn(_counselor_alert_fn)
+
     runtime._started = True
 
     await runtime.event_log.log(category="system", event="started")
@@ -182,11 +210,8 @@ async def finalize_startup(
     # AD-435 + AD-502: Announce startup to Ward Room (lifecycle-aware)
     if runtime.ward_room:
         try:
-            async with runtime.ward_room._db.execute(
-                "SELECT id FROM channels WHERE name = 'All Hands' LIMIT 1"
-            ) as cursor:
-                row = await cursor.fetchone()
-                if row:
+            all_hands = await runtime.ward_room.get_channel_by_name("All Hands")
+            if all_hands:
                     if runtime._lifecycle_state == "stasis_recovery":
                         dur = format_duration(runtime._stasis_duration)
                         prev = runtime._previous_session
@@ -211,7 +236,7 @@ async def finalize_startup(
                         title = "System Online"
                         body = "ProbOS startup complete. All systems operational."
                     await runtime.ward_room.create_thread(
-                        channel_id=row[0],
+                        channel_id=all_hands.id,
                         author_id="system",
                         title=title,
                         body=body,

@@ -15,8 +15,8 @@ from collections.abc import Callable
 from typing import Any
 
 from probos.cognitive.contradiction_detector import detect_contradictions
+from probos.cognitive.episode_clustering import cluster_episodes
 from probos.cognitive.gap_predictor import predict_gaps
-from probos.cognitive.strategy_extraction import extract_strategies
 from probos.config import DreamingConfig
 from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — dream consolidation mutates trust
 from probos.mesh.routing import HebbianRouter, REL_INTENT
@@ -35,7 +35,6 @@ class DreamingEngine:
         episodic_memory: Any,
         config: DreamingConfig,
         idle_scale_down_fn: Any = None,
-        strategy_store_fn: Any = None,
         gap_prediction_fn: Any = None,
         contradiction_resolve_fn: Any = None,  # AD-403
     ) -> None:
@@ -45,10 +44,15 @@ class DreamingEngine:
         self.config = config
         self.pre_warm_intents: list[str] = []
         self._idle_scale_down_fn = idle_scale_down_fn
-        self._strategy_store_fn = strategy_store_fn
         self._gap_prediction_fn = gap_prediction_fn
+        self._last_clusters: list[Any] = []  # AD-531: most recent dream cycle clusters
         self._contradiction_resolve_fn = contradiction_resolve_fn
         self._last_consolidated_count: int = 0  # Cursor for micro-dream dedup
+
+    @property
+    def last_clusters(self) -> list[Any]:
+        """Most recent episode clusters from the last dream cycle (AD-531)."""
+        return self._last_clusters
 
     async def micro_dream(self) -> dict[str, Any]:
         """Lightweight consolidation of recent episodes only (Tier 1).
@@ -93,7 +97,7 @@ class DreamingEngine:
         3. Trust consolidation — boost/penalize agents based on track records
         4. Pre-warm — identify temporal intent sequences for faster routing
         5. Idle scale-down
-        6. Strategy extraction
+        6. Episode clustering (AD-531)
         7. Gap prediction
         """
         t_start = time.monotonic()
@@ -136,14 +140,32 @@ class DreamingEngine:
             except Exception as e:
                 logger.debug("Idle scale-down failed: %s", e)
 
-        # Step 6: Strategy extraction (AD-383)
-        strategies = extract_strategies(episodes, min_occurrences=3)
-        strategies_extracted = len(strategies)
-        if strategies and self._strategy_store_fn:
-            try:
-                self._strategy_store_fn(strategies)
-            except Exception as e:
-                logger.debug("Strategy store failed: %s", e)
+        # Step 6: Episode clustering (AD-531, replaces dead extract_strategies)
+        clusters_found = 0
+        clusters: list = []
+        try:
+            episode_ids = [ep.id for ep in episodes]
+            embeddings = await self.episodic_memory.get_embeddings(episode_ids)
+            if embeddings:
+                clusters = cluster_episodes(
+                    episodes=episodes,
+                    embeddings=embeddings,
+                    distance_threshold=0.15,
+                    min_episodes=3,
+                )
+                clusters_found = len(clusters)
+                self._last_clusters = clusters
+                if clusters_found > 0:
+                    logger.info(
+                        "Episode clustering: %d clusters found (%d success-dominant, %d failure-dominant)",
+                        clusters_found,
+                        sum(1 for c in clusters if c.is_success_dominant),
+                        sum(1 for c in clusters if c.is_failure_dominant),
+                    )
+            else:
+                logger.debug("Episode clustering skipped: no embeddings available")
+        except Exception as e:
+            logger.debug("Episode clustering failed (non-critical): %s", e)
 
         # Step 7: Capability gap prediction (AD-385)
         gap_predictions = predict_gaps(episodes)
@@ -163,19 +185,20 @@ class DreamingEngine:
             trust_adjustments=trust_adjustments,
             pre_warm_intents=pre_warm,
             duration_ms=duration_ms,
-            strategies_extracted=strategies_extracted,
+            clusters_found=clusters_found,
+            clusters=clusters,
             gaps_predicted=gaps_predicted,
             contradictions_found=contradictions_found,
         )
 
         logger.info(
             "dream-cycle: flushed=%d strengthened=%d pruned=%d trust_adjusted=%d "
-            "strategies=%d gaps=%d contradictions=%d",
+            "clusters=%d gaps=%d contradictions=%d",
             report.episodes_replayed,
             report.weights_strengthened,
             report.weights_pruned,
             report.trust_adjustments,
-            report.strategies_extracted,
+            report.clusters_found,
             report.gaps_predicted,
             report.contradictions_found,
         )
@@ -352,6 +375,7 @@ class DreamScheduler:
         self._post_dream_fn: Any = None  # Optional callback(dream_report) after each cycle
         self._pre_dream_fn: Any = None  # Optional callback() before each cycle (AD-254)
         self._post_micro_dream_fn: Any = None  # Optional callback(micro_report) after micro-dream
+        self._emit_event_fn: Callable[..., Any] | None = None  # AD-503: Event emission
 
     @property
     def is_dreaming(self) -> bool:
@@ -411,6 +435,20 @@ class DreamScheduler:
             report = await self.engine.dream_cycle()
             self._last_dream_report = report
             self._last_dream_time = time.monotonic()
+            # AD-503: Emit dream complete event
+            if self._emit_event_fn:
+                try:
+                    self._emit_event_fn(
+                        "dream_complete",
+                        {
+                            "dream_type": "full",
+                            "duration_ms": getattr(report, "duration_ms", 0),
+                            "episodes_replayed": len(getattr(report, "episodes_replayed", [])),
+                            "clusters_found": getattr(report, "clusters_found", 0),
+                        },
+                    )
+                except Exception:
+                    logger.debug("Dream complete event emission failed", exc_info=True)
             if self._post_dream_fn:
                 try:
                     self._post_dream_fn(report)
@@ -438,6 +476,18 @@ class DreamScheduler:
                         self._last_micro_dream_time = now
                         if report.get("episodes_replayed", 0) > 0:
                             self._micro_dream_count += 1
+                            # AD-503: Emit dream complete event (micro)
+                            if self._emit_event_fn:
+                                try:
+                                    self._emit_event_fn(
+                                        "dream_complete",
+                                        {
+                                            "dream_type": "micro",
+                                            "episodes_replayed": report.get("episodes_replayed", 0),
+                                        },
+                                    )
+                                except Exception:
+                                    logger.debug("Micro-dream complete event emission failed", exc_info=True)
                             if self._post_micro_dream_fn:
                                 try:
                                     self._post_micro_dream_fn(report)
@@ -471,6 +521,20 @@ class DreamScheduler:
                         report = await self.engine.dream_cycle()
                         self._last_dream_report = report
                         self._last_dream_time = time.monotonic()
+                        # AD-503: Emit dream complete event (monitor loop, full)
+                        if self._emit_event_fn:
+                            try:
+                                self._emit_event_fn(
+                                    "dream_complete",
+                                    {
+                                        "dream_type": "full",
+                                        "duration_ms": getattr(report, "duration_ms", 0),
+                                        "episodes_replayed": len(getattr(report, "episodes_replayed", [])),
+                                        "clusters_found": getattr(report, "clusters_found", 0),
+                                    },
+                                )
+                            except Exception:
+                                logger.debug("Dream complete event emission failed", exc_info=True)
                         if self._post_dream_fn:
                             try:
                                 self._post_dream_fn(report)

@@ -520,6 +520,87 @@ class TestPerAgentCooldown:
         agent_slow.handle_intent.assert_not_called()
 
 
+class TestCooldownEndpointValidation:
+    """BF-093: Cooldown endpoint range validation via Pydantic + HTTPException."""
+
+    @pytest.mark.asyncio
+    async def test_cooldown_below_minimum_rejected(self):
+        """Cooldown < 60 raises HTTPException(400)."""
+        from fastapi import HTTPException
+        from probos.routers.agents import set_agent_proactive_cooldown
+        from probos.api_models import SetCooldownRequest
+
+        rt = MagicMock()
+        agent = MagicMock()
+        agent.agent_type = "scout"
+        rt.registry.get.return_value = agent
+        rt.ontology = MagicMock()
+        rt.ontology.get_crew_agent_types.return_value = {"scout"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await set_agent_proactive_cooldown("a1", SetCooldownRequest(cooldown=30.0), rt)
+        assert exc_info.value.status_code == 400
+        assert "60" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_cooldown_above_maximum_rejected(self):
+        """Cooldown > 1800 raises HTTPException(400)."""
+        from fastapi import HTTPException
+        from probos.routers.agents import set_agent_proactive_cooldown
+        from probos.api_models import SetCooldownRequest
+
+        rt = MagicMock()
+        agent = MagicMock()
+        agent.agent_type = "scout"
+        rt.registry.get.return_value = agent
+        rt.ontology = MagicMock()
+        rt.ontology.get_crew_agent_types.return_value = {"scout"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await set_agent_proactive_cooldown("a1", SetCooldownRequest(cooldown=2000.0), rt)
+        assert exc_info.value.status_code == 400
+        assert "1800" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_valid_cooldown_accepted(self):
+        """Cooldown within range is accepted."""
+        from probos.routers.agents import set_agent_proactive_cooldown
+        from probos.api_models import SetCooldownRequest
+
+        rt = MagicMock()
+        agent = MagicMock()
+        agent.agent_type = "scout"
+        rt.registry.get.return_value = agent
+        rt.ontology = MagicMock()
+        rt.ontology.get_crew_agent_types.return_value = {"scout"}
+        rt.proactive_loop = MagicMock()
+        rt.proactive_loop.set_agent_cooldown = MagicMock()
+        rt.proactive_loop.get_agent_cooldown = MagicMock(return_value=300.0)
+
+        result = await set_agent_proactive_cooldown("a1", SetCooldownRequest(cooldown=300.0), rt)
+        assert result["agentId"] == "a1"
+        assert result["cooldown"] == 300.0
+
+    @pytest.mark.asyncio
+    async def test_default_cooldown_accepted(self):
+        """Empty body defaults to 300.0 (within range)."""
+        from probos.routers.agents import set_agent_proactive_cooldown
+        from probos.api_models import SetCooldownRequest
+
+        rt = MagicMock()
+        agent = MagicMock()
+        agent.agent_type = "scout"
+        rt.registry.get.return_value = agent
+        rt.ontology = MagicMock()
+        rt.ontology.get_crew_agent_types.return_value = {"scout"}
+        rt.proactive_loop = MagicMock()
+        rt.proactive_loop.set_agent_cooldown = MagicMock()
+        rt.proactive_loop.get_agent_cooldown = MagicMock(return_value=300.0)
+
+        result = await set_agent_proactive_cooldown("a1", SetCooldownRequest(), rt)
+        assert result["cooldown"] == 300.0
+
+
 class TestResetScope:
     """BF-070: Tiered reset scope tests."""
 

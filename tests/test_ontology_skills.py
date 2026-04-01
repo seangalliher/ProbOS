@@ -52,8 +52,8 @@ class TestSkillsSchemaLoading:
     @pytest.mark.asyncio
     async def test_skills_yaml_loaded(self, service: VesselOntologyService):
         """Load skills.yaml, verify role templates parsed."""
-        assert len(service._role_templates) == 11
-        assert len(service._qualification_paths) == 3
+        assert len(service._loader.role_templates) == 11
+        assert len(service.get_all_qualification_paths()) == 3
 
 
 # -----------------------------------------------------------------------
@@ -279,14 +279,14 @@ class TestSkillServiceWiring:
     @pytest.mark.asyncio
     async def test_set_skill_service(self, service: VesselOntologyService):
         """set_skill_service() stores reference and enables skills_note."""
-        assert service._skill_service is None
+        assert service._ranks._skill_service is None
         # Without skill service, no skills_note
         ctx = service.get_crew_context("security_officer")
         assert "skills_note" not in ctx
 
         # Wire skill service
         service.set_skill_service("mock_skill_service")
-        assert service._skill_service == "mock_skill_service"
+        assert service._ranks._skill_service == "mock_skill_service"
 
         # Now skills_note should appear
         ctx = service.get_crew_context("security_officer")

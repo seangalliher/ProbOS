@@ -426,6 +426,36 @@ class MedicalConfig(BaseModel):
     scheduled_diagnosis_interval: float = 300.0
 
 
+class CounselorConfig(BaseModel):
+    """Counselor cognitive wellness configuration (AD-503)."""
+
+    enabled: bool = True
+    profile_retention_days: int = 90
+    trust_delta_threshold: float = 0.15
+    sweep_max_agents: int = 50
+    alert_on_red: bool = True
+    alert_on_yellow: bool = False
+
+
+class CircuitBreakerConfig(BaseModel):
+    """Cognitive circuit breaker thresholds (AD-506a)."""
+
+    velocity_threshold: int = 8
+    velocity_window_seconds: float = 300.0
+    similarity_threshold: float = 0.6
+    similarity_min_events: int = 4
+    base_cooldown_seconds: float = 900.0
+    max_cooldown_seconds: float = 3600.0
+    # Amber zone thresholds
+    amber_similarity_ratio: float = 0.25  # Amber when similarity pair ratio exceeds this
+    amber_velocity_ratio: float = 0.6     # Amber when velocity > this fraction of threshold
+    amber_decay_seconds: float = 900.0    # 15 min quiet -> amber decays to green
+    red_decay_seconds: float = 1800.0     # 30 min quiet -> red decays to amber
+    critical_decay_seconds: float = 3600.0  # 1h quiet -> critical decays to red
+    critical_trip_window_seconds: float = 3600.0  # Window for counting trips toward critical
+    critical_trip_count: int = 3           # Trips in window to reach critical
+
+
 class EventLogConfig(BaseModel):
     """Event log retention configuration."""
     retention_days: int = 7          # Delete events older than N days (0 = keep forever)
@@ -500,6 +530,8 @@ class SystemConfig(BaseModel):
     persistent_tasks: PersistentTasksConfig = PersistentTasksConfig()
     channels: ChannelsConfig = ChannelsConfig()
     medical: MedicalConfig = MedicalConfig()
+    counselor: CounselorConfig = CounselorConfig()
+    circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
     communications: CommunicationsConfig = CommunicationsConfig()

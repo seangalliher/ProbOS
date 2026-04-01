@@ -70,8 +70,8 @@ class TestDeterministicCrewIds:
             marker = comment_markers[agent_type]
             idx = source.find(marker)
             assert idx >= 0, f"Comment for {agent_type} not found in source"
-            # Get the next ~300 chars after the marker — should contain agent_ids=
-            block = source[idx:idx + 300]
+            # Get the next ~800 chars after the marker — should contain agent_ids=
+            block = source[idx:idx + 800]
             assert "agent_ids=" in block, (
                 f"create_pool for {agent_type} missing agent_ids= parameter"
             )

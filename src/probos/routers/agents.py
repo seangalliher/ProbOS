@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from probos.api_models import AgentChatRequest
+from probos.api_models import AgentChatRequest, SetCooldownRequest
 from probos.config import format_trust
 from probos.crew_utils import is_crew_agent
 from probos.routers.deps import get_runtime
@@ -60,8 +60,8 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
             display_name = resolved.get("display_name", "")
 
     # Load full seed profile for personality
-    from probos.crew_profile import load_seed_profile, Rank
-    seed = load_seed_profile(agent.agent_type)
+    from probos.crew_profile import load_seed_profile_async, Rank
+    seed = await load_seed_profile_async(agent.agent_type)
     if seed:
         personality = seed.get("personality", {})
         specialization = seed.get("specialization", [])
@@ -145,14 +145,16 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
 
 
 @router.put("/{agent_id}/proactive-cooldown")
-async def set_agent_proactive_cooldown(agent_id: str, req: dict, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+async def set_agent_proactive_cooldown(agent_id: str, req: SetCooldownRequest, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """Set per-agent proactive cooldown (seconds). Range: 60-1800."""
     agent = runtime.registry.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
     if not is_crew_agent(agent, runtime.ontology):
         raise HTTPException(status_code=400, detail=f"Agent {agent_id} is not a crew agent")
-    cooldown = float(req.get("cooldown", 300))
+    cooldown = req.cooldown
+    if cooldown < 60 or cooldown > 1800:
+        raise HTTPException(status_code=400, detail=f"Cooldown must be between 60 and 1800 seconds, got {cooldown}")
     if hasattr(runtime, 'proactive_loop') and runtime.proactive_loop:
         runtime.proactive_loop.set_agent_cooldown(agent_id, cooldown)
     return {"agentId": agent_id, "cooldown": runtime.proactive_loop.get_agent_cooldown(agent_id) if runtime.proactive_loop else 300.0}
@@ -212,6 +214,7 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                     "agent_type": agent.agent_type,
                 }],
                 reflection=f"Captain had a 1:1 conversation with {callsign or agent_id} via HXI.",
+                source="direct",
             )
             await runtime.episodic_memory.store(episode)
         except Exception:

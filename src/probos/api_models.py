@@ -178,6 +178,20 @@ class SkillCommissionRequest(BaseModel):
     agent_type: str
 
 
+# ── ACM lifecycle models (BF-093) ────────────────────────────────
+
+class AgentLifecycleRequest(BaseModel):
+    """Request body for ACM lifecycle transitions (decommission/suspend/reinstate)."""
+    reason: str = ""
+
+
+# ── Agent cooldown model (BF-093) ────────────────────────────────
+
+class SetCooldownRequest(BaseModel):
+    """Request body for per-agent proactive cooldown."""
+    cooldown: float = 300.0  # seconds, range 60–1800
+
+
 # ── Assignment models (AD-408) ───────────────────────────────────
 
 class CreateAssignmentRequest(BaseModel):

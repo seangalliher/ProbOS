@@ -418,6 +418,7 @@ class ExecutionRenderer:
                         outcomes=[],
                         agent_ids=[],
                         duration_ms=(t_end - t_start) * 1000,
+                        source="direct",
                     )
                 await self.runtime.episodic_memory.store(episode)
             except Exception as e:

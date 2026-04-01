@@ -42,10 +42,10 @@ class TestSchemaLoading:
     @pytest.mark.asyncio
     async def test_loads_all_schemas(self, service: VesselOntologyService):
         """Load all three YAML files, verify parsing."""
-        assert service._vessel_identity is not None
-        assert len(service._departments) > 0
-        assert len(service._posts) > 0
-        assert len(service._assignments) > 0
+        assert service.get_vessel_identity() is not None
+        assert len(service.get_departments()) > 0
+        assert len(service.get_posts()) > 0
+        assert service.get_assignment_for_agent("architect") is not None
 
 
 # -----------------------------------------------------------------------

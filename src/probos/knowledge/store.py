@@ -109,6 +109,7 @@ class KnowledgeStore:
                     reflection=data.get("reflection"),
                     agent_ids=data.get("agent_ids", []),
                     duration_ms=data.get("duration_ms", 0.0),
+                    source=data.get("source", "direct"),
                 )
                 episodes.append(ep)
             except Exception as exc:

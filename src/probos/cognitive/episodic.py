@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from probos.cognitive.similarity import jaccard_similarity
 from probos.types import Episode
 
 logger = logging.getLogger(__name__)
@@ -256,8 +257,7 @@ class EpisodicMemory:
             if not doc:
                 continue
             existing_words = set(doc.lower().split())
-            union = episode_words | existing_words
-            if union and len(episode_words & existing_words) / len(union) >= self.SIMILARITY_THRESHOLD:
+            if jaccard_similarity(episode_words, existing_words) >= self.SIMILARITY_THRESHOLD:
                 return True
         return False
 
@@ -455,6 +455,35 @@ class EpisodicMemory:
             for doc_id, metadata, document in paired[:k]
         ]
 
+    async def get_embeddings(self, episode_ids: list[str]) -> dict[str, list[float]]:
+        """Retrieve stored embeddings for the given episode IDs.
+
+        Returns a dict mapping episode_id -> embedding vector.
+        Episodes without embeddings (or if ChromaDB is unavailable) are omitted.
+        Used by AD-531 episode clustering during dream cycles.
+        """
+        if not self._collection or not episode_ids:
+            return {}
+
+        try:
+            result = self._collection.get(
+                ids=episode_ids,
+                include=["embeddings"],
+            )
+            if not result or not result["ids"] or not result["embeddings"]:
+                return {}
+
+            embeddings: dict[str, list[float]] = {}
+            for i, doc_id in enumerate(result["ids"]):
+                emb = result["embeddings"][i]
+                if emb and len(emb) > 0:
+                    embeddings[doc_id] = list(emb)
+            return embeddings
+
+        except Exception:
+            logger.debug("Failed to retrieve embeddings", exc_info=True)
+            return {}
+
     async def count_for_agent(self, agent_id: str) -> int:
         """BF-033: Return the total episode count for a specific agent."""
         if not self._collection:
@@ -540,6 +569,7 @@ class EpisodicMemory:
             "duration_ms": ep.duration_ms,
             "shapley_values_json": json.dumps(ep.shapley_values),
             "trust_deltas_json": json.dumps(ep.trust_deltas),
+            "source": ep.source or "direct",
         }
 
     @staticmethod
@@ -559,4 +589,5 @@ class EpisodicMemory:
             embedding=[],  # ChromaDB manages embeddings internally
             shapley_values=json.loads(metadata.get("shapley_values_json", "{}")),
             trust_deltas=json.loads(metadata.get("trust_deltas_json", "[]")),
+            source=metadata.get("source", "direct"),
         )

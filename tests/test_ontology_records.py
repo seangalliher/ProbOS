@@ -43,10 +43,10 @@ class TestRecordsSchemaLoading:
     @pytest.mark.asyncio
     async def test_load_records_yaml(self, service: VesselOntologyService) -> None:
         """records.yaml parses successfully."""
-        assert len(service._knowledge_tiers) > 0
-        assert len(service._classifications) > 0
-        assert len(service._document_classes) > 0
-        assert len(service._retention_policies) > 0
+        assert len(service.get_knowledge_tiers()) > 0
+        assert len(service.get_classifications()) > 0
+        assert len(service.get_document_classes()) > 0
+        assert len(service.get_retention_policies()) > 0
 
 
 class TestKnowledgeTiers:

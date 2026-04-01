@@ -1315,7 +1315,7 @@ AD-430b complete — 19 new tests in test_api_profile.py. HXI 1:1 chat now passe
 | AD-503 | Counselor Activation — Data Gathering & Persistence. Counselor (AD-378) is architecturally positioned but functionally passive. This AD: runtime metric gathering (Counselor pulls own data from TrustNetwork/HebbianRouter/AgentMeta/CrewProfile), CognitiveProfile SQLite persistence, wellness sweep implementation, event subscriptions (trust_update, circuit_breaker_trip, dream_complete), wellness_review duty wiring. |
 | AD-495 | Counselor Auto-Assessment on Circuit Breaker Trip — absorbed into this wave. Originally scoped out of AD-488. Requires AD-503 for metric gathering. Auto-dispatches counselor_assess on circuit breaker trip. |
 | AD-504 | Agent Self-Monitoring Context — Tier 1 self-regulation. Agent's last N posts with timestamps injected into cognitive context. Self-similarity score as numeric signal. Standing orders guidance for self-regulation. "Take a breath" dynamic cooldown. Cognitive offloading to Ship's Records notebooks. Earned Agency scaling of self-regulation expectations. |
-| AD-505 | Counselor Therapeutic Intervention — Tier 2 intervention. Proactive 1:1 DMs ("office hours"). Peer repetition feedback tracking. Therapeutic recommendations (forced dream, attention redirect, workload review, extended cooldown). Recommendation delivery to Captain. COUNSELOR_GUIDANCE directive expansion. |
+| AD-505 | Counselor Therapeutic Intervention — Tier 2 intervention. BF-096 fix (ward_room_router wiring race). Programmatic DM initiation (rate-limited 1/agent/hour). Therapeutic message templates (circuit_breaker, wellness_sweep, trust_change triggers). Cooldown reason tracking (set_agent_cooldown reason= parameter). counselor_recommendation BridgeAlert type. COUNSELOR_GUIDANCE directive issuance (24h expiry, max 3 per target). _apply_intervention() orchestrator (cooldown × force_dream × directive × recommendation). |
 | AD-506 | Graduated System Response — replaces binary circuit breaker. Green/Amber/Red/Critical zones. Amber: rising similarity, dynamic cooldown increase, Counselor notified. Red: circuit breaker threshold, Counselor auto-assessment, mandatory cooldown. Critical: repeated trips, Captain escalation, fitness-for-duty review. Tier interaction credits. |
 
 **Key design decisions:**
@@ -1673,6 +1673,10 @@ Post-Wave 4 codebase scorecard graded the codebase at **B+** overall. All 18 cod
 - **BF-090 CLOSED** (2026-03-31): 71 silent swallows fixed (43 `logger.debug` + 4 narrowed to `sqlite3.OperationalError` + 24 justified with comments). 42 bare catches fixed (`exc_info=True` added). DRY helper `_safe_log_event()` extracted in `feedback.py`. 4,242 total passing.
 - **BF-092 CLOSED** (2026-03-31): 19 named trust constants in `config.py` replacing ~30 magic numbers across 9 files. `format_trust()` utility replacing 52+ `round(x, 4)` calls across 13 files. `EventEmitterMixin` in `protocols.py` deduplicating 4 identical `_emit()` methods. DRY scorecard B→A-. 4,240 total passing.
 - **BF-091 CLOSED** (2026-03-31): Mock spec compliance 22.6% → 51.9% (target ≥50% met). +222 spec'd mocks across 19 files (top 20 minus test_dependency_resolver.py). 3 real bugs caught by spec= (BF-078 class): `BaseLLMClient.generate()` phantom → `complete()`, `TrustNetwork.get_trust()` phantom → `get_record()`, `TrustNetwork.get_trust_score()` phantom → `get_score()`. 4,243 total passing.
+- **BF-093 CLOSED** (2026-03-31): All raw-dict API endpoints eliminated. `AgentLifecycleRequest` Pydantic model for ACM decommission/suspend/reinstate. `SetCooldownRequest` with range validation (60–1800) for cooldown endpoint. ACM error responses converted from `return {"error":}` to `HTTPException` (503/409). Scorecard A-→A. 15 new tests, 4,254 total passing.
+- **BF-094 CLOSED** (2026-03-31): All sync file I/O in async code paths eliminated across 3 modules. `ward_room.py`: `_write_archive_sync()` helper + 3 `run_in_executor` calls. `crew_profile.py`: `load_seed_profile_async()` wrapper. `ontology.py`: `_read_yaml_sync()` shared helper for 7 loaders + `_load_or_generate_instance_id_sync()`. Scorecard B+→A. 2 new tests, 4,257 total passing.
+- **AD-541 CLOSED** (2026-03-31): Memory Integrity MVP — Pillars 1, 3, 6. `MemorySource(str, Enum)` with DIRECT/SECONDHAND/SHIP_RECORDS/BRIEFING in `types.py`. `Episode.source` field with ChromaDB metadata persistence (backwards-compatible default="direct"). All 12 episode store sites tagged with `source=MemorySource.DIRECT`. EventLog verification at recall time in `_recall_relevant_memories()` — 120s timestamp window cross-check, episodes marked verified/unverified. `_format_memory_section()` updated with `[source | verified/unverified]` tags in boundary markers. Memory Reliability Hierarchy standing order added to `federation.md` (EventLog > Ship's Records > Episodic[direct|verified] > Episodic[direct|unverified] > Episodic[secondhand] > Training). 15 new tests in `test_memory_integrity.py`. 604 tests passing across affected files. Cognitive Clarity Stack (AD-540 + AD-541) complete.
+- **BF-095 CLOSED** (2026-03-31): God object decomposition. `ontology.py` (1,060 lines, 53 methods) → `ontology/` package (5 files: models, loader, departments, ranks, service facade). `ward_room.py` (1,612 lines, 39 methods) → `ward_room/` package (6 files: models, channels, threads, messages, service facade). 7 Law of Demeter violations fixed (direct `_db` access eliminated). New public APIs: `archive_channel()`, `get_channel_by_name()`. Dead code `post_system_message` removed. Scorecard B→A-. Wave 6 COMPLETE (8/8).
 
 ---
 
@@ -1715,17 +1719,52 @@ Post-Wave 4 codebase scorecard graded the codebase at **B+** overall. All 18 cod
 
 **Status:** AD-526 PLANNED.
 
-**AD-540: Memory Provenance Boundary — Knowledge Source Attribution** *(planned, OSS)*
+**AD-540: Memory Provenance Boundary — Knowledge Source Attribution** *(closed 2026-03-31, OSS)*
 
 **Context:** Counselor 1:1 self-diagnosis (2026-03-30): LLM training knowledge contaminates episodic recall. Agent referenced "Data and Worf dynamics" from Star Trek training data as if observed on the ship. Fleet-wide problem — every agent's cognitive context (`_build_user_message()` in cognitive_agent.py) mixes episodic memories with LLM training data in the same text stream with no structural separation. The Westworld Principle states "Knowledge ≠ Memory" but the architecture doesn't enforce it.
 
-**Decision:** Structural provenance boundary in agent cognitive context. (1) Provenance-tagged memory injection: recalled episodes wrapped in `=== SHIP MEMORY (verified observations) ===` boundaries with explicit "everything else is training data" footer. (2) Source attribution standing order at Ship tier: agents must distinguish "[observed]" / "[training]" / "[inferred]" claims. (3) Counselor contamination detection: new `knowledge_integration_score` metric in CognitiveProfile. (4) Connects to AD-487 (Self-Distillation) to form cognitive clarity stack: Personal Ontology (what I know from training) + Ship Memory (what I've experienced) + Provenance Boundary (which am I using) + Scoped Cognition (what's relevant now).
+**Decision:** Structural provenance boundary in agent cognitive context. (1) Provenance-tagged memory injection: recalled episodes wrapped in `=== SHIP MEMORY (verified observations) ===` boundaries with explicit "everything else is training data" footer. (2) Source attribution standing order at Federation tier: agents must distinguish "[observed]" / "[training]" / "[inferred]" claims. (3) Counselor contamination detection and AD-487 integration deferred to AD-541+.
 
-**Rationale:** "A Memory Integrity Field" — the cognitive equivalent of SIF. LLM attention blending is the warp stress; provenance tags are the containment. Without structural separation, training knowledge warps into false episodic recall. Intellectual lineage: Johnson & Raye (1981) reality monitoring, Loftus (1979) misinformation effect. Minimum viable: L1 (boundary injection) + L2 (standing order) — 2 files, 4 code points.
+**Rationale:** "A Memory Integrity Field" — the cognitive equivalent of SIF. LLM attention blending is the warp stress; provenance tags are the containment. Without structural separation, training knowledge warps into false episodic recall. Intellectual lineage: Johnson & Raye (1981) reality monitoring, Loftus (1979) misinformation effect.
 
-**Status:** AD-540 PLANNED.
+**Completed:**
+- L1: `_format_memory_section()` DRY helper in `cognitive_agent.py` wraps all 3 memory paths (direct_message, ward_room_notification, proactive_think) in `=== SHIP MEMORY ===` / `=== END SHIP MEMORY ===` boundary markers. Proactive no-memories path includes anti-hallucination guard.
+- L2: Federation-tier standing order in `federation.md` — "Knowledge Source Attribution (AD-540)" section with [observed]/[training]/[inferred] tagging requirements.
+- 19 new tests in `test_provenance_boundary.py`. 4 updated assertions in `test_cognitive_agent.py`. 88 tests passing across affected files.
 
-**AD-541: Memory Integrity Verification — Anti-Confabulation & Therapeutic Recall** *(planned, OSS)*
+**Status:** AD-540 CLOSED.
+
+**AD-503: Counselor Activation — Data Gathering & Profile Persistence** *(closed 2026-03-31, OSS)*
+
+**Context:** CounselorAgent (AD-378) was architecturally positioned but functionally passive — `assess_agent()` existed with solid deterministic assessment, CognitiveBaseline/CounselorAssessment/CognitiveProfile data models existed, but someone else had to pass metrics in. `_cognitive_profiles` was in-memory only (lost on restart). InitiativeEngine had `set_counselor_fn()` wired but never called in startup — entire counselor trigger path was dead code.
+
+**Decision:** Six-part build:
+- **Part 0:** Type-filtered event subscriptions — `add_event_listener(fn, event_types=[...])` with `frozenset[str]` filter + native async listener dispatch via `asyncio.create_task()`. Infrastructure reusable by any agent, not Counselor-specific.
+- **Part 0b:** 3 new EventTypes (`CIRCUIT_BREAKER_TRIP`, `DREAM_COMPLETE`, `COUNSELOR_ASSESSMENT`) + typed dataclasses (`CircuitBreakerTripEvent`, `DreamCompleteEvent`, `CounselorAssessmentEvent`) + emission wiring in `proactive.py` (circuit breaker) and `dreaming.py` (dream complete with new `emit_event_fn` callback).
+- **Part 1:** Full `counselor.py` rewrite — `CounselorProfileStore` (SQLite, `ConnectionFactory` protocol per AD-542), `_gather_agent_metrics()` (pulls from TrustNetwork, HebbianRouter, CrewProfile, EpisodicMemory), `_run_wellness_sweep()` (deterministic crew-wide assessment), event-driven assessment subscriptions, wellness report generation.
+- **Part 2:** Runtime wiring — profile store lifecycle, `counselor.initialize()`, InitiativeEngine dead wire lit up (`set_counselor_fn()` finally called in startup), shutdown cleanup.
+- **Part 3:** 6 REST API endpoints (`/api/counselor/...`).
+- **Parts 4-5:** `CounselorConfig` + `system.yaml` section.
+
+**Rationale:** The Counselor needed muscles, not a brain transplant. Assessment engine was 90% right — gap was purely data aggregation, persistence, and event integration. Type-filtered subscriptions solve the broadcast-all-50+-events problem for any future subscriber. Lighting up the dead InitiativeEngine wire connects circuit breaker trips → Counselor assessment → graduated response pipeline. ConnectionFactory compliance (AD-542) ensures commercial overlay can swap storage backends.
+
+**Status:** AD-503 CLOSED. 61 new tests across 11 test classes. 4345 total (4196 pytest + 149 vitest). 24/24 validation checklist items PASS.
+
+**AD-495: Counselor Auto-Assessment on Circuit Breaker Trip** *(closed 2026-03-31, OSS)*
+
+**Context:** AD-503 built the Counselor's muscles (event subscriptions, metric gathering, profile persistence). The `_on_circuit_breaker_trip()` handler existed but was thin — generic `assess_agent()` call with `trigger="event"`, no trip awareness, no Ward Room posting, no escalation logic. The circuit breaker trip event lacked `cooldown_seconds` and trip reason.
+
+**Decision:** Five-part upgrade:
+- **Part 1:** Trip reason tracking in `circuit_breaker.py` — `_trip_reasons` dict records "velocity", "rumination", or "velocity+rumination". `get_status()` enriched with `trip_reason` and `cooldown_seconds`. Emitted `CIRCUIT_BREAKER_TRIP` event includes both fields.
+- **Part 2:** Trip-aware handler — `_classify_trip_severity()` returns 4-level classification (monitor/concern/intervention/escalate) based on trip_count, trip_reason, and fit_for_duty. Trip-specific concerns and clinical notes added to assessment. `_save_profile_and_assessment()` DRY helper extracted, `_on_trust_update()` refactored to use it.
+- **Part 3:** Ward Room posting — `_post_assessment_to_ward_room()` constructs proper `BridgeAlert` with severity mapping (escalate→ALERT, concern/intervention→ADVISORY, monitor→INFO). `initialize()` accepts `ward_room_router`, wired in `finalize.py`. Failure is log-and-degrade.
+- **Part 4:** Trigger values fixed — `"event"` → `"circuit_breaker"` / `"trust_update"`. Zero generic triggers remaining.
+
+**Rationale:** `_classify_trip_severity()` designed as explicit override point for AD-506 (Graduated System Response). Enriched event data (trip_reason, cooldown_seconds) provides the inputs AD-506 needs for zone classification. Proper `BridgeAlert` pipeline replaces raw event dict emission — correct severity routing to Medical channel / All Hands / Captain notification.
+
+**Status:** AD-495 CLOSED. 27 new tests across 5 test classes. 4366 total (4217 pytest + 149 vitest). 10/10 validation checklist items PASS.
+
+**AD-541: Memory Integrity Verification — Anti-Confabulation & Therapeutic Recall** *(closed 2026-03-31, OSS)*
 
 **Context:** AD-540 addresses source labeling (training vs experience) but not memory accuracy. Three gaps: (1) Confabulation — LLM can fabricate episode details during act-store, creating false memories in ChromaDB that AD-540's provenance tags would protect rather than flag. (2) Reconsolidation corruption — recalled memories processed through LLM during dream cycles or proactive think can be subtly modified. (3) Social contagion — hearing others' experiences in Ward Room creates secondhand memories that agents may recall as firsthand.
 
@@ -1733,7 +1772,17 @@ Post-Wave 4 codebase scorecard graded the codebase at **B+** overall. All 18 cod
 
 **Rationale:** Clinical neuroscience provides validated interventions for exactly this class of problem. Reconsolidation theory (Nader & Hardt, 2009), social memory contagion (Roediger et al., 2001), errorless learning (Baddeley & Wilson, 1994), cognitive reserve (Stern, 2002). AD-540 is the artificial prefrontal cortex (source tags). AD-541 is the hippocampal integrity system (memory verification + consolidation protection). Together they form a complete memory health architecture.
 
-**Status:** AD-541 PLANNED.
+**Completed (MVP — Pillars 1, 3, 6):**
+- `MemorySource(str, Enum)` with DIRECT/SECONDHAND/SHIP_RECORDS/BRIEFING in `types.py`. `Episode.source` field with ChromaDB metadata round-trip.
+- All 12 episode store sites tagged with `source=MemorySource.DIRECT`.
+- EventLog verification at recall time in `_recall_relevant_memories()` — 120s timestamp window cross-check.
+- `_format_memory_section()` boundary markers updated with `[source | verified/unverified]` tags.
+- Memory Reliability Hierarchy standing order added to `federation.md`.
+- 15 new tests in `test_memory_integrity.py`. 604 tests passing across affected files.
+
+**Remaining (Pillars 2, 4, 5):** Reconsolidation protection (depends: future dream LLM processing), Spaced Retrieval Therapy (depends: AD-503), Counselor reminiscence (depends: AD-503 + AD-505).
+
+**Status:** AD-541 CLOSED (MVP).
 
 **AD-527: Typed Event System** *(done, OSS)*
 
@@ -1762,3 +1811,57 @@ Post-Wave 4 codebase scorecard graded the codebase at **B+** overall. All 18 cod
 **Rationale:** "Take their implementation patterns as the engineering foundation, wrap them in ProbOS's architectural framework." OpenSpace validates the core Cognitive JIT thesis (extract → version → evolve → replay at reduced tokens). Their 46% token reduction on real-world tasks confirms commercial value. ProbOS's unique layers (sovereignty, trust governance, dream consolidation, observational learning, chain of command) transform the same mechanics into a civilization-governed system.
 
 **Status:** DESIGN UPDATE. No code change — roadmap.md AD-531–534 sections updated with absorption notes. Full technical analysis in commercial research repo.
+
+---
+
+**AD-504: Agent Self-Monitoring Context** *(OSS)*
+
+**Context:** Self-Regulation Wave item 4/6. Agents had no visibility into their own recent output — BF-032 actively removes an agent's own posts from ward_room_activity. Agents couldn't detect their own repetition, didn't know what notebooks they'd written, and sparse-memory agents (e.g. Counselor after restart) falsely generalized their own empty shard to the entire crew. Jaccard similarity was duplicated inline in circuit_breaker.py and episodic.py.
+
+**Decision:** Six-part build delivering 8 self-monitoring capabilities: (0) Extracted Jaccard similarity to `cognitive/similarity.py` — DRY refactor, both circuit_breaker.py and episodic.py import from shared utility. (1) `get_posts_by_author()` query in ward_room threads.py + service.py — first method to retrieve an agent's own posts. (2) `_build_self_monitoring_context()` in proactive.py — aggregates recent posts, self-similarity score, dynamic cooldown state, memory state calibration, notebook index, notebook content (semantic pull), pending notebook reads. (3) Prompt formatting in `_build_user_message()` — `[SELF-MONITORING]` section injected into proactive_think context. (4) Standing orders update — `[Self-Monitoring]` section in ship.md with repetition awareness, cognitive offloading to notebooks, memory calibration guidance. (5) Earned Agency scaling — `TIER_CONFIG` dict gates context verbosity by agency level (REACTIVE=minimal, AUTONOMOUS/UNRESTRICTED=full). (6) `[READ_NOTEBOOK topic-slug]` structured action — two-cycle read pattern with `_pending_notebook_reads` dict, parsed by `_extract_structured_actions()`, content injected on next think cycle.
+
+**Rationale:** Tier 1 self-regulation — agents detect their own repetition before the circuit breaker fires (Tier 3). Memory state calibration prevents the Counselor false-memory confabulation pattern (a restart, not a reset, but the Counselor claimed the entire crew had no memories because her own in-memory profiles were empty). Notebook continuity closes the write-only gap where agents could write `[NOTEBOOK]` blocks but never read them back.
+
+**Status:** AD-504 CLOSED. 45 new tests. 4,412 total passing (4,263 pytest + 149 vitest). 2 pre-existing bugs fixed during validation (@staticmethod on get_posts_by_author, missing @staticmethod on _write_archive_sync from BF-095).
+
+---
+
+**AD-505: Counselor Therapeutic Intervention** *(OSS)*
+
+**Context:** Self-Regulation Wave item 5/6. The Counselor could observe (AD-503) and assess on circuit breaker trips (AD-495) but had no ability to act — no DM initiation, no cooldown authority, no directive issuance, no dream forcing, no recommendation pipeline. BF-096 pre-existing wiring bug: `finalize.py` used `getattr(runtime, 'ward_room_router', None)` which was always None because `runtime.ward_room_router` isn't set until after `finalize_startup()` returns.
+
+**Decision:** Seven-part build delivering 6 intervention capabilities: (0) BF-096 fix + 4 new dependency injections (ward_room, directive_store, dream_scheduler, proactive_loop) into Counselor `initialize()`. (1) `_send_therapeutic_dm()` — programmatic DM channel creation via WardRoom API, rate-limited 1/agent/hour via `_dm_cooldowns` dict. (2) `_build_therapeutic_message()` trigger-specific templates + `_maybe_send_therapeutic_dm()` helper wired into `_on_circuit_breaker_trip()`, `_run_wellness_sweep()`, `_on_trust_update()`. (3) Cooldown reason tracking — `set_agent_cooldown(reason=)` parameter on ProactiveCognitiveLoop, `_cooldown_reasons` dict, `get_cooldown_reason()`, `clear_counselor_cooldown()`, self-monitoring context integration. (4) `_post_recommendation_to_ward_room()` — `counselor_recommendation` BridgeAlert type for Captain visibility. (5) `_issue_guidance_directive()` — COUNSELOR_GUIDANCE via DirectiveStore, 24h expiry, max 3 active per target. (6) `_apply_intervention()` orchestrator — cooldown extension (1.5x concern / 2x intervention), `force_dream()`, directive issuance, recommendation alert.
+
+**Rationale:** Closes the Counselor's observe-but-can't-act gap. The Counselor now operates as a clinical bridge between Tier 1 self-regulation (AD-504) and Tier 3 system guardrails (circuit breaker). Therapeutic DMs are auto-sent within standing orders ("advise, don't command") — rate-limited, not gated on Captain approval. Mechanical interventions (cooldown, dream, directive) are auto-executed but visible to Captain via BridgeAlert ADVISORY/ALERT. Peer repetition detection deferred to AD-506 (detection mechanism, not intervention).
+
+**Status:** AD-505 CLOSED. 40 new tests. 4,451 total passing (4,302 pytest + 149 vitest). BF-096 fixed. 18/18 validation checklist confirmed.
+
+**AD-506a: Graduated System Response — Zone Model** *(OSS)*
+
+**Context:** Self-Regulation Wave capstone (6a/6). The circuit breaker was binary — agents went from "everything fine" to "forced cooldown" with no intermediate warning. `_classify_trip_severity()` computed severity per-trip but didn't track persistent state. Standing orders said "advise, don't command" but AD-505 gave the Counselor clinical actions. BF-097 pre-existing: `get_posts_by_author()` queried `ward_room_posts`/`ward_room_threads` but actual table names are `posts`/`threads`.
+
+**Decision:** Five-part build replacing the binary model with a persistent 4-zone state machine: (0) BF-097 fix + `CircuitBreakerConfig` Pydantic model (13 tunable fields, all previously hardcoded) + config wiring into ProactiveCognitiveLoop `set_config()`. (1) `CognitiveZone` enum (GREEN/AMBER/RED/CRITICAL) on `AgentBreakerState`. `_compute_signals()` refactor extracts signal analysis from `check_and_trip()`. `_update_zone()` manages transitions: GREEN→AMBER on rising similarity/velocity pre-trip, AMBER→RED on circuit breaker trip, RED→CRITICAL on repeated trips in window. Time-based decay (configurable per-zone). Zone history tracking (max 20). (2) `SELF_MONITORING_CONCERN` EventType + `SelfMonitoringConcernEvent` dataclass. Proactive loop emits on amber transition. Zone-aware self-monitoring context: `cognitive_zone` + `zone_note` injected for ALL Earned Agency tiers ("brains are brains"). (3) Zone-aware Counselor — subscribes to `SELF_MONITORING_CONCERN`, `_on_self_monitoring_concern()` runs lightweight assessment (trigger="amber_zone"). `_classify_trip_severity()` overridden with zone context (amber→bumped severity, critical→automatic escalation). `_on_dream_complete()` replaces `pass` with post-dream re-assessment via `_intervention_targets` tracking. Zone-aware therapeutic messaging. (4) Standing orders reconciliation: counselor.md `[Clinical Authority]` section (clinical adjustments ≠ commands). ship.md `[Cognitive Zones]` section (zone descriptions + self-correction guidance).
+
+**Rationale:** Closes the observe→warn→intervene→verify loop. Amber zone is the key innovation — agents see their own rising similarity before the circuit breaker trips, consistent with "brains are brains" (a human would notice their own repetitive thinking). Post-dream re-assessment completes the intervention lifecycle. Standing orders reconciled to match AD-505/506a reality. Split from AD-506b (peer repetition detection + tier interaction credits) to keep builds focused.
+
+**Status:** AD-506a CLOSED. 39 new tests. 4,490 total passing (4,341 pytest + 149 vitest). BF-097 fixed. 24/24 validation checklist confirmed.
+
+**AD-506b: Peer Repetition & Tier Credits** *(OSS)*
+
+**Context:** Self-Regulation Wave final item (7/7). AD-506a delivered the graduated zone model (GREEN/AMBER/RED/CRITICAL) but two gaps remained: (1) no cross-agent similarity detection — agents could echo each other without anyone noticing, (2) no positive signal tracking — the Counselor recorded deficits (concerns, wellness drops) but never credited agents for self-correcting from amber or peers for catching repetition. BF-098 pre-existing: `_save_profile_and_assessment()` called async methods without `await`, silently dropping coroutines.
+
+**Decision:** Five-part build completing the three-tier self-regulation model: (0) BF-098 fix — made `_save_profile_and_assessment()` async, added `await` to all 4 callers. `last_zone_transition` field on `AgentBreakerState` for zone recovery detection. `ZONE_RECOVERY` EventType + proactive loop emission when zone transitions from non-green to green. (1) Peer repetition detection — `check_peer_similarity()` standalone function in `threads.py`, wired into both `create_thread()` and `create_post()`. Compares new post body against recent posts by *different* authors in the same channel via `get_recent_activity()`. `PEER_REPETITION_DETECTED` EventType + event emission. Detection only, not suppression — the post still goes through. (2) Tier interaction credits — 4 new fields on `CognitiveProfile` (`self_correction_credits`, `peer_detection_credits`, `peer_caught_credits`, `total_tier_credits`). `tier_credit` field on `CounselorAssessment`. Credit logic in `add_assessment()` accumulates credits and factors them into `alert_level` computation (credits can improve alert level). (3) Counselor event handlers — subscribes to `ZONE_RECOVERY` and `PEER_REPETITION_DETECTED`. Zone recovery handler awards self-correction credit if agent was in amber. Peer repetition handler stores episode with `intent="peer_repetition"` for the repeating agent (source="secondhand"), awards peer detection credit. (4) Schema migration — 5 `ALTER TABLE` statements for new profile/assessment columns with defaults.
+
+**Rationale:** Completes the three-tier self-regulation model: Tier 1 (self-awareness, AD-504) → Tier 2 (peer/social regulation, AD-506b) → Tier 3 (system guardrails, AD-506a). Peer detection is non-punitive — it records a signal, not a sanction. Tier credits are the first positive cognitive health metric, counterbalancing the deficit-focused assessment model. An agent that self-corrects from amber gets credit; an agent whose repetition is caught by a peer creates a learning signal for both. The Counselor now sees the full picture: not just "what went wrong" but "what went right."
+
+**Status:** AD-506b CLOSED. 32 new tests. 4,523 total passing (4,374 pytest + 149 vitest). BF-098 fixed. 24/24 validation checklist confirmed. **Self-Regulation Wave COMPLETE (7/7).**
+
+**AD-531: Episode Clustering & Pattern Detection** *(OSS)*
+
+**Context:** First AD in the Cognitive JIT pipeline (AD-464 decomposed into AD-531–539). Dream consolidation replayed episodes linearly — adjusting Hebbian weights and trust parameters — but never identified structural patterns across episodes. `extract_strategies()` (AD-383) was dead code: expected Episode fields (`agent_type`, `intent`, `outcome`, `error`) that don't exist on the actual `Episode` dataclass. The `StrategyAdvisor` reader was wired but the `strategies/` directory was always empty. Write-only dead code from top to bottom.
+
+**Decision:** Four-part build replacing the dead strategy extraction path with embedding-based episode clustering: (0) Dead code cleanup — deleted `strategy_extraction.py` + `test_strategy_extraction.py`, removed `strategy_store_fn` param from `DreamingEngine.__init__()`, removed `store_strategies()` from `DreamAdapter`, removed wiring in `startup/dreaming.py` and `runtime.py`. `StrategyAdvisor` left in place (AD-534 replaces it). (1) `EpisodeCluster` dataclass + `cluster_episodes()` pure function in new `episode_clustering.py`. Agglomerative clustering with average-linkage, cosine distance threshold (default 0.3). Cluster metadata: centroid embedding, episode count, success rate, participating agents, intent types, first/last occurrence, variance. Success-dominant (>80%) vs failure-dominant (>50%) classification. Minimum 3 episodes per actionable cluster. (2) `EpisodicMemory.get_embeddings()` — retrieves stored embeddings from ChromaDB for given episode IDs. (3) Dream cycle integration — Step 6 replaced: fetches embeddings via `get_embeddings()`, calls `cluster_episodes()`, stores on `engine._last_clusters` (in-memory only). `DreamReport.strategies_extracted` replaced with `clusters_found` + `clusters` fields. Log-and-degrade: embedding retrieval or clustering failures don't crash dream cycle.
+
+**Rationale:** First concrete implementation of "Active Forgetting" and "Variable Recall" from the biological memory model (AD-462). Clustering is deterministic (no LLM) — LLM arrives in AD-532 (Procedure Extraction) which immediately follows. In-memory storage only; AD-533 (Procedure Store) handles persistence. The dead code removal is overdue cleanup — `extract_strategies()` never produced output from real Episodes, making the entire strategy pipeline a no-op since AD-383. Minimum viable slice starts here: AD-531 → AD-532 → AD-533 → AD-534.
+
+**Status:** AD-531 CLOSED. 40 new tests. 4,549 total passing (4,400 pytest + 149 vitest). 24/24 validation checklist confirmed.

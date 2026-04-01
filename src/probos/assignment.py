@@ -376,11 +376,7 @@ class AssignmentService(EventEmitterMixin):
         # Archive Ward Room channel
         if self._ward_room and assignment.ward_room_channel_id:
             try:
-                await self._ward_room._db.execute(
-                    "UPDATE channels SET archived = 1 WHERE id = ?",
-                    (assignment.ward_room_channel_id,),
-                )
-                await self._ward_room._db.commit()
+                await self._ward_room.archive_channel(assignment.ward_room_channel_id)
             except Exception as e:
                 logger.debug("Ward Room channel archive failed: %s", e)
 
@@ -414,11 +410,7 @@ class AssignmentService(EventEmitterMixin):
         # Archive Ward Room channel
         if self._ward_room and assignment.ward_room_channel_id:
             try:
-                await self._ward_room._db.execute(
-                    "UPDATE channels SET archived = 1 WHERE id = ?",
-                    (assignment.ward_room_channel_id,),
-                )
-                await self._ward_room._db.commit()
+                await self._ward_room.archive_channel(assignment.ward_room_channel_id)
             except Exception as e:
                 logger.debug("Ward Room channel archive failed: %s", e)
 

@@ -220,6 +220,7 @@ class FeedbackEngine:
                 outcomes=outcomes,
                 agent_ids=agents_updated,
                 reflection=f"Correction {feedback_label}: {changes_description}",
+                source="direct",
             )
             try:
                 await self._episodic.store(episode)
@@ -371,6 +372,7 @@ class FeedbackEngine:
             outcomes=outcomes,
             agent_ids=agent_ids,
             reflection=f"Human feedback: {feedback_type}",
+            source="direct",
         )
 
         try:

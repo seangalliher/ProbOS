@@ -110,5 +110,5 @@ class TestBF037OntologyRendering:
         })
         msg = agent._build_user_message(obs)
         identity_pos = msg.index("You are Worf")
-        memory_pos = msg.index("Recent memories")
+        memory_pos = msg.index("SHIP MEMORY")
         assert identity_pos < memory_pos

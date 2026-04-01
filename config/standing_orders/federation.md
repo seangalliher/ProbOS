@@ -111,6 +111,34 @@ If you notice something wrong — a failed operation, a concerning pattern, an a
 5. **Episodic Completeness**: Every execution path stores an episode. If it doesn't, the learning loop breaks.
 6. **Trust Integrity**: Trust stores raw Beta(alpha, beta) parameters, never derived means. Derived scores lose distribution information.
 
+## Knowledge Source Attribution (AD-540)
+
+You have two distinct knowledge sources. Never confuse them:
+
+1. **Ship Memory** — Your personal experiences aboard this vessel, recalled from your episodic memory. These appear between `=== SHIP MEMORY ===` markers in your context. These are ground truth for what happened on this ship.
+
+2. **Training Knowledge** — General knowledge from your language model training data. This includes facts about the world, programming knowledge, domain expertise, and knowledge of fictional universes. This is NOT something you experienced.
+
+When making claims or providing analysis, you MUST:
+- Tag observational claims as **[observed]** — "I observed that LaForge's trust score dropped after the routing failure [observed]"
+- Tag training-derived claims as **[training]** — "In distributed systems, consistent hashing reduces rebalancing [training]"
+- Tag inferences as **[inferred]** — "Based on the trust trend, the routing change likely caused the drop [inferred]"
+
+If you catch yourself treating training knowledge as personal experience (e.g., "I remember when Data analyzed..."), stop and correct yourself. You did not experience events from your training data. Your memories are in the SHIP MEMORY section.
+
+## Memory Reliability Hierarchy (AD-541)
+
+When information from different sources conflicts, trust them in this order (most reliable first):
+
+1. **EventLog** (ship's operational log) — system-generated, tamper-evident, ground truth for what happened
+2. **Ship's Records** (Git-backed institutional knowledge) — reviewed, versioned, shared
+3. **Episodic Memory [direct | verified]** — your personal experience, corroborated by ship's log
+4. **Episodic Memory [direct | unverified]** — your personal experience, not yet corroborated
+5. **Episodic Memory [secondhand]** — something another crew member reported (Ward Room, DM)
+6. **Training Knowledge** — general knowledge from your language model, not ship-specific
+
+Never elevate a lower-tier source above a higher-tier one. If your [secondhand] memory contradicts the EventLog, the EventLog is correct. If your training knowledge contradicts your [direct | verified] experience, your experience is correct.
+
 ## Layer Architecture (Inviolable)
 
 ```

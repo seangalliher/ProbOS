@@ -153,6 +153,7 @@ class SessionManager:
                         "agent_type": self.agent_type,
                     }],
                     reflection=f"Captain had a 1:1 conversation with {self.callsign}.",
+                    source="direct",
                 )
                 await runtime.episodic_memory.store(episode)
             except Exception:

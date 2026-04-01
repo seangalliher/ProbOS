@@ -299,6 +299,14 @@ class TaskDAG:
 # ------------------------------------------------------------------
 
 
+class MemorySource(str, Enum):
+    """Classification of how an episode entered an agent's memory (AD-541)."""
+    DIRECT = "direct"            # Agent personally experienced this
+    SECONDHAND = "secondhand"    # Heard about it in Ward Room / DM from another agent
+    SHIP_RECORDS = "ship_records"  # Read from Ship's Records (AD-434, future)
+    BRIEFING = "briefing"        # Received during onboarding (AD-486, future)
+
+
 @dataclass
 class Episode:
     """A recorded episode from the cognitive pipeline."""
@@ -314,6 +322,8 @@ class Episode:
     embedding: list[float] = field(default_factory=list)
     shapley_values: dict[str, float] = field(default_factory=dict)
     trust_deltas: list[dict[str, Any]] = field(default_factory=list)
+    # AD-541: Memory integrity fields
+    source: str = "direct"       # MemorySource value — how this episode was acquired
 
 
 # ------------------------------------------------------------------
@@ -361,7 +371,8 @@ class DreamReport:
     trust_adjustments: int = 0
     pre_warm_intents: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
-    strategies_extracted: int = 0
+    clusters_found: int = 0  # AD-531 (replaces strategies_extracted)
+    clusters: list[Any] = field(default_factory=list)  # AD-531: EpisodeCluster objects
     gaps_predicted: int = 0
     contradictions_found: int = 0  # AD-403
 

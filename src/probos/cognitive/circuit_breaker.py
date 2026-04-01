@@ -3,6 +3,8 @@
 Monitors per-agent cognitive event patterns for rumination signatures
 and intervenes with forced cooldown + attention redirection.
 Not punishment — health protection.
+
+AD-506a: Graduated 4-zone model (Green → Amber → Red → Critical).
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from probos.cognitive.similarity import jaccard_similarity
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,6 +26,14 @@ class BreakerState(Enum):
     CLOSED = "closed"       # Normal operation
     OPEN = "open"           # Tripped — agent on forced cooldown
     HALF_OPEN = "half_open" # Recovery probe — allow one think
+
+
+class CognitiveZone(Enum):
+    """Graduated cognitive health zone (AD-506a)."""
+    GREEN = "green"       # Normal — self-monitoring active
+    AMBER = "amber"       # Rising similarity — pre-trip warning
+    RED = "red"           # Circuit breaker tripped — intervention active
+    CRITICAL = "critical" # Repeated trips — Captain escalation
 
 
 @dataclass
@@ -42,6 +54,14 @@ class AgentBreakerState:
     cooldown_seconds: float = 900.0  # 15 min default, escalates
     events: deque = field(default_factory=lambda: deque(maxlen=50))
     last_probe_at: float = 0.0
+    # AD-506a: Zone tracking
+    zone: CognitiveZone = CognitiveZone.GREEN
+    zone_entered_at: float = 0.0
+    zone_history: list[tuple[str, float]] = field(default_factory=list)  # (zone_value, timestamp), max 20
+    trip_timestamps: list[float] = field(default_factory=list)  # monotonic timestamps for critical window
+    last_signals: dict = field(default_factory=dict)  # Cached signals from last _compute_signals()
+    # AD-506b: Last zone transition for recovery detection
+    last_zone_transition: tuple[str, str] | None = None  # (old, new) or None if no change
 
 
 class CognitiveCircuitBreaker:
@@ -52,39 +72,63 @@ class CognitiveCircuitBreaker:
       OPEN    → agent on forced cooldown, proactive thinks blocked
       HALF_OPEN → single probe think allowed; if healthy → CLOSED, if loop → OPEN
 
-    Parameters
-    ----------
-    velocity_threshold : int
-        Max events in the velocity window before velocity signal fires.
-    velocity_window_seconds : float
-        Sliding window for velocity measurement.
-    similarity_threshold : float
-        Jaccard similarity threshold for rumination detection.
-    similarity_min_events : int
-        Minimum recent events to compare before similarity signal fires.
-    base_cooldown_seconds : float
-        Initial cooldown when circuit breaker trips. Escalates on repeated trips.
-    max_cooldown_seconds : float
-        Maximum cooldown cap.
+    AD-506a adds a graduated 4-zone model on top:
+      GREEN   → normal, self-monitoring active
+      AMBER   → rising similarity pre-trip, agent warned
+      RED     → circuit breaker tripped
+      CRITICAL → repeated trips, Captain escalation
     """
 
     def __init__(
         self,
         *,
+        config: Any = None,
         velocity_threshold: int = 8,
         velocity_window_seconds: float = 300.0,    # 5 minutes
         similarity_threshold: float = 0.6,
         similarity_min_events: int = 4,
         base_cooldown_seconds: float = 900.0,      # 15 minutes
         max_cooldown_seconds: float = 3600.0,       # 1 hour
+        # AD-506a: Zone parameters
+        amber_similarity_ratio: float = 0.25,
+        amber_velocity_ratio: float = 0.6,
+        amber_decay_seconds: float = 900.0,
+        red_decay_seconds: float = 1800.0,
+        critical_decay_seconds: float = 3600.0,
+        critical_trip_window_seconds: float = 3600.0,
+        critical_trip_count: int = 3,
     ) -> None:
-        self._velocity_threshold = velocity_threshold
-        self._velocity_window = velocity_window_seconds
-        self._similarity_threshold = similarity_threshold
-        self._similarity_min_events = similarity_min_events
-        self._base_cooldown = base_cooldown_seconds
-        self._max_cooldown = max_cooldown_seconds
+        if config:
+            self._velocity_threshold = config.velocity_threshold
+            self._velocity_window = config.velocity_window_seconds
+            self._similarity_threshold = config.similarity_threshold
+            self._similarity_min_events = config.similarity_min_events
+            self._base_cooldown = config.base_cooldown_seconds
+            self._max_cooldown = config.max_cooldown_seconds
+            self._amber_similarity_ratio = config.amber_similarity_ratio
+            self._amber_velocity_ratio = config.amber_velocity_ratio
+            self._amber_decay = config.amber_decay_seconds
+            self._red_decay = config.red_decay_seconds
+            self._critical_decay = config.critical_decay_seconds
+            self._critical_trip_window = config.critical_trip_window_seconds
+            self._critical_trip_count = config.critical_trip_count
+        else:
+            self._velocity_threshold = velocity_threshold
+            self._velocity_window = velocity_window_seconds
+            self._similarity_threshold = similarity_threshold
+            self._similarity_min_events = similarity_min_events
+            self._base_cooldown = base_cooldown_seconds
+            self._max_cooldown = max_cooldown_seconds
+            # AD-506a: Zone parameters
+            self._amber_similarity_ratio = amber_similarity_ratio
+            self._amber_velocity_ratio = amber_velocity_ratio
+            self._amber_decay = amber_decay_seconds
+            self._red_decay = red_decay_seconds
+            self._critical_decay = critical_decay_seconds
+            self._critical_trip_window = critical_trip_window_seconds
+            self._critical_trip_count = critical_trip_count
         self._agents: dict[str, AgentBreakerState] = {}
+        self._trip_reasons: dict[str, str] = {}  # AD-495: per-agent trip reason
 
     def _get_state(self, agent_id: str) -> AgentBreakerState:
         """Get or create per-agent breaker state."""
@@ -144,6 +188,128 @@ class CognitiveCircuitBreaker:
 
         return True  # Defensive default
 
+    def _compute_signals(self, agent_id: str) -> dict:
+        """Analyze recent events and return signal strengths.
+
+        Returns dict with:
+            velocity_count: int — events in window
+            velocity_ratio: float — fraction of velocity threshold
+            similarity_ratio: float — fraction of similar pairs (0.0-1.0)
+            velocity_fired: bool — velocity threshold exceeded
+            similarity_fired: bool — similarity threshold exceeded
+            reason: str — human-readable trip reason
+        """
+        state = self._get_state(agent_id)
+        now = time.monotonic()
+
+        velocity_fired = False
+        similarity_fired = False
+        reason = ""
+
+        # --- Signal 1: Velocity (event burst) ---
+        window_start = now - self._velocity_window
+        recent = [e for e in state.events if e.timestamp >= window_start]
+        velocity_count = len(recent)
+        velocity_ratio = velocity_count / self._velocity_threshold if self._velocity_threshold > 0 else 0.0
+
+        if velocity_count >= self._velocity_threshold:
+            velocity_fired = True
+            reason = f"velocity ({velocity_count} events in {self._velocity_window:.0f}s)"
+
+        # --- Signal 2: Similarity (content rumination) ---
+        similarity_ratio = 0.0
+        if len(recent) >= self._similarity_min_events:
+            fingerprints = [e.content_fingerprint for e in recent if e.content_fingerprint]
+            if len(fingerprints) >= self._similarity_min_events:
+                similar_pairs = 0
+                total_pairs = 0
+                for j in range(len(fingerprints)):
+                    for k in range(j + 1, len(fingerprints)):
+                        total_pairs += 1
+                        sim = jaccard_similarity(fingerprints[j], fingerprints[k])
+                        if sim >= self._similarity_threshold:
+                            similar_pairs += 1
+                if total_pairs > 0:
+                    similarity_ratio = similar_pairs / total_pairs
+                    if similarity_ratio >= 0.5:
+                        similarity_fired = True
+                        if velocity_fired:
+                            reason += f" + rumination ({similar_pairs}/{total_pairs} pairs)"
+                        else:
+                            reason = f"rumination ({similar_pairs}/{total_pairs} pairs above {self._similarity_threshold} threshold)"
+
+        signals = {
+            "velocity_count": velocity_count,
+            "velocity_ratio": velocity_ratio,
+            "similarity_ratio": similarity_ratio,
+            "velocity_fired": velocity_fired,
+            "similarity_fired": similarity_fired,
+            "reason": reason,
+        }
+
+        # Cache signals on state for get_status() access
+        state.last_signals = signals
+        return signals
+
+    def _update_zone(self, agent_id: str, signals: dict, tripped: bool) -> tuple[CognitiveZone, CognitiveZone]:
+        """Update the agent's cognitive zone based on signals. Returns (old_zone, new_zone)."""
+        state = self._get_state(agent_id)
+        now = time.monotonic()
+        old_zone = state.zone
+
+        if tripped:
+            # Record trip timestamp for critical window tracking
+            state.trip_timestamps.append(now)
+            # Prune old timestamps outside critical window
+            cutoff = now - self._critical_trip_window
+            state.trip_timestamps = [t for t in state.trip_timestamps if t >= cutoff]
+
+            # Check for critical: enough trips in window
+            if len(state.trip_timestamps) >= self._critical_trip_count:
+                new_zone = CognitiveZone.CRITICAL
+            else:
+                new_zone = CognitiveZone.RED
+        else:
+            # Not tripped — check for amber signals or decay
+            amber_signals = (
+                signals.get("similarity_ratio", 0.0) > self._amber_similarity_ratio
+                or signals.get("velocity_ratio", 0.0) > self._amber_velocity_ratio
+            )
+
+            if amber_signals and state.zone in (CognitiveZone.GREEN, CognitiveZone.AMBER):
+                new_zone = CognitiveZone.AMBER
+            elif state.zone == CognitiveZone.GREEN:
+                new_zone = CognitiveZone.GREEN
+            else:
+                # Decay logic — check if enough time has passed
+                elapsed = now - state.zone_entered_at
+                if state.zone == CognitiveZone.CRITICAL and elapsed >= self._critical_decay:
+                    new_zone = CognitiveZone.RED
+                elif state.zone == CognitiveZone.RED and elapsed >= self._red_decay:
+                    new_zone = CognitiveZone.AMBER
+                elif state.zone == CognitiveZone.AMBER and elapsed >= self._amber_decay and not amber_signals:
+                    new_zone = CognitiveZone.GREEN
+                else:
+                    new_zone = state.zone  # No change
+
+        if new_zone != old_zone:
+            state.zone = new_zone
+            state.zone_entered_at = now
+            state.zone_history.append((new_zone.value, now))
+            # Cap zone_history at 20 entries
+            if len(state.zone_history) > 20:
+                state.zone_history = state.zone_history[-20:]
+            # AD-506b: Cache transition for recovery detection
+            state.last_zone_transition = (old_zone.value, new_zone.value)
+            logger.info(
+                "AD-506a: Zone transition %s -> %s for %s",
+                old_zone.value, new_zone.value, agent_id,
+            )
+        else:
+            state.last_zone_transition = None
+
+        return old_zone, new_zone
+
     def check_and_trip(self, agent_id: str) -> bool:
         """Analyze recent events and trip breaker if rumination detected.
 
@@ -155,43 +321,25 @@ class CognitiveCircuitBreaker:
         2. Similarity: >threshold Jaccard overlap across recent events
         """
         state = self._get_state(agent_id)
-        now = time.monotonic()
 
-        # If HALF_OPEN and we reach this point, the probe succeeded if no signal fires.
-        # We'll check signals and either close or re-trip.
-
-        tripped = False
-        reason = ""
-
-        # --- Signal 1: Velocity (event burst) ---
-        window_start = now - self._velocity_window
-        recent = [e for e in state.events if e.timestamp >= window_start]
-        if len(recent) >= self._velocity_threshold:
-            tripped = True
-            reason = f"velocity ({len(recent)} events in {self._velocity_window:.0f}s)"
-
-        # --- Signal 2: Similarity (content rumination) ---
-        if not tripped and len(recent) >= self._similarity_min_events:
-            # Check pairwise Jaccard of the last N events
-            fingerprints = [e.content_fingerprint for e in recent if e.content_fingerprint]
-            if len(fingerprints) >= self._similarity_min_events:
-                similar_pairs = 0
-                total_pairs = 0
-                for j in range(len(fingerprints)):
-                    for k in range(j + 1, len(fingerprints)):
-                        total_pairs += 1
-                        union = fingerprints[j] | fingerprints[k]
-                        if union:
-                            sim = len(fingerprints[j] & fingerprints[k]) / len(union)
-                            if sim >= self._similarity_threshold:
-                                similar_pairs += 1
-                # Trip if majority of pairs are similar
-                if total_pairs > 0 and similar_pairs / total_pairs >= 0.5:
-                    tripped = True
-                    reason = f"rumination ({similar_pairs}/{total_pairs} pairs above {self._similarity_threshold} threshold)"
+        # Compute signals (extracted for zone reuse)
+        signals = self._compute_signals(agent_id)
+        tripped = signals["velocity_fired"] or signals["similarity_fired"]
 
         if tripped:
-            self._trip(agent_id, reason)
+            # AD-495: Record canonical trip reason for event enrichment
+            if signals["velocity_fired"] and signals["similarity_fired"]:
+                self._trip_reasons[agent_id] = "velocity+rumination"
+            elif signals["similarity_fired"]:
+                self._trip_reasons[agent_id] = "rumination"
+            else:
+                self._trip_reasons[agent_id] = "velocity"
+            self._trip(agent_id, signals["reason"])
+
+        # AD-506a: Update zone based on signals
+        self._update_zone(agent_id, signals, tripped)
+
+        if tripped:
             return True
 
         # If HALF_OPEN and no signals → recovery successful → CLOSED
@@ -231,7 +379,22 @@ class CognitiveCircuitBreaker:
             "cooldown_seconds": state.cooldown_seconds,
             "tripped_at": state.tripped_at,
             "event_count": len(state.events),
+            "trip_reason": self._trip_reasons.get(agent_id, "unknown"),  # AD-495
+            # AD-506a: Zone information
+            "zone": state.zone.value,
+            "zone_entered_at": state.zone_entered_at,
+            "zone_history": [(z, t) for z, t in state.zone_history[-5:]],
+            "similarity_ratio": state.last_signals.get("similarity_ratio", 0.0),
+            "velocity_ratio": state.last_signals.get("velocity_ratio", 0.0),
         }
+
+    def get_zone(self, agent_id: str) -> str:
+        """Return current cognitive zone for an agent."""
+        return self._get_state(agent_id).zone.value
+
+    def get_last_zone_transition(self, agent_id: str) -> tuple[str, str] | None:
+        """Return (old_zone, new_zone) from the most recent check, or None if no change."""
+        return self._get_state(agent_id).last_zone_transition
 
     def get_all_statuses(self) -> list[dict]:
         """Return breaker status for all tracked agents."""
@@ -270,7 +433,9 @@ class CognitiveCircuitBreaker:
         """Reset an agent's breaker state (e.g., after a ship reset)."""
         if agent_id in self._agents:
             del self._agents[agent_id]
+        self._trip_reasons.pop(agent_id, None)
 
     def reset_all(self) -> None:
         """Reset all breaker states."""
         self._agents.clear()
+        self._trip_reasons.clear()

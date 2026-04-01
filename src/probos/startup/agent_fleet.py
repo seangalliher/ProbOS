@@ -104,12 +104,21 @@ async def create_agent_fleet(
             agent_ids=ids, llm_client=llm_client, runtime=runtime,
         )
 
-    # Bridge crew — Counselor (AD-398)
+    # Bridge crew — Counselor (AD-398, AD-503: profile store wiring)
     if config.utility_agents.enabled:
+        from probos.cognitive.counselor import CounselorProfileStore
+
+        counselor_profile_store = CounselorProfileStore(
+            data_dir=runtime._data_dir,
+        )
+        await counselor_profile_store.start()
+        runtime._counselor_profile_store = counselor_profile_store
+
         ids = generate_pool_ids("counselor", "counselor", 1)
         await create_pool_fn(
             "counselor", "counselor", target_size=1,
             agent_ids=ids, llm_client=llm_client, runtime=runtime,
+            profile_store=counselor_profile_store,
         )
 
     # Security team — Security Officer (AD-398)

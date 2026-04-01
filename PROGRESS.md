@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: Wave 6 IN PROGRESS (5/8). BF-089, AD-542, BF-090, BF-092, BF-091 CLOSED. Next: BF-093 + BF-094 (parallel), then BF-095. 4,243 tests passing (4,094 pytest + 149 vitest).
+## Current Status: AD-531 (Episode Clustering & Pattern Detection) CLOSED. Cognitive JIT MVP begins. 4,549+ tests passing (4,400+ pytest + 149 vitest).
 
 ---
 

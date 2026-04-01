@@ -508,7 +508,7 @@ class TestMemoryRecall:
         assert result.success is True
         # Verify _build_user_message got the memories (check LLM call content)
         prompt = llm.last_request.prompt
-        assert "Your recent memories" in prompt
+        assert "=== SHIP MEMORY" in prompt
         # BF-029: input is now preferred over reflection
         assert "[1:1 with Wesley] Captain: status?" in prompt
 
@@ -722,7 +722,7 @@ class TestBuildUserMessageMemories:
             ],
         }
         msg = agent._build_user_message(obs)
-        assert "Your recent memories" in msg
+        assert "=== SHIP MEMORY" in msg
         # BF-029: input is now preferred over reflection
         assert "Asked about power grid" in msg
         assert "Reviewed EPS" in msg
@@ -745,7 +745,7 @@ class TestBuildUserMessageMemories:
             ],
         }
         msg = agent._build_user_message(obs)
-        assert "Your relevant memories" in msg
+        assert "=== SHIP MEMORY" in msg
         # BF-029: input is now preferred over reflection
         assert "Prior EPS review" in msg
         assert "[Ward Room — #Engineering]" in msg
@@ -858,7 +858,7 @@ class TestMemoryRecallFallback:
         assert result.success is True
         # Verify memories were injected
         prompt = llm.last_request.prompt
-        assert "Your recent memories" in prompt
+        assert "=== SHIP MEMORY" in prompt
         # BF-029: input is now preferred over reflection
         assert "Recent action 1" in prompt
 

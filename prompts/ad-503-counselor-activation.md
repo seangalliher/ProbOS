@@ -17,7 +17,19 @@ AD-502 (Temporal Context Injection) is COMPLETE — agents now have time awarene
 
 ## Objective
 
-Give the Counselor muscles. After this AD, the Counselor autonomously gathers metrics, persists cognitive profiles across restarts, runs periodic wellness sweeps, reacts to runtime events, and feeds assessments into the InitiativeEngine.
+Give the Counselor muscles. After this AD, the Counselor autonomously gathers metrics, persists cognitive profiles across restarts, runs periodic wellness sweeps, reacts to runtime events, and feeds assessments into the InitiativeEngine. Also: build type-filtered event subscriptions as reusable infrastructure, add missing EventType entries, and light up the dead InitiativeEngine counselor wire.
+
+## Engineering Principles
+
+- **SOLID (S)**: CognitiveProfileStore is its own file (`cognitive_profile_store.py`), not embedded in counselor.py. Event subscription infrastructure is generic, not Counselor-specific.
+- **SOLID (O)**: Extend EventEmitterProtocol signature without breaking existing listeners. New EventTypes extend the enum via `str, Enum`. Existing `add_event_listener(fn)` callers unchanged.
+- **SOLID (I)**: CognitiveProfileStore depends on `ConnectionFactory` protocol, not concrete `aiosqlite`. Event listeners use a narrow callback interface.
+- **SOLID (D)**: Constructor injection for ConnectionFactory (AD-542 pattern). Default to `SQLiteConnectionFactory` via lazy import.
+- **Law of Demeter**: Counselor accesses services through `self._runtime.<service>` (established agent pattern). No private attribute access. No reaching through objects.
+- **Cloud-Ready Storage (AD-542)**: CognitiveProfileStore MUST use `ConnectionFactory` protocol. Accept `connection_factory: ConnectionFactory | None = None`, default to `default_factory`. Zero direct `aiosqlite.connect()` calls.
+- **Fail Fast**: Log-and-degrade for metric gathering failures. Missing service → skip that metric with sensible default, don't crash. Every `except` block must have `logger.debug(..., exc_info=True)` — no bare swallows (BF-090).
+- **DRY**: Don't duplicate VitalsMonitor's aggregate collection — read from same sources at different granularity. Reuse existing `to_dict()`/`from_dict()` serialization.
+- **Testing (BF-091)**: All mocks MUST use `spec=True` (or `spec_set=True`). Target: mock spec compliance ≥50%.
 
 ## Existing Code to Absorb
 
@@ -67,6 +79,209 @@ Give the Counselor muscles. After this AD, the Counselor autonomously gathers me
 - `cognitive_health_eval`, `crew_fitness_assessment`, `conflict_mediation` skills registered for counselor
 - All medical domain, 14-day decay
 
+## Part 0: Type-Filtered Event Subscriptions (Infrastructure)
+
+**Goal:** Extend the event system so listeners can subscribe to specific event types instead of receiving all 50+ events. This is reusable infrastructure — the Counselor is the first consumer, but any agent or service can use it. Also adds native async listener support, eliminating the need for sync→async bridge hacks.
+
+### Changes to `src/probos/protocols.py`
+
+Update `EventEmitterProtocol` to accept an optional `event_types` filter:
+
+```python
+class EventEmitterProtocol(Protocol):
+    def emit_event(self, event: BaseEvent | str, data: dict[str, Any] | None = None) -> None: ...
+    def add_event_listener(
+        self,
+        fn: Callable[..., Any],
+        event_types: Iterable[str] | None = None,
+    ) -> None: ...
+    def remove_event_listener(self, fn: Callable[..., Any]) -> None: ...
+```
+
+Add `from collections.abc import Iterable` to imports if not present.
+
+### Changes to `src/probos/runtime.py`
+
+**Update internal storage** — change from `list[Callable]` to `list[tuple[Callable, frozenset[str] | None]]`:
+
+```python
+# Replace:
+self._event_listeners: list[Callable] = []
+
+# With:
+self._event_listeners: list[tuple[Callable[..., Any], frozenset[str] | None]] = []
+```
+
+**Update `add_event_listener()`:**
+
+```python
+def add_event_listener(
+    self,
+    fn: Callable[..., Any],
+    event_types: Iterable[str] | None = None,
+) -> None:
+    """Register an event listener.
+
+    Args:
+        fn: Callback receiving event dict. May be a coroutine function —
+            if so, it will be scheduled as an asyncio task.
+        event_types: If provided, listener only fires for these event types.
+            If None, listener receives ALL events (backwards compatible).
+    """
+    type_filter = frozenset(str(t) for t in event_types) if event_types else None
+    self._event_listeners.append((fn, type_filter))
+```
+
+**Update `remove_event_listener()`:**
+
+```python
+def remove_event_listener(self, fn: Callable[..., Any]) -> None:
+    """Remove a previously registered listener by function reference."""
+    self._event_listeners = [
+        (f, tf) for f, tf in self._event_listeners if f is not fn
+    ]
+```
+
+**Update the listener dispatch loop inside `_emit_event()`** — replace the existing loop that iterates `self._event_listeners`:
+
+```python
+type_str = str(event_type) if not isinstance(event_type, str) else event_type
+for fn, type_filter in self._event_listeners:
+    if type_filter is not None and type_str not in type_filter:
+        continue
+    try:
+        if asyncio.iscoroutinefunction(fn):
+            asyncio.create_task(fn(event))
+        else:
+            fn(event)
+    except Exception:
+        logger.debug("Event listener error for %s", type_str, exc_info=True)
+```
+
+**Backwards compatibility:**
+- `add_event_listener(fn)` with no `event_types` → receives all events (existing HXI WebSocket handler unchanged)
+- `remove_event_listener(fn)` → still works, searches by function reference
+- Existing synchronous listeners → still called synchronously
+- Only coroutine function listeners get `create_task()` treatment
+
+## Part 0b: New EventType Entries + Emitter Updates
+
+### Changes to `src/probos/events.py`
+
+Add three new entries to the `EventType` enum in the appropriate section:
+
+```python
+# Counselor / Cognitive Health
+CIRCUIT_BREAKER_TRIP = "circuit_breaker_trip"
+DREAM_COMPLETE = "dream_complete"
+COUNSELOR_ASSESSMENT = "counselor_assessment"
+```
+
+Add typed event dataclasses (follow the existing `BaseEvent` pattern):
+
+```python
+@dataclass
+class CircuitBreakerTripEvent(BaseEvent):
+    """Emitted when a cognitive circuit breaker trips for an agent."""
+    event_type: str = field(default=EventType.CIRCUIT_BREAKER_TRIP, init=False)
+    agent_id: str = ""
+    agent_callsign: str = ""
+    trip_count: int = 0
+    cooldown_seconds: float = 0.0
+
+@dataclass
+class DreamCompleteEvent(BaseEvent):
+    """Emitted when a dream cycle (full or micro) completes."""
+    event_type: str = field(default=EventType.DREAM_COMPLETE, init=False)
+    dream_type: str = ""  # "full" or "micro"
+    duration_ms: float = 0.0
+    episodes_replayed: int = 0
+
+@dataclass
+class CounselorAssessmentEvent(BaseEvent):
+    """Emitted when the Counselor completes an agent assessment."""
+    event_type: str = field(default=EventType.COUNSELOR_ASSESSMENT, init=False)
+    agent_id: str = ""
+    wellness_score: float = 0.0
+    alert_level: str = "green"
+    fit_for_duty: bool = True
+    concerns_count: int = 0
+```
+
+### Changes to `src/probos/proactive.py`
+
+Find the circuit breaker trip handling (where `BRIDGE_ALERT`/`bridge_alert` is emitted with `source: "circuit_breaker"`, around line 373-387). **Add** a `CIRCUIT_BREAKER_TRIP` emission alongside the existing bridge alert (do NOT remove the bridge alert — other consumers depend on it):
+
+```python
+# After the existing bridge_alert emission block:
+if self._on_event:
+    self._on_event({
+        "type": EventType.CIRCUIT_BREAKER_TRIP,
+        "data": {
+            "agent_id": agent.id,
+            "agent_type": agent.agent_type,
+            "callsign": getattr(agent, "callsign", ""),
+            "trip_count": self._circuit_breaker.get_status(agent.id).get("trip_count", 1),
+        },
+    })
+```
+
+Import `EventType` from `probos.events` at the top of the file. Since `EventType` extends `str`, `str(EventType.CIRCUIT_BREAKER_TRIP)` == `"circuit_breaker_trip"` and will work with both the type-filtered subscription and the existing string-based event system.
+
+### Changes to `src/probos/cognitive/dreaming.py`
+
+The `DreamScheduler` currently has `_post_dream_fn` and `_pre_dream_fn` callbacks but no event emission. Add an `_emit_event_fn` callback:
+
+1. Add parameter to `__init__()`:
+```python
+def __init__(
+    self,
+    engine: DreamingEngine,
+    idle_threshold_seconds: float = 300.0,
+    dream_interval_seconds: float = 600.0,
+    micro_dream_interval_seconds: float = 10.0,
+    proactive_extends_idle: bool = True,
+    emit_event_fn: Callable[..., Any] | None = None,  # AD-503
+) -> None:
+    # ... existing init ...
+    self._emit_event_fn = emit_event_fn
+```
+
+2. After full dream cycle completion in `force_dream()` (after `self._last_dream_report = report`, before the return), emit:
+```python
+if self._emit_event_fn:
+    try:
+        self._emit_event_fn(
+            "dream_complete",
+            {
+                "dream_type": "full",
+                "duration_ms": getattr(report, "duration_ms", 0),
+                "episodes_replayed": len(getattr(report, "episodes_replayed", [])),
+            },
+        )
+    except Exception:
+        logger.debug("Dream complete event emission failed", exc_info=True)
+```
+
+3. Similarly in `_monitor_loop()` where full dreams and micro-dreams complete, emit with the appropriate `dream_type` ("full" or "micro").
+
+4. **Check `DreamReport` fields** — use `getattr()` with defaults for safety. The important thing is that the event fires, not that every field is perfectly populated.
+
+### Wire `emit_event_fn` in startup
+
+Find where `DreamScheduler` is created in `src/probos/startup/dreaming.py`. Pass the runtime's `_emit_event` function:
+
+```python
+# When creating DreamScheduler, add:
+dream_scheduler = DreamScheduler(
+    engine=dreaming_engine,
+    # ... existing params ...
+    emit_event_fn=emit_event_fn,  # AD-503: Dream completion events
+)
+```
+
+Check what `emit_event_fn` is called in that startup context — it may be a parameter passed into `init_dreaming()`. Use whatever emit function is available in scope.
+
 ## Files to Modify
 
 ### 1. `src/probos/cognitive/counselor.py` — Core Changes
@@ -84,7 +299,25 @@ Update `to_dict()` and `from_dict()` to include the new field.
 
 **(b) Add `CounselorProfileStore` class** (SQLite-backed persistence):
 
-Follow the `WorkItemStore` pattern from `workforce.py`. Single SQLite database at `{data_dir}/counselor.db` with two tables:
+Follow the `WorkItemStore` pattern from `workforce.py`. **AD-542 compliance:** Accept `connection_factory: ConnectionFactory | None = None` in `__init__()`. Default to `SQLiteConnectionFactory` via lazy import. Zero direct `aiosqlite.connect()` calls.
+
+```python
+from probos.protocols import ConnectionFactory
+
+class CounselorProfileStore:
+    def __init__(
+        self,
+        db_path: str,
+        connection_factory: ConnectionFactory | None = None,
+    ) -> None:
+        self._db_path = db_path
+        if connection_factory is None:
+            from probos.protocols import SQLiteConnectionFactory
+            connection_factory = SQLiteConnectionFactory()
+        self._factory = connection_factory
+```
+
+Single SQLite database at `{data_dir}/counselor.db` with two tables:
 
 ```sql
 CREATE TABLE IF NOT EXISTS cognitive_profiles (
@@ -108,6 +341,8 @@ CREATE TABLE IF NOT EXISTS assessments (
 CREATE INDEX IF NOT EXISTS idx_assessments_agent ON assessments(agent_id);
 CREATE INDEX IF NOT EXISTS idx_assessments_timestamp ON assessments(timestamp DESC);
 ```
+
+All DB access uses `async with self._factory.connect(self._db_path) as conn:` — never bare `aiosqlite.connect()`.
 
 Methods:
 - `async start()` — open DB, create schema
@@ -160,7 +395,7 @@ async def _gather_agent_metrics(self, agent_id: str) -> dict:
                 ))
                 success_rate = successes / len(episodes)
         except Exception:
-            pass
+            logger.debug("Failed to gather success_rate for %s", agent_id, exc_info=True)
 
     # Personality drift from crew profile
     personality_drift = 0.0
@@ -170,7 +405,7 @@ async def _gather_agent_metrics(self, agent_id: str) -> dict:
             if profile and hasattr(profile, 'personality_drift'):
                 personality_drift = profile.personality_drift
         except Exception:
-            pass
+            logger.debug("Failed to gather personality_drift for %s", agent_id, exc_info=True)
 
     return {
         "agent_id": agent_id,
@@ -307,7 +542,7 @@ async def _alert_bridge(self, agent_id: str, assessment: CounselorAssessment) ->
                 medical_channel = ch
                 break
     except Exception:
-        pass
+        logger.debug("Failed to find medical channel", exc_info=True)
 
     if medical_channel:
         title = f"Counselor Assessment — {callsign}"
@@ -367,38 +602,37 @@ async def initialize(self) -> None:
             self._cognitive_profiles[profile.agent_id] = profile
         logger.info("AD-503: Loaded %d cognitive profiles from persistence", len(profiles))
 
-    # Register event handlers (sync bridge → async handlers)
+    # Register type-filtered event handlers (Part 0 infrastructure)
     if self._runtime and not self._event_handlers_registered:
-        self._runtime.add_event_listener(self._on_event_sync)
+        self._runtime.add_event_listener(
+            self._on_event_async,
+            event_types=[
+                EventType.TRUST_UPDATE,
+                EventType.CIRCUIT_BREAKER_TRIP,
+                EventType.DREAM_COMPLETE,
+            ],
+        )
         self._event_handlers_registered = True
         logger.info("AD-503: Counselor event subscriptions active")
 ```
 
-**NOTE:** The runtime event listener system (`add_event_listener`) uses synchronous callbacks (line 441 of runtime.py). The Counselor's handlers are async. You will need to bridge sync→async.
+**NOTE:** Part 0 added native async listener support — `_emit_event()` detects `asyncio.iscoroutinefunction(fn)` and uses `create_task()` automatically. No sync→async bridge needed. Register the async handler directly.
 
-**Required pattern:** The `_on_event` method registered with `add_event_listener` must be a **sync** function that schedules the async work. Use this pattern:
+Add the async event router:
 
 ```python
-def _on_event_sync(self, event: dict) -> None:
-    """Sync bridge for runtime event listener → async handlers."""
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(self._on_event_async(event))
-    except RuntimeError:
-        pass  # No running loop — shutdown or not yet started
-
 async def _on_event_async(self, event: dict) -> None:
     """Route runtime events to appropriate async handlers."""
     event_type = event.get("type", "")
-    if event_type == "trust_update":
+    if event_type == EventType.TRUST_UPDATE:
         await self._on_trust_update(event)
-    elif event_type == "circuit_breaker_trip":
+    elif event_type == EventType.CIRCUIT_BREAKER_TRIP:
         await self._on_circuit_breaker_trip(event)
-    elif event_type == "dream_complete":
-        pass  # Future: AD-505 will use this
+    elif event_type == EventType.DREAM_COMPLETE:
+        pass  # Future: AD-505 will use this for post-dream wellness checks
 ```
 
-Register the sync bridge: `self._runtime.add_event_listener(self._on_event_sync)`. Do NOT use `asyncio.get_event_loop()` — it is deprecated. Use `asyncio.get_running_loop()` with try/except RuntimeError.
+Import `EventType` from `probos.events` at the top of the file.
 
 **(h) Update `act()` to handle `counselor_wellness_report` deterministically:**
 
@@ -411,12 +645,13 @@ When the intent is `counselor_wellness_report`, call `_run_wellness_sweep()` ins
 In the agent wiring section (after work_item_store creation), create the profile store:
 
 ```python
-# AD-503: Counselor profile persistence
+# AD-503: Counselor profile persistence (AD-542 ConnectionFactory pattern)
 counselor_profile_store = None
 if self.config.utility_agents.enabled:
     from probos.cognitive.counselor import CounselorProfileStore
     counselor_profile_store = CounselorProfileStore(
         db_path=str(self._data_dir / "counselor.db"),
+        # connection_factory=None → defaults to SQLiteConnectionFactory
     )
     await counselor_profile_store.start()
 ```
@@ -452,6 +687,7 @@ if self.initiative_engine and counselor_agent:
             return [p.latest_assessment() for p in counselor_agent.all_profiles()
                     if p.latest_assessment() and p.alert_level in ("yellow", "red")]
         except Exception:
+            logger.debug("InitiativeEngine counselor check failed", exc_info=True)
             return []
     self.initiative_engine.set_counselor_fn(counselor_check)
 ```
@@ -472,9 +708,10 @@ In `proactive.py`, when the circuit breaker trips (~line 373), in addition to th
 
 ```python
 # Emit circuit_breaker_trip event for Counselor (AD-503)
+# Uses EventType enum (Part 0b) — str(EventType.CIRCUIT_BREAKER_TRIP) == "circuit_breaker_trip"
 if self._on_event:
     self._on_event({
-        "type": "circuit_breaker_trip",
+        "type": EventType.CIRCUIT_BREAKER_TRIP,
         "data": {
             "agent_id": agent.id,
             "agent_type": agent.agent_type,
@@ -528,6 +765,18 @@ counselor:
 ```
 
 ### 6. `tests/test_counselor.py` — Extend Tests
+
+**BF-091 mandate:** ALL mocks in this test file MUST use `spec=True` or `spec_set=True`. Example: `mock_runtime = MagicMock(spec=ProbOSRuntime)`, `mock_trust = MagicMock(spec=TrustNetwork)`. No bare `MagicMock()` or `Mock()` without spec.
+
+**`TestTypeFilteredEventSubscriptions`** (~8 tests, in `tests/test_event_subscriptions.py`):
+- Test `add_event_listener(fn)` with no filter receives all events (backwards compat)
+- Test `add_event_listener(fn, event_types=["trust_update"])` only receives trust_update
+- Test `add_event_listener(fn, event_types=[EventType.CIRCUIT_BREAKER_TRIP])` works with enum values
+- Test multiple listeners with different filters each get correct events
+- Test `remove_event_listener(fn)` removes filtered listener
+- Test async listener (`async def handler(event)`) is called via `create_task()`
+- Test sync listener is still called synchronously
+- Test listener error in one handler doesn't prevent others from firing
 
 **`TestCounselorProfileStore`** (~12 tests):
 - Test schema creation
@@ -586,15 +835,32 @@ counselor:
 ## Validation Checklist
 
 Before marking complete:
+
+### Part 0 Infrastructure
+- [ ] `add_event_listener(fn, event_types=...)` type-filtering works (filtered listeners skip non-matching events)
+- [ ] `add_event_listener(fn)` with no filter still receives ALL events (backwards compat)
+- [ ] Async listeners (`asyncio.iscoroutinefunction`) dispatched via `create_task()`
+- [ ] Sync listeners still called synchronously (no regression)
+- [ ] `remove_event_listener(fn)` works for filtered listeners
+- [ ] `EventEmitterProtocol` updated in protocols.py
+- [ ] Three new EventType entries exist: CIRCUIT_BREAKER_TRIP, DREAM_COMPLETE, COUNSELOR_ASSESSMENT
+- [ ] Typed event dataclasses created for all three
+- [ ] `proactive.py` emits CIRCUIT_BREAKER_TRIP alongside existing bridge_alert
+- [ ] `dreaming.py` emits DREAM_COMPLETE after dream cycles
+- [ ] DreamScheduler wired with `emit_event_fn` in startup
+
+### Counselor Core
 - [ ] All existing counselor tests still pass (no regressions)
+- [ ] CounselorProfileStore uses ConnectionFactory protocol (AD-542), no bare `aiosqlite.connect()`
+- [ ] No bare `except Exception: pass` anywhere — all have `logger.debug(..., exc_info=True)` (BF-090)
+- [ ] All mocks use `spec=True` or `spec_set=True` (BF-091)
 - [ ] CounselorProfileStore creates/reads/updates SQLite correctly
 - [ ] `_gather_agent_metrics()` pulls from all runtime services with graceful defaults
 - [ ] `_run_wellness_sweep()` iterates crew, assesses, persists, returns results
 - [ ] Profiles survive restart (stop → start → profiles loaded)
-- [ ] Event listener registered and routes trust_update + circuit_breaker_trip
-- [ ] Event handling is async-safe (sync listener → async handler bridge)
+- [ ] Event listener registered with type filter (only TRUST_UPDATE, CIRCUIT_BREAKER_TRIP, DREAM_COMPLETE)
+- [ ] Event handling is async — registered directly, no sync→async bridge
 - [ ] InitiativeEngine `set_counselor_fn()` is wired in runtime.py
-- [ ] `circuit_breaker_trip` event emitted from proactive.py
 - [ ] REST API endpoints return correct data
 - [ ] counselor.db created in data directory alongside other DBs
 - [ ] Shutdown sequence includes profile store cleanup

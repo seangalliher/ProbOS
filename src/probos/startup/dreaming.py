@@ -36,7 +36,6 @@ async def init_dreaming(
     ward_room: Any,
     registry: Any,
     # Callback functions from runtime
-    store_strategies_fn: Callable[..., Any] | None,
     on_gap_predictions_fn: Callable[..., Any],
     on_contradictions_fn: Callable[..., Any],
     on_post_dream_fn: Callable[..., Any],
@@ -45,6 +44,7 @@ async def init_dreaming(
     process_natural_language_fn: Callable[..., Any],
     periodic_flush_loop_fn: Callable[[], Any],
     refresh_emergent_detector_roster_fn: Callable[[], None],
+    emit_event_fn: Callable[..., Any] | None = None,  # AD-503
 ) -> tuple[DreamingResult, bool]:
     """Start dreaming/detection subsystems and detect cold start.
 
@@ -67,9 +67,6 @@ async def init_dreaming(
                 if pool_scaler
                 else None
             ),
-            strategy_store_fn=(
-                store_strategies_fn if knowledge_store else None
-            ),
             gap_prediction_fn=on_gap_predictions_fn,
             contradiction_resolve_fn=on_contradictions_fn,
         )
@@ -79,6 +76,7 @@ async def init_dreaming(
             dream_interval_seconds=dream_cfg.dream_interval_seconds,
             proactive_extends_idle=dream_cfg.proactive_extends_idle,
         )
+        dream_scheduler._emit_event_fn = emit_event_fn  # AD-503
         dream_scheduler.start()
 
     # Create EmergentDetector (AD-237) — unconditional, pure observer

@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
+from probos.api_models import AgentLifecycleRequest
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -46,11 +47,11 @@ async def get_acm_lifecycle(agent_id: str, runtime: Any = Depends(get_runtime)) 
 
 
 @router.post("/agents/{agent_id}/decommission")
-async def decommission_agent(agent_id: str, req: dict, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+async def decommission_agent(agent_id: str, req: AgentLifecycleRequest, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """AD-427: Decommission an agent."""
     if not runtime.acm:
-        return {"error": "ACM not available"}
-    reason = req.get("reason", "Decommissioned by Captain")
+        raise HTTPException(status_code=503, detail="ACM not available")
+    reason = req.reason or "Decommissioned by Captain"
     try:
         t = await runtime.acm.decommission(agent_id, reason=reason, initiated_by="captain")
         return {"status": "decommissioned", "transition": {
@@ -58,16 +59,16 @@ async def decommission_agent(agent_id: str, req: dict, runtime: Any = Depends(ge
             "reason": t.reason, "timestamp": t.timestamp,
         }}
     except ValueError as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @router.post("/agents/{agent_id}/suspend")
-async def suspend_agent(agent_id: str, req: dict, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+async def suspend_agent(agent_id: str, req: AgentLifecycleRequest, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """AD-427: Suspend an agent (Captain order)."""
     if not runtime.acm:
-        return {"error": "ACM not available"}
+        raise HTTPException(status_code=503, detail="ACM not available")
     from probos.acm import LifecycleState
-    reason = req.get("reason", "Suspended by Captain")
+    reason = req.reason or "Suspended by Captain"
     try:
         t = await runtime.acm.transition(
             agent_id, LifecycleState.SUSPENDED,
@@ -78,16 +79,16 @@ async def suspend_agent(agent_id: str, req: dict, runtime: Any = Depends(get_run
             "reason": t.reason, "timestamp": t.timestamp,
         }}
     except ValueError as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @router.post("/agents/{agent_id}/reinstate")
-async def reinstate_agent(agent_id: str, req: dict, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+async def reinstate_agent(agent_id: str, req: AgentLifecycleRequest, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """AD-427: Reinstate a suspended agent."""
     if not runtime.acm:
-        return {"error": "ACM not available"}
+        raise HTTPException(status_code=503, detail="ACM not available")
     from probos.acm import LifecycleState
-    reason = req.get("reason", "Reinstated by Captain")
+    reason = req.reason or "Reinstated by Captain"
     try:
         t = await runtime.acm.transition(
             agent_id, LifecycleState.ACTIVE,
@@ -98,4 +99,4 @@ async def reinstate_agent(agent_id: str, req: dict, runtime: Any = Depends(get_r
             "reason": t.reason, "timestamp": t.timestamp,
         }}
     except ValueError as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=409, detail=str(e))

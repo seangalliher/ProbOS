@@ -530,6 +530,29 @@ class CognitiveAgent(BaseAgent):
 
         return "\n".join(parts)
 
+    def _format_memory_section(self, memories: list[dict]) -> list[str]:
+        """Format recalled episodes with provenance boundary markers (AD-540/541)."""
+        lines = [
+            "=== SHIP MEMORY (your experiences aboard this vessel) ===",
+            "These are YOUR experiences. Do NOT confuse with training knowledge.",
+            "Markers: [direct] = you experienced it, [secondhand] = you heard about it.",
+            "[verified] = corroborated by ship's log, [unverified] = not yet corroborated.",
+            "",
+        ]
+        for mem in memories:
+            entry = "  - "
+            # AD-541: Source and verification tags
+            source = mem.get("source", "direct")
+            verified = "verified" if mem.get("verified") else "unverified"
+            entry += f"[{source} | {verified}] "
+            if mem.get("age"):
+                entry += f"[{mem['age']} ago] "
+            entry += mem.get("input", "") or mem.get("reflection", "")
+            lines.append(entry)
+        lines.append("")
+        lines.append("=== END SHIP MEMORY ===")
+        return lines
+
     def _build_user_message(self, observation: dict) -> str:
         """Build the user message from the observation dict.
         Override in subclasses for custom formatting."""
@@ -548,18 +571,10 @@ class CognitiveAgent(BaseAgent):
                 parts.append("---")
                 parts.append("")
 
-            # AD-430c: Episodic memory context
+            # AD-430c / AD-540: Episodic memory with provenance boundary
             memories = observation.get("recent_memories", [])
             if memories:
-                parts.append("Your recent memories (relevant past experiences):")
-                for m in memories:
-                    # AD-502: Include age prefix if available
-                    age_prefix = f"[{m['age']} ago] " if m.get("age") else ""
-                    # BF-029: Prefer input (content-rich) over reflection (often thin)
-                    if m.get("input"):
-                        parts.append(f"  - {age_prefix}{m['input']}")
-                    elif m.get("reflection"):
-                        parts.append(f"  - {age_prefix}{m['reflection']}")
+                parts.extend(self._format_memory_section(memories))
                 parts.append("")
 
             session_history = params.get("session_history", [])
@@ -592,19 +607,11 @@ class CognitiveAgent(BaseAgent):
                 wr_parts.append(temporal_ctx)
                 wr_parts.append("---")
 
-            # AD-430c: Episodic memory context
+            # AD-430c / AD-540: Episodic memory with provenance boundary
             memories = observation.get("recent_memories", [])
             if memories:
                 wr_parts.append("")
-                wr_parts.append("Your relevant memories:")
-                for m in memories:
-                    # AD-502: Include age prefix if available
-                    age_prefix = f"[{m['age']} ago] " if m.get("age") else ""
-                    # BF-029: Prefer input (content-rich) over reflection (often thin)
-                    if m.get("input"):
-                        wr_parts.append(f"  - {age_prefix}{m['input']}")
-                    elif m.get("reflection"):
-                        wr_parts.append(f"  - {age_prefix}{m['reflection']}")
+                wr_parts.extend(self._format_memory_section(memories))
 
             if context:
                 wr_parts.append(f"\nConversation so far:\n{context}")
@@ -684,15 +691,10 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append(f"Your skills: {', '.join(skill_profile)}.")
                 pt_parts.append("")
 
-            # Recent memories
+            # AD-540: Episodic memory with provenance boundary
             memories = context_parts.get("recent_memories", [])
             if memories:
-                pt_parts.append("Recent memories (your experiences):")
-                for m in memories:
-                    if m.get("reflection"):
-                        pt_parts.append(f"  - {m['reflection']}")
-                    elif m.get("input"):
-                        pt_parts.append(f"  - Handled: {m['input']}")
+                pt_parts.extend(self._format_memory_section(memories))
                 pt_parts.append("")
             else:
                 pt_parts.append("You have no stored episodic memories yet. Do not reference or invent past experiences you do not have.")
@@ -728,6 +730,92 @@ class CognitiveAgent(BaseAgent):
                     score = a.get("net_score", 0)
                     score_str = f" [+{score}]" if score > 0 else f" [{score}]" if score < 0 else ""
                     pt_parts.append(f"  - {prefix}{ids}{score_str} {a.get('author', '?')}: {a.get('body', '?')}")
+                pt_parts.append("")
+
+            # AD-504: Self-monitoring context
+            self_mon = context_parts.get("self_monitoring")
+            if self_mon:
+                pt_parts.append("")
+
+                # AD-506a: Cognitive zone (before self-monitoring details)
+                zone = self_mon.get("cognitive_zone")
+                zone_note = self_mon.get("zone_note")
+                if zone:
+                    pt_parts.append(f"[COGNITIVE ZONE: {zone.upper()}]")
+                    if zone_note:
+                        pt_parts.append(zone_note)
+                    pt_parts.append("")
+
+                pt_parts.append("--- Your Recent Activity (self-monitoring) ---")
+
+                # Recent posts
+                recent_posts = self_mon.get("recent_posts")
+                if recent_posts:
+                    pt_parts.append("Your recent posts (review before adding to the discussion):")
+                    for p in recent_posts:
+                        age_str = f"[{p['age']} ago]" if p.get("age") else ""
+                        pt_parts.append(f"  - {age_str} {p['body']}")
+
+                # Self-similarity
+                sim = self_mon.get("self_similarity")
+                if sim is not None:
+                    pt_parts.append(f"Self-similarity across recent posts: {sim:.2f}")
+                    if sim >= 0.5:
+                        pt_parts.append(
+                            "WARNING: Your recent posts show high similarity. "
+                            "Before posting, ensure you have GENUINELY NEW information. "
+                            "If not, respond with [NO_RESPONSE]."
+                        )
+                    elif sim >= 0.3:
+                        pt_parts.append(
+                            "Note: Some similarity in your recent posts. "
+                            "Consider whether you are adding new insight or restating."
+                        )
+
+                # Cooldown increased
+                if self_mon.get("cooldown_increased"):
+                    pt_parts.append(
+                        "Your proactive cooldown has been increased due to rising similarity. "
+                        "This is pacing, not punishment — take time to find fresh perspectives."
+                    )
+
+                # AD-505: Counselor cooldown reason
+                if self_mon.get("cooldown_reason"):
+                    pt_parts.append(f"  Counselor note: {self_mon['cooldown_reason']}")
+
+                # Memory state awareness
+                mem_state = self_mon.get("memory_state")
+                if mem_state:
+                    count = mem_state.get("episode_count", 0)
+                    lifecycle = mem_state.get("lifecycle", "")
+                    uptime_hrs = mem_state.get("uptime_hours", 0)
+                    if count < 5 and lifecycle != "reset" and uptime_hrs > 1:
+                        pt_parts.append(
+                            f"Note: You have {count} episodic memories, but the system has been "
+                            f"running for {uptime_hrs:.1f}h. Other crew may have richer histories. "
+                            "Do not generalize from your own sparse memory to the crew's state."
+                        )
+
+                # Notebook index
+                nb_index = self_mon.get("notebook_index")
+                if nb_index:
+                    topics = ", ".join(
+                        f"{e['topic']} (updated {e['updated']})" if e.get("updated") else e["topic"]
+                        for e in nb_index
+                    )
+                    pt_parts.append(f"Your notebooks: [{topics}]")
+                    pt_parts.append(
+                        "Use [NOTEBOOK topic-slug] to update. "
+                        "Use [READ_NOTEBOOK topic-slug] to review a notebook next cycle."
+                    )
+
+                # Notebook content (from semantic pull or explicit read)
+                nb_content = self_mon.get("notebook_content")
+                if nb_content:
+                    pt_parts.append(f"--- Notebook: {nb_content['topic']} ---")
+                    pt_parts.append(nb_content["snippet"])
+                    pt_parts.append("--- End Notebook ---")
+
                 pt_parts.append("")
 
             if duty:
@@ -806,15 +894,45 @@ class CognitiveAgent(BaseAgent):
                 if rt and hasattr(rt, 'config') and hasattr(rt.config, 'temporal'):
                     include_ts = rt.config.temporal.include_episode_timestamps
 
-                observation["recent_memories"] = [
-                    {
+                # AD-541: Verify episodes against EventLog at recall time
+                event_log = getattr(self._runtime, 'event_log', None)
+
+                memory_list = []
+                for ep in episodes:
+                    mem = {
                         "input": ep.user_input[:200] if ep.user_input else "",
                         "reflection": ep.reflection[:200] if ep.reflection else "",
-                        **({"age": format_duration(time.time() - ep.timestamp)}
-                           if include_ts and ep.timestamp > 0 else {}),
+                        "source": getattr(ep, 'source', 'direct'),
                     }
-                    for ep in episodes
-                ]
+                    if include_ts and ep.timestamp > 0:
+                        mem["age"] = format_duration(time.time() - ep.timestamp)
+
+                    # AD-541 Pillar 1: Cross-check against EventLog
+                    mem["verified"] = False
+                    if event_log and ep.timestamp > 0 and ep.agent_ids:
+                        try:
+                            corroborating = await event_log.query(
+                                agent_id=ep.agent_ids[0],
+                                limit=1,
+                            )
+                            if corroborating:
+                                for evt in corroborating:
+                                    evt_ts = evt.get("timestamp", "")
+                                    if evt_ts:
+                                        from datetime import datetime
+                                        try:
+                                            evt_time = datetime.fromisoformat(evt_ts).timestamp()
+                                            if abs(evt_time - ep.timestamp) < 120:
+                                                mem["verified"] = True
+                                                break
+                                        except (ValueError, TypeError):
+                                            pass
+                        except Exception:
+                            pass  # EventLog unavailable — leave unverified
+
+                    memory_list.append(mem)
+
+                observation["recent_memories"] = memory_list
         except Exception:
             logger.debug("Failed to fetch episodic memory context", exc_info=True)
 
@@ -857,7 +975,7 @@ class CognitiveAgent(BaseAgent):
 
         try:
             import time as _time
-            from probos.types import Episode
+            from probos.types import Episode, MemorySource
 
             result_text = str(report.get("result", ""))[:500]
             callsign = ""
@@ -878,6 +996,7 @@ class CognitiveAgent(BaseAgent):
                     "source": source or "intent_bus",
                 }],
                 reflection=f"{callsign or self.agent_type} handled {intent.intent}: {result_text[:100]}",
+                source=MemorySource.DIRECT,
             )
             from probos.cognitive.episodic import EpisodicMemory
             if EpisodicMemory.should_store(episode):

@@ -116,6 +116,14 @@ class EventType(str, Enum):
     BRIDGE_ALERT = "bridge_alert"
     PROACTIVE_THOUGHT = "proactive_thought"
 
+    # Counselor / Cognitive Health (AD-503)
+    CIRCUIT_BREAKER_TRIP = "circuit_breaker_trip"
+    DREAM_COMPLETE = "dream_complete"
+    COUNSELOR_ASSESSMENT = "counselor_assessment"
+    SELF_MONITORING_CONCERN = "self_monitoring_concern"  # AD-506a: amber zone
+    ZONE_RECOVERY = "zone_recovery"  # AD-506b: agent zone improved
+    PEER_REPETITION_DETECTED = "peer_repetition_detected"  # AD-506b
+
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
     NODE_COMPLETE = "node_complete"
@@ -406,3 +414,70 @@ class WardRoomEndorsementEvent(BaseEvent):
     voter_id: str = ""
     direction: str = ""
     net_score: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Priority B: Counselor / Cognitive Health events (AD-503)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CircuitBreakerTripEvent(BaseEvent):
+    """Emitted when a cognitive circuit breaker trips for an agent."""
+    event_type: EventType = field(default=EventType.CIRCUIT_BREAKER_TRIP, init=False)
+    agent_id: str = ""
+    agent_callsign: str = ""
+    trip_count: int = 0
+    cooldown_seconds: float = 0.0
+
+
+@dataclass
+class DreamCompleteEvent(BaseEvent):
+    """Emitted when a dream cycle (full or micro) completes."""
+    event_type: EventType = field(default=EventType.DREAM_COMPLETE, init=False)
+    dream_type: str = ""  # "full" or "micro"
+    duration_ms: float = 0.0
+    episodes_replayed: int = 0
+
+
+@dataclass
+class CounselorAssessmentEvent(BaseEvent):
+    """Emitted when the Counselor completes an agent assessment."""
+    event_type: EventType = field(default=EventType.COUNSELOR_ASSESSMENT, init=False)
+    agent_id: str = ""
+    wellness_score: float = 0.0
+    alert_level: str = "green"
+    fit_for_duty: bool = True
+    concerns_count: int = 0
+
+
+@dataclass
+class SelfMonitoringConcernEvent(BaseEvent):
+    """Emitted when an agent enters the amber zone (pre-trip warning)."""
+    event_type: EventType = field(default=EventType.SELF_MONITORING_CONCERN, init=False)
+    agent_id: str = ""
+    agent_callsign: str = ""
+    zone: str = "amber"  # Current zone
+    similarity_ratio: float = 0.0
+    velocity_ratio: float = 0.0
+
+
+@dataclass
+class ZoneRecoveryEvent(BaseEvent):
+    """Emitted when an agent's cognitive zone improves (e.g., amber -> green)."""
+    event_type: EventType = field(default=EventType.ZONE_RECOVERY, init=False)
+    agent_id: str = ""
+    agent_callsign: str = ""
+    old_zone: str = ""
+    new_zone: str = ""
+
+
+@dataclass
+class PeerRepetitionDetectedEvent(BaseEvent):
+    """Emitted when a Ward Room post is similar to another agent's recent post."""
+    event_type: EventType = field(default=EventType.PEER_REPETITION_DETECTED, init=False)
+    channel_id: str = ""
+    author_id: str = ""
+    author_callsign: str = ""
+    match_count: int = 0
+    top_similarity: float = 0.0
+    post_type: str = ""  # "thread" or "reply"

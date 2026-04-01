@@ -178,3 +178,20 @@ class TestSeedProfiles:
         from probos.crew_profile import load_seed_profile
         seed = load_seed_profile("architect")
         assert seed.get("callsign") == "Number One"
+
+
+class TestLoadSeedProfileAsync:
+    """BF-094: Async wrapper returns same result as sync version."""
+
+    @pytest.mark.asyncio
+    async def test_async_matches_sync(self) -> None:
+        from probos.crew_profile import load_seed_profile, load_seed_profile_async
+        sync_result = load_seed_profile("builder")
+        async_result = await load_seed_profile_async("builder")
+        assert async_result == sync_result
+
+    @pytest.mark.asyncio
+    async def test_async_unknown_agent(self) -> None:
+        from probos.crew_profile import load_seed_profile_async
+        result = await load_seed_profile_async("nonexistent_agent_type")
+        assert result.get("role") == "crew"

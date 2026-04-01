@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from probos.config import format_trust
 from probos.events import EventType
-from probos.types import Episode
+from probos.types import Episode, MemorySource
 
 if TYPE_CHECKING:
     from probos.bridge_alerts import BridgeAlertService
@@ -176,19 +176,6 @@ class DreamAdapter:
                 detail=pattern.description,
             )
 
-    def store_strategies(self, strategies: list[Any]) -> None:
-        """Persist dream-extracted strategies to knowledge store (AD-383)."""
-        if not self._knowledge_store:
-            return
-        strategies_dir = self._knowledge_store.repo_path / "strategies"
-        strategies_dir.mkdir(exist_ok=True)
-        for s in strategies:
-            path = strategies_dir / f"{s.id}.json"
-            path.write_text(
-                json.dumps(s.to_dict(), indent=2, default=str),
-                encoding="utf-8",
-            )
-
     def on_gap_predictions(self, predictions: list[Any]) -> None:
         """Broadcast gap predictions to HXI (AD-385)."""
         for p in predictions:
@@ -313,4 +300,5 @@ class DreamAdapter:
             duration_ms=(t_end - t_start) * 1000,
             shapley_values=shapley_values,
             trust_deltas=trust_deltas,
+            source=MemorySource.DIRECT,
         )
