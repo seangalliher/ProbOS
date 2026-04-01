@@ -1107,6 +1107,7 @@ class ProbOSRuntime:
             periodic_flush_loop_fn=self._periodic_flush_loop_bridge,
             refresh_emergent_detector_roster_fn=self._refresh_roster_bridge,
             emit_event_fn=self._emit_event,  # AD-503
+            llm_client=self.llm_client,  # AD-532: procedure extraction
         )
         self.dream_scheduler = dream_result.dream_scheduler
         self._emergent_detector = dream_result.emergent_detector

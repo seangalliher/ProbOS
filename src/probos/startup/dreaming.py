@@ -45,6 +45,7 @@ async def init_dreaming(
     periodic_flush_loop_fn: Callable[[], Any],
     refresh_emergent_detector_roster_fn: Callable[[], None],
     emit_event_fn: Callable[..., Any] | None = None,  # AD-503
+    llm_client: Any = None,  # AD-532: procedure extraction
 ) -> tuple[DreamingResult, bool]:
     """Start dreaming/detection subsystems and detect cold start.
 
@@ -69,6 +70,7 @@ async def init_dreaming(
             ),
             gap_prediction_fn=on_gap_predictions_fn,
             contradiction_resolve_fn=on_contradictions_fn,
+            llm_client=llm_client,
         )
         dream_scheduler = DreamScheduler(
             engine=dreaming_engine,

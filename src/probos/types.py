@@ -373,6 +373,8 @@ class DreamReport:
     duration_ms: float = 0.0
     clusters_found: int = 0  # AD-531 (replaces strategies_extracted)
     clusters: list[Any] = field(default_factory=list)  # AD-531: EpisodeCluster objects
+    procedures_extracted: int = 0  # AD-532
+    procedures: list[Any] = field(default_factory=list)  # AD-532: Procedure objects
     gaps_predicted: int = 0
     contradictions_found: int = 0  # AD-403
 

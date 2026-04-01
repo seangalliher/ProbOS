@@ -1290,6 +1290,14 @@ Dependencies: EpisodicMemory (existing, provides episodes + embeddings), Dreamin
 
 Dependencies: AD-531 (clusters to extract from), AD-431 (Cognitive Journal traces for step-level detail), AD-430 (episode provenance).
 
+**AD-532b: Procedure Evolution Types (FIX/DERIVED)** *(planned, OSS, depends: AD-533)* — Extend AD-532's CAPTURED-only extraction with OpenSpace's FIX/DERIVED taxonomy. **FIX**: when a stored procedure's quality metrics degrade (AD-534 runtime feedback), re-extract from fresh episodes, deactivate the parent, increment generation. **DERIVED**: create specialized variant from 1+ parent procedures for domain-specific contexts (e.g., "code review request" → "security code review request"). Multi-parent merge for combining complementary procedures. Requires AD-533 (persistent store with version DAG + lineage tracking) because FIX/DERIVED operate on *existing* stored procedures.
+
+**AD-532c: Negative Procedure Extraction** *(planned, OSS, depends: AD-532)* — Extract anti-patterns from failure-dominant clusters (>50% negative outcomes) and dream contradiction detection (AD-403). Produces `Procedure` with `is_negative=True` flag — "when you see X, do NOT do Y because Z happened." Stored alongside positive procedures in AD-533. Consumed by AD-534's negative procedure check (skip known bad approaches). Uses same AD-541b READ-ONLY framing as positive extraction.
+
+**AD-532d: Multi-Agent Compound Procedures** *(planned, OSS, depends: AD-532)* — When a success cluster spans multiple agent IDs (e.g., a Ward Room discussion → decision → execution involving Security + Engineering + Builder), extract as a compound procedure with agent role assignments per step. Each `ProcedureStep` gains an optional `agent_role` field. Replay (AD-534) maps roles to available agents. Enables the crew to replay collaborative workflows, not just individual agent patterns.
+
+**AD-532e: Reactive & Proactive Extraction Triggers** *(planned, OSS, depends: AD-533, AD-534)* — Add triggers 2 and 3 from OpenSpace prior art. **Trigger 2 (reactive, post-execution)**: after each significant task execution, analyze execution recording and produce evolution suggestions. Catches opportunities before a cluster forms. **Trigger 3 (proactive, metric degradation)**: periodic health scan of procedure quality metrics; when metrics degrade below thresholds, trigger re-extraction or repair. Both triggers require **LLM confirmation gate** before proceeding (conservative default: ambiguous = skip). Also includes **apply-retry with LLM correction** — up to 3 attempts to apply extracted content, with error-aware retry prompts. Depends on AD-533 (stored procedures to monitor) and AD-534 (runtime metrics to detect degradation).
+
 ---
 
 **AD-533: Procedure Store** — Roadmap.
@@ -1434,8 +1442,8 @@ Dependencies: AD-531 (episode clustering for gap identification), AD-538 (proced
 | Order | AD | Name | Depends On | Key Outcome |
 |---|---|---|---|---|
 | 1 | AD-531 | Episode Clustering | AD-430 ✅, DreamingEngine ✅ | **COMPLETE** — Agglomerative clustering (cosine, average-linkage). EpisodeCluster dataclass. get_embeddings(). Dead strategy_extraction.py removed. 40 tests. |
-| 2 | AD-532 | Procedure Extraction | AD-531 ✅, AD-431 ✅ | "How" is preserved as replayable steps, not just Hebbian weights |
-| 3 | AD-533 | Procedure Store | AD-532, AD-434 ✅ | Procedures persist and are queryable; institutional memory |
+| 2 | AD-532 | Procedure Extraction | AD-531 ✅, AD-431 ✅ | **COMPLETE** — LLM-assisted extraction from success clusters. Procedure/ProcedureStep schema. AD-541b READ-ONLY framing. Standard tier. Cluster dedup via _extracted_cluster_ids. 29 tests. Deferred: AD-532b–e. |
+| 3 | AD-533 | Procedure Store | AD-532 ✅, AD-434 ✅ | Procedures persist and are queryable; institutional memory |
 | 4 | AD-534 | Replay-First Dispatch | AD-533, AD-431 ✅ | Zero-token replay of known procedures; `decide()` checks memory first |
 | 5 | AD-535 | Graduated Compilation | AD-534, AD-357, AD-339 | Five levels of autonomy, not binary; progressive trust |
 | 6 | AD-536 | Trust-Gated Promotion | AD-535, AD-339 | Governance over institutional knowledge; department chief + Captain approval |

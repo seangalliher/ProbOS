@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-531 (Episode Clustering & Pattern Detection) CLOSED. Cognitive JIT MVP begins. 4,549+ tests passing (4,400+ pytest + 149 vitest).
+## Current Status: AD-532 (Procedure Extraction) CLOSED. Cognitive JIT 2/9. 4,575+ tests passing (4,426+ pytest + 149 vitest).
 
 ---
 

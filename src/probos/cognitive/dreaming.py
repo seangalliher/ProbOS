@@ -17,6 +17,7 @@ from typing import Any
 from probos.cognitive.contradiction_detector import detect_contradictions
 from probos.cognitive.episode_clustering import cluster_episodes
 from probos.cognitive.gap_predictor import predict_gaps
+from probos.cognitive.procedures import extract_procedure_from_cluster
 from probos.config import DreamingConfig
 from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — dream consolidation mutates trust
 from probos.mesh.routing import HebbianRouter, REL_INTENT
@@ -37,6 +38,7 @@ class DreamingEngine:
         idle_scale_down_fn: Any = None,
         gap_prediction_fn: Any = None,
         contradiction_resolve_fn: Any = None,  # AD-403
+        llm_client: Any = None,  # AD-532: procedure extraction
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -48,11 +50,19 @@ class DreamingEngine:
         self._last_clusters: list[Any] = []  # AD-531: most recent dream cycle clusters
         self._contradiction_resolve_fn = contradiction_resolve_fn
         self._last_consolidated_count: int = 0  # Cursor for micro-dream dedup
+        self._llm_client = llm_client  # AD-532: for procedure extraction
+        self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
+        self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
 
     @property
     def last_clusters(self) -> list[Any]:
         """Most recent episode clusters from the last dream cycle (AD-531)."""
         return self._last_clusters
+
+    @property
+    def last_procedures(self) -> list[Any]:
+        """Most recent procedures extracted from the last dream cycle (AD-532)."""
+        return self._last_procedures
 
     async def micro_dream(self) -> dict[str, Any]:
         """Lightweight consolidation of recent episodes only (Tier 1).
@@ -98,7 +108,8 @@ class DreamingEngine:
         4. Pre-warm — identify temporal intent sequences for faster routing
         5. Idle scale-down
         6. Episode clustering (AD-531)
-        7. Gap prediction
+        7. Procedure extraction from success clusters (AD-532)
+        8. Gap prediction
         """
         t_start = time.monotonic()
 
@@ -167,7 +178,48 @@ class DreamingEngine:
         except Exception as e:
             logger.debug("Episode clustering failed (non-critical): %s", e)
 
-        # Step 7: Capability gap prediction (AD-385)
+        # Step 7: Procedure extraction from success clusters (AD-532)
+        procedures_extracted = 0
+        procedures: list = []
+        if self._llm_client and clusters:
+            for cluster in clusters:
+                # Only extract from success-dominant clusters
+                if not cluster.is_success_dominant:
+                    continue
+                # Skip clusters we've already processed
+                if cluster.cluster_id in self._extracted_cluster_ids:
+                    continue
+                try:
+                    # Get the actual Episode objects for this cluster
+                    matched_episodes = [
+                        ep for ep in episodes
+                        if ep.id in cluster.episode_ids
+                    ]
+                    if not matched_episodes:
+                        continue
+                    procedure = await extract_procedure_from_cluster(
+                        cluster=cluster,
+                        episodes=matched_episodes,
+                        llm_client=self._llm_client,
+                    )
+                    if procedure:
+                        procedures.append(procedure)
+                        procedures_extracted += 1
+                        self._extracted_cluster_ids.add(cluster.cluster_id)
+                        logger.info(
+                            "Procedure extracted from cluster %s: '%s' (%d steps)",
+                            cluster.cluster_id[:8],
+                            procedure.name,
+                            len(procedure.steps),
+                        )
+                except Exception as e:
+                    logger.debug(
+                        "Procedure extraction failed for cluster %s (non-critical): %s",
+                        cluster.cluster_id[:8], e,
+                    )
+            self._last_procedures = procedures
+
+        # Step 8: Capability gap prediction (AD-385)
         gap_predictions = predict_gaps(episodes)
         gaps_predicted = len(gap_predictions)
         if gap_predictions and self._gap_prediction_fn:
@@ -187,18 +239,21 @@ class DreamingEngine:
             duration_ms=duration_ms,
             clusters_found=clusters_found,
             clusters=clusters,
+            procedures_extracted=procedures_extracted,
+            procedures=procedures,
             gaps_predicted=gaps_predicted,
             contradictions_found=contradictions_found,
         )
 
         logger.info(
             "dream-cycle: flushed=%d strengthened=%d pruned=%d trust_adjusted=%d "
-            "clusters=%d gaps=%d contradictions=%d",
+            "clusters=%d procedures=%d gaps=%d contradictions=%d",
             report.episodes_replayed,
             report.weights_strengthened,
             report.weights_pruned,
             report.trust_adjustments,
             report.clusters_found,
+            procedures_extracted,
             report.gaps_predicted,
             report.contradictions_found,
         )
