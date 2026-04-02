@@ -125,6 +125,7 @@ class EventType(str, Enum):
     PEER_REPETITION_DETECTED = "peer_repetition_detected"  # AD-506b
     TASK_EXECUTION_COMPLETE = "task_execution_complete"  # AD-532e: reactive trigger
     PROCEDURE_FALLBACK_LEARNING = "procedure_fallback_learning"  # AD-534b: fallback evidence
+    GAP_IDENTIFIED = "gap_identified"  # AD-539: gap → qualification pipeline
 
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"

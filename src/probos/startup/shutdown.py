@@ -77,9 +77,13 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     logger.info("Shutdown grace period (1s)...")
     await asyncio.sleep(1)
 
-    # Cancel periodic flush
+    # Cancel periodic flush — BF-099: await cancellation before trust writes
     if hasattr(runtime, '_flush_task'):
         runtime._flush_task.cancel()
+        try:
+            await runtime._flush_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
     # Stop ACM (AD-427)
     if runtime.acm:

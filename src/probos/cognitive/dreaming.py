@@ -16,7 +16,7 @@ from typing import Any
 
 from probos.cognitive.contradiction_detector import detect_contradictions
 from probos.cognitive.episode_clustering import cluster_episodes
-from probos.cognitive.gap_predictor import predict_gaps
+from probos.cognitive.gap_predictor import predict_gaps, detect_gaps, map_gap_to_skill, trigger_qualification_if_needed
 from probos.cognitive.procedures import (
     extract_procedure_from_cluster,
     extract_procedure_from_observation,
@@ -376,6 +376,7 @@ class DreamingEngine:
         procedures_decayed = 0
         procedures_archived = 0
         dedup_candidates_found = 0
+        decay_results: list[dict] = []  # AD-539: captured for Step 8
         try:
             if self._procedure_store:
                 # Decay first (may create Level 1 candidates for archival)
@@ -402,14 +403,93 @@ class DreamingEngine:
         except Exception as e:
             logger.debug("Step 7f lifecycle maintenance failed: %s", e)
 
-        # Step 8: Capability gap prediction (AD-385)
-        gap_predictions = predict_gaps(episodes)
-        gaps_predicted = len(gap_predictions)
-        if gap_predictions and self._gap_prediction_fn:
-            try:
-                self._gap_prediction_fn(gap_predictions)
-            except Exception as e:
-                logger.debug("Gap prediction callback failed: %s", e)
+        # Step 8: Enhanced capability gap detection (AD-385 + AD-539)
+        gaps_predicted = 0
+        gaps_classified = 0
+        qualification_paths_triggered = 0
+        gap_reports_generated = 0
+        try:
+            # Build procedure health results from active procedures
+            procedure_health_results: list[dict] = []
+            if self._procedure_store:
+                try:
+                    active = await self._procedure_store.list_active()
+                    for p in active[:50]:  # Cap scan size
+                        pid = p.get("id", "")
+                        if pid:
+                            metrics = await self._procedure_store.get_quality_metrics(pid)
+                            if metrics:
+                                eff_rate = metrics.get("effective_rate", 1.0)
+                                fallback_rate = metrics.get("fallback_rate", 0.0)
+                                completion_rate = metrics.get("completion_rate", 1.0)
+                                diagnosis = ""
+                                if fallback_rate > 0.3:
+                                    diagnosis = "FIX:high_fallback_rate"
+                                elif completion_rate < 0.5:
+                                    diagnosis = "FIX:low_completion"
+                                elif eff_rate < 0.5:
+                                    diagnosis = "DERIVED:low_effective_rate"
+                                if diagnosis:
+                                    procedure_health_results.append({
+                                        "id": pid,
+                                        "name": p.get("name", pid),
+                                        "diagnosis": diagnosis,
+                                        "intent_types": p.get("intent_types", []),
+                                        "failure_rate": 1.0 - eff_rate,
+                                        "total_selections": metrics.get("total_selections", 0),
+                                    })
+                except Exception:
+                    pass
+
+            gap_reports = detect_gaps(
+                episodes=episodes,
+                clusters=self._last_clusters,
+                procedure_decay_results=decay_results,
+                procedure_health_results=procedure_health_results,
+                agent_id=self._agent_id,
+                agent_type=getattr(self, "_agent_type", ""),
+            )
+
+            # Map to skills and trigger qualifications (if Skill Framework available)
+            skill_service = getattr(self._procedure_store, "_skill_service", None) if self._procedure_store else None
+            for i, gap in enumerate(gap_reports):
+                if skill_service:
+                    gap_reports[i] = await map_gap_to_skill(gap, skill_service)
+                    gap_reports[i] = await trigger_qualification_if_needed(gap, skill_service)
+                    if gap_reports[i].qualification_path_id:
+                        qualification_paths_triggered += 1
+
+            gaps_predicted = len(gap_reports)
+            gaps_classified = sum(1 for g in gap_reports if g.gap_type)
+            gap_reports_generated = len(gap_reports)
+
+            # Write gap reports to Ship's Records (if available)
+            records_store = getattr(self._procedure_store, "_records_store", None) if self._procedure_store else None
+            if records_store and gap_reports:
+                for gap in gap_reports:
+                    try:
+                        import yaml
+                        content = yaml.dump(gap.to_dict(), default_flow_style=False, sort_keys=False)
+                        await records_store.write_entry(
+                            author="system",
+                            path=f"reports/gap-reports/{gap.id}.md",
+                            content=content,
+                            message=f"Gap report: {gap.description}",
+                            classification="ship",
+                            topic="gap_analysis",
+                            tags=["ad-539", gap.gap_type, gap.priority],
+                        )
+                    except Exception:
+                        pass
+
+            # Backward-compatible callback
+            if gap_reports and self._gap_prediction_fn:
+                try:
+                    self._gap_prediction_fn(gap_reports)
+                except Exception as e:
+                    logger.debug("Gap prediction callback failed: %s", e)
+        except Exception as e:
+            logger.debug("Step 8 gap detection failed: %s", e)
 
         duration_ms = (time.monotonic() - t_start) * 1000
 
@@ -435,12 +515,17 @@ class DreamingEngine:
             procedures_decayed=procedures_decayed,
             procedures_archived=procedures_archived,
             dedup_candidates_found=dedup_candidates_found,
+            # AD-539: Gap → Qualification Pipeline
+            gaps_classified=gaps_classified,
+            qualification_paths_triggered=qualification_paths_triggered,
+            gap_reports_generated=gap_reports_generated,
         )
 
         logger.info(
             "dream-cycle: flushed=%d strengthened=%d pruned=%d trust_adjusted=%d "
             "clusters=%d procedures=%d evolved=%d negatives=%d fallback_evolved=%d "
-            "observed=%d decayed=%d archived=%d dedup=%d gaps=%d contradictions=%d",
+            "observed=%d decayed=%d archived=%d dedup=%d gaps=%d classified=%d "
+            "qual_paths=%d gap_reports=%d contradictions=%d",
             report.episodes_replayed,
             report.weights_strengthened,
             report.weights_pruned,
@@ -455,6 +540,9 @@ class DreamingEngine:
             procedures_archived,
             dedup_candidates_found,
             report.gaps_predicted,
+            gaps_classified,
+            qualification_paths_triggered,
+            gap_reports_generated,
             report.contradictions_found,
         )
 
@@ -1104,15 +1192,23 @@ class DreamingEngine:
         # Boost agents with consistent success (threshold: >1 successful episode)
         for agent_id, count in agent_successes.items():
             if count > 1:
-                record = self.trust_network.get_or_create(agent_id)
-                record.alpha += self.config.trust_boost
+                self.trust_network.record_outcome(
+                    agent_id,
+                    success=True,
+                    weight=self.config.trust_boost,
+                    source="dream_consolidation",
+                )
                 adjustments += 1
 
         # Penalize agents appearing in multiple failed episodes
         for agent_id, count in agent_failures.items():
             if count > 1:
-                record = self.trust_network.get_or_create(agent_id)
-                record.beta += self.config.trust_penalty
+                self.trust_network.record_outcome(
+                    agent_id,
+                    success=False,
+                    weight=self.config.trust_penalty,
+                    source="dream_consolidation",
+                )
                 adjustments += 1
 
         return adjustments

@@ -391,6 +391,10 @@ class DreamReport:
     procedures_decayed: int = 0
     procedures_archived: int = 0
     dedup_candidates_found: int = 0
+    # AD-539: Gap → Qualification Pipeline
+    gaps_classified: int = 0
+    qualification_paths_triggered: int = 0
+    gap_reports_generated: int = 0
 
 
 # ------------------------------------------------------------------

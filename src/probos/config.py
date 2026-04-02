@@ -96,6 +96,13 @@ LIFECYCLE_DEDUP_MAX_CANDIDATES: int = 50        # Max procedures to scan for ded
 LIFECYCLE_REVALIDATION_LEVEL: int = 2           # Decayed procedures drop to this level (Guided)
 LIFECYCLE_MIN_SELECTIONS_FOR_DECAY: int = 3     # Don't decay procedures that haven't had a fair chance
 
+# AD-539: Gap → Qualification Pipeline
+GAP_MIN_FAILURE_RATE: float = 0.30         # Cluster failure rate threshold for gap detection
+GAP_MIN_EPISODES: int = 5                  # Minimum episodes in cluster to qualify as gap evidence
+GAP_MIN_PROCEDURE_FAILURES: int = 3        # Minimum procedure failures to constitute a gap
+GAP_PROFICIENCY_TARGET: int = 3            # Target ProficiencyLevel (APPLY) for gap closure
+GAP_REPORT_MAX_PER_DREAM: int = 10         # Cap gap reports per dream cycle
+
 
 def format_trust(value: float, precision: int = TRUST_DISPLAY_PRECISION) -> float:
     """Round a trust/score value for display. Centralizes precision."""

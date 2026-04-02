@@ -534,6 +534,7 @@ class CounselorAgent(CognitiveAgent):
                     EventType.SELF_MONITORING_CONCERN,  # AD-506a
                     EventType.ZONE_RECOVERY,            # AD-506b
                     EventType.PEER_REPETITION_DETECTED, # AD-506b
+                    EventType.GAP_IDENTIFIED,           # AD-539
                 ],
             )
 
@@ -720,6 +721,8 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_zone_recovery(data)
             elif event_type == EventType.PEER_REPETITION_DETECTED.value:
                 await self._on_peer_repetition_detected(data)
+            elif event_type == EventType.GAP_IDENTIFIED.value:
+                await self._on_gap_identified(data)
         except Exception:
             logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
 
@@ -852,6 +855,52 @@ class CounselorAgent(CognitiveAgent):
         )
         assessment.tier_credit = "peer_catch"
         await self._save_profile_and_assessment(author_id, assessment)
+
+    async def _on_gap_identified(self, data: dict[str, Any]) -> None:
+        """AD-539: Track knowledge gaps for Counselor monitoring.
+
+        When a gap is identified during dream cycle, update the agent's
+        cognitive profile and optionally notify for high/critical gaps.
+        """
+        agent_id = data.get("agent_id", "")
+        gap_type = data.get("gap_type", "knowledge")
+        description = data.get("description", "")
+        priority = data.get("priority", "low")
+        intent_types = data.get("affected_intent_types", [])
+
+        if not agent_id or agent_id == self.id:
+            return
+
+        intent_label = ", ".join(intent_types[:3]) if intent_types else "unknown"
+        logger.info(
+            "AD-539: Counselor noted gap for %s: %s (type=%s, priority=%s)",
+            agent_id[:8], description[:80], gap_type, priority,
+        )
+
+        # Track gaps on profile via a gap_concerns list (lightweight)
+        profile = self.get_or_create_profile(agent_id)
+        if not hasattr(profile, "_gap_concerns"):
+            profile._gap_concerns = []
+        concern = f"Knowledge gap in {intent_label}: {description[:120]} (priority: {priority})"
+        profile._gap_concerns.append(concern)
+
+        # High/critical gaps warrant assessment + therapeutic DM
+        if priority in ("high", "critical"):
+            callsign = self._resolve_callsign(agent_id)
+            metrics = self._gather_agent_metrics(agent_id)
+            assessment = self.assess_agent(
+                agent_id=agent_id,
+                current_trust=metrics["trust_score"],
+                current_confidence=metrics["confidence"],
+                hebbian_avg=metrics["hebbian_avg"],
+                success_rate=metrics["success_rate"],
+                personality_drift=metrics["personality_drift"],
+                trigger="gap_identified",
+            )
+            await self._save_profile_and_assessment(agent_id, assessment)
+            await self._maybe_send_therapeutic_dm(
+                agent_id, callsign, assessment, trigger="gap_identified"
+            )
 
     async def _on_trust_update(self, data: dict[str, Any]) -> None:
         """React to significant trust changes — re-assess the agent."""
@@ -1482,6 +1531,14 @@ class CounselorAgent(CognitiveAgent):
         if personality_drift > 0.5:
             concerns.append(f"Significant personality drift ({personality_drift:.2f})")
             recommendations.append("Flag for Captain review — may be emergence or degradation")
+
+        # AD-539: Check for unresolved high/critical gaps in profile
+        gap_concerns = getattr(profile, "_gap_concerns", [])
+        high_gap_concerns = [c for c in gap_concerns
+                             if "priority: high" in c or "priority: critical" in c]
+        if high_gap_concerns:
+            concerns.append(f"Unresolved knowledge gaps ({len(high_gap_concerns)} high/critical)")
+            recommendations.append("Review gap reports — qualification path may be needed")
 
         # Compute wellness score
         wellness = 1.0

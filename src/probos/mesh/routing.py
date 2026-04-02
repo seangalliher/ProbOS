@@ -71,6 +71,8 @@ class HebbianRouter:
         """Initialize — load weights from SQLite if configured."""
         if self.db_path:
             self._db = await self._connection_factory.connect(self.db_path)
+            await self._db.execute("PRAGMA journal_mode=WAL")
+            await self._db.execute("PRAGMA busy_timeout=5000")
             await self._db.execute("PRAGMA foreign_keys = ON")
             await self._db.execute(_SCHEMA)
             await self._db.commit()
@@ -254,14 +256,19 @@ class HebbianRouter:
         if not self._db:
             return
         now = datetime.now(timezone.utc).isoformat()
-        await self._db.execute("DELETE FROM hebbian_weights")
-        for (source, target, rel_type), weight in self._weights.items():
-            await self._db.execute(
-                "INSERT INTO hebbian_weights (source_id, target_id, rel_type, weight, updated) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (source, target, rel_type, weight, now),
-            )
-        await self._db.commit()
+        await self._db.execute("BEGIN IMMEDIATE")
+        try:
+            await self._db.execute("DELETE FROM hebbian_weights")
+            for (source, target, rel_type), weight in self._weights.items():
+                await self._db.execute(
+                    "INSERT INTO hebbian_weights (source_id, target_id, rel_type, weight, updated) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (source, target, rel_type, weight, now),
+                )
+            await self._db.commit()
+        except Exception:
+            await self._db.execute("ROLLBACK")
+            raise
         logger.debug("Saved %d hebbian weights to disk", len(self._weights))
 
     async def save(self) -> None:

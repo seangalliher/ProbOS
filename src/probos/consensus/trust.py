@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import time
@@ -100,6 +101,7 @@ class TrustNetwork:
         self._records: dict[AgentID, TrustRecord] = {}
         self._db: DatabaseConnection | None = None
         self._event_log: deque[TrustEvent] = deque(maxlen=500)
+        self._lock = asyncio.Lock()  # BF-099: concurrency protection
         self._connection_factory = connection_factory
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
@@ -109,6 +111,8 @@ class TrustNetwork:
         """Initialize — load trust scores from SQLite if configured."""
         if self.db_path:
             self._db = await self._connection_factory.connect(self.db_path)
+            await self._db.execute("PRAGMA journal_mode=WAL")
+            await self._db.execute("PRAGMA busy_timeout=5000")
             await self._db.execute("PRAGMA foreign_keys = ON")
             await self._db.execute(_SCHEMA)
             await self._db.commit()
@@ -157,6 +161,7 @@ class TrustNetwork:
         intent_type: str = "",
         episode_id: str = "",
         verifier_id: str = "",
+        source: str = "verification",
     ) -> float:
         """Record an observation and return the updated trust score.
 
@@ -293,28 +298,35 @@ class TrustNetwork:
     async def _load_from_db(self) -> None:
         if not self._db:
             return
-        async with self._db.execute(
-            "SELECT agent_id, alpha, beta FROM trust_scores"
-        ) as cursor:
-            async for row in cursor:
-                self._records[row[0]] = TrustRecord(
-                    agent_id=row[0],
-                    alpha=row[1],
-                    beta=row[2],
-                )
+        async with self._lock:
+            async with self._db.execute(
+                "SELECT agent_id, alpha, beta FROM trust_scores"
+            ) as cursor:
+                async for row in cursor:
+                    self._records[row[0]] = TrustRecord(
+                        agent_id=row[0],
+                        alpha=row[1],
+                        beta=row[2],
+                    )
 
     async def _save_to_db(self) -> None:
         if not self._db:
             return
         now = datetime.now(timezone.utc).isoformat()
-        await self._db.execute("DELETE FROM trust_scores")
-        for record in self._records.values():
-            await self._db.execute(
-                "INSERT INTO trust_scores (agent_id, alpha, beta, updated) "
-                "VALUES (?, ?, ?, ?)",
-                (record.agent_id, record.alpha, record.beta, now),
-            )
-        await self._db.commit()
+        async with self._lock:
+            await self._db.execute("BEGIN IMMEDIATE")
+            try:
+                await self._db.execute("DELETE FROM trust_scores")
+                for record in self._records.values():
+                    await self._db.execute(
+                        "INSERT INTO trust_scores (agent_id, alpha, beta, updated) "
+                        "VALUES (?, ?, ?, ?)",
+                        (record.agent_id, record.alpha, record.beta, now),
+                    )
+                await self._db.commit()
+            except Exception:
+                await self._db.execute("ROLLBACK")
+                raise
         logger.debug("Saved %d trust records to disk", len(self._records))
 
     async def save(self) -> None:

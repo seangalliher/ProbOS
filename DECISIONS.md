@@ -2075,4 +2075,32 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 
 **Rationale:** AD-488–495 protect the cognitive axis. AD-558 is the trust axis equivalent. The gap was identified by the crew themselves — Echo's clinical framing ("trust cascade," collaborative degradation before performance metrics reflect it) and Meridian's architectural framing (high-connectivity node propagation, threshold-based dampening) both independently converged on the same structural concern. This is itself evidence of the collaborative intelligence thesis: two agents from different professional frames producing a more complete diagnosis than either alone. Relationship to planned ADs: AD-493 (Novelty Gate) reduces input feeding trust anomalies; AD-494 (Trait-Adaptive Thresholds) adjusts cognitive breaker thresholds. Both are complementary but neither substitutes — AD-558 protects the trust update path itself.
 
-**Status:** AD-558 PLANNED. Five sub-features: progressive dampening, hard trust floor, network-level circuit breaker, dream consolidation event emission, dampening telemetry. Depends on TrustNetwork, EmergentDetector, CounselorAgent, AD-506a (Graduated Zone Model).
+**Status:** AD-558 PLANNED. Five sub-features: progressive dampening, hard trust floor, network-level circuit breaker, dream consolidation event emission, dampening telemetry. Depends on TrustNetwork, EmergentDetector, CounselorAgent, AD-506a (Graduated Zone Model), BF-099 (trust concurrency safety).
+
+## Knowledge Gap → Qualification Pipeline (AD-539)
+
+**AD-539: Knowledge Gap → Qualification Pipeline — Cognitive JIT Final Stage (9/9)** *(OSS)*
+
+**Context:** The Cognitive JIT pipeline (AD-531–538) delivered procedure extraction, storage, replay, graduated compilation, governance, observational learning, and lifecycle management. But gaps were invisible — if an agent repeatedly failed at a task type, no one noticed until the Captain observed it manually. The existing `predict_gaps()` function (gap_predictor.py) did basic episode-level detection but had no procedure evidence, no classification, and no bridge to the Skill Framework (AD-428).
+
+| AD | Decision |
+|----|----------|
+| AD-539 | **Knowledge Gap → Qualification Pipeline.** Multi-source gap detection (failure clusters + procedure decay + health diagnosis + episodes) with typed `GapEvidence` provenance. Three-category classification (knowledge/capability/data). Skill Framework bridge via `start_qualification()` for knowledge gaps. Counselor integration for capability/data gaps. Enhanced Dream Step 8 with procedure evidence. Progress tracking with closure metrics. Three deferred ADs: AD-539b (Holodeck scenario generation), AD-539c (automatic remediation), AD-539d (fleet-level aggregation). |
+
+**Rationale:** Gap detection closes the Cognitive JIT feedback loop. The pipeline now goes: episodes cluster → procedures extract → procedures store → replay at graduated levels → promote through governance → learn from peers → decay/archive/dedup → **identify gaps → map to qualifications → track closure**. Classification matters because the intervention differs: knowledge gaps need training (Holodeck/qualifications), capability gaps need escalation (the agent fundamentally can't do this), data gaps need information routing (the agent knows how but lacks inputs). Routing dream consolidation through existing `predict_gaps()` means gap detection runs automatically without operator intervention.
+
+**Status:** AD-539 COMPLETE. 49 tests across 6 test files. 618 total Cognitive JIT tests. Cognitive JIT pipeline fully delivered (9/9 ADs: AD-531→539). Full suite: 5,218 passed. Deferred: AD-539b (Holodeck scenarios), AD-539c (auto-remediation), AD-539d (fleet aggregation).
+
+## Trust Engine Concurrency Safety (BF-099)
+
+**BF-099: Trust Engine Concurrency Safety — Write Contention and Race Condition Fixes** *(OSS)*
+
+**Context:** Crew-identified via recurring "stuck calculation" pattern with ~72-hour recurrence. Medical team (Keiko, Chapel, Sinclair, Cortez) diagnosed this as a chronic condition requiring root cause analysis, not just repeated "flush and restart" interventions. Architect investigation confirmed six categories of concurrency vulnerability in TrustNetwork: zero locks on `_records` dict, 6 concurrent writers with no coordination, DELETE-all/INSERT-all save without explicit transaction, no WAL mode or busy_timeout, periodic flush/shutdown race condition, and dream consolidation bypassing `record_outcome()` to directly mutate alpha/beta. Same patterns found in Hebbian router (`routing.py`).
+
+| BF | Decision |
+|----|----------|
+| BF-099 | **Trust engine concurrency safety.** Six fixes: (1) `asyncio.Lock` on all `_records` mutations in `record_outcome()` and `decay_all()`, (2) `BEGIN IMMEDIATE` transaction wrapping DELETE+INSERT in `_save_to_db()`, (3) WAL mode + busy_timeout PRAGMAs on trust database, (4) dream consolidation routed through `record_outcome()` instead of direct alpha/beta mutation, (5) flush cancellation properly awaited before shutdown writes, (6) same lock + transaction + WAL fixes applied to Hebbian router. |
+
+**Rationale:** Trust data integrity is foundational — AD-558 (Trust Cascade Dampening) adds dampening logic to `record_outcome()`, which is meaningless if concurrent callers can bypass or race with it. The "flush and restart" fix worked because `_save_to_db()` does a full DELETE+INSERT, resetting accumulated drift from concurrent mutations. The 72-hour recurrence window corresponds to enough concurrent writes accumulating drift plus dream consolidation directly mutating records and diverging in-memory state from database. The crew's medical framing was accurate: treating symptoms (flush) without addressing root cause (concurrency) guarantees recurrence. This is the first BF where the crew identified, diagnosed, and tracked the issue through their professional framework before the architect investigated.
+
+**Status:** BF-099 CLOSED. 18 new tests. 128/128 trust+dreaming+hebbian regression passing. Full suite: 5,236 passed (5,087 pytest + 149 vitest). Prerequisite for AD-558 satisfied.
