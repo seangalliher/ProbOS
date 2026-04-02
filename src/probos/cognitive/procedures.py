@@ -38,6 +38,7 @@ class ProcedureStep:
     fallback_action: str = ""  # what to do if this step fails
     invariants: list[str] = field(default_factory=list)  # must remain true during step
     agent_role: str = ""  # AD-532d: functional role (e.g. "security_analysis"), "" = any agent
+    resolved_agent_type: str = ""  # AD-534c: concrete agent_type for dispatch, "" = unresolved
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -48,6 +49,7 @@ class ProcedureStep:
             "fallback_action": self.fallback_action,
             "invariants": self.invariants,
             "agent_role": self.agent_role,
+            "resolved_agent_type": self.resolved_agent_type,
         }
 
 
@@ -527,6 +529,7 @@ def _build_steps_from_data(data: dict[str, Any]) -> list[ProcedureStep]:
             fallback_action=s.get("fallback_action", ""),
             invariants=s.get("invariants", []),
             agent_role=s.get("agent_role", ""),
+            resolved_agent_type=s.get("resolved_agent_type", ""),
         ))
     return steps
 
@@ -853,6 +856,66 @@ async def extract_negative_procedure_from_cluster(
 # ------------------------------------------------------------------
 
 
+def _resolve_agent_roles(
+    steps: list[ProcedureStep],
+    participating_agent_ids: list[str],
+) -> list[ProcedureStep]:
+    """AD-534c: Map agent_role strings to concrete agent_types using cluster participant info.
+
+    Agent IDs encode their type: 'security_officer-abc123' → agent_type='security_officer'.
+    Builds a {agent_type: token_set} map from participating_agent_ids,
+    then uses fuzzy token matching to map each step's agent_role to the best
+    matching agent_type.
+
+    Steps with empty agent_role or no match get resolved_agent_type = "".
+    """
+    if not participating_agent_ids:
+        return steps
+
+    # Extract agent_types from IDs: 'security_officer-abc123' → 'security_officer'
+    # Agent IDs follow pattern: {agent_type}-{uuid_hex}
+    agent_types: list[str] = []
+    for aid in participating_agent_ids:
+        # Split on last hyphen-followed-by-hex to separate type from UUID
+        # Most reliable: find the last segment that looks like hex
+        parts = aid.rsplit("-", 1)
+        if len(parts) == 2 and len(parts[1]) >= 6:
+            agent_types.append(parts[0])
+        else:
+            agent_types.append(aid)  # Fallback: use full ID as type
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique_types: list[str] = []
+    for at in agent_types:
+        if at not in seen:
+            seen.add(at)
+            unique_types.append(at)
+
+    # Build token sets for each agent_type
+    type_tokens: dict[str, set[str]] = {}
+    for at in unique_types:
+        type_tokens[at] = set(at.replace("-", "_").split("_"))
+
+    for step in steps:
+        if not step.agent_role:
+            continue
+
+        role_tokens = set(step.agent_role.replace("-", "_").split("_"))
+        best_type = ""
+        best_overlap = 0
+
+        for at, tokens in type_tokens.items():
+            overlap = len(role_tokens & tokens)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_type = at
+
+        step.resolved_agent_type = best_type
+
+    return steps
+
+
 async def extract_compound_procedure_from_cluster(
     cluster: Any,  # EpisodeCluster (success-dominant, multi-agent)
     episodes: list[Any],  # Episode objects in this cluster
@@ -908,6 +971,10 @@ async def extract_compound_procedure_from_cluster(
             evolution_type="CAPTURED",
             compilation_level=1,
         )
+
+        # AD-534c: Resolve agent_role → concrete agent_type for dispatch
+        _resolve_agent_roles(procedure.steps, cluster.participating_agents)
+
         return procedure
 
     except Exception as e:

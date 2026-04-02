@@ -235,13 +235,23 @@ class CognitiveAgent(BaseAgent):
                 observation.get("intent", ""), procedure.name, best.get("score", 0),
             )
 
-            return {
+            # AD-534c: detect compound procedure (any step has agent_role set)
+            is_compound = any(
+                getattr(step, "agent_role", "") for step in procedure.steps
+            )
+
+            result_dict = {
                 "action": "execute",
                 "llm_output": replay_output,
                 "cached": True,
                 "procedure_id": procedure.id,
                 "procedure_name": procedure.name,
             }
+            if is_compound:
+                result_dict["compound"] = True
+                result_dict["procedure"] = procedure
+
+            return result_dict
 
         except Exception as exc:
             # Replay failed — record near-miss info, fall through to LLM
@@ -259,6 +269,19 @@ class CognitiveAgent(BaseAgent):
             }
             return None
 
+    def _format_single_step(self, step: Any) -> str:
+        """AD-534c: Format a single ProcedureStep for dispatch or local replay."""
+        role = getattr(step, "agent_role", "")
+        if role:
+            line = f"**Step {step.step_number} [{role}]:** {step.action}"
+        else:
+            line = f"**Step {step.step_number}:** {step.action}"
+
+        if getattr(step, "expected_output", ""):
+            line += f"\n  \u2192 Expected: {step.expected_output}"
+
+        return line
+
     def _format_procedure_replay(self, procedure: Any, match_score: float = 0.0) -> str:
         """AD-534: Format a procedure for deterministic replay output.
 
@@ -275,15 +298,9 @@ class CognitiveAgent(BaseAgent):
             lines.append("")
 
         for step in procedure.steps:
-            role = getattr(step, "agent_role", "")
-            if role:
-                lines.append(f"**Step {step.step_number} [{role}]:** {step.action}")
-            else:
-                lines.append(f"**Step {step.step_number}:** {step.action}")
-            if step.expected_output:
-                lines.append(f"  → Expected: {step.expected_output}")
-            if step.fallback_action:
-                lines.append(f"  ⚠ Fallback: {step.fallback_action}")
+            lines.append(self._format_single_step(step))
+            if getattr(step, "fallback_action", ""):
+                lines.append(f"  \u26a0 Fallback: {step.fallback_action}")
 
         if procedure.postconditions:
             lines.append("")
@@ -292,6 +309,162 @@ class CognitiveAgent(BaseAgent):
                 lines.append(f"  - {pc}")
 
         return "\n".join(lines)
+
+    def _resolve_step_agent(self, step: Any) -> str | None:
+        """AD-534c: Resolve a ProcedureStep to a live agent ID.
+
+        Three-stage resolution:
+          1. resolved_agent_type → registry.get_by_pool() → first live agent
+          2. agent_role → registry.get_by_capability() → first live agent
+          3. Return None if both fail
+
+        Skips self (orchestrating agent). Returns the agent_id or None.
+        """
+        _rt = getattr(self, '_runtime', None)
+        if not _rt or not hasattr(_rt, 'registry'):
+            return None
+
+        registry = _rt.registry
+
+        # Stage 1: resolved_agent_type → get_by_pool
+        resolved_type = getattr(step, "resolved_agent_type", "")
+        if resolved_type:
+            try:
+                pool_agents = registry.get_by_pool(resolved_type)
+                for agent in pool_agents:
+                    if agent.id != self.id and getattr(agent, 'is_alive', False):
+                        return agent.id
+            except Exception:
+                logger.debug("AD-534c: get_by_pool('%s') failed", resolved_type, exc_info=True)
+
+        # Stage 2: agent_role → get_by_capability
+        role = getattr(step, "agent_role", "")
+        if role:
+            try:
+                cap_agents = registry.get_by_capability(role)
+                for agent in cap_agents:
+                    if agent.id != self.id and getattr(agent, 'is_alive', False):
+                        return agent.id
+            except Exception:
+                logger.debug("AD-534c: get_by_capability('%s') failed", role, exc_info=True)
+
+        # Stage 3: no match
+        return None
+
+    async def _execute_compound_replay(
+        self, procedure: Any, text_fallback: str
+    ) -> dict:
+        """AD-534c: Dispatch compound procedure steps to appropriate agents.
+
+        Resolves each step's agent_role to a live agent. Dispatches steps
+        sequentially via IntentBus.send() with 'compound_step_replay' intent.
+        Target agents receive pre-formatted step text and return it (zero tokens).
+
+        Degrades to single-agent text replay if any required agent is unavailable
+        or if IntentBus/registry are not available.
+        """
+        from probos.config import COMPOUND_STEP_TIMEOUT_SECONDS
+
+        _rt = getattr(self, '_runtime', None)
+        if not _rt or not hasattr(_rt, 'intent_bus') or not hasattr(_rt, 'registry'):
+            logger.debug("AD-534c: IntentBus or registry unavailable, degrading to text replay")
+            return {"success": True, "result": text_fallback, "compound_dispatched": False, "steps_dispatched": 0}
+
+        intent_bus = _rt.intent_bus
+
+        # Build dispatch plan: list of (step, target_agent_id or None)
+        dispatch_plan: list[tuple[Any, str | None]] = []
+        for step in procedure.steps:
+            role = getattr(step, "agent_role", "")
+            if not role:
+                # No role assigned — local step
+                dispatch_plan.append((step, None))
+                continue
+
+            agent_id = self._resolve_step_agent(step)
+            if agent_id is None:
+                # Can't resolve — degrade to single-agent text replay
+                logger.warning(
+                    "AD-534c: Cannot resolve agent for role '%s' in procedure '%s'. "
+                    "Degrading to single-agent replay.",
+                    role, procedure.name,
+                )
+                self._last_fallback_info = {
+                    "type": "compound_agent_unavailable",
+                    "procedure_id": procedure.id,
+                    "procedure_name": procedure.name,
+                    "reason": f"No agent available for role '{role}'",
+                }
+                return {"success": True, "result": text_fallback, "compound_dispatched": False, "steps_dispatched": 0}
+
+            dispatch_plan.append((step, agent_id))
+
+        # Dispatch loop
+        results: list[str] = []
+        for step, target_agent_id in dispatch_plan:
+            step_text = self._format_single_step(step)
+
+            if target_agent_id is None:
+                # Local step — no dispatch needed
+                results.append(step_text)
+                continue
+
+            # Dispatch via IntentBus
+            intent = IntentMessage(
+                intent="compound_step_replay",
+                params={
+                    "step_text": step_text,
+                    "procedure_id": procedure.id,
+                    "step_number": step.step_number,
+                },
+                target_agent_id=target_agent_id,
+                ttl_seconds=COMPOUND_STEP_TIMEOUT_SECONDS,
+            )
+
+            try:
+                intent_result = await intent_bus.send(intent)
+                if intent_result and intent_result.success:
+                    results.append(intent_result.result or step_text)
+                else:
+                    logger.warning(
+                        "AD-534c: Step %d dispatch to '%s' failed. Using text fallback.",
+                        step.step_number, target_agent_id,
+                    )
+                    results.append(step_text)
+            except Exception:
+                logger.debug("AD-534c: Step %d dispatch exception", step.step_number, exc_info=True)
+                results.append(step_text)
+
+        assembled = "\n\n".join(results)
+        return {
+            "success": True,
+            "result": assembled,
+            "compound_dispatched": True,
+            "steps_dispatched": sum(1 for _, tid in dispatch_plan if tid is not None),
+        }
+
+    async def _handle_compound_step_replay(self, intent: IntentMessage) -> IntentResult:
+        """AD-534c: Handle a dispatched compound procedure step.
+
+        Zero-token operation — receives pre-formatted step text and returns it.
+        No LLM invocation.
+        """
+        step_text = intent.params.get("step_text", "")
+        procedure_id = intent.params.get("procedure_id", "")
+        step_number = intent.params.get("step_number", 0)
+
+        logger.debug(
+            "AD-534c: Agent %s received compound step %d from procedure %s",
+            self.id, step_number, procedure_id,
+        )
+
+        return IntentResult(
+            intent_id=intent.id,
+            agent_id=self.id,
+            success=True,
+            result=step_text,
+            confidence=1.0,
+        )
 
     def _diagnose_procedure_health(
         self, procedure_id: str, procedure_name: str, metrics: dict
@@ -693,13 +866,17 @@ class CognitiveAgent(BaseAgent):
         # AD-397: always accept direct_message if targeted to this agent
         # AD-407b: always accept ward_room_notification if targeted to this agent
         is_direct = (
-            intent.intent in ("direct_message", "ward_room_notification", "proactive_think")
+            intent.intent in ("direct_message", "ward_room_notification", "proactive_think", "compound_step_replay")
             and intent.target_agent_id == self.id
         )
 
         # Fast path: self-deselect for unrecognized intents before any LLM call
         if not is_direct and intent.intent not in self._handled_intents:
             return None
+
+        # AD-534c: compound step replay — zero-token, bypass full cognitive lifecycle
+        if intent.intent == "compound_step_replay" and intent.target_agent_id == self.id:
+            return await self._handle_compound_step_replay(intent)
 
         # Skill dispatch — direct handler call, no LLM reasoning
         if intent.intent in self._skills:
@@ -714,6 +891,51 @@ class CognitiveAgent(BaseAgent):
 
         decision = await self.decide(observation)
         decision["intent"] = intent.intent  # AD-398: propagate intent name to act()
+
+        # AD-534c: compound procedure dispatch
+        if decision.get("compound") and decision.get("procedure"):
+            compound_result = await self._execute_compound_replay(
+                decision["procedure"], decision.get("llm_output", "")
+            )
+
+            if compound_result.get("compound_dispatched"):
+                # Record procedure completion (AD-534b metrics)
+                _store = self._procedure_store
+                if _store:
+                    try:
+                        await _store.record_completion(decision["procedure_id"])
+                    except Exception:
+                        pass
+
+                # Emit task execution event (AD-532e)
+                _rt = getattr(self, '_runtime', None)
+                if _rt and hasattr(_rt, '_emit_event'):
+                    try:
+                        _rt._emit_event(EventType.TASK_EXECUTION_COMPLETE, {
+                            "agent_id": self.id,
+                            "agent_type": getattr(self, 'agent_type', ''),
+                            "intent_type": intent.intent,
+                            "success": True,
+                            "used_procedure": True,
+                            "compound_dispatched": True,
+                            "steps_dispatched": compound_result.get("steps_dispatched", 0),
+                        })
+                    except Exception:
+                        pass
+
+                self.update_confidence(True)
+
+                return IntentResult(
+                    intent_id=intent.id,
+                    agent_id=self.id,
+                    success=True,
+                    result=compound_result["result"],
+                    confidence=self.confidence,
+                )
+            # Degradation: compound_dispatched=False — use text fallback in normal act() flow
+            decision["llm_output"] = compound_result["result"]
+            decision["compound"] = False  # prevent re-entry
+
         result = await self.act(decision)
         report = await self.report(result)
 

@@ -58,6 +58,9 @@ EVOLUTION_MAX_RETRIES: int = 3              # Max retry attempts for evolution
 MAX_FALLBACK_RESPONSE_CHARS: int = 4000   # Truncation limit for LLM response in fallback events
 MAX_FALLBACK_QUEUE_SIZE: int = 50         # Cap on in-memory fallback queue per dream cycle
 
+# AD-534c: Multi-agent replay dispatch
+COMPOUND_STEP_TIMEOUT_SECONDS: float = 10.0  # Per-step dispatch timeout
+
 
 def format_trust(value: float, precision: int = TRUST_DISPLAY_PRECISION) -> float:
     """Round a trust/score value for display. Centralizes precision."""

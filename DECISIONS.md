@@ -1950,6 +1950,18 @@ Post-Wave 4 codebase scorecard graded the codebase at **B+** overall. All 18 cod
 
 **Status:** AD-534b CLOSED. 68 new tests. 333 total Cognitive JIT tests.
 
+**AD-534c: Multi-Agent Replay Dispatch** *(OSS)*
+
+**Context:** AD-532d extracts compound procedures from multi-agent success clusters, assigning `ProcedureStep.agent_role` per step (e.g., `"security_analysis"`, `"engineering_implementation"`). But at replay time, `_check_procedural_memory()` treats compound procedures identically to single-agent procedures — the entire procedure is replayed as text through the single agent that matched the intent. The `[role]` annotations in replay output are purely decorative. No steps are dispatched to other agents. The dispatch infrastructure exists (IntentBus.send() for targeted delivery, AgentRegistry for capability-based lookup), but no orchestration layer connects compound procedures to multi-agent execution.
+
+| AD | Decision |
+|----|----------|
+| AD-534c | (1) **ProcedureStep.resolved_agent_type** — New field on ProcedureStep (default `""`). Populated at extraction time by `_resolve_agent_roles()` helper, which maps `origin_agent_ids` from the cluster to concrete agent types. Stored alongside `agent_role` — `agent_role` is the functional descriptor (semantic), `resolved_agent_type` is the pool/type key (operational). (2) **Compound detection** — `_check_procedural_memory()` detects compound procedures (2+ steps with non-empty `resolved_agent_type`). Compound procedures route to `_execute_compound_replay()` instead of text-based single-agent replay. (3) **Agent resolution** — `_resolve_step_agent()` resolution chain: `registry.get_by_pool(resolved_agent_type)` → `registry.get_by_capability(agent_role)` → fallback to originating agent. (4) **Zero-token step dispatch** — `_handle_compound_step_replay()` registered as handler for `compound_step_replay` intent. Target agent receives pre-formatted step text via IntentBus.send(), returns acknowledgment. No LLM call — zero tokens for participating agents. (5) **Sequential orchestration** — `_execute_compound_replay()` dispatches steps sequentially with `COMPOUND_STEP_TIMEOUT_SECONDS=10.0`. Collects per-step results. (6) **DRY** — `_format_single_step()` extracted from `_format_procedure_replay()` for reuse in both single-agent and compound paths. (7) **Unavailability fallback** — If any step's agent cannot be resolved, entire compound replay degrades to single-agent text replay (current behavior), logged for near-miss capture (AD-534b). (8) **handle_intent() compound branch** — Recognizes compound replay results and records metrics appropriately. (9) **Deferred to AD-535** — Step-by-step postcondition validation (expected_output/expected_input checking), step-level failure diagnosis, graduated trust requirements per compilation level. |
+
+**Rationale:** Role resolution at extraction time (not replay time) avoids LLM cost during replay. The `resolved_agent_type` field makes dispatch deterministic — compound replay is zero-token for all participating agents, preserving Cognitive JIT's core value proposition. The fallback-to-single-agent on unavailability is conservative: a partially-dispatched compound procedure would be worse than the existing single-agent text replay. Step postcondition validation is deliberately deferred to AD-535 (Graduated Compilation) which introduces per-step execution with validation — that's a deeper change to the replay model, while AD-534c focuses purely on dispatch routing.
+
+**Status:** AD-534c CLOSED. 54 new tests. 387 total Cognitive JIT tests. 4,986 pytest + 149 vitest passing.
+
 ## Notebook Quality Pipeline (AD-550–555)
 
 **AD-550–555: Notebook Quality Pipeline — Deduplication, Consolidation, Convergence** *(OSS)*
