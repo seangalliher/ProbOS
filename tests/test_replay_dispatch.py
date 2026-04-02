@@ -57,6 +57,7 @@ class _MockProcedure:
     steps: list[_MockStep] = field(default_factory=lambda: [_MockStep()])
     preconditions: list[str] = field(default_factory=list)
     postconditions: list[str] = field(default_factory=lambda: ["Task completed"])
+    compilation_level: int = 4  # AD-535: Level 4 (Autonomous) for zero-token replay tests
 
 
 def _make_store_mock(
@@ -75,6 +76,11 @@ def _make_store_mock(
     store.record_applied = AsyncMock()
     store.record_completion = AsyncMock()
     store.record_fallback = AsyncMock()
+    # AD-535: Graduated compilation methods
+    store.record_consecutive_success = AsyncMock(return_value=1)
+    store.reset_consecutive_successes = AsyncMock()
+    store.promote_compilation_level = AsyncMock()
+    store.demote_compilation_level = AsyncMock()
     return store
 
 
@@ -120,7 +126,7 @@ class TestInfrastructureWiring:
             PROCEDURE_HEALTH_DERIVED_APPLIED,
         )
         assert PROCEDURE_MATCH_THRESHOLD == 0.6
-        assert PROCEDURE_MIN_COMPILATION_LEVEL == 1
+        assert PROCEDURE_MIN_COMPILATION_LEVEL == 2  # AD-535: Level 2 minimum for replay
         assert PROCEDURE_MIN_SELECTIONS == 5
         assert PROCEDURE_HEALTH_FALLBACK_RATE == 0.4
         assert PROCEDURE_HEALTH_COMPLETION_RATE == 0.35

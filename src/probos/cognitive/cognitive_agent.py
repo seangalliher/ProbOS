@@ -217,6 +217,33 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             logger.debug("record_applied failed", exc_info=True)
 
+        # AD-535: Trust-tier clamping
+        trust_score = getattr(self, "_trust_score", 0.5)
+        max_level = self._max_compilation_level_for_trust(trust_score)
+        # AD-537: Promoted procedures can reach Level 5 (Expert)
+        if procedure.compilation_level >= 5 and self._procedure_store:
+            try:
+                promo_status = await self._procedure_store.get_promotion_status(procedure.id)
+                max_level = self._max_compilation_level_for_promoted(trust_score, promo_status)
+            except Exception:
+                pass
+        effective_level = min(procedure.compilation_level, max_level)
+
+        # AD-535: Level-based dispatch
+        if effective_level <= 1:
+            # Level 1 (Novice): Should not reach here — find_matching() filters by
+            # min_compilation_level. If it does, fall through to LLM.
+            return None
+
+        elif effective_level == 2:
+            # Level 2 (Guided): LLM + procedure hints
+            return await self._build_guided_decision(procedure, observation, best.get("score", 0))
+
+        elif effective_level == 3:
+            # Level 3 (Validated): Deterministic replay + LLM validation
+            return await self._build_validated_decision(procedure, observation, best.get("score", 0))
+
+        # Level 4+ (Autonomous/Expert): Zero-token replay
         # 8. Execute replay
         try:
             replay_output = self._format_procedure_replay(procedure, best.get("score", 0))
@@ -352,7 +379,7 @@ class CognitiveAgent(BaseAgent):
         return None
 
     async def _execute_compound_replay(
-        self, procedure: Any, text_fallback: str
+        self, procedure: Any, text_fallback: str, compilation_level: int = 4
     ) -> dict:
         """AD-534c: Dispatch compound procedure steps to appropriate agents.
 
@@ -424,16 +451,31 @@ class CognitiveAgent(BaseAgent):
             try:
                 intent_result = await intent_bus.send(intent)
                 if intent_result and intent_result.success:
-                    results.append(intent_result.result or step_text)
+                    step_result_text = intent_result.result or step_text
+                    results.append(step_result_text)
                 else:
                     logger.warning(
                         "AD-534c: Step %d dispatch to '%s' failed. Using text fallback.",
                         step.step_number, target_agent_id,
                     )
+                    step_result_text = step_text
                     results.append(step_text)
             except Exception:
                 logger.debug("AD-534c: Step %d dispatch exception", step.step_number, exc_info=True)
+                step_result_text = step_text
                 results.append(step_text)
+
+            # AD-535: Level 3 per-step postcondition validation
+            if compilation_level == 3 and step.expected_output:
+                step_valid = await self._validate_step_postcondition(
+                    step, step_result_text
+                )
+                if not step_valid:
+                    logger.info(
+                        "Compound step %d validation failed — aborting compound replay",
+                        step.step_number,
+                    )
+                    return {"success": True, "result": text_fallback, "compound_dispatched": False, "compound_aborted": True}
 
         assembled = "\n\n".join(results)
         return {
@@ -466,6 +508,196 @@ class CognitiveAgent(BaseAgent):
             confidence=1.0,
         )
 
+    async def _build_guided_decision(
+        self, procedure: Any, observation: dict, match_score: float
+    ) -> dict:
+        """AD-535 Level 2 (Guided): Call LLM with procedure steps injected as hints.
+
+        The LLM reasons freely but has the learned procedure as scaffolding.
+        ~40% token reduction vs full reasoning from scratch.
+        """
+        hints = self._format_procedure_as_hints(procedure)
+
+        guided_observation = dict(observation)
+        guided_observation["procedure_hints"] = hints
+        guided_observation["procedure_guidance"] = (
+            f"A learned procedure '{procedure.name}' suggests the following approach. "
+            f"Use these steps as guidance but apply your own judgment:\n\n{hints}"
+        )
+
+        decision = await self._decide_via_llm(guided_observation)
+
+        decision["guided_by_procedure"] = True
+        decision["procedure_id"] = procedure.id
+        decision["procedure_name"] = procedure.name
+        decision["compilation_level"] = 2
+        return decision
+
+    def _format_procedure_as_hints(self, procedure: Any) -> str:
+        """AD-535: Format procedure steps as guidance hints for Level 2 (Guided) replay.
+
+        Differs from _format_procedure_replay() — framed as suggestions, not directives.
+        Includes expected_input/output for each step as orientation.
+        """
+        lines = [f"Suggested approach based on prior success ('{procedure.name}'):"]
+        for step in procedure.steps:
+            line = f"  {step.step_number}. {step.action}"
+            if step.expected_input:
+                line += f"\n     Context: {step.expected_input}"
+            if step.expected_output:
+                line += f"\n     Expected result: {step.expected_output}"
+            role = getattr(step, "agent_role", "")
+            if role:
+                line += f"\n     (Typically performed by: {role})"
+            lines.append(line)
+        if procedure.postconditions:
+            lines.append(f"\nSuccess criteria: {procedure.postconditions}")
+        return "\n".join(lines)
+
+    async def _build_validated_decision(
+        self, procedure: Any, observation: dict, match_score: float
+    ) -> dict | None:
+        """AD-535 Level 3 (Validated): Deterministic replay + LLM postcondition validation.
+
+        Execute procedure deterministically (same as Level 4), then call LLM
+        to validate the result against expected outcomes. ~80% token reduction.
+        If validation fails, return None to trigger LLM fallback.
+        """
+        replay_output = self._format_procedure_replay(procedure, match_score)
+
+        validation_passed = await self._validate_replay_postconditions(
+            procedure, replay_output, observation
+        )
+
+        if not validation_passed:
+            self._last_fallback_info = {
+                "type": "validation_failure",
+                "procedure_id": procedure.id,
+                "procedure_name": procedure.name,
+                "score": match_score,
+                "compilation_level": 3,
+            }
+            logger.info(
+                "Level 3 validation failed for procedure %s — falling back to LLM",
+                procedure.name,
+            )
+            return None
+
+        is_compound = any(
+            getattr(step, "resolved_agent_type", "") for step in procedure.steps
+        ) and len(procedure.steps) >= 2
+
+        decision = {
+            "action": "execute",
+            "llm_output": replay_output,
+            "cached": True,
+            "procedure_id": procedure.id,
+            "procedure_name": procedure.name,
+            "compilation_level": 3,
+            "validated": True,
+        }
+        if is_compound:
+            decision["compound"] = True
+            decision["procedure"] = procedure
+
+        return decision
+
+    async def _validate_replay_postconditions(
+        self, procedure: Any, replay_output: str, observation: dict
+    ) -> bool:
+        """AD-535: Validate deterministic replay output against procedure postconditions.
+
+        Uses a small LLM call to check whether the output satisfies expected outcomes.
+        Returns True if validation passes, False otherwise.
+        """
+        import asyncio
+
+        from probos.config import COMPILATION_VALIDATION_TIMEOUT_SECONDS
+
+        validation_context = []
+
+        if procedure.postconditions:
+            if isinstance(procedure.postconditions, list):
+                for pc in procedure.postconditions:
+                    validation_context.append(f"Expected postcondition: {pc}")
+            else:
+                validation_context.append(f"Expected postconditions: {procedure.postconditions}")
+
+        for step in procedure.steps:
+            if step.expected_output:
+                validation_context.append(
+                    f"Step {step.step_number} expected output: {step.expected_output}"
+                )
+            if step.invariants:
+                for inv in step.invariants:
+                    validation_context.append(f"Step {step.step_number} invariant: {inv}")
+
+        if not validation_context:
+            return True
+
+        validation_prompt = (
+            "You are a postcondition validator. Given the following procedure replay output "
+            "and expected outcomes, determine if the output satisfies the expectations.\n\n"
+            f"Procedure: {procedure.name}\n"
+            f"Replay output:\n{replay_output[:2000]}\n\n"
+            f"Expected outcomes:\n" + "\n".join(validation_context) + "\n\n"
+            "Does the output satisfy the expected outcomes? "
+            "Answer ONLY 'YES' or 'NO' followed by a brief reason."
+        )
+
+        try:
+            llm_client = getattr(self, "_llm_client", None)
+            if not llm_client:
+                return True
+
+            response = await asyncio.wait_for(
+                llm_client.generate(validation_prompt, max_tokens=100),
+                timeout=COMPILATION_VALIDATION_TIMEOUT_SECONDS,
+            )
+
+            answer = response.strip().upper()
+            return answer.startswith("YES")
+
+        except (asyncio.TimeoutError, Exception) as exc:
+            logger.warning(
+                "Level 3 validation call failed for procedure %s: %s — passing by default",
+                procedure.name, exc,
+            )
+            return True
+
+    async def _validate_step_postcondition(
+        self, step: Any, actual_output: str
+    ) -> bool:
+        """AD-535: Validate a single step's output against its expected_output.
+
+        Small LLM call. Used at Level 3 during compound replay.
+        """
+        import asyncio
+
+        from probos.config import COMPILATION_VALIDATION_TIMEOUT_SECONDS
+
+        if not step.expected_output:
+            return True
+
+        prompt = (
+            f"Step {step.step_number}: {step.action}\n"
+            f"Actual output: {actual_output[:1000]}\n"
+            f"Expected output: {step.expected_output}\n\n"
+            "Does the actual output satisfy the expected output? YES or NO."
+        )
+
+        try:
+            llm_client = getattr(self, "_llm_client", None)
+            if not llm_client:
+                return True
+            response = await asyncio.wait_for(
+                llm_client.generate(prompt, max_tokens=50),
+                timeout=COMPILATION_VALIDATION_TIMEOUT_SECONDS,
+            )
+            return response.strip().upper().startswith("YES")
+        except Exception:
+            return True  # Fail-open
+
     def _diagnose_procedure_health(
         self, procedure_id: str, procedure_name: str, metrics: dict
     ) -> None:
@@ -489,6 +721,266 @@ class CognitiveAgent(BaseAgent):
                 metrics.get("completion_rate", 0.0),
                 metrics.get("effective_rate", 0.0),
             )
+
+    def _max_compilation_level_for_trust(self, trust_score: float) -> int:
+        """AD-535: Return the maximum compilation level allowed for the given trust score.
+
+        Ensign (trust < 0.5): Levels 1-2 (Novice, Guided)
+        Lieutenant (trust 0.5+): Levels 1-4 (full range)
+        AD-536: Promoted procedures can reach Level 5 (Expert) at Commander+ trust.
+        """
+        from probos.config import (
+            COMPILATION_TRUST_LEVEL_3_MIN,
+            COMPILATION_MAX_LEVEL,
+        )
+        if trust_score < COMPILATION_TRUST_LEVEL_3_MIN:
+            return 2  # Ensign: max Level 2 (Guided)
+        return min(4, COMPILATION_MAX_LEVEL)  # Lieutenant+: max Level 4
+
+    def _max_compilation_level_for_promoted(self, trust_score: float, promotion_status: str) -> int:
+        """AD-536: Level 5 unlock for promoted procedures with Commander+ trust."""
+        from probos.config import TRUST_COMMANDER
+        base = self._max_compilation_level_for_trust(trust_score)
+        if promotion_status == "approved" and trust_score >= TRUST_COMMANDER:
+            return 5  # Expert level unlocked for promoted procedures
+        return base
+
+    # ------------------------------------------------------------------
+    # AD-536: Procedure Promotion Helpers
+    # ------------------------------------------------------------------
+
+    _DEPARTMENT_CHIEFS: dict[str, str] = {
+        "engineering": "laforge",
+        "medical": "bones",
+        "science": "number_one",  # dual-hatted
+        "security": "worf",
+        "operations": "obrien",
+        "bridge": "captain",  # Bridge procedures always go to Captain
+    }
+
+    async def _request_procedure_promotion(self, procedure_id: str) -> dict | None:
+        """AD-536: Request institutional promotion for a proven procedure."""
+        _store = self._procedure_store
+        if not _store:
+            return None
+        try:
+            result = await _store.request_promotion(procedure_id)
+            if result.get("eligible"):
+                await self._announce_promotion_request(procedure_id, result)
+                return result
+            else:
+                logger.debug(
+                    "AD-536: Procedure %s not eligible for promotion: %s",
+                    procedure_id, result.get("reason"),
+                )
+        except Exception as e:
+            logger.debug("AD-536: Promotion request failed: %s", e)
+        return None
+
+    def _route_promotion_approval(self, criticality: str) -> str:
+        """AD-536: Determine approver callsign based on criticality."""
+        from probos.config import PROMOTION_CRITICALITY_CAPTAIN_THRESHOLD
+
+        captain_levels = {"high", "critical"}
+        if PROMOTION_CRITICALITY_CAPTAIN_THRESHOLD == "high":
+            captain_levels = {"high", "critical"}
+        elif PROMOTION_CRITICALITY_CAPTAIN_THRESHOLD == "critical":
+            captain_levels = {"critical"}
+
+        if criticality in captain_levels:
+            return "captain"
+
+        # LOW/MEDIUM → department chief
+        agent_type = getattr(self, "agent_type", "")
+        _rt = getattr(self, "_runtime", None)
+        department = ""
+        if _rt and hasattr(_rt, "ontology") and _rt.ontology:
+            department = _rt.ontology.get_agent_department(agent_type) or ""
+        return self._DEPARTMENT_CHIEFS.get(department, "captain")
+
+    async def _announce_promotion_request(
+        self, procedure_id: str, promotion_result: dict
+    ) -> None:
+        """AD-536: Post promotion request to Ward Room and DM the approver."""
+        _rt = getattr(self, "_runtime", None)
+        if not _rt or not hasattr(_rt, "ward_room") or not _rt.ward_room:
+            return
+
+        criticality = promotion_result.get("criticality", "low")
+        approver = self._route_promotion_approval(criticality)
+        quality = promotion_result.get("quality_metrics", {})
+        proc_name = promotion_result.get("procedure_name", procedure_id[:8])
+        intent_types = promotion_result.get("intent_types", [])
+
+        body = (
+            f"**Procedure Promotion Request**\n\n"
+            f"**Procedure:** {proc_name}\n"
+            f"**Intent Types:** {', '.join(intent_types) if intent_types else 'general'}\n"
+            f"**Description:** {promotion_result.get('procedure_description', 'N/A')}\n"
+            f"**Compilation Level:** {promotion_result.get('compilation_level', 0)}\n"
+            f"**Quality:** {quality.get('effective_rate', 0):.0%} effective over "
+            f"{quality.get('total_completions', 0)} completions\n"
+            f"**Criticality:** {criticality}\n"
+            f"**Recommended Approver:** @{approver}\n\n"
+            f"Use `procedure approve {procedure_id}` to approve."
+        )
+
+        try:
+            agent_type = getattr(self, "agent_type", "")
+            agent_id = getattr(self, "_agent_id", agent_type)
+            callsign = getattr(self, "_callsign", agent_type)
+
+            # Post to appropriate channel
+            department = ""
+            if _rt.ontology:
+                department = _rt.ontology.get_agent_department(agent_type) or ""
+
+            channels = await _rt.ward_room.list_channels()
+            target_channel = None
+            # Critical → Bridge/All Hands, routine → department channel
+            chan_name = "All Hands" if criticality in ("high", "critical") else (department or "All Hands")
+            for ch in channels:
+                if ch.name == chan_name:
+                    target_channel = ch
+                    break
+            if not target_channel and channels:
+                target_channel = channels[0]
+
+            if target_channel:
+                await _rt.ward_room.create_thread(
+                    channel_id=target_channel.id,
+                    author_id=agent_id,
+                    title=f"[Promotion Request] {proc_name}",
+                    body=body,
+                    author_callsign=callsign,
+                )
+
+            # DM the approver
+            approver_id = approver
+            dm_body = (
+                f"Procedure promotion request requires your review: {proc_name}. "
+                f"Quality: {quality.get('effective_rate', 0):.0%} effective over "
+                f"{quality.get('total_completions', 0)} completions. "
+                f"Criticality: {criticality}. Use `procedure approve {procedure_id}` to approve."
+            )
+            try:
+                dm_channel = await _rt.ward_room.get_or_create_dm_channel(
+                    agent_id, approver_id,
+                    callsign_a=callsign, callsign_b=approver,
+                )
+                await _rt.ward_room.create_thread(
+                    channel_id=dm_channel.id,
+                    author_id=agent_id,
+                    title=f"Promotion Review: {proc_name}",
+                    body=dm_body,
+                    author_callsign=callsign,
+                )
+            except Exception:
+                logger.debug("AD-536: Failed to DM approver %s", approver)
+
+        except Exception as e:
+            logger.debug("AD-536: Ward Room announcement failed: %s", e)
+
+    # ------------------------------------------------------------------
+    # AD-537: Teaching Protocol
+    # ------------------------------------------------------------------
+
+    async def _teach_procedure(
+        self,
+        procedure_id: str,
+        target_callsign: str,
+    ) -> bool:
+        """AD-537: Teach a Level 5 Expert procedure to another agent via Ward Room DM.
+
+        Preconditions: Level 5, approved, Commander+ trust, target exists.
+        Returns True on success.
+        """
+        from probos.config import TEACHING_MIN_COMPILATION_LEVEL, TEACHING_MIN_TRUST
+
+        _store = self._procedure_store
+        if not _store:
+            logger.debug("AD-537: No procedure store available for teaching")
+            return False
+
+        # 1. Procedure exists
+        procedure = await _store.get(procedure_id)
+        if not procedure:
+            logger.debug("AD-537: Procedure %s not found", procedure_id)
+            return False
+
+        # 2. Must be Level 5 Expert
+        if procedure.compilation_level < TEACHING_MIN_COMPILATION_LEVEL:
+            logger.debug(
+                "AD-537: Procedure %s at level %d, need %d to teach",
+                procedure_id[:8], procedure.compilation_level,
+                TEACHING_MIN_COMPILATION_LEVEL,
+            )
+            return False
+
+        # 3. Must be institutionally approved
+        promotion_status = await _store.get_promotion_status(procedure_id)
+        if promotion_status != "approved":
+            logger.debug("AD-537: Procedure %s not approved (status: %s)", procedure_id[:8], promotion_status)
+            return False
+
+        # 4. Agent trust must be Commander+
+        _rt = getattr(self, "_runtime", None)
+        agent_type = getattr(self, "agent_type", "")
+        trust_score = 0.5
+        if _rt and hasattr(_rt, "trust_network") and _rt.trust_network:
+            trust_score = _rt.trust_network.get_trust(agent_type)
+        if trust_score < TEACHING_MIN_TRUST:
+            logger.debug("AD-537: Trust %.2f below teaching threshold %.2f", trust_score, TEACHING_MIN_TRUST)
+            return False
+
+        # 5. Ward Room available
+        if not _rt or not hasattr(_rt, "ward_room") or not _rt.ward_room:
+            logger.debug("AD-537: Ward Room not available for teaching")
+            return False
+
+        # 6. Format teaching message
+        quality = await _store.get_quality_metrics(procedure_id)
+        total_comp = quality.get("total_completions", 0) if quality else 0
+        effective_rate = quality.get("effective_rate", 0) if quality else 0
+        steps_text = "\n".join(f"  {s.step_number}. {s.action}" for s in procedure.steps)
+        preconditions_text = "\n".join(f"  - {p}" for p in procedure.preconditions) if procedure.preconditions else "  (none)"
+        postconditions_text = "\n".join(f"  - {p}" for p in procedure.postconditions) if procedure.postconditions else "  (none)"
+
+        callsign = getattr(self, "_callsign", agent_type)
+        agent_id = getattr(self, "_agent_id", agent_type)
+
+        body = (
+            f"**[TEACHING] Procedure: {procedure.name}**\n\n"
+            f"I'm teaching you this procedure because I've validated it through "
+            f"{total_comp} successful executions with {effective_rate:.0%} success rate.\n\n"
+            f"**Description:** {procedure.description}\n\n"
+            f"**Steps:**\n{steps_text}\n\n"
+            f"**Preconditions:**\n{preconditions_text}\n\n"
+            f"**Postconditions:**\n{postconditions_text}\n\n"
+            f"This procedure has been institutionally approved and promoted to Expert level."
+        )
+
+        # 7. Send DM
+        try:
+            dm_channel = await _rt.ward_room.get_or_create_dm_channel(
+                agent_id, target_callsign,
+                callsign_a=callsign, callsign_b=target_callsign,
+            )
+            await _rt.ward_room.create_thread(
+                channel_id=dm_channel.id,
+                author_id=agent_id,
+                title=f"[TEACHING] {procedure.name}",
+                body=body,
+                author_callsign=callsign,
+            )
+            logger.info(
+                "AD-537: Taught procedure '%s' to %s",
+                procedure.name, target_callsign,
+            )
+            return True
+        except Exception as e:
+            logger.debug("AD-537: Teaching DM failed: %s", e)
+            return False
 
     async def perceive(self, intent: Any) -> dict:
         """Package the intent as an observation for the LLM."""
@@ -895,7 +1387,8 @@ class CognitiveAgent(BaseAgent):
         # AD-534c: compound procedure dispatch
         if decision.get("compound") and decision.get("procedure"):
             compound_result = await self._execute_compound_replay(
-                decision["procedure"], decision.get("llm_output", "")
+                decision["procedure"], decision.get("llm_output", ""),
+                compilation_level=decision.get("compilation_level", 4),
             )
 
             if compound_result.get("compound_dispatched"):
@@ -955,6 +1448,66 @@ class CognitiveAgent(BaseAgent):
                         await _store.record_fallback(decision["procedure_id"])
                 except Exception:
                     pass  # Never block intent pipeline for metrics
+
+        # AD-535: Track Level 2 (Guided) procedure association
+        if decision.get("guided_by_procedure") and decision.get("procedure_id"):
+            _store = self._procedure_store
+            if _store:
+                try:
+                    if success:
+                        await _store.record_completion(decision["procedure_id"])
+                    else:
+                        await _store.record_fallback(decision["procedure_id"])
+                except Exception:
+                    pass
+
+        # AD-535: Compilation level promotion/demotion
+        _proc_id_for_promo = decision.get("procedure_id")
+        if _proc_id_for_promo and self._procedure_store:
+            _store = self._procedure_store
+            if success:
+                try:
+                    new_count = await _store.record_consecutive_success(_proc_id_for_promo)
+                    from probos.config import (
+                        COMPILATION_PROMOTION_THRESHOLD,
+                        COMPILATION_MAX_LEVEL,
+                    )
+                    proc = await _store.get(_proc_id_for_promo)
+                    if proc and new_count >= COMPILATION_PROMOTION_THRESHOLD:
+                        _ts = getattr(self, "_trust_score", 0.5)
+                        # AD-536: Check if promoted procedure can reach Level 5
+                        _promo_status = await _store.get_promotion_status(_proc_id_for_promo)
+                        max_allowed = self._max_compilation_level_for_promoted(_ts, _promo_status)
+                        next_level = proc.compilation_level + 1
+                        if next_level <= min(max_allowed, COMPILATION_MAX_LEVEL):
+                            await _store.promote_compilation_level(_proc_id_for_promo, next_level)
+                            logger.info(
+                                "Procedure '%s' promoted to Level %d after %d consecutive successes",
+                                proc.name, next_level, new_count,
+                            )
+                            # AD-536: Check if procedure is eligible for institutional promotion
+                            from probos.config import PROMOTION_MIN_COMPILATION_LEVEL
+                            promo_status = await _store.get_promotion_status(_proc_id_for_promo)
+                            if next_level >= PROMOTION_MIN_COMPILATION_LEVEL and promo_status == "private":
+                                await self._request_procedure_promotion(_proc_id_for_promo)
+                except Exception:
+                    pass
+            else:
+                try:
+                    from probos.config import COMPILATION_DEMOTION_LEVEL
+                    proc = await _store.get(_proc_id_for_promo)
+                    if proc and proc.compilation_level > COMPILATION_DEMOTION_LEVEL:
+                        await _store.demote_compilation_level(
+                            _proc_id_for_promo, COMPILATION_DEMOTION_LEVEL
+                        )
+                        logger.info(
+                            "Procedure '%s' demoted to Level %d after failure",
+                            proc.name, COMPILATION_DEMOTION_LEVEL,
+                        )
+                    else:
+                        await _store.reset_consecutive_successes(_proc_id_for_promo)
+                except Exception:
+                    pass
 
         # AD-534b: Service recovery — re-run LLM on cached execution failure
         llm_decision = None
@@ -1420,6 +1973,9 @@ class CognitiveAgent(BaseAgent):
             parts.append(f"Context: {observation['context']}")
         if observation.get("fetched_content"):
             parts.append(f"Fetched content:\n{observation['fetched_content']}")
+        # AD-535: Include procedure guidance hints for Level 2 (Guided) replay
+        if observation.get("procedure_guidance"):
+            parts.append(f"\n--- Suggested approach ---\n{observation['procedure_guidance']}")
         return "\n".join(parts)
 
     async def _recall_relevant_memories(self, intent: IntentMessage, observation: dict) -> dict:

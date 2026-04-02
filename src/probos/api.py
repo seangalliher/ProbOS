@@ -192,12 +192,12 @@ def create_app(runtime: Any) -> FastAPI:
     from probos.routers import (
         ontology, system, wardroom, wardroom_admin, records, identity,
         agents, journal, skills, acm, assignments, scheduled_tasks,
-        workforce, build, design, chat, counselor,
+        workforce, build, design, chat, counselor, procedures,
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
         agents, journal, skills, acm, assignments, scheduled_tasks,
-        workforce, build, design, chat, counselor,
+        workforce, build, design, chat, counselor, procedures,
     ):
         app.include_router(r.router)
 

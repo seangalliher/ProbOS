@@ -383,6 +383,14 @@ class DreamReport:
     fallback_events_processed: int = 0  # AD-534b: total fallback events processed in dream cycle
     gaps_predicted: int = 0
     contradictions_found: int = 0  # AD-403
+    # AD-537: Observational learning
+    procedures_observed: int = 0
+    observation_threads_scanned: int = 0
+    teaching_dms_processed: int = 0
+    # AD-538: Procedure lifecycle
+    procedures_decayed: int = 0
+    procedures_archived: int = 0
+    dedup_candidates_found: int = 0
 
 
 # ------------------------------------------------------------------

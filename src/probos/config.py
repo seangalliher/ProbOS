@@ -40,7 +40,7 @@ COUNSELOR_TRUST_DRIFT_CONCERN = -0.2  # Significant trust drop
 # Replay-first dispatch thresholds for procedural memory.
 
 PROCEDURE_MATCH_THRESHOLD = 0.6     # Minimum semantic similarity for replay
-PROCEDURE_MIN_COMPILATION_LEVEL = 1  # Minimum Dreyfus level for replay (AD-535 raises this)
+PROCEDURE_MIN_COMPILATION_LEVEL = 2  # AD-535: Minimum Level 2 (Guided) for replay dispatch
 PROCEDURE_MIN_SELECTIONS = 5        # Minimum selections before health diagnosis
 PROCEDURE_HEALTH_FALLBACK_RATE = 0.4    # FIX diagnosis threshold
 PROCEDURE_HEALTH_COMPLETION_RATE = 0.35  # FIX diagnosis (with applied > 0.4)
@@ -60,6 +60,41 @@ MAX_FALLBACK_QUEUE_SIZE: int = 50         # Cap on in-memory fallback queue per 
 
 # AD-534c: Multi-agent replay dispatch
 COMPOUND_STEP_TIMEOUT_SECONDS: float = 10.0  # Per-step dispatch timeout
+
+# AD-535: Graduated compilation
+COMPILATION_PROMOTION_THRESHOLD: int = 3        # Consecutive successes to promote
+COMPILATION_DEMOTION_LEVEL: int = 2              # Level to demote to on failure (Guided)
+COMPILATION_MAX_LEVEL: int = 5                   # Maximum level (AD-537: Level 5 Expert unlocked)
+COMPILATION_VALIDATION_TIMEOUT_SECONDS: float = 15.0  # LLM validation call timeout at Level 3
+COMPILATION_TRUST_LEVEL_2_MIN: float = 0.0       # Ensign+ (any trust)
+COMPILATION_TRUST_LEVEL_3_MIN: float = 0.5       # Lieutenant+ (TRUST_LIEUTENANT)
+COMPILATION_TRUST_LEVEL_4_MIN: float = 0.5       # Lieutenant+ (TRUST_LIEUTENANT)
+
+# AD-536: Procedure Promotion
+PROMOTION_MIN_COMPILATION_LEVEL: int = 4          # Must be Level 4+ to request promotion
+PROMOTION_MIN_TOTAL_COMPLETIONS: int = 10          # Minimum successful completions
+PROMOTION_MIN_EFFECTIVE_RATE: float = 0.7           # Minimum effective_rate
+PROMOTION_REJECTION_COOLDOWN_HOURS: int = 72        # Anti-loop: no re-submit within 72h
+PROMOTION_CRITICALITY_CAPTAIN_THRESHOLD: str = "high"  # "high"/"critical" -> Captain
+PROMOTION_DESTRUCTIVE_KEYWORDS: frozenset[str] = frozenset({
+    "delete", "remove", "destroy", "reset", "drop", "purge", "force", "override",
+})
+
+# AD-537: Observational Learning
+OBSERVATION_MIN_TRUST: float = 0.5               # Only observe agents with trust >= this
+OBSERVATION_MAX_THREADS_PER_DREAM: int = 20       # Cap threads scanned per dream cycle
+OBSERVATION_MIN_DETAIL_SCORE: float = 0.6         # LLM-assessed actionability threshold
+OBSERVATION_WARD_ROOM_LOOKBACK_HOURS: float = 24  # Scan threads from last N hours
+TEACHING_MIN_COMPILATION_LEVEL: int = 5           # Must be Level 5 to teach
+TEACHING_MIN_TRUST: float = 0.85                  # Must be Commander+ trust to teach
+
+# AD-538: Procedure Lifecycle
+LIFECYCLE_DECAY_DAYS: int = 30                  # Unused for this many days → lose 1 compilation level
+LIFECYCLE_ARCHIVE_DAYS: int = 90                # Unused at Level 1 for this many days → archived
+LIFECYCLE_DEDUP_SIMILARITY_THRESHOLD: float = 0.85  # ChromaDB cosine similarity → flag as duplicate
+LIFECYCLE_DEDUP_MAX_CANDIDATES: int = 50        # Max procedures to scan for dedup per dream
+LIFECYCLE_REVALIDATION_LEVEL: int = 2           # Decayed procedures drop to this level (Guided)
+LIFECYCLE_MIN_SELECTIONS_FOR_DECAY: int = 3     # Don't decay procedures that haven't had a fair chance
 
 
 def format_trust(value: float, precision: int = TRUST_DISPLAY_PRECISION) -> float:

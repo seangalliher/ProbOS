@@ -236,6 +236,10 @@ class TestProcedureSchema:
             # AD-533: store and evolution support
             "is_active", "generation", "parent_procedure_ids",
             "is_negative", "superseded_by", "tags",
+            # AD-537: observational learning
+            "learned_via", "learned_from",
+            # AD-538: lifecycle management
+            "last_used_at", "is_archived",
         }
         assert set(d.keys()) == expected_keys
 

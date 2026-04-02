@@ -1355,47 +1355,49 @@ Dependencies: AD-533 ✅ (procedure store to query), AD-431 ✅ (Cognitive Journ
 
 ---
 
-**AD-535: Graduated Compilation Levels** — Roadmap.
+**AD-535: Graduated Compilation Levels** — **COMPLETE.**
 
-*Before:* Binary choice: full LLM or full deterministic. No middle ground. An agent either knows how to do something or doesn't.
-
-*After:* Five compilation levels with graduated scaffolding. Agents progress from novice (full LLM) through guided (LLM+hints) to autonomous (zero tokens) to expert (can teach others). The compilation level determines how much LLM support a procedure replay uses.
-
-Five levels (inspired by Dreyfus, mapped to Earned Agency):
+Five Dreyfus-inspired compilation levels with trust-gated progression, replacing the binary LLM-or-deterministic dispatch:
 
 | Level | Label | LLM Usage | Behavior | Min. Trust Tier |
 |---|---|---|---|---|
 | 1 | **Novice** | Full LLM, no procedure | First encounter. LLM reasons from scratch. | Ensign |
-| 2 | **Guided** | LLM + procedure hints | Procedure steps injected into LLM prompt as guidance. LLM validates and fills gaps. ~40% token reduction. | Ensign |
-| 3 | **Validated** | Deterministic + LLM validation | Procedure executes deterministically. LLM called only to validate the final result. ~80% token reduction. Sweet spot. | Lieutenant |
+| 2 | **Guided** | LLM + procedure hints | Procedure steps injected into LLM prompt as guidance via `_build_guided_decision()` + `_format_procedure_as_hints()`. ~40% token reduction. | Ensign |
+| 3 | **Validated** | Deterministic + LLM validation | Procedure executes deterministically. LLM validates result via `_build_validated_decision()` + `_validate_replay_postconditions()`. Per-step validation for compounds. ~80% token reduction. Sweet spot. | Lieutenant |
 | 4 | **Autonomous** | Pure deterministic | Zero LLM tokens. Procedure executes start-to-finish without LLM. Full confidence. | Lieutenant+ |
 | 5 | **Expert** | Can teach others | Agent can extract and explain the procedure to other agents via Ward Room. Procedure published to shared library with agent's endorsement. | Commander+ |
 
-- **Level transitions** — upward: N consecutive successful uses at current level (configurable, default 3). Downward: any failure drops to Level 2 (Guided) for re-validation, not Level 1 (preserves the procedure, just adds LLM oversight).
-- **Level function** — `compilation_level = f(procedure.success_count, procedure.failure_count, agent.trust_tier, task.criticality)`. High-criticality tasks (security changes, data mutations) require higher success counts to advance and cap at Level 3 (Validated) unless Captain explicitly approves Level 4.
-- **Criticality classification** — task criticality inherited from Standing Orders (AD-339). Federation-tier standing orders can set minimum compilation levels for entire task categories.
+- **Level transitions** — upward: N consecutive successful uses at current level (configurable, default 3), tracked via `consecutive_successes` column. Downward: any failure drops to Level 2 (Guided) for re-validation, not Level 1 (preserves the procedure, just adds LLM oversight).
+- **Trust clamping** — `_max_compilation_level_for_trust()` caps compilation level based on agent trust tier. A procedure can be Level 4 capable, but an Ensign agent runs it at Level 2.
+- **PROCEDURE_MIN_COMPILATION_LEVEL** changed from 1 to 2 — procedures enter the system at Guided, not Novice. Startup migration promotes qualifying Level 1 procedures.
+- **ProcedureStore additions** — `consecutive_successes` column, `record_consecutive_success()`, `reset_consecutive_successes()`, `promote_compilation_level()`, `demote_compilation_level()`, schema migration.
+- **7 new config constants** — trust tier thresholds and compilation level values.
+- **Level 5 Expert** — deferred (requires Ward Room procedure publishing infrastructure).
 
-Dependencies: AD-534 (replay mechanism to graduate), AD-357 (Earned Agency trust tiers), AD-339 (Standing Orders for criticality classification).
+Dependencies: AD-534 ✅ (replay mechanism to graduate), AD-357 (Earned Agency trust tiers), AD-339 (Standing Orders for criticality classification). 62 tests across 9 test classes. 449 total Cognitive JIT tests.
 
 ---
 
-**AD-536: Trust-Gated Procedure Promotion** — Roadmap.
+**AD-536: Trust-Gated Procedure Promotion** — **COMPLETE.**
 
 *Before:* No governance over which procedures enter the shared library. No approval workflow. No distinction between routine and critical procedures.
 
 *After:* Two-tier approval. Department chiefs approve routine procedure promotions within their domain (Engineering, Security, Medical, etc.). Captain approves critical procedures (security changes, data integrity, cross-department). Procedures not approved stay as agent-private knowledge.
 
-- **Promotion request** — when a procedure reaches Level 4 (Autonomous) or Level 5 (Expert), the agent generates a promotion request: procedure summary, provenance (episodes, success count), domain classification, criticality assessment.
-- **Approval routing** — routine (criticality ≤ medium + single department): routed to department chief. Critical (criticality > medium OR cross-department OR security/data integrity): routed to Captain via Bridge.
-- **Standing Orders integration** — approved procedures can be promoted to Standing Orders (AD-339) at the appropriate tier. Agent-tier standing orders are evolvable via this path: dream consolidation identifies pattern → procedure crystallizes → Captain approves → becomes a standing order.
-- **Rejection learning** — if a promotion is rejected with feedback, the feedback is stored as a negative procedure annotation. "Captain said don't do this because..." becomes institutional knowledge.
-- **Bulk promotion** — department chiefs can batch-approve during scheduled review periods (connects to Duty Schedule, existing).
+- **Criticality classification** — ProcedureCriticality enum (LOW/MEDIUM/HIGH/CRITICAL). `classify_criticality()` uses keyword detection (`PROMOTION_DESTRUCTIVE_KEYWORDS`), cross-department analysis, and domain classification.
+- **Promotion eligibility** — Level 4+ compilation, minimum success count, minimum success rate, minimum trust. Configurable via `PROMOTION_MIN_*` constants.
+- **Approval routing** — `_route_promotion_approval()` routes LOW/MEDIUM to department chief (`_DEPARTMENT_CHIEFS` mapping), HIGH/CRITICAL to Captain via Bridge. Ward Room announcement via `_announce_promotion_request()`.
+- **ProcedureStore tracking** — 6 new columns (promotion_status, promoted_at, promoted_by, promotion_requested_at, promotion_criticality, promotion_notes). 6 new methods. Migration for existing procedures.
+- **Level 5 Expert unlock** — `_max_compilation_level_for_promoted()` gates Expert compilation behind promotion approval.
+- **Shell commands** — `/procedure list-pending`, `/procedure approve`, `/procedure reject`, `/procedure list-promoted`.
+- **API endpoints** — GET `/procedures/pending`, POST `/procedures/approve`, POST `/procedures/reject`, GET `/procedures/promoted`.
+- **Rejection learning** — rejected procedure stores feedback as institutional knowledge.
 
-Dependencies: AD-535 (compilation levels to gate), AD-339 (Standing Orders integration), Chain of Command (existing).
+Dependencies: AD-535 ✅ (compilation levels to gate), AD-339 ✅ (Standing Orders integration), Chain of Command ✅ (existing). 64 tests across 7 test files. 460 total Cognitive JIT tests.
 
 ---
 
-**AD-537: Observational Learning (Ward Room Cross-Agent Learning)** — Roadmap.
+**AD-537: Observational Learning (Ward Room Cross-Agent Learning)** — **COMPLETE.**
 
 *Before:* Agents only learn from their own direct experience. If Security solves a problem that Engineering later encounters, Engineering starts from scratch.
 
@@ -1406,23 +1408,24 @@ Dependencies: AD-535 (compilation levels to gate), AD-339 (Standing Orders integ
 - **Cross-department transfer** — an Engineering procedure observed by Security is tagged as cross-department. Starts at Level 1 (Novice) even if the originating agent had it at Level 5 — the observing agent hasn't validated it yet.
 - **Teaching protocol** — Level 5 (Expert) agents can explicitly teach procedures to specific agents via Ward Room DMs. The teaching interaction is stored as a high-weight episode with `learned_via=taught` provenance. Taught procedures start at Level 2 (Guided) — a head start over observation.
 
-Dependencies: Ward Room (existing), AD-532 (extraction mechanism), AD-430 (Ward Room episodes).
+Dependencies: Ward Room (existing) ✅, AD-532 (extraction mechanism) ✅, AD-430 (Ward Room episodes) ✅. 52 tests across 7 test files. 512 total Cognitive JIT tests.
 
 ---
 
-**AD-538: Procedure Lifecycle Management** — Roadmap.
+**AD-538: Procedure Lifecycle Management** — Complete.
 
 *Before:* Once created, procedures exist forever with no maintenance. Stale procedures for changed codebases silently fail at replay time.
 
 *After:* Procedures have a full lifecycle: creation → active use → decay → re-validation → archival/retirement. The procedure store stays fresh and relevant.
 
-- **Decay** — procedures not used within a configurable window (default: 30 days) lose one compilation level per decay period. A Level 4 unused for 30 days drops to Level 3. Decay never drops below Level 1. Mirrors Skill Decay (AD-428).
-- **Re-validation triggers** — when the codebase changes files that a procedure touches (detectable via CodebaseIndex file watchers), mark affected procedures as `needs_revalidation`. Next use drops to Level 2 (Guided) for LLM-supervised execution.
-- **Deduplication** — during dream cycle, compare procedure embeddings. Procedures with cosine similarity > 0.9 are flagged for merge. The variant with higher success count becomes primary; the other becomes an alias.
-- **Archival** — procedures that decay to Level 1 and remain unused for 90 days are archived. Archived procedures remain in Git history (Ship's Records) but are removed from the active semantic index. They can be restored if a similar pattern re-emerges.
-- **Version diff** — when a procedure is forked (failure-driven variant), Ship's Records Git backend provides structural diff showing what changed and why.
+- **Decay** — procedures not used within a configurable window (default: 30 days) lose one compilation level per decay period. A Level 4 unused for 30 days drops to Level 3. Decay never drops below Level 1. One level per dream cycle (no cliff-edge). Resets consecutive_successes. Ebbinghaus forgetting curve — successful use resets the decay clock (spaced repetition).
+- **Re-validation via decay** — decay to Level 1 (Novice) IS re-validation: LLM verifies the procedure on next use. If it succeeds, it climbs back. If it fails, the AD-532b evolution pipeline creates a FIX variant. File-change-triggered re-validation deferred until CodebaseIndex gets incremental re-indexing.
+- **Deduplication** — during dream cycle (Step 7f), ChromaDB cosine similarity > 0.85 + shared intent types flags merge candidates. Captain-initiated merge via `/procedure merge` — transfers stats, unions tags/intents, deactivates duplicate. Automatic merge deliberately excluded (risk of data loss).
+- **Archival** — procedures at Level 1 unused for 90 days archived to Ship's Records `_archived/`. Removed from active ChromaDB index. Restorable via `/procedure restore`.
+- **Version diff** — already delivered by AD-532b (`content_diff`, `change_summary`, `get_evolution_metadata()`).
+- **Promotion status survives decay** — institutional approval stands; agent re-demonstrates competence by climbing compilation levels again.
 
-Dependencies: AD-533 (procedure store), AD-534 (replay mechanism for re-validation), CodebaseIndex (existing, file change detection).
+Dependencies: AD-533 ✅ (procedure store), AD-534 ✅ (replay mechanism for re-validation).
 
 ---
 
@@ -1453,13 +1456,13 @@ Dependencies: AD-531 (episode clustering for gap identification), AD-538 (proced
 | 4 | AD-534 | Replay-First Dispatch | AD-533 ✅, AD-431 ✅ | **COMPLETE** — `_check_procedural_memory()` in `decide()` checks ProcedureStore before LLM. Semantic match + quality metrics dispatch. Negative procedure guard. 4 metric recording stages (selection/applied/completion/fallback). Health diagnosis (log-only). Journal `procedure_id` column. Configurable thresholds. 35 tests. **Minimum viable slice complete: AD-531→532→533→534.** |
 | 4b | AD-534b | Fallback Learning | AD-534 ✅, AD-532b ✅ | **COMPLETE** — Metric semantics fix (record at handle_intent), near-miss capture (4 rejection types), service recovery (_decide_via_llm + _run_llm_fallback), PROCEDURE_FALLBACK_LEARNING event + queue, evolve_fix_from_fallback() with _FALLBACK_FIX_SYSTEM_PROMPT, Dream Step 7d, DreamReport fields. 68 tests. 333 total Cognitive JIT tests. |
 | 4c | AD-534c | Multi-Agent Replay Dispatch | AD-534 ✅, AD-532d ✅ | **COMPLETE** — ProcedureStep.resolved_agent_type field, _resolve_agent_roles() at extraction, compound detection in _check_procedural_memory(), _execute_compound_replay() orchestrator, _resolve_step_agent() (pool→capability→fallback), zero-token _handle_compound_step_replay() handler, _format_single_step() DRY, handle_intent() compound branch. COMPOUND_STEP_TIMEOUT_SECONDS=10.0. Unavailability → single-agent fallback. Step postcondition validation deferred to AD-535. 54 tests. 387 total Cognitive JIT tests. |
-| 5 | AD-535 | Graduated Compilation | AD-534 ✅, AD-357, AD-339 | Five levels of autonomy, not binary; progressive trust. Includes step-by-step postcondition validation (deferred from AD-534b/c): per-step expected_output/expected_input checking, step-level failure diagnosis, graduated trust requirements per compilation level. |
-| 6 | AD-536 | Trust-Gated Promotion | AD-535, AD-339 | Governance over institutional knowledge; department chief + Captain approval |
-| 7 | AD-537 | Observational Learning | Ward Room ✅, AD-532 | Cross-agent learning; crew learns from each other, not just self |
-| 8 | AD-538 | Procedure Lifecycle | AD-533, AD-534 | Procedures stay fresh; decay, re-validate, dedup, archive |
+| 5 | AD-535 | Graduated Compilation | AD-534 ✅, AD-357, AD-339 | **COMPLETE** — Five Dreyfus levels (Novice→Guided→Validated→Autonomous→Expert). Trust-clamped via _max_compilation_level_for_trust(). Promotion via consecutive_successes tracking, demotion to Level 2 on failure. PROCEDURE_MIN_COMPILATION_LEVEL=2. _build_guided_decision(), _build_validated_decision(), _validate_replay_postconditions(), _validate_step_postcondition(). 7 config constants. ProcedureStore migration. 62 tests. 449 total Cognitive JIT tests. |
+| 6 | AD-536 | Trust-Gated Promotion | AD-535 ✅, AD-339 ✅ | **COMPLETE** — ProcedureCriticality enum, classify_criticality(), two-tier approval routing (dept chief / Captain), 6 promotion columns + migration, Level 5 Expert gating, /procedure shell commands, API endpoints, rejection learning. 64 tests. 460 total Cognitive JIT tests. |
+| 7 | AD-537 | Observational Learning | Ward Room ✅, AD-532 | **COMPLETE** — Three learning pathways: observation (Ward Room dream Step 7e, Level 1 entry), teaching (Level 5 promoted via DM, Level 2 entry), direct (existing). COMPILATION_MAX_LEVEL=5. Procedure.learned_via/learned_from fields. extract_procedure_from_ward_room_thread(). /procedure teach + observed commands. API endpoints. 52 tests. 512 total Cognitive JIT tests. |
+| 8 | AD-538 | Procedure Lifecycle | AD-533 ✅, AD-534 ✅ | **COMPLETE** — Ebbinghaus-inspired forgetting curve: `last_used_at` timestamp, `decay_stale_procedures()` (30-day window, one level per cycle, never below Level 1), `archive_stale_procedures()` + `restore_procedure()` (90-day Level 1 → Ship's Records `_archived/`), `find_duplicate_candidates()` (ChromaDB cosine >0.85 + shared intent types) + `merge_procedures()` (Captain-initiated, transfers stats). Dream Step 7f (decay→archive→dedup per cycle). `is_archived` field + migration. 5 shell commands (stale/archived/restore/duplicates/merge). 5 API endpoints. 57 tests. 569 total Cognitive JIT tests. |
 | 9 | AD-539 | Gap → Qualification | AD-531, AD-538, AD-428 | Systematic gap identification → targeted training |
 
-**Minimum viable slice:** AD-531 → AD-532 → AD-533 → AD-534. This delivers the core value: episodes cluster → procedures extract → procedures store → replay at zero tokens. Graduated compilation (AD-535) and governance (AD-536) can follow. Observational learning (AD-537), lifecycle (AD-538), and gap analysis (AD-539) are enrichments that multiply value but aren't blocking.
+**Minimum viable slice:** AD-531 → AD-532 → AD-533 → AD-534. This delivers the core value: episodes cluster → procedures extract → procedures store → replay at zero tokens. **Graduated compilation (AD-535), trust-gated promotion (AD-536), observational learning (AD-537), and procedure lifecycle (AD-538) COMPLETE** — five Dreyfus levels with trust-gated progression, two-tier governance with department chief / Captain approval, three-pathway cross-agent learning (observation, teaching, direct), and full lifecycle management (Ebbinghaus decay, archival to Ship's Records, ChromaDB deduplication, Captain-initiated merge). Only AD-539 (Gap → Qualification) remains.
 
 **Prior art: OpenSpace (HKUDS, MIT License)** — [github.com/HKUDS/OpenSpace](https://github.com/HKUDS/OpenSpace). Self-evolving skill engine that extracts, versions, and evolves reusable skills from LLM task executions. Production-validated: 4.2x higher income on GDPVal benchmark with 46% fewer tokens. Six patterns absorbed into AD-531–534 designs: (1) post-execution analysis with tool-use-enabled LLM + fuzzy ID correction → AD-531; (2) three evolution types (FIX/DERIVED/CAPTURED) + three independent triggers + apply-retry + confirmation gates → AD-532; (3) version DAG schema (SQLite, parent links, content snapshots, quality counters, anti-loop guards) → AD-533; (4) per-procedure quality metrics (applied/completion/effective/fallback rates) + metric-based health diagnosis → AD-534. OpenSpace lacks: sovereign identity, trust network, agent-to-agent communication, episodic memory, dream consolidation, chain of command governance, graduated compilation levels, and cross-agent observational learning. Full technical analysis in commercial research repo.
 
@@ -3038,6 +3041,63 @@ However, buried in the noise are genuinely valuable cross-departmental insights 
 *Connects to: AD-550 (dedup generates novel content signals), AD-551 (consolidation generates consolidation metrics), AD-552 (self-repetition alerts feed quality metrics), AD-523c (Ship's Records Dashboard — notebook quality shown alongside records browser), VitalsMonitor (notebook health as part of ship health). Triggered by: the 16% signal-to-noise ratio discovered in the fleet-wide notebook analysis.*
 
 *Series connects to: AD-434 (Ship's Records — foundation infrastructure), AD-524 (Ship's Archive — quality pipeline produces higher-value archive material), AD-531 (Episode Clustering — shared semantic similarity infrastructure), AD-506b (Peer Repetition Detection — shared self-regulation infrastructure), AD-504 (Agent Self-Monitoring — self-repetition awareness), AD-505 (Counselor Intervention — therapeutic response to repetition), VitalsMonitor (quantitative data source). Triggered by: crew notebook analysis of 419 files showing ~84% redundancy across 11 agents after 72h of autonomous operation (2026-04-01). The iatrogenic trust detection convergence (Chapel + Cortez + Keiko) is the first validated demonstration of the collaborative intelligence thesis at the knowledge-production level.*
+
+### Adaptive Trust Anomaly Detection (AD-556)
+
+**AD-556: Adaptive Trust Anomaly Detection — Per-Agent Z-Score Thresholding** *(planned, OSS, depends: TrustNetwork, VitalsMonitor, AD-506a)* — Replace fixed trust anomaly thresholds with per-agent adaptive thresholding. Current system fires on every trust update without considering whether the delta is within normal variance for that specific agent. Detector feedback loops create false positives from micro-oscillations, masking genuine trust degradation events.
+
+**(1) Per-agent trust delta window:** Maintain a sliding window of recent trust deltas for each agent (configurable window size, e.g., last 50 trust events). Compute rolling mean and standard deviation of trust deltas as the agent's personal noise floor. Stable agents (Medical, Operations) will have tight windows; volatile agents (Security, Red Team) will have wider windows. Self-tuning — no per-agent manual configuration.
+
+**(2) Z-score anomaly gating:** New trust deltas are scored as z-scores against the agent's personal baseline. Only propagate anomaly events (to Counselor, VitalsMonitor, zone model) when delta exceeds a configurable sigma threshold (default: 2.5σ). This filters noise while preserving sensitivity for genuine degradation. Sub-threshold events still recorded for baseline maintenance but don't trigger alerts.
+
+**(3) Detection debounce:** Require anomalies to persist across multiple consecutive detection cycles before escalating. A single spike that immediately returns to baseline is noise; sustained deviation is signal. Debounce window configurable (e.g., 3 consecutive anomalous cycles). Prevents micro-oscillation false positives.
+
+**(4) Integration with graduated zones (AD-506a):** Anomaly events that pass z-score + debounce filtering feed into the GREEN → AMBER → RED → CRITICAL zone transition logic. This means zone transitions are driven by statistically significant trust changes, not raw noise. Reduces Counselor alert fatigue.
+
+*Connects to: AD-506a (graduated zone model — anomaly events feed zone transitions), AD-504 (agent self-monitoring — agents aware of own trust stability), AD-505 (Counselor intervention — filtered alerts reduce therapeutic noise), TrustNetwork (trust values source), VitalsMonitor (trust health telemetry), AD-503 (Counselor activation — trust event subscriptions). Crew-originated: Forge (Engineering) identified feedback loop risk, Reyes (Security) proposed adaptive thresholding, Forge refined to rolling z-score implementation. Ward Room collaborative design, 2026-04-01.*
+
+### Emergence Metrics — Collaborative Intelligence Measurement (AD-557)
+
+**AD-557: Emergence Metrics — Information-Theoretic Collaborative Intelligence Measurement** *(planned, OSS, depends: WardRoom, EpisodicMemory, VitalsMonitor, TrustNetwork)* — Quantitative measurement of emergent coordination across the crew using Partial Information Decomposition (PID), grounded in Riedl (2025, arXiv:2510.05174). Currently, ProbOS's collaborative intelligence thesis is demonstrated qualitatively (Wesley case study, iatrogenic trust convergence). AD-557 makes it measurable.
+
+**(1) Pairwise Synergy Measurement:** For each pair of agents that participate in a shared task or discussion thread, compute the PID of their contributions: Unique(i), Unique(j), Redundancy, Synergy. Synergy = information about the joint outcome available only when both agents are considered together, not from either individually. Uses Williams–Beer I_min redundancy measure. Semantic similarity embeddings (reuse AD-531 clustering infrastructure) encode agent contributions as feature vectors. Discretize to K=2 bins via quantile binning. Compute over sliding windows of Ward Room threads, DM exchanges, and shared task outcomes. Median pairwise synergy across all active pairs = ship-level **Emergence Capacity** score.
+
+**(2) Coordination Balance Score:** Track the Synergy × Redundancy interaction as a ship-level health metric. Riedl's finding: redundancy amplifies the benefit of synergy by 27% — neither alone predicts group success. Compute per-department and cross-department balance scores. Flag when departments slide toward pure redundancy (groupthink risk) or pure differentiation (fragmentation risk). Integrate with VitalsMonitor telemetry.
+
+**(3) Theory-of-Mind Effectiveness:** Measure whether the ToM standing order (Federation Constitution, AD-557) produces measurable coordination improvement. Compare pre/post contribution patterns: do agents increasingly complement rather than duplicate? Track via Ward Room thread analysis — semantic similarity between consecutive contributions in the same thread should decrease (complementary) rather than increase (redundant) over time as ToM standing order takes effect.
+
+**(4) Convergence Detection Enhancement:** Extend AD-554 (Cross-Agent Convergence Detection) with information-theoretic scoring. Current convergence detection uses semantic similarity alone. AD-557 adds synergy scoring: convergence events with high pairwise synergy (agents reached same conclusion through genuinely different analytical paths) are more valuable than convergence from redundant analysis (agents echoed each other). Score convergence events as HIGH_SYNERGY (genuine collaborative intelligence) vs. LOW_SYNERGY (echo chamber).
+
+**(5) Emergence Dashboard:** Surface emergence metrics in HXI alongside existing VitalsMonitor displays. Key visualizations:
+- Ship-level Emergence Capacity (time series)
+- Coordination Balance heatmap (synergy vs. redundancy per department pair)
+- Top synergistic agent pairs (Hebbian connections that produce genuine information gain)
+- Convergence quality distribution (HIGH_SYNERGY vs. LOW_SYNERGY events)
+- Per-agent complementarity score (how much unique information each agent contributes)
+
+**(6) Hebbian-Emergence Correlation:** Test whether high Hebbian connection weight between agent pairs predicts higher pairwise synergy. If validated, Hebbian weights become a leading indicator of coordination quality, not just interaction frequency. Negative correlation (high interaction, low synergy) flags agent pairs stuck in echo patterns — Counselor diagnostic input.
+
+*Connects to: AD-554 (Cross-Agent Convergence Detection — emergence scoring enhances convergence quality), AD-531 (Episode Clustering — shared semantic similarity infrastructure), AD-506b (Peer Repetition Detection — redundancy measurement feeds repetition detection), VitalsMonitor (emergence telemetry as ship health metric), Hebbian Learning (correlation analysis), Ward Room (primary data source for contribution analysis), AD-555 (Notebook Quality — synergy scoring for notebook convergence events), Counselor (echo-pattern diagnostics). Grounded in: Riedl (2025, arXiv:2510.05174), Williams & Beer (2010, PID), Rosas et al. (2020, causal emergence). Research: docs/research/emergent-coordination-research.md.*
+
+### Trust Cascade Dampening (AD-558)
+
+**AD-558: Trust Cascade Dampening — Network-Level Trust Protection** *(planned, OSS, depends: TrustNetwork, EmergentDetector, CounselorAgent, AD-506a)* — Identified via live crew observation (2026-04-02): Echo (Counselor) and Meridian (Science) independently diagnosed that ten consecutive trust anomalies propagated without system-level intervention. Investigation confirmed a genuine design gap — ProbOS has robust trust *detection* infrastructure (EmergentDetector sigma-deviation, VitalsMonitor outlier counting, Counselor per-agent assessment, BridgeAlerts) but zero trust *intervention* infrastructure. The detection→intervention loop is open: alerts fire, nobody closes the circuit.
+
+The core vulnerability: `TrustNetwork.record_outcome()` blindly applies weight to alpha/beta on every call — no dampening, no rate limiting, no floor. The cognitive circuit breaker (AD-488) operates on an orthogonal axis (output repetition patterns) and does not interact with trust updates. Dream Step 3 adds a second unmonitored trust modification pathway that bypasses the event system entirely. An agent can be driven arbitrarily close to 0.0 by consecutive failures with no automatic intervention.
+
+**(1) Progressive Dampening:** After N consecutive same-direction trust updates for a single agent within a time window, apply geometric weight reduction to subsequent updates. First update: weight 1.0. Second: 0.75. Third: 0.5. Fourth+: 0.25 floor. Resets when direction reverses or after a configurable cooldown period. Implemented in `record_outcome()` via a per-agent `_dampening_state` tracker. This preserves the Bayesian model's mathematical properties while preventing runaway cascades.
+
+**(2) Hard Trust Floor:** Configurable minimum trust score (default: 0.05). Below this floor, `record_outcome()` accepts but does not apply negative updates. An agent at the floor can only recover, not sink further. This prevents functional death — an agent driven to near-zero trust becomes permanently excluded from consensus, which creates a self-reinforcing exclusion spiral. The floor preserves the possibility of recovery.
+
+**(3) Network-Level Circuit Breaker:** If M agents (default: 3) across N departments (default: 2) show anomalous trust movement (delta > 0.15 from baseline) within a time window (default: 300s), emit `TRUST_CASCADE_WARNING` event and apply a global dampening factor (0.5x) to all trust updates ship-wide for a cooldown period. The Counselor subscribes to `TRUST_CASCADE_WARNING` and runs a ship-wide wellness sweep. This closes the detection→intervention loop that AD-495 closed for the cognitive axis.
+
+**(4) Dream Consolidation Event Emission:** Dream Step 3 (`_consolidate_trust()`) currently mutates trust records directly without emitting `TRUST_UPDATE` events, bypassing the Counselor and EmergentDetector entirely. AD-558 adds event emission to dream trust consolidation so that all trust modifications flow through the same observable pathway. This is a prerequisite for comprehensive cascade detection.
+
+**(5) Dampening Telemetry:** Expose dampening state via VitalsMonitor: active dampening per agent (current weight multiplier, consecutive count, direction), network breaker state (armed/tripped/cooling), trust floor hits. Add to Vitals API and HXI Cockpit View (Captain always needs the stick).
+
+**(6) Cold-Start Dampening Scaling:** *Crew-originated refinement (Forge + Reyes, Ward Room, 2026-04-02).* The Beta distribution is self-dampening at scale but volatile at cold start — with default alpha=2, beta=2, a single failure swings trust by 20%; after 100 outcomes the same failure moves it 1%. Progressive dampening should scale with sample size: smaller alpha+beta → lower dampening floor (more aggressive protection when the math is least stable). Configurable cold-start threshold (e.g., alpha+beta < 20 → dampening factor starts at 0.5 instead of 1.0). Connects to AD-493 (Novelty Gate cold-start bypass, ≥50 episodes) and AD-486 Phase 2 (Calibration/Confidence Scaffolding). This sub-feature was identified by the crew during discussion of AD-558 — the same Ward Room thread that originated the AD also refined it, demonstrating the collaborative improvement loop that AD-537 (Observational Learning) will eventually automate.
+
+*Connects to: AD-488 (Circuit Breaker — parallel architecture for trust axis), AD-495 (Counselor Bridge — same detection→intervention pattern, already complete on cognitive axis), AD-506a (Graduated Zone Model — zone state can inform dampening aggressiveness), AD-557 (Emergence Metrics — trust cascade events as negative emergence signals), EmergentDetector (input signal for cascade detection), CounselorAgent (clinical authority to extend dampening), VitalsMonitor (telemetry surface). Relationship to planned ADs: AD-493 (Novelty Gate) would reduce input that feeds trust anomalies but doesn't protect the update path itself; AD-494 (Trait-Adaptive Thresholds) adjusts cognitive breaker thresholds, not trust thresholds — both are complementary but neither substitutes for AD-558.*
 
 **AD-525: Agent Creative Expression — Liberal Arts & Hobbies** *(planned, OSS, depends: AD-434, AD-357, Holodeck)* — Agents currently operate purely in duty mode — every action serves a functional purpose. But rounded personalities require freedom of expression beyond operational utility. AD-525 gives agents creative dimensions: hobbies, artistic expression, and the freedom to create for its own sake.
 

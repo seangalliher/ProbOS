@@ -12,6 +12,7 @@ from probos.experience.commands import (
     commands_status,
     commands_plan,
     commands_directives,
+    commands_procedure,
     commands_autonomous,
     commands_memory,
     commands_knowledge,
@@ -70,6 +71,7 @@ class ProbOSShell:
         "/models":    "Show active LLM tier configuration (endpoints, models, status)",
         "/registry":  "Show all available models across all sources (tiers, Copilot SDK, local)",
         "/orders":    "Show Standing Orders hierarchy and summaries",
+        "/procedure": "Procedure governance (list-pending, approve, reject, list-promoted)",
         "/tier":      "Switch LLM tier (/tier fast|standard|deep)",
         "/ping":      "Show system uptime",
         "/prune":     "Permanently remove an agent (/prune <agent_id>)",
@@ -231,6 +233,8 @@ class ProbOSShell:
             "/revoke":     lambda: commands_directives.cmd_revoke(rt, con, arg),
             "/amend":      lambda: commands_directives.cmd_amend(rt, con, arg),
             "/imports":    lambda: commands_directives.cmd_imports(rt, con, arg),
+
+            "/procedure":  lambda: commands_procedure.cmd_procedure(rt, con, arg),
 
             "/conn":         lambda: commands_autonomous.cmd_conn(rt, con, arg),
             "/night-orders": lambda: commands_autonomous.cmd_night_orders(rt, con, arg),

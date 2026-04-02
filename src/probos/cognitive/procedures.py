@@ -83,6 +83,10 @@ class Procedure:
     is_negative: bool = False  # anti-pattern flag (AD-532c)
     superseded_by: str = ""  # ID of procedure that replaced this one (AD-532b)
     tags: list[str] = field(default_factory=list)  # domain, agent_type, etc.
+    learned_via: str = "direct"  # "direct" | "observational" | "taught" (AD-537)
+    learned_from: str = ""  # callsign of the agent observed/taught from (AD-537)
+    last_used_at: float = 0.0    # timestamp of last replay selection (AD-538)
+    is_archived: bool = False     # archived (removed from active index) (AD-538)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -107,6 +111,10 @@ class Procedure:
             "is_negative": self.is_negative,
             "superseded_by": self.superseded_by,
             "tags": self.tags,
+            "learned_via": self.learned_via,
+            "learned_from": self.learned_from,
+            "last_used_at": self.last_used_at,
+            "is_archived": self.is_archived,
         }
 
     @classmethod
@@ -135,6 +143,10 @@ class Procedure:
             is_negative=data.get("is_negative", False),
             superseded_by=data.get("superseded_by", ""),
             tags=data.get("tags", []),
+            learned_via=data.get("learned_via", "direct"),
+            learned_from=data.get("learned_from", ""),
+            last_used_at=data.get("last_used_at", 0.0),
+            is_archived=data.get("is_archived", False),
         )
 
 
@@ -497,6 +509,149 @@ async def extract_procedure_from_cluster(
 
     except Exception as e:
         logger.debug("Procedure extraction failed (non-critical): %s", e)
+        return None
+
+
+# ------------------------------------------------------------------
+# Observational extraction (AD-537)
+# ------------------------------------------------------------------
+
+_OBSERVATION_SYSTEM_PROMPT = """\
+You are an observational learning engine. You analyze a Ward Room discussion
+between agents and determine if it contains actionable procedural knowledge
+that an observer could learn from.
+
+Your task has TWO parts:
+
+**Part 1 — Detail Assessment:**
+Score the discussion's actionability from 0.0 to 1.0:
+- 0.0: Pure opinion, no actionable steps
+- 0.3: Mentions a solution but lacks specifics
+- 0.6: Clear problem → solution with some reproducible steps
+- 0.8: Detailed, step-by-step walkthrough that someone could follow
+- 1.0: Complete procedure with inputs, outputs, and edge cases
+
+**Part 2 — Procedure Extraction (only if detail_score >= 0.6):**
+Extract the procedure from the observer's perspective — what *I* learned
+from watching this discussion.
+
+Output ONLY valid JSON matching this schema:
+{
+  "detail_score": 0.8,
+  "name": "short human-readable label",
+  "description": "what this procedure accomplishes. Include: Observed from {author}'s discussion about {topic}.",
+  "steps": [
+    {
+      "step_number": 1,
+      "action": "what to do",
+      "expected_input": "state before this step",
+      "expected_output": "state after this step",
+      "fallback_action": "what to do if this step fails",
+      "invariants": ["what must remain true"]
+    }
+  ],
+  "preconditions": ["what must be true before starting"],
+  "postconditions": ["what must be true when done"]
+}
+
+If detail_score < 0.6, return ONLY: {"detail_score": 0.3, "error": "insufficient_detail"}
+
+Rules:
+- This is READ-ONLY observation. Do not modify, summarize, or reinterpret the discussion.
+- The observer is learning from another agent's account [observed], not from direct experience.
+- Steps should be deterministic and replayable without LLM assistance.
+- Frame the procedure from the observer's perspective.
+"""
+
+
+async def extract_procedure_from_observation(
+    thread_content: str,
+    observer_agent_type: str,
+    author_callsign: str,
+    author_trust: float,
+    llm_client: Any,
+    is_teaching: bool = False,
+) -> Procedure | None:
+    """Extract a procedure from a Ward Room thread observation.
+
+    AD-537: Observational learning — agents learn from Ward Room discussions.
+    When is_teaching=True (Level 5 teaching DM), sets learned_via="taught"
+    and compilation_level=2, skipping detail_score threshold.
+
+    Returns None if extraction fails or detail is insufficient.
+    """
+    from probos.config import OBSERVATION_MIN_DETAIL_SCORE
+
+    try:
+        from probos.types import LLMRequest
+
+        user_prompt = (
+            "=== READ-ONLY WARD ROOM DISCUSSION (do not modify or reinterpret) ===\n"
+            f"{thread_content}\n"
+            "=== END READ-ONLY DISCUSSION ===\n\n"
+            f"Observer: {observer_agent_type}\n"
+            f"Author: {author_callsign} (trust: {author_trust:.2f})\n\n"
+            "Analyze this discussion for actionable procedural knowledge. "
+            "Score the detail level, and if sufficient, extract a procedure "
+            "from the observer's perspective."
+        )
+
+        request = LLMRequest(
+            prompt=user_prompt,
+            system_prompt=_OBSERVATION_SYSTEM_PROMPT,
+            tier="standard",
+            temperature=0.0,
+            max_tokens=2048,
+        )
+        response = await llm_client.complete(request)
+
+        text = response.content.strip()
+        match = _FENCE_RE.search(text)
+        if match:
+            text = match.group(1).strip()
+
+        data = json.loads(text)
+
+        if "error" in data:
+            logger.debug("Observation extraction declined: %s", data["error"])
+            return None
+
+        detail_score = data.get("detail_score", 0.0)
+        min_detail = OBSERVATION_MIN_DETAIL_SCORE
+
+        # Teaching DMs skip detail threshold — always detailed enough
+        if not is_teaching and detail_score < min_detail:
+            logger.debug(
+                "Observation detail too low (%.2f < %.2f), skipping",
+                detail_score, min_detail,
+            )
+            return None
+
+        steps = _build_steps_from_data(data)
+
+        learned_via = "taught" if is_teaching else "observational"
+        comp_level = 2 if is_teaching else 1
+
+        procedure = Procedure(
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            steps=steps,
+            preconditions=data.get("preconditions", []),
+            postconditions=data.get("postconditions", []),
+            intent_types=[],
+            origin_cluster_id="",
+            origin_agent_ids=[observer_agent_type],
+            provenance=[],
+            extraction_date=time.time(),
+            evolution_type="CAPTURED",
+            compilation_level=comp_level,
+            learned_via=learned_via,
+            learned_from=author_callsign,
+        )
+        return procedure
+
+    except Exception as e:
+        logger.debug("Observation extraction failed (non-critical): %s", e)
         return None
 
 

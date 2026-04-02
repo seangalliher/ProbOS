@@ -19,6 +19,7 @@ from probos.cognitive.episode_clustering import cluster_episodes
 from probos.cognitive.gap_predictor import predict_gaps
 from probos.cognitive.procedures import (
     extract_procedure_from_cluster,
+    extract_procedure_from_observation,
     extract_compound_procedure_from_cluster,
     extract_negative_procedure_from_cluster,
     evolve_fix_procedure,
@@ -35,6 +36,11 @@ from probos.config import (
     PROCEDURE_MATCH_THRESHOLD,
     REACTIVE_COOLDOWN_SECONDS,
     PROACTIVE_SCAN_INTERVAL_SECONDS,
+)
+from probos.config import (  # AD-537: observation config
+    OBSERVATION_MAX_THREADS_PER_DREAM,
+    OBSERVATION_MIN_TRUST,
+    OBSERVATION_WARD_ROOM_LOOKBACK_HOURS,
 )
 from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — dream consolidation mutates trust
 from probos.mesh.routing import HebbianRouter, REL_INTENT
@@ -57,6 +63,9 @@ class DreamingEngine:
         contradiction_resolve_fn: Any = None,  # AD-403
         llm_client: Any = None,  # AD-532: procedure extraction
         procedure_store: Any = None,  # AD-533: persistent procedure storage
+        ward_room: Any = None,  # AD-537: observational learning from Ward Room
+        agent_id: str = "",  # AD-537: the dreaming agent's ID
+        trust_network_lookup: Any = None,  # AD-537: fn(agent_id) -> trust score
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -70,12 +79,16 @@ class DreamingEngine:
         self._last_consolidated_count: int = 0  # Cursor for micro-dream dedup
         self._llm_client = llm_client  # AD-532: for procedure extraction
         self._procedure_store = procedure_store  # AD-533: persistent procedure storage
+        self._ward_room = ward_room  # AD-537: observational learning
+        self._agent_id = agent_id  # AD-537: dreaming agent ID
+        self._trust_network_lookup = trust_network_lookup  # AD-537: trust score lookup
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
         self._addressed_degradations: dict[str, float] = {}  # AD-532b: procedure_id -> timestamp
         self._extraction_candidates: dict[str, float] = {}  # AD-532e: intent_type -> timestamp
         self._reactive_cooldowns: dict[str, float] = {}  # AD-532e: agent_id -> last reactive check
         self._fallback_learning_queue: list[dict[str, Any]] = []  # AD-534b: fallback evidence for dream-time processing
+        self._observed_threads: set[str] = set()  # AD-537: already-observed thread IDs
 
     @property
     def last_clusters(self) -> list[Any]:
@@ -344,6 +357,51 @@ class DreamingEngine:
         except Exception as e:
             logger.debug("Step 7d fallback learning failed: %s", e)
 
+        # Step 7e: Observational learning from Ward Room (AD-537)
+        procedures_observed = 0
+        observation_threads_scanned = 0
+        try:
+            obs_stats = await self._process_observational_learning()
+            procedures_observed = obs_stats.get("observed", 0)
+            observation_threads_scanned = obs_stats.get("scanned", 0)
+            if procedures_observed > 0:
+                logger.debug(
+                    "Step 7e: Observed %d procedures from %d threads",
+                    procedures_observed, observation_threads_scanned,
+                )
+        except Exception as e:
+            logger.debug("Step 7e observational learning failed: %s", e)
+
+        # Step 7f: Procedure lifecycle maintenance (AD-538)
+        procedures_decayed = 0
+        procedures_archived = 0
+        dedup_candidates_found = 0
+        try:
+            if self._procedure_store:
+                # Decay first (may create Level 1 candidates for archival)
+                decay_results = await self._procedure_store.decay_stale_procedures()
+                procedures_decayed = len(decay_results)
+                if procedures_decayed > 0:
+                    logger.debug("Step 7f: Decayed %d procedures", procedures_decayed)
+
+                # Archive Level 1 procedures unused for LIFECYCLE_ARCHIVE_DAYS
+                archive_results = await self._procedure_store.archive_stale_procedures()
+                procedures_archived = len(archive_results)
+                if procedures_archived > 0:
+                    logger.debug("Step 7f: Archived %d procedures", procedures_archived)
+
+                # Dedup detection (flag only, no auto-merge)
+                dedup_results = await self._procedure_store.find_duplicate_candidates()
+                dedup_candidates_found = len(dedup_results)
+                if dedup_candidates_found > 0:
+                    for dup in dedup_results:
+                        logger.debug(
+                            "Step 7f dedup candidate: '%s' ↔ '%s' (similarity %.3f)",
+                            dup["primary_name"], dup["duplicate_name"], dup["similarity"],
+                        )
+        except Exception as e:
+            logger.debug("Step 7f lifecycle maintenance failed: %s", e)
+
         # Step 8: Capability gap prediction (AD-385)
         gap_predictions = predict_gaps(episodes)
         gaps_predicted = len(gap_predictions)
@@ -372,11 +430,17 @@ class DreamingEngine:
             fallback_events_processed=fallback_stats.get("processed", 0),
             gaps_predicted=gaps_predicted,
             contradictions_found=contradictions_found,
+            procedures_observed=procedures_observed,
+            observation_threads_scanned=observation_threads_scanned,
+            procedures_decayed=procedures_decayed,
+            procedures_archived=procedures_archived,
+            dedup_candidates_found=dedup_candidates_found,
         )
 
         logger.info(
             "dream-cycle: flushed=%d strengthened=%d pruned=%d trust_adjusted=%d "
-            "clusters=%d procedures=%d evolved=%d negatives=%d fallback_evolved=%d gaps=%d contradictions=%d",
+            "clusters=%d procedures=%d evolved=%d negatives=%d fallback_evolved=%d "
+            "observed=%d decayed=%d archived=%d dedup=%d gaps=%d contradictions=%d",
             report.episodes_replayed,
             report.weights_strengthened,
             report.weights_pruned,
@@ -386,6 +450,10 @@ class DreamingEngine:
             procedures_evolved,
             negative_procedures_extracted,
             fallback_stats.get("evolved", 0),
+            procedures_observed,
+            procedures_decayed,
+            procedures_archived,
+            dedup_candidates_found,
             report.gaps_predicted,
             report.contradictions_found,
         )
@@ -781,6 +849,118 @@ class DreamingEngine:
             "skipped_cooldown": skipped_cooldown,
             "negative_veto_flagged": negative_veto_flagged,
         }
+
+    async def _process_observational_learning(self) -> dict[str, int]:
+        """AD-537: Dream Step 7e — scan Ward Room threads for observational learning.
+
+        Returns stats dict with observed/scanned counts.
+        """
+        stats: dict[str, int] = {"observed": 0, "scanned": 0}
+
+        if not self._ward_room or not self._llm_client or not self._procedure_store:
+            return stats
+        if not self._agent_id:
+            return stats
+
+        try:
+            lookback = OBSERVATION_WARD_ROOM_LOOKBACK_HOURS * 3600
+            since_ts = time.time() - lookback
+            max_threads = OBSERVATION_MAX_THREADS_PER_DREAM
+
+            threads = await self._ward_room.browse_threads(
+                agent_id=self._agent_id,
+                limit=max_threads,
+                since=since_ts,
+                sort="recent",
+            )
+        except Exception as e:
+            logger.debug("Step 7e: Failed to fetch Ward Room threads: %s", e)
+            return stats
+
+        for thread in threads:
+            thread_id = getattr(thread, "id", "")
+            if not thread_id:
+                continue
+
+            stats["scanned"] += 1
+
+            # Skip already-observed threads
+            if thread_id in self._observed_threads:
+                continue
+
+            # Skip DM channels (teaching path, not observation)
+            channel_name = getattr(thread, "channel_name", "") or ""
+            if channel_name.startswith("dm:"):
+                continue
+
+            # Skip own threads
+            author_id = getattr(thread, "author_id", "")
+            if author_id == self._agent_id:
+                continue
+
+            # Get author trust
+            author_trust = 0.5
+            if self._trust_network_lookup:
+                try:
+                    author_trust = self._trust_network_lookup(author_id)
+                except Exception:
+                    pass
+
+            if author_trust < OBSERVATION_MIN_TRUST:
+                continue
+
+            # Format thread content
+            title = getattr(thread, "title", "")
+            body = getattr(thread, "body", "")
+            author_callsign = getattr(thread, "author_callsign", author_id)
+            thread_content = f"Thread: {title}\nAuthor: {author_callsign}\n\n{body}"
+
+            # Extract procedure
+            try:
+                procedure = await extract_procedure_from_observation(
+                    thread_content=thread_content,
+                    observer_agent_type=self._agent_id,
+                    author_callsign=author_callsign,
+                    author_trust=author_trust,
+                    llm_client=self._llm_client,
+                )
+            except Exception as e:
+                logger.debug("Step 7e: Extraction failed for thread %s: %s", thread_id[:8], e)
+                self._observed_threads.add(thread_id)
+                continue
+
+            if procedure is None:
+                self._observed_threads.add(thread_id)
+                continue
+
+            # Check for semantic duplicates (direct experience takes priority)
+            try:
+                existing = await self._procedure_store.find_matching(
+                    procedure.name,
+                    n_results=1,
+                )
+                if existing and existing[0].get("score", 0) > 0.8:
+                    self._observed_threads.add(thread_id)
+                    continue
+            except Exception:
+                pass  # ChromaDB not available — skip dedup
+
+            # Tag with thread provenance
+            procedure.tags.append(f"ward_room_thread:{thread_id}")
+
+            try:
+                await self._procedure_store.save(procedure)
+                stats["observed"] += 1
+                logger.info(
+                    "Observed procedure '%s' from %s's discussion",
+                    procedure.name, author_callsign,
+                )
+            except Exception as e:
+                logger.debug("Step 7e: Failed to save observed procedure: %s", e)
+
+            self._observed_threads.add(thread_id)
+
+        return stats
 
     async def proactive_procedure_scan(self) -> dict[str, Any]:
         """AD-532e: Proactive trigger — periodic health scan of all active procedures."""

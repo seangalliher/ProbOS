@@ -72,6 +72,7 @@ def _make_procedure(**overrides):
         "intent_types": ["test_intent"],
         "is_active": True,
         "generation": 0,
+        "compilation_level": 4,  # AD-535: Level 4 (Autonomous) for zero-token replay tests
     }
     defaults.update(overrides)
     return Procedure(**defaults)
@@ -91,6 +92,11 @@ def _make_store_mock():
     store.deactivate = AsyncMock()
     store.list_active = AsyncMock(return_value=[])
     store.has_cluster = AsyncMock(return_value=False)
+    # AD-535: Graduated compilation methods
+    store.record_consecutive_success = AsyncMock(return_value=1)
+    store.reset_consecutive_successes = AsyncMock()
+    store.promote_compilation_level = AsyncMock()
+    store.demote_compilation_level = AsyncMock()
     return store
 
 
