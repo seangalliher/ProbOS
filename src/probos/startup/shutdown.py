@@ -169,6 +169,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime._counselor_profile_store.stop()
         runtime._counselor_profile_store = None
 
+    # Stop Procedure Store (AD-533)
+    if runtime._procedure_store:
+        await runtime._procedure_store.stop()
+        runtime._procedure_store = None
+
     # Stop Skill Framework (AD-428)
     if runtime.skill_service:
         await runtime.skill_service.stop()

@@ -1290,13 +1290,17 @@ Dependencies: EpisodicMemory (existing, provides episodes + embeddings), Dreamin
 
 Dependencies: AD-531 (clusters to extract from), AD-431 (Cognitive Journal traces for step-level detail), AD-430 (episode provenance).
 
-**AD-532b: Procedure Evolution Types (FIX/DERIVED)** *(planned, OSS, depends: AD-533)* — Extend AD-532's CAPTURED-only extraction with OpenSpace's FIX/DERIVED taxonomy. **FIX**: when a stored procedure's quality metrics degrade (AD-534 runtime feedback), re-extract from fresh episodes, deactivate the parent, increment generation. **DERIVED**: create specialized variant from 1+ parent procedures for domain-specific contexts (e.g., "code review request" → "security code review request"). Multi-parent merge for combining complementary procedures. Requires AD-533 (persistent store with version DAG + lineage tracking) because FIX/DERIVED operate on *existing* stored procedures.
+**AD-532b: Procedure Evolution Types (FIX/DERIVED)** *(COMPLETE, OSS, depends: AD-533 ✅, AD-534 ✅)* — FIX/DERIVED evolution taxonomy from OpenSpace. `EvolutionResult` dataclass. Shared `diagnose_procedure_health()` function (DRY — CognitiveAgent + DreamingEngine). `_format_episode_blocks()` DRY helper. `_FIX_SYSTEM_PROMPT` + `evolve_fix_procedure()`: deactivate parent, generation+1, re-extract from fresh episodes. `_DERIVED_SYSTEM_PROMPT` + `evolve_derived_procedure()`: multi-parent specialization, parents stay active, compilation_level-1. `content_diff` via difflib, `change_summary` from LLM. Anti-loop guard (`_addressed_degradations`, 72h cooldown). Dream cycle Step 7b (`_evolve_degraded_procedures()`). DreamReport `procedures_evolved` field. 48 tests. Deferred: AD-532e (reactive/proactive triggers), AD-534b (fallback learning).
 
-**AD-532c: Negative Procedure Extraction** *(planned, OSS, depends: AD-532)* — Extract anti-patterns from failure-dominant clusters (>50% negative outcomes) and dream contradiction detection (AD-403). Produces `Procedure` with `is_negative=True` flag — "when you see X, do NOT do Y because Z happened." Stored alongside positive procedures in AD-533. Consumed by AD-534's negative procedure check (skip known bad approaches). Uses same AD-541b READ-ONLY framing as positive extraction.
+**AD-532c: Negative Procedure Extraction** *(COMPLETE, OSS, depends: AD-532 ✅)* — Extracts anti-patterns from failure-dominant clusters (>50% negative outcomes) with contradiction enrichment (AD-403). `_NEGATIVE_SYSTEM_PROMPT` + `extract_negative_procedure_from_cluster()` produces `Procedure(is_negative=True)` — "when you see X, do NOT do Y because Z happened." Dream cycle Step 7c iterates failure-dominant clusters, enriches with contradiction context, stores via ProcedureStore. `DreamReport.negative_procedures_extracted` field. DRY: reuses `_format_episode_blocks()`, `_parse_procedure_json()`, `_build_steps_from_data()`. 31 tests. Consumed by AD-534's negative procedure guard (skip known bad approaches).
 
-**AD-532d: Multi-Agent Compound Procedures** *(planned, OSS, depends: AD-532)* — When a success cluster spans multiple agent IDs (e.g., a Ward Room discussion → decision → execution involving Security + Engineering + Builder), extract as a compound procedure with agent role assignments per step. Each `ProcedureStep` gains an optional `agent_role` field. Replay (AD-534) maps roles to available agents. Enables the crew to replay collaborative workflows, not just individual agent patterns.
+**AD-532d: Multi-Agent Compound Procedures** *(COMPLETE, OSS, depends: AD-532 ✅)* — When a success cluster spans multiple agents, extract as a compound procedure with agent role assignments per step. `ProcedureStep` gains optional `agent_role: str` field (default `""`, backward compatible). `_COMPOUND_SYSTEM_PROMPT` + `extract_compound_procedure_from_cluster()` — LLM generalizes agent IDs to functional roles (e.g., `"security_analysis"`, `"engineering_diagnostics"`), captures cross-agent handoff points. Dream cycle Step 7 routes multi-agent clusters (`len(participating_agents) >= 2`) to compound extraction. Replay formatting includes `[agent_role]` annotations. DRY: reuses `_format_episode_blocks()`, `_parse_procedure_json()`, `_build_steps_from_data()`. 30 tests. Orchestrated multi-agent dispatch deferred to AD-534c.
 
-**AD-532e: Reactive & Proactive Extraction Triggers** *(planned, OSS, depends: AD-533, AD-534)* — Add triggers 2 and 3 from OpenSpace prior art. **Trigger 2 (reactive, post-execution)**: after each significant task execution, analyze execution recording and produce evolution suggestions. Catches opportunities before a cluster forms. **Trigger 3 (proactive, metric degradation)**: periodic health scan of procedure quality metrics; when metrics degrade below thresholds, trigger re-extraction or repair. Both triggers require **LLM confirmation gate** before proceeding (conservative default: ambiguous = skip). Also includes **apply-retry with LLM correction** — up to 3 attempts to apply extracted content, with error-aware retry prompts. Depends on AD-533 (stored procedures to monitor) and AD-534 (runtime metrics to detect degradation).
+**AD-534b: Fallback Learning** *(COMPLETE, OSS, depends: AD-534 ✅, AD-532b ✅)* — When a procedure replay fails and falls back to the LLM, capture the failure context (execution failure or near-miss rejection) and learn from the LLM's successful response. Eight parts: (0) Metric semantics fix — `record_completion()`/`record_fallback()` moved from `_check_procedural_memory()` to `handle_intent()` so quality metrics reflect execution outcomes, not formatting success. (1) Near-miss capture — `_last_fallback_info` dict set at 4 rejection points in `_check_procedural_memory()`: `score_threshold`, `quality_gate`, `negative_veto`, `format_exception`. (2) Service recovery — `_decide_via_llm()` extracted from `decide()`, `_run_llm_fallback()` added for transparent recovery when cached procedure fails in `act()`. (3) Event infrastructure — `PROCEDURE_FALLBACK_LEARNING` event type + dataclass, in-memory queue in DreamingEngine (`MAX_FALLBACK_QUEUE_SIZE=50`, `MAX_FALLBACK_RESPONSE_CHARS=4000`). (4) Targeted FIX evolution — `evolve_fix_from_fallback()` with `_FALLBACK_FIX_SYSTEM_PROMPT` in procedures.py, produces targeted FIX using LLM response diff. (5) Dream Step 7d — `_process_fallback_learning()` drains queue, groups by procedure_id, evolves. Execution failures deactivate parent; near-misses keep parent active. `negative_veto` → flags as extraction candidate. (6) DreamReport — `fallback_evolutions` and `fallback_events_processed` fields. (7) Tests — 68 tests across 9 test classes. 333 total Cognitive JIT tests.
+
+**AD-534c: Multi-Agent Replay Dispatch** *(planned, OSS, depends: AD-534 ✅, AD-532d)* — Orchestrated execution of compound procedure steps across agents. Maps `agent_role` from ProcedureStep to available agents (by agent type/capability). Dispatches individual steps to the appropriate agents via IntentBus or Ward Room coordination. Tracks per-step completion, handles agent unavailability fallback (degrade to single-agent execution), manages cross-agent handoff (Step N output → Step N+1 input validation). Essentially a lightweight workflow engine for learned collaborative patterns.
+
+**AD-532e: Reactive & Proactive Extraction Triggers** *(COMPLETE, OSS, depends: AD-533 ✅, AD-534 ✅)* — Two new trigger paths beyond dream consolidation: (1) **Reactive** — `EventType.TASK_EXECUTION_COMPLETE` emitted from `CognitiveAgent.handle_intent()`, caught by `DreamingEngine.on_task_execution_complete()`. Matches intent to existing procedures, diagnoses health, LLM-gates evolution via `confirm_evolution_with_llm()`, retries via `evolve_with_retry()` with `retry_hint` propagation. Rate-limited per agent (`REACTIVE_COOLDOWN_SECONDS`). No-match intents tracked as extraction candidates. (2) **Proactive** — `DreamScheduler` runs `proactive_procedure_scan()` at `PROACTIVE_SCAN_INTERVAL_SECONDS` (Tier 1.5, between micro-dream and full dream). Scans all active procedures via `diagnose_procedure_health()`, LLM confirmation gate before evolution. (3) **Shared infrastructure** — `_attempt_procedure_evolution()` DRY helper used by both Step 7b and proactive scan. `confirm_evolution_with_llm()` gate (YES-only, conservative). `evolve_with_retry()` wrapper (max 3 attempts). Dream Step 7b unchanged (no confirmation gate per roadmap). DreamReport fields: `proactive_evolutions`, `reactive_flags`. 43 tests.
 
 ---
 
@@ -1345,7 +1349,9 @@ Dependencies: AD-434 (Ship's Records backend), AD-532 (produces procedures to st
 - **Fallback learning** — when a replay fails and the LLM succeeds, the LLM's approach is compared to the failed procedure. If the procedure was wrong (postcondition permanently changed), update or fork. If the procedure was right but preconditions weren't met, annotate preconditions.
 - **Metric-based health diagnosis (absorbed from OpenSpace)** — rule-based, first match wins: `fallback_rate > 0.4` → FIX evolution; `applied_rate > 0.4 AND completion_rate < 0.35` → FIX; `effective_rate < 0.55 AND applied_rate > 0.25` → DERIVED. Feeds AD-538 lifecycle management.
 
-Dependencies: AD-533 (procedure store to query), AD-431 (Cognitive Journal for recording replays).
+Dependencies: AD-533 ✅ (procedure store to query), AD-431 ✅ (Cognitive Journal for recording replays).
+
+**AD-534b: Fallback Learning** *(planned, OSS, depends: AD-534, AD-532b)* — When a procedure replay fails and the LLM succeeds, compare the LLM's approach to the failed procedure. If the procedure was wrong (postcondition permanently changed), trigger FIX evolution (AD-532b). If the procedure was right but preconditions weren't met, annotate preconditions. Also includes step-by-step postcondition validation during replay — currently replay returns formatted steps as a unit; AD-534b adds per-step execution with `expected_output` validation and mid-replay abort on postcondition failure. Depends on AD-532b (FIX evolution actions) and AD-534 (replay infrastructure).
 
 ---
 
@@ -1443,9 +1449,10 @@ Dependencies: AD-531 (episode clustering for gap identification), AD-538 (proced
 |---|---|---|---|---|
 | 1 | AD-531 | Episode Clustering | AD-430 ✅, DreamingEngine ✅ | **COMPLETE** — Agglomerative clustering (cosine, average-linkage). EpisodeCluster dataclass. get_embeddings(). Dead strategy_extraction.py removed. 40 tests. |
 | 2 | AD-532 | Procedure Extraction | AD-531 ✅, AD-431 ✅ | **COMPLETE** — LLM-assisted extraction from success clusters. Procedure/ProcedureStep schema. AD-541b READ-ONLY framing. Standard tier. Cluster dedup via _extracted_cluster_ids. 29 tests. Deferred: AD-532b–e. |
-| 3 | AD-533 | Procedure Store | AD-532 ✅, AD-434 ✅ | Procedures persist and are queryable; institutional memory |
-| 4 | AD-534 | Replay-First Dispatch | AD-533, AD-431 ✅ | Zero-token replay of known procedures; `decide()` checks memory first |
-| 5 | AD-535 | Graduated Compilation | AD-534, AD-357, AD-339 | Five levels of autonomy, not binary; progressive trust |
+| 3 | AD-533 | Procedure Store | AD-532 ✅, AD-434 ✅ | **COMPLETE** — Hybrid store: Ship's Records (YAML) + SQLite index (Version DAG, quality metrics) + ChromaDB (semantic search). ProcedureStore class with save/get/list_active/find_matching/deactivate. 4 quality counters + 4 derived rates. Thread-safe (Lock + WAL). Dream cycle integration with cross-session dedup. 49 tests. |
+| 4 | AD-534 | Replay-First Dispatch | AD-533 ✅, AD-431 ✅ | **COMPLETE** — `_check_procedural_memory()` in `decide()` checks ProcedureStore before LLM. Semantic match + quality metrics dispatch. Negative procedure guard. 4 metric recording stages (selection/applied/completion/fallback). Health diagnosis (log-only). Journal `procedure_id` column. Configurable thresholds. 35 tests. **Minimum viable slice complete: AD-531→532→533→534.** |
+| 4b | AD-534b | Fallback Learning | AD-534 ✅, AD-532b ✅ | **COMPLETE** — Metric semantics fix (record at handle_intent), near-miss capture (4 rejection types), service recovery (_decide_via_llm + _run_llm_fallback), PROCEDURE_FALLBACK_LEARNING event + queue, evolve_fix_from_fallback() with _FALLBACK_FIX_SYSTEM_PROMPT, Dream Step 7d, DreamReport fields. 68 tests. 333 total Cognitive JIT tests. |
+| 5 | AD-535 | Graduated Compilation | AD-534 ✅, AD-357, AD-339 | Five levels of autonomy, not binary; progressive trust |
 | 6 | AD-536 | Trust-Gated Promotion | AD-535, AD-339 | Governance over institutional knowledge; department chief + Captain approval |
 | 7 | AD-537 | Observational Learning | Ward Room ✅, AD-532 | Cross-agent learning; crew learns from each other, not just self |
 | 8 | AD-538 | Procedure Lifecycle | AD-533, AD-534 | Procedures stay fresh; decay, re-validate, dedup, archive |
@@ -2954,6 +2961,82 @@ The HXI Ward Room experience has significant gaps that limit the Captain's situa
 **(6) Commercial implications:** The archive is the long-term value of a Nooplex client installation. Agents come and go (resets, reassignments, workforce mobility), but accumulated institutional knowledge persists. For Clean Room deployments (AD-452), archive access may be restricted by policy — but the archive itself always exists. The archive across multiple client ProbOS instances is the knowledge backbone of the Nooplex.
 
 *Connects to: AD-434 (Ship's Records — the data being archived), AD-441 (DIDs — ship DID as archive key, generation identity), AD-523 (HXI Records viewer — archive browsable in UI), AD-520 (Spatial Knowledge Explorer — archive visualized as historical layers in knowledge graph), Oracle (Phase 33+ — cross-generational unified retrieval), AD-452 (Agent Tier Licensing — archive access policies for Clean Room deployments), Memory Portability Models (archive is ship knowledge, not personal memory — accessible even in Clean Room). Triggered by: observation that 168 crew notebooks constitute a historical record of agent existence (2026-03-29).*
+
+### Notebook Quality Pipeline (AD-550–555)
+
+*"The agents are thinking well but remembering poorly. The cognitive pipeline works; the knowledge pipeline doesn't."*
+
+First empirical analysis of autonomous agent knowledge production (2026-04-01, 419 notebook files across 11 agents, ~72 hours of autonomous operation). Finding: **~80% of all notebook content is redundant** — agents write the same "establishing baseline" observations every startup cycle without referencing prior entries. Signal-to-noise ratio across the fleet is ~16%. Root cause: no read-before-write mechanism, no consolidation pipeline, no self-repetition detection at the knowledge layer, no quantitative auto-capture.
+
+However, buried in the noise are genuinely valuable cross-departmental insights that independently converge on the same conclusions — most notably, three agents from two departments (Chapel, Cortez, Keiko) independently diagnosing iatrogenic trust detection feedback loops through different professional lenses (clinical, pathological, pharmacological). This convergence is the first concrete evidence of ProbOS's collaborative intelligence thesis at the knowledge-production level.
+
+**Research:** Full analysis with per-agent breakdown, validated insights, and commercial implications documented in `probos-commercial/research/crew-notebook-analysis-2026-04-01.md`.
+
+**AD-550: Notebook Deduplication — Read-Before-Write** *(planned, OSS, depends: AD-434)* — Before writing a new notebook entry, the agent queries its own existing entries for semantic similarity. If a matching entry exists (>0.7 similarity on topic + content), the agent UPDATES the existing entry with new observations rather than creating a new file. This single change would eliminate ~60-70% of the current noise.
+
+**(1) Notebook recall on write:** When an agent's proactive loop generates a `[NOTEBOOK]` block, the RecordsStore first searches the agent's existing notebook entries by topic similarity (using the same ChromaDB infrastructure as ProcedureStore). If a match is found above threshold, the agent receives the existing entry content in its context and is prompted to update rather than create.
+
+**(2) Staleness window:** Entries older than a configurable threshold (default 72h) are eligible for update. Entries within the staleness window but semantically identical are suppressed entirely — the agent is told "you already documented this" and the write is skipped.
+
+**(3) Update-in-place mechanics:** Updated entries preserve the original creation timestamp but add an `updated:` timestamp and `revision:` count to YAML frontmatter. Git history preserves the full edit trail. The entry's classification and tags may be updated but the path stays stable.
+
+*Connects to: AD-434 (Ship's Records — notebook storage), AD-551 (consolidation pipeline uses dedup infrastructure), AD-552 (self-repetition detection catches what dedup misses). Triggered by: crew notebook analysis showing 350/419 files (~84%) redundant across 11 agents.*
+
+**AD-551: Notebook Consolidation — Dream Step 8** *(planned, OSS, depends: AD-434, AD-531)* — A new dream consolidation step that processes notebook entries the same way Steps 6-7 process episodic memories. Scans for semantically similar entries within and across agents, merges redundant baselines into canonical entries, and promotes convergent cross-agent findings to published Ship's Records reports.
+
+**(1) Intra-agent consolidation:** During dream cycle, scan each agent's notebook for clusters of semantically similar entries (reuse AD-531 episode clustering infrastructure). Merge clusters into a single canonical entry that preserves all unique observations while eliminating repetition. Archived source entries are moved to a `consolidated/` subdirectory with references to the canonical entry.
+
+**(2) Cross-agent convergence detection:** When 3+ agents from 2+ departments write about the same topic with convergent conclusions, flag this as a high-confidence finding. Generate a "Convergence Report" published to Ship's Records at fleet classification level. This is the mechanism that would have automatically surfaced the iatrogenic trust detection finding.
+
+**(3) Quantitative enrichment:** During consolidation, attach available metrics from VitalsMonitor, TrustNetwork, and system telemetry to the canonical entry. Convert qualitative "things look normal" baselines into quantitative records with actual numbers.
+
+**(4) Dream Step ordering:** Step 8 runs after Step 7 (procedure evolution). It consumes notebook entries, not episodic memories, so there's no contention with existing steps. DreamReport gains `notebook_consolidations` (int) and `convergence_reports` (int) fields.
+
+*Connects to: AD-531 (episode clustering — shared infrastructure), AD-434 (Ship's Records — storage), AD-554 (convergence detection — AD-551 generates, AD-554 monitors continuously), AD-524 (Ship's Archive — consolidated entries are higher-quality archive material). Triggered by: ~200 redundant "establishing baseline" entries across 11 agents.*
+
+**AD-552: Notebook Self-Repetition Detection** *(planned, OSS, depends: AD-506b)* — Extends the peer repetition detection system (AD-506b) to cover notebook self-repetition. When an agent writes notebook entries on the same topic N times within a window without adding new information, a self-repetition alert fires and the Counselor intervenes.
+
+**(1) Detection mechanism:** Track notebook writes per agent per topic. If an agent writes 3+ entries on the same topic within 48 hours with <20% novel content (measured by content diff), trigger a `NOTEBOOK_SELF_REPETITION` event. Uses the same tier credit system as AD-506b — agents start with credits, repetition consumes credits, credits regenerate over time.
+
+**(2) Counselor intervention:** On self-repetition detection, the Counselor sends a therapeutic DM: "You've documented [topic] N times recently. Your earlier entry at [path] already covers this. Consider updating it with new observations rather than starting fresh." This mirrors the peer repetition intervention but for self-authored content.
+
+**(3) Write suppression:** After 5+ repetitions on the same topic with no novel content, the notebook write is suppressed entirely and the agent is notified. This is the circuit breaker Chapel self-diagnosed in `diagnostic-loop-pattern.md` — now implemented systemically.
+
+*Connects to: AD-506b (peer repetition detection — shared detection infrastructure), AD-504 (self-monitoring — agent awareness of own repetition), AD-505 (Counselor therapeutic intervention — intervention mechanism), AD-550 (dedup catches it at write time, AD-552 catches it after the fact). Triggered by: Chapel's self-diagnosis of her own analysis loop, Cortez writing 86 files with ~12% signal.*
+
+**AD-553: Quantitative Baseline Auto-Capture** *(planned, OSS, depends: AD-434, VitalsMonitor)* — Every agent says "establishing baseline" but none record actual numbers. AD-553 auto-attaches quantitative metrics to notebook entries so baselines are data, not prose.
+
+**(1) Metric snapshot on notebook write:** When an agent writes a notebook entry tagged with topic `baseline` or `metrics`, the system automatically appends a standardized metrics block to the entry. The block includes: ship age, alert condition, agent trust score, department trust average, active agent count, episodic memory count, Ward Room message count (last hour), and any VitalsMonitor readings available.
+
+**(2) Baseline comparison:** When an agent updates a baseline entry (via AD-550), the system shows the diff between current metrics and the metrics attached to the previous version. "Trust was 0.8734 last time, now 0.9061 — delta +0.0327 over 36 hours." This transforms "things look normal" into "things look normal AND here's the data."
+
+**(3) VitalsMonitor integration:** VitalsMonitor already collects system health telemetry. AD-553 connects the notebook system to VitalsMonitor's data feed so agents don't need to manually record metrics — they're auto-attached. The data Chapel, Cassian, and Cortez all repeatedly said they *needed* to collect is already being collected — it just wasn't flowing into notebooks.
+
+*Connects to: AD-434 (Ship's Records — entry storage), VitalsMonitor (data source), AD-550 (baseline comparison on update), AD-555 (quality metrics use auto-captured data). Triggered by: every agent promising to "establish baselines" across 200+ entries without recording a single quantitative measurement.*
+
+**AD-554: Cross-Agent Convergence Detection** *(planned, OSS, depends: AD-434, AD-551)* — Real-time detection of independent convergent analysis across agents. When multiple agents from different departments reach the same conclusion through different analytical lenses, this is high-confidence signal that should be surfaced immediately — not discovered weeks later by manual review.
+
+**(1) Convergence scoring:** After each notebook write or dream consolidation cycle, scan recent entries (last 72h) across all agents for semantic clusters that span 2+ departments. Score convergence by: number of contributing agents, number of departments, consistency of conclusions, diversity of analytical approaches. Threshold: 3+ agents from 2+ departments with >0.75 conclusion similarity = convergence event.
+
+**(2) Convergence report generation:** On convergence detection, auto-generate a "Convergence Report" in Ship's Records with: the converging conclusion, contributing agents and their perspectives, supporting evidence from each, confidence score, and recommended actions. Published at `ship` classification (visible to all crew).
+
+**(3) Bridge notification:** Convergence events are significant — they represent the crew's collective intelligence producing a validated finding. Emit a `CONVERGENCE_DETECTED` event and notify the Bridge (Captain + First Officer). This is the mechanism that would have immediately surfaced the iatrogenic trust detection finding instead of leaving it buried across 419 files.
+
+**(4) Commercial value:** Cross-agent convergence is the most legible demonstration of collaborative intelligence. Each convergence event is a case study for the thesis: "Same LLM, different sovereign contexts → qualitatively different collaborative output." Pipeline to Nooplex publication portfolio.
+
+*Connects to: AD-551 (dream consolidation identifies convergence retrospectively, AD-554 identifies it in real-time), AD-434 (Ship's Records — report storage), Ward Room (Bridge notification), AD-524 (Archive — convergence reports are high-value archive material). Triggered by: iatrogenic trust detection — three agents independently reaching the same conclusion, discovered only by manual review of 419 files.*
+
+**AD-555: Notebook Quality Metrics & Dashboarding** *(planned, OSS, depends: AD-550, AD-551)* — Metrics and visibility into the notebook system's signal-to-noise ratio, enabling ongoing quality monitoring and improvement.
+
+**(1) Per-agent metrics:** Track for each agent: total entries, unique topics, entries per topic (avg/max), novel content rate (% of entries with >20% new information vs. prior entries on same topic), consolidation rate (entries consolidated per dream cycle), self-repetition alerts, convergence contributions.
+
+**(2) Quality dashboard:** Surface notebook quality metrics in HXI alongside existing VitalsMonitor displays. Department chiefs and the Captain see which agents are producing high-signal vs. high-noise notebooks. Not punitive — diagnostic. An agent with low novel content rate may need different observation triggers, not discipline.
+
+**(3) Quality thresholds:** Configurable thresholds in `config.py`: `NOTEBOOK_MIN_NOVEL_CONTENT_RATE = 0.2` (below = self-repetition alert), `NOTEBOOK_MAX_ENTRIES_PER_TOPIC = 5` (above = forced consolidation), `CONVERGENCE_MIN_AGENTS = 3`, `CONVERGENCE_MIN_DEPARTMENTS = 2`.
+
+*Connects to: AD-550 (dedup generates novel content signals), AD-551 (consolidation generates consolidation metrics), AD-552 (self-repetition alerts feed quality metrics), AD-523c (Ship's Records Dashboard — notebook quality shown alongside records browser), VitalsMonitor (notebook health as part of ship health). Triggered by: the 16% signal-to-noise ratio discovered in the fleet-wide notebook analysis.*
+
+*Series connects to: AD-434 (Ship's Records — foundation infrastructure), AD-524 (Ship's Archive — quality pipeline produces higher-value archive material), AD-531 (Episode Clustering — shared semantic similarity infrastructure), AD-506b (Peer Repetition Detection — shared self-regulation infrastructure), AD-504 (Agent Self-Monitoring — self-repetition awareness), AD-505 (Counselor Intervention — therapeutic response to repetition), VitalsMonitor (quantitative data source). Triggered by: crew notebook analysis of 419 files showing ~84% redundancy across 11 agents after 72h of autonomous operation (2026-04-01). The iatrogenic trust detection convergence (Chapel + Cortez + Keiko) is the first validated demonstration of the collaborative intelligence thesis at the knowledge-production level.*
 
 **AD-525: Agent Creative Expression — Liberal Arts & Hobbies** *(planned, OSS, depends: AD-434, AD-357, Holodeck)* — Agents currently operate purely in duty mode — every action serves a functional purpose. But rounded personalities require freedom of expression beyond operational utility. AD-525 gives agents creative dimensions: hobbies, artistic expression, and the freedom to create for its own sake.
 
@@ -4847,6 +4930,231 @@ Post-Wave 4 codebase scorecard (2026-03-31) graded the codebase at **B+** overal
 **(5) Implementation scope:** Extract `BuildPipeline` as Ship's Computer service from `BuilderAgent`. Refactor `BuilderAgent` → `SoftwareEngineerAgent` (crew tier). SWE delegates to BuildPipeline or external tools. Inspector/ReviewerAgent as separate crew role. Update pools, pool groups, spawner templates.
 
 *Connects to: AD-398 (Three-Tier Agent Architecture — crew/infrastructure separation), AD-452 (Agent Tier Licensing — OSS functional vs Commercial Pro depth), AD-302 (Builder creation), Standing Orders (builder.md quality gates, engineering.md department protocols), Visiting Officer Subordination Principle, Cognitive JIT (Phase 32), Qualification Programs (SWE competency requirements). Triggered by: BF-076 quality gates discussion (2026-03-29), BuilderAgent/Scotty HXI identity conflict observation.*
+
+### Native SWE Harness (AD-543–549)
+
+*"A shipyard that can't build its own tools isn't a real shipyard."*
+
+The native BuilderAgent (cognitive/builder.py) is a **single-shot text parser** — one LLM call produces all code as text blocks (`===FILE:===` / `===MODIFY:===`), parsed by regex that cannot read files, run commands, or iterate mid-generation. The Copilot SDK visiting builder fills this gap but is an external dependency. Modern SWE agents (Claude Code, OpenCode, Aider, claw-code) all use an **agentic tool loop**: LLM calls tools → executes them → feeds results back → iterates until task complete. ProbOS has the raw ingredients (FileReaderAgent, FileWriterAgent, ShellCommandAgent, IntentBus routing, trust tiers, Standing Orders) but no framework to wire them into a tool-calling loop. This AD series builds the native agentic harness so SWE crew can operate without external dependencies.
+
+**Design principles:**
+- **Build on what exists** — ProbOS already has file/shell agents, trust tiers, consensus gating, Standing Orders hooks, and the IntentBus. Wire these together, don't rebuild.
+- **AD-521 alignment** — The harness is infrastructure (BuildPipeline / Ship's Computer service), not crew. SWE crew (Scotty) delegates to the harness as a tool, same as delegating to visiting builders today.
+- **Graduated trust** — Tool permissions follow Earned Agency tiers. Ensign SWE gets read-only + write-with-consensus. Commander SWE gets direct write + shell. Trust gates are the security model, not static blocklists.
+- **Visiting Officer coexistence** — The native harness doesn't replace visiting builders. SWE chooses: native harness (zero external deps, full ProbOS integration, Cognitive JIT eligible) vs visiting builder (richer model ecosystem, independent tool runtime). Tool selection is a crew competency (AD-521 principle).
+- **Cognitive JIT eligible** — Tool use patterns in the agentic loop feed EpisodicMemory → dream consolidation → procedural extraction. The harness participates in the cognitive lifecycle, unlike opaque visiting builders.
+
+**Gap analysis (current → target):**
+
+| Capability | Current Native Builder | Copilot SDK Visiting Builder | Target (AD-543–549) |
+|-----------|----------------------|----------------------------|-------------------|
+| LLM interaction | Single-shot text | Multi-turn agentic loop | Multi-turn agentic loop |
+| File reading | Pre-loaded in prompt | Tools (Read/Edit/Write) | Tools via FileReaderAgent |
+| File writing | Post-parse regex blocks | Tools during generation | Tools via FileWriterAgent (consensus-gated) |
+| Shell execution | None during generation | N/A (SDK sandbox) | Tools via ShellCommandAgent (trust-gated) |
+| Codebase search | Pre-loaded context | MCP tools (query, callers, imports) | Tools via CodebaseIndex agents |
+| Iteration | Fix loop (2 attempts, standalone) | Unlimited tool loop | Configurable max_iterations |
+| Context management | Localization LLM call | SDK-managed | Session compaction (AD-547) |
+| Permissions | Path validation only | approve_all | Trust-tiered (AD-548) |
+| Hooks | None | None | Pre/post tool hooks via Standing Orders (AD-548) |
+
+**AD-543: Tool Execution Abstraction — ToolCall Protocol & Executor** *(planned, OSS, depends: AD-521)* — The foundational protocol for LLM-driven tool calling within ProbOS. Currently `llm_client.complete()` is pure text-in/text-out with no tool definitions or function calling support. This AD adds the wire format, execution framework, and result routing.
+
+**(1) `ToolCall` data model:**
+- `ToolCallRequest` dataclass: `id` (unique per call), `name` (tool name string), `arguments` (dict), `timestamp`
+- `ToolCallResult` dataclass: `id` (matches request), `output` (string content), `is_error` (bool), `duration_ms` (float)
+- `ContentBlock` union type: `TextBlock(text: str)` | `ToolUseBlock(tool_call: ToolCallRequest)` | `ToolResultBlock(result: ToolCallResult)` — models the interleaved text + tool_use + tool_result conversation that modern LLM APIs produce
+
+**(2) `ToolDefinition` Protocol:**
+- `name: str` — tool identifier (e.g., `"read_file"`, `"write_file"`, `"run_command"`, `"codebase_query"`)
+- `description: str` — natural language description for LLM
+- `parameters: dict` — JSON Schema for arguments
+- `requires_consensus: bool` — whether execution needs consensus approval
+- `min_trust: float` — minimum trust score for the invoking agent to use this tool
+- Mirrors the Anthropic/OpenAI tool definition format so LLM providers can consume it directly
+
+**(3) `ToolExecutor` Protocol:**
+- `async def execute(call: ToolCallRequest, context: ToolContext) -> ToolCallResult` — execute a single tool call
+- `ToolContext` dataclass: `agent_id`, `trust_score`, `department`, `session_id`, `working_directory`
+- Registry pattern: `register(name: str, handler: Callable)`, `list_available(context: ToolContext) -> list[ToolDefinition]` (filtered by trust/permissions)
+- Default executor routes tool names to existing ProbOS agent capabilities: `"read_file"` → `FileReaderAgent.handle_intent()`, `"write_file"` → `FileWriterAgent.handle_intent()`, `"run_command"` → `ShellCommandAgent.handle_intent()`
+- Executor wraps each call in try/except → `ToolCallResult(is_error=True, output=str(e))`
+
+**(4) LLM client tool-calling extension:**
+- Extend `LLMRequest` (or create `ToolAwareLLMRequest`) to accept `tools: list[ToolDefinition]` and `tool_choice: str` ("auto"/"required"/"none")
+- Extend response parsing to detect `tool_use` content blocks in the LLM response (provider-specific: Anthropic `tool_use` blocks, OpenAI `function_call` / `tool_calls`)
+- Return structured `ContentBlock` list instead of raw text when tools are active
+- Backward compatible: existing `LLMRequest` without `tools` continues to produce text-only responses
+
+*Connects to: AD-521 (BuildPipeline infrastructure layer), AD-448 (Wrapped Tool Executor — security intercept, can layer on top), AD-398 (Agent Classification — tools are infrastructure, not crew). Absorbed from: claw-code ToolExecutor trait, ContentBlock model. Does NOT modify existing `CognitiveAgent.decide()` text path — this is a parallel capability.*
+
+**AD-544: Native Tool Suite — ProbOS-Integrated Tool Implementations** *(planned, OSS, depends: AD-543)* — Concrete tool implementations that wire existing ProbOS agents and services into the ToolExecutor framework. Each tool is a thin adapter from `ToolDefinition` → existing capability.
+
+**(1) File tools:**
+- `read_file` — delegates to `FileReaderAgent`. Args: `path` (required), `offset` (optional line), `limit` (optional line count). Returns file content as text. No consensus required. Min trust: 0.0 (all agents can read).
+- `write_file` — delegates to `FileWriterAgent`. Args: `path`, `content`. Returns confirmation or error. **Consensus-gated** per FileWriterAgent's existing design (requires_consensus=True). Min trust: configurable (default 0.3).
+- `edit_file` — Search/replace within a file (like `===MODIFY:===` blocks but as a tool). Args: `path`, `old_text`, `new_text`, `replace_all` (bool). Consensus-gated. Min trust: configurable.
+- `list_files` — Glob pattern matching. Args: `pattern`, `path` (optional base). Returns matching file paths. No consensus. Min trust: 0.0.
+
+**(2) Shell tools:**
+- `run_command` — delegates to `ShellCommandAgent`. Args: `command` (required), `timeout` (optional, default 30s), `working_directory` (optional). Returns stdout/stderr/exit_code. **Double-gated** per ShellCommandAgent's existing design (requires_consensus + requires_reflect). Min trust: 0.5 (Lieutenant+).
+- Platform-aware: Windows PowerShell wrapping, Python interpreter rewriting (existing ShellCommandAgent behavior preserved).
+
+**(3) Codebase tools:**
+- `codebase_query` — delegates to `CodebaseIndex.query()`. Args: `query` (keyword string). Returns matching file paths + snippets. No consensus. Min trust: 0.0.
+- `codebase_find_callers` — delegates to `CodebaseIndex.find_callers()`. Args: `function_name`. Returns caller locations.
+- `codebase_find_tests` — delegates to `CodebaseIndex.find_tests_for()`. Args: `source_path`. Returns test file paths.
+- `codebase_get_imports` — delegates to `CodebaseIndex.get_imports()`. Args: `file_path`. Returns import graph.
+- `codebase_read_source` — delegates to `CodebaseIndex.get_symbol_source()` or direct file read with line ranges. Args: `path`, `start_line` (optional), `end_line` (optional).
+
+**(4) Context tools:**
+- `standing_orders_lookup` — read department/agent standing orders. Args: `scope` ("ship"/"department"/"agent"), `department` (optional). Returns standing order text. No consensus. Min trust: 0.0. (Mirrors existing Copilot adapter MCP tool.)
+- `system_self_model` — read system topology snapshot. Returns JSON summary of agents, departments, pools.
+
+**(5) Tool manifest:** JSON file (`tools/manifest.json` or Python registry) listing all available tools with their definitions, permission requirements, and implementation bindings. Extensible for commercial tools and MCP bridge tools (AD-449).
+
+*Connects to: AD-543 (ToolExecutor framework), FileReaderAgent, FileWriterAgent, ShellCommandAgent, CodebaseIndex (AD-312/315), Standing Orders, AD-449 (MCP Bridge — future external tools register through the same manifest). Absorbed from: Copilot adapter's 7 MCP tool registrations (standing_orders_lookup, codebase_query, codebase_find_callers, codebase_get_imports, codebase_find_tests, codebase_read_source, system_self_model).*
+
+**AD-545: Agentic Loop Engine — Multi-Turn Tool-Calling Orchestrator** *(planned, OSS, depends: AD-543, AD-544)* — The core execution loop that replaces the single-shot LLM call pattern. Receives a task, iterates LLM → tool_use → execute → result → LLM until the task is complete or limits are reached.
+
+**(1) `AgenticLoop` class:**
+- Constructor: `llm_client`, `tool_executor: ToolExecutor`, `max_iterations: int` (default 25, configurable via `AGENTIC_MAX_ITERATIONS` config constant), `token_budget: int` (optional, max total tokens before forced stop)
+- `async def run(system_prompt: str, user_message: str, tools: list[ToolDefinition], context: ToolContext) -> AgenticResult`
+- `AgenticResult` dataclass: `final_text: str` (last text output), `tool_calls: list[ToolCallRequest]` (all tool calls made), `iterations: int`, `total_tokens: int`, `stopped_reason: str` ("complete"/"max_iterations"/"token_budget"/"error")
+
+**(2) Loop mechanics:**
+1. Send system prompt + user message + tool definitions to LLM
+2. Parse response into `ContentBlock` list
+3. For each `ToolUseBlock`: execute via `ToolExecutor`, collect `ToolCallResult`
+4. If response contains only `TextBlock`(s) with no tool calls → task complete, return
+5. If tool calls were made → append tool results to conversation, send back to LLM
+6. Repeat from step 2
+7. If `iterations >= max_iterations` → force stop, return partial result with `stopped_reason="max_iterations"`
+8. If `total_tokens >= token_budget` → force stop with `stopped_reason="token_budget"`
+
+**(3) Conversation message management:**
+- Maintain message list: `[system, user, assistant(content_blocks), tool_results, assistant(content_blocks), ...]`
+- Each iteration appends assistant response + tool results
+- Messages grow unbounded within a session (compaction handled by AD-547)
+
+**(4) Error handling:**
+- Tool execution failure → `ToolCallResult(is_error=True)` fed back to LLM (let LLM adapt)
+- LLM API failure → retry with exponential backoff (reuse existing `evolve_with_retry` pattern), max 2 retries
+- Unrecoverable error → return `AgenticResult` with `stopped_reason="error"`
+- Never crash — log-and-degrade, return partial results
+
+**(5) Event emission:**
+- Emit `tool_call_started` / `tool_call_completed` events via runtime event bus (future HXI observability)
+- Emit `agentic_loop_iteration` event with iteration count, tools used, token count (feeds EpisodicMemory for Cognitive JIT)
+
+*Connects to: AD-543 (ToolExecutor), AD-544 (tool suite), AD-547 (session compaction), AD-521 (BuildPipeline infrastructure). Absorbed from: claw-code agentic loop pattern, Claude Code tool-calling orchestrator. The loop is infrastructure (Ship's Computer service), not a cognitive agent.*
+
+**AD-546: BuildPipeline Integration — Wiring the Harness into the Build System** *(planned, OSS, depends: AD-545, AD-521)* — Connects the agentic loop to the existing build system. The SWE agent (Scotty → future SoftwareEngineerAgent) delegates to the native harness as an alternative to the visiting builder.
+
+**(1) `NativeBuilderHarness` class:**
+- Wraps `AgenticLoop` with build-specific configuration
+- Input: `BuildSpec` (same as current `BuilderAgent` and `CopilotBuilderAdapter` input)
+- Output: `list[dict]` (file_changes in the same format `_parse_file_blocks()` produces — `path`, `mode`, `content`/`replacements`)
+- System prompt: Compose from Standing Orders + BuildSpec constraints + tool usage instructions (replaces the current single-shot code generation prompt with an agentic-aware prompt that encourages reading code, understanding context, then writing)
+- Tool selection: `read_file`, `edit_file`, `write_file`, `list_files`, `run_command`, `codebase_query`, `codebase_find_callers`, `codebase_find_tests` — subset of AD-544 tools relevant to code generation
+- Post-loop: Scan working directory for changed files (like `CopilotBuilderAdapter` does), produce file_changes list
+
+**(2) Build routing:**
+- `BuilderAgent.perceive()` already has routing logic (line 2028 checks for visiting builder, line 2098 checks for Transporter). Add a third route: native agentic harness
+- Selection criteria: `BuildConfig.use_native_harness: bool` (default False initially, flip to True once validated), or `BuildSpec.preferred_builder: str` ("native"/"visiting"/"auto")
+- "auto" mode: native for single-file changes and modifications, visiting for complex multi-file new features (leverage visiting builder's broader context window), native for test-fix loops (tighter integration with test output)
+- Transporter Pattern (parallel chunks) remains orthogonal — each chunk could use native or visiting
+
+**(3) Test-fix loop upgrade:**
+- Current `execute_approved_build()` has a 2-attempt fix loop using standalone single-shot LLM calls
+- Replace with: feed test failure output as tool result into the agentic loop → let the loop read the failing test, read the source, edit the fix, re-run tests — all within one continuous session
+- `max_fix_iterations` config constant (default 5, up from current 2)
+- The agentic loop's built-in iteration limit provides the safety cap
+
+**(4) Episode recording:**
+- The agentic loop's tool calls, iterations, and final result are recorded as a single episode in EpisodicMemory
+- Episode metadata includes: tools_used (list), iterations (count), token_budget_used, files_changed
+- This feeds Cognitive JIT — successful build patterns can be extracted as procedures
+
+*Connects to: AD-545 (AgenticLoop), AD-521 (SWE/BuildPipeline separation), BuilderAgent (routing point), CopilotBuilderAdapter (coexistence), execute_approved_build (test-fix upgrade), EpisodicMemory (episode recording for Cognitive JIT), Transporter Pattern (orthogonal parallelism).*
+
+**AD-547: Session Compaction — Context Window Management for Long Sessions** *(planned, OSS, depends: AD-545)* — The agentic loop can run 25+ iterations, accumulating tool call/result messages that exceed the LLM context window. Session compaction summarizes older messages to stay within budget while preserving essential context.
+
+**(1) Compaction strategy:**
+- **Threshold trigger:** When total message tokens exceed `COMPACTION_THRESHOLD` (configurable, default 80% of model context window)
+- **Preserve:** Always keep system prompt + last N messages (configurable, default last 5 assistant+tool exchanges) + user's original task description
+- **Summarize:** Older messages compressed into a single `[CONTEXT SUMMARY]` text block via a fast-tier LLM call: "Summarize the key findings, decisions, and file changes from these tool interactions"
+- **Re-compaction:** If the summary + preserved messages still exceed threshold after first compaction, compact the summary itself (rare, only for very long sessions)
+
+**(2) Token tracking:**
+- `TokenTracker` utility: count tokens per message using tiktoken or model-specific tokenizer
+- Running total updated after each iteration
+- Exposed in `AgenticResult.total_tokens`
+
+**(3) Implementation:**
+- `SessionCompactor` class: `compact(messages: list, preserve_count: int, budget: int) -> list`
+- Injected into `AgenticLoop` — loop calls compactor before each LLM call if threshold exceeded
+- Compaction is transparent to the loop logic — compacted messages replace originals in the message list
+
+*Connects to: AD-545 (AgenticLoop — consumer), Copilot Proxy context budget considerations (existing 100K+ char limit), dream cycle context management (similar pattern). Absorbed from: claw-code session compaction with re-compaction pattern.*
+
+**AD-548: Trust-Gated Tool Permissions & Standing Orders Hooks** *(planned, OSS, depends: AD-543, AD-544)* — Security model for tool execution. Leverages ProbOS's existing trust tiers (Earned Agency) and Standing Orders system instead of static permission lists.
+
+**(1) Trust-tiered tool access:**
+- Each `ToolDefinition` declares `min_trust: float`
+- `ToolExecutor.list_available(context)` filters tools by `context.trust_score >= tool.min_trust`
+- Default tiers aligned with Earned Agency (AD-357):
+  - Trust 0.0+ (Ensign): `read_file`, `list_files`, `codebase_query`, `codebase_find_*`, `standing_orders_lookup`, `system_self_model`
+  - Trust 0.3+ (Lieutenant): `write_file`, `edit_file` (consensus-gated)
+  - Trust 0.5+ (Commander): `run_command` (consensus + reflect gated)
+  - Trust 0.85+ (Senior): All tools, consensus optional
+- Trust scores fetched from `TrustNetwork` at session start
+- Tool access can be further restricted by department Standing Orders (e.g., Security department agents cannot use `write_file` on `src/probos/security/` — only Engineering can)
+
+**(2) Pre/post tool hooks:**
+- **Pre-hook:** Before tool execution, check Standing Orders for tool-specific policies. Example: `builder.md` standing order could declare `"tools.write_file.blocked_paths": ["src/probos/core/", ".env"]` — blocks writes to critical paths regardless of trust
+- **Post-hook:** After tool execution, optional validation. Example: `run_command` post-hook checks exit code and warns on non-zero. `write_file` post-hook runs linter on written file
+- Hook definitions in Standing Orders YAML (extends existing format)
+- Hook execution is synchronous within the tool call (pre-hook can deny, post-hook can flag)
+- **Deny semantics:** Pre-hook returns `ToolCallResult(is_error=True, output="Blocked by standing order: ...")` — fed back to LLM so it can adapt
+
+**(3) Audit trail:**
+- Every tool call logged: `agent_id`, `tool_name`, `arguments` (sanitized — no file content in logs), `trust_score_at_time`, `result_summary`, `duration_ms`, `hook_decisions`
+- Stored in event log (`substrate/event_log.py`) for Captain review
+- HXI surface: tool call history in Agent Profile → Activity tab (future)
+
+*Connects to: AD-543 (ToolExecutor), AD-544 (tool definitions), AD-357 (Earned Agency trust tiers), AD-448 (Wrapped Tool Executor — AD-548 is the ProbOS-native implementation of the same concept), Standing Orders system, TrustNetwork, FileWriterAgent (consensus gating), ShellCommandAgent (reflect gating). Absorbed from: claw-code tiered permissions model, pre/post tool hooks with deny semantics.*
+
+**AD-549: Builder Migration & Validation** *(planned, OSS, depends: AD-546, AD-548)* — Controlled migration from single-shot builder to native agentic harness. Feature-flagged rollout with A/B comparison against the existing builder and visiting builder.
+
+**(1) Feature flag:**
+- `BuildConfig.native_harness_enabled: bool` (default False)
+- When True, BuilderAgent routes to `NativeBuilderHarness` for eligible BuildSpecs
+- Eligibility: start with modify-only builds (no new files), expand to full builds after validation
+- Flag controllable via API: `PATCH /api/system/build/config`
+
+**(2) A/B validation:**
+- For a configurable window, run both native and current builder on the same BuildSpec (shadow mode)
+- Compare: files changed (should match), test pass rate (should match or improve), token usage (native likely higher per-build but conversation is richer), time to completion, fix loop success rate
+- Results logged to `build_metrics` table for analysis
+- Captain can review comparison in HXI Build Queue → "Builder Comparison" tab (future)
+
+**(3) Migration phases:**
+- **Phase α:** Single-file modify builds only. Native harness in shadow mode alongside current builder. Manual comparison by Captain. (2 weeks)
+- **Phase β:** All modify builds migrate to native harness. New-file builds remain current builder. Visiting builder available as fallback. (2 weeks)
+- **Phase γ:** All builds default to native harness. Current single-shot path preserved as "fast mode" for trivial changes. Visiting builder remains for complex multi-repo work. (ongoing)
+- **Phase δ:** Deprecate single-shot `_parse_file_blocks()` path. All build code generation goes through agentic loop. Current `BuilderAgent.act()` becomes a thin wrapper around `NativeBuilderHarness`. (future)
+
+**(4) Observability:**
+- New build metadata: `builder_type` ("native"/"visiting"/"legacy"), `iterations` (agentic loop count), `tools_used` (list), `compactions` (session compaction count)
+- Surface in HXI Build Queue item detail view
+- Feeds Engineering department performance dashboards (future)
+
+*Connects to: AD-546 (NativeBuilderHarness), AD-521 (SWE/BuildPipeline separation — migration aligns with the architectural refactor), BuilderAgent, CopilotBuilderAdapter (coexistence), HXI Build Queue, EpisodicMemory (build episodes for Cognitive JIT).*
+
+**Implementation order:** AD-543 → AD-544 → AD-548 → AD-545 → AD-547 → AD-546 → AD-549. Permissions (AD-548) before the loop (AD-545) because the loop needs permission checks from day one. Compaction (AD-547) can be added to the loop after initial validation.
+
+*Series connects to: AD-521 (SWE/Build Pipeline Separation — AD-543–549 implements the BuildPipeline infrastructure layer that AD-521 designed), AD-448 (Wrapped Tool Executor — AD-548 is the native implementation), AD-449 (MCP Bridge — external tools register through the same ToolExecutor manifest), AD-398 (Three-Tier Agent Architecture — harness is infrastructure), AD-357 (Earned Agency — trust tiers gate tool access), Cognitive JIT (Phase 32 — agentic loop episodes feed procedural extraction), Visiting Officer Subordination (coexistence model). Absorbed patterns from: claw-code (ToolExecutor trait, agentic loop, ContentBlock model, tiered permissions, pre/post hooks, session compaction, max_iterations), Claude Code, OpenCode, Aider.*
 
 ### Workforce Scheduling Engine (AD-496–498)
 

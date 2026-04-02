@@ -123,6 +123,8 @@ class EventType(str, Enum):
     SELF_MONITORING_CONCERN = "self_monitoring_concern"  # AD-506a: amber zone
     ZONE_RECOVERY = "zone_recovery"  # AD-506b: agent zone improved
     PEER_REPETITION_DETECTED = "peer_repetition_detected"  # AD-506b
+    TASK_EXECUTION_COMPLETE = "task_execution_complete"  # AD-532e: reactive trigger
+    PROCEDURE_FALLBACK_LEARNING = "procedure_fallback_learning"  # AD-534b: fallback evidence
 
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
@@ -481,3 +483,29 @@ class PeerRepetitionDetectedEvent(BaseEvent):
     match_count: int = 0
     top_similarity: float = 0.0
     post_type: str = ""  # "thread" or "reply"
+
+
+@dataclass
+class TaskExecutionCompleteEvent(BaseEvent):
+    """Emitted after a cognitive agent completes a task via LLM path (AD-532e)."""
+    event_type: EventType = field(default=EventType.TASK_EXECUTION_COMPLETE, init=False)
+    agent_id: str = ""
+    agent_type: str = ""
+    intent_type: str = ""
+    success: bool = False
+    used_procedure: bool = False  # True if procedural replay was used (no reactive needed)
+
+
+@dataclass
+class ProcedureFallbackLearningEvent(BaseEvent):
+    """Emitted when a procedure was relevant but skipped/failed, and the LLM succeeded (AD-534b)."""
+    event_type: EventType = field(default=EventType.PROCEDURE_FALLBACK_LEARNING, init=False)
+    agent_id: str = ""
+    intent_type: str = ""
+    fallback_type: str = ""        # "execution_failure" | "quality_gate" | "score_threshold" | "negative_veto" | "format_exception"
+    procedure_id: str = ""
+    procedure_name: str = ""
+    near_miss_score: float = 0.0   # Cosine similarity score (0 for execution failures)
+    rejection_reason: str = ""     # Human-readable reason for rejection/failure
+    llm_response: str = ""         # What the LLM did (truncated to MAX_FALLBACK_RESPONSE_CHARS)
+    timestamp: float = 0.0

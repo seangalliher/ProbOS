@@ -233,6 +233,9 @@ class TestProcedureSchema:
             "origin_agent_ids", "provenance", "extraction_date",
             "evolution_type", "compilation_level", "success_count",
             "failure_count",
+            # AD-533: store and evolution support
+            "is_active", "generation", "parent_procedure_ids",
+            "is_negative", "superseded_by", "tags",
         }
         assert set(d.keys()) == expected_keys
 

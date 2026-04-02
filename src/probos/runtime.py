@@ -388,6 +388,9 @@ class ProbOSRuntime:
         # --- Counselor Profile Store (AD-503) ---
         self._counselor_profile_store: Any = None
 
+        # --- Procedure Store (AD-533) ---
+        self._procedure_store: Any = None
+
         # --- Skill Framework (AD-428) ---
         self.skill_registry: SkillRegistry | None = None
         self.skill_service: AgentSkillService | None = None
@@ -762,6 +765,11 @@ class ProbOSRuntime:
         return self._records_store
 
     @property
+    def procedure_store(self):
+        """AD-534: Procedure store for replay-first dispatch."""
+        return self._procedure_store
+
+    @property
     def is_cold_start(self) -> bool:
         """True during first cycle after a clean reset (no prior state)."""
         return self._cold_start
@@ -1086,6 +1094,20 @@ class ProbOSRuntime:
         self._stasis_duration = cog.stasis_duration
         self._previous_session = cog.previous_session
 
+        # AD-533: Procedure Store (after RecordsStore, before Dreaming)
+        try:
+            from probos.cognitive.procedure_store import ProcedureStore
+
+            procedure_store = ProcedureStore(
+                data_dir=self._data_dir / "procedures",
+                records_store=self._records_store,
+            )
+            await procedure_store.start()
+            self._procedure_store = procedure_store
+        except Exception as e:
+            logger.warning("ProcedureStore failed to start: %s — continuing without", e)
+            self._procedure_store = None
+
         # Phase 5: Dreaming & Detection (AD-517)
         from probos.startup.dreaming import init_dreaming
 
@@ -1108,6 +1130,8 @@ class ProbOSRuntime:
             refresh_emergent_detector_roster_fn=self._refresh_roster_bridge,
             emit_event_fn=self._emit_event,  # AD-503
             llm_client=self.llm_client,  # AD-532: procedure extraction
+            procedure_store=self._procedure_store,  # AD-533: persistent procedure storage
+            runtime=self,  # AD-532e: for reactive event subscription
         )
         self.dream_scheduler = dream_result.dream_scheduler
         self._emergent_detector = dream_result.emergent_detector

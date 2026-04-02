@@ -36,6 +36,28 @@ COUNSELOR_WELLNESS_FIT = 0.3       # Minimum wellness for fit-for-duty
 COUNSELOR_CONFIDENCE_LOW = 0.3     # Low confidence concern threshold
 COUNSELOR_TRUST_DRIFT_CONCERN = -0.2  # Significant trust drop
 
+# ─── Cognitive JIT (AD-534) ───────────────────────────────────────
+# Replay-first dispatch thresholds for procedural memory.
+
+PROCEDURE_MATCH_THRESHOLD = 0.6     # Minimum semantic similarity for replay
+PROCEDURE_MIN_COMPILATION_LEVEL = 1  # Minimum Dreyfus level for replay (AD-535 raises this)
+PROCEDURE_MIN_SELECTIONS = 5        # Minimum selections before health diagnosis
+PROCEDURE_HEALTH_FALLBACK_RATE = 0.4    # FIX diagnosis threshold
+PROCEDURE_HEALTH_COMPLETION_RATE = 0.35  # FIX diagnosis (with applied > 0.4)
+PROCEDURE_HEALTH_APPLIED_RATE = 0.4      # FIX diagnosis trigger
+PROCEDURE_HEALTH_EFFECTIVE_RATE = 0.55   # DERIVED diagnosis threshold
+PROCEDURE_HEALTH_DERIVED_APPLIED = 0.25  # DERIVED minimum applied_rate
+EVOLUTION_COOLDOWN_SECONDS = 259200  # 72 hours — don't re-evolve same procedure within this window
+
+# AD-532e: Reactive & proactive triggers
+REACTIVE_COOLDOWN_SECONDS: int = 60       # Per-agent cooldown for reactive checks
+PROACTIVE_SCAN_INTERVAL_SECONDS: int = 300  # 5 minutes between proactive scans
+EVOLUTION_MAX_RETRIES: int = 3              # Max retry attempts for evolution
+
+# AD-534b: Fallback learning
+MAX_FALLBACK_RESPONSE_CHARS: int = 4000   # Truncation limit for LLM response in fallback events
+MAX_FALLBACK_QUEUE_SIZE: int = 50         # Cap on in-memory fallback queue per dream cycle
+
 
 def format_trust(value: float, precision: int = TRUST_DISPLAY_PRECISION) -> float:
     """Round a trust/score value for display. Centralizes precision."""

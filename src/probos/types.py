@@ -375,6 +375,12 @@ class DreamReport:
     clusters: list[Any] = field(default_factory=list)  # AD-531: EpisodeCluster objects
     procedures_extracted: int = 0  # AD-532
     procedures: list[Any] = field(default_factory=list)  # AD-532: Procedure objects
+    procedures_evolved: int = 0  # AD-532b
+    negative_procedures_extracted: int = 0  # AD-532c
+    proactive_evolutions: int = 0  # AD-532e: procedures evolved by proactive scan
+    reactive_flags: int = 0        # AD-532e: extraction candidates flagged by reactive trigger
+    fallback_evolutions: int = 0   # AD-534b: procedures evolved from fallback learning evidence
+    fallback_events_processed: int = 0  # AD-534b: total fallback events processed in dream cycle
     gaps_predicted: int = 0
     contradictions_found: int = 0  # AD-403
 

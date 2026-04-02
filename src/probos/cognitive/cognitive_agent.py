@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from probos.events import EventType
 from probos.substrate.agent import BaseAgent
 from probos.types import IntentMessage, IntentResult, LLMRequest, Skill
 from probos.utils import format_duration
@@ -60,6 +61,9 @@ class CognitiveAgent(BaseAgent):
         # Strategy advisor (AD-384) — optional cross-agent knowledge transfer
         self._strategy_advisor = None
 
+        # AD-534b: near-miss/failure context for fallback learning
+        self._last_fallback_info: dict[str, Any] | None = None
+
         # Validate instructions exist
         if not self.instructions:
             raise ValueError(
@@ -76,6 +80,242 @@ class CognitiveAgent(BaseAgent):
         if self._runtime and hasattr(self._runtime, 'cognitive_journal'):
             return self._runtime.cognitive_journal
         return None
+
+    @property
+    def _procedure_store(self):
+        """AD-534: Access procedure store via runtime (Ship's Computer service)."""
+        if self._runtime and hasattr(self._runtime, 'procedure_store'):
+            return self._runtime.procedure_store
+        return None
+
+    async def _check_procedural_memory(self, observation: dict) -> dict | None:
+        """AD-534: Check for a matching procedure before calling the LLM.
+
+        Returns a decision dict if a procedure was replayed successfully,
+        or None to fall through to the LLM path.
+        """
+        self._last_fallback_info = None  # AD-534b: reset for this cycle
+
+        store = self._procedure_store
+        if not store:
+            return None
+
+        # Extract query text from observation
+        params = observation.get("params", {})
+        query = ""
+        if isinstance(params, dict):
+            query = params.get("message", "") or params.get("query", "")
+        if not query:
+            query = observation.get("intent", "")
+        if not query:
+            return None
+
+        from probos.config import (
+            PROCEDURE_MATCH_THRESHOLD,
+            PROCEDURE_MIN_COMPILATION_LEVEL,
+        )
+
+        # 1. Negative procedure check — warn even before positive match
+        try:
+            neg_matches = await store.find_matching(
+                query, n_results=3, exclude_negative=False,
+            )
+            for nm in neg_matches:
+                if nm.get("is_negative") and nm.get("score", 0) >= PROCEDURE_MATCH_THRESHOLD:
+                    logger.warning(
+                        "AD-534: Negative procedure match for '%s': %s (score=%.3f). "
+                        "Avoiding known anti-pattern.",
+                        query[:50], nm.get("name"), nm.get("score"),
+                    )
+                    # AD-534b: Near-miss tracking — negative veto
+                    self._last_fallback_info = {
+                        "type": "negative_veto",
+                        "procedure_id": nm["id"],
+                        "procedure_name": nm.get("name", ""),
+                        "score": nm["score"],
+                        "reason": "Blocked by negative procedure (anti-pattern match)",
+                    }
+                    # Don't return — fall through to LLM with warning logged.
+                    # The LLM path will handle the task correctly.
+                    return None
+        except Exception:
+            logger.debug("Negative procedure check failed (non-critical)", exc_info=True)
+
+        # 2. Find matching positive procedures
+        try:
+            matches = await store.find_matching(
+                query,
+                n_results=3,
+                min_compilation_level=PROCEDURE_MIN_COMPILATION_LEVEL,
+                exclude_negative=True,
+            )
+        except Exception:
+            logger.debug("Procedure store query failed (non-critical)", exc_info=True)
+            return None
+
+        if not matches:
+            return None
+
+        best = matches[0]
+
+        # 3. Score threshold gate
+        if best.get("score", 0) < PROCEDURE_MATCH_THRESHOLD:
+            # AD-534b: Near-miss tracking — score below threshold
+            self._last_fallback_info = {
+                "type": "score_threshold",
+                "procedure_id": best["id"],
+                "procedure_name": best.get("name", ""),
+                "score": best.get("score", 0),
+                "reason": f"Score {best.get('score', 0):.2f} below threshold {PROCEDURE_MATCH_THRESHOLD}",
+            }
+            return None
+
+        # 4. Quality metric gate — don't replay procedures with poor track record
+        try:
+            metrics = await store.get_quality_metrics(best["id"])
+        except Exception:
+            metrics = {}
+
+        if metrics.get("total_selections", 0) >= 5:
+            eff_rate = metrics.get("effective_rate", 1.0)
+            if eff_rate < 0.3:
+                logger.info(
+                    "AD-534: Skipping procedure '%s' — poor effective_rate (%.2f)",
+                    best.get("name"), eff_rate,
+                )
+                self._diagnose_procedure_health(best["id"], best.get("name", ""), metrics)
+                # AD-534b: Near-miss tracking — quality gate
+                self._last_fallback_info = {
+                    "type": "quality_gate",
+                    "procedure_id": best["id"],
+                    "procedure_name": best.get("name", ""),
+                    "score": best.get("score", 0),
+                    "metrics": metrics,
+                    "reason": f"Effective rate {eff_rate:.2f} below 0.3",
+                }
+                return None
+
+        # 5. Record selection
+        try:
+            await store.record_selection(best["id"])
+        except Exception:
+            logger.debug("record_selection failed", exc_info=True)
+
+        # 6. Load full procedure
+        try:
+            procedure = await store.get(best["id"])
+        except Exception:
+            logger.debug("Procedure load failed", exc_info=True)
+            return None
+
+        if not procedure:
+            return None
+
+        # 7. Record applied (replay attempt begins)
+        try:
+            await store.record_applied(best["id"])
+        except Exception:
+            logger.debug("record_applied failed", exc_info=True)
+
+        # 8. Execute replay
+        try:
+            replay_output = self._format_procedure_replay(procedure, best.get("score", 0))
+
+            # AD-534b: record_completion moved to handle_intent() post-execution
+
+            # Health diagnosis (log-only, feeds future AD-532b)
+            try:
+                updated_metrics = await store.get_quality_metrics(best["id"])
+                self._diagnose_procedure_health(best["id"], procedure.name, updated_metrics)
+            except Exception:
+                logger.debug("Health diagnosis failed (non-critical)", exc_info=True)
+
+            logger.info(
+                "AD-534: Procedure replay for '%s' — '%s' (score=%.3f, 0 tokens)",
+                observation.get("intent", ""), procedure.name, best.get("score", 0),
+            )
+
+            return {
+                "action": "execute",
+                "llm_output": replay_output,
+                "cached": True,
+                "procedure_id": procedure.id,
+                "procedure_name": procedure.name,
+            }
+
+        except Exception as exc:
+            # Replay failed — record near-miss info, fall through to LLM
+            logger.info(
+                "AD-534: Procedure replay failed for '%s' — falling back to LLM",
+                procedure.name,
+            )
+            # AD-534b: record_fallback moved to handle_intent() post-execution
+            self._last_fallback_info = {
+                "type": "format_exception",
+                "procedure_id": procedure.id,
+                "procedure_name": procedure.name,
+                "score": best.get("score", 0),
+                "reason": f"Replay formatting failed: {exc}",
+            }
+            return None
+
+    def _format_procedure_replay(self, procedure: Any, match_score: float = 0.0) -> str:
+        """AD-534: Format a procedure for deterministic replay output.
+
+        The procedure's steps become the structured response,
+        replacing the LLM call entirely.
+        """
+        lines = [
+            f"[Procedure Replay: {procedure.name}]",
+            f"Match score: {match_score:.3f} | Steps: {len(procedure.steps)}",
+            "",
+        ]
+        if procedure.description:
+            lines.append(procedure.description)
+            lines.append("")
+
+        for step in procedure.steps:
+            role = getattr(step, "agent_role", "")
+            if role:
+                lines.append(f"**Step {step.step_number} [{role}]:** {step.action}")
+            else:
+                lines.append(f"**Step {step.step_number}:** {step.action}")
+            if step.expected_output:
+                lines.append(f"  → Expected: {step.expected_output}")
+            if step.fallback_action:
+                lines.append(f"  ⚠ Fallback: {step.fallback_action}")
+
+        if procedure.postconditions:
+            lines.append("")
+            lines.append("**Postconditions:**")
+            for pc in procedure.postconditions:
+                lines.append(f"  - {pc}")
+
+        return "\n".join(lines)
+
+    def _diagnose_procedure_health(
+        self, procedure_id: str, procedure_name: str, metrics: dict
+    ) -> None:
+        """AD-534: Metric-based health diagnosis (OpenSpace absorbed pattern).
+
+        Uses shared diagnosis function from procedures.py. Logs diagnosis for
+        AD-532b FIX/DERIVED evolution. No action taken here.
+        """
+        from probos.cognitive.procedures import diagnose_procedure_health
+        from probos.config import PROCEDURE_MIN_SELECTIONS
+
+        diagnosis = diagnose_procedure_health(metrics, min_selections=PROCEDURE_MIN_SELECTIONS)
+        if diagnosis:
+            logger.warning(
+                "AD-534: Procedure health diagnosis for '%s' (%s): %s "
+                "(selections=%d, fallback=%.2f, applied=%.2f, completion=%.2f, effective=%.2f)",
+                procedure_name, procedure_id[:8], diagnosis,
+                metrics.get("total_selections", 0),
+                metrics.get("fallback_rate", 0.0),
+                metrics.get("applied_rate", 0.0),
+                metrics.get("completion_rate", 0.0),
+                metrics.get("effective_rate", 0.0),
+            )
 
     async def perceive(self, intent: Any) -> dict:
         """Package the intent as an observation for the LLM."""
@@ -200,7 +440,56 @@ class CognitiveAgent(BaseAgent):
 
         _CACHE_MISSES[self.agent_type] = _CACHE_MISSES.get(self.agent_type, 0) + 1
 
+        # --- AD-534: Procedural memory check (semantic match) ---
+        procedural_result = await self._check_procedural_memory(observation)
+        if procedural_result is not None:
+            # Record in journal (fire-and-forget)
+            if self._cognitive_journal:
+                try:
+                    import uuid as _uuid
+                    await self._cognitive_journal.record(
+                        entry_id=_uuid.uuid4().hex,
+                        timestamp=time.time(),
+                        agent_id=self.id,
+                        agent_type=self.agent_type,
+                        intent=observation.get("intent", ""),
+                        intent_id=observation.get("intent_id", ""),
+                        cached=True,
+                        total_tokens=0,
+                        procedure_id=procedural_result.get("procedure_id", ""),
+                    )
+                except Exception:
+                    logger.debug("Journal recording failed", exc_info=True)
+            return procedural_result
+
         # --- LLM call (cache miss) ---
+        decision = await self._decide_via_llm(observation)
+
+        # Record strategy outcomes (AD-384)
+        applied_strategy_ids = decision.pop("_applied_strategy_ids", [])
+        if applied_strategy_ids and self._strategy_advisor:
+            for sid in applied_strategy_ids:
+                self._strategy_advisor.record_outcome(
+                    sid, self.agent_type, success=True
+                )
+
+        # --- Store in cache ---
+        ttl = self._get_cache_ttl()
+        cache[cache_key] = (decision, time.monotonic(), ttl)
+
+        # Evict oldest entry if cache exceeds 1000 per agent type
+        if len(cache) > 1000:
+            oldest_key = min(cache, key=lambda k: cache[k][1])
+            del cache[oldest_key]
+
+        return decision
+
+    async def _decide_via_llm(self, observation: dict) -> dict:
+        """AD-534b: LLM-only decision path — extracted from decide() for DRY reuse.
+
+        Builds messages, calls LLM, records to journal.
+        Returns decision dict. Does NOT check decision cache or procedural memory.
+        """
         user_message = self._build_user_message(observation)
 
         # Strategy advice (AD-384)
@@ -365,23 +654,19 @@ class CognitiveAgent(BaseAgent):
             except Exception:
                 logger.debug("Journal recording failed", exc_info=True)  # Non-critical — never block agent cognition
 
-        # Record strategy outcomes (AD-384)
-        if applied_strategy_ids and self._strategy_advisor:
-            for sid in applied_strategy_ids:
-                self._strategy_advisor.record_outcome(
-                    sid, self.agent_type, success=True
-                )
-
-        # --- Store in cache ---
-        ttl = self._get_cache_ttl()
-        cache[cache_key] = (decision, time.monotonic(), ttl)
-
-        # Evict oldest entry if cache exceeds 1000 per agent type
-        if len(cache) > 1000:
-            oldest_key = min(cache, key=lambda k: cache[k][1])
-            del cache[oldest_key]
+        # Pass strategy IDs back for caller to process
+        if applied_strategy_ids:
+            decision["_applied_strategy_ids"] = applied_strategy_ids
 
         return decision
+
+    async def _run_llm_fallback(self, observation: dict[str, Any]) -> dict[str, Any] | None:
+        """AD-534b: Re-run through LLM path, skipping procedural memory and decision cache."""
+        try:
+            return await self._decide_via_llm(observation)
+        except Exception:
+            logger.debug("LLM fallback decision failed", exc_info=True)
+            return None
 
     async def act(self, decision: dict) -> dict:
         """Execute based on LLM decision.  Override for structured output."""
@@ -436,7 +721,87 @@ class CognitiveAgent(BaseAgent):
         await self._store_action_episode(intent, observation, report)
 
         success = report.get("success", False)
+
+        # AD-534b: Post-execution metric recording for procedure replay
+        if decision.get("cached") and decision.get("procedure_id"):
+            _store = self._procedure_store
+            if _store:
+                try:
+                    if success:
+                        await _store.record_completion(decision["procedure_id"])
+                    else:
+                        await _store.record_fallback(decision["procedure_id"])
+                except Exception:
+                    pass  # Never block intent pipeline for metrics
+
+        # AD-534b: Service recovery — re-run LLM on cached execution failure
+        llm_decision = None
+        if decision.get("cached") and not success:
+            _proc_name = decision.get("procedure_name", "")
+            _proc_id = decision.get("procedure_id", "")
+            logger.debug("Procedure replay failed, attempting LLM fallback: procedure=%s", _proc_name)
+            try:
+                llm_decision = await self._run_llm_fallback(observation)
+                if llm_decision is not None:
+                    llm_result = await self.act(llm_decision)
+                    llm_report = await self.report(llm_result)
+                    llm_success = llm_report.get("success", False)
+                    if llm_success:
+                        # Service recovery succeeded — use LLM result
+                        result = llm_result
+                        report = llm_report
+                        success = True
+                        # Capture fallback learning event
+                        self._last_fallback_info = {
+                            "type": "execution_failure",
+                            "procedure_id": _proc_id,
+                            "procedure_name": _proc_name,
+                            "reason": "Procedure replay succeeded in formatting but failed in execution",
+                        }
+            except Exception:
+                logger.debug("LLM fallback recovery failed", exc_info=True)
+                # Original failure stands — user sees the procedure's error
+
         self.update_confidence(success)
+
+        # AD-532e: Reactive trigger — emit task completion for procedure evolution monitoring
+        _rt = getattr(self, '_runtime', None)
+        if _rt and hasattr(_rt, '_emit_event'):
+            try:
+                _rt._emit_event(EventType.TASK_EXECUTION_COMPLETE, {
+                    "agent_id": self.id,
+                    "agent_type": getattr(self, 'agent_type', ''),
+                    "intent_type": intent.intent,
+                    "success": success,
+                    "used_procedure": decision.get("cached", False),
+                })
+            except Exception:
+                pass  # Fire-and-forget, never block the intent pipeline
+
+        # AD-534b: Emit fallback learning event for dream-time processing
+        if success and self._last_fallback_info is not None:
+            if _rt and hasattr(_rt, '_emit_event'):
+                try:
+                    from probos.config import MAX_FALLBACK_RESPONSE_CHARS
+                    _llm_output = ""
+                    if llm_decision is not None:
+                        _llm_output = llm_decision.get("llm_output", "")
+                    else:
+                        _llm_output = decision.get("llm_output", "")
+                    _rt._emit_event(EventType.PROCEDURE_FALLBACK_LEARNING, {
+                        "agent_id": self.id,
+                        "intent_type": intent.intent,
+                        "fallback_type": self._last_fallback_info["type"],
+                        "procedure_id": self._last_fallback_info["procedure_id"],
+                        "procedure_name": self._last_fallback_info.get("procedure_name", ""),
+                        "near_miss_score": self._last_fallback_info.get("score", 0.0),
+                        "rejection_reason": self._last_fallback_info.get("reason", ""),
+                        "llm_response": _llm_output[:MAX_FALLBACK_RESPONSE_CHARS],
+                        "timestamp": time.time(),
+                    })
+                except Exception:
+                    pass  # Fire-and-forget
+            self._last_fallback_info = None  # Consumed
 
         return IntentResult(
             intent_id=intent.id,

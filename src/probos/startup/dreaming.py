@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
 from probos.cognitive.emergent_detector import EmergentDetector
 from probos.cognitive.task_scheduler import TaskScheduler
+from probos.events import EventType
 from probos.startup.results import DreamingResult
 
 if TYPE_CHECKING:
@@ -46,6 +47,8 @@ async def init_dreaming(
     refresh_emergent_detector_roster_fn: Callable[[], None],
     emit_event_fn: Callable[..., Any] | None = None,  # AD-503
     llm_client: Any = None,  # AD-532: procedure extraction
+    procedure_store: Any = None,  # AD-533: persistent procedure storage
+    runtime: Any = None,  # AD-532e: for reactive event subscription
 ) -> tuple[DreamingResult, bool]:
     """Start dreaming/detection subsystems and detect cold start.
 
@@ -71,6 +74,7 @@ async def init_dreaming(
             gap_prediction_fn=on_gap_predictions_fn,
             contradiction_resolve_fn=on_contradictions_fn,
             llm_client=llm_client,
+            procedure_store=procedure_store,
         )
         dream_scheduler = DreamScheduler(
             engine=dreaming_engine,
@@ -144,6 +148,31 @@ async def init_dreaming(
         dream_scheduler._post_dream_fn = on_post_dream_fn
         dream_scheduler._pre_dream_fn = on_pre_dream_fn
         dream_scheduler._post_micro_dream_fn = on_post_micro_dream_fn
+
+    # AD-532e: Reactive trigger subscription
+    if dreaming_engine and runtime and hasattr(runtime, 'add_event_listener'):
+        async def _on_task_complete(event: dict) -> None:
+            try:
+                await dreaming_engine.on_task_execution_complete(event.get("data", event))
+            except Exception:
+                logger.debug("Reactive trigger handler failed", exc_info=True)
+
+        runtime.add_event_listener(
+            _on_task_complete,
+            event_types=[EventType.TASK_EXECUTION_COMPLETE],
+        )
+
+        # AD-534b: Fallback learning event subscription
+        async def _on_fallback_learning(event: dict) -> None:
+            try:
+                await dreaming_engine.on_procedure_fallback_learning(event.get("data", event))
+            except Exception:
+                logger.debug("Fallback learning handler failed", exc_info=True)
+
+        runtime.add_event_listener(
+            _on_fallback_learning,
+            event_types=[EventType.PROCEDURE_FALLBACK_LEARNING],
+        )
 
     # Start task scheduler (AD-282)
     task_scheduler = TaskScheduler(

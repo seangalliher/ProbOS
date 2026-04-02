@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS journal (
     response_length  INTEGER NOT NULL DEFAULT 0,
     intent_id        TEXT NOT NULL DEFAULT '',
     dag_node_id      TEXT NOT NULL DEFAULT '',
-    response_hash    TEXT NOT NULL DEFAULT ''
+    response_hash    TEXT NOT NULL DEFAULT '',
+    procedure_id     TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_journal_agent ON journal(agent_id);
@@ -77,6 +78,7 @@ class CognitiveJournal:
             ("intent_id", "TEXT NOT NULL DEFAULT ''"),
             ("dag_node_id", "TEXT NOT NULL DEFAULT ''"),
             ("response_hash", "TEXT NOT NULL DEFAULT ''"),
+            ("procedure_id", "TEXT NOT NULL DEFAULT ''"),  # AD-534: procedure replay tracking
         ]:
             try:
                 await self._db.execute(f"ALTER TABLE journal ADD COLUMN {col} {typedef}")
@@ -162,6 +164,7 @@ class CognitiveJournal:
         intent_id: str = "",
         dag_node_id: str = "",
         response_hash: str = "",
+        procedure_id: str = "",  # AD-534: procedure ID if this was a replay
     ) -> None:
         """Append a journal entry. Fire-and-forget — never raises."""
         if not self._db:
@@ -173,15 +176,15 @@ class CognitiveJournal:
                     prompt_tokens, completion_tokens, total_tokens,
                     latency_ms, intent, success, cached, request_id,
                     prompt_hash, response_length,
-                    intent_id, dag_node_id, response_hash)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    intent_id, dag_node_id, response_hash, procedure_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry_id, timestamp, agent_id, agent_type, tier, model,
                     prompt_tokens, completion_tokens, total_tokens,
                     latency_ms, intent, 1 if success else 0,
                     1 if cached else 0, request_id,
                     prompt_hash, response_length,
-                    intent_id, dag_node_id, response_hash,
+                    intent_id, dag_node_id, response_hash, procedure_id,
                 ),
             )
             await self._db.commit()

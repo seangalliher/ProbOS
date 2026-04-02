@@ -17,8 +17,25 @@ from typing import Any
 from probos.cognitive.contradiction_detector import detect_contradictions
 from probos.cognitive.episode_clustering import cluster_episodes
 from probos.cognitive.gap_predictor import predict_gaps
-from probos.cognitive.procedures import extract_procedure_from_cluster
-from probos.config import DreamingConfig
+from probos.cognitive.procedures import (
+    extract_procedure_from_cluster,
+    extract_compound_procedure_from_cluster,
+    extract_negative_procedure_from_cluster,
+    evolve_fix_procedure,
+    evolve_derived_procedure,
+    evolve_fix_from_fallback,
+    diagnose_procedure_health,
+    confirm_evolution_with_llm,
+    evolve_with_retry,
+)
+from probos.config import (
+    DreamingConfig,
+    EVOLUTION_COOLDOWN_SECONDS,
+    PROCEDURE_MIN_SELECTIONS,
+    PROCEDURE_MATCH_THRESHOLD,
+    REACTIVE_COOLDOWN_SECONDS,
+    PROACTIVE_SCAN_INTERVAL_SECONDS,
+)
 from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — dream consolidation mutates trust
 from probos.mesh.routing import HebbianRouter, REL_INTENT
 from probos.types import DreamReport, Episode
@@ -39,6 +56,7 @@ class DreamingEngine:
         gap_prediction_fn: Any = None,
         contradiction_resolve_fn: Any = None,  # AD-403
         llm_client: Any = None,  # AD-532: procedure extraction
+        procedure_store: Any = None,  # AD-533: persistent procedure storage
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -51,8 +69,13 @@ class DreamingEngine:
         self._contradiction_resolve_fn = contradiction_resolve_fn
         self._last_consolidated_count: int = 0  # Cursor for micro-dream dedup
         self._llm_client = llm_client  # AD-532: for procedure extraction
+        self._procedure_store = procedure_store  # AD-533: persistent procedure storage
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
+        self._addressed_degradations: dict[str, float] = {}  # AD-532b: procedure_id -> timestamp
+        self._extraction_candidates: dict[str, float] = {}  # AD-532e: intent_type -> timestamp
+        self._reactive_cooldowns: dict[str, float] = {}  # AD-532e: agent_id -> last reactive check
+        self._fallback_learning_queue: list[dict[str, Any]] = []  # AD-534b: fallback evidence for dream-time processing
 
     @property
     def last_clusters(self) -> list[Any]:
@@ -186,9 +209,17 @@ class DreamingEngine:
                 # Only extract from success-dominant clusters
                 if not cluster.is_success_dominant:
                     continue
-                # Skip clusters we've already processed
+                # Skip clusters we've already processed (in-memory)
                 if cluster.cluster_id in self._extracted_cluster_ids:
                     continue
+                # Skip clusters already persisted (cross-session, AD-533)
+                if self._procedure_store:
+                    try:
+                        if await self._procedure_store.has_cluster(cluster.cluster_id):
+                            self._extracted_cluster_ids.add(cluster.cluster_id)  # warm cache
+                            continue
+                    except Exception:
+                        pass  # fall through to in-memory check only
                 try:
                     # Get the actual Episode objects for this cluster
                     matched_episodes = [
@@ -197,15 +228,31 @@ class DreamingEngine:
                     ]
                     if not matched_episodes:
                         continue
-                    procedure = await extract_procedure_from_cluster(
-                        cluster=cluster,
-                        episodes=matched_episodes,
-                        llm_client=self._llm_client,
-                    )
+                    # AD-532d: Route to compound extraction for multi-agent clusters
+                    if len(cluster.participating_agents) >= 2:
+                        procedure = await extract_compound_procedure_from_cluster(
+                            cluster=cluster,
+                            episodes=matched_episodes,
+                            llm_client=self._llm_client,
+                        )
+                    else:
+                        procedure = await extract_procedure_from_cluster(
+                            cluster=cluster,
+                            episodes=matched_episodes,
+                            llm_client=self._llm_client,
+                        )
                     if procedure:
                         procedures.append(procedure)
                         procedures_extracted += 1
                         self._extracted_cluster_ids.add(cluster.cluster_id)
+                        # AD-533: Persist to store
+                        if self._procedure_store:
+                            try:
+                                await self._procedure_store.save(procedure)
+                            except Exception as e:
+                                logger.debug(
+                                    "Procedure persistence failed (non-critical): %s", e
+                                )
                         logger.info(
                             "Procedure extracted from cluster %s: '%s' (%d steps)",
                             cluster.cluster_id[:8],
@@ -218,6 +265,84 @@ class DreamingEngine:
                         cluster.cluster_id[:8], e,
                     )
             self._last_procedures = procedures
+
+        # Step 7b: Procedure evolution from degraded metrics (AD-532b)
+        procedures_evolved = 0
+        if self._llm_client and self._procedure_store:
+            try:
+                procedures_evolved = await self._evolve_degraded_procedures(episodes, procedures)
+            except Exception as e:
+                logger.debug("Procedure evolution scan failed (non-critical): %s", e)
+
+        # Step 7c: Negative procedure extraction from failure clusters (AD-532c)
+        negative_procedures_extracted = 0
+        if self._llm_client and clusters:
+            for cluster in clusters:
+                # Only extract from failure-dominant clusters
+                if not cluster.is_failure_dominant:
+                    continue
+                # Skip clusters we've already processed (same dedup set as positive)
+                if cluster.cluster_id in self._extracted_cluster_ids:
+                    continue
+                # Skip clusters already persisted (cross-session, AD-533)
+                if self._procedure_store:
+                    try:
+                        if await self._procedure_store.has_cluster(cluster.cluster_id):
+                            self._extracted_cluster_ids.add(cluster.cluster_id)
+                            continue
+                    except Exception:
+                        pass
+                try:
+                    # Get the actual Episode objects for this cluster
+                    matched_episodes = [
+                        ep for ep in episodes
+                        if ep.id in cluster.episode_ids
+                    ]
+                    if not matched_episodes:
+                        continue
+                    # Find relevant contradictions (AD-403) for this cluster's intent types
+                    relevant_contradictions = [
+                        c for c in contradictions
+                        if c.intent in cluster.intent_types
+                    ] if contradictions else []
+                    procedure = await extract_negative_procedure_from_cluster(
+                        cluster=cluster,
+                        episodes=matched_episodes,
+                        llm_client=self._llm_client,
+                        contradictions=relevant_contradictions or None,
+                    )
+                    if procedure:
+                        procedures.append(procedure)
+                        negative_procedures_extracted += 1
+                        self._extracted_cluster_ids.add(cluster.cluster_id)
+                        # AD-533: Persist to store
+                        if self._procedure_store:
+                            try:
+                                await self._procedure_store.save(procedure)
+                            except Exception as e:
+                                logger.debug(
+                                    "Negative procedure persistence failed (non-critical): %s", e
+                                )
+                        logger.info(
+                            "Negative procedure extracted from cluster %s: '%s' (%d steps)",
+                            cluster.cluster_id[:8],
+                            procedure.name,
+                            len(procedure.steps),
+                        )
+                except Exception as e:
+                    logger.debug(
+                        "Negative extraction failed for cluster %s (non-critical): %s",
+                        cluster.cluster_id[:8], e,
+                    )
+
+        # Step 7d: Fallback learning (AD-534b)
+        fallback_stats: dict[str, Any] = {"evolved": 0, "processed": 0}
+        try:
+            fallback_stats = await self._process_fallback_learning()
+            if fallback_stats.get("evolved", 0) > 0:
+                logger.debug("Step 7d: Evolved %d procedures from fallback evidence", fallback_stats["evolved"])
+        except Exception as e:
+            logger.debug("Step 7d fallback learning failed: %s", e)
 
         # Step 8: Capability gap prediction (AD-385)
         gap_predictions = predict_gaps(episodes)
@@ -241,24 +366,477 @@ class DreamingEngine:
             clusters=clusters,
             procedures_extracted=procedures_extracted,
             procedures=procedures,
+            procedures_evolved=procedures_evolved,
+            negative_procedures_extracted=negative_procedures_extracted,
+            fallback_evolutions=fallback_stats.get("evolved", 0),
+            fallback_events_processed=fallback_stats.get("processed", 0),
             gaps_predicted=gaps_predicted,
             contradictions_found=contradictions_found,
         )
 
         logger.info(
             "dream-cycle: flushed=%d strengthened=%d pruned=%d trust_adjusted=%d "
-            "clusters=%d procedures=%d gaps=%d contradictions=%d",
+            "clusters=%d procedures=%d evolved=%d negatives=%d fallback_evolved=%d gaps=%d contradictions=%d",
             report.episodes_replayed,
             report.weights_strengthened,
             report.weights_pruned,
             report.trust_adjustments,
             report.clusters_found,
             procedures_extracted,
+            procedures_evolved,
+            negative_procedures_extracted,
+            fallback_stats.get("evolved", 0),
             report.gaps_predicted,
             report.contradictions_found,
         )
 
         return report
+
+    async def _evolve_degraded_procedures(
+        self, episodes: list[Episode], procedures: list,
+    ) -> int:
+        """Scan active procedures for degraded metrics and evolve. Returns count of evolved."""
+        active = await self._procedure_store.list_active()
+        if not active:
+            return 0
+
+        evolved_count = 0
+        now = time.time()
+
+        for entry in active:
+            proc_id = entry["id"]
+            metrics = await self._procedure_store.get_quality_metrics(proc_id)
+            if not metrics:
+                continue
+
+            diagnosis = diagnose_procedure_health(metrics, min_selections=PROCEDURE_MIN_SELECTIONS)
+            if not diagnosis:
+                continue
+
+            # Anti-loop guard: skip if addressed recently
+            last_attempt = self._addressed_degradations.get(proc_id, 0.0)
+            if now - last_attempt < EVOLUTION_COOLDOWN_SECONDS:
+                continue
+
+            # Load full procedure
+            parent = await self._procedure_store.get(proc_id)
+            if not parent:
+                continue
+
+            # Find fresh episodes via recall_by_intent for each intent type
+            fresh_episodes: list = []
+            seen_ids: set = set()
+            for intent_type in (parent.intent_types or []):
+                try:
+                    recalled = await self.episodic_memory.recall_by_intent(intent_type)
+                    for ep in recalled:
+                        if ep.id not in seen_ids:
+                            fresh_episodes.append(ep)
+                            seen_ids.add(ep.id)
+                except Exception:
+                    continue
+
+            # Limit to 10 most recent
+            fresh_episodes = fresh_episodes[:10]
+
+            if not fresh_episodes:
+                self._addressed_degradations[proc_id] = now
+                continue
+
+            # Dispatch to appropriate evolution function
+            result = None
+            if diagnosis.startswith("FIX:"):
+                result = await evolve_fix_procedure(
+                    parent, diagnosis, metrics, fresh_episodes, self._llm_client,
+                )
+            elif diagnosis.startswith("DERIVED:"):
+                result = await evolve_derived_procedure(
+                    [parent], fresh_episodes, self._llm_client,
+                )
+
+            # Record attempt regardless of outcome
+            self._addressed_degradations[proc_id] = time.time()
+
+            if result is None:
+                continue
+
+            # Persist evolved procedure
+            try:
+                await self._procedure_store.save(
+                    result.procedure,
+                    content_diff=result.content_diff,
+                    change_summary=result.change_summary,
+                )
+            except Exception as e:
+                logger.debug("Failed to save evolved procedure: %s", e)
+                continue
+
+            # FIX: deactivate parent. DERIVED: parents stay active.
+            if diagnosis.startswith("FIX:"):
+                try:
+                    await self._procedure_store.deactivate(
+                        parent.id, superseded_by=result.procedure.id,
+                    )
+                except Exception as e:
+                    logger.debug("Failed to deactivate parent procedure: %s", e)
+
+            procedures.append(result.procedure)
+            evolved_count += 1
+            logger.info(
+                "Procedure evolved (%s): '%s' -> '%s'",
+                result.procedure.evolution_type,
+                parent.name,
+                result.procedure.name,
+            )
+
+        return evolved_count
+
+    async def _attempt_procedure_evolution(
+        self,
+        parent: Any,  # Procedure
+        diagnosis: str,
+        metrics: dict[str, Any],
+        require_confirmation: bool = False,
+    ) -> bool:
+        """Shared diagnosis+evolve logic for Step 7b and proactive scan.
+
+        Returns True if evolution succeeded.
+        """
+        proc_id = parent.id
+        now = time.time()
+
+        # Anti-loop guard
+        last_attempt = self._addressed_degradations.get(proc_id, 0.0)
+        if now - last_attempt < EVOLUTION_COOLDOWN_SECONDS:
+            return False
+
+        # LLM confirmation gate (proactive only)
+        if require_confirmation:
+            evidence = (
+                f"total_selections={metrics.get('total_selections', 0)}, "
+                f"fallback_rate={metrics.get('fallback_rate', 0.0):.2f}, "
+                f"completion_rate={metrics.get('completion_rate', 0.0):.2f}, "
+                f"effective_rate={metrics.get('effective_rate', 0.0):.2f}"
+            )
+            confirmed = await confirm_evolution_with_llm(
+                parent.name, diagnosis, evidence, self._llm_client,
+            )
+            if not confirmed:
+                self._addressed_degradations[proc_id] = now
+                return False
+
+        # Recall fresh episodes
+        fresh_episodes: list = []
+        seen_ids: set = set()
+        for intent_type in (parent.intent_types or []):
+            try:
+                recalled = await self.episodic_memory.recall_by_intent(intent_type)
+                for ep in recalled:
+                    if ep.id not in seen_ids:
+                        fresh_episodes.append(ep)
+                        seen_ids.add(ep.id)
+            except Exception:
+                continue
+        fresh_episodes = fresh_episodes[:10]
+
+        if not fresh_episodes:
+            self._addressed_degradations[proc_id] = now
+            return False
+
+        # Dispatch to appropriate evolution function with retry
+        result = None
+        if diagnosis.startswith("FIX:"):
+            result = await evolve_with_retry(
+                evolve_fix_procedure,
+                parent, diagnosis, metrics, fresh_episodes, self._llm_client,
+            )
+        elif diagnosis.startswith("DERIVED:"):
+            result = await evolve_with_retry(
+                evolve_derived_procedure,
+                [parent], fresh_episodes, self._llm_client,
+            )
+
+        self._addressed_degradations[proc_id] = time.time()
+
+        if result is None:
+            return False
+
+        # Persist
+        try:
+            await self._procedure_store.save(
+                result.procedure,
+                content_diff=result.content_diff,
+                change_summary=result.change_summary,
+            )
+        except Exception as e:
+            logger.debug("Failed to save evolved procedure: %s", e)
+            return False
+
+        if diagnosis.startswith("FIX:"):
+            try:
+                await self._procedure_store.deactivate(
+                    parent.id, superseded_by=result.procedure.id,
+                )
+            except Exception as e:
+                logger.debug("Failed to deactivate parent procedure: %s", e)
+
+        logger.info(
+            "Procedure evolved (%s): '%s' -> '%s'",
+            result.procedure.evolution_type,
+            parent.name,
+            result.procedure.name,
+        )
+        return True
+
+    async def on_task_execution_complete(self, event_data: dict[str, Any]) -> None:
+        """AD-532e: Reactive trigger — analyze post-execution for evolution opportunities."""
+        try:
+            # Guard clauses
+            if event_data.get("used_procedure"):
+                return
+            if not event_data.get("success"):
+                return
+            if not self._procedure_store or not self._llm_client:
+                return
+
+            agent_id = event_data.get("agent_id", "")
+            intent_type = event_data.get("intent_type", "")
+
+            # Rate limit per agent
+            now = time.time()
+            last_check = self._reactive_cooldowns.get(agent_id, 0.0)
+            if now - last_check < REACTIVE_COOLDOWN_SECONDS:
+                return
+            self._reactive_cooldowns[agent_id] = now
+
+            # Find matching procedure
+            match = await self._procedure_store.find_matching(
+                intent_type, threshold=PROCEDURE_MATCH_THRESHOLD,
+            )
+            if not match:
+                self._extraction_candidates[intent_type] = now
+                return
+
+            proc_id = match.get("id", "")
+            metrics = await self._procedure_store.get_quality_metrics(proc_id)
+            if not metrics:
+                return
+
+            diagnosis = diagnose_procedure_health(
+                metrics, min_selections=PROCEDURE_MIN_SELECTIONS,
+            )
+            if not diagnosis:
+                return
+
+            # Load full procedure and attempt evolution
+            parent = await self._procedure_store.get(proc_id)
+            if not parent:
+                return
+
+            await self._attempt_procedure_evolution(
+                parent, diagnosis, metrics, require_confirmation=True,
+            )
+
+        except Exception as e:
+            logger.debug("Reactive trigger failed (non-critical): %s", e)
+
+    async def on_procedure_fallback_learning(self, event_data: dict[str, Any]) -> None:
+        """AD-534b: Queue fallback evidence for dream-time targeted evolution."""
+        try:
+            if not self._procedure_store or not self._llm_client:
+                return
+
+            from probos.config import MAX_FALLBACK_QUEUE_SIZE
+
+            # Queue cap — FIFO eviction
+            if len(self._fallback_learning_queue) >= MAX_FALLBACK_QUEUE_SIZE:
+                self._fallback_learning_queue.pop(0)
+
+            self._fallback_learning_queue.append(event_data)
+            logger.debug(
+                "Fallback learning event queued: type=%s procedure=%s",
+                event_data.get("fallback_type", ""),
+                event_data.get("procedure_name", ""),
+            )
+        except Exception as e:
+            logger.debug("Fallback learning handler failed (non-critical): %s", e)
+
+    async def _process_fallback_learning(self) -> dict[str, Any]:
+        """AD-534b: Dream Step 7d — process fallback learning queue for targeted FIX evolution.
+
+        Returns stats dict with evolved/processed/skipped_cooldown/negative_veto_flagged.
+        """
+        empty_stats = {"evolved": 0, "processed": 0, "skipped_cooldown": 0, "negative_veto_flagged": 0}
+        if not self._fallback_learning_queue or not self._procedure_store or not self._llm_client:
+            return empty_stats
+
+        # Drain queue
+        queue = list(self._fallback_learning_queue)
+        self._fallback_learning_queue.clear()
+
+        # Group by procedure_id — most recent wins
+        by_proc: dict[str, dict[str, Any]] = {}
+        for event in queue:
+            proc_id = event.get("procedure_id", "")
+            if proc_id:
+                by_proc[proc_id] = event  # later events overwrite earlier
+
+        evolved_count = 0
+        skipped_cooldown = 0
+        negative_veto_flagged = 0
+        now = time.time()
+
+        for proc_id, event in by_proc.items():
+            try:
+                fallback_type = event.get("fallback_type", "")
+
+                # Anti-loop guard
+                last_attempt = self._addressed_degradations.get(proc_id, 0.0)
+                if now - last_attempt < EVOLUTION_COOLDOWN_SECONDS:
+                    skipped_cooldown += 1
+                    continue
+
+                # Handle negative_veto — flag for extraction, no evolution
+                if fallback_type == "negative_veto":
+                    intent_type = event.get("intent_type", "")
+                    if intent_type:
+                        self._extraction_candidates[intent_type] = now
+                    negative_veto_flagged += 1
+                    logger.debug(
+                        "Fallback learning: negative_veto for %s flagged as extraction candidate",
+                        proc_id[:8],
+                    )
+                    continue
+
+                # Load procedure
+                parent = await self._procedure_store.get(proc_id)
+                if not parent or not parent.is_active:
+                    continue
+
+                # Gather fresh episodes
+                fresh_episodes: list = []
+                seen_ids: set = set()
+                for intent_type in (parent.intent_types or []):
+                    try:
+                        recalled = await self.episodic_memory.recall_by_intent(intent_type)
+                        for ep in recalled:
+                            if ep.id not in seen_ids:
+                                fresh_episodes.append(ep)
+                                seen_ids.add(ep.id)
+                    except Exception:
+                        continue
+                fresh_episodes = fresh_episodes[:10]
+
+                # Call evolution with retry
+                result = await evolve_with_retry(
+                    evolve_fix_from_fallback,
+                    parent,
+                    fallback_type,
+                    event.get("llm_response", ""),
+                    event.get("rejection_reason", ""),
+                    fresh_episodes,
+                    self._llm_client,
+                )
+
+                # Record attempt regardless of outcome
+                self._addressed_degradations[proc_id] = time.time()
+
+                if result is None:
+                    continue
+
+                # Persist evolved procedure
+                try:
+                    await self._procedure_store.save(
+                        result.procedure,
+                        content_diff=result.content_diff,
+                        change_summary=result.change_summary,
+                    )
+                except Exception as e:
+                    logger.debug("Failed to save fallback-evolved procedure: %s", e)
+                    continue
+
+                # execution_failure → deactivate parent (it demonstrably failed)
+                # near-miss types → keep parent active (it wasn't tried)
+                if fallback_type == "execution_failure":
+                    try:
+                        await self._procedure_store.deactivate(
+                            parent.id, superseded_by=result.procedure.id,
+                        )
+                    except Exception as e:
+                        logger.debug("Failed to deactivate parent procedure: %s", e)
+
+                evolved_count += 1
+                logger.info(
+                    "Fallback FIX evolution: '%s' -> '%s' (type=%s)",
+                    parent.name, result.procedure.name, fallback_type,
+                )
+
+            except Exception as e:
+                logger.debug("Fallback learning failed for %s: %s", proc_id[:8], e)
+                continue
+
+        return {
+            "evolved": evolved_count,
+            "processed": len(queue),
+            "skipped_cooldown": skipped_cooldown,
+            "negative_veto_flagged": negative_veto_flagged,
+        }
+
+    async def proactive_procedure_scan(self) -> dict[str, Any]:
+        """AD-532e: Proactive trigger — periodic health scan of all active procedures."""
+        if not self._procedure_store or not self._llm_client:
+            return {"scanned": 0, "evolved": 0, "skipped_cooldown": 0}
+
+        scanned = 0
+        evolved = 0
+        skipped_cooldown = 0
+
+        try:
+            active = await self._procedure_store.list_active()
+            if not active:
+                return {"scanned": 0, "evolved": 0, "skipped_cooldown": 0}
+
+            now = time.time()
+            for entry in active:
+                scanned += 1
+                proc_id = entry["id"]
+
+                try:
+                    metrics = await self._procedure_store.get_quality_metrics(proc_id)
+                    if not metrics:
+                        continue
+
+                    diagnosis = diagnose_procedure_health(
+                        metrics, min_selections=PROCEDURE_MIN_SELECTIONS,
+                    )
+                    if not diagnosis:
+                        continue
+
+                    # Anti-loop guard check
+                    last_attempt = self._addressed_degradations.get(proc_id, 0.0)
+                    if now - last_attempt < EVOLUTION_COOLDOWN_SECONDS:
+                        skipped_cooldown += 1
+                        continue
+
+                    parent = await self._procedure_store.get(proc_id)
+                    if not parent:
+                        continue
+
+                    success = await self._attempt_procedure_evolution(
+                        parent, diagnosis, metrics, require_confirmation=True,
+                    )
+                    if success:
+                        evolved += 1
+                except Exception as e:
+                    logger.debug(
+                        "Proactive scan failed for procedure %s (non-critical): %s",
+                        proc_id, e,
+                    )
+
+        except Exception as e:
+            logger.debug("Proactive procedure scan failed (non-critical): %s", e)
+
+        return {"scanned": scanned, "evolved": evolved, "skipped_cooldown": skipped_cooldown}
 
     def _replay_episodes(self, episodes: list[Episode]) -> int:
         """Replay episodes: strengthen weights for successes, weaken for failures."""
@@ -423,6 +1001,7 @@ class DreamScheduler:
         self._last_dream_time: float = 0.0
         self._last_micro_dream_time: float = 0.0
         self._micro_dream_count: int = 0
+        self._last_proactive_scan_time: float = 0.0  # AD-532e
         self._is_dreaming: bool = False
         self._task: asyncio.Task[None] | None = None
         self._last_dream_report: DreamReport | None = None
@@ -550,6 +1129,20 @@ class DreamScheduler:
                                     logger.debug("Post-micro-dream callback failed: %s", e)
                     except Exception as e:
                         logger.debug("Micro-dream failed: %s", e)
+
+                # Tier 1.5: Proactive procedure scan (AD-532e)
+                if (
+                    not self._is_dreaming
+                    and self._last_proactive_scan_time is not None
+                    and now - self._last_proactive_scan_time >= PROACTIVE_SCAN_INTERVAL_SECONDS
+                ):
+                    try:
+                        scan_result = await self.engine.proactive_procedure_scan()
+                        self._last_proactive_scan_time = now
+                        if scan_result.get("evolved", 0) > 0:
+                            logger.debug("Proactive scan evolved %d procedures", scan_result["evolved"])
+                    except Exception as e:
+                        logger.debug("Proactive procedure scan failed: %s", e)
 
                 # Tier 2: Full dream when idle long enough
                 idle_time = now - self._last_activity_time

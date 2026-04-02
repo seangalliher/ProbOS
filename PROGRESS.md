@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-532 (Procedure Extraction) CLOSED. Cognitive JIT 2/9. 4,575+ tests passing (4,426+ pytest + 149 vitest).
+## Current Status: AD-534b (Fallback Learning) CLOSED. Cognitive JIT 9/9 enrichments complete. AD-550–555 (Notebook Quality) PLANNED. 333 Cognitive JIT tests.
 
 ---
 
