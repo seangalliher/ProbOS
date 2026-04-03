@@ -2116,7 +2116,7 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 
 **Rationale:** The analytical pyramid follows real-world naval science/technical department structure: data flows up (raw → processed → synthesized), questions flow down (research agenda → analytical framing → data collection). Each role adds a layer of interpretation. Data Analyst trusts the instruments, Systems Analyst trusts the patterns, Research Specialist trusts the evidence. When they disagree, they're looking at different layers of the same phenomenon — and that tension is productive. Callsigns drawn from Star Trek characters matching each role's archetype: Rahda (steady sensor operator, TOS), Dax (lateral systems thinker, DS9), Brahms (deep research investigator, TNG). Deferred: Knowledge Engineer (blocked on AD-550–555), Laboratory Technician (blocked on AD-539b Holodeck).
 
-**Status:** AD-560 PLANNED. Build prompt: `prompts/ad-560-science-department-expansion.md`.
+**Status:** AD-560 COMPLETE. Three agents: DataAnalystAgent (Rahda), SystemsAnalystAgent (Dax), ResearchSpecialistAgent (Brahms). Organization ontology (3 posts, authority chain, 3 assignments), crew profiles (Big Five personality), standing orders, department protocols (analytical pyramid), skills templates (3 role_templates), Python agent classes (`src/probos/agents/science/`), registration (crew_utils, standing_orders, runtime spawner). 57 new tests. 5,561 total tests (5,412 pytest + 149 vitest).
 
 ## Design Principles Extraction
 
@@ -2133,3 +2133,22 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 | Add "Extension-First Architecture" principle | Core sealed (Phase 30). New capabilities via public APIs. If a feature requires patching a private method, the architecture has a gap. |
 
 **Status:** Complete. Roadmap cross-references design-principles.md. 4 new principles added alongside 14 migrated principles.
+
+## BF-101 / BF-102 / BF-103: Crew Identity & Self-Awareness Fixes
+
+**Context:** Post-AD-560 observation. Three new Science crew members exhibited identity confusion during first Ward Room interactions: Kira identified as "Rahda" (seed callsign), all three welcomed themselves as if they were other people.
+
+| Bug | Issue | Root Cause |
+|-----|-------|------------|
+| BF-101 | Agent uses seed callsign instead of chosen callsign | Possible warm boot restoration failure or `_build_personality_block` cache stale entry when `self.callsign` is empty string |
+| BF-102 | New crew don't know they're new | No commissioning awareness in temporal context; BF-034 cold-start note only in `proactive_think`, not `ward_room_notification` |
+| BF-103 | `thread_mode="announce"` doesn't suppress responses | Router only checks for `"inform"`; `"announce"` falls through to normal routing with unlimited dispatch |
+
+| Decision | Rationale |
+|----------|-----------|
+| Add commissioning awareness to temporal context (age < 300s) | Westworld Principle: agents should know they're new. "Born today, and that's fine." |
+| Extend cold-start system note to `ward_room_notification` | Consistency: agents need the same context in Ward Room as in proactive think |
+| Suppress `"announce"` threads in Ward Room router | Announcements are for reading, not responding. Same semantic as `"inform"` but semantically distinct |
+
+**Build prompt:** `prompts/bf-101-102-103-crew-identity-awareness.md`
+**Status:** Open.
