@@ -184,6 +184,19 @@ async def create_agent_fleet(
         # Register codebase_knowledge skill on CognitiveAgent medical agents
         from probos.cognitive.codebase_skill import create_codebase_skill
 
+        # Science analytical team (AD-560) — Data Analyst, Systems Analyst, Research Specialist
+        _science_cognitive = [
+            ("data_analyst", "data_analyst"),
+            ("systems_analyst", "systems_analyst"),
+            ("research_specialist", "research_specialist"),
+        ]
+        for agent_type_name, pool_suffix in _science_cognitive:
+            ids = generate_pool_ids(agent_type_name, f"science_{pool_suffix}", 1)
+            await create_pool_fn(
+                f"science_{pool_suffix}", agent_type_name, target_size=1,
+                agent_ids=ids, llm_client=llm_client, runtime=runtime,
+            )
+
         codebase_skill = create_codebase_skill(codebase_index)
         for pool_name in ["medical_pathologist"]:
             pool = pools.get(pool_name)

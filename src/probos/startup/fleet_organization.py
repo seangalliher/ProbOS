@@ -93,7 +93,7 @@ async def organize_fleet(
     pool_groups.register(PoolGroup(
         name="science",
         display_name="Science",
-        pool_names={"architect", "scout"},
+        pool_names={"architect", "scout", "science_data_analyst", "science_systems_analyst", "science_research_specialist"},
         exclude_from_scaler=True,
     ))
 
