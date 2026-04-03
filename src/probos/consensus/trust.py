@@ -9,7 +9,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from probos.config import format_trust
 from probos.protocols import ConnectionFactory, DatabaseConnection
@@ -74,6 +74,30 @@ class TrustEvent:
     intent_type: str  # which intent was being processed
     episode_id: str  # which episode this belongs to
     verifier_id: str  # which red-team agent verified
+    dampening_factor: float = 1.0  # AD-558: applied dampening multiplier
+    floor_hit: bool = False  # AD-558: True if update was absorbed by hard floor
+
+
+# ---------------------------------------------------------------------------
+# AD-558: Dampening state tracking
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _DampeningState:
+    """Per-agent dampening tracker for consecutive same-direction trust updates."""
+    consecutive_count: int = 0
+    direction: str = ""  # "positive" or "negative"
+    first_timestamp: float = 0.0
+    last_timestamp: float = 0.0
+
+
+@dataclass
+class _CascadeState:
+    """Network-level trust cascade circuit breaker."""
+    recent_anomalies: list = field(default_factory=list)  # (timestamp, agent_id, department, delta)
+    tripped: bool = False
+    tripped_at: float = 0.0
+    cooldown_until: float = 0.0
 
 
 class TrustNetwork:
@@ -93,6 +117,7 @@ class TrustNetwork:
         decay_rate: float = 0.999,
         db_path: str | None = None,
         connection_factory: ConnectionFactory | None = None,
+        dampening_config: Any | None = None,
     ) -> None:
         self.prior_alpha = prior_alpha
         self.prior_beta = prior_beta
@@ -106,6 +131,28 @@ class TrustNetwork:
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
             self._connection_factory = default_factory
+
+        # AD-558: Dampening state
+        self._dampening: dict[str, _DampeningState] = {}
+        self._cascade = _CascadeState()
+        self._get_department: Callable[[str], str | None] | None = None
+        self._emit_event: Callable[[str, Any], None] | None = None
+        self._floor_hit_count: int = 0
+
+        # AD-558: Dampening config — use defaults if not provided
+        if dampening_config is not None:
+            self._dampening_config = dampening_config
+        else:
+            from probos.config import TrustDampeningConfig
+            self._dampening_config = TrustDampeningConfig()
+
+    def set_department_lookup(self, fn: Callable[[str], str | None]) -> None:
+        """Inject department resolution for cascade detection. Called by runtime during startup."""
+        self._get_department = fn
+
+    def set_event_callback(self, fn: Callable[[str, Any], None]) -> None:
+        """Inject event emission for trust updates. Called by runtime during startup."""
+        self._emit_event = fn
 
     async def start(self) -> None:
         """Initialize — load trust scores from SQLite if configured."""
@@ -167,19 +214,94 @@ class TrustNetwork:
 
         A successful outcome increases alpha. A failure increases beta.
         The weight parameter scales the update (partial trust/distrust).
+        AD-558: Applies progressive dampening, hard floor, and cascade dampening.
         """
+        cfg = self._dampening_config
         record = self.get_or_create(agent_id)
         old_score = record.score
-        if success:
-            record.alpha += weight
+        now = time.monotonic()
+
+        # --- AD-558 Part 1: Progressive dampening ---
+        direction = "positive" if success else "negative"
+        state = self._dampening.get(agent_id)
+        if state is None:
+            state = _DampeningState()
+            self._dampening[agent_id] = state
+
+        if state.direction == direction and (now - state.first_timestamp) < cfg.dampening_window_seconds:
+            state.consecutive_count += 1
         else:
-            record.beta += weight
+            state.consecutive_count = 1
+            state.direction = direction
+            state.first_timestamp = now
+        state.last_timestamp = now
+
+        factors = cfg.dampening_geometric_factors
+        dampening_factor = factors[min(state.consecutive_count - 1, len(factors) - 1)]
+
+        # Cold-start scaling: more aggressive dampening when few observations
+        if (record.alpha + record.beta) < cfg.cold_start_observation_threshold:
+            dampening_factor = max(dampening_factor, cfg.cold_start_dampening_floor)
+
+        # --- AD-558 Part 3: Global cascade dampening multiplier ---
+        if self._cascade.tripped:
+            if now < self._cascade.cooldown_until:
+                dampening_factor *= cfg.cascade_global_dampening
+            else:
+                # Cooldown expired — reset breaker
+                self._cascade.tripped = False
+                self._cascade.recent_anomalies.clear()
+                logger.info("AD-558: Trust cascade breaker reset after cooldown")
+
+        effective_weight = weight * dampening_factor
+
+        # --- AD-558 Part 2: Hard trust floor ---
+        floor_hit = False
+        current_score = record.score
+        if not success and current_score <= cfg.hard_trust_floor:
+            floor_hit = True
+            self._floor_hit_count += 1
+            logger.info(
+                "AD-558: Hard floor hit for agent=%s score=%.3f — negative update absorbed",
+                agent_id[:8], current_score,
+            )
+            # Record event but do NOT apply weight
+            self._event_log.append(TrustEvent(
+                timestamp=now,
+                agent_id=agent_id,
+                success=success,
+                old_score=old_score,
+                new_score=current_score,
+                weight=weight,
+                intent_type=intent_type,
+                episode_id=episode_id,
+                verifier_id=verifier_id,
+                dampening_factor=dampening_factor,
+                floor_hit=True,
+            ))
+            # Emit event even for floor hits
+            if self._emit_event:
+                self._emit_event("trust_update", {
+                    "agent_id": agent_id,
+                    "old_score": old_score,
+                    "new_score": current_score,
+                    "success": success,
+                    "dampening_factor": dampening_factor,
+                    "floor_hit": True,
+                })
+            return current_score
+
+        # Apply effective weight
+        if success:
+            record.alpha += effective_weight
+        else:
+            record.beta += effective_weight
 
         new_score = record.score
 
         # Append causal event to the ring buffer
         self._event_log.append(TrustEvent(
-            timestamp=time.monotonic(),
+            timestamp=now,
             agent_id=agent_id,
             success=success,
             old_score=old_score,
@@ -188,16 +310,76 @@ class TrustNetwork:
             intent_type=intent_type,
             episode_id=episode_id,
             verifier_id=verifier_id,
+            dampening_factor=dampening_factor,
+            floor_hit=False,
         ))
 
         logger.debug(
-            "Trust updated: agent=%s success=%s alpha=%.2f beta=%.2f score=%.3f",
+            "Trust updated: agent=%s success=%s alpha=%.2f beta=%.2f score=%.3f dampening=%.2f",
             agent_id[:8],
             success,
             record.alpha,
             record.beta,
             record.score,
+            dampening_factor,
         )
+
+        # --- AD-558 Part 4: Event emission ---
+        if self._emit_event:
+            self._emit_event("trust_update", {
+                "agent_id": agent_id,
+                "old_score": old_score,
+                "new_score": new_score,
+                "success": success,
+                "dampening_factor": dampening_factor,
+                "floor_hit": False,
+            })
+
+        # --- AD-558 Part 3: Cascade detection ---
+        delta = abs(new_score - old_score)
+        if delta > cfg.cascade_delta_threshold:
+            dept = None
+            if self._get_department:
+                try:
+                    dept = self._get_department(agent_id)
+                except Exception:
+                    pass
+            self._cascade.recent_anomalies.append((now, agent_id, dept, delta))
+            # Prune anomalies outside window
+            cutoff = now - cfg.cascade_window_seconds
+            self._cascade.recent_anomalies = [
+                a for a in self._cascade.recent_anomalies if a[0] >= cutoff
+            ]
+            # Check trip conditions
+            if not self._cascade.tripped:
+                unique_agents = {a[1] for a in self._cascade.recent_anomalies}
+                unique_depts = {a[2] for a in self._cascade.recent_anomalies if a[2] is not None}
+                agent_count_met = len(unique_agents) >= cfg.cascade_agent_threshold
+                # If no department lookup, skip department check
+                dept_count_met = (
+                    len(unique_depts) >= cfg.cascade_department_threshold
+                    if self._get_department
+                    else True
+                )
+                if agent_count_met and dept_count_met:
+                    self._cascade.tripped = True
+                    self._cascade.tripped_at = now
+                    self._cascade.cooldown_until = now + cfg.cascade_cooldown_seconds
+                    logger.warning(
+                        "AD-558: Trust cascade breaker TRIPPED — %d agents across %d departments, "
+                        "global dampening=%.2f for %.0fs",
+                        len(unique_agents), len(unique_depts),
+                        cfg.cascade_global_dampening, cfg.cascade_cooldown_seconds,
+                    )
+                    # Emit cascade warning event
+                    if self._emit_event:
+                        self._emit_event("trust_cascade_warning", {
+                            "anomalous_agents": list(unique_agents),
+                            "departments_affected": list(unique_depts),
+                            "global_dampening_factor": cfg.cascade_global_dampening,
+                            "cooldown_seconds": cfg.cascade_cooldown_seconds,
+                        })
+
         return record.score
 
     def get_score(self, agent_id: AgentID) -> float:
@@ -290,6 +472,37 @@ class TrustNetwork:
                 self._records.values(), key=lambda r: r.score, reverse=True
             )
         ]
+
+    # ------------------------------------------------------------------
+    # AD-558: Dampening telemetry
+    # ------------------------------------------------------------------
+
+    def get_dampening_telemetry(self) -> dict:
+        """Return current dampening state for vitals/telemetry."""
+        cfg = self._dampening_config
+        now = time.monotonic()
+        return {
+            "per_agent": {
+                agent_id: {
+                    "dampening_factor": cfg.dampening_geometric_factors[
+                        min(state.consecutive_count - 1, len(cfg.dampening_geometric_factors) - 1)
+                    ] if state.consecutive_count > 0 else 1.0,
+                    "consecutive_count": state.consecutive_count,
+                    "direction": state.direction,
+                }
+                for agent_id, state in self._dampening.items()
+            },
+            "cascade_breaker": {
+                "tripped": self._cascade.tripped,
+                "cooldown_remaining": max(0.0, self._cascade.cooldown_until - now),
+                "anomaly_count": len(self._cascade.recent_anomalies),
+            },
+            "floor_hits": self._floor_hit_count,
+        }
+
+    def reset_floor_hit_count(self) -> None:
+        """Reset the floor hit counter (called after dream cycles)."""
+        self._floor_hit_count = 0
 
     # ------------------------------------------------------------------
     # SQLite persistence

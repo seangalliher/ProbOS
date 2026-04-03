@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from probos.config import TrustDampeningConfig
 from probos.consensus.trust import TrustNetwork, TrustRecord, TrustEvent
 
 
@@ -14,15 +15,24 @@ from probos.consensus.trust import TrustNetwork, TrustRecord, TrustEvent
 # Helpers
 # ---------------------------------------------------------------------------
 
+# AD-558: Disable dampening for concurrency tests to preserve original expectations
+_NO_DAMPENING = TrustDampeningConfig(
+    dampening_geometric_factors=(1.0, 1.0, 1.0, 1.0),
+    cold_start_observation_threshold=0.0,
+    cascade_agent_threshold=999,  # Effectively disable cascade
+)
+
+
 def _make_trust(**kwargs) -> TrustNetwork:
     """Create a TrustNetwork without DB (in-memory only)."""
+    kwargs.setdefault("dampening_config", _NO_DAMPENING)
     return TrustNetwork(**kwargs)
 
 
 async def _make_trust_with_db(tmp_path) -> TrustNetwork:
     """Create a TrustNetwork with real SQLite DB."""
     db_path = str(tmp_path / "trust.db")
-    tn = TrustNetwork(db_path=db_path)
+    tn = TrustNetwork(db_path=db_path, dampening_config=_NO_DAMPENING)
     await tn.start()
     return tn
 

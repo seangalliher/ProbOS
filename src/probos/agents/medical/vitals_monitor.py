@@ -115,6 +115,14 @@ class VitalsMonitorAgent(HeartbeatAgent):
             sum(active_confs) / len(active_confs) if active_confs else 1.0
         )
 
+        # AD-557: Cached emergence metrics (read-only from last dream cycle)
+        emergence_engine = getattr(rt, "_emergence_metrics_engine", None)
+        if emergence_engine:
+            snap = emergence_engine.latest_snapshot
+            if snap:
+                metrics["emergence_capacity"] = snap.emergence_capacity
+                metrics["coordination_balance"] = snap.coordination_balance
+
         # Store in sliding window
         self._window.append(metrics)
 

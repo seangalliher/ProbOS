@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from probos.cognitive.correction_detector import CorrectionDetector
     from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
     from probos.cognitive.emergent_detector import EmergentDetector
+    from probos.cognitive.emergence_metrics import EmergenceMetricsEngine
     from probos.cognitive.feedback import FeedbackEngine
     from probos.cognitive.journal import CognitiveJournal
     from probos.cognitive.self_mod import SelfModificationPipeline
@@ -108,6 +109,7 @@ class DreamingResult:
     dream_scheduler: "DreamScheduler | None"
     dreaming_engine: "DreamingEngine | None"
     emergent_detector: "EmergentDetector"
+    emergence_metrics_engine: "EmergenceMetricsEngine"
     task_scheduler: "TaskScheduler"
     flush_task: asyncio.Task[None]
 

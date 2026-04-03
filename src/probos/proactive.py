@@ -507,18 +507,6 @@ class ProactiveCognitiveLoop:
                     weight=trust_weight,
                     intent_type="proactive_think",
                 )
-                if self._on_event:
-                    self._on_event({
-                        "type": EventType.TRUST_UPDATE.value,
-                        "data": {
-                            "agent_id": agent.id,
-                            "agent_type": getattr(agent, "agent_type", "unknown"),
-                            "new_score": new_score,
-                            "weight": trust_weight,
-                            "source": "proactive",
-                            "duty_id": duty.duty_id if duty else None,
-                        },
-                    })
 
         # Record duty execution after successful post
         if duty and self._duty_tracker:

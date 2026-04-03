@@ -150,3 +150,32 @@ async def ack_all_notifications(runtime: Any = Depends(get_runtime)) -> dict[str
     """Acknowledge all unread notifications (AD-323)."""
     count = runtime.notification_queue.acknowledge_all()
     return {"acknowledged": count}
+
+
+@router.get("/emergence")
+async def get_emergence_metrics(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-557: Return cached emergence metrics from last dream cycle."""
+    engine = getattr(runtime, "_emergence_metrics_engine", None)
+    if not engine:
+        return {"status": "not_available", "message": "Emergence metrics engine not wired"}
+    snapshot = engine.latest_snapshot
+    if not snapshot:
+        return {"status": "no_data", "message": "No emergence metrics computed yet"}
+    return {"status": "ok", **snapshot.to_dict()}
+
+
+@router.get("/emergence/history")
+async def get_emergence_history(
+    limit: int = 20,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-557: Return emergence metrics time series."""
+    engine = getattr(runtime, "_emergence_metrics_engine", None)
+    if not engine:
+        return {"status": "not_available", "snapshots": []}
+    snapshots = engine.snapshots
+    return {
+        "status": "ok",
+        "count": len(snapshots),
+        "snapshots": [s.to_dict() for s in snapshots[-limit:]],
+    }

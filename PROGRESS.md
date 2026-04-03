@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: BF-099 (Trust Concurrency Safety) CLOSED. Cognitive JIT pipeline COMPLETE (9/9). 618 Cognitive JIT tests. 5,236 tests (5,087 pytest + 149 vitest).
+## Current Status: AD-557 (Emergence Metrics) COMPLETE. AD-558 COMPLETE. BF-099 CLOSED. Cognitive JIT pipeline COMPLETE (9/9). 618 Cognitive JIT tests. 5,337 tests (5,188 pytest + 149 vitest).
 
 ---
 

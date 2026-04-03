@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
 from probos.cognitive.emergent_detector import EmergentDetector
+from probos.cognitive.emergence_metrics import EmergenceMetricsEngine
 from probos.cognitive.task_scheduler import TaskScheduler
 from probos.events import EventType
 from probos.startup.results import DreamingResult
@@ -59,6 +60,7 @@ async def init_dreaming(
     # Start dreaming scheduler if episodic memory is available
     dream_scheduler = None
     dreaming_engine = None
+    emergence_engine = EmergenceMetricsEngine(config.emergence_metrics)
     if episodic_memory:
         dream_cfg = config.dreaming
         dreaming_engine = DreamingEngine(
@@ -75,6 +77,7 @@ async def init_dreaming(
             contradiction_resolve_fn=on_contradictions_fn,
             llm_client=llm_client,
             procedure_store=procedure_store,
+            emergence_metrics_engine=emergence_engine,
         )
         dream_scheduler = DreamScheduler(
             engine=dreaming_engine,
@@ -197,6 +200,7 @@ async def init_dreaming(
         dream_scheduler=dream_scheduler,
         dreaming_engine=dreaming_engine,
         emergent_detector=emergent_detector,
+        emergence_metrics_engine=emergence_engine,
         task_scheduler=task_scheduler,
         flush_task=flush_task,
     )

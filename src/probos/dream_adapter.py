@@ -110,6 +110,25 @@ class DreamAdapter:
         # Emit system_mode event for HXI (AD-254) — dream cycle ended
         self._event_emitter(EventType.SYSTEM_MODE, {"mode": "idle", "previous": "dreaming"})
 
+        # AD-557: Emit emergence metrics events
+        if dream_report and getattr(dream_report, "emergence_capacity", None) is not None:
+            self._event_emitter(EventType.EMERGENCE_METRICS_UPDATED, {
+                "emergence_capacity": dream_report.emergence_capacity,
+                "coordination_balance": dream_report.coordination_balance,
+                "groupthink_risk": dream_report.groupthink_risk,
+                "fragmentation_risk": dream_report.fragmentation_risk,
+                "tom_effectiveness": dream_report.tom_effectiveness,
+            })
+            if dream_report.groupthink_risk:
+                self._event_emitter(EventType.GROUPTHINK_WARNING, {
+                    "redundancy_ratio": getattr(dream_report, "redundancy_ratio", 0.0),
+                })
+            if dream_report.fragmentation_risk:
+                self._event_emitter(EventType.FRAGMENTATION_WARNING, {
+                    "synergy_ratio": getattr(dream_report, "synergy_ratio", 0.0),
+                    "pairs_analyzed": getattr(dream_report, "pairs_analyzed", 0),
+                })
+
         if not self._emergent_detector:
             return
         try:

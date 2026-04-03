@@ -126,6 +126,10 @@ class EventType(str, Enum):
     TASK_EXECUTION_COMPLETE = "task_execution_complete"  # AD-532e: reactive trigger
     PROCEDURE_FALLBACK_LEARNING = "procedure_fallback_learning"  # AD-534b: fallback evidence
     GAP_IDENTIFIED = "gap_identified"  # AD-539: gap → qualification pipeline
+    TRUST_CASCADE_WARNING = "trust_cascade_warning"  # AD-558: trust cascade breaker tripped
+    EMERGENCE_METRICS_UPDATED = "emergence_metrics_updated"  # AD-557: emergence snapshot computed
+    GROUPTHINK_WARNING = "groupthink_warning"  # AD-557: redundancy dominates
+    FRAGMENTATION_WARNING = "fragmentation_warning"  # AD-557: synergy near zero
 
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
@@ -304,6 +308,29 @@ class TrustUpdateEvent(BaseEvent):
     agent_id: str = ""
     new_score: float = 0.0
     success: bool = False
+
+
+@dataclass
+class TrustCascadeEvent(BaseEvent):
+    """Emitted when the trust cascade circuit breaker trips (AD-558)."""
+    event_type: EventType = field(default=EventType.TRUST_CASCADE_WARNING, init=False)
+    anomalous_agents: list[str] = field(default_factory=list)
+    departments_affected: list[str] = field(default_factory=list)
+    global_dampening_factor: float = 0.5
+    cooldown_seconds: float = 600.0
+
+
+@dataclass
+class EmergenceMetricsEvent(BaseEvent):
+    """Emitted after emergence metrics computation during dream Step 9 (AD-557)."""
+    event_type: EventType = field(default=EventType.EMERGENCE_METRICS_UPDATED, init=False)
+    emergence_capacity: float = 0.0
+    coordination_balance: float = 0.0
+    threads_analyzed: int = 0
+    pairs_analyzed: int = 0
+    significant_pairs: int = 0
+    groupthink_risk: bool = False
+    fragmentation_risk: bool = False
 
 
 @dataclass

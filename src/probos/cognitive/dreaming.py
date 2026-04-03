@@ -66,6 +66,8 @@ class DreamingEngine:
         ward_room: Any = None,  # AD-537: observational learning from Ward Room
         agent_id: str = "",  # AD-537: the dreaming agent's ID
         trust_network_lookup: Any = None,  # AD-537: fn(agent_id) -> trust score
+        emergence_metrics_engine: Any = None,  # AD-557: emergence metrics engine
+        get_department: Any = None,  # AD-557: fn(agent_id) -> department name
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -82,6 +84,8 @@ class DreamingEngine:
         self._ward_room = ward_room  # AD-537: observational learning
         self._agent_id = agent_id  # AD-537: dreaming agent ID
         self._trust_network_lookup = trust_network_lookup  # AD-537: trust score lookup
+        self._emergence_metrics_engine = emergence_metrics_engine  # AD-557
+        self._get_department = get_department  # AD-557: department lookup
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
         self._addressed_degradations: dict[str, float] = {}  # AD-532b: procedure_id -> timestamp
@@ -146,6 +150,7 @@ class DreamingEngine:
         6. Episode clustering (AD-531)
         7. Procedure extraction from success clusters (AD-532)
         8. Gap prediction
+        9. Emergence metrics (AD-557)
         """
         t_start = time.monotonic()
 
@@ -491,6 +496,36 @@ class DreamingEngine:
         except Exception as e:
             logger.debug("Step 8 gap detection failed: %s", e)
 
+        # Step 9: Emergence metrics (AD-557)
+        emergence_capacity = None
+        coordination_balance = None
+        groupthink_risk = False
+        fragmentation_risk = False
+        tom_effectiveness = None
+        if self._emergence_metrics_engine and self._ward_room:
+            try:
+                snapshot = await self._emergence_metrics_engine.compute_emergence_metrics(
+                    ward_room=self._ward_room,
+                    trust_network=self.trust_network,
+                    hebbian_router=self.router,
+                    get_department=self._get_department,
+                )
+                emergence_capacity = snapshot.emergence_capacity
+                coordination_balance = snapshot.coordination_balance
+                groupthink_risk = snapshot.groupthink_risk
+                fragmentation_risk = snapshot.fragmentation_risk
+                tom_effectiveness = snapshot.tom_effectiveness
+                logger.debug(
+                    "Step 9 emergence: capacity=%.3f, balance=%.3f, "
+                    "pairs=%d (%d significant)",
+                    snapshot.emergence_capacity,
+                    snapshot.coordination_balance,
+                    snapshot.pairs_analyzed,
+                    snapshot.significant_pairs,
+                )
+            except Exception as e:
+                logger.debug("Step 9 emergence metrics failed: %s", e)
+
         duration_ms = (time.monotonic() - t_start) * 1000
 
         report = DreamReport(
@@ -519,6 +554,12 @@ class DreamingEngine:
             gaps_classified=gaps_classified,
             qualification_paths_triggered=qualification_paths_triggered,
             gap_reports_generated=gap_reports_generated,
+            # AD-557: Emergence metrics
+            emergence_capacity=emergence_capacity,
+            coordination_balance=coordination_balance,
+            groupthink_risk=groupthink_risk,
+            fragmentation_risk=fragmentation_risk,
+            tom_effectiveness=tom_effectiveness,
         )
 
         logger.info(

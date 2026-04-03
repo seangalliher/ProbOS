@@ -20,6 +20,7 @@ TRUST_DEFAULT = 0.5        # Default trust for new/unknown agents
 TRUST_FLOOR_CONN = 0.6     # Minimum trust for Conn eligibility
 TRUST_FLOOR_CREDIBILITY = 0.3  # Minimum credibility for channel creation
 TRUST_DEGRADED = 0.2       # Agent degraded state threshold
+TRUST_HARD_FLOOR = 0.05    # AD-558: Protective minimum — below this, negative updates silently absorbed
 TRUST_OUTLIER_LOW = 0.3    # Trust outlier detection — low flag
 TRUST_OUTLIER_HIGH = 0.9   # Trust outlier detection — high flag
 
@@ -523,6 +524,55 @@ class CircuitBreakerConfig(BaseModel):
     critical_trip_count: int = 3           # Trips in window to reach critical
 
 
+class TrustDampeningConfig(BaseModel):
+    """Trust cascade dampening configuration (AD-558)."""
+
+    # Progressive dampening
+    dampening_window_seconds: float = 300.0
+    dampening_geometric_factors: tuple[float, ...] = (1.0, 0.75, 0.5, 0.25)
+    dampening_floor: float = 0.25
+
+    # Hard trust floor
+    hard_trust_floor: float = 0.05
+
+    # Network circuit breaker
+    cascade_agent_threshold: int = 3
+    cascade_department_threshold: int = 2
+    cascade_delta_threshold: float = 0.15
+    cascade_window_seconds: float = 300.0
+    cascade_global_dampening: float = 0.5
+    cascade_cooldown_seconds: float = 600.0
+
+    # Cold-start scaling
+    cold_start_observation_threshold: float = 20.0
+    cold_start_dampening_floor: float = 0.5
+
+
+class EmergenceMetricsConfig(BaseModel):
+    """Configuration for emergence metrics computation (AD-557)."""
+
+    # PID computation
+    pid_bins: int = 2  # K=2 quantile binning (per Riedl 2025)
+    pid_permutation_shuffles: int = 50  # Significance testing
+    pid_significance_threshold: float = 0.05  # p-value threshold
+
+    # Thread analysis
+    min_thread_contributors: int = 2  # Minimum agents in thread to analyze
+    min_thread_posts: int = 3  # Minimum posts in thread to analyze
+    thread_lookback_hours: float = 24.0  # How far back to look for threads
+
+    # Coordination balance
+    groupthink_redundancy_threshold: float = 0.8  # Flag when redundancy dominates
+    fragmentation_synergy_threshold: float = 0.1  # Flag when synergy is near zero
+
+    # ToM effectiveness
+    tom_baseline_window: int = 20  # Initial threads to establish baseline
+    tom_trend_min_samples: int = 10  # Minimum threads before computing trend
+
+    # Hebbian correlation
+    hebbian_synergy_min_interactions: int = 5  # Minimum Hebbian interactions to correlate
+
+
 class EventLogConfig(BaseModel):
     """Event log retention configuration."""
     retention_days: int = 7          # Delete events older than N days (0 = keep forever)
@@ -599,6 +649,8 @@ class SystemConfig(BaseModel):
     medical: MedicalConfig = MedicalConfig()
     counselor: CounselorConfig = CounselorConfig()
     circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
+    trust_dampening: TrustDampeningConfig = TrustDampeningConfig()
+    emergence_metrics: EmergenceMetricsConfig = EmergenceMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
     communications: CommunicationsConfig = CommunicationsConfig()

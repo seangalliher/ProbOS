@@ -535,6 +535,9 @@ class CounselorAgent(CognitiveAgent):
                     EventType.ZONE_RECOVERY,            # AD-506b
                     EventType.PEER_REPETITION_DETECTED, # AD-506b
                     EventType.GAP_IDENTIFIED,           # AD-539
+                    EventType.TRUST_CASCADE_WARNING,    # AD-558
+                    EventType.GROUPTHINK_WARNING,       # AD-557
+                    EventType.FRAGMENTATION_WARNING,     # AD-557
                 ],
             )
 
@@ -723,6 +726,12 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_peer_repetition_detected(data)
             elif event_type == EventType.GAP_IDENTIFIED.value:
                 await self._on_gap_identified(data)
+            elif event_type == EventType.TRUST_CASCADE_WARNING.value:
+                await self._on_trust_cascade(data)
+            elif event_type == EventType.GROUPTHINK_WARNING.value:
+                await self._on_groupthink_warning(data)
+            elif event_type == EventType.FRAGMENTATION_WARNING.value:
+                await self._on_fragmentation_warning(data)
         except Exception:
             logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
 
@@ -937,7 +946,67 @@ class CounselorAgent(CognitiveAgent):
                 agent_id, callsign, assessment, trigger="trust_update"
             )
 
-    async def _on_circuit_breaker_trip(self, data: dict[str, Any]) -> None:
+    async def _on_trust_cascade(self, data: dict[str, Any]) -> None:
+        """AD-558: Respond to trust cascade warning — run ship-wide wellness sweep."""
+        agents = data.get("anomalous_agents", [])
+        depts = data.get("departments_affected", [])
+        dampening = data.get("global_dampening_factor", 0.5)
+        cooldown = data.get("cooldown_seconds", 600.0)
+        logger.warning(
+            "AD-558: Trust cascade warning — %d agents, %d departments, "
+            "dampening=%.2f, cooldown=%.0fs",
+            len(agents), len(depts), dampening, cooldown,
+        )
+        # Rate-limit: one sweep per cascade cooldown period
+        last_cascade = getattr(self, "_last_cascade_sweep", 0.0)
+        now = time.time()
+        if now - last_cascade < cooldown:
+            return
+        self._last_cascade_sweep = now
+        # Run wellness sweep across affected agents
+        for agent_id in agents:
+            if agent_id == self.id:
+                continue
+            try:
+                metrics = self._gather_agent_metrics(agent_id)
+                assessment = self.assess_agent(
+                    agent_id,
+                    current_trust=metrics["trust_score"],
+                    current_confidence=metrics["confidence"],
+                    hebbian_avg=metrics["hebbian_avg"],
+                    success_rate=metrics["success_rate"],
+                    personality_drift=metrics["personality_drift"],
+                    trigger="trust_cascade",
+                )
+                await self._save_profile_and_assessment(agent_id, assessment)
+                if not assessment.fit_for_duty:
+                    self._alert_bridge(agent_id, assessment)
+                    callsign = self._resolve_callsign(agent_id)
+                    await self._maybe_send_therapeutic_dm(
+                        agent_id, callsign, assessment, trigger="trust_cascade"
+                    )
+            except Exception:
+                logger.debug("Cascade sweep failed for %s", agent_id, exc_info=True)
+
+    async def _on_groupthink_warning(self, data: dict[str, Any]) -> None:
+        """AD-557: Respond to groupthink risk — redundancy dominates synergy."""
+        redundancy_ratio = data.get("redundancy_ratio", 0.0)
+        top_pairs = data.get("top_synergy_pairs", [])
+        logger.warning(
+            "AD-557: Groupthink warning — redundancy_ratio=%.3f, "
+            "agents may be echoing rather than complementing",
+            redundancy_ratio,
+        )
+
+    async def _on_fragmentation_warning(self, data: dict[str, Any]) -> None:
+        """AD-557: Respond to fragmentation risk — synergy near zero."""
+        synergy_ratio = data.get("synergy_ratio", 0.0)
+        pairs_analyzed = data.get("pairs_analyzed", 0)
+        logger.warning(
+            "AD-557: Fragmentation warning — synergy_ratio=%.3f across %d pairs, "
+            "agents may not be building on each other's contributions",
+            synergy_ratio, pairs_analyzed,
+        )
         """Handle circuit breaker trip with trip-aware clinical assessment (AD-495)."""
         agent_id = data.get("agent_id", "")
         if not agent_id or agent_id == self.id:

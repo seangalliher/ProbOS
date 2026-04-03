@@ -317,6 +317,7 @@ class ProbOSRuntime:
             prior_beta=consensus_cfg.trust_prior_beta,
             decay_rate=consensus_cfg.trust_decay_rate,
             db_path=str(self._data_dir / "trust.db"),
+            dampening_config=self.config.trust_dampening,
         )
         # Red team agents are stored separately — not on the intent bus
         self._red_team_agents: list[RedTeamAgent] = []
@@ -457,6 +458,9 @@ class ProbOSRuntime:
 
         # --- Emergent detection (AD-236) ---
         self._emergent_detector: EmergentDetector | None = None
+
+        # --- Emergence metrics (AD-557) ---
+        self._emergence_metrics_engine: Any = None
 
         # --- Structural Integrity Field (AD-370) ---
         self.sif: StructuralIntegrityField | None = None
@@ -1135,6 +1139,7 @@ class ProbOSRuntime:
         )
         self.dream_scheduler = dream_result.dream_scheduler
         self._emergent_detector = dream_result.emergent_detector
+        self._emergence_metrics_engine = dream_result.emergence_metrics_engine
         self.task_scheduler = dream_result.task_scheduler
         self._flush_task = dream_result.flush_task
         self._cold_start = cold_start
@@ -1463,12 +1468,6 @@ class ProbOSRuntime:
                         episode_id=msg.id,
                         verifier_id=rt_agent.id,
                     )
-
-                    self._emit_event(EventType.TRUST_UPDATE, {
-                        "agent_id": result.agent_id,
-                        "new_score": format_trust(self.trust_network.get_score(result.agent_id)),
-                        "success": vr.verified,
-                    })
 
                     # AD-410: Bridge Alert on significant trust drop
                     if self.bridge_alerts:
@@ -2817,13 +2816,6 @@ class ProbOSRuntime:
                     self.trust_network.record_outcome(
                         aid, success=test["passed"], weight=weight,
                     )
-
-                    # Emit trust_update for HXI (AD-254)
-                    self._emit_event(EventType.TRUST_UPDATE, {
-                        "agent_id": aid,
-                        "new_score": format_trust(self.trust_network.get_score(aid)),
-                        "success": test["passed"],
-                    })
 
                     # AD-410: Bridge Alert on significant trust drop
                     if self.bridge_alerts:

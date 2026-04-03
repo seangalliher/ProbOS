@@ -966,19 +966,17 @@ class TestProactiveTrustSignal:
 
     @pytest.mark.asyncio
     async def test_trust_update_event_emitted(self):
-        """Successful proactive think emits trust_update event."""
-        events = []
+        """Successful proactive think calls record_outcome (AD-558: event emitted internally)."""
         loop, rt = self._make_loop_with_config(trust_reward_weight=0.1)
-        loop._on_event = lambda evt: events.append(evt)
         agent = self._make_agent("EPS conduits nominal.")
 
         await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
 
-        trust_events = [e for e in events if e["type"] == "trust_update"]
-        assert len(trust_events) == 1
-        assert trust_events[0]["data"]["source"] == "proactive"
-        assert trust_events[0]["data"]["agent_id"] == "scout-1"
-        assert trust_events[0]["data"]["weight"] == 0.1
+        # AD-558: Event emission now happens inside record_outcome via callback.
+        # Verify record_outcome was called with correct args.
+        rt.trust_network.record_outcome.assert_called_once_with(
+            "scout-1", success=True, weight=0.1, intent_type="proactive_think",
+        )
 
     @pytest.mark.asyncio
     async def test_zero_weight_skips_record(self):

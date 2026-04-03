@@ -395,6 +395,12 @@ class DreamReport:
     gaps_classified: int = 0
     qualification_paths_triggered: int = 0
     gap_reports_generated: int = 0
+    # AD-557: Emergence metrics
+    emergence_capacity: float | None = None
+    coordination_balance: float | None = None
+    groupthink_risk: bool = False
+    fragmentation_risk: bool = False
+    tom_effectiveness: float | None = None
 
 
 # ------------------------------------------------------------------

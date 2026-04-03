@@ -74,6 +74,23 @@ async def finalize_startup(
         await proactive_loop.start()
         logger.info("proactive-cognitive-loop started (interval=%ss)", config.proactive_cognitive.interval_seconds)
 
+    # --- AD-558: Wire trust dampening dependencies ---
+    if runtime.ontology:
+        runtime.trust_network.set_department_lookup(
+            lambda agent_id: runtime.ontology.get_agent_department(agent_id)
+        )
+    runtime.trust_network.set_event_callback(
+        lambda event_type, data: runtime._emit_event(event_type, data)
+    )
+
+    # --- AD-557: Wire emergence metrics dependencies ---
+    if runtime.dream_scheduler and runtime.dream_scheduler._engine:
+        engine = runtime.dream_scheduler._engine
+        if runtime.ward_room:
+            engine._ward_room = runtime.ward_room
+        if runtime.ontology:
+            engine._get_department = lambda aid: runtime.ontology.get_agent_department(aid)
+
     # --- AD-515: Create extracted service instances ---
     from probos.ward_room_router import WardRoomRouter
     from probos.self_mod_manager import SelfModManager
