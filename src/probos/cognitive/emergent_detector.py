@@ -169,6 +169,9 @@ class EmergentDetector:
         # BF-034: Cold-start suppression — suppress trust anomalies for N seconds after reset
         self._suppress_trust_until: float = 0.0
 
+        # BF-100: Dream cycle suppression — suppress trust anomalies during dream consolidation
+        self._dreaming: bool = False
+
     def set_live_agents(self, agent_ids: set[str]) -> None:
         """Update the set of live agent IDs from the runtime pool registry."""
         self._live_agent_ids = agent_ids
@@ -185,6 +188,17 @@ class EmergentDetector:
         trust (0.5) is expected, not anomalous.
         """
         self._suppress_trust_until = time.monotonic() + duration_seconds
+
+    def set_dreaming(self, active: bool) -> None:
+        """Set dream cycle state. Suppresses trust anomaly detection during dreams.
+
+        BF-100: Dream consolidation (Step 3) updates trust scores via
+        record_outcome(), and AD-558 now emits TRUST_UPDATE events for these.
+        Without suppression, the detector treats coordinated dream trust
+        movements as anomalies. Cooperation clusters and routing shifts are
+        still detected — only trust anomalies are suppressed.
+        """
+        self._dreaming = active
 
     def _is_duplicate_pattern(self, pattern_type: str, dedup_key: str) -> bool:
         """Check if this pattern was already reported within the cooldown window.
@@ -446,6 +460,11 @@ class EmergentDetector:
 
         # BF-034: Suppress during cold-start period
         if time.monotonic() < self._suppress_trust_until:
+            return patterns
+
+        # BF-100: Suppress during dream cycles — dream consolidation trust
+        # updates are legitimate coordination, not anomalies
+        if self._dreaming:
             return patterns
 
         # BF-089: Prune stale temporal buffer entries

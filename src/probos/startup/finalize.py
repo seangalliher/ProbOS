@@ -91,6 +91,10 @@ async def finalize_startup(
         if runtime.ontology:
             engine._get_department = lambda aid: runtime.ontology.get_agent_department(aid)
 
+    # --- BF-100: Wire EmergentDetector to DreamScheduler for dream suppression ---
+    if runtime.dream_scheduler and getattr(runtime, '_emergent_detector', None):
+        runtime.dream_scheduler.set_emergent_detector(runtime._emergent_detector)
+
     # --- AD-515: Create extracted service instances ---
     from probos.ward_room_router import WardRoomRouter
     from probos.self_mod_manager import SelfModManager

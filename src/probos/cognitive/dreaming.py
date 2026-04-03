@@ -1320,6 +1320,7 @@ class DreamScheduler:
         self._micro_dream_count: int = 0
         self._last_proactive_scan_time: float = 0.0  # AD-532e
         self._is_dreaming: bool = False
+        self._emergent_detector: Any = None  # BF-100: Set via set_emergent_detector()
         self._task: asyncio.Task[None] | None = None
         self._last_dream_report: DreamReport | None = None
         self._stopped = False
@@ -1377,6 +1378,8 @@ class DreamScheduler:
     async def force_dream(self) -> DreamReport:
         """Force an immediate dream cycle (for /dream now command)."""
         self._is_dreaming = True
+        if self._emergent_detector:
+            self._emergent_detector.set_dreaming(True)
         if self._pre_dream_fn:
             try:
                 self._pre_dream_fn()
@@ -1408,8 +1411,8 @@ class DreamScheduler:
             return report
         finally:
             self._is_dreaming = False
-
-    async def _monitor_loop(self) -> None:
+            if self._emergent_detector:
+                self._emergent_detector.set_dreaming(False)
         """Background loop: micro-dream every 10s, full dream when idle."""
         while not self._stopped:
             try:
@@ -1477,6 +1480,8 @@ class DreamScheduler:
                     and time_since_last_dream >= self.dream_interval_seconds
                 ):
                     self._is_dreaming = True
+                    if self._emergent_detector:
+                        self._emergent_detector.set_dreaming(True)
                     if self._pre_dream_fn:
                         try:
                             self._pre_dream_fn()
@@ -1509,6 +1514,8 @@ class DreamScheduler:
                         logger.warning("Dream cycle failed: %s", e)
                     finally:
                         self._is_dreaming = False
+                        if self._emergent_detector:
+                            self._emergent_detector.set_dreaming(False)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -1532,3 +1539,7 @@ class DreamScheduler:
             self._post_dream_fn = post_dream
         if post_micro_dream is not None:
             self._post_micro_dream_fn = post_micro_dream
+
+    def set_emergent_detector(self, detector: Any) -> None:
+        """Wire EmergentDetector for BF-100 dream cycle suppression."""
+        self._emergent_detector = detector
