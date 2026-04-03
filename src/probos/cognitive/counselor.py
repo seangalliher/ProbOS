@@ -957,7 +957,7 @@ class CounselorAgent(CognitiveAgent):
 
         # High/critical gaps warrant assessment + therapeutic DM
         if priority in ("high", "critical"):
-            callsign = self._resolve_callsign(agent_id)
+            callsign = self._resolve_agent_callsign(agent_id)
             metrics = self._gather_agent_metrics(agent_id)
             assessment = self.assess_agent(
                 agent_id=agent_id,
@@ -1003,7 +1003,7 @@ class CounselorAgent(CognitiveAgent):
 
         # AD-505: Therapeutic DM for significant trust changes
         if not assessment.fit_for_duty or assessment.wellness_score < COUNSELOR_WELLNESS_YELLOW:
-            callsign = self._resolve_callsign(agent_id)
+            callsign = self._resolve_agent_callsign(agent_id)
             await self._maybe_send_therapeutic_dm(
                 agent_id, callsign, assessment, trigger="trust_update"
             )
@@ -1043,7 +1043,7 @@ class CounselorAgent(CognitiveAgent):
                 await self._save_profile_and_assessment(agent_id, assessment)
                 if not assessment.fit_for_duty:
                     self._alert_bridge(agent_id, assessment)
-                    callsign = self._resolve_callsign(agent_id)
+                    callsign = self._resolve_agent_callsign(agent_id)
                     await self._maybe_send_therapeutic_dm(
                         agent_id, callsign, assessment, trigger="trust_cascade"
                     )
@@ -1436,8 +1436,8 @@ class CounselorAgent(CognitiveAgent):
         message = self._build_therapeutic_message(callsign, assessment, trigger)
         await self._send_therapeutic_dm(agent_id, callsign, message)
 
-    def _resolve_callsign(self, agent_id: str) -> str:
-        """Resolve an agent's callsign from registry."""
+    def _resolve_agent_callsign(self, agent_id: str) -> str:
+        """Resolve another agent's callsign from registry."""
         if self._registry:
             agent = self._registry.get(agent_id)
             if agent:

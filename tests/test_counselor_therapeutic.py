@@ -578,11 +578,11 @@ class TestCounselorWiring:
         registry = MagicMock()
         registry.get = MagicMock(return_value=agent_mock)
         c = _make_counselor(registry=registry)
-        assert c._resolve_callsign("agent-1") == "Worf"
+        assert c._resolve_agent_callsign("agent-1") == "Worf"
 
         # Fallback when registry unavailable
         c2 = _make_counselor(registry=None)
-        assert c2._resolve_callsign("agent-12345678-abcd") == "agent-12"
+        assert c2._resolve_agent_callsign("agent-12345678-abcd") == "agent-12"
 
 
 # ===== Test Class 8: TestIntegration =====
