@@ -38,7 +38,7 @@ See [Design Principles](design-principles.md) for the full design philosophy —
 |------|-----------------|-----------------|--------|
 | **Medical** | Sickbay (Crusher) | Health monitoring, diagnosis, remediation, post-mortems | Built (AD-290) |
 | **Engineering** | Main Engineering (LaForge) | Performance optimization, architecture review, system optimization, builds | Built (LaForge + Scotty, AD-302/398) |
-| **Science** | Science Lab (Spock) | Research, discovery, architectural analysis, codebase knowledge, intelligence gathering, telemetry analysis, emergence studies | Built (Architect, CodebaseIndex, Scout); expanding (AD-560: Data Analyst, Systems Analyst, Research Specialist) |
+| **Science** | Science Lab (Spock) | Research, discovery, architectural analysis, codebase knowledge, intelligence gathering, telemetry analysis, emergence studies | Built (Architect, CodebaseIndex, Scout, Data Analyst, Systems Analyst, Research Specialist — AD-560 complete) |
 | **Security** | Tactical (Worf) | Threat assessment, vulnerability review, code security audit, defense | Built (AD-398) |
 | **Operations** | Ops (O'Brien) | Resource analysis, cross-department coordination, capacity planning, system efficiency | Built (AD-398) |
 | **Communications** | Comms (Uhura) | Channel adapters, federation, external interfaces | Partial |
@@ -2924,7 +2924,7 @@ The confabulation cascade (Substack case study, 2026-03-26) demonstrated that 11
 
 ### Science Department Expansion — Analytical Pyramid (AD-560)
 
-**AD-560: Science Department Expansion** *(planned, OSS, depends: AD-398, AD-428)*
+**AD-560: Science Department Expansion** *(complete, OSS, depends: AD-398, AD-428)*
 
 The Science department has only 2 agents (Number One dual-hatted as CSO + Horizon as Scout) vs Medical's 4 and Engineering's 2+infrastructure. Crew observation from Horizon and Meridian independently identified the gap: the ship generates massive telemetry (Trust events, Hebbian weights, emergence metrics, cognitive journal, dream consolidation) but nobody systematically analyzes it.
 
