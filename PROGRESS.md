@@ -35,13 +35,17 @@ Tags use the format `v{major}.{minor}.{patch}-phase{N}` (e.g., `v0.4.0-phase29c`
 
 ## Design Principles
 
-See [roadmap.md](docs/development/roadmap.md#design-principles) for full design principles:
+See [design-principles.md](docs/development/design-principles.md) for full design principles:
 - "Brains are Brains" (Nooplex core principle)
 - Agent Development Model (Communication + Simulation)
 - HXI Self-Sufficiency, Agent-First Design, Cockpit View
 - Probabilistic Agents, Consensus Governance
 - Agent Classification Framework (Core / Utility / Domain)
 - Foundational Governance Axioms (Safety Budget, Reversibility, Minimal Authority)
+- "Cooperate, Don't Compete" (Federation philosophy)
+- Visiting Officer Subordination
+- Extension-First Architecture
+- Markdown is Code
 
 ---
 

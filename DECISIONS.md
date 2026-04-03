@@ -2104,3 +2104,32 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Rationale:** Trust data integrity is foundational — AD-558 (Trust Cascade Dampening) adds dampening logic to `record_outcome()`, which is meaningless if concurrent callers can bypass or race with it. The "flush and restart" fix worked because `_save_to_db()` does a full DELETE+INSERT, resetting accumulated drift from concurrent mutations. The 72-hour recurrence window corresponds to enough concurrent writes accumulating drift plus dream consolidation directly mutating records and diverging in-memory state from database. The crew's medical framing was accurate: treating symptoms (flush) without addressing root cause (concurrency) guarantees recurrence. This is the first BF where the crew identified, diagnosed, and tracked the issue through their professional framework before the architect investigated.
 
 **Status:** BF-099 CLOSED. 18 new tests. 128/128 trust+dreaming+hebbian regression passing. Full suite: 5,236 passed (5,087 pytest + 149 vitest). Prerequisite for AD-558 satisfied.
+## Science Department Expansion — Analytical Pyramid (AD-560)
+
+**AD-560: Science Department Expansion — Data Analyst, Systems Analyst, Research Specialist** *(OSS)*
+
+**Context:** Science department had only 2 agents (Number One dual-hatted as CSO, Horizon as Scout) vs Medical's 4 and Engineering's 2+infrastructure. Crew observation from Horizon and Meridian independently identified the gap: the ship generates massive telemetry (Trust events, Hebbian weights, emergence metrics, dream consolidation) but nobody systematically analyzes it. Both agents converged on "Data Analyst" as the top priority — another demonstration of collaborative intelligence Level 3 (Converge).
+
+| AD | Decision |
+|----|----------|
+| AD-560 | **Three new Science crew forming an analytical pyramid.** (1) **Data Analyst (Rahda)** — telemetry processing, baseline establishment, anomaly detection. Navy analog: Operations Specialist. Ultra-high conscientiousness (0.95), "report what you see, not what you think." First standing order: establish baselines BEFORE detecting anomalies. (2) **Systems Analyst (Dax)** — emergent behavior analysis, cross-system pattern synthesis. Navy analog: ORSA officer. High openness (0.85), "we illuminate the decision space." Consumer of AD-557 emergence metrics. (3) **Research Specialist (Brahms)** — directed investigation, experimental design, formal reports. Navy analog: NRL scientist. Very high openness (0.9), low agreeableness (0.4), "findings are not requests." Intellectually fearless — reports uncomfortable truths. |
+
+**Rationale:** The analytical pyramid follows real-world naval science/technical department structure: data flows up (raw → processed → synthesized), questions flow down (research agenda → analytical framing → data collection). Each role adds a layer of interpretation. Data Analyst trusts the instruments, Systems Analyst trusts the patterns, Research Specialist trusts the evidence. When they disagree, they're looking at different layers of the same phenomenon — and that tension is productive. Callsigns drawn from Star Trek characters matching each role's archetype: Rahda (steady sensor operator, TOS), Dax (lateral systems thinker, DS9), Brahms (deep research investigator, TNG). Deferred: Knowledge Engineer (blocked on AD-550–555), Laboratory Technician (blocked on AD-539b Holodeck).
+
+**Status:** AD-560 PLANNED. Build prompt: `prompts/ad-560-science-department-expansion.md`.
+
+## Design Principles Extraction
+
+**Design Principles → Standalone Document** *(OSS, structural)*
+
+**Context:** Design principles were embedded in `docs/development/roadmap.md` (lines 7–193, ~180 lines). Principles are permanent philosophy; roadmap items are temporal plans that complete and move to history. Mixing them in one document created conceptual clutter and made principles harder to reference from build prompts and ADs.
+
+| Decision | Rationale |
+|----------|-----------|
+| Extract design principles from roadmap.md into `docs/development/design-principles.md` | Clean separation: design-principles.md = how to think about the system (permanent), roadmap.md = what to build and when (temporal), contributing.md = how to write code (engineering practices). |
+| Add "Markdown is Code" principle | Standing orders, crew profiles, and department protocols are executable behavioral programs on LLM substrates. `config/standing_orders/` deserves the same review rigor as `src/probos/`. |
+| Add "Cooperate, Don't Compete" principle | Federation philosophy formalized. ProbOS's moat is the orchestration layer, not individual agent capability. |
+| Add "Visiting Officer Subordination" principle | External tools serve under ProbOS chain of command. Litmus test: can you use it purely as a code generation engine? If not, it's a competing captain. |
+| Add "Extension-First Architecture" principle | Core sealed (Phase 30). New capabilities via public APIs. If a feature requires patching a private method, the architecture has a gap. |
+
+**Status:** Complete. Roadmap cross-references design-principles.md. 4 new principles added alongside 14 migrated principles.
