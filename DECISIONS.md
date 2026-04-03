@@ -2140,15 +2140,16 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 
 | Bug | Issue | Root Cause |
 |-----|-------|------------|
-| BF-101 | Agent uses seed callsign instead of chosen callsign | Possible warm boot restoration failure or `_build_personality_block` cache stale entry when `self.callsign` is empty string |
+| BF-101 | Agent uses seed callsign instead of chosen callsign | `self.callsign or None` passes `None` when callsign is empty string, `_build_personality_block` falls back to YAML seed |
 | BF-102 | New crew don't know they're new | No commissioning awareness in temporal context; BF-034 cold-start note only in `proactive_think`, not `ward_room_notification` |
-| BF-103 | `thread_mode="announce"` doesn't suppress responses | Router only checks for `"inform"`; `"announce"` falls through to normal routing with unlimited dispatch |
 
 | Decision | Rationale |
 |----------|-----------|
+| Add `_resolve_callsign()` with identity registry fallback | Defensive depth: even if callsign attribute is empty, birth certificate is the ground truth |
 | Add commissioning awareness to temporal context (age < 300s) | Westworld Principle: agents should know they're new. "Born today, and that's fine." |
 | Extend cold-start system note to `ward_room_notification` | Consistency: agents need the same context in Ward Room as in proactive think |
-| Suppress `"announce"` threads in Ward Room router | Announcements are for reading, not responding. Same semantic as `"inform"` but semantically distinct |
+| Ship's Computer auto-welcome for new crew on warm boot | Enhancement: batched "New Crew Aboard" discuss thread so crew can welcome and new agents can respond as themselves |
+| Drop BF-103 (announce thread suppression) | Misdiagnosis. Observed behavior was Captain's All Hands post, not system announcement. All Hands should trigger responses. New agents should respond — they just need commissioning awareness (BF-102) |
 
 **Build prompt:** `prompts/bf-101-102-103-crew-identity-awareness.md`
 **Status:** Open.
