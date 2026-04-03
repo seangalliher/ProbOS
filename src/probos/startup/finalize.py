@@ -84,8 +84,8 @@ async def finalize_startup(
     )
 
     # --- AD-557: Wire emergence metrics dependencies ---
-    if runtime.dream_scheduler and runtime.dream_scheduler._engine:
-        engine = runtime.dream_scheduler._engine
+    if runtime.dream_scheduler and runtime.dream_scheduler.engine:
+        engine = runtime.dream_scheduler.engine
         if runtime.ward_room:
             engine._ward_room = runtime.ward_room
         if runtime.ontology:
