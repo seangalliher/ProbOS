@@ -1413,6 +1413,8 @@ class DreamScheduler:
             self._is_dreaming = False
             if self._emergent_detector:
                 self._emergent_detector.set_dreaming(False)
+
+    async def _monitor_loop(self) -> None:
         """Background loop: micro-dream every 10s, full dream when idle."""
         while not self._stopped:
             try:
