@@ -130,6 +130,9 @@ class EventType(str, Enum):
     EMERGENCE_METRICS_UPDATED = "emergence_metrics_updated"  # AD-557: emergence snapshot computed
     GROUPTHINK_WARNING = "groupthink_warning"  # AD-557: redundancy dominates
     FRAGMENTATION_WARNING = "fragmentation_warning"  # AD-557: synergy near zero
+    LLM_HEALTH_CHANGED = "llm_health_changed"  # BF-069: LLM proxy status transition
+    CONVERGENCE_DETECTED = "convergence_detected"  # AD-551: cross-agent convergence
+    NOTEBOOK_SELF_REPETITION = "notebook_self_repetition"  # AD-552: notebook self-repetition
 
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
@@ -511,6 +514,19 @@ class PeerRepetitionDetectedEvent(BaseEvent):
     match_count: int = 0
     top_similarity: float = 0.0
     post_type: str = ""  # "thread" or "reply"
+
+
+@dataclass
+class NotebookSelfRepetitionEvent(BaseEvent):
+    """AD-552: Emitted when an agent writes about the same topic repeatedly."""
+    event_type: EventType = field(default=EventType.NOTEBOOK_SELF_REPETITION, init=False)
+    agent_id: str = ""
+    agent_callsign: str = ""
+    topic_slug: str = ""
+    revision: int = 0
+    hours_active: float = 0.0
+    novelty: float = 0.0
+    suppressed: bool = False  # True if write was suppressed
 
 
 @dataclass

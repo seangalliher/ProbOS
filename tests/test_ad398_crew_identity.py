@@ -189,9 +189,11 @@ class TestInfrastructureNoCallsigns:
         """VitalsMonitor (Chapel) no longer has a callsign."""
         assert self._registry().resolve("chapel") is None
 
-    def test_no_dax_callsign(self):
-        """EmergentDetector (Dax) no longer has a callsign."""
-        assert self._registry().resolve("dax") is None
+    def test_dax_callsign_is_systems_analyst(self):
+        """Dax callsign is now assigned to SystemsAnalyst (AD-560)."""
+        result = self._registry().resolve("dax")
+        assert result is not None
+        assert result["agent_type"] == "systems_analyst"
 
     def test_introspect_type_no_callsign(self):
         """get_callsign('introspect') returns empty."""

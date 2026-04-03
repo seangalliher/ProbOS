@@ -401,6 +401,11 @@ class DreamReport:
     groupthink_risk: bool = False
     fragmentation_risk: bool = False
     tom_effectiveness: float | None = None
+    # AD-551: Notebook consolidation
+    notebook_consolidations: int = 0
+    notebook_entries_archived: int = 0
+    convergence_reports_generated: int = 0
+    convergence_reports: list[Any] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------

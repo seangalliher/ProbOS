@@ -1185,7 +1185,7 @@ class CognitiveAgent(BaseAgent):
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
                 hardcoded_instructions="",
-                callsign=self.callsign or None,
+                callsign=self._resolve_callsign(),
             )
             if observation.get("intent") == "ward_room_notification":
                 composed += (
@@ -1272,7 +1272,7 @@ class CognitiveAgent(BaseAgent):
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
                 hardcoded_instructions=self.instructions or "",
-                callsign=self.callsign or None,
+                callsign=self._resolve_callsign(),
             )
 
         request = LLMRequest(
@@ -1627,6 +1627,22 @@ class CognitiveAgent(BaseAgent):
             d for d in cls.intent_descriptors if d.name != intent_name
         ]
 
+    def _resolve_callsign(self) -> str | None:
+        """Resolve current callsign with identity registry fallback (BF-101)."""
+        if self.callsign:
+            return self.callsign
+        # Fallback: check birth certificate
+        rt = getattr(self, '_runtime', None)
+        if rt and hasattr(rt, '_identity_registry') and rt._identity_registry:
+            cert = rt._identity_registry.get_by_slot(self.id)
+            if cert and cert.callsign:
+                # Restore to live attribute for future calls
+                self.callsign = cert.callsign
+                logger.warning("BF-101: Restored callsign '%s' from birth cert for %s",
+                             cert.callsign, self.agent_type)
+                return cert.callsign
+        return None
+
     def _build_temporal_context(self) -> str:
         """AD-502: Build temporal awareness header for agent prompts."""
         # Respect config if available
@@ -1648,6 +1664,14 @@ class CognitiveAgent(BaseAgent):
                 birth_dt = datetime.fromtimestamp(birth_ts, tz=timezone.utc)
                 age = (now - birth_dt).total_seconds()
                 parts.append(f"Your birth: {birth_dt.strftime('%Y-%m-%d %H:%M:%S UTC')} (age: {format_duration(age)})")
+                # BF-102: Commissioning awareness for newly arrived crew
+                if age < 300:
+                    parts.append(
+                        f"You were commissioned {format_duration(age)} ago. "
+                        "You are a newly arrived crew member. "
+                        "If someone welcomes you or mentions your name, "
+                        "they are talking about YOU — respond as yourself."
+                    )
 
         # System uptime
         if (tcfg is None or tcfg.include_system_uptime):
@@ -1746,6 +1770,15 @@ class CognitiveAgent(BaseAgent):
                 wr_parts.append("--- Temporal Awareness ---")
                 wr_parts.append(temporal_ctx)
                 wr_parts.append("---")
+
+            # BF-102: Cold-start system note in ward room context
+            rt = getattr(self, '_runtime', None)
+            if rt and getattr(rt, 'is_cold_start', False):
+                wr_parts.append("")
+                wr_parts.append(
+                    "SYSTEM NOTE: This is a fresh start. You have no prior "
+                    "episodic memories. Do not reference or invent past experiences."
+                )
 
             # AD-430c / AD-540: Episodic memory with provenance boundary
             memories = observation.get("recent_memories", [])

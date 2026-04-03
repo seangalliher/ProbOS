@@ -57,6 +57,7 @@ class DreamAdapter:
         pools: dict[str, ResourcePool],
         behavioral_monitor: BehavioralMonitor | None = None,
         deliver_bridge_alert_fn: Callable | None = None,
+        llm_client: Any = None,  # BF-069: LLM client for health monitoring
     ) -> None:
         self._dream_scheduler = dream_scheduler
         self._emergent_detector = emergent_detector
@@ -74,6 +75,7 @@ class DreamAdapter:
         self._pools = pools
         self._behavioral_monitor = behavioral_monitor
         self._deliver_bridge_alert_fn = deliver_bridge_alert_fn
+        self._llm_client = llm_client
 
         # Runtime state references (set by runtime after creation)
         self._cold_start: bool = False
@@ -183,6 +185,31 @@ class DreamAdapter:
                     try:
                         loop = asyncio.get_running_loop()
                         loop.create_task(self._deliver_bridge_alert_fn(va))
+                    except RuntimeError:
+                        pass
+
+            # BF-069: LLM proxy health bridge alerts
+            if self._llm_client and hasattr(self._llm_client, 'get_health_status'):
+                llm_alerts = self._bridge_alerts.check_llm_health(self._llm_client.get_health_status())
+                for la in llm_alerts:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self._deliver_bridge_alert_fn(la))
+                    except RuntimeError:
+                        pass
+
+            # AD-551: Cross-agent convergence bridge alerts
+            conv_count = getattr(dream_report, "convergence_reports_generated", 0)
+            if conv_count > 0:
+                conv_data = {
+                    "convergence_reports_generated": conv_count,
+                    "convergence_reports": getattr(dream_report, "convergence_reports", []),
+                }
+                conv_alerts = self._bridge_alerts.check_convergence(conv_data)
+                for ca in conv_alerts:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self._deliver_bridge_alert_fn(ca))
                     except RuntimeError:
                         pass
 

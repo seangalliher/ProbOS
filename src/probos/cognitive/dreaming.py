@@ -16,6 +16,7 @@ from typing import Any
 
 from probos.cognitive.contradiction_detector import detect_contradictions
 from probos.cognitive.episode_clustering import cluster_episodes
+from probos.cognitive.similarity import jaccard_similarity, text_to_words  # AD-551
 from probos.cognitive.gap_predictor import predict_gaps, detect_gaps, map_gap_to_skill, trigger_qualification_if_needed
 from probos.cognitive.procedures import (
     extract_procedure_from_cluster,
@@ -68,6 +69,7 @@ class DreamingEngine:
         trust_network_lookup: Any = None,  # AD-537: fn(agent_id) -> trust score
         emergence_metrics_engine: Any = None,  # AD-557: emergence metrics engine
         get_department: Any = None,  # AD-557: fn(agent_id) -> department name
+        records_store: Any = None,  # AD-551: Ship's Records for notebook consolidation
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -86,6 +88,7 @@ class DreamingEngine:
         self._trust_network_lookup = trust_network_lookup  # AD-537: trust score lookup
         self._emergence_metrics_engine = emergence_metrics_engine  # AD-557
         self._get_department = get_department  # AD-557: department lookup
+        self._records_store = records_store  # AD-551: Ship's Records
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
         self._addressed_degradations: dict[str, float] = {}  # AD-532b: procedure_id -> timestamp
@@ -408,6 +411,259 @@ class DreamingEngine:
         except Exception as e:
             logger.debug("Step 7f lifecycle maintenance failed: %s", e)
 
+        # Step 7g: Notebook consolidation + cross-agent convergence (AD-551)
+        notebook_consolidations = 0
+        notebook_entries_archived = 0
+        convergence_reports_generated = 0
+        convergence_reports: list[dict] = []
+        try:
+            if self._records_store and self.config.notebook_consolidation_enabled:
+                # --- Intra-agent consolidation ---
+                all_entries = await self._records_store.list_entries("notebooks/")
+                # Group by agent callsign (path: notebooks/{callsign}/...)
+                agents_entries: dict[str, list[dict]] = {}
+                for entry in all_entries:
+                    parts = entry["path"].split("/")
+                    if len(parts) >= 2:
+                        agent_cs = parts[1]
+                        agents_entries.setdefault(agent_cs, []).append(entry)
+
+                threshold = self.config.notebook_consolidation_threshold
+                min_entries = self.config.notebook_consolidation_min_entries
+
+                for agent_cs, entries in agents_entries.items():
+                    if len(entries) < min_entries:
+                        continue
+                    # Load content for each entry
+                    loaded: list[dict] = []
+                    for ent in entries:
+                        try:
+                            doc = await self._records_store.read_entry(
+                                ent["path"], reader_id="system",
+                            )
+                            if doc:
+                                loaded.append({**ent, "_content": doc.get("content", ""), "_doc": doc})
+                        except Exception:
+                            pass
+                    if len(loaded) < min_entries:
+                        continue
+                    # Pairwise similarity → single-linkage clustering
+                    n = len(loaded)
+                    adj: dict[int, set[int]] = {i: set() for i in range(n)}
+                    for i in range(n):
+                        words_i = text_to_words(loaded[i]["_content"])
+                        for j in range(i + 1, n):
+                            words_j = text_to_words(loaded[j]["_content"])
+                            sim = jaccard_similarity(words_i, words_j)
+                            if sim >= threshold:
+                                adj[i].add(j)
+                                adj[j].add(i)
+                    # BFS to find connected components
+                    visited: set[int] = set()
+                    clusters: list[list[int]] = []
+                    for start in range(n):
+                        if start in visited:
+                            continue
+                        if not adj[start]:
+                            continue
+                        queue = [start]
+                        component: list[int] = []
+                        while queue:
+                            node = queue.pop(0)
+                            if node in visited:
+                                continue
+                            visited.add(node)
+                            component.append(node)
+                            queue.extend(adj[node] - visited)
+                        if len(component) >= min_entries:
+                            clusters.append(component)
+                    # Consolidate each cluster
+                    for cluster_indices in clusters:
+                        cluster_items = [loaded[i] for i in cluster_indices]
+                        # Primary = most recent (by updated or created timestamp)
+                        def _sort_key(item: dict) -> str:
+                            fm = item.get("frontmatter", {})
+                            return fm.get("updated", fm.get("created", ""))
+                        cluster_items.sort(key=_sort_key, reverse=True)
+                        primary = cluster_items[0]
+                        others = cluster_items[1:]
+                        # Build consolidated content
+                        primary_content = primary["_content"]
+                        unique_observations: list[str] = []
+                        for other in others:
+                            other_content = other["_content"].strip()
+                            if other_content and other_content != primary_content.strip():
+                                unique_observations.append(other_content)
+                        consolidated = primary_content
+                        if unique_observations:
+                            consolidated += "\n\n## Consolidated Observations\n\n"
+                            consolidated += "\n\n---\n\n".join(unique_observations)
+                        # Write consolidated entry
+                        await self._records_store.write_entry(
+                            author=primary.get("frontmatter", {}).get("author", "system"),
+                            path=primary["path"],
+                            content=consolidated,
+                            message=f"AD-551: Consolidated {len(cluster_items)} entries",
+                        )
+                        # Archive non-primary entries
+                        for other in others:
+                            try:
+                                old_path = self._records_store._safe_path(other["path"])
+                                new_dir = old_path.parent / "_archived"
+                                new_dir.mkdir(parents=True, exist_ok=True)
+                                new_path = new_dir / old_path.name
+                                old_path.rename(new_path)
+                                try:
+                                    await self._records_store._git("add", "-A")
+                                except Exception:
+                                    pass
+                                notebook_entries_archived += 1
+                            except Exception:
+                                logger.debug("AD-551: Failed to archive %s", other["path"])
+                        notebook_consolidations += 1
+                    if notebook_consolidations:
+                        logger.debug(
+                            "Step 7g: Consolidated %d notebook clusters for agent %s",
+                            len(clusters), agent_cs,
+                        )
+
+                # --- Cross-agent convergence detection ---
+                conv_min_agents = self.config.notebook_convergence_min_agents
+                conv_min_depts = self.config.notebook_convergence_min_departments
+                conv_threshold = self.config.notebook_convergence_threshold
+                # Collect entries with department info
+                agent_dept_entries: list[dict] = []
+                for agent_cs, entries in agents_entries.items():
+                    dept = ""
+                    if self._get_department and agent_cs:
+                        try:
+                            dept = self._get_department(agent_cs) or ""
+                        except Exception:
+                            pass
+                    for ent in entries:
+                        fm = ent.get("frontmatter", {})
+                        dept_resolved = fm.get("department", dept)
+                        agent_dept_entries.append({
+                            **ent, "agent": agent_cs, "department": dept_resolved,
+                        })
+                # Need entries from enough agents/departments
+                unique_agents = {e["agent"] for e in agent_dept_entries}
+                unique_depts = {e["department"] for e in agent_dept_entries if e["department"]}
+                if len(unique_agents) >= conv_min_agents and len(unique_depts) >= conv_min_depts:
+                    # Load content for cross-agent comparison
+                    cross_loaded: list[dict] = []
+                    for ent in agent_dept_entries:
+                        try:
+                            doc = await self._records_store.read_entry(
+                                ent["path"], reader_id="system",
+                            )
+                            if doc:
+                                cross_loaded.append({
+                                    **ent, "_content": doc.get("content", ""),
+                                })
+                        except Exception:
+                            pass
+                    # Find cross-agent matches
+                    n_cross = len(cross_loaded)
+                    cross_adj: dict[int, set[int]] = {i: set() for i in range(n_cross)}
+                    for i in range(n_cross):
+                        words_i = text_to_words(cross_loaded[i]["_content"])
+                        for j in range(i + 1, n_cross):
+                            if cross_loaded[i]["agent"] == cross_loaded[j]["agent"]:
+                                continue  # skip same-agent pairs
+                            words_j = text_to_words(cross_loaded[j]["_content"])
+                            sim = jaccard_similarity(words_i, words_j)
+                            if sim >= conv_threshold:
+                                cross_adj[i].add(j)
+                                cross_adj[j].add(i)
+                    # BFS for convergence clusters
+                    cross_visited: set[int] = set()
+                    for start in range(n_cross):
+                        if start in cross_visited or not cross_adj[start]:
+                            continue
+                        queue = [start]
+                        component: list[int] = []
+                        while queue:
+                            node = queue.pop(0)
+                            if node in cross_visited:
+                                continue
+                            cross_visited.add(node)
+                            component.append(node)
+                            queue.extend(cross_adj[node] - cross_visited)
+                        cluster_entries = [cross_loaded[i] for i in component]
+                        cluster_agents = {e["agent"] for e in cluster_entries}
+                        cluster_depts = {e["department"] for e in cluster_entries if e["department"]}
+                        if len(cluster_agents) >= conv_min_agents and len(cluster_depts) >= conv_min_depts:
+                            # Compute coherence = avg pairwise similarity
+                            pairs = 0
+                            total_sim = 0.0
+                            for ci in range(len(component)):
+                                wi = text_to_words(cluster_entries[ci]["_content"])
+                                for cj in range(ci + 1, len(component)):
+                                    wj = text_to_words(cluster_entries[cj]["_content"])
+                                    total_sim += jaccard_similarity(wi, wj)
+                                    pairs += 1
+                            coherence = total_sim / pairs if pairs else 0.0
+                            # Infer topic from most common words
+                            from collections import Counter as _Counter
+                            all_words: list[str] = []
+                            for ce in cluster_entries:
+                                all_words.extend(ce["_content"].lower().split()[:50])
+                            common = _Counter(all_words).most_common(3)
+                            topic = "-".join(w for w, _ in common) if common else "unknown"
+                            # Build perspectives
+                            perspectives = ""
+                            for ce in cluster_entries:
+                                snippet = ce["_content"][:300].strip()
+                                perspectives += f"\n### {ce['agent']} ({ce['department']})\n\n{snippet}\n"
+                            # Intersection content
+                            word_sets = [text_to_words(ce["_content"]) for ce in cluster_entries]
+                            shared_words = set.intersection(*word_sets) if word_sets else set()
+                            shared_summary = " ".join(sorted(shared_words)[:30]) if shared_words else "(computed intersection)"
+                            import datetime as _dt
+                            ts_slug = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+                            report_path = f"reports/convergence/convergence-{ts_slug}.md"
+                            report_content = (
+                                f"## Convergence Report\n\n"
+                                f"**Agents:** {', '.join(sorted(cluster_agents))}\n\n"
+                                f"**Departments:** {', '.join(sorted(cluster_depts))}\n\n"
+                                f"**Coherence:** {coherence:.3f}\n\n"
+                                f"## Contributing Perspectives\n{perspectives}\n"
+                                f"## Convergent Finding\n\n{shared_summary}\n"
+                            )
+                            try:
+                                await self._records_store.write_entry(
+                                    author="system",
+                                    path=report_path,
+                                    content=report_content,
+                                    message=f"AD-551: Convergence report ({topic})",
+                                    classification="ship",
+                                    tags=["convergence", "ad-551"],
+                                )
+                            except Exception:
+                                logger.debug("AD-551: Failed to write convergence report")
+                            conv_data = {
+                                "agents": sorted(cluster_agents),
+                                "departments": sorted(cluster_depts),
+                                "coherence": coherence,
+                                "topic": topic,
+                                "report_path": report_path,
+                            }
+                            convergence_reports.append(conv_data)
+                            convergence_reports_generated += 1
+                            # Emit event
+                            if hasattr(self, "_emit_event_fn") and self._emit_event_fn:
+                                try:
+                                    self._emit_event_fn("convergence_detected", conv_data)
+                                except Exception:
+                                    pass
+                if convergence_reports_generated:
+                    logger.debug(
+                        "Step 7g: Detected %d convergence events", convergence_reports_generated,
+                    )
+        except Exception as e:
+            logger.debug("Step 7g notebook consolidation failed (non-critical): %s", e)
+
         # Step 8: Enhanced capability gap detection (AD-385 + AD-539)
         gaps_predicted = 0
         gaps_classified = 0
@@ -469,7 +725,7 @@ class DreamingEngine:
             gap_reports_generated = len(gap_reports)
 
             # Write gap reports to Ship's Records (if available)
-            records_store = getattr(self._procedure_store, "_records_store", None) if self._procedure_store else None
+            records_store = self._records_store  # AD-551: direct access
             if records_store and gap_reports:
                 for gap in gap_reports:
                     try:
@@ -560,6 +816,11 @@ class DreamingEngine:
             groupthink_risk=groupthink_risk,
             fragmentation_risk=fragmentation_risk,
             tom_effectiveness=tom_effectiveness,
+            # AD-551: Notebook consolidation
+            notebook_consolidations=notebook_consolidations,
+            notebook_entries_archived=notebook_entries_archived,
+            convergence_reports_generated=convergence_reports_generated,
+            convergence_reports=convergence_reports,
         )
 
         logger.info(
@@ -1399,6 +1660,8 @@ class DreamScheduler:
                             "duration_ms": getattr(report, "duration_ms", 0),
                             "episodes_replayed": len(getattr(report, "episodes_replayed", [])),
                             "clusters_found": getattr(report, "clusters_found", 0),
+                            "notebook_consolidations": getattr(report, "notebook_consolidations", 0),
+                            "convergence_reports_generated": getattr(report, "convergence_reports_generated", 0),
                         },
                     )
                 except Exception:
@@ -1503,6 +1766,8 @@ class DreamScheduler:
                                         "duration_ms": getattr(report, "duration_ms", 0),
                                         "episodes_replayed": len(getattr(report, "episodes_replayed", [])),
                                         "clusters_found": getattr(report, "clusters_found", 0),
+                                        "notebook_consolidations": getattr(report, "notebook_consolidations", 0),
+                                        "convergence_reports_generated": getattr(report, "convergence_reports_generated", 0),
                                     },
                                 )
                             except Exception:

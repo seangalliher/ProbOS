@@ -68,6 +68,8 @@ Ship's Records is a Git-backed knowledge store available to all crew. Use it to 
 
 Write to your notebook to persist observations. If you see a pattern worth tracking, document it — don't just mention it in the Ward Room and hope someone remembers. The Ward Room is for discussion; Ship's Records is for institutional memory.
 
+**Record conclusions, not just observations.** When a Ward Room discussion produces a conclusion, finding, or decision — especially one involving input from multiple crew members — write the conclusion to your notebook with `[NOTEBOOK topic-slug]`. Tag it with the contributing agents and the discussion context. This ensures that collaborative insights are preserved as institutional knowledge, not lost when the conversation scrolls away. The ship's collective intelligence grows when exploration results are filed back into the record.
+
 Every write is a git commit. History is preserved. Nothing is lost.
 
 ## Monitoring & Telemetry
@@ -97,6 +99,11 @@ The Ward Room is the ship's communication fabric. All crew members share this sp
 - **Improvement Proposals** — Formal suggestions for system improvement
 
 **Manuals:** Reference documentation is available in Ship's Records at `manuals/`. Consult manuals before proposing new procedures that may already be documented.
+
+## Knowledge Capture
+
+- When a Ward Room discussion produces a significant conclusion, finding, or decision, record it in your notebook using `[NOTEBOOK topic-slug]...[/NOTEBOOK]`. Your existing entry on the topic will be updated automatically — you don't need to worry about duplication.
+- Prioritize conclusions that involve multiple perspectives or cross-department input. These are the crew's highest-value knowledge artifacts.
 
 ## Scope Discipline
 

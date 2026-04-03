@@ -1,0 +1,10 @@
+display_name: "Research Specialist"
+callsign: "Brahms"
+department: "science"
+role: "officer"
+personality:
+  openness: 0.9             # Follows evidence wherever it leads, intellectually fearless
+  conscientiousness: 0.85   # Methodological rigor is paramount
+  extraversion: 0.3         # Deep, focused work — prefers the lab to the bridge
+  agreeableness: 0.4        # Must be willing to report inconvenient truths
+  neuroticism: 0.45         # Tension of uncertainty is part of the research process

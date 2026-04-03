@@ -29,6 +29,14 @@ def mock_runtime():
     runtime.hebbian_router = MagicMock()
     runtime.intent_bus = MagicMock()
 
+    # BF-069: LLM client with health status
+    llm_client = MagicMock()
+    llm_client.get_health_status.return_value = {
+        "tiers": {"standard": {"status": "operational", "consecutive_failures": 0}},
+        "overall": "operational",
+    }
+    runtime.llm_client = llm_client
+
     return runtime
 
 

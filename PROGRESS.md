@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-557 (Emergence Metrics) COMPLETE. AD-558 COMPLETE. BF-099 CLOSED. Cognitive JIT pipeline COMPLETE (9/9). 618 Cognitive JIT tests. 5,337 tests (5,188 pytest + 149 vitest).
+## Current Status: AD-553 COMPLETE (Quantitative Baseline Auto-Capture). AD-552 COMPLETE (Notebook Self-Repetition Detection). AD-551 COMPLETE (Notebook Consolidation — Dream Step 7g). AD-550 COMPLETE. BF-069 CLOSED. BF-101/102 COMPLETE. AD-560 COMPLETE. AD-557 COMPLETE. AD-558 COMPLETE. BF-099 CLOSED. Cognitive JIT pipeline COMPLETE (9/9). 618 Cognitive JIT tests. 5,716 tests (5,567 pytest + 149 vitest).
 
 ---
 

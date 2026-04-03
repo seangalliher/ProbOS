@@ -2023,15 +2023,15 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 | AD | Decision |
 |----|----------|
 | AD-550 | **Notebook Deduplication — Read-Before-Write.** Before writing a new notebook entry, agent queries existing entries for semantic similarity (ChromaDB). Match >0.7 similarity → update existing entry instead of creating new file. 72h staleness window. Updated entries preserve creation timestamp, add `updated:` and `revision:` frontmatter. Git history preserves edit trail. Depends: AD-434. |
-| AD-551 | **Notebook Consolidation — Dream Step 8.** New dream step after Step 7. (a) Intra-agent: cluster semantically similar entries per agent (reuse AD-531 clustering), merge into canonical entry, archive sources to `consolidated/`. (b) Cross-agent convergence: 3+ agents from 2+ departments on same topic with convergent conclusions → generate Convergence Report at fleet classification. (c) Quantitative enrichment: auto-attach VitalsMonitor metrics to consolidated entries. DreamReport gains `notebook_consolidations` and `convergence_reports` fields. Depends: AD-434, AD-531. |
-| AD-552 | **Notebook Self-Repetition Detection.** Extends AD-506b peer repetition detection to notebook self-repetition. 3+ entries on same topic within 48h with <20% novel content → `NOTEBOOK_SELF_REPETITION` event. Counselor sends therapeutic DM. 5+ repetitions → write suppressed (circuit breaker). Uses tier credit system from AD-506b. Depends: AD-506b. |
-| AD-553 | **Quantitative Baseline Auto-Capture.** Auto-attach metric snapshot to entries tagged `baseline` or `metrics`: ship age, alert condition, trust scores, agent counts, Ward Room activity, VitalsMonitor readings. On baseline update (via AD-550), show diff vs. previous metrics. Transforms "things look normal" into data. Depends: AD-434, VitalsMonitor. |
+| AD-551 | **Notebook Consolidation — Dream Step 7g.** *(complete)* Dream Step 7g between 7f and 8. (a) Intra-agent: cluster same-agent entries by Jaccard similarity (0.6), merge into primary, archive non-primary to `_archived/`. (b) Cross-agent convergence: 3+ agents from 2+ depts → Convergence Report + `CONVERGENCE_DETECTED` event + bridge alert. (c) DreamReport gains 4 fields. (d) 6 DreamingConfig knobs. (e) RecordsStore late-wired via finalize.py. 25 tests. Depends: AD-434, AD-531. |
+| AD-552 | **Notebook Self-Repetition Detection.** *(complete)* Cumulative frequency check in dedup gate: 3+ revisions on same topic within 48h with <20% novelty → `NOTEBOOK_SELF_REPETITION` event. 5+ revisions with low novelty → write suppressed. Counselor therapeutic DM on detection (not suppression). `notebook_repetition` tier credit on CognitiveProfile. Self-monitoring prompt enriched with revision counts + repetition warnings. 5 config knobs. 25 tests. Depends: AD-506b, AD-550. |
+| AD-553 | **Quantitative Baseline Auto-Capture.** *(complete)* `collect_notebook_metrics()` reads VitalsMonitor `latest_vitals` cache (sync, no I/O) + TrustNetwork agent score + registry count. 9 metrics (trust_mean/min, system_health, pool_health_mean, emergence_capacity, coordination_balance, llm_health, agent_trust, active_agents). `compute_metrics_delta()` computes numeric deltas (>0.01) and string transitions. Metrics stored in YAML frontmatter `metrics` key. Delta stored as nested `metrics_delta` on update. `existing_metrics` returned in dedup result. 1 config knob. 27 tests. Depends: AD-434, AD-550, VitalsMonitor, AD-557. |
 | AD-554 | **Cross-Agent Convergence Detection.** Real-time convergence scoring after each notebook write. 3+ agents from 2+ departments with >0.75 conclusion similarity = convergence event. Auto-generate Convergence Report in Ship's Records. Emit `CONVERGENCE_DETECTED` event + Bridge notification. Each convergence event is a case study for the collaborative intelligence thesis. Depends: AD-434, AD-551. |
 | AD-555 | **Notebook Quality Metrics & Dashboarding.** Per-agent: total entries, unique topics, novel content rate, consolidation rate, self-repetition alerts, convergence contributions. Quality dashboard in HXI. Configurable thresholds: `NOTEBOOK_MIN_NOVEL_CONTENT_RATE=0.2`, `NOTEBOOK_MAX_ENTRIES_PER_TOPIC=5`, `CONVERGENCE_MIN_AGENTS=3`, `CONVERGENCE_MIN_DEPARTMENTS=2`. Depends: AD-550, AD-551. |
 
 **Rationale:** The notebook system (AD-434) provides the storage infrastructure but lacks quality control. Agents treat notebooks as write-only streams rather than living documents. The pipeline follows the same progressive pattern as Cognitive JIT: capture → deduplicate → consolidate → detect patterns → surface insights. AD-550 (dedup) and AD-552 (self-repetition) are preventive. AD-551 (consolidation) and AD-554 (convergence) are extractive. AD-553 (auto-capture) and AD-555 (dashboarding) are supportive infrastructure. The convergence detection mechanism (AD-554) is the most commercially significant — it automates the discovery of collaborative intelligence events that currently require manual review of hundreds of files.
 
-**Status:** AD-550–555 PLANNED. Six ADs. Informed by empirical analysis of 419 notebook files. Commercial research documented.
+**Status:** AD-550 COMPLETE, AD-551 COMPLETE, AD-552 COMPLETE, AD-553 COMPLETE. AD-554–555 PLANNED. Six ADs. Informed by empirical analysis of 419 notebook files. Commercial research documented.
 
 ## Adaptive Trust Anomaly Detection (AD-556)
 
@@ -2152,4 +2152,173 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 | Drop BF-103 (announce thread suppression) | Misdiagnosis. Observed behavior was Captain's All Hands post, not system announcement. All Hands should trigger responses. New agents should respond — they just need commissioning awareness (BF-102) |
 
 **Build prompt:** `prompts/bf-101-102-103-crew-identity-awareness.md`
-**Status:** Open.
+**Status:** Complete — 24 new tests (9 BF-101 + 9 BF-102 + 6 Enhancement), 5,585 total (5,436 pytest + 149 vitest). BF-103 DROPPED (misdiagnosis).
+
+## Intervention Classification & Change Governance (AD-561)
+
+**AD-561: Intervention Classification — Unified Change Governance Framework** *(OSS, planned)*
+
+**Context:** Post-AD-560 observation. Chapel (Medical) and Sinclair (Engineering) independently converged on a surgical intervention classification framework during a Ward Room DM — the first cross-department crew-originated governance proposal. Their framework maps cleanly to a gap in ProbOS's architecture: the system has 6+ change pathways (self-mod, builder, dream consolidation, standing orders, hot-reload, manual) but no unified taxonomy, no pre-change impact assessment, no post-change observation windows, no rollback for most change types, and no unified change log.
+
+**Prior work surveyed (10 areas):**
+- AD-536: Procedure criticality (4 levels: LOW/MEDIUM/HIGH/CRITICAL, two-tier governance) — maps to intervention classes
+- Self-mod pipeline: 10-step flow with sandbox + user gate + probationary trust — becomes Elective class with rollback
+- Builder quality gates (AD-337–341): Prevention-only, no rollback — gap
+- AD-548 (planned): Trust-gated tool permissions — per-class approval tiers
+- Change management: Only KnowledgeStore artifacts and failed self-mod registrations have rollback — gap
+- Alert Conditions: GREEN/YELLOW/RED in ontology — context-only, not enforcement — gap
+- Earned Agency (AD-357): Gates communication actions, not system changes — gap
+- CASREP/Damage Control (AD-477 planned): 5-phase model — maps to Emergency class protocol
+- Standing Orders: Federation Constitution (Safety Budget, Reversibility Preference) — prompt instructions not enforcement
+- Post-change monitoring: Counselor post-dream, circuit breaker zones, emergence metrics — no general observation window — gap
+
+| Decision | Rationale |
+|----------|-----------|
+| Four intervention classes: Diagnostic, Emergency, Elective, Experimental | Maps to medical/naval practice. Chapel & Sinclair's original framework. Each class has different approval, rollback, and monitoring requirements |
+| Mandatory pre-change impact assessment (blast radius) | Current pathways don't assess what's affected before making changes. Defense in Depth principle |
+| Mandatory rollback plans per class | Only self-mod and KnowledgeStore have rollback today. Most changes are fire-and-forget |
+| Post-change observation windows (Counselor-monitored) | No general mechanism to watch for drift after changes. Counselor already monitors post-dream — extend to all change types |
+| Unified Change Registry | 6+ change pathways with no unified log. Can't answer "what changed and when?" across the system |
+| Capture as crew-originated proposal | First instance of agents proposing governance improvements. Validates collaborative improvement thesis at meta-level — crew improving how the crew operates |
+
+**Status:** Planned. Depends on AD-477 (Damage Control) and AD-548 (tool permissions). No build prompt yet.
+
+## BF-069: LLM Proxy Health Monitoring & Alerting
+
+**Context:** When the Copilot proxy (127.0.0.1:8080) goes down or returns empty responses, the entire crew stops thinking proactively with zero indication to the Captain. Silent failure across proactive loop, shell chat, and all LLM-dependent operations.
+
+| Decision | Rationale |
+|----------|-----------|
+| Per-tier health tracking (fast/standard/deep) with consecutive failure counters | Different tiers can fail independently; per-tier granularity enables targeted diagnostics |
+| 3-failure unreachable threshold (`_UNREACHABLE_THRESHOLD = 3`) | Avoids false positives from transient failures while detecting sustained outages quickly |
+| Three-state model: operational / degraded / unreachable per tier | Maps naturally to Bridge alert severities and system panel indicators |
+| Overall status rollup: all-operational → operational, any-unreachable → degraded/offline | Gives Captain a single glance indicator while preserving drill-down capability |
+| BridgeAlertService produces alerts with dedup (no duplicate alerts for same status) | Prevents alert fatigue during sustained outages |
+| Detection + alerting only — no retry, failover, shedding, or capacity management | Scope discipline per build prompt; future ADs can layer on recovery strategies |
+| EventType.LLM_HEALTH_CHANGED registered but not yet emitted | Forward compat for future HXI WebSocket consumers |
+
+**Files modified:** `cognitive/llm_client.py`, `bridge_alerts.py`, `agents/medical/vitals_monitor.py`, `dream_adapter.py`, `proactive.py`, `routers/system.py`, `events.py`, `startup/finalize.py`. 28 tests.
+
+**Status:** Closed.
+
+---
+
+### AD-550: Notebook Deduplication — Read-Before-Write *(2026-04-03)*
+
+**Problem:** Empirical analysis of 419 notebook files across 11 agents after 72h of autonomous operation found ~84% of content is redundant. Agents write "establishing baseline, will monitor" at every startup cycle without referencing prior entries. Root cause: no read-before-write mechanism.
+
+**Solution:** Three-layer deduplication: (1) Enhanced self-monitoring context — agents see content previews + human-readable recency of their existing notebooks, reducing redundant generation. (2) Content similarity gate — before `write_notebook()`, compare new content against existing entry for same `topic_slug` using Jaccard word-level similarity (threshold 0.8, 72h staleness window). (3) Cross-topic redirect — scan agent's other notebook entries for similar content under different slugs (capped at 20 most recent). Update-in-place mechanics preserve original `created:` timestamps and track revision counts.
+
+| Decision | Rationale |
+|----------|-----------|
+| Jaccard word-level similarity (not ChromaDB/embeddings) | Proven lightweight pattern from BF-039 and AD-506b; no new dependencies; pure Python |
+| Three-layer approach: context + same-topic + cross-topic | Defense in depth — reduce generation, catch same-slug duplicates, catch cross-slug duplicates |
+| Update-in-place as default `write_entry()` behavior | All callers benefit automatically; preserves `created:` timestamp, increments `revision:`, sets `updated:` |
+| 72-hour staleness threshold | Entries older than 72h always allowed to refresh even if identical — prevents stale-lock |
+| Cross-topic scan capped at 20 entries | Limits I/O for agents with large notebook histories |
+| Fail-safe: try/except around dedup check | Log-and-degrade — never block a write on dedup failure |
+| Config-driven thresholds on RecordsConfig | `notebook_dedup_enabled`, `notebook_similarity_threshold`, `notebook_staleness_hours`, `notebook_max_scan_entries` |
+
+**Files modified:** `knowledge/records_store.py` (Jaccard utility, update-in-place, `check_notebook_similarity()`), `proactive.py` (dedup gate + enhanced self-monitoring context), `config.py` (4 RecordsConfig fields). 26 tests.
+
+**Status:** Complete.
+
+---
+
+### AD-551: Notebook Consolidation — Dream Step 7g *(2026-04-03)*
+
+**Problem:** After AD-550 (dedup at write-time), ~200 redundant notebook entries from prior cycles remain. Agents writing independently about the same topic across departments produces convergent findings never surfaced to the Bridge. Dream consolidation handles episodic memories (Steps 6-7) but not notebook entries.
+
+**Solution:** Dream Step 7g inserted between Step 7f (lifecycle maintenance) and Step 8 (gap detection). Two phases: (1) intra-agent consolidation clusters same-agent entries by Jaccard word similarity, merges redundant entries into primary (most recent), archives non-primary to `_archived/`. (2) Cross-agent convergence detects when 3+ agents from 2+ departments write similar content, generates Convergence Report to Ship's Records, emits `CONVERGENCE_DETECTED` event, triggers ADVISORY bridge alert.
+
+| Decision | Rationale |
+|----------|-----------|
+| Step 7g (not renumbering existing steps) | Additive — no disruption to Step 8 (gap detection) or Step 9 (emergence metrics) |
+| Jaccard word-level similarity (not embeddings) | Consistent with AD-550, BF-039, AD-506b; no new dependencies; pure Python |
+| Single-linkage clustering via BFS | Same algorithm as AD-531 episode clustering; finds connected components in pairwise similarity graph |
+| Intra-agent threshold 0.6, cross-agent 0.5 | Lower than AD-550's write-time threshold (0.8) — consolidation is more aggressive |
+| Primary = most recent entry in cluster | Most recent observation is most relevant; earlier entries archived |
+| Archive to `_archived/` (not delete) | Preserves provenance; archived entries remain in git history |
+| Late-wiring via finalize.py | RecordsStore created Phase 4, DreamingEngine Phase 5 — same pattern as AD-557 |
+| Log-and-degrade on failure | Step 7g wrapped in try/except — never crashes dream cycle |
+| 6 DreamingConfig knobs | `notebook_consolidation_enabled/threshold/min_entries`, `notebook_convergence_threshold/min_agents/min_departments` |
+| Bridge alert via `check_convergence()` | Follows `check_vitals()`/`check_llm_health()` pattern with ADVISORY severity and dedup cooldown |
+
+**Files modified:** `cognitive/dreaming.py` (Step 7g ~200 lines), `startup/finalize.py` (late wiring), `bridge_alerts.py` (`check_convergence()`), `dream_adapter.py` (convergence alert wiring), `events.py` (`CONVERGENCE_DETECTED`), `types.py` (4 DreamReport fields), `config.py` (6 DreamingConfig fields). 25 tests. 10 regression fixes in `test_dream_step_7f.py` and `test_fallback_learning.py` (missing AD-557/551 attrs in `object.__new__` builders).
+
+**Status:** Complete.
+
+---
+
+### AD-552: Notebook Self-Repetition Detection *(2026-04-03)*
+
+**Problem:** AD-550 dedup catches identical/near-identical writes at the gate, but agents can still write about the same topic repeatedly with slight variations that pass the similarity threshold. Chapel self-diagnosed this as a "diagnostic loop pattern" — repeatedly documenting the same observation without adding new insight. The peer repetition system (AD-506b) catches cross-agent repetition but not self-repetition within an agent's own notebook.
+
+**Solution:** Cumulative frequency check embedded in the existing AD-550 dedup gate. Uses frontmatter metadata already written by AD-550 (`revision`, `created`, `updated`) to compute write frequency per agent per topic — no new tracking store. Novelty = 1.0 - Jaccard similarity (already computed). Suppression requires BOTH high revision count AND low novelty. Counselor sends therapeutic DM on detection (warning to reconsider), but NOT on suppression (action already taken). `notebook_repetition` tier credit tracked on CognitiveProfile.
+
+| Decision | Rationale |
+|----------|-----------|
+| Reuse AD-550 frontmatter (not new store) | `revision`, `created`, `updated` already in every dedup result — zero new infrastructure |
+| Novelty = 1.0 - similarity | Jaccard similarity already computed by dedup gate; reinterpret as novelty measure |
+| Dual-condition suppression (rev AND novelty) | Frequent writes with genuine new content should NOT be suppressed |
+| Therapeutic DM on detection, not suppression | DM is a warning ("consider updating instead"); suppression is action already taken |
+| `notebook_repetition` tier credit (not budget) | Follows `peer_catches`/`self_corrections` pattern — diagnostic signal, not finite budget |
+| Log-and-degrade on frequency check failure | Never blocks a notebook write; wrapped in try/except |
+| 5 config knobs | `enabled`, `window_hours` (48), `threshold_count` (3), `novelty_threshold` (0.2), `suppression_count` (5) |
+
+**Files modified:** `proactive.py` (frequency check ~70 lines + self-monitoring enrichment), `knowledge/records_store.py` (frequency metadata in dedup result), `events.py` (`NOTEBOOK_SELF_REPETITION` event type + `NotebookSelfRepetitionEvent` dataclass), `cognitive/counselor.py` (subscription, handler, profile fields, schema migration), `config.py` (5 `RecordsConfig` knobs). 25 tests.
+
+**Status:** Complete.
+
+---
+
+### AD-553: Quantitative Baseline Auto-Capture *(2026-04-03)*
+
+**Problem:** Agents write qualitative notebook entries ("trust patterns seem unstable", "system performance degraded") without quantitative context. Later, neither the agent nor the crew can determine what the actual metrics were at the time of writing. VitalsMonitor already collects all needed metrics, but they don't flow into notebooks.
+
+**Solution:** Two module-level functions in `proactive.py`: `collect_notebook_metrics(runtime, agent_id)` reads VitalsMonitor's sync `latest_vitals` cache (no I/O) plus TrustNetwork agent score and registry count — 9 metrics total. `compute_metrics_delta(old, new)` computes numeric deltas (>0.01 threshold) and string transitions ("operational → degraded"). Metrics stored in YAML frontmatter under `metrics` key. On updates, delta stored as nested `metrics_delta` sub-key. `existing_metrics` returned in dedup result for baseline comparison. Universal capture (every write, not just "baseline"-tagged).
+
+| Decision | Rationale |
+|----------|-----------|
+| Module-level functions (not methods) | Testable without instantiating ProactiveCognitiveLoop |
+| VitalsMonitor `latest_vitals` (sync property) | No I/O, no async — notebook writes don't block on metric collection |
+| Universal capture (every write) | Simpler than tag-based filtering; provides temporal context for ANY observation |
+| Metrics in frontmatter (not content body) | Keeps agent's narrative clean; frontmatter is queryable metadata |
+| `metrics_delta` nested inside `metrics` | One frontmatter key, simple structure |
+| `existing_metrics` in dedup result | Baseline comparison uses data already loaded by dedup gate — zero extra I/O |
+| None values omitted (not stored as null) | Clean YAML, smaller frontmatter |
+| Floats rounded to 3 decimal places | Readability; 0.001 precision sufficient for all metrics |
+| Single config knob (`notebook_metrics_enabled`) | Metric set is deterministic from VitalsMonitor; per-metric toggles unnecessary |
+| Log-and-degrade on failure | Metric collection failure never blocks notebook write |
+
+**Files modified:** `proactive.py` (`collect_notebook_metrics()` + `compute_metrics_delta()` functions, write path wiring), `knowledge/records_store.py` (`metrics` param on `write_entry()` + `write_notebook()`, `existing_metrics` in dedup result), `config.py` (`RecordsConfig.notebook_metrics_enabled`). 27 tests.
+
+**Status:** Complete.
+
+---
+
+### AD-562: Ship's Records Knowledge Browser *(2026-04-03)*
+
+**Context:** Ship's Records (AD-434) provides a Git-backed markdown knowledge store with agent notebooks, duty logs, convergence reports, and published research — all with YAML frontmatter, classification-based access control, and full revision history. The Notebook Quality Pipeline (AD-550–555) adds dedup, consolidation, convergence detection, and quality metrics. But there's no unified browsing experience for navigating this knowledge. The HXI currently has no way to explore Ship's Records spatially, discover connections between entries, or visualize the crew's collective knowledge production.
+
+**Prior work surveyed:**
+1. Obsidian — local-first markdown knowledge base with graph view, backlinks, Canvas, full-text search. Design influence for the browsing experience and cross-reference model.
+2. Karpathy LLM Knowledge Base architecture (2026-04-03) — four-function LLM engine (compile, Q&A, linting, indexing) with compound growth loop ("explorations add up"). Identified patterns ProbOS already has (compile = dream consolidation, Q&A = CodebaseIndex, linting = AD-550-555) and the key gap: no unified knowledge browsing/visualization layer.
+3. AD-523c (Ship's Records Dashboard) — planned feature for records browsing. AD-562 supersedes and absorbs this.
+4. Three.js + three-forcegraph — web-native 3D force-directed graph library. Fits HXI's existing web stack.
+5. RecordsStore API — `list_entries()`, `read_entry()`, `search()`, `_parse_document()` already provide the data layer. No new backend needed for basic browsing.
+6. AD-551 convergence reports — provide natural "hub nodes" in the knowledge graph (multi-agent, multi-department contributions).
+7. AD-555 quality metrics — provide per-entry quality signals usable as visual overlays (novel content rate, revision count).
+
+| Decision | Rationale |
+|----------|-----------|
+| Obsidian-style browsing with markdown rendering | Ship's Records are already markdown + YAML frontmatter. Render natively, show metadata sidebar. Natural fit. |
+| 3D force-directed knowledge graph (not 2D) | Spatial navigation of multi-agent collective intelligence is a differentiator. Department clusters, convergence bridges, and knowledge neighborhoods emerge naturally from force-directed layout. Most tools use flat 2D — 3D is uniquely ProbOS. |
+| Auto-backlinks via content scanning | Scan entries for topic slug references, callsign mentions, explicit links. Build bidirectional link index. No manual linking required — knowledge web emerges from content. |
+| Forward-link suggestions via Jaccard similarity | Entries discussing related topics that don't explicitly link get suggested connections. Reuses existing similarity infrastructure (cognitive/similarity.py). |
+| OSS visualization, commercial native packaging | Web HXI knowledge browser = OSS (how it works). Native app packaging via Tauri/Electron = commercial (how it makes money). Consistent with existing boundary rule. |
+| AD-562 supersedes AD-523c | AD-523c (Ship's Records Dashboard) was a simpler browsing view. AD-562 is the full-featured replacement with graph visualization, backlinks, and quality overlays. |
+
+**Files affected:** New HXI components (knowledge browser, graph view, entry renderer), new API endpoints (backlinks, graph data, search), RecordsStore extensions (backlink index generation). No changes to existing backend files — builds on existing RecordsStore API.
+
+**Status:** Planned.

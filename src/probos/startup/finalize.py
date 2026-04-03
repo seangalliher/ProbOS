@@ -90,6 +90,9 @@ async def finalize_startup(
             engine._ward_room = runtime.ward_room
         if runtime.ontology:
             engine._get_department = lambda aid: runtime.ontology.get_agent_department(aid)
+        # AD-551: Wire records_store for notebook consolidation
+        if hasattr(runtime, '_records_store') and runtime._records_store:
+            engine._records_store = runtime._records_store
 
     # --- BF-100: Wire EmergentDetector to DreamScheduler for dream suppression ---
     if runtime.dream_scheduler and getattr(runtime, '_emergent_detector', None):
@@ -175,6 +178,7 @@ async def finalize_startup(
             ward_room_router.deliver_bridge_alert
             if ward_room_router else None
         ),
+        llm_client=getattr(runtime, 'llm_client', None),  # BF-069
     )
     dream_adapter._cold_start = runtime._cold_start
 
@@ -267,6 +271,39 @@ async def finalize_startup(
                     )
         except Exception:
             logger.debug("Startup announcement failed", exc_info=True)
+
+    # BF-101/102 Enhancement: Batched auto-welcome for newly commissioned crew
+    # Skip on cold start (reset) — the "Fresh Start" announcement handles it.
+    if runtime.ward_room and not runtime._cold_start:
+        try:
+            new_crew = [
+                a for a in runtime.registry.all()
+                if getattr(a, '_newly_commissioned', False)
+            ]
+            if new_crew:
+                all_hands_ch = await runtime.ward_room.get_channel_by_name("All Hands")
+                if all_hands_ch:
+                    names = ", ".join(
+                        f"{a.callsign} ({a.agent_type.replace('_', ' ').title()})"
+                        for a in new_crew
+                    )
+                    await runtime.ward_room.create_thread(
+                        channel_id=all_hands_ch.id,
+                        author_id="system",
+                        title="New Crew Aboard",
+                        body=(
+                            f"The following crew members have been commissioned "
+                            f"and joined the ship: {names}. Welcome aboard."
+                        ),
+                        author_callsign="Ship's Computer",
+                        thread_mode="discuss",
+                    )
+                    logger.info("BF-102 Enhancement: Posted auto-welcome for %d new crew", len(new_crew))
+                    # Clear flags to avoid duplicate announcements
+                    for a in new_crew:
+                        a._newly_commissioned = False
+        except Exception:
+            logger.debug("Auto-welcome announcement failed", exc_info=True)
 
     logger.info("Startup [finalize]: complete")
     return FinalizationResult(

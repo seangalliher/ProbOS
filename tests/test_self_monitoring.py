@@ -198,13 +198,17 @@ def _make_runtime(
     callsign_registry: Any = None,
     lifecycle_state: str = "warm_boot",
     start_time_wall: float | None = None,
+    trust_score: float = 0.55,
 ) -> SimpleNamespace:
+    trust_network = MagicMock()
+    trust_network.get_score = MagicMock(return_value=trust_score)
     rt = SimpleNamespace(
         ward_room=ward_room,
         episodic_memory=episodic_memory,
         _records_store=records_store,
         _lifecycle_state=lifecycle_state,
         _start_time_wall=start_time_wall or (time.time() - 7200),  # 2h ago
+        trust_network=trust_network,
     )
     if callsign_registry:
         rt.callsign_registry = callsign_registry
@@ -385,7 +389,7 @@ class TestSelfMonitoringContextBuilder:
             {"path": "notebooks/Bones/topic-b.md", "frontmatter": {"topic": "topic-b", "updated": now - 200}},
         ])
         records.search = AsyncMock(return_value=[])
-        rt = _make_runtime(ward_room=ward_room, records_store=records)
+        rt = _make_runtime(ward_room=ward_room, records_store=records, trust_score=0.75)
         loop = _make_loop()
         agent = _make_agent(rank=Rank.COMMANDER)  # Notebooks require AUTONOMOUS tier
         result = await loop._build_self_monitoring_context(agent, "Bones", rt)
@@ -405,7 +409,7 @@ class TestSelfMonitoringContextBuilder:
         records = MagicMock()
         records.list_entries = AsyncMock(return_value=entries)
         records.search = AsyncMock(return_value=[])
-        rt = _make_runtime(ward_room=ward_room, records_store=records)
+        rt = _make_runtime(ward_room=ward_room, records_store=records, trust_score=0.75)
         loop = _make_loop()
         agent = _make_agent(rank=Rank.COMMANDER)
         result = await loop._build_self_monitoring_context(agent, "Bones", rt)
@@ -423,7 +427,7 @@ class TestSelfMonitoringContextBuilder:
         records.search = AsyncMock(return_value=[
             {"path": "notebooks/Bones/analysis.md", "snippet": "This is my analysis content on the topic."},
         ])
-        rt = _make_runtime(ward_room=ward_room, records_store=records)
+        rt = _make_runtime(ward_room=ward_room, records_store=records, trust_score=0.75)
         loop = _make_loop()
         agent = _make_agent(rank=Rank.COMMANDER, department="medical")
         result = await loop._build_self_monitoring_context(agent, "Bones", rt)
@@ -437,7 +441,7 @@ class TestSelfMonitoringContextBuilder:
         records = MagicMock()
         records.list_entries = AsyncMock(return_value=[])
         records.read_entry = AsyncMock(return_value={"content": "Notebook content here"})
-        rt = _make_runtime(ward_room=ward_room, records_store=records)
+        rt = _make_runtime(ward_room=ward_room, records_store=records, trust_score=0.75)
         loop = _make_loop()
         loop._pending_notebook_reads["agent-1"] = "my-topic"
         agent = _make_agent(rank=Rank.COMMANDER)
@@ -452,7 +456,7 @@ class TestSelfMonitoringContextBuilder:
         records = MagicMock()
         records.list_entries = AsyncMock(return_value=[])
         records.read_entry = AsyncMock(return_value={"content": "content"})
-        rt = _make_runtime(ward_room=ward_room, records_store=records)
+        rt = _make_runtime(ward_room=ward_room, records_store=records, trust_score=0.75)
         loop = _make_loop()
         loop._pending_notebook_reads["agent-1"] = "some-topic"
         agent = _make_agent(rank=Rank.COMMANDER)
@@ -524,7 +528,7 @@ class TestEarnedAgencyScaling:
             {"path": "notebooks/Bones/x.md", "frontmatter": {"topic": "x", "updated": now}},
         ])
         records.search = AsyncMock(return_value=[])
-        rt = _make_runtime(ward_room=ward_room, records_store=records)
+        rt = _make_runtime(ward_room=ward_room, records_store=records, trust_score=0.75)
         loop = _make_loop()
         agent = _make_agent(rank=Rank.COMMANDER)
         result = await loop._build_self_monitoring_context(agent, "Bones", rt)
@@ -541,7 +545,7 @@ class TestEarnedAgencyScaling:
             {"path": "notebooks/Bones/x.md", "frontmatter": {"topic": "x", "updated": time.time()}},
         ])
         records.search = AsyncMock(return_value=[])
-        rt = _make_runtime(ward_room=ward_room, records_store=records)
+        rt = _make_runtime(ward_room=ward_room, records_store=records, trust_score=0.9)
         loop = _make_loop()
         agent = _make_agent(rank=Rank.SENIOR)
         result = await loop._build_self_monitoring_context(agent, "Bones", rt)

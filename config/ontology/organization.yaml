@@ -65,11 +65,32 @@ posts:
     title: "Chief Science Officer"
     department: science
     reports_to: first_officer
-    authority_over: [scout_officer]
+    authority_over: [scout_officer, data_analyst_officer, systems_analyst_officer, research_specialist_officer]
     tier: crew
     note: "Number One is dual-hatted as First Officer and Chief Science Officer"
   - id: scout_officer
     title: "Scout"
+    department: science
+    reports_to: chief_science
+    authority_over: []
+    tier: crew
+
+  - id: data_analyst_officer
+    title: "Data Analyst"
+    department: science
+    reports_to: chief_science
+    authority_over: []
+    tier: crew
+
+  - id: systems_analyst_officer
+    title: "Systems Analyst"
+    department: science
+    reports_to: chief_science
+    authority_over: []
+    tier: crew
+
+  - id: research_specialist_officer
+    title: "Research Specialist"
     department: science
     reports_to: chief_science
     authority_over: []
@@ -165,3 +186,15 @@ assignments:
     post_id: chief_operations
     callsign: "O'Brien"
     watches: [alpha, beta, gamma]
+  - agent_type: data_analyst
+    post_id: data_analyst_officer
+    callsign: "Rahda"
+    watches: [alpha, beta, gamma]
+  - agent_type: systems_analyst
+    post_id: systems_analyst_officer
+    callsign: "Dax"
+    watches: [alpha, beta]
+  - agent_type: research_specialist
+    post_id: research_specialist_officer
+    callsign: "Brahms"
+    watches: [alpha]

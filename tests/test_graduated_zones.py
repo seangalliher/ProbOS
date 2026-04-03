@@ -369,13 +369,12 @@ class TestSelfMonitoringConcern:
         agent.rank = None
         rt = MagicMock()
         rt.ward_room = None
+        rt.trust_network = MagicMock()
+        rt.trust_network.get_score = MagicMock(return_value=0.75)
         rt.callsign_registry = MagicMock()
         rt.callsign_registry.get_callsign = MagicMock(return_value="Worf")
 
-        with patch("probos.proactive.agency_from_rank") as mock_agency:
-            from probos.earned_agency import AgencyLevel
-            mock_agency.return_value = AgencyLevel.AUTONOMOUS
-            result = await loop._build_self_monitoring_context(agent, "Worf", rt)
+        result = await loop._build_self_monitoring_context(agent, "Worf", rt)
 
         assert result.get("cognitive_zone") == "amber"
         assert "zone_note" in result
@@ -400,11 +399,10 @@ class TestSelfMonitoringConcern:
         agent.rank = None
         rt = MagicMock()
         rt.ward_room = None
+        rt.trust_network = MagicMock()
+        rt.trust_network.get_score = MagicMock(return_value=0.75)
 
-        with patch("probos.proactive.agency_from_rank") as mock_agency:
-            from probos.earned_agency import AgencyLevel
-            mock_agency.return_value = AgencyLevel.AUTONOMOUS
-            result = await loop._build_self_monitoring_context(agent, "Worf", rt)
+        result = await loop._build_self_monitoring_context(agent, "Worf", rt)
 
         assert result.get("cognitive_zone") == "red"
 
@@ -431,11 +429,10 @@ class TestSelfMonitoringConcern:
         agent.rank = None
         rt = MagicMock()
         rt.ward_room = None
+        rt.trust_network = MagicMock()
+        rt.trust_network.get_score = MagicMock(return_value=0.3)  # REACTIVE tier
 
-        with patch("probos.proactive.agency_from_rank") as mock_agency:
-            from probos.earned_agency import AgencyLevel
-            mock_agency.return_value = AgencyLevel.REACTIVE
-            result = await loop._build_self_monitoring_context(agent, "Worf", rt)
+        result = await loop._build_self_monitoring_context(agent, "Worf", rt)
 
         # REACTIVE tier returns empty dict for self-monitoring but zone should be present
         # Actually, tier_config posts=0 causes early return. Zone awareness should bypass TIER_CONFIG.

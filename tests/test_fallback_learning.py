@@ -137,6 +137,16 @@ def _make_dreaming_engine(**overrides):
     engine._extraction_candidates = {}
     engine._reactive_cooldowns = {}
     engine._fallback_learning_queue = []
+    # AD-537 fields
+    engine._ward_room = None
+    engine._agent_id = ""
+    engine._trust_network_lookup = None
+    engine._observed_threads = set()
+    # AD-557 fields
+    engine._emergence_metrics_engine = None
+    engine._get_department = None
+    # AD-551 fields
+    engine._records_store = None
     return engine
 
 

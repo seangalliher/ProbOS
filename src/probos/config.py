@@ -273,6 +273,13 @@ class DreamingConfig(BaseModel):
     trust_boost: float = 0.1
     trust_penalty: float = 0.1
     pre_warm_top_k: int = 5
+    # AD-551: Notebook consolidation
+    notebook_consolidation_enabled: bool = True
+    notebook_consolidation_threshold: float = 0.6
+    notebook_consolidation_min_entries: int = 2
+    notebook_convergence_threshold: float = 0.5
+    notebook_convergence_min_agents: int = 3
+    notebook_convergence_min_departments: int = 2
 
 
 class ScalingConfig(BaseModel):
@@ -377,6 +384,19 @@ class RecordsConfig(BaseModel):
     auto_commit: bool = True
     commit_debounce_seconds: float = 5.0
     max_episodes_per_hour: int = 20  # Rate limit for notebook writes
+    # AD-550: Notebook dedup settings
+    notebook_dedup_enabled: bool = True
+    notebook_similarity_threshold: float = 0.8
+    notebook_staleness_hours: float = 72.0
+    notebook_max_scan_entries: int = 20
+    # AD-552: Notebook self-repetition detection
+    notebook_repetition_enabled: bool = True
+    notebook_repetition_window_hours: float = 48.0
+    notebook_repetition_threshold_count: int = 3
+    notebook_repetition_novelty_threshold: float = 0.2
+    notebook_repetition_suppression_count: int = 5
+    # AD-553: Notebook metric capture
+    notebook_metrics_enabled: bool = True
 
 
 class OnboardingConfig(BaseModel):

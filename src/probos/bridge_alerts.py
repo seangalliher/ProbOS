@@ -305,6 +305,77 @@ class BridgeAlertService:
 
         return alerts
 
+    def check_llm_health(self, llm_health: dict) -> list[BridgeAlert]:
+        """BF-069: Evaluate LLM proxy health and emit bridge alerts."""
+        alerts: list[BridgeAlert] = []
+        overall = llm_health.get("overall", "unknown")
+        tiers = llm_health.get("tiers", {})
+
+        if overall == "offline":
+            key = "llm_offline"
+            if self._should_emit(key):
+                a = BridgeAlert(
+                    id=str(uuid.uuid4()),
+                    severity=AlertSeverity.ALERT,
+                    source="llm_client",
+                    alert_type="llm_offline",
+                    title="Communications Array Offline",
+                    detail="All LLM tiers unreachable. Crew cognitive functions suspended. Check Copilot proxy at 127.0.0.1:8080.",
+                    department=None,
+                    dedup_key=key,
+                )
+                self._record(a)
+                alerts.append(a)
+        elif overall == "degraded":
+            unreachable = [t for t, info in tiers.items() if info.get("status") == "unreachable"]
+            if unreachable:
+                key = f"llm_degraded_{'_'.join(sorted(unreachable))}"
+                if self._should_emit(key):
+                    a = BridgeAlert(
+                        id=str(uuid.uuid4()),
+                        severity=AlertSeverity.ADVISORY,
+                        source="llm_client",
+                        alert_type="llm_degraded",
+                        title="Communications Array Degraded",
+                        detail=f"LLM tier(s) unreachable: {', '.join(unreachable)}. Remaining tiers operational. Fallback routing active.",
+                        department=None,
+                        dedup_key=key,
+                    )
+                    self._record(a)
+                    alerts.append(a)
+
+        return alerts
+
+    def check_convergence(self, convergence_data: dict) -> list[BridgeAlert]:
+        """AD-551: Evaluate cross-agent convergence and emit bridge alerts."""
+        alerts: list[BridgeAlert] = []
+        reports_generated = convergence_data.get("convergence_reports_generated", 0)
+        if reports_generated <= 0:
+            return alerts
+        reports = convergence_data.get("convergence_reports", [])
+        for report in reports:
+            topic = report.get("topic", "unknown")
+            agents = report.get("agents", [])
+            departments = report.get("departments", [])
+            key = f"convergence:{topic}"
+            if self._should_emit(key):
+                a = BridgeAlert(
+                    id=str(uuid.uuid4()),
+                    severity=AlertSeverity.ADVISORY,
+                    source="dream_consolidation",
+                    alert_type="convergence_detected",
+                    title="Crew Convergence Detected",
+                    detail=(
+                        f"{len(agents)} agents from {len(departments)} departments "
+                        f"independently reached convergent conclusions on {topic}"
+                    ),
+                    department=None,
+                    dedup_key=key,
+                )
+                self._record(a)
+                alerts.append(a)
+        return alerts
+
     def get_recent_alerts(self, limit: int = 50) -> list[BridgeAlert]:
         """Return recent alerts for status/API exposure."""
         return self._alert_log[-limit:]

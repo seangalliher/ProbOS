@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -21,6 +22,17 @@ class BaseLLMClient(ABC):
     @abstractmethod
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Send a completion request and return the response."""
+
+    def get_health_status(self) -> dict[str, Any]:
+        """Return per-tier and overall LLM health status.
+
+        Default implementation returns all-operational for subclasses
+        that don't track health (e.g., MockLLMClient).
+        """
+        tiers = {t: {"status": "operational", "consecutive_failures": 0,
+                      "last_success": None, "last_failure": None}
+                 for t in ("fast", "standard", "deep")}
+        return {"tiers": tiers, "overall": "operational"}
 
     async def close(self) -> None:
         """Clean up resources."""
@@ -40,6 +52,8 @@ class OpenAICompatibleClient(BaseLLMClient):
     Tiers sharing the same base_url share the same httpx.AsyncClient
     (no duplicate connection pools for the same server).
     """
+
+    _UNREACHABLE_THRESHOLD = 3  # BF-069: consecutive failures before tier is unreachable
 
     def __init__(
         self,
@@ -108,6 +122,11 @@ class OpenAICompatibleClient(BaseLLMClient):
         # Simple response cache keyed by (tier, prompt_hash)
         self._cache: dict[str, LLMResponse] = {}
 
+        # BF-069: Per-tier failure tracking for health monitoring
+        self._consecutive_failures: dict[str, int] = {t: 0 for t in ("fast", "standard", "deep")}
+        self._last_success: dict[str, float] = {}  # tier -> monotonic timestamp
+        self._last_failure: dict[str, float] = {}  # tier -> monotonic timestamp
+
         # Ollama keep_alive to prevent model unloading during idle periods
         self._ollama_keep_alive: str = getattr(self._config, "ollama_keep_alive", "30m")
 
@@ -158,6 +177,10 @@ class OpenAICompatibleClient(BaseLLMClient):
                 checked_urls[url] = reachable
                 results[tier] = reachable
             self._tier_status[tier] = results[tier]
+            # BF-069: Reset failure counter on successful connectivity check
+            if results[tier]:
+                self._consecutive_failures[tier] = 0
+                self._last_success[tier] = time.monotonic()
 
         return results
 
@@ -240,6 +263,9 @@ class OpenAICompatibleClient(BaseLLMClient):
                 # Cache successful responses (keyed by original tier)
                 cache_key = self._cache_key(tier, request.prompt)
                 self._cache[cache_key] = response
+                # BF-069: Reset failure counter on successful completion
+                self._consecutive_failures[attempt_tier] = 0
+                self._last_success[attempt_tier] = time.monotonic()
                 if attempt_tier != tier:
                     logger.info(
                         "LLM tier fallback: %s → %s (model=%s)",
@@ -249,18 +275,26 @@ class OpenAICompatibleClient(BaseLLMClient):
             except httpx.ConnectError:
                 last_error = f"LLM endpoint unreachable at {tc['base_url']}"
                 logger.warning("%s (tier=%s)", last_error, attempt_tier)
+                self._consecutive_failures[attempt_tier] += 1
+                self._last_failure[attempt_tier] = time.monotonic()
             except httpx.TimeoutException:
                 last_error = f"LLM request timed out after {tc['timeout']:.0f}s"
                 logger.warning("%s (model=%s, tier=%s)", last_error, model, attempt_tier)
+                self._consecutive_failures[attempt_tier] += 1
+                self._last_failure[attempt_tier] = time.monotonic()
             except httpx.HTTPStatusError as e:
                 last_error = f"LLM endpoint returned HTTP {e.response.status_code}"
                 logger.warning(
                     "LLM endpoint returned HTTP %d (tier=%s): %s",
                     e.response.status_code, attempt_tier, e.response.text[:200],
                 )
+                self._consecutive_failures[attempt_tier] += 1
+                self._last_failure[attempt_tier] = time.monotonic()
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
                 logger.warning("LLM call failed (tier=%s): %s", attempt_tier, last_error)
+                self._consecutive_failures[attempt_tier] += 1
+                self._last_failure[attempt_tier] = time.monotonic()
 
         # Try cache (keyed by original tier)
         cache_key = self._cache_key(tier, request.prompt)
@@ -429,6 +463,45 @@ class OpenAICompatibleClient(BaseLLMClient):
                 "top_p": tc.get("top_p"),
             }
         return info
+
+    def get_health_status(self) -> dict[str, Any]:
+        """BF-069: Return per-tier and overall LLM health status.
+
+        Per-tier status:
+        - "operational": 0 consecutive failures
+        - "degraded": 1-2 consecutive failures
+        - "unreachable": 3+ consecutive failures
+
+        Overall status:
+        - "operational": all tiers operational
+        - "degraded": at least one tier operational, at least one not
+        - "offline": all tiers unreachable
+        """
+        tiers: dict[str, dict[str, Any]] = {}
+        for tier in ("fast", "standard", "deep"):
+            failures = self._consecutive_failures.get(tier, 0)
+            if failures == 0:
+                status = "operational"
+            elif failures < self._UNREACHABLE_THRESHOLD:
+                status = "degraded"
+            else:
+                status = "unreachable"
+            tiers[tier] = {
+                "status": status,
+                "consecutive_failures": failures,
+                "last_success": self._last_success.get(tier),
+                "last_failure": self._last_failure.get(tier),
+            }
+
+        statuses = [t["status"] for t in tiers.values()]
+        if all(s == "operational" for s in statuses):
+            overall = "operational"
+        elif all(s == "unreachable" for s in statuses):
+            overall = "offline"
+        else:
+            overall = "degraded"
+
+        return {"tiers": tiers, "overall": overall}
 
     async def close(self) -> None:
         """Close all httpx clients."""

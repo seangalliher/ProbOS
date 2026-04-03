@@ -138,6 +138,9 @@ class CognitiveProfile:
     peer_catches: int = 0         # Times peer repetition was detected for this agent
     last_self_correction: float = 0.0  # Timestamp of most recent self-correction
     last_peer_catch: float = 0.0       # Timestamp of most recent peer catch
+    # AD-552: Notebook self-repetition tracking
+    notebook_repetitions: int = 0
+    last_notebook_repetition: float = 0.0
 
     def add_assessment(self, assessment: CounselorAssessment) -> None:
         """Append an assessment and update alert level."""
@@ -167,6 +170,9 @@ class CognitiveProfile:
         elif assessment.tier_credit == "peer_catch":
             self.peer_catches += 1
             self.last_peer_catch = assessment.timestamp
+        elif assessment.tier_credit == "notebook_repetition":
+            self.notebook_repetitions += 1
+            self.last_notebook_repetition = assessment.timestamp
 
     def latest_assessment(self) -> CounselorAssessment | None:
         return self.assessments[-1] if self.assessments else None
@@ -192,6 +198,8 @@ class CognitiveProfile:
             "peer_catches": self.peer_catches,
             "last_self_correction": self.last_self_correction,
             "last_peer_catch": self.last_peer_catch,
+            "notebook_repetitions": self.notebook_repetitions,
+            "last_notebook_repetition": self.last_notebook_repetition,
         }
 
     @classmethod
@@ -206,6 +214,8 @@ class CognitiveProfile:
             peer_catches=data.get("peer_catches", 0),
             last_self_correction=data.get("last_self_correction", 0.0),
             last_peer_catch=data.get("last_peer_catch", 0.0),
+            notebook_repetitions=data.get("notebook_repetitions", 0),
+            last_notebook_repetition=data.get("last_notebook_repetition", 0.0),
         )
         if "baseline" in data:
             profile.baseline = CognitiveBaseline.from_dict(data["baseline"])
@@ -276,6 +286,9 @@ class CounselorProfileStore:
             "ALTER TABLE cognitive_profiles ADD COLUMN last_self_correction REAL DEFAULT 0.0",
             "ALTER TABLE cognitive_profiles ADD COLUMN last_peer_catch REAL DEFAULT 0.0",
             "ALTER TABLE assessments ADD COLUMN tier_credit TEXT DEFAULT ''",
+            # AD-552: Notebook self-repetition tracking
+            "ALTER TABLE cognitive_profiles ADD COLUMN notebook_repetitions INTEGER DEFAULT 0",
+            "ALTER TABLE cognitive_profiles ADD COLUMN last_notebook_repetition REAL DEFAULT 0.0",
         ]:
             try:
                 await self._db.execute(stmt)
@@ -534,6 +547,7 @@ class CounselorAgent(CognitiveAgent):
                     EventType.SELF_MONITORING_CONCERN,  # AD-506a
                     EventType.ZONE_RECOVERY,            # AD-506b
                     EventType.PEER_REPETITION_DETECTED, # AD-506b
+                    EventType.NOTEBOOK_SELF_REPETITION, # AD-552
                     EventType.GAP_IDENTIFIED,           # AD-539
                     EventType.TRUST_CASCADE_WARNING,    # AD-558
                     EventType.GROUPTHINK_WARNING,       # AD-557
@@ -724,6 +738,8 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_zone_recovery(data)
             elif event_type == EventType.PEER_REPETITION_DETECTED.value:
                 await self._on_peer_repetition_detected(data)
+            elif event_type == EventType.NOTEBOOK_SELF_REPETITION.value:
+                await self._on_notebook_self_repetition(data)
             elif event_type == EventType.GAP_IDENTIFIED.value:
                 await self._on_gap_identified(data)
             elif event_type == EventType.TRUST_CASCADE_WARNING.value:
@@ -864,6 +880,52 @@ class CounselorAgent(CognitiveAgent):
         )
         assessment.tier_credit = "peer_catch"
         await self._save_profile_and_assessment(author_id, assessment)
+
+    async def _on_notebook_self_repetition(self, data: dict[str, Any]) -> None:
+        """AD-552: Track notebook self-repetition for Counselor monitoring."""
+        agent_id = data.get("agent_id", "")
+        callsign = data.get("agent_callsign", agent_id[:8])
+        topic = data.get("topic_slug", "unknown")
+        revision = data.get("revision", 0)
+        suppressed = data.get("suppressed", False)
+
+        if not agent_id or agent_id == self.id:
+            return
+
+        logger.info(
+            "AD-552: Notebook self-repetition for %s on %s (revision=%d, suppressed=%s)",
+            callsign, topic, revision, suppressed,
+        )
+
+        # Update profile
+        profile = self.get_or_create_profile(agent_id)
+        profile.notebook_repetitions += 1
+        profile.last_notebook_repetition = time.time()
+
+        # Lightweight assessment with notebook repetition tag
+        metrics = self._gather_agent_metrics(agent_id)
+        assessment = self.assess_agent(
+            agent_id=agent_id,
+            current_trust=metrics["trust_score"],
+            current_confidence=metrics["confidence"],
+            hebbian_avg=metrics["hebbian_avg"],
+            success_rate=metrics["success_rate"],
+            personality_drift=metrics["personality_drift"],
+            trigger="notebook_self_repetition",
+        )
+        assessment.tier_credit = "notebook_repetition"
+        await self._save_profile_and_assessment(agent_id, assessment)
+
+        # Therapeutic DM — only if not suppressed (suppression is its own feedback)
+        if not suppressed:
+            message = (
+                f"@{callsign}, I've noticed you've documented **{topic}** "
+                f"{revision} times recently. Your earlier entry already covers "
+                f"the core observations. Consider updating it with genuinely "
+                f"new findings rather than writing a fresh entry — your notebook "
+                f"will be clearer and more useful for the crew."
+            )
+            await self._send_therapeutic_dm(agent_id, callsign, message)
 
     async def _on_gap_identified(self, data: dict[str, Any]) -> None:
         """AD-539: Track knowledge gaps for Counselor monitoring.

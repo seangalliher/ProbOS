@@ -122,6 +122,54 @@ role_templates:
       - skill_id: knowledge_stewardship
         min_proficiency: 3
 
+  data_analyst_officer:
+    required:
+      - skill_id: communication
+        min_proficiency: 3
+      - skill_id: pattern_recognition
+        min_proficiency: 4
+      - skill_id: trend_analysis
+        min_proficiency: 5
+      - skill_id: data_processing
+        min_proficiency: 5
+      - skill_id: quantitative_analysis
+        min_proficiency: 4
+    optional:
+      - skill_id: knowledge_stewardship
+        min_proficiency: 3
+
+  systems_analyst_officer:
+    required:
+      - skill_id: communication
+        min_proficiency: 4
+      - skill_id: pattern_recognition
+        min_proficiency: 5
+      - skill_id: trend_analysis
+        min_proficiency: 5
+      - skill_id: cross_department_synthesis
+        min_proficiency: 4
+      - skill_id: emergence_analysis
+        min_proficiency: 5
+    optional:
+      - skill_id: collaboration
+        min_proficiency: 4
+
+  research_specialist_officer:
+    required:
+      - skill_id: communication
+        min_proficiency: 4
+      - skill_id: pattern_recognition
+        min_proficiency: 4
+      - skill_id: research_methodology
+        min_proficiency: 5
+      - skill_id: technical_writing
+        min_proficiency: 5
+      - skill_id: evidence_analysis
+        min_proficiency: 5
+    optional:
+      - skill_id: experimental_design
+        min_proficiency: 4
+
   chief_medical:
     required:
       - skill_id: chain_of_command

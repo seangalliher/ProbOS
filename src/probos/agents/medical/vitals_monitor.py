@@ -123,6 +123,13 @@ class VitalsMonitorAgent(HeartbeatAgent):
                 metrics["emergence_capacity"] = snap.emergence_capacity
                 metrics["coordination_balance"] = snap.coordination_balance
 
+        # BF-069: LLM proxy health
+        llm_health: dict[str, Any] = {"overall": "unknown", "tiers": {}}
+        llm_client = getattr(rt, 'llm_client', None)
+        if llm_client and hasattr(llm_client, 'get_health_status'):
+            llm_health = llm_client.get_health_status()
+        metrics["llm_health"] = llm_health
+
         # Store in sliding window
         self._window.append(metrics)
 
@@ -242,6 +249,35 @@ class VitalsMonitorAgent(HeartbeatAgent):
                 "affected": "system",
                 "timestamp": metrics["timestamp"],
             })
+
+        # BF-069: LLM proxy health alerts
+        llm_health = metrics.get("llm_health", {})
+        llm_overall = llm_health.get("overall", "unknown")
+        if llm_overall == "offline":
+            alerts.append({
+                "severity": "critical",
+                "metric": "llm_health",
+                "current_value": "offline",
+                "threshold": "operational",
+                "affected": "llm_proxy",
+                "alert": "LLM proxy offline — all tiers unreachable",
+                "timestamp": metrics["timestamp"],
+            })
+        elif llm_overall == "degraded":
+            unreachable_tiers = [
+                t for t, info in llm_health.get("tiers", {}).items()
+                if info.get("status") == "unreachable"
+            ]
+            if unreachable_tiers:
+                alerts.append({
+                    "severity": "warning",
+                    "metric": "llm_health",
+                    "current_value": "degraded",
+                    "threshold": "operational",
+                    "affected": "llm_proxy",
+                    "alert": f"LLM proxy degraded — tier(s) unreachable: {', '.join(unreachable_tiers)}",
+                    "timestamp": metrics["timestamp"],
+                })
 
         # Broadcast alerts via intent bus
         for alert_data in alerts:

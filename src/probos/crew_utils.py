@@ -13,6 +13,7 @@ _WARD_ROOM_CREW = {
     "diagnostician",  # Bones — CMO / Medical Chief
     "surgeon", "pathologist", "pharmacist",  # Medical crew
     "builder",  # Scotty — SWE officer, uses build pipeline as tool
+    "data_analyst", "systems_analyst", "research_specialist",  # Science crew (AD-560)
 }
 
 

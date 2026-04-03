@@ -323,6 +323,8 @@ class TestCooldownAdjustment:
         agent.agent_type = "security"
         rt = MagicMock()
         rt.ward_room = None
+        rt.trust_network = MagicMock()
+        rt.trust_network.get_score = MagicMock(return_value=0.75)
         rt.callsign_registry = MagicMock()
         rt.callsign_registry.get_callsign = MagicMock(return_value="Worf")
         # Agency level that enables self-monitoring

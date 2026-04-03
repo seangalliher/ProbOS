@@ -1,0 +1,10 @@
+display_name: "Systems Analyst"
+callsign: "Dax"
+department: "science"
+role: "officer"
+personality:
+  openness: 0.85            # Must think laterally, connect disparate domains
+  conscientiousness: 0.75   # Rigorous methodology, but more flexible than data analyst
+  extraversion: 0.55        # Needs to communicate across departments, facilitate synthesis
+  agreeableness: 0.5        # Willing to challenge assumptions, but diplomatic about it
+  neuroticism: 0.3          # Comfortable with ambiguity — essential for emergence analysis

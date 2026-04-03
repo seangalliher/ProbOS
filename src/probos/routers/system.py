@@ -62,7 +62,32 @@ async def system_services(runtime: Any = Depends(get_runtime)) -> dict[str, Any]
         else:
             svc_status = "online"
         services.append({"name": name, "status": svc_status})
+
+    # BF-069: LLM proxy health
+    llm_client = getattr(runtime, 'llm_client', None)
+    if llm_client and hasattr(llm_client, 'get_health_status'):
+        health = llm_client.get_health_status()
+        overall = health.get("overall", "unknown")
+        if overall == "operational":
+            llm_status = "online"
+        elif overall == "degraded":
+            llm_status = "degraded"
+        else:
+            llm_status = "offline"
+        services.append({"name": "LLM Proxy", "status": llm_status})
+    else:
+        services.append({"name": "LLM Proxy", "status": "offline"})
+
     return {"services": services}
+
+
+@router.get("/system/llm-health")
+async def llm_health(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """BF-069: Detailed LLM proxy health status per tier."""
+    llm_client = getattr(runtime, 'llm_client', None)
+    if llm_client and hasattr(llm_client, 'get_health_status'):
+        return llm_client.get_health_status()
+    return {"tiers": {}, "overall": "unknown"}
 
 
 @router.get("/system/circuit-breakers")

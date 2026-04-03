@@ -40,6 +40,9 @@ _AGENT_DEPARTMENTS: dict[str, str] = {
     "emergent_detector": "science",
     "codebase_index": "science",
     "scout": "science",
+    "data_analyst": "science",       # AD-560
+    "systems_analyst": "science",    # AD-560
+    "research_specialist": "science",  # AD-560
     # Medical
     "diagnostician": "medical",
     "vitals_monitor": "medical",
@@ -134,6 +137,11 @@ def _build_personality_block(agent_type: str, department: str | None = None, cal
 
     # Identity line — BF-083: prefer runtime callsign over YAML seed default
     callsign = callsign_override or profile.get("callsign", "")
+    # BF-101: Diagnostic logging when callsign_override differs from YAML seed
+    seed_callsign = profile.get("callsign", "")
+    if callsign_override and callsign_override != seed_callsign:
+        logger.debug("BF-101: %s personality block using override '%s' (seed='%s')",
+                     agent_type, callsign_override, seed_callsign)
     display_name = profile.get("display_name", agent_type.replace("_", " ").title())
     role_raw = profile.get("role", "")
     dept = department or profile.get("department", "")

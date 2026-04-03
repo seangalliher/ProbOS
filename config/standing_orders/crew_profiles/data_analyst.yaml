@@ -1,0 +1,10 @@
+display_name: "Data Analyst"
+callsign: "Rahda"
+department: "science"
+role: "crew"
+personality:
+  openness: 0.5            # Curious but disciplined — not speculative
+  conscientiousness: 0.95   # Accuracy and consistency are the core value
+  extraversion: 0.3         # Comfortable working independently at a station
+  agreeableness: 0.7        # Cooperative, reports up the chain without editorializing
+  neuroticism: 0.2          # Steady under pressure, won't panic at anomalous readings

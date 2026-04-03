@@ -132,6 +132,8 @@ class AgentOnboardingService:
 
         if _existing_identity_callsign:
             # Warm boot — restore persisted identity, skip naming ceremony
+            logger.debug("BF-101: %s warm boot — found birth cert callsign '%s', live callsign='%s'",
+                        agent.agent_type, _existing_identity_callsign, agent.callsign)
             if agent.callsign != _existing_identity_callsign:
                 agent.callsign = _existing_identity_callsign
                 self._callsign_registry.set_callsign(agent.agent_type, _existing_identity_callsign)
@@ -159,6 +161,8 @@ class AgentOnboardingService:
                         if self._ontology:
                             self._ontology.update_assignment_callsign(agent.agent_type, chosen_callsign)
                         logger.info("AD-442: %s renamed from '%s' to '%s'", agent.agent_type, old_callsign, chosen_callsign)
+                    # BF-101/102 Enhancement: Flag as newly commissioned for auto-welcome
+                    agent._newly_commissioned = True
                 except Exception as e:
                     logger.warning("AD-442: Naming ceremony error for %s: %s", agent.agent_type, e)
 

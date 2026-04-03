@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable
 
 from probos.config import format_trust
@@ -24,6 +25,103 @@ if TYPE_CHECKING:
     from probos.runtime import ProbOSRuntime
 
 logger = logging.getLogger(__name__)
+
+
+def collect_notebook_metrics(runtime: Any, agent_id: str = "") -> dict[str, Any]:
+    """AD-553: Collect standardized metrics snapshot for notebook attachment.
+
+    Returns flat dict of metric_name -> value. Degrades gracefully:
+    returns empty dict if runtime/VitalsMonitor unavailable.
+    """
+    metrics: dict[str, Any] = {}
+    if runtime is None:
+        return metrics
+
+    # VitalsMonitor cached data (no I/O)
+    vitals = None
+    try:
+        for agent in runtime.registry.all():
+            if getattr(agent, "agent_type", "") == "vitals_monitor":
+                vitals = agent.latest_vitals
+                break
+    except Exception:
+        pass  # Registry unavailable
+
+    if vitals:
+        for key in ("trust_mean", "trust_min", "system_health"):
+            val = vitals.get(key)
+            if val is not None:
+                metrics[key] = round(val, 3)
+
+        # Pool health mean
+        pool_health = vitals.get("pool_health")
+        if pool_health and isinstance(pool_health, dict):
+            vals = [v for v in pool_health.values() if isinstance(v, (int, float))]
+            if vals:
+                metrics["pool_health_mean"] = round(sum(vals) / len(vals), 3)
+
+        # Emergence (AD-557)
+        for key in ("emergence_capacity", "coordination_balance"):
+            val = vitals.get(key)
+            if val is not None:
+                metrics[key] = round(val, 3)
+
+        # LLM health
+        llm = vitals.get("llm_health")
+        if isinstance(llm, dict):
+            overall = llm.get("overall")
+            if overall:
+                metrics["llm_health"] = overall
+
+    # Agent's own trust score
+    if agent_id and hasattr(runtime, "trust_network") and runtime.trust_network:
+        try:
+            score = runtime.trust_network.get_score(agent_id)
+            if score is not None:
+                metrics["agent_trust"] = round(score, 3)
+        except Exception:
+            pass
+
+    # Active agent count
+    try:
+        metrics["active_agents"] = len(runtime.registry.all())
+    except Exception:
+        pass
+
+    return metrics
+
+
+def compute_metrics_delta(
+    old_metrics: dict[str, Any],
+    new_metrics: dict[str, Any],
+    *,
+    min_numeric_delta: float = 0.01,
+) -> dict[str, Any]:
+    """AD-553: Compute delta between two metrics snapshots.
+
+    Returns dict of metric_name -> delta for numeric values that changed
+    by more than min_numeric_delta, and "old -> new" strings for changed
+    string values. Returns empty dict if no meaningful changes.
+    """
+    delta: dict[str, Any] = {}
+    all_keys = set(old_metrics) | set(new_metrics)
+
+    for key in sorted(all_keys):
+        old_val = old_metrics.get(key)
+        new_val = new_metrics.get(key)
+
+        if old_val is None or new_val is None:
+            continue  # Skip if either side is missing
+
+        if isinstance(old_val, (int, float)) and isinstance(new_val, (int, float)):
+            diff = new_val - old_val
+            if abs(diff) >= min_numeric_delta:
+                delta[key] = round(diff, 3)
+        elif isinstance(old_val, str) and isinstance(new_val, str):
+            if old_val != new_val:
+                delta[key] = f"{old_val} \u2192 {new_val}"
+
+    return delta
 
 
 class ProactiveCognitiveLoop:
@@ -66,6 +164,8 @@ class ProactiveCognitiveLoop:
         self._notified_dm_threads: set[str] = set()  # BF-082: dedup guard
         self._notified_dm_threads_reset: float = time.monotonic()  # hourly reset
         self._pending_notebook_reads: dict[str, str] = {}  # AD-504: agent_id -> topic_slug
+        self._llm_failure_count: int = 0  # BF-069: consecutive proactive failures
+        self._llm_failure_streak: int = 0  # BF-069: consecutive cycles with failure
 
     def set_runtime(self, runtime: ProbOSRuntime) -> None:
         """Wire the runtime reference (provides registry, trust, WR, memory, etc.)."""
@@ -347,6 +447,18 @@ class ProactiveCognitiveLoop:
         result = await agent.handle_intent(intent)
 
         if not result or not result.success or not result.result:
+            self._llm_failure_count += 1
+            # BF-069: Log failure details for visibility
+            error_detail = ""
+            if result and hasattr(result, 'error') and result.error:
+                error_detail = str(result.error)
+            elif result and not result.success:
+                error_detail = "agent returned unsuccessful result"
+            if error_detail:
+                logger.warning(
+                    "BF-069: Proactive think failed for %s: %s (consecutive failures: %d)",
+                    agent.agent_type, error_detail, self._llm_failure_count,
+                )
             return
 
         response_text = str(result.result).strip()
@@ -418,6 +530,7 @@ class ProactiveCognitiveLoop:
         # Post to Ward Room — find agent's department channel
         await self._post_to_ward_room(agent, response_text)
         self._last_proactive[agent.id] = time.monotonic()
+        self._llm_failure_count = 0  # BF-069: reset on successful post
 
         # AD-488: Record cognitive event and check for rumination
         self._circuit_breaker.record_event(
@@ -806,8 +919,9 @@ class ProactiveCognitiveLoop:
         Earned Agency tier controls verbosity.
         """
         result: dict[str, Any] = {}
-        rank = getattr(agent, 'rank', None)
-        agency = agency_from_rank(rank) if rank else AgencyLevel.REACTIVE
+        trust_score = rt.trust_network.get_score(agent.id) if hasattr(rt, 'trust_network') and rt.trust_network else 0.5
+        rank = Rank.from_trust(trust_score)
+        agency = agency_from_rank(rank)
 
         # Tier-based feature gating
         TIER_CONFIG = {
@@ -923,19 +1037,89 @@ class ProactiveCognitiveLoop:
                         author=callsign,
                     )
                     if entries:
-                        # Index: last 5 entries by updated time
+                        # AD-550: Enhanced index with content previews + recency
                         sorted_entries = sorted(
                             entries,
-                            key=lambda e: e.get("frontmatter", {}).get("updated", 0),
+                            key=lambda e: e.get("frontmatter", {}).get("updated", ""),
                             reverse=True,
-                        )[:5]
-                        result["notebook_index"] = [
-                            {
-                                "topic": e.get("frontmatter", {}).get("topic", e["path"].split("/")[-1].replace(".md", "")),
-                                "updated": e.get("frontmatter", {}).get("updated", ""),
-                            }
-                            for e in sorted_entries
-                        ]
+                        )
+                        now_ts = time.time()
+
+                        # Entry/topic counts
+                        result["notebook_summary"] = {
+                            "total_entries": len(entries),
+                            "total_topics": len(set(
+                                e.get("frontmatter", {}).get("topic", e["path"].split("/")[-1].replace(".md", ""))
+                                for e in entries
+                            )),
+                        }
+
+                        top5 = sorted_entries[:5]
+                        enriched_index = []
+                        for e in top5:
+                            fm = e.get("frontmatter", {})
+                            topic = fm.get("topic", e["path"].split("/")[-1].replace(".md", ""))
+                            updated_str = fm.get("updated", "")
+
+                            # Human-readable recency
+                            recency = ""
+                            if updated_str:
+                                try:
+                                    entry_ts = datetime.fromisoformat(updated_str).timestamp()
+                                    delta_s = now_ts - entry_ts
+                                    if delta_s < 3600:
+                                        recency = f"{int(delta_s / 60)}m ago"
+                                    elif delta_s < 86400:
+                                        recency = f"{int(delta_s / 3600)}h ago"
+                                    else:
+                                        recency = f"{int(delta_s / 86400)}d ago"
+                                except (ValueError, TypeError):
+                                    pass
+
+                            # Content preview (first 150 chars)
+                            preview = ""
+                            try:
+                                entry_data = await rt._records_store.read_entry(
+                                    e["path"],
+                                    reader_id=callsign,
+                                    reader_department=getattr(agent, 'department', ''),
+                                )
+                                if entry_data and entry_data.get("content"):
+                                    preview = entry_data["content"][:150].replace("\n", " ").strip()
+                            except Exception:
+                                pass
+
+                            enriched_index.append({
+                                "topic": topic,
+                                "updated": updated_str,
+                                "recency": recency,
+                                "preview": preview,
+                                "revision": fm.get("revision", 1),  # AD-552
+                            })
+
+                        result["notebook_index"] = enriched_index
+
+                        # AD-552: Repetition warnings for high-revision topics
+                        _rep_thresh = 3
+                        _rep_window_h = 48.0
+                        if hasattr(rt, 'config') and hasattr(rt.config, 'records'):
+                            _rep_thresh = getattr(rt.config.records, 'notebook_repetition_threshold_count', 3)
+                            _rep_window_h = getattr(rt.config.records, 'notebook_repetition_window_hours', 48.0)
+                        warnings = []
+                        for ei in enriched_index:
+                            rev = ei.get("revision", 1)
+                            if rev >= _rep_thresh and ei.get("updated"):
+                                try:
+                                    _ei_ts = datetime.fromisoformat(ei["updated"]).timestamp()
+                                    if (now_ts - _ei_ts) < (_rep_window_h * 3600):
+                                        warnings.append(
+                                            f"You've written about {ei['topic']} {rev} times recently. "
+                                            f"Review your existing entry before writing again."
+                                        )
+                                except (ValueError, TypeError):
+                                    pass
+                        if warnings:
+                            result["notebook_repetition_warnings"] = warnings
 
                     # Semantic pull: search notebooks for content relevant to current think
                     dept = getattr(agent, 'department', '')
@@ -1227,12 +1411,141 @@ class ProactiveCognitiveLoop:
                     dept = self._runtime.ontology.get_agent_department(agent.agent_type)
                     if dept:
                         department = dept.department_id if hasattr(dept, 'department_id') else str(dept)
+
+                # AD-550: Read-before-write dedup gate
+                dedup_enabled = True
+                dedup_threshold = 0.8
+                dedup_staleness = 72.0
+                dedup_max_scan = 20
+                if hasattr(self._runtime, 'config') and hasattr(self._runtime.config, 'records'):
+                    rc = self._runtime.config.records
+                    dedup_enabled = getattr(rc, 'notebook_dedup_enabled', True)
+                    dedup_threshold = getattr(rc, 'notebook_similarity_threshold', 0.8)
+                    dedup_staleness = getattr(rc, 'notebook_staleness_hours', 72.0)
+                    dedup_max_scan = getattr(rc, 'notebook_max_scan_entries', 20)
+
+                if dedup_enabled:
+                    try:
+                        dedup_result = await self._runtime._records_store.check_notebook_similarity(
+                            callsign=callsign,
+                            topic_slug=topic_slug,
+                            new_content=notebook_content,
+                            similarity_threshold=dedup_threshold,
+                            staleness_hours=dedup_staleness,
+                            max_scan_entries=dedup_max_scan,
+                        )
+                    except Exception:
+                        logger.debug("AD-550: Dedup check failed for %s/%s, writing anyway", callsign, topic_slug, exc_info=True)
+                        dedup_result = {"action": "write", "reason": "dedup_check_failed", "existing_path": None, "existing_content": None, "similarity": 0.0}
+
+                    if dedup_result["action"] == "suppress":
+                        logger.info(
+                            "AD-550: Notebook write suppressed for %s/%s: %s (similarity=%.2f)",
+                            callsign, topic_slug, dedup_result["reason"], dedup_result["similarity"],
+                        )
+                        actions_executed.append({
+                            "type": "notebook_suppressed",
+                            "topic": topic_slug,
+                            "callsign": callsign,
+                            "reason": dedup_result["reason"],
+                        })
+                        continue  # Skip this notebook block
+
+                    # AD-552: Cumulative frequency check for self-repetition
+                    rep_enabled = True
+                    rep_window = 48.0
+                    rep_threshold = 3
+                    rep_novelty = 0.2
+                    rep_suppress_count = 5
+                    if hasattr(self._runtime, 'config') and hasattr(self._runtime.config, 'records'):
+                        rc2 = self._runtime.config.records
+                        rep_enabled = getattr(rc2, 'notebook_repetition_enabled', True)
+                        rep_window = getattr(rc2, 'notebook_repetition_window_hours', 48.0)
+                        rep_threshold = getattr(rc2, 'notebook_repetition_threshold_count', 3)
+                        rep_novelty = getattr(rc2, 'notebook_repetition_novelty_threshold', 0.2)
+                        rep_suppress_count = getattr(rc2, 'notebook_repetition_suppression_count', 5)
+
+                    if rep_enabled:
+                        try:
+                            _rev = dedup_result.get("revision", 0)
+                            _created_iso = dedup_result.get("created_iso")
+                            if _rev >= rep_threshold and _created_iso:
+                                _created_ts = datetime.fromisoformat(_created_iso).timestamp()
+                                _hours_active = (time.time() - _created_ts) / 3600.0
+                                if _hours_active < rep_window:
+                                    _novelty = 1.0 - dedup_result.get("similarity", 0.0)
+                                    _suppressed = False
+
+                                    # Suppress: high revision + low novelty
+                                    if _rev >= rep_suppress_count and _novelty < rep_novelty:
+                                        _suppressed = True
+                                        logger.info(
+                                            "AD-552: Suppressing write — %s has written %s %d times in %.1fh with <%.0f%% novel content",
+                                            callsign, topic_slug, _rev, _hours_active, rep_novelty * 100,
+                                        )
+                                        dedup_result["action"] = "suppress"
+
+                                    # Emit event for detection (any revision over threshold in window)
+                                    if _novelty < rep_novelty or (_rev >= rep_suppress_count and _novelty < 0.3):
+                                        logger.info(
+                                            "AD-552: Self-repetition detected for %s on %s (revision=%d, hours_active=%.1f, novelty=%.2f)",
+                                            callsign, topic_slug, _rev, _hours_active, _novelty,
+                                        )
+                                        if hasattr(self._runtime, '_emit_event'):
+                                            from probos.events import NotebookSelfRepetitionEvent
+                                            evt = NotebookSelfRepetitionEvent(
+                                                agent_id=agent.id,
+                                                agent_callsign=callsign,
+                                                topic_slug=topic_slug,
+                                                revision=_rev,
+                                                hours_active=round(_hours_active, 1),
+                                                novelty=round(_novelty, 2),
+                                                suppressed=_suppressed,
+                                            )
+                                            try:
+                                                await self._runtime._emit_event(evt.to_dict())
+                                            except Exception:
+                                                logger.debug("AD-552: Event emission failed", exc_info=True)
+
+                                    if _suppressed:
+                                        actions_executed.append({
+                                            "type": "notebook_suppressed",
+                                            "topic": topic_slug,
+                                            "callsign": callsign,
+                                            "reason": "self_repetition_suppressed",
+                                        })
+                                        continue  # Skip this notebook block
+                        except Exception:
+                            logger.debug("AD-552: Frequency check failed for %s/%s", callsign, topic_slug, exc_info=True)
+
+                # AD-553: Collect metrics snapshot and compute delta
+                _nb_metrics: dict[str, Any] = {}
+                _metric_capture_enabled = True
+                if hasattr(self._runtime, 'config') and hasattr(self._runtime.config, 'records'):
+                    _metric_capture_enabled = getattr(
+                        self._runtime.config.records, 'notebook_metrics_enabled', True
+                    )
+
+                if _metric_capture_enabled:
+                    try:
+                        _nb_metrics = collect_notebook_metrics(self._runtime, agent.id)
+                        # Baseline delta: compare with previous metrics if updating
+                        if dedup_result.get("action") == "update":
+                            _old_metrics = dedup_result.get("existing_metrics", {})
+                            if _old_metrics and _nb_metrics:
+                                _nb_metrics_delta = compute_metrics_delta(_old_metrics, _nb_metrics)
+                                if _nb_metrics_delta:
+                                    _nb_metrics["metrics_delta"] = _nb_metrics_delta
+                    except Exception:
+                        logger.debug("AD-553: Metric collection failed for %s/%s", callsign, topic_slug, exc_info=True)
+
                 await self._runtime._records_store.write_notebook(
                     callsign=callsign,
                     topic_slug=topic_slug,
                     content=notebook_content,
                     department=department,
                     tags=[topic_slug],
+                    metrics=_nb_metrics if _nb_metrics else None,  # AD-553
                 )
                 actions_executed.append({
                     "type": "notebook_write",
@@ -1482,3 +1795,8 @@ class ProactiveCognitiveLoop:
     def get_cooldowns(self) -> dict:
         """Return a copy of per-agent cooldown data for persistence."""
         return dict(self._agent_cooldowns)
+
+    @property
+    def llm_failure_count(self) -> int:
+        """BF-069: Number of consecutive proactive loop failures."""
+        return self._llm_failure_count

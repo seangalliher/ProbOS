@@ -31,6 +31,17 @@ _CLASSIFICATION_LEVELS = {
 }
 
 
+def _jaccard_similarity(text_a: str, text_b: str) -> float:
+    """Word-level Jaccard similarity between two texts."""
+    words_a = set(text_a.lower().split())
+    words_b = set(text_b.lower().split())
+    if not words_a or not words_b:
+        return 0.0
+    intersection = words_a & words_b
+    union = words_a | words_b
+    return len(intersection) / len(union)
+
+
 class RecordsStore:
     """Git-backed institutional knowledge store for a ProbOS instance.
 
@@ -85,6 +96,7 @@ class RecordsStore:
         department: str = "",
         topic: str = "",
         tags: list[str] | None = None,
+        metrics: dict[str, Any] | None = None,  # AD-553
     ) -> str:
         """Write a document to Ship's Records.
 
@@ -104,6 +116,20 @@ class RecordsStore:
             "created": now,
             "updated": now,
         }
+
+        # AD-550: Update-in-place — preserve created timestamp + track revision
+        file_path = self._safe_path(path)
+        if file_path.exists():
+            try:
+                existing_raw = file_path.read_text(encoding="utf-8")
+                existing_fm, _ = self._parse_document(existing_raw)
+                if "created" in existing_fm:
+                    frontmatter["created"] = existing_fm["created"]
+                existing_rev = existing_fm.get("revision", 1)
+                frontmatter["revision"] = existing_rev + 1
+            except Exception:
+                logger.debug("AD-550: Could not read existing frontmatter for update-in-place", exc_info=True)
+
         if department:
             frontmatter["department"] = department
         if topic:
@@ -111,12 +137,15 @@ class RecordsStore:
         if tags:
             frontmatter["tags"] = tags
 
+        # AD-553: Attach metrics snapshot
+        if metrics:
+            frontmatter["metrics"] = metrics
+
         # Compose full document
         fm_yaml = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
         full_content = f"---\n{fm_yaml}---\n\n{content}"
 
         # Write file
-        file_path = self._safe_path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(full_content, encoding="utf-8")
 
@@ -203,6 +232,7 @@ class RecordsStore:
         department: str = "",
         tags: list[str] | None = None,
         classification: str = "department",
+        metrics: dict[str, Any] | None = None,  # AD-553
     ) -> str:
         """Write to an agent's notebook.
 
@@ -220,7 +250,157 @@ class RecordsStore:
             department=department,
             topic=topic_slug,
             tags=tags,
+            metrics=metrics,
         )
+
+    async def check_notebook_similarity(
+        self,
+        callsign: str,
+        topic_slug: str,
+        new_content: str,
+        *,
+        similarity_threshold: float = 0.8,
+        staleness_hours: float = 72.0,
+        max_scan_entries: int = 20,
+    ) -> dict:
+        """AD-550: Check if a notebook write is redundant.
+
+        Returns:
+            {
+                "action": "write" | "update" | "suppress",
+                "reason": str,
+                "existing_path": str | None,
+                "existing_content": str | None,
+                "similarity": float,
+            }
+        """
+        no_match: dict[str, Any] = {
+            "action": "write",
+            "reason": "no_existing_entry",
+            "existing_path": None,
+            "existing_content": None,
+            "similarity": 0.0,
+            # AD-552: Frequency metadata
+            "revision": 0,
+            "created_iso": None,
+            "updated_iso": None,
+            # AD-553: Previous metrics for baseline delta
+            "existing_metrics": {},
+        }
+
+        now = datetime.now(timezone.utc)
+        staleness_cutoff = now.timestamp() - (staleness_hours * 3600)
+
+        # --- Layer 2: Exact topic match ---
+        exact_path = f"notebooks/{callsign}/{topic_slug}.md"
+        exact_file = self._safe_path(exact_path)
+        if exact_file.exists():
+            try:
+                raw = exact_file.read_text(encoding="utf-8")
+                fm, existing_content = self._parse_document(raw)
+                updated_str = fm.get("updated", "")
+                entry_ts = 0.0
+                if updated_str:
+                    try:
+                        entry_ts = datetime.fromisoformat(updated_str).timestamp()
+                    except (ValueError, TypeError):
+                        pass
+
+                similarity = _jaccard_similarity(new_content, existing_content)
+
+                # AD-552: Extract frequency metadata from frontmatter
+                _revision = fm.get("revision", 1)
+                _created_iso = fm.get("created", None)
+                _updated_iso = fm.get("updated", None)
+                # AD-553: Extract existing metrics for baseline delta
+                _existing_metrics = fm.get("metrics", {})
+
+                if entry_ts > staleness_cutoff and similarity >= similarity_threshold:
+                    return {
+                        "action": "suppress",
+                        "reason": "content unchanged from recent entry",
+                        "existing_path": exact_path,
+                        "existing_content": existing_content,
+                        "similarity": similarity,
+                        "revision": _revision,
+                        "created_iso": _created_iso,
+                        "updated_iso": _updated_iso,
+                        "existing_metrics": _existing_metrics,
+                    }
+
+                if entry_ts <= staleness_cutoff:
+                    return {
+                        "action": "update",
+                        "reason": "stale entry, refreshing",
+                        "existing_path": exact_path,
+                        "existing_content": existing_content,
+                        "similarity": similarity,
+                        "revision": _revision,
+                        "created_iso": _created_iso,
+                        "updated_iso": _updated_iso,
+                        "existing_metrics": _existing_metrics,
+                    }
+
+                # Fresh but different content → update
+                return {
+                    "action": "update",
+                    "reason": "different content for same topic",
+                    "existing_path": exact_path,
+                    "existing_content": existing_content,
+                    "similarity": similarity,
+                    "revision": _revision,
+                    "created_iso": _created_iso,
+                    "updated_iso": _updated_iso,
+                    "existing_metrics": _existing_metrics,
+                }
+            except Exception:
+                logger.debug("AD-550: Error reading existing notebook entry", exc_info=True)
+
+        # --- Layer 3: Cross-topic scan ---
+        notebook_dir = self._repo_path / "notebooks" / callsign
+        if notebook_dir.is_dir():
+            try:
+                entries: list[tuple[float, Path]] = []
+                for md_file in notebook_dir.glob("*.md"):
+                    if md_file.name == f"{topic_slug}.md":
+                        continue  # Already checked above
+                    try:
+                        raw = md_file.read_text(encoding="utf-8")
+                        fm, _ = self._parse_document(raw)
+                        updated_str = fm.get("updated", "")
+                        entry_ts = 0.0
+                        if updated_str:
+                            try:
+                                entry_ts = datetime.fromisoformat(updated_str).timestamp()
+                            except (ValueError, TypeError):
+                                pass
+                        if entry_ts > staleness_cutoff:
+                            entries.append((entry_ts, md_file))
+                    except Exception:
+                        continue
+
+                # Sort by recency, cap scan
+                entries.sort(key=lambda x: x[0], reverse=True)
+                for _, md_file in entries[:max_scan_entries]:
+                    try:
+                        raw = md_file.read_text(encoding="utf-8")
+                        _, existing_content = self._parse_document(raw)
+                        similarity = _jaccard_similarity(new_content, existing_content)
+                        if similarity >= similarity_threshold:
+                            matched_path = f"notebooks/{callsign}/{md_file.name}"
+                            return {
+                                "action": "suppress",
+                                "reason": f"similar content exists at {matched_path}",
+                                "existing_path": matched_path,
+                                "existing_content": existing_content,
+                                "similarity": similarity,
+                            }
+                    except Exception:
+                        continue
+            except Exception:
+                logger.debug("AD-550: Cross-topic scan failed", exc_info=True)
+
+        return no_match
 
     async def read_entry(
         self,

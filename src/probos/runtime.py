@@ -45,6 +45,11 @@ from probos.agents.medical import (
     PharmacistAgent,
     PathologistAgent,
 )
+from probos.agents.science import (
+    DataAnalystAgent,
+    SystemsAnalystAgent,
+    ResearchSpecialistAgent,
+)
 from probos.cognitive.builder import BuilderAgent
 from probos.cognitive.architect import ArchitectAgent
 from probos.cognitive.scout import ScoutAgent
@@ -545,6 +550,10 @@ class ProbOSRuntime:
         # Science team (AD-306)
         self.spawner.register_template("architect", ArchitectAgent)
         self.spawner.register_template("scout", ScoutAgent)
+        # Science analytical pyramid (AD-560)
+        self.spawner.register_template("data_analyst", DataAnalystAgent)
+        self.spawner.register_template("systems_analyst", SystemsAnalystAgent)
+        self.spawner.register_template("research_specialist", ResearchSpecialistAgent)
         # Bridge crew (AD-398)
         self.spawner.register_template("counselor", CounselorAgent)
         # Security team (AD-398)
