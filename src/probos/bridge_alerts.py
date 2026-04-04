@@ -376,6 +376,151 @@ class BridgeAlertService:
                 alerts.append(a)
         return alerts
 
+    def check_realtime_convergence(self, conv_result: dict) -> list[BridgeAlert]:
+        """AD-554: Evaluate real-time cross-agent convergence and emit bridge alerts."""
+        alerts: list[BridgeAlert] = []
+        if not conv_result.get("convergence_detected"):
+            return alerts
+
+        topic = conv_result.get("convergence_topic", "unknown")
+        agents = conv_result.get("convergence_agents", [])
+        departments = conv_result.get("convergence_departments", [])
+        key = f"realtime_convergence:{topic}"
+
+        if self._should_emit(key):
+            a = BridgeAlert(
+                id=str(uuid.uuid4()),
+                severity=AlertSeverity.ADVISORY,
+                source="notebook_monitor",
+                alert_type="realtime_convergence_detected",
+                title="Real-Time Crew Convergence",
+                detail=(
+                    f"{len(agents)} agents from {len(departments)} departments "
+                    f"independently reached convergent conclusions on {topic}"
+                ),
+                department=None,
+                dedup_key=key,
+            )
+            self._record(a)
+            alerts.append(a)
+        return alerts
+
+    def check_divergence(self, divergence_data: dict) -> list[BridgeAlert]:
+        """AD-554: Evaluate cross-agent divergence and emit bridge alerts."""
+        alerts: list[BridgeAlert] = []
+        if not divergence_data.get("divergence_detected"):
+            return alerts
+
+        topic = divergence_data.get("divergence_topic", "unknown")
+        agents = divergence_data.get("divergence_agents", [])
+        departments = divergence_data.get("divergence_departments", [])
+        similarity = divergence_data.get("divergence_similarity", 0.0)
+        key = f"divergence:{topic}"
+
+        if self._should_emit(key):
+            a = BridgeAlert(
+                id=str(uuid.uuid4()),
+                severity=AlertSeverity.ADVISORY,
+                source="notebook_monitor",
+                alert_type="divergence_detected",
+                title="Cross-Department Divergence",
+                detail=(
+                    f"{', '.join(agents)} from {', '.join(departments)} "
+                    f"reached different conclusions on {topic} "
+                    f"(similarity={similarity:.2f})"
+                ),
+                department=None,
+                dedup_key=key,
+            )
+            self._record(a)
+            alerts.append(a)
+        return alerts
+
+    def check_notebook_quality(self, quality_snapshot: dict) -> list[BridgeAlert]:
+        """AD-555: Check notebook quality metrics for alert conditions."""
+        alerts: list[BridgeAlert] = []
+        score = quality_snapshot.get("system_quality_score", 1.0)
+        stale_rate = quality_snapshot.get("stale_entry_rate", 0.0)
+
+        # Read thresholds from snapshot (caller passes config values)
+        low_threshold = quality_snapshot.get("_low_threshold", 0.3)
+        warn_threshold = quality_snapshot.get("_warn_threshold", 0.5)
+        staleness_alert_rate = quality_snapshot.get("_staleness_alert_rate", 0.7)
+
+        if score < low_threshold:
+            key = "notebook_quality_low"
+            if self._should_emit(key):
+                a = BridgeAlert(
+                    id=str(uuid.uuid4()),
+                    severity=AlertSeverity.ALERT,
+                    source="notebook_quality",
+                    alert_type="notebook_quality_low",
+                    title="Notebook quality critically low",
+                    detail=f"System notebook quality score {score:.2f} — high noise, low signal across crew notebooks",
+                    department=None,
+                    dedup_key=key,
+                )
+                self._record(a)
+                alerts.append(a)
+        elif score < warn_threshold:
+            key = "notebook_quality_degraded"
+            if self._should_emit(key):
+                a = BridgeAlert(
+                    id=str(uuid.uuid4()),
+                    severity=AlertSeverity.ADVISORY,
+                    source="notebook_quality",
+                    alert_type="notebook_quality_degraded",
+                    title="Notebook quality degraded",
+                    detail=f"System notebook quality score {score:.2f} — recommend reviewing agent observation triggers",
+                    department=None,
+                    dedup_key=key,
+                )
+                self._record(a)
+                alerts.append(a)
+
+        if stale_rate > staleness_alert_rate:
+            key = "notebook_staleness_high"
+            if self._should_emit(key):
+                a = BridgeAlert(
+                    id=str(uuid.uuid4()),
+                    severity=AlertSeverity.ADVISORY,
+                    source="notebook_quality",
+                    alert_type="notebook_staleness_high",
+                    title="High notebook staleness",
+                    detail=f"{stale_rate:.0%} of notebook entries are stale — crew may not be actively observing",
+                    department=None,
+                    dedup_key=key,
+                )
+                self._record(a)
+                alerts.append(a)
+
+        # Per-agent quality alerts
+        for agent in quality_snapshot.get("per_agent", []):
+            if isinstance(agent, dict):
+                aq_score = agent.get("quality_score", 1.0)
+                aq_callsign = agent.get("callsign", "unknown")
+            else:
+                aq_score = getattr(agent, "quality_score", 1.0)
+                aq_callsign = getattr(agent, "callsign", "unknown")
+
+            if aq_score < 0.25:
+                key = f"agent_quality_low_{aq_callsign}"
+                if self._should_emit(key):
+                    a = BridgeAlert(
+                        id=str(uuid.uuid4()),
+                        severity=AlertSeverity.INFO,
+                        source="notebook_quality",
+                        alert_type="agent_quality_low",
+                        title=f"{aq_callsign}: notebook quality low",
+                        detail=f"{aq_callsign} quality score {aq_score:.2f} — may need different observation triggers",
+                        department=None,
+                        dedup_key=key,
+                    )
+                    self._record(a)
+                    alerts.append(a)
+
+        return alerts
+
     def get_recent_alerts(self, limit: int = 50) -> list[BridgeAlert]:
         """Return recent alerts for status/API exposure."""
         return self._alert_log[-limit:]

@@ -70,6 +70,9 @@ class DreamingEngine:
         emergence_metrics_engine: Any = None,  # AD-557: emergence metrics engine
         get_department: Any = None,  # AD-557: fn(agent_id) -> department name
         records_store: Any = None,  # AD-551: Ship's Records for notebook consolidation
+        notebook_quality_engine: Any = None,  # AD-555: notebook quality metrics
+        retrieval_practice_engine: Any = None,  # AD-541c: spaced retrieval therapy
+        retrieval_llm_client: Any = None,  # AD-541c: fast-tier LLM for recall practice
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -89,6 +92,9 @@ class DreamingEngine:
         self._emergence_metrics_engine = emergence_metrics_engine  # AD-557
         self._get_department = get_department  # AD-557: department lookup
         self._records_store = records_store  # AD-551: Ship's Records
+        self._notebook_quality_engine = notebook_quality_engine  # AD-555
+        self._retrieval_practice_engine = retrieval_practice_engine  # AD-541c
+        self._retrieval_llm_client = retrieval_llm_client  # AD-541c
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
         self._addressed_degradations: dict[str, float] = {}  # AD-532b: procedure_id -> timestamp
@@ -782,6 +788,55 @@ class DreamingEngine:
             except Exception as e:
                 logger.debug("Step 9 emergence metrics failed: %s", e)
 
+        # Step 10: Notebook Quality Metrics (AD-555)
+        notebook_quality_score = None
+        notebook_quality_agents = 0
+        if self._notebook_quality_engine:
+            try:
+                _records = self._records_store
+                if _records:
+                    _staleness = 72.0
+                    if hasattr(self, 'config') and hasattr(self.config, 'notebook_staleness_hours'):
+                        _staleness = self.config.notebook_staleness_hours
+                    quality_snapshot = await self._notebook_quality_engine.compute_quality_metrics(
+                        _records, staleness_hours=_staleness
+                    )
+                    notebook_quality_score = quality_snapshot.system_quality_score
+                    notebook_quality_agents = len(quality_snapshot.per_agent)
+                    logger.info(
+                        "AD-555 Step 10: Notebook quality computed — score=%.3f, agents=%d, entries=%d",
+                        quality_snapshot.system_quality_score,
+                        len(quality_snapshot.per_agent),
+                        quality_snapshot.total_entries,
+                    )
+            except Exception:
+                logger.debug("AD-555 Step 10: Quality metrics failed", exc_info=True)
+
+        # Step 11: Spaced Retrieval Therapy (AD-541c)
+        retrieval_practices = 0
+        retrieval_accuracy = None
+        retrieval_concerns = 0
+        if (
+            self._retrieval_practice_engine
+            and self._retrieval_llm_client
+            and self.config.active_retrieval_enabled
+        ):
+            try:
+                rp_result = await self._step_11_retrieval_practice(episodes)
+                retrieval_practices = rp_result.get("practices", 0)
+                if rp_result.get("accuracies"):
+                    retrieval_accuracy = sum(rp_result["accuracies"]) / len(rp_result["accuracies"])
+                retrieval_concerns = rp_result.get("concerns", 0)
+                if retrieval_practices:
+                    logger.info(
+                        "AD-541c Step 11: Retrieval practice — %d trials, avg accuracy=%.2f, concerns=%d",
+                        retrieval_practices,
+                        retrieval_accuracy or 0.0,
+                        retrieval_concerns,
+                    )
+            except Exception:
+                logger.debug("AD-541c Step 11: Retrieval practice failed", exc_info=True)
+
         duration_ms = (time.monotonic() - t_start) * 1000
 
         report = DreamReport(
@@ -821,6 +876,13 @@ class DreamingEngine:
             notebook_entries_archived=notebook_entries_archived,
             convergence_reports_generated=convergence_reports_generated,
             convergence_reports=convergence_reports,
+            # AD-555: Notebook quality
+            notebook_quality_score=notebook_quality_score,
+            notebook_quality_agents=notebook_quality_agents,
+            # AD-541c: Spaced Retrieval Therapy
+            retrieval_practices=retrieval_practices,
+            retrieval_accuracy=retrieval_accuracy,
+            retrieval_concerns=retrieval_concerns,
         )
 
         logger.info(
@@ -1555,6 +1617,85 @@ class DreamingEngine:
             if intent:
                 intents.append(intent)
         return intents
+
+    async def _step_11_retrieval_practice(
+        self, episodes: list[Episode],
+    ) -> dict[str, Any]:
+        """AD-541c: Spaced Retrieval Therapy — active recall practice per agent."""
+        if not self.config.active_retrieval_enabled:
+            return {"practices": 0, "accuracies": [], "concerns": 0}
+        engine = self._retrieval_practice_engine
+        llm = self._retrieval_llm_client
+        if not engine or not llm:
+            return {"practices": 0, "accuracies": [], "concerns": 0}
+
+        # Collect unique agent IDs across all episodes
+        agent_ids: set[str] = set()
+        for ep in episodes:
+            for aid in ep.agent_ids:
+                agent_ids.add(aid)
+
+        practices = 0
+        accuracies: list[float] = []
+        total_concerns = 0
+
+        for agent_id in agent_ids:
+            # Select episodes due for practice
+            selected = engine.select_episodes_for_practice(episodes, agent_id)
+            if not selected:
+                continue
+
+            for ep in selected:
+                try:
+                    prompt = engine.build_recall_prompt(ep)
+                    expected = engine.build_expected_text(ep)
+                    if not expected:
+                        continue
+
+                    # Fast-tier LLM recall
+                    from probos.types import LLMRequest
+                    req = LLMRequest(
+                        prompt=prompt,
+                        tier="fast",
+                        max_tokens=256,
+                    )
+                    resp = await llm.complete(req)
+                    recalled_text = resp.content if resp and resp.content else ""
+
+                    # Score and update schedule
+                    accuracy = engine.score_recall(recalled_text, expected)
+                    sched = engine.update_schedule(agent_id, ep.id, accuracy)
+                    await engine._save_schedule(sched)
+
+                    practices += 1
+                    accuracies.append(accuracy)
+                except Exception:
+                    logger.debug(
+                        "Retrieval practice failed for agent=%s episode=%s",
+                        agent_id[:8], ep.id[:8], exc_info=True,
+                    )
+
+            # Check for concerns after practicing
+            concerns = engine.get_counselor_concerns(agent_id)
+            if concerns:
+                total_concerns += len(concerns)
+                # Emit concern event if emit function available
+                if hasattr(self, "_emit_event_fn") and self._emit_event_fn:
+                    stats = engine.get_agent_recall_stats(agent_id)
+                    try:
+                        self._emit_event_fn("retrieval_practice_concern", {
+                            "agent_id": agent_id,
+                            "episodes_at_risk": stats.get("episodes_at_risk", 0),
+                            "avg_recall_accuracy": stats.get("avg_recall_accuracy", 0.0),
+                        })
+                    except Exception:
+                        pass
+
+        return {
+            "practices": practices,
+            "accuracies": accuracies,
+            "concerns": total_concerns,
+        }
 
 
 class DreamScheduler:

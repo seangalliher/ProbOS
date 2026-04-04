@@ -84,6 +84,8 @@ async def init_structural_services(
         hebbian_router=hebbian_router,
         spawner=spawner,
         pool_manager=pools,
+        episodic_memory=episodic_memory,
+        eviction_audit=getattr(episodic_memory, "_eviction_audit", None) if episodic_memory else None,
     )
     await sif.start()
 

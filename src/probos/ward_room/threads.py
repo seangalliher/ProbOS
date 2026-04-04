@@ -91,6 +91,7 @@ class ThreadManager:
         hebbian_router: Any = None,
         format_trust_fn: Callable[..., Any] | None = None,
         channel_cache: list[dict[str, Any]] | None = None,
+        identity_registry: Any = None,  # BF-103: for sovereign ID resolution
     ) -> None:
         self._db = db
         self._emit = emit_fn
@@ -102,6 +103,7 @@ class ThreadManager:
         self._prune_config: Any = None
         self._archive_dir: Any = None
         self._last_stats: dict[str, Any] | None = None
+        self._identity_registry = identity_registry
 
     # ------------------------------------------------------------------
     # List / browse
@@ -344,6 +346,8 @@ class ThreadManager:
         if self._episodic_memory and author_id:
             try:
                 from probos.types import Episode
+                from probos.cognitive.episodic import resolve_sovereign_id_from_slot
+                sovereign_id = resolve_sovereign_id_from_slot(author_id, self._identity_registry)
                 ch_name = ""
                 for ch in self._channel_cache:
                     if ch.get("id") == channel_id:
@@ -352,7 +356,7 @@ class ThreadManager:
                 episode = Episode(
                     user_input=f"[Ward Room] {ch_name} — {author_callsign or author_id}: {title}",
                     timestamp=time.time(),
-                    agent_ids=[author_id],
+                    agent_ids=[sovereign_id],
                     outcomes=[{
                         "intent": "ward_room_post",
                         "success": True,
@@ -376,6 +380,8 @@ class ThreadManager:
             top_match = peer_matches[0]
             try:
                 from probos.types import Episode
+                from probos.cognitive.episodic import resolve_sovereign_id_from_slot
+                sovereign_id_rep = resolve_sovereign_id_from_slot(author_id, self._identity_registry)
                 ep = Episode(
                     timestamp=time.time(),
                     user_input=(
@@ -383,7 +389,7 @@ class ThreadManager:
                         f"{top_match['author_callsign']}'s recent post "
                         f"(similarity {top_match['similarity']:.0%})"
                     ),
-                    agent_ids=[author_id],
+                    agent_ids=[sovereign_id_rep],
                     outcomes=[{
                         "intent": "peer_repetition",
                         "success": True,

@@ -27,12 +27,14 @@ class MessageStore:
         episodic_memory: Any = None,
         hebbian_router: Any = None,
         format_trust_fn: Callable[..., Any] | None = None,
+        identity_registry: Any = None,  # BF-103: for sovereign ID resolution
     ) -> None:
         self._db = db
         self._emit = emit_fn
         self._episodic_memory = episodic_memory
         self._hebbian_router = hebbian_router
         self._format_trust = format_trust_fn
+        self._identity_registry = identity_registry
 
     # ------------------------------------------------------------------
     # Post operations
@@ -137,6 +139,8 @@ class MessageStore:
         if self._episodic_memory and author_id:
             try:
                 from probos.types import Episode
+                from probos.cognitive.episodic import resolve_sovereign_id_from_slot
+                sovereign_id = resolve_sovereign_id_from_slot(author_id, self._identity_registry)
                 thread_title = ""
                 channel_name = ""
                 try:
@@ -153,7 +157,7 @@ class MessageStore:
                 episode = Episode(
                     user_input=f"[Ward Room reply] {channel_name} — {author_callsign or author_id}: {body[:500]}",
                     timestamp=time.time(),
-                    agent_ids=[author_id],
+                    agent_ids=[sovereign_id],
                     outcomes=[{
                         "intent": "ward_room_post",
                         "success": True,
@@ -176,6 +180,8 @@ class MessageStore:
             top_match = peer_matches[0]
             try:
                 from probos.types import Episode
+                from probos.cognitive.episodic import resolve_sovereign_id_from_slot
+                sovereign_id_rep = resolve_sovereign_id_from_slot(author_id, self._identity_registry)
                 ep = Episode(
                     timestamp=time.time(),
                     user_input=(
@@ -183,7 +189,7 @@ class MessageStore:
                         f"{top_match['author_callsign']}'s recent post "
                         f"(similarity {top_match['similarity']:.0%})"
                     ),
-                    agent_ids=[author_id],
+                    agent_ids=[sovereign_id_rep],
                     outcomes=[{
                         "intent": "peer_repetition",
                         "success": True,

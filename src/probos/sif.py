@@ -82,6 +82,8 @@ class StructuralIntegrityField:
         spawner: AgentSpawner | None = None,
         pool_manager: dict[str, ResourcePool] | None = None,
         check_interval: float = 5.0,
+        episodic_memory: Any = None,
+        eviction_audit: Any = None,
     ) -> None:
         self._trust_network = trust_network
         self._intent_bus = intent_bus
@@ -89,8 +91,11 @@ class StructuralIntegrityField:
         self._spawner = spawner
         self._pool_manager = pool_manager
         self._check_interval = check_interval
+        self._episodic_memory = episodic_memory
+        self._eviction_audit = eviction_audit
         self._task: asyncio.Task[None] | None = None
         self._last_report: SIFReport | None = None
+        self._last_violation_details: str = ""
 
     # -- properties ----------------------------------------------------------
 
@@ -119,11 +124,16 @@ class StructuralIntegrityField:
             await asyncio.sleep(self._check_interval)
             report = await self.run_all_checks()
             if not report.all_passed:
-                logger.warning(
-                    "SIF violation detected (%.0f%% integrity): %s",
-                    report.health_pct,
-                    "; ".join(v.details for v in report.violations),
-                )
+                details = "; ".join(v.details for v in report.violations)
+                if details != self._last_violation_details:
+                    logger.warning(
+                        "SIF violation detected (%.0f%% integrity): %s",
+                        report.health_pct,
+                        details,
+                    )
+                    self._last_violation_details = details
+            else:
+                self._last_violation_details = ""
             self._last_report = report
 
     # -- aggregate -----------------------------------------------------------
@@ -139,6 +149,7 @@ class StructuralIntegrityField:
             self.check_config_validity,
             self.check_index_consistency,
             self.check_memory_integrity,
+            self.check_eviction_health,
         ):
             try:
                 result = check_fn()
@@ -287,8 +298,77 @@ class StructuralIntegrityField:
         )
 
     def check_memory_integrity(self) -> SIFCheckResult:
-        """EpisodicMemory and KnowledgeStore are readable."""
-        # SIF doesn't hold memory refs — graceful no-op.
+        """AD-541b: Verify episode storage integrity."""
+        if self._episodic_memory is None:
+            return SIFCheckResult(
+                name="memory_integrity", passed=True, details="not configured"
+            )
+        em = self._episodic_memory
+        issues: list[str] = []
+        try:
+            collection = getattr(em, "_collection", None)
+            if collection is None:
+                return SIFCheckResult(
+                    name="memory_integrity", passed=True, details="no collection"
+                )
+            count = collection.count()
+            if count == 0:
+                return SIFCheckResult(
+                    name="memory_integrity", passed=True, details="empty"
+                )
+            # Sample recent episodes and verify required fields
+            import json as _json
+            result = collection.get(include=["metadatas", "documents"], limit=10)
+            if result and result["ids"]:
+                for i, doc_id in enumerate(result["ids"]):
+                    meta = result["metadatas"][i] if result["metadatas"] else {}
+                    if not doc_id:
+                        issues.append("Episode missing ID")
+                    source = meta.get("source", "")
+                    # Legacy episodes (pre-source field or migrated by
+                    # BF-103) may have no key or an empty value — both are
+                    # legacy, not a violation.  Only flag episodes that
+                    # have a non-empty source field check would catch.
+                    if not source:
+                        pass  # legacy or migrated episode — not a violation
+                    ts = meta.get("timestamp", 0)
+                    if ts <= 0:
+                        issues.append(f"Episode {doc_id[:8]} has invalid timestamp")
+                    # AD-541e: Content hash verification
+                    content_hash = meta.get("content_hash", "")
+                    if content_hash:
+                        from probos.cognitive.episodic import compute_episode_hash, EpisodicMemory as _EM
+                        document = result["documents"][i] if result.get("documents") and i < len(result["documents"]) else ""
+                        ep = _EM._metadata_to_episode(doc_id, document, meta)
+                        recomputed = compute_episode_hash(ep)
+                        if recomputed != content_hash:
+                            issues.append(f"Episode {doc_id[:8]} content hash mismatch")
+        except Exception as exc:
+            issues.append(f"Episode recall failed: {exc}")
+
+        passed = len(issues) == 0
         return SIFCheckResult(
-            name="memory_integrity", passed=True, details="not configured"
+            name="memory_integrity",
+            passed=passed,
+            details="; ".join(issues) if issues else "ok",
         )
+
+    def check_eviction_health(self) -> SIFCheckResult:
+        """AD-541f: Monitor eviction audit trail health via cached counts."""
+        if self._eviction_audit is None:
+            return SIFCheckResult(
+                name="eviction_health", passed=True, details="not configured"
+            )
+        try:
+            total = self._eviction_audit._cached_total
+            return SIFCheckResult(
+                name="eviction_health",
+                passed=True,
+                details=f"total_evictions={total}",
+            )
+        except Exception as exc:
+            return SIFCheckResult(
+                name="eviction_health",
+                passed=False,
+                details=f"Eviction audit query failed: {exc}",
+            )

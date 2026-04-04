@@ -272,18 +272,27 @@ async def _boot_runtime(
     console.print("[bold blue]Starting ProbOS...[/bold blue]")
     llm_client = await _create_llm_client(config, console)
 
+    # AD-541f: Create eviction audit log
+    eviction_audit = None
+    if config.memory.eviction_audit_enabled:
+        from probos.cognitive.eviction_audit import EvictionAuditLog
+        eviction_audit = EvictionAuditLog()
+
     # Create episodic memory (ChromaDB-backed, uses data_dir for persistence)
     episodic_db = data_path / "episodic.db"
     episodic_memory = EpisodicMemory(
         db_path=str(episodic_db),
         max_episodes=config.memory.max_episodes,
         relevance_threshold=config.memory.relevance_threshold,
+        verify_content_hash=config.memory.verify_content_hash,
+        eviction_audit=eviction_audit,
     )
 
     runtime = ProbOSRuntime(
         config=config, data_dir=str(data_path), llm_client=llm_client,
         episodic_memory=episodic_memory,
     )
+    runtime._eviction_audit = eviction_audit  # AD-541f: expose for shutdown/SIF
 
     # Boot sequence
     with console.status("  Initializing infrastructure..."):
@@ -850,6 +859,30 @@ def _cmd_reset(args: argparse.Namespace) -> None:
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
                 archive_path = archive_dir / f"{fpath.stem}_{timestamp}{fpath.suffix}"
                 shutil.copy2(str(fpath), str(archive_path))
+
+        # AD-541f: Record reset eviction before deleting files
+        if t >= 2:
+            _audit_db = data_dir / "eviction_audit.db"
+            if _audit_db.is_file():
+                try:
+                    import sqlite3 as _sqlite3
+                    import time as _time
+                    import uuid as _uuid
+                    _aconn = _sqlite3.connect(str(_audit_db))
+                    _aconn.execute(
+                        "INSERT INTO eviction_audit "
+                        "(id, episode_id, agent_id, timestamp, reason, process, "
+                        "details, content_hash, episode_timestamp) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (_uuid.uuid4().hex, "*", "*", _time.time(),
+                         "reset", "probos_reset",
+                         f"Tier {tier} reset — total episodic memory wipe",
+                         "", 0.0),
+                    )
+                    _aconn.commit()
+                    _aconn.close()
+                except Exception:
+                    pass  # Best-effort — reset must proceed
 
         # Delete files
         for fname in tier_def.get("files", []):

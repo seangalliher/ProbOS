@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING, Any, Callable
 from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
 from probos.cognitive.emergent_detector import EmergentDetector
 from probos.cognitive.emergence_metrics import EmergenceMetricsEngine
+from probos.cognitive.retrieval_practice import RetrievalPracticeEngine
 from probos.cognitive.task_scheduler import TaskScheduler
 from probos.events import EventType
+from probos.knowledge.notebook_quality import NotebookQualityEngine
 from probos.startup.results import DreamingResult
 
 if TYPE_CHECKING:
@@ -61,6 +63,30 @@ async def init_dreaming(
     dream_scheduler = None
     dreaming_engine = None
     emergence_engine = EmergenceMetricsEngine(config.emergence_metrics)
+    # AD-555: Notebook Quality Engine
+    staleness_hours = 72.0
+    if hasattr(config, 'records'):
+        staleness_hours = getattr(config.records, 'notebook_staleness_hours', 72.0)
+    notebook_quality_engine = NotebookQualityEngine(staleness_hours=staleness_hours)
+    # AD-541c: Spaced Retrieval Therapy
+    retrieval_practice_engine = None
+    retrieval_llm_client = None
+    if config.dreaming.active_retrieval_enabled:
+        data_dir = getattr(config, 'data_dir', '')
+        retrieval_practice_engine = RetrievalPracticeEngine(
+            success_threshold=config.dreaming.retrieval_success_threshold,
+            partial_threshold=config.dreaming.retrieval_partial_threshold,
+            initial_interval_hours=config.dreaming.retrieval_initial_interval_hours,
+            max_interval_hours=config.dreaming.retrieval_max_interval_hours,
+            episodes_per_cycle=config.dreaming.retrieval_episodes_per_cycle,
+            counselor_failure_streak=config.dreaming.retrieval_counselor_failure_streak,
+            data_dir=data_dir,
+        )
+        try:
+            await retrieval_practice_engine.start()
+        except Exception:
+            logger.debug("AD-541c: Retrieval practice DB init failed", exc_info=True)
+        retrieval_llm_client = llm_client  # Reuse the same LLM client (fast tier routed by LLMRequest)
     if episodic_memory:
         dream_cfg = config.dreaming
         dreaming_engine = DreamingEngine(
@@ -78,6 +104,9 @@ async def init_dreaming(
             llm_client=llm_client,
             procedure_store=procedure_store,
             emergence_metrics_engine=emergence_engine,
+            notebook_quality_engine=notebook_quality_engine,
+            retrieval_practice_engine=retrieval_practice_engine,
+            retrieval_llm_client=retrieval_llm_client,
         )
         dream_scheduler = DreamScheduler(
             engine=dreaming_engine,
@@ -203,5 +232,7 @@ async def init_dreaming(
         emergence_metrics_engine=emergence_engine,
         task_scheduler=task_scheduler,
         flush_task=flush_task,
+        notebook_quality_engine=notebook_quality_engine,
+        retrieval_practice_engine=retrieval_practice_engine,
     )
     return result, cold_start

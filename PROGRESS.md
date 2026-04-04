@@ -1,6 +1,6 @@
 # ProbOS — Progress Tracker
 
-## Current Status: AD-553 COMPLETE (Quantitative Baseline Auto-Capture). AD-552 COMPLETE (Notebook Self-Repetition Detection). AD-551 COMPLETE (Notebook Consolidation — Dream Step 7g). AD-550 COMPLETE. BF-069 CLOSED. BF-101/102 COMPLETE. AD-560 COMPLETE. AD-557 COMPLETE. AD-558 COMPLETE. BF-099 CLOSED. Cognitive JIT pipeline COMPLETE (9/9). 618 Cognitive JIT tests. 5,716 tests (5,567 pytest + 149 vitest).
+## Current Status: AD-541f COMPLETE (Eviction Audit Trail — Append-Only Accountability). AD-541 Lineage CLOSED (6/6 pillars complete). AD-541e COMPLETE (Content Hashing — Cryptographic Episode Integrity). BF-103 CLOSED (Episodic Memory Agent ID Mismatch — sovereign ID normalization + migration). AD-541d COMPLETE (Guided Reminiscence — Therapeutic Memory Sessions). AD-541c COMPLETE (Spaced Retrieval Therapy — Active Recall Practice). AD-541b COMPLETE (Reconsolidation Protection — Read-Only Memory Framing). AD-555 COMPLETE (Notebook Quality Metrics & Dashboarding). AD-554 COMPLETE (Real-Time Cross-Agent Convergence & Divergence Detection). AD-553 COMPLETE (Quantitative Baseline Auto-Capture). AD-552 COMPLETE (Notebook Self-Repetition Detection). AD-551 COMPLETE (Notebook Consolidation — Dream Step 7g). AD-550 COMPLETE. BF-069 CLOSED. BF-101/102 COMPLETE. AD-560 COMPLETE. AD-557 COMPLETE. AD-558 COMPLETE. BF-099 CLOSED. Cognitive JIT pipeline COMPLETE (9/9). 618 Cognitive JIT tests. 5,878 tests (5,729 pytest + 149 vitest).
 
 ---
 

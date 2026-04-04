@@ -117,6 +117,7 @@ async def init_communication(
             emit_event=_ward_room_emit,
             episodic_memory=episodic_memory,
             hebbian_router=hebbian_router,
+            identity_registry=identity_registry,  # BF-103
         )
         await ward_room.start()
         # Stash the mutable ref so finalize phase can wire the router

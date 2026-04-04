@@ -141,6 +141,14 @@ class CognitiveProfile:
     # AD-552: Notebook self-repetition tracking
     notebook_repetitions: int = 0
     last_notebook_repetition: float = 0.0
+    # AD-541c: Retrieval practice tracking
+    retrieval_concerns: int = 0
+    last_retrieval_accuracy: float = 0.0
+    # AD-541d: Guided Reminiscence
+    memory_integrity_score: float = 1.0     # Rolling accuracy (0.0-1.0, starts presumed good)
+    confabulation_rate: float = 0.0         # Rolling ratio of confabulated recalls
+    last_reminiscence: float = 0.0          # Timestamp of last reminiscence session
+    reminiscence_sessions: int = 0          # Total sessions completed
 
     def add_assessment(self, assessment: CounselorAssessment) -> None:
         """Append an assessment and update alert level."""
@@ -200,6 +208,12 @@ class CognitiveProfile:
             "last_peer_catch": self.last_peer_catch,
             "notebook_repetitions": self.notebook_repetitions,
             "last_notebook_repetition": self.last_notebook_repetition,
+            "retrieval_concerns": self.retrieval_concerns,
+            "last_retrieval_accuracy": self.last_retrieval_accuracy,
+            "memory_integrity_score": self.memory_integrity_score,
+            "confabulation_rate": self.confabulation_rate,
+            "last_reminiscence": self.last_reminiscence,
+            "reminiscence_sessions": self.reminiscence_sessions,
         }
 
     @classmethod
@@ -216,6 +230,12 @@ class CognitiveProfile:
             last_peer_catch=data.get("last_peer_catch", 0.0),
             notebook_repetitions=data.get("notebook_repetitions", 0),
             last_notebook_repetition=data.get("last_notebook_repetition", 0.0),
+            retrieval_concerns=data.get("retrieval_concerns", 0),
+            last_retrieval_accuracy=data.get("last_retrieval_accuracy", 0.0),
+            memory_integrity_score=data.get("memory_integrity_score", 1.0),
+            confabulation_rate=data.get("confabulation_rate", 0.0),
+            last_reminiscence=data.get("last_reminiscence", 0.0),
+            reminiscence_sessions=data.get("reminiscence_sessions", 0),
         )
         if "baseline" in data:
             profile.baseline = CognitiveBaseline.from_dict(data["baseline"])
@@ -289,6 +309,13 @@ class CounselorProfileStore:
             # AD-552: Notebook self-repetition tracking
             "ALTER TABLE cognitive_profiles ADD COLUMN notebook_repetitions INTEGER DEFAULT 0",
             "ALTER TABLE cognitive_profiles ADD COLUMN last_notebook_repetition REAL DEFAULT 0.0",
+            # AD-541c fix + AD-541d migration
+            "ALTER TABLE cognitive_profiles ADD COLUMN retrieval_concerns INTEGER DEFAULT 0",
+            "ALTER TABLE cognitive_profiles ADD COLUMN last_retrieval_accuracy REAL DEFAULT 0.0",
+            "ALTER TABLE cognitive_profiles ADD COLUMN memory_integrity_score REAL DEFAULT 1.0",
+            "ALTER TABLE cognitive_profiles ADD COLUMN confabulation_rate REAL DEFAULT 0.0",
+            "ALTER TABLE cognitive_profiles ADD COLUMN last_reminiscence REAL DEFAULT 0.0",
+            "ALTER TABLE cognitive_profiles ADD COLUMN reminiscence_sessions INTEGER DEFAULT 0",
         ]:
             try:
                 await self._db.execute(stmt)
@@ -489,6 +516,12 @@ class CounselorAgent(CognitiveAgent):
         self._proactive_loop: Any = None      # AD-505: for cooldown adjustment
         self._dm_cooldowns: dict[str, float] = {}  # AD-505: agent_id -> monotonic timestamp of last DM
         self._intervention_targets: set[str] = set()  # AD-506a: agents with forced dream pending
+        # AD-541d: Guided Reminiscence
+        self._reminiscence_engine: Any = None  # Set via set_reminiscence_engine()
+        self._reminiscence_cooldowns: dict[str, float] = {}
+        self._REMINISCENCE_COOLDOWN_SECONDS: int = 7200  # 2 hours default
+        self._reminiscence_concern_threshold: int = 3
+        self._confabulation_alert_threshold: float = 0.3
 
     # -- AD-503: Initialization and event wiring --
 
@@ -552,6 +585,7 @@ class CounselorAgent(CognitiveAgent):
                     EventType.TRUST_CASCADE_WARNING,    # AD-558
                     EventType.GROUPTHINK_WARNING,       # AD-557
                     EventType.FRAGMENTATION_WARNING,     # AD-557
+                    EventType.RETRIEVAL_PRACTICE_CONCERN, # AD-541c
                 ],
             )
 
@@ -688,6 +722,17 @@ class CounselorAgent(CognitiveAgent):
             results.append(assessment)
             agents_assessed += 1
 
+            # AD-541d: Memory health as concern dimension (read-only, no new sessions)
+            profile = self._cognitive_profiles.get(agent_id)
+            if profile and profile.confabulation_rate >= self._confabulation_alert_threshold:
+                assessment.concerns.append(
+                    f"Memory integrity concern: confabulation rate {profile.confabulation_rate:.0%}"
+                )
+            if profile and profile.retrieval_concerns >= self._reminiscence_concern_threshold:
+                assessment.concerns.append(
+                    f"Retrieval concern: {profile.retrieval_concerns} episodes at risk"
+                )
+
             # Persist profile + assessment
             if self._profile_store:
                 profile = self.get_profile(agent_id)
@@ -748,6 +793,8 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_groupthink_warning(data)
             elif event_type == EventType.FRAGMENTATION_WARNING.value:
                 await self._on_fragmentation_warning(data)
+            elif event_type == EventType.RETRIEVAL_PRACTICE_CONCERN.value:
+                await self._on_retrieval_practice_concern(data)
         except Exception:
             logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
 
@@ -782,6 +829,21 @@ class CounselorAgent(CognitiveAgent):
                     self._intervention_targets.discard(agent_id)
             except Exception:
                 logger.debug("Post-dream re-assessment failed for %s", agent_id[:8], exc_info=True)
+
+        # AD-541d: Post-dream reminiscence trigger for agents with retrieval concerns
+        dream_report = data.get("dream_report", data)
+        retrieval_results = dream_report.get("retrieval_results", []) if isinstance(dream_report, dict) else []
+        if retrieval_results and self._reminiscence_engine:
+            # Collect unique agents with concerns
+            concern_agents: set[str] = set()
+            for result in retrieval_results:
+                aid = result.get("agent_id", "") if isinstance(result, dict) else getattr(result, "agent_id", "")
+                if aid:
+                    profile = self._cognitive_profiles.get(aid)
+                    if profile and profile.retrieval_concerns >= self._reminiscence_concern_threshold:
+                        concern_agents.add(aid)
+            for aid in concern_agents:
+                await self._initiate_reminiscence_session(aid, trigger="post_dream")
 
     async def _on_self_monitoring_concern(self, data: dict[str, Any]) -> None:
         """AD-506a: Handle amber zone detection — lightweight monitoring response."""
@@ -1164,6 +1226,37 @@ class CounselorAgent(CognitiveAgent):
             callsign, trip_count, severity, assessment.fit_for_duty,
         )
 
+    async def _on_retrieval_practice_concern(self, data: dict[str, Any]) -> None:
+        """AD-541c/d: Handle retrieval practice concern — agent struggling to recall episodes.
+
+        Updates CognitiveProfile with retrieval stats, persists to SQLite,
+        and triggers Guided Reminiscence when episodes_at_risk >= threshold.
+        """
+        agent_id = data.get("agent_id", "")
+        episodes_at_risk = data.get("episodes_at_risk", 0)
+        avg_accuracy = data.get("avg_recall_accuracy", 0.0)
+        if not agent_id:
+            return
+        logger.info(
+            "Counselor: Retrieval practice concern for %s — %d episodes at risk (avg accuracy=%.2f)",
+            agent_id[:8], episodes_at_risk, avg_accuracy,
+        )
+        # Update and persist profile
+        profile = await self._get_or_create_profile(agent_id)
+        profile.retrieval_concerns = episodes_at_risk
+        profile.last_retrieval_accuracy = avg_accuracy
+        if self._profile_store:
+            try:
+                await self._profile_store.save_profile(profile)
+            except Exception:
+                logger.debug("Failed to persist retrieval concern profile", exc_info=True)
+
+        # AD-541d: Trigger Guided Reminiscence when concern threshold is met
+        if episodes_at_risk >= self._reminiscence_concern_threshold:
+            await self._initiate_reminiscence_session(
+                agent_id, trigger="retrieval_concern",
+            )
+
     def _classify_trip_severity(
         self,
         trip_count: int,
@@ -1443,6 +1536,95 @@ class CounselorAgent(CognitiveAgent):
             if agent:
                 return getattr(agent, 'callsign', agent.agent_type)
         return agent_id[:8]
+
+    # -- AD-541d: Guided Reminiscence integration --
+
+    def set_reminiscence_engine(self, engine: Any) -> None:
+        """Wire the guided reminiscence engine (AD-541d)."""
+        self._reminiscence_engine = engine
+
+    def configure_reminiscence(
+        self,
+        *,
+        cooldown_hours: float = 2.0,
+        concern_threshold: int = 3,
+        confabulation_alert: float = 0.3,
+    ) -> None:
+        """Configure reminiscence thresholds from config (AD-541d)."""
+        self._REMINISCENCE_COOLDOWN_SECONDS = int(cooldown_hours * 3600)
+        self._reminiscence_concern_threshold = concern_threshold
+        self._confabulation_alert_threshold = confabulation_alert
+
+    async def _get_or_create_profile(self, agent_id: str) -> "CognitiveProfile":
+        """Get existing profile or create new one (async-friendly wrapper)."""
+        return self.get_or_create_profile(agent_id)
+
+    async def _initiate_reminiscence_session(self, agent_id: str, trigger: str = "concern") -> None:
+        """Initiate a guided reminiscence session for an agent with memory concerns."""
+        if not self._reminiscence_engine:
+            return
+
+        callsign = self._resolve_agent_callsign(agent_id)
+
+        # Rate limit: one session per agent per cooldown period
+        last = self._reminiscence_cooldowns.get(agent_id, 0.0)
+        if (time.monotonic() - last) < self._REMINISCENCE_COOLDOWN_SECONDS:
+            return
+
+        try:
+            result = await self._reminiscence_engine.run_session(agent_id)
+        except Exception:
+            logger.debug("AD-541d: Reminiscence session failed for %s", agent_id[:8], exc_info=True)
+            return
+
+        if result.episodes_tested == 0:
+            return  # No episodes to test
+
+        self._reminiscence_cooldowns[agent_id] = time.monotonic()
+
+        # Update CognitiveProfile
+        profile = await self._get_or_create_profile(agent_id)
+        profile.memory_integrity_score = result.overall_accuracy
+        profile.confabulation_rate = result.confabulation_rate
+        profile.last_reminiscence = time.time()
+        profile.reminiscence_sessions += 1
+
+        if self._profile_store:
+            try:
+                await self._profile_store.save_profile(profile)
+            except Exception:
+                logger.debug("AD-541d: Profile save failed", exc_info=True)
+
+        # Send therapeutic DM
+        if result.therapeutic_message:
+            await self._send_therapeutic_dm(agent_id, callsign, result.therapeutic_message)
+
+        # Emit event
+        if self._emit_event_fn:
+            self._emit_event_fn("reminiscence_session_complete", {
+                "agent_id": agent_id,
+                "trigger": trigger,
+                "episodes_tested": result.episodes_tested,
+                "overall_accuracy": result.overall_accuracy,
+                "confabulation_rate": result.confabulation_rate,
+                "accurate_count": result.accurate_count,
+                "confabulated_count": result.confabulated_count,
+                "contaminated_count": result.contaminated_count,
+            })
+
+        # Confabulation rate alarm → amber alert
+        if result.confabulation_rate >= self._confabulation_alert_threshold:
+            profile.alert_level = "amber"
+            if self._profile_store:
+                try:
+                    await self._profile_store.save_profile(profile)
+                except Exception:
+                    logger.debug("AD-541d: Alert level save failed", exc_info=True)
+
+        logger.info(
+            "AD-541d: Reminiscence session for %s — %d tested, accuracy=%.2f, confab=%.2f",
+            callsign, result.episodes_tested, result.overall_accuracy, result.confabulation_rate,
+        )
 
     async def _post_recommendation_to_ward_room(
         self,

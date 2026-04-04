@@ -123,6 +123,15 @@ class VitalsMonitorAgent(HeartbeatAgent):
                 metrics["emergence_capacity"] = snap.emergence_capacity
                 metrics["coordination_balance"] = snap.coordination_balance
 
+        # AD-555: Notebook quality metrics
+        _quality_engine = getattr(rt, "_notebook_quality_engine", None)
+        if _quality_engine:
+            _qs = _quality_engine.latest_snapshot
+            if _qs:
+                metrics["notebook_quality"] = round(_qs.system_quality_score, 3)
+                metrics["notebook_entries"] = _qs.total_entries
+                metrics["notebook_stale_rate"] = round(_qs.stale_entry_rate, 3)
+
         # BF-069: LLM proxy health
         llm_health: dict[str, Any] = {"overall": "unknown", "tiers": {}}
         llm_client = getattr(rt, 'llm_client', None)

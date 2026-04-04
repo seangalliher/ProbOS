@@ -307,7 +307,7 @@ class MemorySource(str, Enum):
     BRIEFING = "briefing"        # Received during onboarding (AD-486, future)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Episode:
     """A recorded episode from the cognitive pipeline."""
 
@@ -406,6 +406,13 @@ class DreamReport:
     notebook_entries_archived: int = 0
     convergence_reports_generated: int = 0
     convergence_reports: list[Any] = field(default_factory=list)
+    # AD-555: Notebook quality
+    notebook_quality_score: float | None = None
+    notebook_quality_agents: int = 0
+    # AD-541c: Spaced Retrieval Therapy
+    retrieval_practices: int = 0
+    retrieval_accuracy: float | None = None
+    retrieval_concerns: int = 0
 
 
 # ------------------------------------------------------------------

@@ -2026,12 +2026,12 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 | AD-551 | **Notebook Consolidation — Dream Step 7g.** *(complete)* Dream Step 7g between 7f and 8. (a) Intra-agent: cluster same-agent entries by Jaccard similarity (0.6), merge into primary, archive non-primary to `_archived/`. (b) Cross-agent convergence: 3+ agents from 2+ depts → Convergence Report + `CONVERGENCE_DETECTED` event + bridge alert. (c) DreamReport gains 4 fields. (d) 6 DreamingConfig knobs. (e) RecordsStore late-wired via finalize.py. 25 tests. Depends: AD-434, AD-531. |
 | AD-552 | **Notebook Self-Repetition Detection.** *(complete)* Cumulative frequency check in dedup gate: 3+ revisions on same topic within 48h with <20% novelty → `NOTEBOOK_SELF_REPETITION` event. 5+ revisions with low novelty → write suppressed. Counselor therapeutic DM on detection (not suppression). `notebook_repetition` tier credit on CognitiveProfile. Self-monitoring prompt enriched with revision counts + repetition warnings. 5 config knobs. 25 tests. Depends: AD-506b, AD-550. |
 | AD-553 | **Quantitative Baseline Auto-Capture.** *(complete)* `collect_notebook_metrics()` reads VitalsMonitor `latest_vitals` cache (sync, no I/O) + TrustNetwork agent score + registry count. 9 metrics (trust_mean/min, system_health, pool_health_mean, emergence_capacity, coordination_balance, llm_health, agent_trust, active_agents). `compute_metrics_delta()` computes numeric deltas (>0.01) and string transitions. Metrics stored in YAML frontmatter `metrics` key. Delta stored as nested `metrics_delta` on update. `existing_metrics` returned in dedup result. 1 config knob. 27 tests. Depends: AD-434, AD-550, VitalsMonitor, AD-557. |
-| AD-554 | **Cross-Agent Convergence Detection.** Real-time convergence scoring after each notebook write. 3+ agents from 2+ departments with >0.75 conclusion similarity = convergence event. Auto-generate Convergence Report in Ship's Records. Emit `CONVERGENCE_DETECTED` event + Bridge notification. Each convergence event is a case study for the collaborative intelligence thesis. Depends: AD-434, AD-551. |
-| AD-555 | **Notebook Quality Metrics & Dashboarding.** Per-agent: total entries, unique topics, novel content rate, consolidation rate, self-repetition alerts, convergence contributions. Quality dashboard in HXI. Configurable thresholds: `NOTEBOOK_MIN_NOVEL_CONTENT_RATE=0.2`, `NOTEBOOK_MAX_ENTRIES_PER_TOPIC=5`, `CONVERGENCE_MIN_AGENTS=3`, `CONVERGENCE_MIN_DEPARTMENTS=2`. Depends: AD-550, AD-551. |
+| AD-554 | **Cross-Agent Convergence & Divergence Detection.** *(complete)* Real-time incremental scan after each notebook write. `check_cross_agent_convergence()` on RecordsStore: anchor entry vs OTHER agents' recent entries (72h window, cap 5/agent). Convergence: Jaccard >=0.5 from 2+ agents across 2+ depts → `ConvergenceDetectedEvent` (source=realtime) + auto-generated report + Bridge alert. Divergence: same topic_slug + similarity <0.3 + different dept → `DivergenceDetectedEvent` + Bridge alert. Both checked in single pass. Proactive: runs after write (not blocking). Log-and-degrade. 7 RecordsConfig knobs. 28 tests. Depends: AD-551, AD-434, AD-410. |
+| AD-555 | **Notebook Quality Metrics & Dashboarding.** *(complete)* `NotebookQualityEngine` follows EmergenceMetricsEngine pattern (deque, properties, compute method). `AgentNotebookQuality` dataclass: per-agent quality score (weighted composite: 30% topic diversity, 25% freshness, 25% novelty, 10% convergence, 10% low-repetition). `NotebookQualitySnapshot`: system-wide aggregation. Dream Step 10 after Step 9. `record_event()` inline from proactive write path (dedup, repetition, convergence, divergence counters). Per-agent cumulative counts survive across snapshots. API: `/api/notebook-quality`, `/history`, `/agent/{callsign}`. VitalsMonitor: `notebook_quality`, `notebook_entries`, `notebook_stale_rate`. Bridge alerts: ALERT <0.3, ADVISORY <0.5, per-agent INFO <0.25. `NOTEBOOK_QUALITY_UPDATED` event type. 4 RecordsConfig knobs. `DreamReport.notebook_quality_score`, `.notebook_quality_agents`. 41 tests. Depends: AD-550–554, AD-557. |
 
 **Rationale:** The notebook system (AD-434) provides the storage infrastructure but lacks quality control. Agents treat notebooks as write-only streams rather than living documents. The pipeline follows the same progressive pattern as Cognitive JIT: capture → deduplicate → consolidate → detect patterns → surface insights. AD-550 (dedup) and AD-552 (self-repetition) are preventive. AD-551 (consolidation) and AD-554 (convergence) are extractive. AD-553 (auto-capture) and AD-555 (dashboarding) are supportive infrastructure. The convergence detection mechanism (AD-554) is the most commercially significant — it automates the discovery of collaborative intelligence events that currently require manual review of hundreds of files.
 
-**Status:** AD-550 COMPLETE, AD-551 COMPLETE, AD-552 COMPLETE, AD-553 COMPLETE. AD-554–555 PLANNED. Six ADs. Informed by empirical analysis of 419 notebook files. Commercial research documented.
+**Status:** AD-550 COMPLETE, AD-551 COMPLETE, AD-552 COMPLETE, AD-553 COMPLETE, AD-554 COMPLETE, AD-555 COMPLETE. Notebook Quality Pipeline COMPLETE (6/6 ADs). Informed by empirical analysis of 419 notebook files. Commercial research documented.
 
 ## Adaptive Trust Anomaly Detection (AD-556)
 
@@ -2297,6 +2297,30 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 
 ---
 
+### AD-554: Real-Time Cross-Agent Convergence & Divergence Detection *(2026-04-03)*
+
+**Problem:** AD-551 detects convergence retrospectively during dream consolidation (batch, every few hours). The iatrogenic trust detection case study — Chapel, Cortez, and Keiko independently converging — was discovered only by manual review of 419 files. Real-time detection is needed to surface convergence as it forms. Additionally, divergence (agents disagreeing on the same topic from different departments) is potentially more actionable than agreement — it identifies knowledge frontiers.
+
+**Solution:** `check_cross_agent_convergence()` on RecordsStore — incremental scan anchored on the just-written entry. Scans OTHER agents' recent notebooks (within staleness window, capped per agent). Convergence: Jaccard similarity >= threshold from min agents across min departments. Divergence: same topic_slug + similarity below divergence threshold + different department. Both checked in a single pass. Typed events: `ConvergenceDetectedEvent` (source="realtime") and `DivergenceDetectedEvent`. Auto-generated convergence reports to Ship's Records. Bridge alerts via `check_realtime_convergence()` and `check_divergence()`. Proactive write path: scan runs AFTER write succeeds — detection not gating.
+
+| Decision | Rationale |
+|----------|-----------|
+| Incremental scan (not full N×N) | O(agents × max_scan_per_agent) ~275 comparisons max. Full N×N is for dream batch (Step 7g) |
+| Anchor-based approach | Just-written entry is the anchor — only compare against OTHER agents |
+| Single pass for both convergence and divergence | Same scan data, inverse similarity filters — no duplicate I/O |
+| Separate from DreamingConfig | Real-time scan is notebook write pipeline, not dream machinery — different config namespace |
+| `source="realtime"` on ConvergenceDetectedEvent | Distinguishes from dream batch detection; same EventType for both |
+| Divergence = same topic + low similarity + different dept | Topic match ensures they're writing about the same subject; low similarity = different conclusions |
+| Report path with UUID suffix | `convergence-{timestamp}-{uuid[:8]}.md` avoids collision if two convergences in same second |
+| Log-and-degrade on scan failure | Scan runs after write succeeds — failure never affects the notebook write |
+| 7 RecordsConfig knobs | `realtime_convergence_enabled/threshold`, `realtime_divergence_threshold`, `staleness_hours`, `max_scan_per_agent`, `min_agents`, `min_departments` |
+
+**Files modified:** `knowledge/records_store.py` (`check_cross_agent_convergence()` ~130 lines), `events.py` (`DIVERGENCE_DETECTED` EventType, `ConvergenceDetectedEvent`, `DivergenceDetectedEvent` dataclasses), `proactive.py` (post-write scan integration ~90 lines, `_write_convergence_report()`, `_emit_convergence_bridge_alert()`, `_emit_divergence_bridge_alert()`), `bridge_alerts.py` (`check_realtime_convergence()`, `check_divergence()`), `config.py` (7 RecordsConfig knobs). 28 tests.
+
+**Status:** Complete.
+
+---
+
 ### AD-562: Ship's Records Knowledge Browser *(2026-04-03)*
 
 **Context:** Ship's Records (AD-434) provides a Git-backed markdown knowledge store with agent notebooks, duty logs, convergence reports, and published research — all with YAML frontmatter, classification-based access control, and full revision history. The Notebook Quality Pipeline (AD-550–555) adds dedup, consolidation, convergence detection, and quality metrics. But there's no unified browsing experience for navigating this knowledge. The HXI currently has no way to explore Ship's Records spatially, discover connections between entries, or visualize the crew's collective knowledge production.
@@ -2322,3 +2346,91 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Files affected:** New HXI components (knowledge browser, graph view, entry renderer), new API endpoints (backlinks, graph data, search), RecordsStore extensions (backlink index generation). No changes to existing backend files — builds on existing RecordsStore API.
 
 **Status:** Planned.
+
+---
+
+### AD-541b: Reconsolidation Protection — Read-Only Memory Framing *(2026-04-03, OSS)*
+
+**Context:** AD-541 (MVP) established episode verification, social provenance, and memory hierarchy — but the reconsolidation gap remained open. When episodes are sent through an LLM during dream cycles (procedure extraction, evolution, fallback repair), the LLM can subtly modify source material. Biological analog: synaptic reconsolidation (Nader & Hardt, 2009) — recalled memories enter a labile state where they can be corrupted. AD-541b closes this gap with a four-layer defense: prompt-level (READ-ONLY markers), structural (frozen dataclass), storage (write-once guard), and verification (SIF integrity check).
+
+**Decision:** Five deliverables implementing reconsolidation protection across the cognitive pipeline:
+
+(D1) READ-ONLY framing in `procedures.py`: New `_format_procedure_block()` helper wraps procedure JSON in `=== READ-ONLY {LABEL} (do not modify source — generate new artifact) ===` boundary markers. Applied to 4 evolution/extraction functions: `evolve_fix_procedure()`, `evolve_derived_procedure()`, `evolve_fix_from_fallback()`, `extract_negative_procedure_from_cluster()`. Contradiction context also wrapped in READ-ONLY markers.
+
+(D2) System prompt awareness: Added "All input blocks marked READ-ONLY are source material. Generate a NEW procedure — never modify the source." to all 6 system prompts (`_SYSTEM_PROMPT`, `_FIX_SYSTEM_PROMPT`, `_DERIVED_SYSTEM_PROMPT`, `_COMPOUND_SYSTEM_PROMPT`, `_FALLBACK_FIX_SYSTEM_PROMPT`, `_NEGATIVE_SYSTEM_PROMPT`). Added "Do not alter, embellish, or reinterpret individual episodes." to 3 evolution user prompts.
+
+(D3) Frozen Episode dataclass: Changed `Episode` in `types.py` from `@dataclass` to `@dataclass(frozen=True)`. All fields use `field(default_factory=...)` for mutable defaults. Mutation requires `dataclasses.replace()` (creates new instance). Note: frozen with list/dict fields is NOT hashable — protection is structural immutability, not hash-based.
+
+(D4) Write-once guard in `episodic.py`: Replaced `upsert()` with `get(ids=[id])` existence check + `add()`. Duplicate episode IDs are logged and skipped. Private `_force_update()` escape hatch retained for migration/repair tools only (uses `upsert()` directly).
+
+(D5) SIF memory integrity check: Implemented `check_memory_integrity()` in `sif.py` — samples 10 recent episodes from ChromaDB, verifies required fields (non-empty ID, source provenance, valid timestamp). Wired `episodic_memory` into `StructuralIntegrityField` constructor via `structural_services.py`.
+
+**Rationale:** Four-layer defense matches security defense-in-depth principle: prompt framing (prevents LLM from modifying), frozen dataclass (prevents Python code from modifying), write-once guard (prevents storage from overwriting), SIF verification (detects corruption). Each layer is independent — failure of one doesn't compromise the others. `_force_update()` escape hatch is necessary for migration tools but clearly documented as bypass-only. Frozen dataclass with mutable field defaults (list/dict) prevents field reassignment but not in-place mutation of container contents — acceptable tradeoff since episodes are stored immutably in ChromaDB and the frozen attribute prevents the most common mutation patterns.
+
+**Status:** AD-541b COMPLETE. 24 new tests in `test_ad541b_reconsolidation.py`. 330 targeted regression tests passing. Files: `procedures.py`, `types.py`, `episodic.py`, `sif.py`, `structural_services.py`.
+
+---
+
+### AD-541c: Spaced Retrieval Therapy — Active Recall Practice *(2026-04-03, OSS)*
+
+**Context:** Memory integrity sub-wave AD-541a (provenance), AD-541b (reconsolidation protection) addressed storage and mutation concerns. The remaining gap is retrieval — agents passively replay episodes during dreams but never actively practice recalling them. Clinical SRT research (Camp 1989, Camp et al. 1996) shows active recall with spaced intervals achieves 90%+ retention at 1-week intervals, far surpassing passive replay.
+
+**Decision:** Implemented Spaced Retrieval Therapy as Dream Step 11 — active recall practice during offline dream consolidation.
+
+(D1) `RetrievalPracticeEngine` in `cognitive/retrieval_practice.py`: Selects high-impact DIRECT episodes per agent's sovereign shard. Builds recall prompts (context without outcome), scores recall via Jaccard similarity, updates spaced repetition schedules (success ≥ 0.6 doubles interval, failure < 0.3 halves, partial maintains, retirement at 168h). Per-agent agent_ids filtering respects sovereign memory architecture.
+
+(D2) SQLite persistence via Cloud-Ready Storage pattern (ConnectionFactory). Schedules survive restarts. In-memory fallback when no data_dir.
+
+(D3) Dream Step 11 integration: Placed after Step 10 (Notebook Quality). Per-agent practice loop collects unique agent_ids from episode set, each agent practices their own episodes. Fast-tier LLM routing for recall (pattern matching, not deep reasoning). Config-gated via `active_retrieval_enabled` (default False). DreamReport updated with `retrieval_practices`, `retrieval_accuracy`, `retrieval_concerns`.
+
+(D4) Counselor integration: `RETRIEVAL_PRACTICE_CONCERN` event emitted when consecutive failure streak ≥ 3. CognitiveProfile extended with `retrieval_concerns` and `last_retrieval_accuracy`. Counselor subscribes and updates profiles.
+
+(D5) Startup wiring: Conditional RetrievalPracticeEngine construction in `startup/dreaming.py`. Graceful shutdown in `startup/shutdown.py`.
+
+**Rationale:** Active recall is the single most validated memory intervention in clinical literature. Passive replay (Steps 1-4) strengthens pathways but doesn't verify retrieval ability. Jaccard similarity reuses existing `cognitive/similarity.py` infrastructure (DRY). Per-agent sovereign shard filtering ensures agents only practice their own experiences. Config-gated (default off) allows enabling when LLM costs are acceptable. Fast-tier routing minimizes token costs — recall scoring is pattern matching, not reasoning.
+
+**Status:** AD-541c COMPLETE. 30 new tests in `test_ad541c_retrieval_practice.py`. Files: `cognitive/retrieval_practice.py` (new), `cognitive/dreaming.py`, `cognitive/counselor.py`, `config.py`, `types.py`, `events.py`, `startup/dreaming.py`, `startup/results.py`, `startup/shutdown.py`, `runtime.py`.
+
+### AD-541d: Guided Reminiscence — Therapeutic Memory Sessions *(2026-04-03, OSS)*
+
+**Context:** AD-541c (SRT) automated screening flags agents with retrieval problems but lacks a clinical follow-up pathway. When an agent consistently fails to recall episodes, the system detects the problem but cannot investigate why. Clinical practice distinguishes confabulation (fabricating memories) from contamination (conflating training knowledge with lived experience) — different pathologies requiring different interventions.
+
+**Decision:** Counselor-initiated therapeutic 1:1 sessions where the Counselor investigates memory integrity concerns. Based on Validation Therapy (Feil 1993) and Reminiscence Therapy (Butler 1963, Woods 2005). (1) `GuidedReminiscenceEngine` (new module) — standalone class with constructor injection: episode selection, recall prompting, LLM-based scoring with Jaccard fallback, 4-category recall classification (ACCURATE/CONFABULATED/CONTAMINATED/PARTIAL), validation therapy response generation. (2) CognitiveProfile extended with 4 new fields: `memory_integrity_score`, `confabulation_rate`, `last_reminiscence`, `reminiscence_sessions`. AD-541c serialization gap fixed (2 missing fields in to_dict/from_dict + ALTER TABLE). (3) Counselor integration: `_on_retrieval_practice_concern()` upgraded to persist profiles and conditionally trigger reminiscence when concern threshold met; wellness sweep reads memory health as concern dimension (no new sessions); post-dream handler triggers reminiscence for agents with retrieval concerns. (4) Rate-limited sessions: 2-hour cooldown per agent via `time.monotonic()`. (5) Confabulation alarm: ≥30% rate escalates CognitiveProfile alert to amber. (6) Config-driven: 5 new fields in DreamingConfig, startup wiring in finalize.py gated by `reminiscence_enabled`.
+
+**Rationale:** Novel word ratio + indicator word heuristics distinguish confabulation from contamination without requiring expensive LLM calls for every classification. LLM failure degrades gracefully (0.5 uncertain score, template therapeutic response). Counselor initiates sessions — this is therapeutic intervention, not automated pipeline. Same clinical authority pattern as AD-505.
+
+**Status:** AD-541d COMPLETE. 29 new tests in `test_ad541d_guided_reminiscence.py`. Files: `cognitive/guided_reminiscence.py` (new), `cognitive/counselor.py`, `config.py`, `events.py`, `startup/finalize.py`.
+
+---
+
+## BF-103: Episodic Memory Agent ID Mismatch — Sovereign ID Normalization
+
+**Context:** After restart (not reset), agents report "no stored episodic memories" despite 843+ episodes in ChromaDB. Root cause: mixed ID types in episode `agent_ids_json`. Four storage paths (Ward Room messages, Ward Room threads, dream adapter, runtime QA) write **slot IDs** (deterministic `sha256(type:pool:index)`) but episodic recall uses **sovereign IDs** (AD-441 UUIDs from identity.db). Crew-identified: Vega (Security Agent) flagged the symptom.
+
+**Decision:** Normalize all storage paths to sovereign_id + one-time startup migration. No dual lookup — clean single-ID path. (1) Two module-level helpers in `episodic.py`: `resolve_sovereign_id(agent)` prefers `agent.sovereign_id` then falls back to `agent.id`; `resolve_sovereign_id_from_slot(slot_id, identity_registry)` resolves via `identity_registry.get_by_slot()`. (2) Four storage path fixes: Ward Room `MessageStore.create_post()`, `ThreadManager.create_thread()`, `DreamAdapter.build_episode()`, and `runtime.py` QA episode construction — all now resolve to sovereign IDs before creating Episode objects. (3) `migrate_episode_agent_ids()` async function scans all ChromaDB episodes, resolves slot→sovereign for each `agent_ids_json` entry, upserts changed metadata. Runs once at startup after `episodic_memory.start()` + `identity_registry` availability. Exception-safe (catches internally, logs warning, returns 0). (4) `identity_registry` parameter threaded through `WardRoomService` → `MessageStore`/`ThreadManager`, `DreamAdapter`, and `init_cognitive_services()`.
+
+**Rationale:** Single-ID normalization at write time is simpler and more reliable than dual-lookup at read time. Migration handles pre-fix data. The `resolve_sovereign_id_from_slot()` helper returns the slot ID unchanged when registry is unavailable or slot is unknown — graceful degradation. Migration is idempotent (re-running returns 0 changed).
+
+**Status:** BF-103 CLOSED. 16 new tests in `test_bf103_episode_id_mismatch.py`. Files: `cognitive/episodic.py`, `ward_room/messages.py`, `ward_room/threads.py`, `ward_room/service.py`, `dream_adapter.py`, `runtime.py`, `startup/cognitive_services.py`, `startup/communication.py`, `startup/finalize.py`.
+
+---
+
+### AD-541e: Episode Content Integrity — Cryptographic Hashing *(2026-04-03, OSS)*
+
+**Context:** AD-541b prevents Python-level mutation (`frozen=True`) and application-level overwrites (write-once guard). Neither protects against direct ChromaDB/SQLite manipulation, `_force_update()` misuse, or storage corruption. Need cryptographic verification layer — the Identity Ledger (AD-441) already has a proven SHA-256 content hashing pattern.
+
+**Decision:** Per-episode SHA-256 content hash (not hash-chain — episodes are independent, not sequential). Hash stored in ChromaDB metadata, not on the frozen Episode dataclass (avoids chicken-and-egg). (D1) `compute_episode_hash()` utility follows identity.py canonical JSON pattern (`sort_keys=True`, compact separators). Includes all content fields (timestamp, user_input, dag_summary, outcomes, reflection, agent_ids, duration_ms, shapley_values, trust_deltas, source); excludes id and embedding. (D2) `_episode_to_metadata()` computes and stores `content_hash` at episode creation. (D3) `_verify_episode_hash()` helper + verification in `recall_for_agent()` and `recent_for_agent()` — log WARNING on mismatch, still return episode (degrade, not deny). (D4) SIF `check_memory_integrity()` enhanced to verify sampled episode hashes — lazy import to avoid circular deps. (D5) `MemoryConfig.verify_content_hash` config flag (default `True`), wired through `__init__` as `_verify_on_recall`. (D6) Legacy episodes without `content_hash` gracefully skipped — no backfill migration (expensive ONNX re-embedding for zero integrity benefit).
+
+**Rationale:** Per-episode hash is sufficient — ordering integrity doesn't apply to independent memories. Metadata placement avoids dataclass modification. Config-gated verification allows disabling in test environments. Legacy graceful handling follows the source provenance lesson (BF-103): grandfather existing data, only hold new data to new standards.
+
+**Status:** AD-541e COMPLETE. 18 new tests in `test_ad541e_content_hashing.py`. Files: `cognitive/episodic.py`, `sif.py`, `config.py`, `__main__.py`.
+
+### AD-541f: Episode Eviction Audit Trail — Append-Only Accountability *(2026-04-03, OSS)*
+
+**Context:** When episodes are evicted by capacity management, there's no record of what was lost or why. "Why doesn't the agent remember X?" is unanswerable. Need forensic accountability across all eviction paths: `_evict()` (capacity), `_force_update()` (migration), `_evict_episodes()` (KnowledgeStore), and `probos reset` (full wipe). Final pillar of the AD-541 Memory Consolidation Integrity lineage.
+
+**Decision:** (D1) `EvictionAuditLog` in `cognitive/eviction_audit.py` — append-only SQLite (no UPDATE/DELETE), `EvictionRecord` frozen dataclass, `ConnectionFactory` protocol. Cached `_cached_total`/`_cached_counts` for sync SIF access. (D2) `_evict()` in episodic.py records batch eviction with `reason="capacity"` before deletion, wrapped in try/except (log-and-degrade). (D3) `_force_update()` records with `reason="force_update"` via fire-and-forget `asyncio.create_task()` (sync method constraint). (D4) KnowledgeStore `_evict_episodes()` records with `reason="capacity"` before file deletion. (D5) `probos reset` at tier≥2 records wildcard `episode_id="*"` via sync `sqlite3.connect()` (sync `_cmd_reset` constraint). Audit DB survives reset. (D6) SIF `check_eviction_health()` sync check using `_cached_total` — always passes, reports count for observability. (D7) `MemoryConfig.eviction_audit_enabled` config flag (default `True`). (D8) Startup: audit created in `__main__.py`, started in `cognitive_services.py`, stopped in `shutdown.py`.
+
+**Rationale:** Append-only enforced by schema discipline (no UPDATE/DELETE SQL), not DB constraints — simpler, proven pattern from ACM lifecycle_transitions. Cached counts avoid async boundary in SIF's sync check loop. Fire-and-forget for `_force_update` keeps the sync method signature. Audit failures never block eviction — tier: log-and-degrade. Closes the AD-541 lineage: Prevention (541b) → Strengthening (541c) → Detection/Treatment (541d) → Verification (541e) → Accountability (541f).
+
+**Status:** AD-541f COMPLETE. AD-541 lineage CLOSED (6/6 pillars). 16 new tests in `test_ad541f_eviction_audit.py`. Files: `cognitive/eviction_audit.py` (new), `cognitive/episodic.py`, `knowledge/store.py`, `sif.py`, `config.py`, `__main__.py`, `startup/cognitive_services.py`, `startup/structural_services.py`, `startup/shutdown.py`.

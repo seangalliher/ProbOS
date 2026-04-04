@@ -112,6 +112,8 @@ class DreamingResult:
     emergence_metrics_engine: "EmergenceMetricsEngine"
     task_scheduler: "TaskScheduler"
     flush_task: asyncio.Task[None]
+    notebook_quality_engine: Any = None  # AD-555
+    retrieval_practice_engine: Any = None  # AD-541c
 
 
 @dataclass

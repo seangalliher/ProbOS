@@ -33,8 +33,9 @@ _SCHEMA_VERSION = 1
 class KnowledgeStore:
     """Git-backed persistent knowledge repository."""
 
-    def __init__(self, config: KnowledgeConfig) -> None:
+    def __init__(self, config: KnowledgeConfig, eviction_audit: Any = None) -> None:
         self._config = config
+        self._eviction_audit = eviction_audit
         # Resolve repo path: empty → ~/.probos/knowledge/
         if config.repo_path:
             self._repo_path = Path(config.repo_path).expanduser()
@@ -126,7 +127,34 @@ class KnowledgeStore:
         files = sorted(episodes_dir.glob("*.json"), key=lambda f: f.stat().st_mtime)
         excess = len(files) - self._config.max_episodes
         if excess > 0:
-            for fp in files[:excess]:
+            to_delete = files[:excess]
+            # AD-541f: Record evictions before deletion
+            if self._eviction_audit:
+                records = []
+                for fp in to_delete:
+                    try:
+                        data = json.loads(fp.read_text())
+                        agent_ids = data.get("agent_ids", [])
+                        records.append({
+                            "episode_id": fp.stem,
+                            "agent_id": agent_ids[0] if agent_ids else "unknown",
+                            "episode_timestamp": data.get("timestamp", 0.0),
+                        })
+                    except Exception:
+                        records.append({
+                            "episode_id": fp.stem,
+                            "agent_id": "unknown",
+                        })
+                try:
+                    await self._eviction_audit.record_batch_eviction(
+                        records,
+                        reason="capacity",
+                        process="_evict_episodes",
+                        details=f"batch of {len(to_delete)}, budget={self._config.max_episodes}",
+                    )
+                except Exception as exc:
+                    log.warning("Eviction audit failed: %s", exc)
+            for fp in to_delete:
                 fp.unlink(missing_ok=True)
 
     # ------------------------------------------------------------------

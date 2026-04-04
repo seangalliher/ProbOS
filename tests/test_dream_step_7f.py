@@ -66,6 +66,11 @@ def _build_engine(mock_store, **overrides):
     engine._get_department = None
     # AD-551 fields
     engine._records_store = None
+    # AD-555 fields
+    engine._notebook_quality_engine = None
+    # AD-541c fields
+    engine._retrieval_practice_engine = None
+    engine._retrieval_llm_client = None
     return engine
 
 

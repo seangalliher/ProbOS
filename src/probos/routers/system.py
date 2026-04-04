@@ -204,3 +204,48 @@ async def get_emergence_history(
         "count": len(snapshots),
         "snapshots": [s.to_dict() for s in snapshots[-limit:]],
     }
+
+
+@router.get("/notebook-quality")
+async def get_notebook_quality(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-555: Return cached notebook quality metrics from last dream cycle."""
+    engine = getattr(runtime, "_notebook_quality_engine", None)
+    if not engine:
+        return {"status": "not_available", "message": "Notebook quality engine not initialized"}
+    snapshot = engine.latest_snapshot
+    if not snapshot:
+        return {"status": "no_data", "message": "No quality metrics computed yet — next dream cycle will generate"}
+    return {"status": "ok", **snapshot.to_dict()}
+
+
+@router.get("/notebook-quality/history")
+async def get_notebook_quality_history(
+    limit: int = 20,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-555: Return notebook quality time series."""
+    engine = getattr(runtime, "_notebook_quality_engine", None)
+    if not engine:
+        return {"status": "not_available", "snapshots": []}
+    snaps = engine.snapshots
+    limited = snaps[-limit:] if len(snaps) > limit else snaps
+    return {
+        "status": "ok",
+        "count": len(limited),
+        "snapshots": [s.to_dict() for s in limited],
+    }
+
+
+@router.get("/notebook-quality/agent/{callsign}")
+async def get_agent_notebook_quality(
+    callsign: str,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-555: Per-agent notebook quality from latest snapshot."""
+    engine = getattr(runtime, "_notebook_quality_engine", None)
+    if not engine or not engine.latest_snapshot:
+        return {"status": "no_data"}
+    for aq in engine.latest_snapshot.per_agent:
+        if aq.callsign.lower() == callsign.lower():
+            return {"status": "ok", **aq.to_dict()}
+    return {"status": "not_found", "message": f"No quality data for {callsign}"}

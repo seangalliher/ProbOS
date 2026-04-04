@@ -179,6 +179,7 @@ async def finalize_startup(
             if ward_room_router else None
         ),
         llm_client=getattr(runtime, 'llm_client', None),  # BF-069
+        identity_registry=runtime.identity_registry,  # BF-103
     )
     dream_adapter._cold_start = runtime._cold_start
 
@@ -215,6 +216,28 @@ async def finalize_startup(
                 proactive_loop=proactive_loop,  # AD-505: for cooldown adjustment
             )
             logger.info("AD-503: Counselor agent initialized")
+
+            # AD-541d: Wire Guided Reminiscence Engine into Counselor
+            if config.dreaming.reminiscence_enabled:
+                try:
+                    from probos.cognitive.guided_reminiscence import GuidedReminiscenceEngine
+
+                    reminiscence_engine = GuidedReminiscenceEngine(
+                        episodic_memory=runtime.episodic_memory,
+                        llm_client=getattr(runtime, 'llm_client', None),
+                        config=config.dreaming,
+                        max_episodes_per_session=config.dreaming.reminiscence_episodes_per_session,
+                        confabulation_alert_threshold=config.dreaming.reminiscence_confabulation_alert,
+                    )
+                    counselor_agent.set_reminiscence_engine(reminiscence_engine)
+                    counselor_agent.configure_reminiscence(
+                        cooldown_hours=config.dreaming.reminiscence_cooldown_hours,
+                        concern_threshold=config.dreaming.reminiscence_concern_threshold,
+                        confabulation_alert=config.dreaming.reminiscence_confabulation_alert,
+                    )
+                    logger.info("AD-541d: Guided Reminiscence wired into Counselor")
+                except Exception:
+                    logger.debug("AD-541d: Failed to wire Guided Reminiscence", exc_info=True)
 
     # AD-503: Wire InitiativeEngine counselor_fn
     if runtime.initiative and counselor_agent:

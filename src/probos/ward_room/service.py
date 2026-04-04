@@ -37,6 +37,7 @@ class WardRoomService(EventEmitterMixin):
         ontology: Any = None,
         hebbian_router: Any = None,
         connection_factory: ConnectionFactory | None = None,
+        identity_registry: Any = None,  # BF-103: for sovereign ID resolution
     ):
         self.db_path = db_path
         self._db: DatabaseConnection | None = None
@@ -45,6 +46,7 @@ class WardRoomService(EventEmitterMixin):
         self._ontology = ontology
         self._hebbian_router = hebbian_router
         self._connection_factory = connection_factory
+        self._identity_registry = identity_registry
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
             self._connection_factory = default_factory
@@ -90,6 +92,7 @@ class WardRoomService(EventEmitterMixin):
             episodic_memory=self._episodic_memory,
             hebbian_router=self._hebbian_router,
             format_trust_fn=format_trust,
+            identity_registry=self._identity_registry,
         )
         self._channels = ChannelManager(
             db=self._db,
@@ -103,6 +106,7 @@ class WardRoomService(EventEmitterMixin):
             hebbian_router=self._hebbian_router,
             format_trust_fn=format_trust,
             channel_cache=self._channels._channel_cache,
+            identity_registry=self._identity_registry,
         )
 
         await self._channels._ensure_default_channels()

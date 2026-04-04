@@ -132,7 +132,11 @@ class EventType(str, Enum):
     FRAGMENTATION_WARNING = "fragmentation_warning"  # AD-557: synergy near zero
     LLM_HEALTH_CHANGED = "llm_health_changed"  # BF-069: LLM proxy status transition
     CONVERGENCE_DETECTED = "convergence_detected"  # AD-551: cross-agent convergence
+    DIVERGENCE_DETECTED = "divergence_detected"  # AD-554: cross-agent divergence
     NOTEBOOK_SELF_REPETITION = "notebook_self_repetition"  # AD-552: notebook self-repetition
+    NOTEBOOK_QUALITY_UPDATED = "notebook_quality_updated"  # AD-555: quality snapshot computed
+    RETRIEVAL_PRACTICE_CONCERN = "retrieval_practice_concern"  # AD-541c: recall failure streak
+    REMINISCENCE_SESSION_COMPLETE = "reminiscence_session_complete"  # AD-541d: guided reminiscence
 
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
@@ -527,6 +531,28 @@ class NotebookSelfRepetitionEvent(BaseEvent):
     hours_active: float = 0.0
     novelty: float = 0.0
     suppressed: bool = False  # True if write was suppressed
+
+
+@dataclass
+class ConvergenceDetectedEvent(BaseEvent):
+    """AD-554: Emitted when cross-agent convergence is detected."""
+    event_type: EventType = field(default=EventType.CONVERGENCE_DETECTED, init=False)
+    agents: list[str] = field(default_factory=list)
+    departments: list[str] = field(default_factory=list)
+    topic: str = ""
+    coherence: float = 0.0
+    source: str = ""  # "realtime" or "dream_consolidation"
+    report_path: str = ""
+
+
+@dataclass
+class DivergenceDetectedEvent(BaseEvent):
+    """AD-554: Emitted when cross-agent divergence is detected."""
+    event_type: EventType = field(default=EventType.DIVERGENCE_DETECTED, init=False)
+    agents: list[str] = field(default_factory=list)
+    departments: list[str] = field(default_factory=list)
+    topic: str = ""
+    similarity: float = 0.0
 
 
 @dataclass

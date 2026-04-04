@@ -258,6 +258,8 @@ class MemoryConfig(BaseModel):
     max_episodes: int = 100000
     relevance_threshold: float = 0.7
     similarity_threshold: float = 0.6  # Semantic similarity threshold for recall/fuzzy lookup
+    verify_content_hash: bool = True    # AD-541e: Verify episode hashes on recall
+    eviction_audit_enabled: bool = True  # AD-541f: Append-only eviction audit trail
 
 
 class DreamingConfig(BaseModel):
@@ -280,6 +282,20 @@ class DreamingConfig(BaseModel):
     notebook_convergence_threshold: float = 0.5
     notebook_convergence_min_agents: int = 3
     notebook_convergence_min_departments: int = 2
+    # AD-541c: Spaced Retrieval Therapy
+    active_retrieval_enabled: bool = False
+    retrieval_episodes_per_cycle: int = 3
+    retrieval_success_threshold: float = 0.6
+    retrieval_partial_threshold: float = 0.3
+    retrieval_initial_interval_hours: float = 24.0
+    retrieval_max_interval_hours: float = 168.0
+    retrieval_counselor_failure_streak: int = 3
+    # AD-541d: Guided Reminiscence
+    reminiscence_enabled: bool = True
+    reminiscence_episodes_per_session: int = 3
+    reminiscence_concern_threshold: int = 3
+    reminiscence_confabulation_alert: float = 0.3
+    reminiscence_cooldown_hours: float = 2.0
 
 
 class ScalingConfig(BaseModel):
@@ -397,6 +413,19 @@ class RecordsConfig(BaseModel):
     notebook_repetition_suppression_count: int = 5
     # AD-553: Notebook metric capture
     notebook_metrics_enabled: bool = True
+    # AD-554: Real-time convergence/divergence detection
+    realtime_convergence_enabled: bool = True
+    realtime_convergence_threshold: float = 0.5
+    realtime_divergence_threshold: float = 0.3
+    realtime_convergence_staleness_hours: float = 72.0
+    realtime_max_scan_per_agent: int = 5
+    realtime_min_convergence_agents: int = 2
+    realtime_min_convergence_departments: int = 2
+    # AD-555: Notebook quality metrics
+    notebook_quality_enabled: bool = True
+    notebook_quality_low_threshold: float = 0.3
+    notebook_quality_warn_threshold: float = 0.5
+    notebook_staleness_alert_rate: float = 0.7
 
 
 class OnboardingConfig(BaseModel):

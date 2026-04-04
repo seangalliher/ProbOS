@@ -309,6 +309,7 @@ Rules:
 - Extract the COMMON pattern across episodes, not any single episode's exact steps
 - Steps should be deterministic and replayable without LLM assistance
 - If no common procedure can be extracted, return {"error": "no_common_pattern"}
+All input blocks marked READ-ONLY are source material. Generate a NEW procedure — never modify the source.
 """
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)```", re.DOTALL)
@@ -346,6 +347,7 @@ Rules:
 - Steps should be deterministic and replayable without LLM assistance
 - The change_summary must explain what was wrong and what you fixed
 - If no repair can be determined, return {"error": "no_repair_possible"}
+All input blocks marked READ-ONLY are source material. Generate a NEW procedure — never modify the source.
 """
 
 _DERIVED_SYSTEM_PROMPT = """\
@@ -377,6 +379,7 @@ Rules:
 - Reference episode IDs, do not reconstruct narratives
 - Steps should be deterministic and replayable without LLM assistance
 - If no useful specialization can be determined, return {"error": "no_specialization_possible"}
+All input blocks marked READ-ONLY are source material. Generate a NEW procedure — never modify the source.
 """
 
 
@@ -410,7 +413,18 @@ Rules:
 - Preconditions should describe WHEN this anti-pattern is tempting but dangerous
 - Postconditions should describe the BAD outcomes (errors, failures, user dissatisfaction)
 - If no common anti-pattern can be extracted, return {"error": "no_common_antipattern"}
+All input blocks marked READ-ONLY are source material. Generate a NEW procedure — never modify the source.
 """
+
+
+def _format_procedure_block(procedure: Any, label: str = "PROCEDURE") -> str:
+    """Format a procedure as an AD-541b READ-ONLY block."""
+    proc_json = json.dumps(procedure.to_dict(), indent=2, default=str)
+    return (
+        f"=== READ-ONLY {label} (do not modify source — generate new artifact) ===\n"
+        f"{proc_json}\n"
+        f"=== END READ-ONLY {label} ==="
+    )
 
 
 def _format_episode_blocks(episodes: list[Any]) -> str:
@@ -716,14 +730,14 @@ async def evolve_fix_procedure(
         from probos.types import LLMRequest
 
         user_prompt = (
-            "=== DEGRADED PROCEDURE ===\n"
-            f"{json.dumps(parent.to_dict(), indent=2)}\n"
-            "=== END DEGRADED PROCEDURE ===\n\n"
+            _format_procedure_block(parent, "DEGRADED PROCEDURE")
+            + "\n\n"
             f"Diagnosis: {diagnosis}\n"
             f"Quality metrics: {json.dumps(metrics)}\n\n"
             f"Fresh successful episodes ({len(fresh_episodes)}):\n\n"
             + _format_episode_blocks(fresh_episodes)
             + "\n\nRepair this procedure based on the fresh episodes. "
+            "Do not alter, embellish, or reinterpret individual episodes. "
             "The diagnosis explains what degraded."
         )
         if retry_hint:
@@ -787,13 +801,11 @@ async def evolve_derived_procedure(
     try:
         from probos.types import LLMRequest
 
-        # Build parent blocks
+        # Build parent blocks with AD-541b READ-ONLY framing
         parent_blocks = []
         for i, p in enumerate(parents, 1):
             parent_blocks.append(
-                f"=== PARENT PROCEDURE {i} ===\n"
-                f"{json.dumps(p.to_dict(), indent=2)}\n"
-                f"=== END PARENT PROCEDURE {i} ==="
+                _format_procedure_block(p, f"PARENT PROCEDURE {i}")
             )
 
         if len(parents) == 1:
@@ -813,6 +825,7 @@ async def evolve_derived_procedure(
             + f"\n\nFresh episodes ({len(fresh_episodes)}):\n\n"
             + _format_episode_blocks(fresh_episodes)
             + f"\n\n{instruction}"
+            + "\nDo not alter, embellish, or reinterpret individual episodes."
         )
         if retry_hint:
             user_prompt += f"\n\n[RETRY HINT: {retry_hint}]"
@@ -908,6 +921,7 @@ when the role changes between steps (cross-agent handoff)
 - Preserve sequential ordering — steps should reflect the temporal order agents took
 - Steps should be deterministic and replayable without LLM assistance
 - If no common multi-agent pattern can be extracted, return {"error": "no_compound_pattern"}
+All input blocks marked READ-ONLY are source material. Generate a NEW procedure — never modify the source.
 """
 
 
@@ -947,7 +961,7 @@ async def extract_negative_procedure_from_cluster(
             relevant = relevant[:5]
             if relevant:
                 lines = [
-                    "\n=== CONTRADICTION CONTEXT (AD-403) ===",
+                    "\n=== READ-ONLY CONTRADICTION CONTEXT (do not modify — reference only) ===",
                     "The following contradictions were detected — episodes with similar inputs",
                     "but opposite outcomes. The failure outcomes may explain WHY this pattern is bad:\n",
                 ]
@@ -962,7 +976,7 @@ async def extract_negative_procedure_from_cluster(
                     )
                     if c.description:
                         lines.append(f"  {c.description}")
-                lines.append("=== END CONTRADICTION CONTEXT ===")
+                lines.append("=== END READ-ONLY CONTRADICTION CONTEXT ===")
                 user_prompt += "\n".join(lines)
 
         user_prompt += (
@@ -1187,6 +1201,7 @@ Rules:
 - Include a clear change_summary explaining what diverged and why
 - Set divergence_point to the first step number where the procedure and LLM approach diverged
 - If the procedure is fundamentally wrong, return {"error": "no_repair_possible"}
+All input blocks marked READ-ONLY are source material. Generate a NEW procedure — never modify the source.
 """
 
 
@@ -1211,14 +1226,13 @@ async def evolve_fix_from_fallback(
         from probos.types import LLMRequest
 
         user_prompt = (
-            "=== PROCEDURE TO REPAIR ===\n"
-            f"{json.dumps(parent.to_dict(), indent=2)}\n"
-            "=== END PROCEDURE ===\n\n"
+            _format_procedure_block(parent, "PROCEDURE TO REPAIR")
+            + "\n\n"
             f"Fallback type: {fallback_type}\n"
             f"Rejection reason: {rejection_reason}\n\n"
-            "=== LLM SUCCESSFUL RESPONSE ===\n"
+            "=== READ-ONLY LLM RESPONSE (do not modify — reference only) ===\n"
             f"{llm_response}\n"
-            "=== END LLM RESPONSE ===\n\n"
+            "=== END READ-ONLY LLM RESPONSE ===\n\n"
         )
 
         if fresh_episodes:
@@ -1230,7 +1244,8 @@ async def evolve_fix_from_fallback(
 
         user_prompt += (
             "Compare the procedure's steps with what the LLM did. "
-            "Identify where they diverge and repair the procedure accordingly."
+            "Identify where they diverge and repair the procedure accordingly. "
+            "Do not alter, embellish, or reinterpret individual episodes."
         )
         if retry_hint:
             user_prompt += f"\n\n[RETRY HINT: {retry_hint}]"

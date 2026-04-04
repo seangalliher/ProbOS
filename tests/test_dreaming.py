@@ -65,6 +65,7 @@ def _make_episode(
     agent_ids: list[str],
     success: bool = True,
     user_input: str = "test input",
+    timestamp: float | None = None,
 ) -> Episode:
     """Helper to create an episode with given intents and outcomes."""
     outcomes = [
@@ -72,7 +73,7 @@ def _make_episode(
         for intent in intents
     ]
     return Episode(
-        timestamp=time.time(),
+        timestamp=timestamp if timestamp is not None else time.time(),
         user_input=user_input,
         dag_summary={"node_count": len(intents), "intent_types": intents},
         outcomes=outcomes,
@@ -669,15 +670,15 @@ class TestBF008DreamComposability:
             agent_ids=["agent_a"],
             success=True,
             user_input="read the file foo.txt",
+            timestamp=1.0,
         )
-        ep_old.timestamp = 1.0
         ep_new = _make_episode(
             intents=["read_file"],
             agent_ids=["agent_a"],
             success=False,
             user_input="read the file foo.txt",
+            timestamp=2.0,
         )
-        ep_new.timestamp = 2.0
         await memory.store(ep_old)
         await memory.store(ep_new)
 
@@ -716,15 +717,15 @@ class TestBF008DreamComposability:
             agent_ids=["agent_a"],
             success=True,
             user_input="read the file foo.txt",
+            timestamp=1.0,
         )
-        ep_old.timestamp = 1.0
         ep_new = _make_episode(
             intents=["read_file"],
             agent_ids=["agent_a"],
             success=False,
             user_input="read the file foo.txt",
+            timestamp=2.0,
         )
-        ep_new.timestamp = 2.0
         await memory.store(ep_old)
         await memory.store(ep_new)
 

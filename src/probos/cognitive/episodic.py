@@ -7,6 +7,7 @@ implementation (Phase 14b).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -17,6 +18,187 @@ from probos.cognitive.similarity import jaccard_similarity
 from probos.types import Episode
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# BF-103: Sovereign ID resolution helpers (DRY — one place for all callers)
+# ---------------------------------------------------------------------------
+
+def resolve_sovereign_id(agent: Any) -> str:
+    """Resolve an agent's sovereign_id, falling back to agent.id if unavailable.
+
+    This is the ONLY correct way to get an agent ID for episode storage.
+    All episode agent_ids_json entries MUST use sovereign_id.
+    """
+    return getattr(agent, 'sovereign_id', None) or getattr(agent, 'id', str(agent))
+
+
+def resolve_sovereign_id_from_slot(slot_id: str, identity_registry: Any) -> str:
+    """Resolve a slot ID to a sovereign ID via the identity registry.
+
+    Used during episode storage when only a slot_id string is available
+    (not an agent object). Returns slot_id unchanged if no mapping found.
+    """
+    if not identity_registry:
+        return slot_id
+    cert = identity_registry.get_by_slot(slot_id)
+    if cert:
+        return cert.agent_uuid
+    return slot_id
+
+
+async def migrate_episode_agent_ids(
+    episodic_memory: "EpisodicMemory",
+    identity_registry: Any,
+) -> int:
+    """Migrate episode agent_ids from slot IDs to sovereign IDs.
+
+    Scans all episodes in ChromaDB. For each agent_id in agent_ids_json,
+    checks if it's a slot ID with a known sovereign_id mapping. If so,
+    replaces the slot ID with the sovereign_id.
+
+    Returns the number of episodes updated.
+    """
+    if not episodic_memory or not episodic_memory._collection:
+        return 0
+    if not identity_registry:
+        return 0
+
+    t0 = time.time()
+    migrated = 0
+
+    try:
+        result = episodic_memory._collection.get(include=["metadatas", "documents"])
+        if not result or not result.get("ids"):
+            return 0
+
+        ids_list = result["ids"]
+        metadatas = result.get("metadatas", [])
+        documents = result.get("documents", [])
+
+        for i, ep_id in enumerate(ids_list):
+            meta = metadatas[i] if i < len(metadatas) else {}
+            agent_ids_json = meta.get("agent_ids_json", "[]")
+            try:
+                agent_ids = json.loads(agent_ids_json)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            changed = False
+            new_ids: list[str] = []
+            for aid in agent_ids:
+                resolved = resolve_sovereign_id_from_slot(aid, identity_registry)
+                new_ids.append(resolved)
+                if resolved != aid:
+                    changed = True
+
+            if changed:
+                meta["agent_ids_json"] = json.dumps(new_ids)
+                doc = documents[i] if i < len(documents) else ""
+                # Recompute content hash after agent ID migration (AD-541e)
+                ep = EpisodicMemory._metadata_to_episode(ep_id, doc or "", meta)
+                meta["content_hash"] = compute_episode_hash(ep)
+                episodic_memory._collection.upsert(
+                    ids=[ep_id],
+                    metadatas=[meta],
+                    documents=[doc or ""],
+                )
+                migrated += 1
+
+        elapsed = time.time() - t0
+        if migrated > 0:
+            logger.info(
+                "BF-103: Migrated %d episodes from slot IDs to sovereign IDs (%.1fs)",
+                migrated, elapsed,
+            )
+        else:
+            logger.debug("BF-103: No episodes needed migration (%.1fs)", elapsed)
+    except Exception:
+        logger.warning("BF-103: Episode ID migration failed", exc_info=True)
+
+    return migrated
+
+
+# ---------------------------------------------------------------------------
+# AD-541e: Episode content hashing — cryptographic tamper detection
+# ---------------------------------------------------------------------------
+
+def compute_episode_hash(episode: Episode) -> str:
+    """Compute SHA-256 content hash for an episode.
+
+    Uses canonical JSON serialization (sorted keys, compact separators)
+    following the Identity Ledger pattern (identity.py:135-148).
+
+    Includes all content fields. Excludes:
+    - id (document key, not content)
+    - embedding (computed by ChromaDB, not original content)
+
+    Values are normalized to match _episode_to_metadata storage coercions
+    so the hash survives the ChromaDB round-trip.
+    """
+    content = {
+        "timestamp": round(float(episode.timestamp or 0.0), 6),
+        "user_input": episode.user_input,
+        "dag_summary": episode.dag_summary,
+        "outcomes": episode.outcomes,
+        "reflection": episode.reflection or "",
+        "agent_ids": episode.agent_ids,
+        "duration_ms": float(episode.duration_ms),
+        "shapley_values": episode.shapley_values,
+        "trust_deltas": episode.trust_deltas,
+        "source": episode.source or "direct",
+    }
+    canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+_HASH_VERSION = 2  # Current hash normalization version
+
+
+def _verify_episode_hash(
+    episode: Episode,
+    stored_hash: str,
+    metadata: dict | None = None,
+    collection: Any = None,
+) -> bool:
+    """Verify an episode's content matches its stored hash.
+
+    Returns True if hash matches or no hash stored (legacy episode).
+    Returns False only on hash mismatch (potential tampering).
+
+    If collection is provided and the episode was stored with an older
+    hash version (_hash_v < _HASH_VERSION), auto-heals the stale hash.
+    """
+    if not stored_hash:
+        return True  # Legacy episode — no hash to verify
+    recomputed = compute_episode_hash(episode)
+    if recomputed != stored_hash:
+        # Auto-heal: episodes stored with older normalization have stale hashes.
+        stored_v = metadata.get("_hash_v", 0) if metadata else 0
+        if stored_v < _HASH_VERSION and collection:
+            try:
+                updated_meta = dict(metadata)
+                updated_meta["content_hash"] = recomputed
+                updated_meta["_hash_v"] = _HASH_VERSION
+                collection.update(
+                    ids=[episode.id],
+                    metadatas=[updated_meta],
+                )
+                logger.info(
+                    "AD-541e: Auto-healed hash v%d->v%d for episode %s",
+                    stored_v, _HASH_VERSION, episode.id[:8],
+                )
+                return True
+            except Exception:
+                logger.debug("Auto-heal failed for %s", episode.id[:8], exc_info=True)
+        # Genuine mismatch on a current-version episode — log warning
+        logger.warning(
+            "Episode %s hash mismatch (v%d): stored=%s recomputed=%s",
+            episode.id[:8] if episode.id else "unknown",
+            stored_v, stored_hash[:12], recomputed[:12],
+        )
+        return False
+    return True
 
 
 class EpisodicMemory:
@@ -32,10 +214,14 @@ class EpisodicMemory:
         db_path: str | Path,
         max_episodes: int = 100_000,
         relevance_threshold: float = 0.7,
+        verify_content_hash: bool = True,
+        eviction_audit: Any = None,
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
         self.relevance_threshold = relevance_threshold
+        self._verify_on_recall = verify_content_hash
+        self._eviction_audit = eviction_audit
         self._client: Any = None
         self._collection: Any = None
 
@@ -187,7 +373,16 @@ class EpisodicMemory:
 
         metadata = self._episode_to_metadata(episode)
 
-        self._collection.upsert(
+        # AD-541b: Write-once guard — prevent silent episode overwrites
+        existing = self._collection.get(ids=[episode.id])
+        if existing and existing["ids"]:
+            logger.warning(
+                "Episode %s already exists — skipping store (write-once)",
+                episode.id[:12],
+            )
+            return  # Do not overwrite
+
+        self._collection.add(
             ids=[episode.id],
             documents=[episode.user_input],
             metadatas=[metadata],
@@ -195,6 +390,34 @@ class EpisodicMemory:
 
         # Evict oldest beyond budget
         await self._evict()
+
+    def _force_update(self, episode: Episode) -> None:
+        """Bypass write-once for migration only. Do not call from normal code paths."""
+        if not self._collection:
+            return
+        # AD-541f: Log the overwrite (best-effort, sync path)
+        if self._eviction_audit:
+            agent_id = episode.agent_ids[0] if episode.agent_ids else "unknown"
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self._eviction_audit.record_eviction(
+                        episode_id=episode.id,
+                        agent_id=agent_id,
+                        reason="force_update",
+                        process="_force_update",
+                        details="migration overwrite",
+                        episode_timestamp=episode.timestamp,
+                    ))
+            except Exception:
+                pass  # Best-effort audit for sync path
+        metadata = self._episode_to_metadata(episode)
+        self._collection.upsert(
+            ids=[episode.id],
+            documents=[episode.user_input],
+            metadatas=[metadata],
+        )
 
     async def _evict(self) -> None:
         assert self._collection
@@ -209,7 +432,33 @@ class EpisodicMemory:
                 # Sort by timestamp ascending (oldest first)
                 paired = list(zip(result["ids"], result["metadatas"]))
                 paired.sort(key=lambda x: x[1].get("timestamp", 0))
-                ids_to_delete = [p[0] for p in paired[:excess]]
+                to_evict = paired[:excess]
+                ids_to_delete = [p[0] for p in to_evict]
+                # AD-541f: Record evictions before deletion
+                if ids_to_delete and self._eviction_audit:
+                    records = []
+                    for eid, meta in to_evict:
+                        agent_ids_raw = meta.get("agent_ids_json", "[]")
+                        try:
+                            agent_ids = json.loads(agent_ids_raw)
+                            agent_id = agent_ids[0] if agent_ids else "unknown"
+                        except (json.JSONDecodeError, TypeError):
+                            agent_id = "unknown"
+                        records.append({
+                            "episode_id": eid,
+                            "agent_id": agent_id,
+                            "content_hash": meta.get("content_hash", ""),
+                            "episode_timestamp": meta.get("timestamp", 0.0),
+                        })
+                    try:
+                        await self._eviction_audit.record_batch_eviction(
+                            records,
+                            reason="capacity",
+                            process="_evict",
+                            details=f"batch of {len(ids_to_delete)}, budget={self.max_episodes}",
+                        )
+                    except Exception as exc:
+                        logger.warning("Eviction audit failed: %s", exc)
                 if ids_to_delete:
                     self._collection.delete(ids=ids_to_delete)
 
@@ -345,6 +594,10 @@ class EpisodicMemory:
 
             document = result["documents"][0][i] if result["documents"] else ""
             ep = self._metadata_to_episode(doc_id, document, metadata)
+            # AD-541e: Content hash verification
+            if self._verify_on_recall:
+                stored_hash = metadata.get("content_hash", "")
+                _verify_episode_hash(ep, stored_hash, metadata, self._collection)
             episodes.append(ep)
             if len(episodes) >= k:
                 break
@@ -385,10 +638,15 @@ class EpisodicMemory:
         # Sort by timestamp descending (most recent first)
         agent_episodes.sort(key=lambda x: x[1].get("timestamp", 0), reverse=True)
 
-        return [
-            self._metadata_to_episode(doc_id, document, metadata)
-            for doc_id, metadata, document in agent_episodes[:k]
-        ]
+        episodes: list[Episode] = []
+        for doc_id, metadata, document in agent_episodes[:k]:
+            ep = self._metadata_to_episode(doc_id, document, metadata)
+            # AD-541e: Content hash verification
+            if self._verify_on_recall:
+                stored_hash = metadata.get("content_hash", "")
+                _verify_episode_hash(ep, stored_hash, metadata, self._collection)
+            episodes.append(ep)
+        return episodes
 
     async def recall_by_intent(self, intent_type: str, k: int = 5) -> list[Episode]:
         """Filter by intent type, then rank by recency."""
@@ -559,18 +817,32 @@ class EpisodicMemory:
         if outcomes:
             intent_type = outcomes[0].get("intent", "") if isinstance(outcomes[0], dict) else ""
 
-        return {
-            "timestamp": ep.timestamp or time.time(),
+        # Normalize timestamp before hashing — use the same value in both
+        # Round to 6 decimal places (microsecond precision) — IEEE 754
+        # double has ~15-16 significant digits; 10-digit epoch + 7 decimals
+        # = 17 digits, which exceeds reliable precision and causes ChromaDB
+        # (SQLite) to truncate, breaking the content hash on recall.
+        ts = round(float(ep.timestamp or time.time()), 6)
+        dur = float(ep.duration_ms)
+        # Build normalized Episode for hashing so hash matches stored values
+        from dataclasses import replace
+        normalized = replace(ep, timestamp=ts, duration_ms=dur, source=ep.source or "direct")
+
+        metadata = {
+            "timestamp": ts,
             "intent_type": intent_type,
             "dag_summary_json": json.dumps(ep.dag_summary),
             "outcomes_json": json.dumps(ep.outcomes),
             "reflection": ep.reflection or "",
             "agent_ids_json": json.dumps(ep.agent_ids),
-            "duration_ms": ep.duration_ms,
+            "duration_ms": dur,
             "shapley_values_json": json.dumps(ep.shapley_values),
             "trust_deltas_json": json.dumps(ep.trust_deltas),
             "source": ep.source or "direct",
+            "content_hash": compute_episode_hash(normalized),
+            "_hash_v": 2,  # Hash normalization version (round(ts,6) + float coercion)
         }
+        return metadata
 
     @staticmethod
     def _metadata_to_episode(
@@ -579,13 +851,13 @@ class EpisodicMemory:
         """Convert ChromaDB result back to an Episode."""
         return Episode(
             id=doc_id,
-            timestamp=metadata.get("timestamp", 0.0),
+            timestamp=round(float(metadata.get("timestamp", 0.0)), 6),
             user_input=document,
             dag_summary=json.loads(metadata.get("dag_summary_json", "{}")),
             outcomes=json.loads(metadata.get("outcomes_json", "[]")),
             reflection=metadata.get("reflection", None) or None,
             agent_ids=json.loads(metadata.get("agent_ids_json", "[]")),
-            duration_ms=metadata.get("duration_ms", 0.0),
+            duration_ms=float(metadata.get("duration_ms", 0.0)),
             embedding=[],  # ChromaDB manages embeddings internally
             shapley_values=json.loads(metadata.get("shapley_values_json", "{}")),
             trust_deltas=json.loads(metadata.get("trust_deltas_json", "[]")),

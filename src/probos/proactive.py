@@ -1443,6 +1443,10 @@ class ProactiveCognitiveLoop:
                             "AD-550: Notebook write suppressed for %s/%s: %s (similarity=%.2f)",
                             callsign, topic_slug, dedup_result["reason"], dedup_result["similarity"],
                         )
+                        # AD-555: Record dedup suppression for quality metrics
+                        _quality_engine = getattr(self._runtime, '_notebook_quality_engine', None)
+                        if _quality_engine:
+                            _quality_engine.record_event("dedup_suppression")
                         actions_executed.append({
                             "type": "notebook_suppressed",
                             "topic": topic_slug,
@@ -1506,6 +1510,10 @@ class ProactiveCognitiveLoop:
                                                 await self._runtime._emit_event(evt.to_dict())
                                             except Exception:
                                                 logger.debug("AD-552: Event emission failed", exc_info=True)
+                                        # AD-555: Record repetition alert for quality metrics
+                                        _quality_engine = getattr(self._runtime, '_notebook_quality_engine', None)
+                                        if _quality_engine:
+                                            _quality_engine.record_event("repetition_alert", callsign=callsign)
 
                                     if _suppressed:
                                         actions_executed.append({
@@ -1552,7 +1560,108 @@ class ProactiveCognitiveLoop:
                     "topic": topic_slug,
                     "callsign": callsign,
                 })
+                # AD-555: Record successful write for quality metrics
+                _quality_engine = getattr(self._runtime, '_notebook_quality_engine', None)
+                if _quality_engine:
+                    _quality_engine.record_event("dedup_write")
                 logger.info("Notebook entry written: %s/%s", callsign, topic_slug)
+
+                # AD-554: Real-time cross-agent convergence/divergence detection
+                _conv_enabled = True
+                if hasattr(self._runtime, 'config') and hasattr(self._runtime.config, 'records'):
+                    _conv_enabled = getattr(
+                        self._runtime.config.records, 'realtime_convergence_enabled', True
+                    )
+
+                if _conv_enabled and department:
+                    try:
+                        _rc554 = getattr(self._runtime.config, 'records', None) if hasattr(self._runtime, 'config') else None
+                        conv_result = await self._runtime._records_store.check_cross_agent_convergence(
+                            anchor_callsign=callsign,
+                            anchor_department=department,
+                            anchor_topic_slug=topic_slug,
+                            anchor_content=notebook_content,
+                            convergence_threshold=getattr(_rc554, 'realtime_convergence_threshold', 0.5) if _rc554 else 0.5,
+                            divergence_threshold=getattr(_rc554, 'realtime_divergence_threshold', 0.3) if _rc554 else 0.3,
+                            staleness_hours=getattr(_rc554, 'realtime_convergence_staleness_hours', 72.0) if _rc554 else 72.0,
+                            max_scan_per_agent=getattr(_rc554, 'realtime_max_scan_per_agent', 5) if _rc554 else 5,
+                            min_convergence_agents=getattr(_rc554, 'realtime_min_convergence_agents', 2) if _rc554 else 2,
+                            min_convergence_departments=getattr(_rc554, 'realtime_min_convergence_departments', 2) if _rc554 else 2,
+                        )
+
+                        if conv_result.get("convergence_detected"):
+                            # 1. Auto-generate convergence report
+                            report_path = await self._write_convergence_report(
+                                conv_result, callsign, topic_slug,
+                            )
+                            conv_result["report_path"] = report_path or ""
+
+                            # 2. Emit typed event
+                            if hasattr(self._runtime, '_emit_event'):
+                                from probos.events import ConvergenceDetectedEvent
+                                evt = ConvergenceDetectedEvent(
+                                    agents=conv_result["convergence_agents"],
+                                    departments=conv_result["convergence_departments"],
+                                    topic=conv_result.get("convergence_topic", topic_slug),
+                                    coherence=conv_result.get("convergence_coherence", 0.0),
+                                    source="realtime",
+                                    report_path=conv_result.get("report_path", ""),
+                                )
+                                try:
+                                    await self._runtime._emit_event(evt.to_dict())
+                                except Exception:
+                                    logger.debug("AD-554: Convergence event emission failed", exc_info=True)
+
+                            # 3. Bridge Alert
+                            await self._emit_convergence_bridge_alert(conv_result)
+
+                            # AD-555: Record convergence for quality metrics
+                            _quality_engine = getattr(self._runtime, '_notebook_quality_engine', None)
+                            if _quality_engine:
+                                _quality_engine.record_event(
+                                    "convergence",
+                                    agents=conv_result.get("convergence_agents", []),
+                                )
+
+                            logger.info(
+                                "AD-554: Real-time convergence detected! %d agents from %d depts on %s",
+                                len(conv_result["convergence_agents"]),
+                                len(conv_result["convergence_departments"]),
+                                conv_result.get("convergence_topic", topic_slug),
+                            )
+
+                        if conv_result.get("divergence_detected"):
+                            # 1. Emit typed event
+                            if hasattr(self._runtime, '_emit_event'):
+                                from probos.events import DivergenceDetectedEvent
+                                evt = DivergenceDetectedEvent(
+                                    agents=conv_result["divergence_agents"],
+                                    departments=conv_result["divergence_departments"],
+                                    topic=conv_result.get("divergence_topic", topic_slug),
+                                    similarity=conv_result.get("divergence_similarity", 0.0),
+                                )
+                                try:
+                                    await self._runtime._emit_event(evt.to_dict())
+                                except Exception:
+                                    logger.debug("AD-554: Divergence event emission failed", exc_info=True)
+
+                            # 2. Bridge Alert
+                            await self._emit_divergence_bridge_alert(conv_result)
+
+                            # AD-555: Record divergence for quality metrics
+                            _quality_engine = getattr(self._runtime, '_notebook_quality_engine', None)
+                            if _quality_engine:
+                                _quality_engine.record_event("divergence")
+
+                            logger.info(
+                                "AD-554: Divergence detected! %s on %s (similarity=%.2f)",
+                                ", ".join(conv_result["divergence_agents"]),
+                                conv_result.get("divergence_topic", topic_slug),
+                                conv_result.get("divergence_similarity", 0.0),
+                            )
+
+                    except Exception:
+                        logger.debug("AD-554: Cross-agent scan failed for %s/%s", callsign, topic_slug, exc_info=True)
             except Exception as e:
                 logger.warning("Notebook write failed for %s: %s", topic_slug, e)
 
@@ -1570,6 +1679,93 @@ class ProactiveCognitiveLoop:
         text = re.sub(read_nb_pattern, '', text).strip()
 
         return text, actions_executed
+
+    async def _write_convergence_report(
+        self, conv_result: dict, anchor_callsign: str, topic_slug: str,
+    ) -> str | None:
+        """AD-554: Auto-generate a convergence report in Ship's Records."""
+        try:
+            from uuid import uuid4 as _uuid4
+            ts_slug = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            uid = str(_uuid4())[:8]
+            report_path = f"reports/convergence/convergence-{ts_slug}-{uid}.md"
+
+            agents = conv_result.get("convergence_agents", [])
+            departments = conv_result.get("convergence_departments", [])
+            coherence = conv_result.get("convergence_coherence", 0.0)
+            topic = conv_result.get("convergence_topic", topic_slug)
+
+            # Build perspectives from match data
+            perspectives = ""
+            matches = conv_result.get("convergence_matches", [])
+            for m in matches:
+                cs = m.get("callsign", "unknown")
+                dept = m.get("department", "unknown")
+                path = m.get("path", "")
+                # Read content for the perspective
+                snippet = ""
+                if path and hasattr(self._runtime, '_records_store'):
+                    try:
+                        entry = await self._runtime._records_store.read_entry(
+                            path, reader_id="system", reader_department="",
+                        )
+                        if entry:
+                            snippet = entry.get("content", "")[:300].strip()
+                    except Exception:
+                        pass
+                perspectives += f"\n### {cs} ({dept})\n\n{snippet}\n"
+
+            report_content = (
+                f"## Real-Time Convergence Report\n\n"
+                f"**Detected:** {datetime.utcnow().isoformat()}Z\n\n"
+                f"**Source:** Real-time notebook monitor\n\n"
+                f"**Topic:** {topic}\n\n"
+                f"**Agents:** {', '.join(sorted(agents))}\n\n"
+                f"**Departments:** {', '.join(sorted(departments))}\n\n"
+                f"**Coherence:** {coherence:.3f}\n\n"
+                f"## Contributing Perspectives\n{perspectives}\n"
+            )
+
+            await self._runtime._records_store.write_entry(
+                author="system",
+                path=report_path,
+                content=report_content,
+                message=f"AD-554: Real-time convergence report ({topic})",
+                classification="ship",
+                tags=["convergence", "ad-554", "realtime"],
+            )
+            return report_path
+        except Exception:
+            logger.debug("AD-554: Failed to write convergence report", exc_info=True)
+            return None
+
+    async def _emit_convergence_bridge_alert(self, conv_result: dict) -> None:
+        """AD-554: Create and deliver a convergence BridgeAlert."""
+        ba_svc = getattr(self._runtime, '_bridge_alerts', None)
+        deliver_fn = getattr(self._runtime, '_deliver_bridge_alert', None)
+        if not ba_svc or not deliver_fn:
+            return
+
+        alerts = ba_svc.check_realtime_convergence(conv_result)
+        for alert in alerts:
+            try:
+                await deliver_fn(alert)
+            except Exception:
+                logger.debug("AD-554: Bridge alert delivery failed", exc_info=True)
+
+    async def _emit_divergence_bridge_alert(self, conv_result: dict) -> None:
+        """AD-554: Create and deliver a divergence BridgeAlert."""
+        ba_svc = getattr(self._runtime, '_bridge_alerts', None)
+        deliver_fn = getattr(self._runtime, '_deliver_bridge_alert', None)
+        if not ba_svc or not deliver_fn:
+            return
+
+        alerts = ba_svc.check_divergence(conv_result)
+        for alert in alerts:
+            try:
+                await deliver_fn(alert)
+            except Exception:
+                logger.debug("AD-554: Divergence bridge alert delivery failed", exc_info=True)
 
     async def _resolve_thread_id(self, thread_id: str) -> str | None:
         """BF-061: Resolve a full or partial thread ID to an actual thread ID."""

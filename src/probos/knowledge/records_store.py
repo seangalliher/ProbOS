@@ -402,6 +402,168 @@ class RecordsStore:
 
         return no_match
 
+    async def check_cross_agent_convergence(
+        self,
+        anchor_callsign: str,
+        anchor_department: str,
+        anchor_topic_slug: str,
+        anchor_content: str,
+        *,
+        convergence_threshold: float = 0.5,
+        divergence_threshold: float = 0.3,
+        staleness_hours: float = 72.0,
+        max_scan_per_agent: int = 5,
+        min_convergence_agents: int = 2,
+        min_convergence_departments: int = 2,
+    ) -> dict[str, Any]:
+        """AD-554: Incremental cross-agent convergence/divergence scan.
+
+        Anchored on a just-written entry, scans recent notebooks from OTHER
+        agents in OTHER departments for convergent or divergent conclusions.
+        """
+        result: dict[str, Any] = {
+            "convergence_detected": False,
+            "convergence_agents": [],
+            "convergence_departments": [],
+            "convergence_coherence": 0.0,
+            "convergence_topic": "",
+            "convergence_matches": [],
+            "divergence_detected": False,
+            "divergence_agents": [],
+            "divergence_departments": [],
+            "divergence_topic": "",
+            "divergence_similarity": 1.0,
+            "divergence_matches": [],
+        }
+
+        notebooks_dir = self._repo_path / "notebooks"
+        if not notebooks_dir.is_dir():
+            return result
+
+        now = datetime.now(timezone.utc)
+        staleness_cutoff = now.timestamp() - (staleness_hours * 3600)
+
+        convergence_matches: list[dict[str, Any]] = []
+        divergence_matches: list[dict[str, Any]] = []
+
+        # Scan other agents' notebook directories
+        try:
+            for agent_dir in sorted(notebooks_dir.iterdir()):
+                if not agent_dir.is_dir():
+                    continue
+                other_callsign = agent_dir.name
+                if other_callsign == anchor_callsign:
+                    continue  # Skip self
+
+                # Collect recent entries for this agent
+                entries: list[tuple[float, Path, str, str]] = []  # (ts, path, topic, dept)
+                for md_file in agent_dir.glob("*.md"):
+                    try:
+                        raw = md_file.read_text(encoding="utf-8")
+                        fm, content = self._parse_document(raw)
+                        updated_str = fm.get("updated", "")
+                        entry_ts = 0.0
+                        if updated_str:
+                            try:
+                                entry_ts = datetime.fromisoformat(updated_str).timestamp()
+                            except (ValueError, TypeError):
+                                pass
+                        if entry_ts <= staleness_cutoff:
+                            continue
+                        dept = fm.get("department", "")
+                        topic = fm.get("topic", md_file.stem)
+                        entries.append((entry_ts, md_file, topic, dept))
+                    except Exception:
+                        continue
+
+                # Sort by recency, cap scan
+                entries.sort(key=lambda x: x[0], reverse=True)
+                for _, md_file, topic, dept in entries[:max_scan_per_agent]:
+                    try:
+                        raw = md_file.read_text(encoding="utf-8")
+                        _, content = self._parse_document(raw)
+                        similarity = _jaccard_similarity(anchor_content, content)
+                        rel_path = f"notebooks/{other_callsign}/{md_file.name}"
+                        match_info = {
+                            "callsign": other_callsign,
+                            "department": dept,
+                            "topic_slug": topic,
+                            "similarity": similarity,
+                            "path": rel_path,
+                            "content": content,
+                        }
+
+                        # Convergence: high similarity from different department
+                        if similarity >= convergence_threshold and dept and dept != anchor_department:
+                            convergence_matches.append(match_info)
+
+                        # Divergence: same topic, low similarity, different department
+                        if (
+                            topic == anchor_topic_slug
+                            and similarity < divergence_threshold
+                            and dept
+                            and dept != anchor_department
+                        ):
+                            divergence_matches.append(match_info)
+                    except Exception:
+                        continue
+        except Exception:
+            logger.debug("AD-554: Cross-agent scan error", exc_info=True)
+            return result
+
+        # Evaluate convergence
+        if convergence_matches:
+            conv_agents = {anchor_callsign}
+            conv_depts = {anchor_department}
+            for m in convergence_matches:
+                conv_agents.add(m["callsign"])
+                conv_depts.add(m["department"])
+
+            if len(conv_agents) >= min_convergence_agents and len(conv_depts) >= min_convergence_departments:
+                # Compute coherence (average pairwise similarity among converging entries)
+                similarities = [m["similarity"] for m in convergence_matches]
+                coherence = sum(similarities) / len(similarities) if similarities else 0.0
+
+                # Infer topic from common words
+                from collections import Counter as _Counter
+                all_words: list[str] = []
+                all_words.extend(anchor_content.lower().split()[:50])
+                for m in convergence_matches:
+                    all_words.extend(m.get("content", "").lower().split()[:50])
+                common = _Counter(all_words).most_common(3)
+                topic = "-".join(w for w, _ in common) if common else anchor_topic_slug
+
+                result["convergence_detected"] = True
+                result["convergence_agents"] = sorted(conv_agents)
+                result["convergence_departments"] = sorted(conv_depts)
+                result["convergence_coherence"] = coherence
+                result["convergence_topic"] = topic
+                result["convergence_matches"] = [
+                    {k: v for k, v in m.items() if k != "content"} for m in convergence_matches
+                ]
+
+        # Evaluate divergence
+        if divergence_matches:
+            div_agents = {anchor_callsign}
+            div_depts = {anchor_department}
+            lowest_sim = 1.0
+            for m in divergence_matches:
+                div_agents.add(m["callsign"])
+                div_depts.add(m["department"])
+                if m["similarity"] < lowest_sim:
+                    lowest_sim = m["similarity"]
+
+            result["divergence_detected"] = True
+            result["divergence_agents"] = sorted(div_agents)
+            result["divergence_departments"] = sorted(div_depts)
+            result["divergence_topic"] = anchor_topic_slug
+            result["divergence_similarity"] = lowest_sim
+            result["divergence_matches"] = [
+                {k: v for k, v in m.items() if k != "content"} for m in divergence_matches
+            ]
+
+        return result
+
     async def read_entry(
         self,
         path: str,

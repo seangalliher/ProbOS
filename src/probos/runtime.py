@@ -1085,6 +1085,7 @@ class ProbOSRuntime:
             event_log=self.event_log,
             workflow_cache=self.workflow_cache,
             qa_reports=self._qa_reports,
+            identity_registry=self.identity_registry,  # BF-103
             submit_intent_with_consensus_fn=self.submit_intent_with_consensus,
             register_designed_agent_fn=self._register_designed_agent,
             unregister_designed_agent_fn=self._unregister_designed_agent,
@@ -1149,6 +1150,8 @@ class ProbOSRuntime:
         self.dream_scheduler = dream_result.dream_scheduler
         self._emergent_detector = dream_result.emergent_detector
         self._emergence_metrics_engine = dream_result.emergence_metrics_engine
+        self._notebook_quality_engine = dream_result.notebook_quality_engine  # AD-555
+        self._retrieval_practice_engine = dream_result.retrieval_practice_engine  # AD-541c
         self.task_scheduler = dream_result.task_scheduler
         self._flush_task = dream_result.flush_task
         self._cold_start = cold_start
@@ -2838,6 +2841,7 @@ class ProbOSRuntime:
             # Episodic memory
             if self.episodic_memory:
                 import uuid as _uuid
+                from probos.cognitive.episodic import EpisodicMemory, resolve_sovereign_id
                 episode = Episode(
                     id=_uuid.uuid4().hex,
                     timestamp=time.time(),
@@ -2857,14 +2861,13 @@ class ProbOSRuntime:
                     ],
                     reflection=f"QA {report.verdict}: {report.passed}/{report.total_tests} passed for {record.agent_type}",
                     agent_ids=[
-                        (a if isinstance(a, str) else a.id)
+                        (a if isinstance(a, str) else resolve_sovereign_id(a))
                         for a in pool.healthy_agents
                     ],
                     duration_ms=report.duration_ms,
                     embedding=[],
                     source="direct",
                 )
-                from probos.cognitive.episodic import EpisodicMemory
                 if EpisodicMemory.should_store(episode):
                     await self.episodic_memory.store(episode)
 

@@ -178,6 +178,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime._procedure_store.stop()
         runtime._procedure_store = None
 
+    # Stop Retrieval Practice Engine (AD-541c)
+    if hasattr(runtime, '_retrieval_practice_engine') and runtime._retrieval_practice_engine:
+        await runtime._retrieval_practice_engine.stop()
+        runtime._retrieval_practice_engine = None
+
     # Stop Skill Framework (AD-428)
     if runtime.skill_service:
         await runtime.skill_service.stop()
@@ -283,6 +288,12 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # Stop episodic memory
     if runtime.episodic_memory:
         await runtime.episodic_memory.stop()
+
+    # AD-541f: Stop eviction audit log
+    _eviction_audit = getattr(runtime, "_eviction_audit", None)
+    if _eviction_audit is not None:
+        await _eviction_audit.stop()
+        runtime._eviction_audit = None
 
     # Stop semantic knowledge layer (AD-243)
     if runtime._semantic_layer:

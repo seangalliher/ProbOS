@@ -58,6 +58,7 @@ class DreamAdapter:
         behavioral_monitor: BehavioralMonitor | None = None,
         deliver_bridge_alert_fn: Callable | None = None,
         llm_client: Any = None,  # BF-069: LLM client for health monitoring
+        identity_registry: Any = None,  # BF-103: for sovereign ID resolution
     ) -> None:
         self._dream_scheduler = dream_scheduler
         self._emergent_detector = emergent_detector
@@ -76,6 +77,7 @@ class DreamAdapter:
         self._behavioral_monitor = behavioral_monitor
         self._deliver_bridge_alert_fn = deliver_bridge_alert_fn
         self._llm_client = llm_client
+        self._identity_registry = identity_registry
 
         # Runtime state references (set by runtime after creation)
         self._cold_start: bool = False
@@ -314,7 +316,9 @@ class DreamAdapter:
                         for r in node_results:
                             aid = r.get("agent_id") if isinstance(r, dict) else getattr(r, "agent_id", None)
                             if aid:
-                                agent_ids.append(aid)
+                                # BF-103: Resolve slot ID to sovereign ID
+                                from probos.cognitive.episodic import resolve_sovereign_id_from_slot
+                                agent_ids.append(resolve_sovereign_id_from_slot(aid, self._identity_registry))
                 outcomes.append(outcome)
 
         reflection = execution_result.get("reflection")

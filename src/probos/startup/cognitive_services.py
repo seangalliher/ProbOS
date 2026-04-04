@@ -47,6 +47,7 @@ async def init_cognitive_services(
     event_log: "EventLog",
     workflow_cache: "WorkflowCache",
     qa_reports: dict[str, Any],
+    identity_registry: Any = None,  # BF-103: for episode ID migration
     # Function references from runtime
     submit_intent_with_consensus_fn: Callable[..., Any],
     register_designed_agent_fn: Callable[..., Any],
@@ -138,6 +139,24 @@ async def init_cognitive_services(
     # Start episodic memory if provided
     if episodic_memory:
         await episodic_memory.start()
+
+    # AD-541f: Start eviction audit log
+    eviction_audit = getattr(episodic_memory, "_eviction_audit", None) if episodic_memory else None
+    if eviction_audit:
+        try:
+            await eviction_audit.start(db_path=str(data_dir / "eviction_audit.db"))
+        except Exception:
+            logger.warning("AD-541f: Eviction audit log start failed (non-fatal)", exc_info=True)
+
+    # BF-103: Migrate episode agent_ids from slot IDs to sovereign IDs
+    if episodic_memory and identity_registry:
+        try:
+            from probos.cognitive.episodic import migrate_episode_agent_ids
+            migrated = await migrate_episode_agent_ids(episodic_memory, identity_registry)
+            if migrated > 0:
+                logger.info("BF-103: Migrated %d episodes to sovereign IDs", migrated)
+        except Exception:
+            logger.warning("BF-103: Episode ID migration failed (non-fatal)", exc_info=True)
 
     # Create FeedbackEngine (AD-219)
     from probos.cognitive.feedback import FeedbackEngine

@@ -99,7 +99,9 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
     memory_count = 0
     if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
         if hasattr(runtime.episodic_memory, 'count_for_agent'):
-            memory_count = await runtime.episodic_memory.count_for_agent(agent.id)
+            memory_count = await runtime.episodic_memory.count_for_agent(
+                getattr(agent, 'sovereign_id', '') or agent.id
+            )
 
     # BF-017: Only crew agents get personality and proactive controls
     is_crew = is_crew_agent(agent, runtime.ontology)
