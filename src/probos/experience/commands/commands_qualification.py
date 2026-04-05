@@ -10,6 +10,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from probos.cognitive.qualification import CREW_AGENT_ID
+
 if TYPE_CHECKING:
     from probos.runtime import ProbOSRuntime
 
@@ -126,21 +128,15 @@ async def _run(runtime: Any, console: Console, harness: Any, store: Any, target:
         console.print("[dim]Running qualification battery...[/dim]")
         reports = await scheduler.run_now()
 
-        # Also run collective tests
-        try:
-            collective = await harness.run_collective(3, runtime)
-        except Exception:
-            collective = []
-
-        # Gather latest results from store for display
+        # Gather latest results from store for display (includes collective)
         crew_ids = scheduler._get_crew_agent_ids()
+        all_ids = crew_ids + [CREW_AGENT_ID]
         results = []
-        for cid in crew_ids:
+        for cid in all_ids:
             for test_name in harness.registered_tests:
                 r = await store.get_latest(cid, test_name)
                 if r:
                     results.append(r)
-        results.extend(collective)
 
     if not results:
         console.print("[dim]No results.[/dim]")
