@@ -686,7 +686,7 @@ class QualificationConfig(BaseModel):
     drift_min_samples: int = 3          # Minimum data points before drift analysis
     drift_history_window: int = 20      # Max historical results for stats
     drift_cooldown_seconds: float = 3600.0  # Min time between alerts per agent+test
-    drift_check_tiers: list[int] = [1, 2]  # AD-566d: Which tiers the drift scheduler runs
+    drift_check_tiers: list[int] = [1, 2, 3]  # AD-566d/e: Which tiers the drift scheduler runs
 
 
 class SystemConfig(BaseModel):

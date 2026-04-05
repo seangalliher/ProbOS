@@ -66,9 +66,11 @@ def _get_crew_agent_ids(runtime: Any) -> list[str]:
 
         ids: list[str] = []
         pools = getattr(runtime, "pools", {})
+        registry = getattr(runtime, "registry", None)
         for pool in pools.values():
-            for agent in getattr(pool, "healthy_agents", []):
-                if is_crew_agent(agent):
+            for aid in getattr(pool, "healthy_agents", []):
+                agent = registry.get(aid) if registry else None
+                if agent and is_crew_agent(agent):
                     ids.append(agent.id)
         return ids
     except Exception:
@@ -290,8 +292,12 @@ class CollectiveIntelligenceProbe:
 
             traits_list: list[PersonalityTraits] = []
             pools = getattr(runtime, "pools", {})
+            registry = getattr(runtime, "registry", None)
             for pool in pools.values():
-                for agent in getattr(pool, "healthy_agents", []):
+                for aid in getattr(pool, "healthy_agents", []):
+                    agent = registry.get(aid) if registry else None
+                    if not agent:
+                        continue
                     try:
                         from probos.crew_utils import is_crew_agent
                         if not is_crew_agent(agent):

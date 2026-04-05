@@ -100,8 +100,16 @@ class MockAgent:
 
 class MockPool:
     def __init__(self, agents: list) -> None:
-        self.healthy_agents = agents
+        self.healthy_agents = [a.id for a in agents]
         self.target_size = len(agents)
+
+
+class MockRegistry:
+    """Minimal registry that resolves agent IDs to agent objects."""
+    def __init__(self, agents: list) -> None:
+        self._agents = {a.id: a for a in agents}
+    def get(self, agent_id: str) -> Any:
+        return self._agents.get(agent_id)
 
 
 class MockHarness:
@@ -341,7 +349,7 @@ class TestDriftScheduler:
 
         agent = MockAgent("agent-1")
         pool = MockPool([agent])
-        runtime = MagicMock(pools={"bridge": pool})
+        runtime = MagicMock(pools={"bridge": pool}, registry=MockRegistry([agent]))
 
         scheduler = DriftScheduler(
             harness=harness,
@@ -372,7 +380,7 @@ class TestDriftScheduler:
         emit_fn = MagicMock()
         agent = MockAgent("agent-1")
         pool = MockPool([agent])
-        runtime = MagicMock(pools={"bridge": pool})
+        runtime = MagicMock(pools={"bridge": pool}, registry=MockRegistry([agent]))
 
         scheduler = DriftScheduler(
             harness=harness,
@@ -403,7 +411,7 @@ class TestDriftScheduler:
         emit_fn = MagicMock()
         agent = MockAgent("agent-1")
         pool = MockPool([agent])
-        runtime = MagicMock(pools={"bridge": pool})
+        runtime = MagicMock(pools={"bridge": pool}, registry=MockRegistry([agent]))
 
         scheduler = DriftScheduler(
             harness=harness,
@@ -435,7 +443,7 @@ class TestDriftScheduler:
         emit_fn = MagicMock()
         agent = MockAgent("agent-1")
         pool = MockPool([agent])
-        runtime = MagicMock(pools={"bridge": pool})
+        runtime = MagicMock(pools={"bridge": pool}, registry=MockRegistry([agent]))
 
         cfg = QualificationConfig(drift_cooldown_seconds=3600)
         scheduler = DriftScheduler(
@@ -468,7 +476,7 @@ class TestDriftScheduler:
 
         agent = MockAgent("agent-1")
         pool = MockPool([agent])
-        runtime = MagicMock(pools={"bridge": pool})
+        runtime = MagicMock(pools={"bridge": pool}, registry=MockRegistry([agent]))
 
         scheduler = DriftScheduler(
             harness=harness,
@@ -500,7 +508,7 @@ class TestDriftScheduler:
         emit_fn = MagicMock()
         agent = MockAgent("agent-1")
         pool = MockPool([agent])
-        runtime = MagicMock(pools={"bridge": pool})
+        runtime = MagicMock(pools={"bridge": pool}, registry=MockRegistry([agent]))
 
         scheduler = DriftScheduler(
             harness=harness,
@@ -842,7 +850,7 @@ class TestE2EPipeline:
 
         agent = MockAgent("agent-1")
         pool = MockPool([agent])
-        runtime = MagicMock(pools={"bridge": pool})
+        runtime = MagicMock(pools={"bridge": pool}, registry=MockRegistry([agent]))
 
         scheduler = DriftScheduler(
             harness=harness,

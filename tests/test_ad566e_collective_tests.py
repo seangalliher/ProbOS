@@ -113,10 +113,20 @@ class MockCrewAgent:
 
 
 class MockPool:
-    """Fake pool with healthy agents."""
+    """Fake pool with healthy agents (returns IDs, not objects)."""
 
     def __init__(self, agents: list[MockCrewAgent]):
-        self.healthy_agents = agents
+        self.healthy_agents = [a.id for a in agents]
+
+
+class MockRegistry:
+    """Minimal registry that resolves agent IDs to agent objects."""
+
+    def __init__(self, agents: list[MockCrewAgent]):
+        self._agents = {a.id: a for a in agents}
+
+    def get(self, agent_id: str) -> MockCrewAgent | None:
+        return self._agents.get(agent_id)
 
 
 def _build_runtime(
@@ -136,12 +146,14 @@ def _build_runtime(
     # Ward room
     runtime.ward_room = ward_room or MockWardRoom()
 
-    # Pools with crew agents
+    # Pools with crew agents + registry for ID→object resolution
     if agents:
         pool = MockPool(agents)
         runtime.pools = {"default": pool}
+        runtime.registry = MockRegistry(agents)
     else:
         runtime.pools = {}
+        runtime.registry = MockRegistry([])
 
     # Harness/store
     if harness is not None:

@@ -488,7 +488,7 @@ class TestDriftSchedulerTierGeneralization:
         """QualificationConfig has drift_check_tiers."""
         cfg = QualificationConfig()
         assert hasattr(cfg, "drift_check_tiers")
-        assert cfg.drift_check_tiers == [1, 2]
+        assert cfg.drift_check_tiers == [1, 2, 3]
 
     def test_scheduler_uses_tier_set(self):
         """DriftScheduler._drift_tiers is a set from config."""
