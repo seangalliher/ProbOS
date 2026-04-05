@@ -1113,6 +1113,7 @@ class ProbOSRuntime:
         self._lifecycle_state = cog.lifecycle_state
         self._stasis_duration = cog.stasis_duration
         self._previous_session = cog.previous_session
+        self._activation_tracker = cog.activation_tracker  # AD-567d
 
         # AD-533: Procedure Store (after RecordsStore, before Dreaming)
         try:
@@ -1223,6 +1224,7 @@ class ProbOSRuntime:
             llm_client=self.llm_client,  # AD-532: procedure extraction
             procedure_store=self._procedure_store,  # AD-533: persistent procedure storage
             runtime=self,  # AD-532e: for reactive event subscription
+            activation_tracker=self._activation_tracker,  # AD-567d
         )
         self.dream_scheduler = dream_result.dream_scheduler
         self._emergent_detector = dream_result.emergent_detector
@@ -1281,6 +1283,11 @@ class ProbOSRuntime:
         self.persistent_task_store = comm.persistent_task_store
         self.work_item_store = comm.work_item_store
         self.ward_room = comm.ward_room
+
+        # AD-567c: Late-bind WardRoom into SIF for anchor integrity cross-reference
+        if self.sif and self.ward_room:
+            self.sif.set_ward_room(self.ward_room)
+
         self.assignment_service = comm.assignment_service
         self.bridge_alerts = comm.bridge_alerts
         self.cognitive_journal = comm.cognitive_journal

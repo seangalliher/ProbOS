@@ -1,7 +1,8 @@
-# AD-567c: Anchor Quality & Integrity
+# AD-567c: Anchor Quality & Integrity — COMPLETE
 
+**Status:** COMPLETE (2026-04-05)
 **Absorbs:** AD-567e (Anchor Drift Detection)
-**Depends:** AD-567a (Episode Anchor Metadata — COMPLETE), AD-567b (Anchor-Aware Recall — in build)
+**Depends:** AD-567a (Episode Anchor Metadata — COMPLETE), AD-567b (Anchor-Aware Recall — COMPLETE)
 **Prior art:** Johnson & Raye (1981) reality monitoring, Johnson SMF (1993), CAST (Ma 2026), RPMS (Yuan 2026), Video-EM (Wang 2025)
 **Crew observation:** Echo/Meridian thread 92719789 (2026-04-03) — "what looks like cognitive drift might actually be healthy specialization"
 

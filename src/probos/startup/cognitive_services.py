@@ -140,6 +140,24 @@ async def init_cognitive_services(
     if episodic_memory:
         await episodic_memory.start()
 
+    # AD-567d: Create and wire activation tracker
+    activation_tracker = None
+    if episodic_memory and config.dreaming.activation_enabled:
+        try:
+            from probos.cognitive.activation_tracker import ActivationTracker
+
+            activation_tracker = ActivationTracker(
+                decay_d=config.dreaming.activation_decay_d,
+                access_max_age_days=config.dreaming.activation_access_max_age_days,
+                db_path=str(data_dir / "activation_tracker.db"),
+            )
+            await activation_tracker.start()
+            episodic_memory.set_activation_tracker(activation_tracker)
+            logger.info("AD-567d: Activation tracker started")
+        except Exception:
+            logger.warning("AD-567d: Activation tracker start failed (non-fatal)", exc_info=True)
+            activation_tracker = None
+
     # AD-541f: Start eviction audit log
     eviction_audit = getattr(episodic_memory, "_eviction_audit", None) if episodic_memory else None
     if eviction_audit:
@@ -292,4 +310,5 @@ async def init_cognitive_services(
         stasis_duration=stasis_duration,
         previous_session=previous_session,
         semantic_layer=None,  # created in structural_services phase
+        activation_tracker=activation_tracker,  # AD-567d
     )

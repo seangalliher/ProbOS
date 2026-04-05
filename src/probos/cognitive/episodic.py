@@ -227,6 +227,11 @@ class EpisodicMemory:
         self._client: Any = None
         self._collection: Any = None
         self._fts_db: Any = None  # AD-567b: FTS5 sidecar
+        self._activation_tracker: Any = None  # AD-567d: ACT-R activation tracker
+
+    def set_activation_tracker(self, tracker: Any) -> None:
+        """AD-567d: Wire the activation tracker after construction."""
+        self._activation_tracker = tracker
 
     async def start(self) -> None:
         import chromadb
@@ -522,6 +527,103 @@ class EpisodicMemory:
                             await self._fts_db.commit()
                         except Exception:
                             logger.debug("AD-567b: FTS5 eviction cleanup failed", exc_info=True)
+                    # AD-567d: Clean up activation records for evicted episodes
+                    if self._activation_tracker:
+                        try:
+                            await self._activation_tracker.delete_episode_accesses(ids_to_delete)
+                        except Exception:
+                            logger.debug("AD-567d: Activation cleanup on eviction failed", exc_info=True)
+
+    async def evict_by_ids(self, episode_ids: list[str], reason: str = "activation_pruning") -> int:
+        """AD-567d: Evict specific episodes by ID. Handles audit, FTS5, ChromaDB, and activation cleanup.
+
+        Used by dream Step 12 for activation-based pruning.
+        Returns count of episodes actually evicted.
+        """
+        if not self._collection or not episode_ids:
+            return 0
+
+        # Gather metadata for audit trail
+        evicted = 0
+        try:
+            result = self._collection.get(ids=episode_ids, include=["metadatas"])
+            if not result or not result["ids"]:
+                return 0
+
+            valid_ids = result["ids"]
+
+            # AD-541f: Record evictions before deletion
+            if valid_ids and self._eviction_audit:
+                records = []
+                for i, eid in enumerate(valid_ids):
+                    meta = result["metadatas"][i] if result["metadatas"] and i < len(result["metadatas"]) else {}
+                    agent_ids_raw = meta.get("agent_ids_json", "[]")
+                    try:
+                        agent_ids = json.loads(agent_ids_raw)
+                        agent_id = agent_ids[0] if agent_ids else "unknown"
+                    except (json.JSONDecodeError, TypeError):
+                        agent_id = "unknown"
+                    records.append({
+                        "episode_id": eid,
+                        "agent_id": agent_id,
+                        "content_hash": meta.get("content_hash", ""),
+                        "episode_timestamp": meta.get("timestamp", 0.0),
+                    })
+                try:
+                    await self._eviction_audit.record_batch_eviction(
+                        records,
+                        reason=reason,
+                        process="evict_by_ids",
+                        details=f"batch of {len(valid_ids)}, reason={reason}",
+                    )
+                except Exception as exc:
+                    logger.warning("Eviction audit failed: %s", exc)
+
+            # Delete from ChromaDB
+            self._collection.delete(ids=valid_ids)
+            evicted = len(valid_ids)
+
+            # AD-567b: FTS5 cleanup
+            if self._fts_db is not None:
+                try:
+                    for eid in valid_ids:
+                        await self._fts_db.execute(
+                            "DELETE FROM episode_fts WHERE episode_id = ?", (eid,)
+                        )
+                    await self._fts_db.commit()
+                except Exception:
+                    logger.debug("AD-567b: FTS5 eviction cleanup failed", exc_info=True)
+
+            # AD-567d: Activation cleanup
+            if self._activation_tracker:
+                try:
+                    await self._activation_tracker.delete_episode_accesses(valid_ids)
+                except Exception:
+                    logger.debug("AD-567d: Activation cleanup failed", exc_info=True)
+
+        except Exception as e:
+            logger.debug("evict_by_ids failed: %s", e)
+
+        return evicted
+
+    async def get_episode_ids_older_than(self, cutoff_timestamp: float) -> list[str]:
+        """AD-567d: Return IDs of episodes with timestamp < cutoff_timestamp.
+
+        Used by dream Step 12 to identify candidates for activation-based pruning.
+        Only episodes older than the cutoff are eligible for pruning — never prune
+        episodes less than 24 hours old.
+        """
+        if not self._collection:
+            return []
+        try:
+            result = self._collection.get(
+                where={"timestamp": {"$lt": cutoff_timestamp}},
+                include=[],  # Only need IDs
+            )
+            return result["ids"] if result and result["ids"] else []
+        except Exception:
+            logger.debug("AD-567d: get_episode_ids_older_than failed", exc_info=True)
+            return []
 
     def _is_rate_limited(self, episode: Episode) -> bool:
         """BF-039/BF-048: Check if agent has exceeded episode rate limit in the last hour."""
@@ -663,6 +765,15 @@ class EpisodicMemory:
             if len(episodes) >= k:
                 break
 
+        # AD-567d: Record deliberate recall access for activation tracking
+        if episodes and self._activation_tracker:
+            try:
+                await self._activation_tracker.record_batch_access(
+                    [ep.id for ep in episodes], access_type="recall"
+                )
+            except Exception:
+                pass  # Non-critical — don't block recall
+
         return episodes
 
     async def recent_for_agent(self, agent_id: str, k: int = 5) -> list[Episode]:
@@ -670,6 +781,7 @@ class EpisodicMemory:
 
         Timestamp-based fallback when semantic recall returns nothing.
         No relevance threshold — just the most recent experiences.
+        Does NOT record activation access (fallback scan, not deliberate recall).
         """
         if not self._collection:
             return []
@@ -995,6 +1107,15 @@ class EpisodicMemory:
             if len(scored) >= k:
                 break
 
+        # AD-567d: Record deliberate recall access for activation tracking
+        if scored and self._activation_tracker:
+            try:
+                await self._activation_tracker.record_batch_access(
+                    [ep.id for ep, _ in scored], access_type="recall"
+                )
+            except Exception:
+                pass
+
         return scored
 
     @staticmethod
@@ -1007,26 +1128,21 @@ class EpisodicMemory:
         recency_weight: float = 0.0,
         weights: dict[str, float] | None = None,
     ) -> RecallScore:
-        """Compute composite salience score for a recalled episode (AD-567b).
+        """Compute composite salience score for a recalled episode (AD-567b/c).
 
         Weights default to the AD-567b formula:
           0.35*semantic + 0.10*keyword + 0.15*trust + 0.10*hebbian + 0.20*recency + 0.10*anchor
+        AD-567c: anchor_confidence uses Johnson-weighted dimension scoring.
         """
+        from probos.cognitive.anchor_quality import compute_anchor_confidence
+
         w = weights or {
             "semantic": 0.35, "keyword": 0.10, "trust": 0.15,
             "hebbian": 0.10, "recency": 0.20, "anchor": 0.10,
         }
 
-        # Anchor completeness: count non-empty AnchorFrame fields / 10
-        anchor_completeness = 0.0
-        if episode.anchors is not None:
-            af = episode.anchors
-            filled = sum(1 for v in [
-                af.duty_cycle_id, af.watch_section, af.channel, af.channel_id,
-                af.department, af.participants, af.trigger_agent, af.trigger_type,
-                af.thread_id, af.event_log_window,
-            ] if v)  # truthy check: non-empty str, non-empty list, non-zero float
-            anchor_completeness = filled / 10.0
+        # AD-567c: Johnson-weighted anchor confidence (replaces simple field count)
+        anchor_confidence = compute_anchor_confidence(episode.anchors)
 
         keyword_norm = min(keyword_hits / 3.0, 1.0) if keyword_hits > 0 else 0.0
 
@@ -1036,7 +1152,7 @@ class EpisodicMemory:
             + w.get("trust", 0.15) * trust_weight
             + w.get("hebbian", 0.10) * hebbian_weight
             + w.get("recency", 0.20) * recency_weight
-            + w.get("anchor", 0.10) * anchor_completeness
+            + w.get("anchor", 0.10) * anchor_confidence
         )
 
         return RecallScore(
@@ -1046,7 +1162,7 @@ class EpisodicMemory:
             trust_weight=trust_weight,
             hebbian_weight=hebbian_weight,
             recency_weight=recency_weight,
-            anchor_completeness=anchor_completeness,
+            anchor_confidence=anchor_confidence,
             composite_score=composite,
         )
 
@@ -1061,11 +1177,14 @@ class EpisodicMemory:
         k: int = 5,
         context_budget: int = 4000,
         weights: dict[str, float] | None = None,
+        anchor_confidence_gate: float = 0.0,
     ) -> list[RecallScore]:
-        """Salience-weighted recall combining semantic + keyword + trust + Hebbian + recency + anchor (AD-567b).
+        """Salience-weighted recall combining semantic + keyword + trust + Hebbian + recency + anchor (AD-567b/c).
 
         Over-fetches from ChromaDB, merges FTS5 keyword hits, scores each
         candidate with ``score_recall()``, and enforces context budget.
+        AD-567c: applies RPMS confidence gating — episodes below anchor_confidence_gate
+        are filtered from results (still accessible via recall_for_agent).
         """
         # 1. Semantic retrieval — over-fetch for re-ranking headroom
         scored_eps = await self.recall_for_agent_scored(agent_id, query, k=k * 3)
@@ -1135,6 +1254,10 @@ class EpisodicMemory:
             )
             results.append(rs)
 
+        # 3b. AD-567c: RPMS confidence gating — filter low-confidence episodes
+        if anchor_confidence_gate > 0.0:
+            results = [rs for rs in results if rs.anchor_confidence >= anchor_confidence_gate]
+
         # 4. Sort by composite score descending
         results.sort(key=lambda r: r.composite_score, reverse=True)
 
@@ -1147,5 +1270,14 @@ class EpisodicMemory:
                 break  # Over budget, stop (always include at least 1)
             budgeted.append(rs)
             total_chars += char_len
+
+        # AD-567d: Record deliberate recall access for activation tracking
+        if budgeted and self._activation_tracker:
+            try:
+                await self._activation_tracker.record_batch_access(
+                    [rs.episode.id for rs in budgeted], access_type="recall"
+                )
+            except Exception:
+                pass
 
         return budgeted

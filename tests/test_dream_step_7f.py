@@ -71,6 +71,8 @@ def _build_engine(mock_store, **overrides):
     # AD-541c fields
     engine._retrieval_practice_engine = None
     engine._retrieval_llm_client = None
+    # AD-567d fields
+    engine._activation_tracker = None
     return engine
 
 

@@ -93,9 +93,16 @@ class StructuralIntegrityField:
         self._check_interval = check_interval
         self._episodic_memory = episodic_memory
         self._eviction_audit = eviction_audit
+        self._ward_room: Any = None  # AD-567c: late-bound via set_ward_room()
+        self._anchor_check_cache: list[Any] = []  # AD-567c: cached recent episodes for sync check
+        self._anchor_invalid_threads: set[str] = set()  # AD-567c: thread_ids that failed WR lookup
         self._task: asyncio.Task[None] | None = None
         self._last_report: SIFReport | None = None
         self._last_violation_details: str = ""
+
+    def set_ward_room(self, ward_room: Any) -> None:
+        """AD-567c: Late-bind WardRoom for anchor integrity cross-reference."""
+        self._ward_room = ward_room
 
     # -- properties ----------------------------------------------------------
 
@@ -122,6 +129,7 @@ class StructuralIntegrityField:
         """Run checks every check_interval seconds."""
         while True:
             await asyncio.sleep(self._check_interval)
+            await self._refresh_anchor_cache()  # AD-567c: async cache update before sync checks
             report = await self.run_all_checks()
             if not report.all_passed:
                 details = "; ".join(v.details for v in report.violations)
@@ -150,6 +158,7 @@ class StructuralIntegrityField:
             self.check_index_consistency,
             self.check_memory_integrity,
             self.check_eviction_health,
+            self.check_anchor_integrity,
         ):
             try:
                 result = check_fn()
@@ -372,3 +381,129 @@ class StructuralIntegrityField:
                 passed=False,
                 details=f"Eviction audit query failed: {exc}",
             )
+
+    # -- AD-567c: Anchor integrity ------------------------------------------
+
+    async def _refresh_anchor_cache(self) -> None:
+        """AD-567c: Async cache update — called from _check_loop BEFORE sync checks."""
+        if self._episodic_memory is None:
+            return
+        try:
+            recent = await self._episodic_memory.recent_for_agent("__all__", k=50)
+            self._anchor_check_cache = recent or []
+        except Exception:
+            # Fallback: try getting recent episodes without agent filter
+            try:
+                collection = getattr(self._episodic_memory, "_collection", None)
+                if collection and collection.count() > 0:
+                    import json as _json
+                    result = collection.get(
+                        include=["metadatas", "documents"], limit=50,
+                    )
+                    if result and result["ids"]:
+                        from probos.cognitive.episodic import EpisodicMemory as _EM
+                        episodes = []
+                        for i, doc_id in enumerate(result["ids"]):
+                            meta = result["metadatas"][i] if result["metadatas"] else {}
+                            doc = (
+                                result["documents"][i]
+                                if result.get("documents") and i < len(result["documents"])
+                                else ""
+                            )
+                            episodes.append(_EM._metadata_to_episode(doc_id, doc, meta))
+                        self._anchor_check_cache = episodes
+                    else:
+                        self._anchor_check_cache = []
+                else:
+                    self._anchor_check_cache = []
+            except Exception:
+                self._anchor_check_cache = []
+
+        # AD-567c: Cross-reference thread_ids against Ward Room (async)
+        self._anchor_invalid_threads = set()
+        if self._ward_room:
+            for ep in self._anchor_check_cache:
+                anchors = getattr(ep, "anchors", None)
+                if anchors is None:
+                    continue
+                thread_id = getattr(anchors, "thread_id", "")
+                if thread_id:
+                    try:
+                        thread = await self._ward_room.get_thread(thread_id)
+                        if thread is None:
+                            self._anchor_invalid_threads.add(thread_id)
+                    except Exception:
+                        pass
+
+    def check_anchor_integrity(self) -> SIFCheckResult:
+        """AD-567c: Verify anchor quality across recent episodes (Video-EM pattern).
+
+        Checks:
+        1. Anchor presence rate — >50% of recent episodes should have non-None anchors
+        2. Cross-reference: participants should be known agent IDs
+        3. Cross-reference: thread_id should exist in Ward Room (if available)
+        """
+        if self._episodic_memory is None:
+            return SIFCheckResult(
+                name="anchor_integrity", passed=True, details="not configured"
+            )
+
+        cache = self._anchor_check_cache
+        if not cache:
+            return SIFCheckResult(
+                name="anchor_integrity", passed=True, details="empty cache"
+            )
+
+        issues: list[str] = []
+        total = len(cache)
+        with_anchors = sum(1 for ep in cache if getattr(ep, "anchors", None) is not None)
+        presence_rate = with_anchors / total if total > 0 else 0.0
+
+        if presence_rate < 0.5:
+            issues.append(
+                f"anchor presence {with_anchors}/{total} ({presence_rate:.0%}) < 50%"
+            )
+
+        # Cross-reference: verify participants are known agents
+        if self._spawner:
+            known_ids: set[str] = set()
+            try:
+                registry = getattr(self._spawner, "_registry", None)
+                if registry:
+                    known_ids = {a.id for a in registry.all()}
+                    # Also include callsigns
+                    for a in registry.all():
+                        cs = getattr(a, "callsign", None)
+                        if cs:
+                            known_ids.add(cs)
+            except Exception:
+                pass
+
+            if known_ids:
+                for ep in cache:
+                    anchors = getattr(ep, "anchors", None)
+                    if anchors is None:
+                        continue
+                    for p in getattr(anchors, "participants", []):
+                        if p and p not in known_ids:
+                            issues.append(f"unknown participant '{p}' in episode {ep.id[:8]}")
+                            break  # one per episode is enough
+
+        # Cross-reference: verify thread_id exists in Ward Room (pre-validated in cache refresh)
+        for ep in cache:
+            anchors = getattr(ep, "anchors", None)
+            if anchors is None:
+                continue
+            thread_id = getattr(anchors, "thread_id", "")
+            if thread_id and thread_id in self._anchor_invalid_threads:
+                issues.append(
+                    f"anchor thread_id '{thread_id[:8]}' not found in Ward Room "
+                    f"for episode {ep.id[:8]}"
+                )
+
+        passed = len(issues) == 0
+        return SIFCheckResult(
+            name="anchor_integrity",
+            passed=passed,
+            details="; ".join(issues) if issues else f"ok ({with_anchors}/{total} anchored)",
+        )

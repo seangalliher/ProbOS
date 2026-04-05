@@ -359,10 +359,13 @@ class TestProactiveContextGathering:
 
     @pytest.mark.asyncio
     async def test_gathers_episodic_memories(self):
-        from probos.types import Episode
+        from probos.types import Episode, RecallScore
         agent = _make_mock_agent()
         rt = _make_mock_runtime(agents=[agent])
         ep = Episode(user_input="test task", reflection="Handled successfully")
+        # AD-567c: recall_weighted is now primary path
+        rs = RecallScore(episode=ep, composite_score=0.5)
+        rt.episodic_memory.recall_weighted = AsyncMock(return_value=[rs])
         rt.episodic_memory.recall_for_agent.return_value = [ep]
 
         loop = _make_loop()

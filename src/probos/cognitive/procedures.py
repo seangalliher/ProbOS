@@ -87,6 +87,8 @@ class Procedure:
     learned_from: str = ""  # callsign of the agent observed/taught from (AD-537)
     last_used_at: float = 0.0    # timestamp of last replay selection (AD-538)
     is_archived: bool = False     # archived (removed from active index) (AD-538)
+    # AD-567d: Anchor provenance from source episodes
+    source_anchors: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +117,7 @@ class Procedure:
             "learned_from": self.learned_from,
             "last_used_at": self.last_used_at,
             "is_archived": self.is_archived,
+            "source_anchors": self.source_anchors,
         }
 
     @classmethod
@@ -147,6 +150,7 @@ class Procedure:
             learned_from=data.get("learned_from", ""),
             last_used_at=data.get("last_used_at", 0.0),
             is_archived=data.get("is_archived", False),
+            source_anchors=data.get("source_anchors", []),
         )
 
 
@@ -428,9 +432,24 @@ def _format_procedure_block(procedure: Any, label: str = "PROCEDURE") -> str:
 
 
 def _format_episode_blocks(episodes: list[Any]) -> str:
-    """Format episodes as AD-541b READ-ONLY blocks."""
+    """Format episodes as AD-541b READ-ONLY blocks. AD-567d: includes anchor context."""
     blocks = []
     for ep in episodes:
+        # AD-567d: Include anchor context if present
+        anchor_lines = ""
+        anchors = getattr(ep, "anchors", None)
+        if anchors is not None:
+            ch = getattr(anchors, "channel", "") or ""
+            dept = getattr(anchors, "department", "") or ""
+            trigger = getattr(anchors, "trigger_type", "") or ""
+            parts = getattr(anchors, "participants", []) or []
+            if ch or dept or trigger or parts:
+                anchor_lines = (
+                    f"Channel: {ch}\n"
+                    f"Department: {dept}\n"
+                    f"Trigger: {trigger}\n"
+                    f"Participants: {parts}\n"
+                )
         block = (
             "=== READ-ONLY EPISODE (do not modify, summarize, or reinterpret) ===\n"
             f"Episode ID: {ep.id}\n"
@@ -439,7 +458,8 @@ def _format_episode_blocks(episodes: list[Any]) -> str:
             f"DAG Summary: {json.dumps(ep.dag_summary, default=str)}\n"
             f"Reflection: {ep.reflection or 'none'}\n"
             f"Agents: {ep.agent_ids}\n"
-            "=== END READ-ONLY EPISODE ==="
+            + anchor_lines
+            + "=== END READ-ONLY EPISODE ==="
         )
         blocks.append(block)
     return "\n\n".join(blocks)

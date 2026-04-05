@@ -73,6 +73,7 @@ class DreamingEngine:
         notebook_quality_engine: Any = None,  # AD-555: notebook quality metrics
         retrieval_practice_engine: Any = None,  # AD-541c: spaced retrieval therapy
         retrieval_llm_client: Any = None,  # AD-541c: fast-tier LLM for recall practice
+        activation_tracker: Any = None,  # AD-567d: activation-based memory lifecycle
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -95,6 +96,7 @@ class DreamingEngine:
         self._notebook_quality_engine = notebook_quality_engine  # AD-555
         self._retrieval_practice_engine = retrieval_practice_engine  # AD-541c
         self._retrieval_llm_client = retrieval_llm_client  # AD-541c
+        self._activation_tracker = activation_tracker  # AD-567d
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
         self._addressed_degradations: dict[str, float] = {}  # AD-532b: procedure_id -> timestamp
@@ -137,6 +139,17 @@ class DreamingEngine:
 
         strengthened = self._replay_episodes(episodes)
         self._last_consolidated_count = current_count
+
+        # AD-567d: Reinforce replayed episodes (sleep replay strengthens memories)
+        if self._activation_tracker and self.config.activation_enabled:
+            try:
+                replayed_ids = [ep.id for ep in episodes]
+                if replayed_ids:
+                    await self._activation_tracker.record_batch_access(
+                        replayed_ids, access_type="dream_replay"
+                    )
+            except Exception:
+                logger.debug("AD-567d: micro_dream activation reinforcement failed", exc_info=True)
 
         logger.debug("micro-dream: replayed=%d strengthened=%d", len(episodes), strengthened)
 
@@ -217,6 +230,14 @@ class DreamingEngine:
                 clusters_found = len(clusters)
                 self._last_clusters = clusters
                 if clusters_found > 0:
+                    # AD-567d: Compose anchor provenance for each cluster
+                    try:
+                        from probos.cognitive.anchor_provenance import summarize_cluster_anchors
+                        for cluster in clusters:
+                            matched_eps = [ep for ep in episodes if ep.id in cluster.episode_ids]
+                            cluster.anchor_summary = summarize_cluster_anchors(matched_eps)
+                    except Exception:
+                        logger.debug("AD-567d: Cluster anchor provenance failed (non-critical)", exc_info=True)
                     logger.info(
                         "Episode clustering: %d clusters found (%d success-dominant, %d failure-dominant)",
                         clusters_found,
@@ -269,6 +290,15 @@ class DreamingEngine:
                             llm_client=self._llm_client,
                         )
                     if procedure:
+                        # AD-567d: Attach anchor provenance to procedure
+                        if cluster.anchor_summary:
+                            try:
+                                from probos.cognitive.anchor_provenance import build_procedure_provenance
+                                procedure.source_anchors = build_procedure_provenance(
+                                    cluster.anchor_summary, cluster.cluster_id
+                                )
+                            except Exception:
+                                pass
                         procedures.append(procedure)
                         procedures_extracted += 1
                         self._extracted_cluster_ids.add(cluster.cluster_id)
@@ -655,6 +685,12 @@ class DreamingEngine:
                                 "topic": topic,
                                 "report_path": report_path,
                             }
+                            # AD-567d: Enrich with provenance
+                            try:
+                                from probos.cognitive.anchor_provenance import enrich_convergence_report
+                                conv_data = enrich_convergence_report(conv_data, cluster_entries)
+                            except Exception:
+                                pass
                             convergence_reports.append(conv_data)
                             convergence_reports_generated += 1
                             # Emit event
@@ -837,6 +873,49 @@ class DreamingEngine:
             except Exception:
                 logger.debug("AD-541c Step 11: Retrieval practice failed", exc_info=True)
 
+        # Step 12: Activation-Based Memory Pruning (AD-567d / AD-462b)
+        activation_pruned = 0
+        activation_reinforced = 0
+        if (
+            self._activation_tracker
+            and self.config.activation_enabled
+            and self.episodic_memory
+        ):
+            try:
+                # Reinforcement: dream replayed these episodes — record access
+                replayed_ids = [ep.id for ep in episodes]
+                if replayed_ids:
+                    await self._activation_tracker.record_batch_access(
+                        replayed_ids, access_type="dream_replay"
+                    )
+                    activation_reinforced = len(replayed_ids)
+
+                # Pruning: find low-activation episodes older than 24 hours
+                cutoff = time.time() - 86400  # 24 hours
+                candidate_ids = await self.episodic_memory.get_episode_ids_older_than(cutoff)
+
+                if candidate_ids:
+                    low_activation = await self._activation_tracker.find_low_activation_episodes(
+                        all_episode_ids=candidate_ids,
+                        threshold=self.config.activation_prune_threshold,
+                        max_prune_fraction=0.10,
+                    )
+                    if low_activation:
+                        await self.episodic_memory.evict_by_ids(
+                            low_activation, reason="activation_decay"
+                        )
+                        activation_pruned = len(low_activation)
+                        logger.info(
+                            "AD-567d Step 12: Pruned %d low-activation episodes (threshold=%.1f)",
+                            activation_pruned,
+                            self.config.activation_prune_threshold,
+                        )
+
+                # Cleanup old access records
+                await self._activation_tracker.cleanup_old_accesses()
+            except Exception:
+                logger.debug("AD-567d Step 12: Activation pruning failed", exc_info=True)
+
         duration_ms = (time.monotonic() - t_start) * 1000
 
         report = DreamReport(
@@ -883,13 +962,17 @@ class DreamingEngine:
             retrieval_practices=retrieval_practices,
             retrieval_accuracy=retrieval_accuracy,
             retrieval_concerns=retrieval_concerns,
+            # AD-567d: Activation-based lifecycle
+            activation_pruned=activation_pruned,
+            activation_reinforced=activation_reinforced,
         )
 
         logger.info(
             "dream-cycle: flushed=%d strengthened=%d pruned=%d trust_adjusted=%d "
             "clusters=%d procedures=%d evolved=%d negatives=%d fallback_evolved=%d "
             "observed=%d decayed=%d archived=%d dedup=%d gaps=%d classified=%d "
-            "qual_paths=%d gap_reports=%d contradictions=%d",
+            "qual_paths=%d gap_reports=%d contradictions=%d "
+            "activation_pruned=%d activation_reinforced=%d",
             report.episodes_replayed,
             report.weights_strengthened,
             report.weights_pruned,
@@ -908,6 +991,8 @@ class DreamingEngine:
             qualification_paths_triggered,
             gap_reports_generated,
             report.contradictions_found,
+            activation_pruned,
+            activation_reinforced,
         )
 
         return report

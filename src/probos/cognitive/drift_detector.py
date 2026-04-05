@@ -42,6 +42,7 @@ class DriftSignal:
     direction: str       # "improved" | "stable" | "declined"
     severity: str        # "normal" | "warning" | "critical"
     sample_count: int
+    drift_type: str = "unclassified"  # AD-567c: "specialization" | "concerning" | "unclassified"
 
 
 @dataclass(frozen=True)
@@ -87,9 +88,13 @@ class DriftDetector:
         self,
         store: Any,  # QualificationStore
         config: Any,  # QualificationConfig
+        anchor_profile_cache: dict[str, Any] | None = None,  # AD-567c: agent_id → AnchorProfile
+        hebbian_router: Any = None,  # AD-567c: for domain detection
     ) -> None:
         self._store = store
         self._config = config
+        self._anchor_profiles = anchor_profile_cache or {}
+        self._hebbian_router = hebbian_router
 
     async def analyze_agent(
         self, agent_id: str, test_names: list[str]
@@ -189,6 +194,34 @@ class DriftDetector:
         else:
             severity = "normal"
 
+        # AD-567c: Drift type classification
+        drift_type = "unclassified"
+        if direction == "declined" and severity in ("warning", "critical"):
+            profile = self._anchor_profiles.get(agent_id)
+            mean_anchor_conf = getattr(profile, "mean_confidence", 0.5) if profile else 0.5
+
+            # Check if declining test is outside agent's primary domain
+            is_out_of_domain = False
+            if self._hebbian_router:
+                try:
+                    # Find top intent types for this agent by Hebbian weight
+                    all_w = self._hebbian_router.get_all_weights()
+                    agent_intents: list[tuple[str, float]] = []
+                    for (src, tgt, rel), w in all_w.items():
+                        if rel == "intent" and tgt == agent_id:
+                            agent_intents.append((src, w))
+                    agent_intents.sort(key=lambda x: x[1], reverse=True)
+                    top_intents = [name for name, _ in agent_intents[:3]]
+                    if top_intents and test_name not in top_intents:
+                        is_out_of_domain = True
+                except Exception:
+                    pass  # Hebbian lookup failure is non-fatal
+
+            if mean_anchor_conf >= 0.6 and is_out_of_domain:
+                drift_type = "specialization"
+            elif mean_anchor_conf < 0.4:
+                drift_type = "concerning"
+
         return DriftSignal(
             agent_id=agent_id,
             test_name=test_name,
@@ -200,6 +233,7 @@ class DriftDetector:
             direction=direction,
             severity=severity,
             sample_count=sample_count,
+            drift_type=drift_type,
         )
 
 
@@ -443,6 +477,7 @@ class DriftScheduler:
                         "baseline_score": signal.baseline_score,
                         "direction": signal.direction,
                         "sample_count": signal.sample_count,
+                        "drift_type": signal.drift_type,
                     },
                 )
             except Exception:

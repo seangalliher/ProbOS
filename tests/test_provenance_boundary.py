@@ -105,13 +105,15 @@ class TestFormatMemorySection:
         assert "[verified]" in lines[3]
         # Blank line separator
         assert lines[4] == ""
-        # Memory entries with source/verified tags
-        assert lines[5].startswith("  - [direct |")
-        assert lines[6].startswith("  - [direct |")
+        # AD-567b: Memory entries now have header + content lines
+        assert "[direct | unverified]" in lines[5]
+        assert "Captain asked about trust scores" in lines[6]
+        assert "[direct | verified]" in lines[7]
+        assert "Ward Room thread about routing" in lines[8]
         # Blank line before closing
-        assert lines[7] == ""
+        assert lines[9] == ""
         # Closing marker is last
-        assert "END SHIP MEMORY" in lines[8]
+        assert "END SHIP MEMORY" in lines[10]
 
     def test_empty_memories(self):
         lines = self.agent._format_memory_section([])

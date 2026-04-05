@@ -151,6 +151,8 @@ class ProcedureStore:
         await self._ensure_learned_via_columns()
         # AD-538: Schema migration — add lifecycle columns
         await self._ensure_lifecycle_columns()
+        # AD-567d: Schema migration — add source_anchors_json column
+        await self._ensure_source_anchors_column()
         self._init_chroma()
         # AD-535: Auto-promote qualifying Level 1 procedures to Level 2
         await self._migrate_qualifying_procedures()
@@ -247,6 +249,22 @@ class ProcedureStore:
         except Exception as e:
             logger.debug("AD-538: Lifecycle schema migration failed: %s", e)
 
+    async def _ensure_source_anchors_column(self) -> None:
+        """AD-567d: Add source_anchors_json column if not present."""
+        if not self._db:
+            return
+        try:
+            cursor = await self._db.execute("PRAGMA table_info(procedure_records)")
+            columns = {row[1] for row in await cursor.fetchall()}
+            if "source_anchors_json" not in columns:
+                await self._db.execute(
+                    "ALTER TABLE procedure_records ADD COLUMN source_anchors_json TEXT DEFAULT '[]'"
+                )
+                await self._db.commit()
+                logger.info("AD-567d: Added source_anchors_json column to procedure_records")
+        except Exception as e:
+            logger.debug("AD-567d: Source anchors schema migration failed: %s", e)
+
     async def stop(self) -> None:
         """Close database connections."""
         if self._db:
@@ -316,8 +334,9 @@ class ProcedureStore:
                  superseded_by, content_snapshot, content_diff, change_summary,
                  intent_types, tags,
                  origin_agent_ids, extraction_date, created_at, updated_at,
-                 learned_via, learned_from, last_used_at, is_archived)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 learned_via, learned_from, last_used_at, is_archived,
+                 source_anchors_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     procedure.id,
                     procedure.name,
@@ -342,6 +361,7 @@ class ProcedureStore:
                     getattr(procedure, "learned_from", ""),
                     getattr(procedure, "last_used_at", 0.0) or procedure.extraction_date,
                     1 if getattr(procedure, "is_archived", False) else 0,
+                    json.dumps(getattr(procedure, "source_anchors", [])),
                 ),
             )
             for parent_id in procedure.parent_procedure_ids:

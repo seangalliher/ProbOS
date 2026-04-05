@@ -149,6 +149,9 @@ class CognitiveProfile:
     confabulation_rate: float = 0.0         # Rolling ratio of confabulated recalls
     last_reminiscence: float = 0.0          # Timestamp of last reminiscence session
     reminiscence_sessions: int = 0          # Total sessions completed
+    # AD-567c: Anchor quality
+    anchor_quality: float = 0.0             # Mean anchor confidence from latest AnchorProfile
+    weakest_anchor_dimension: str = ""      # For targeted metacognitive coaching
 
     def add_assessment(self, assessment: CounselorAssessment) -> None:
         """Append an assessment and update alert level."""
@@ -214,6 +217,8 @@ class CognitiveProfile:
             "confabulation_rate": self.confabulation_rate,
             "last_reminiscence": self.last_reminiscence,
             "reminiscence_sessions": self.reminiscence_sessions,
+            "anchor_quality": self.anchor_quality,
+            "weakest_anchor_dimension": self.weakest_anchor_dimension,
         }
 
     @classmethod
@@ -236,6 +241,8 @@ class CognitiveProfile:
             confabulation_rate=data.get("confabulation_rate", 0.0),
             last_reminiscence=data.get("last_reminiscence", 0.0),
             reminiscence_sessions=data.get("reminiscence_sessions", 0),
+            anchor_quality=data.get("anchor_quality", 0.0),
+            weakest_anchor_dimension=data.get("weakest_anchor_dimension", ""),
         )
         if "baseline" in data:
             profile.baseline = CognitiveBaseline.from_dict(data["baseline"])
@@ -1130,26 +1137,44 @@ class CounselorAgent(CognitiveAgent):
             )
 
     async def _on_qualification_drift(self, data: dict[str, Any]) -> None:
-        """AD-566c: Handle qualification drift detection events.
+        """AD-566c/567c: Handle qualification drift detection events.
 
-        Critical drift triggers full assessment + therapeutic DM.
-        Warning drift is logged for trend tracking only.
+        Drift-type-aware handling (AD-567c):
+        - "specialization" at critical → log only (healthy divergence)
+        - "concerning" at warning+ → trigger assessment + therapeutic DM
+        - "unclassified" → existing behavior (critical=assess, warning=log)
         """
         agent_id = data.get("agent_id", "")
         severity = data.get("severity", "")
         test_name = data.get("test_name", "")
+        drift_type = data.get("drift_type", "unclassified")
 
         if not agent_id or agent_id == self.id:
             return
 
         callsign = self._resolve_agent_callsign(agent_id)
 
-        if severity == "critical":
+        # AD-567c: Specialization drift — log but don't intervene
+        if drift_type == "specialization":
             logger.info(
-                "AD-566c: Critical qualification drift for %s on %s (z=%.2f)",
+                "AD-567c: Specialization drift for %s on %s (z=%.2f) — healthy divergence, no intervention",
                 callsign, test_name, data.get("z_score", 0.0),
             )
+            return
+
+        # AD-567c: Concerning drift — intervene even at warning level
+        if drift_type == "concerning" or severity == "critical":
+            logger.info(
+                "AD-567c: %s drift for %s on %s (z=%.2f, type=%s)",
+                severity.title(), callsign, test_name,
+                data.get("z_score", 0.0), drift_type,
+            )
             metrics = self._gather_agent_metrics(agent_id)
+            trigger_label = (
+                f"qualification_drift_{drift_type}"
+                if drift_type != "unclassified"
+                else f"qualification_drift_{severity}"
+            )
             assessment = self.assess_agent(
                 agent_id=agent_id,
                 current_trust=metrics["trust_score"],
@@ -1157,7 +1182,7 @@ class CounselorAgent(CognitiveAgent):
                 hebbian_avg=metrics["hebbian_avg"],
                 success_rate=metrics["success_rate"],
                 personality_drift=metrics["personality_drift"],
-                trigger="qualification_drift_critical",
+                trigger=trigger_label,
             )
             await self._save_profile_and_assessment(agent_id, assessment)
             await self._maybe_send_therapeutic_dm(

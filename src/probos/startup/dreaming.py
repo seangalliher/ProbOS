@@ -52,6 +52,7 @@ async def init_dreaming(
     llm_client: Any = None,  # AD-532: procedure extraction
     procedure_store: Any = None,  # AD-533: persistent procedure storage
     runtime: Any = None,  # AD-532e: for reactive event subscription
+    activation_tracker: Any = None,  # AD-567d: activation-based lifecycle
 ) -> tuple[DreamingResult, bool]:
     """Start dreaming/detection subsystems and detect cold start.
 
@@ -107,6 +108,7 @@ async def init_dreaming(
             notebook_quality_engine=notebook_quality_engine,
             retrieval_practice_engine=retrieval_practice_engine,
             retrieval_llm_client=retrieval_llm_client,
+            activation_tracker=activation_tracker,
         )
         dream_scheduler = DreamScheduler(
             engine=dreaming_engine,

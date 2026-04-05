@@ -270,6 +270,15 @@ class MemoryConfig(BaseModel):
         "anchor": 0.10,
     }
     recall_context_budget_chars: int = 4000  # ~4K char memory budget
+    # AD-567c: Anchor confidence scoring
+    anchor_dimension_weights: dict[str, float] = {
+        "temporal": 0.25,
+        "spatial": 0.25,
+        "social": 0.25,
+        "causal": 0.15,
+        "evidential": 0.10,
+    }
+    anchor_confidence_gate: float = 0.3  # RPMS: suppress below this from default recall
 
 
 class DreamingConfig(BaseModel):
@@ -306,6 +315,11 @@ class DreamingConfig(BaseModel):
     reminiscence_concern_threshold: int = 3
     reminiscence_confabulation_alert: float = 0.3
     reminiscence_cooldown_hours: float = 2.0
+    # AD-567d / AD-462b: Activation-based memory lifecycle
+    activation_enabled: bool = True
+    activation_decay_d: float = 0.5
+    activation_prune_threshold: float = -2.0
+    activation_access_max_age_days: int = 180
 
 
 class ScalingConfig(BaseModel):

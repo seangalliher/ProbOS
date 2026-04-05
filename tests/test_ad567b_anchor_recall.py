@@ -83,7 +83,7 @@ class TestRecallScoreComputation:
         # = 0.28 + 0.10 + 0.135 + 0.07 + 0.12 + 0.10 = 0.805
         expected = 0.35 * 0.8 + 0.10 * 1.0 + 0.15 * 0.9 + 0.10 * 0.7 + 0.20 * 0.6 + 0.10 * 1.0
         assert abs(rs.composite_score - expected) < 1e-9
-        assert rs.anchor_completeness == 1.0
+        assert rs.anchor_confidence == 1.0
 
     def test_zero_inputs(self):
         """All-zero inputs produce composite_score = 0."""
@@ -136,15 +136,18 @@ class TestAnchorCompleteness:
 
         ep = _make_episode(anchors=_full_anchor())
         rs = EpisodicMemory.score_recall(ep, semantic_similarity=0.5)
-        assert rs.anchor_completeness == 1.0
+        assert rs.anchor_confidence == 1.0
 
     def test_half_filled(self):
-        """5/10 fields = 0.5."""
+        """Half-filled anchor → Johnson-weighted confidence ≈ 0.567."""
         from probos.cognitive.episodic import EpisodicMemory
 
         ep = _make_episode(anchors=_half_anchor())
         rs = EpisodicMemory.score_recall(ep, semantic_similarity=0.5)
-        assert rs.anchor_completeness == 0.5
+        # _half_anchor: spatial=2/3, social=2/2, causal=1/1, temporal=0, evidential=0
+        # = 0.25*(2/3) + 0.25*1.0 + 0.15*1.0 = 0.1667 + 0.25 + 0.15 = 0.5667
+        expected = 0.25 * (2 / 3) + 0.25 * 1.0 + 0.15 * 1.0
+        assert abs(rs.anchor_confidence - expected) < 1e-9
 
     def test_no_anchors(self):
         """anchors=None → 0.0."""
@@ -152,7 +155,7 @@ class TestAnchorCompleteness:
 
         ep = _make_episode(anchors=None)
         rs = EpisodicMemory.score_recall(ep, semantic_similarity=0.5)
-        assert rs.anchor_completeness == 0.0
+        assert rs.anchor_confidence == 0.0
 
     def test_empty_anchor(self):
         """All-default AnchorFrame → 0.0 (all fields empty/falsy)."""
@@ -160,7 +163,7 @@ class TestAnchorCompleteness:
 
         ep = _make_episode(anchors=AnchorFrame())
         rs = EpisodicMemory.score_recall(ep, semantic_similarity=0.5)
-        assert rs.anchor_completeness == 0.0
+        assert rs.anchor_confidence == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -472,5 +475,5 @@ class TestRecallScoreDataclass:
         assert rs.trust_weight == 0.5
         assert rs.hebbian_weight == 0.5
         assert rs.recency_weight == 0.0
-        assert rs.anchor_completeness == 0.0
+        assert rs.anchor_confidence == 0.0
         assert rs.composite_score == 0.0

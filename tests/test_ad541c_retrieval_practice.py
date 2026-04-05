@@ -442,6 +442,8 @@ def _build_dreaming_engine(
     engine._reactive_cooldowns = {}
     engine._fallback_learning_queue = []
     engine._observed_threads = set()
+    # AD-567d fields
+    engine._activation_tracker = None
     return engine
 
 

@@ -225,6 +225,8 @@ async def test_dream_consolidation_uses_record_outcome():
     engine.config = engine._config
     engine.config.trust_boost = 0.5
     engine.config.trust_penalty = 0.5
+    # AD-567d fields
+    engine._activation_tracker = None
 
     # Track calls to record_outcome
     tn = _make_trust()
@@ -268,6 +270,8 @@ async def test_dream_consolidation_emits_trust_event():
     engine.config = engine._config
     engine.config.trust_boost = 0.5
     engine.config.trust_penalty = 0.5
+    # AD-567d fields
+    engine._activation_tracker = None
 
     tn = _make_trust()
     engine.trust_network = tn
@@ -298,6 +302,8 @@ async def test_concurrent_dream_and_verification():
     engine.config = engine._config
     engine.config.trust_boost = 0.5
     engine.config.trust_penalty = 0.5
+    # AD-567d fields
+    engine._activation_tracker = None
 
     tn = _make_trust()
     engine.trust_network = tn

@@ -240,6 +240,8 @@ class TestProcedureSchema:
             "learned_via", "learned_from",
             # AD-538: lifecycle management
             "last_used_at", "is_archived",
+            # AD-567d: anchor provenance
+            "source_anchors",
         }
         assert set(d.keys()) == expected_keys
 

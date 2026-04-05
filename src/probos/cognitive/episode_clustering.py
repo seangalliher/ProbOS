@@ -35,10 +35,12 @@ class EpisodeCluster:
     intent_types: list[str]  # unique intent types across all episodes
     first_occurrence: float  # earliest episode timestamp
     last_occurrence: float  # latest episode timestamp
+    # AD-567d: Anchor provenance summary aggregated from source episodes
+    anchor_summary: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for logging/storage. Omit centroid (large)."""
-        return {
+        d = {
             "cluster_id": self.cluster_id,
             "episode_ids": self.episode_ids,
             "episode_count": self.episode_count,
@@ -51,6 +53,9 @@ class EpisodeCluster:
             "first_occurrence": self.first_occurrence,
             "last_occurrence": self.last_occurrence,
         }
+        if self.anchor_summary:
+            d["anchor_summary"] = self.anchor_summary
+        return d
 
 
 def cluster_episodes(

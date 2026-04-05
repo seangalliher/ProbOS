@@ -196,6 +196,12 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime._retrieval_practice_engine.stop()
         runtime._retrieval_practice_engine = None
 
+    # Stop Activation Tracker (AD-567d)
+    _activation_tracker = getattr(runtime, "_activation_tracker", None)
+    if _activation_tracker is not None:
+        await _activation_tracker.stop()
+        runtime._activation_tracker = None
+
     # Stop Skill Framework (AD-428)
     if runtime.skill_service:
         await runtime.skill_service.stop()

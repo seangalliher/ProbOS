@@ -16,7 +16,7 @@ from probos.events import EventType
 from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
-from probos.types import IntentMessage
+from probos.types import AnchorFrame, IntentMessage
 from probos.utils import format_duration
 
 if TYPE_CHECKING:
@@ -744,8 +744,6 @@ class ProactiveCognitiveLoop:
                 if hasattr(em, 'recall_weighted'):
                     # Derive query from agent context instead of hardcoded "recent activity"
                     _duty_type = ""
-                    if duty:
-                        _duty_type = getattr(duty, 'duty_type', '') if hasattr(duty, 'duty_type') else str(duty)[:50]
                     query = f"{agent.agent_type} {_duty_type} recent duty observations".strip()
 
                     trust_net = getattr(rt, 'trust_network', None)
@@ -761,6 +759,7 @@ class ProactiveCognitiveLoop:
                         k=5,
                         context_budget=getattr(mem_cfg, 'recall_context_budget_chars', 4000) if mem_cfg else 4000,
                         weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
+                        anchor_confidence_gate=getattr(mem_cfg, 'anchor_confidence_gate', 0.3) if mem_cfg else 0.3,
                     )
                     episodes = [rs.episode for rs in scored_results]
 
@@ -789,8 +788,8 @@ class ProactiveCognitiveLoop:
                         if include_ts and ep.timestamp > 0:
                             mem["age"] = format_duration(time.time() - ep.timestamp)
                         # AD-567b: Anchor context for formatting
-                        anchors = ep.anchors
-                        if anchors:
+                        anchors = getattr(ep, 'anchors', None)
+                        if isinstance(anchors, AnchorFrame):
                             mem["anchor_channel"] = anchors.channel or ""
                             mem["anchor_department"] = anchors.department or ""
                             mem["anchor_participants"] = ", ".join(anchors.participants) if anchors.participants else ""

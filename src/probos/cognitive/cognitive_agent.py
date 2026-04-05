@@ -11,7 +11,7 @@ from typing import Any
 
 from probos.events import EventType
 from probos.substrate.agent import BaseAgent
-from probos.types import IntentMessage, IntentResult, LLMRequest, Skill
+from probos.types import AnchorFrame, IntentMessage, IntentResult, LLMRequest, Skill
 from probos.utils import format_duration
 
 logger = logging.getLogger(__name__)
@@ -2084,6 +2084,7 @@ class CognitiveAgent(BaseAgent):
                     k=5,
                     context_budget=getattr(mem_cfg, 'recall_context_budget_chars', 4000) if mem_cfg else 4000,
                     weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
+                    anchor_confidence_gate=getattr(mem_cfg, 'anchor_confidence_gate', 0.3) if mem_cfg else 0.3,
                 )
 
             # Fallback to old recall path if recall_weighted unavailable or returned nothing
@@ -2114,8 +2115,8 @@ class CognitiveAgent(BaseAgent):
                         mem["age"] = format_duration(time.time() - ep.timestamp)
 
                     # AD-567b: Anchor context for formatting
-                    anchors = ep.anchors
-                    if anchors:
+                    anchors = getattr(ep, 'anchors', None)
+                    if isinstance(anchors, AnchorFrame):
                         mem["anchor_channel"] = anchors.channel or ""
                         mem["anchor_department"] = anchors.department or ""
                         mem["anchor_participants"] = ", ".join(anchors.participants) if anchors.participants else ""

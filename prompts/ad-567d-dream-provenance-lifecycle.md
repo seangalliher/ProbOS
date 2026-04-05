@@ -146,7 +146,12 @@ def build_procedure_provenance(episodes: list[Episode]) -> list[dict[str, Any]]:
 
 **Modify `Procedure.from_dict()`** — deserialize: `source_anchors=data.get("source_anchors", [])`.
 
-**Modify `procedure_store.py` schema** — add `source_anchors_json TEXT DEFAULT '[]'` column to the procedures table. Migration: `ALTER TABLE procedures ADD COLUMN source_anchors_json TEXT DEFAULT '[]'`. Serialize/deserialize as JSON in `_save()` and `_load()`.
+**Modify `procedure_store.py` schema** — add `source_anchors_json TEXT DEFAULT '[]'` column to the procedures table. Migration: `ALTER TABLE procedures ADD COLUMN source_anchors_json TEXT DEFAULT '[]'` (guarded by column-existence check, same pattern as `_ensure_consecutive_successes_column()`). Serialize/deserialize as JSON in `_save()` and `_load()`.
+
+**IMPORTANT: Also update `_save_to_index()` and `_load_from_index()`** — The index table has a hardcoded multi-column INSERT (~23 columns). Add `source_anchors_json` to both:
+- The `_save_to_index()` INSERT statement (add column name + value placeholder + `json.dumps(proc.source_anchors)`)
+- The `_load_from_index()` SELECT/deserialization (add `source_anchors=json.loads(row["source_anchors_json"] or "[]")`)
+- The `CREATE TABLE IF NOT EXISTS` DDL in `_ensure_index_table()` (add `source_anchors_json TEXT DEFAULT '[]'`)
 
 ### 3. Convergence Report Provenance
 
@@ -435,11 +440,12 @@ try:
         ]
 
         # 4. Guard: never prune episodes less than 24 hours old (consolidation window)
+        #    Protect-by-default: skip any episode ID not found in the current episode set
         now = time.time()
         episode_map = {ep.id: ep for ep in episodes}
         candidates = [
             eid for eid in candidates
-            if (now - episode_map.get(eid, Episode()).timestamp) > 86400
+            if eid in episode_map and (now - episode_map[eid].timestamp) > 86400
         ]
 
         # 5. Guard: cap pruning at 10% of total per dream cycle (avoid mass eviction)
@@ -623,7 +629,7 @@ This parallels real neuroscience — sleep replay reinforces memories, it's not 
 
 ## Tests
 
-**File: `tests/test_ad567d_dream_provenance.py`** (NEW, ~30 tests)
+**File: `tests/test_ad567d_dream_provenance.py`** (NEW, ~31 tests)
 
 ### Provenance Composition (Section 1-3)
 1. `test_summarize_cluster_anchors_shared_channel` — all episodes same channel → shared_channel populated
@@ -661,9 +667,10 @@ This parallels real neuroscience — sleep replay reinforces memories, it's not 
 27. `test_dream_step_12_eviction_audit` — pruned episodes recorded in eviction audit
 28. `test_dream_step_12_disabled` — activation_enabled=False → step skipped
 29. `test_dream_step_12_no_tracker` — no tracker wired → step skipped gracefully
+30. `test_dream_step_12_skips_unknown_episode_ids` — episode IDs in activation tracker but not in current episode set are protected (never pruned)
 
 ### Micro-Dream Reinforcement (Section 9)
-30. `test_micro_dream_records_replay_access` — micro_dream reinforces episode activation
+31. `test_micro_dream_records_replay_access` — micro_dream reinforces episode activation
 
 ---
 
@@ -678,6 +685,7 @@ This parallels real neuroscience — sleep replay reinforces memories, it's not 
 
 **Absorbs:** AD-559 (Provenance Tracking), AD-462b (Active Forgetting)
 **Connects:** AD-567a (anchors), AD-567b (recall scoring), AD-567c (anchor confidence), AD-538 (procedure Ebbinghaus), AD-541f (eviction audit)
+**Scope note:** AD-559 absorption covers *memory provenance* (tracing source episodes through dream consolidation artifacts). The `EmergenceSnapshot.provenance_independence` reserved field (convergence independence scoring) remains unpopulated — it is a separate concept that belongs in a future AD if needed.
 ```
 
 ---
@@ -698,7 +706,7 @@ This parallels real neuroscience — sleep replay reinforces memories, it's not 
 | `src/probos/startup/dreaming.py` | MODIFY | Accept `activation_tracker`, pass to `DreamingEngine` |
 | `src/probos/startup/results.py` | MODIFY | Add `activation_tracker` to `CognitiveServicesResult` |
 | `src/probos/startup/shutdown.py` | MODIFY | Close `ActivationTracker` on shutdown |
-| `tests/test_ad567d_dream_provenance.py` | NEW | 30 tests |
+| `tests/test_ad567d_dream_provenance.py` | NEW | 31 tests |
 
 ---
 

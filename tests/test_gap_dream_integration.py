@@ -24,6 +24,8 @@ def _make_engine(**overrides) -> DreamingEngine:
     engine.episodic_memory = overrides.get("episodic_memory", AsyncMock())
     engine._last_clusters = overrides.get("clusters", [])
     engine._config = overrides.get("config", MagicMock())
+    # AD-567d fields
+    engine._activation_tracker = None
     return engine
 
 

@@ -158,8 +158,8 @@ class TestRunAllChecks:
             # others None → pass
         )
         report = await sif.run_all_checks()
-        # 1 failing out of 8 checks → 87.5%
-        assert report.health_pct == pytest.approx(7 / 8 * 100, abs=0.1)
+        # 1 failing out of 9 checks → 88.9% (AD-567c added anchor integrity check)
+        assert report.health_pct == pytest.approx(8 / 9 * 100, abs=0.1)
         assert not report.all_passed
 
     @pytest.mark.asyncio
@@ -169,7 +169,7 @@ class TestRunAllChecks:
         report = await sif.run_all_checks()
         assert report.health_pct == 100.0
         assert report.all_passed
-        assert len(report.checks) == 8
+        assert len(report.checks) == 9  # AD-567c added anchor integrity check
 
     def test_violations_property(self) -> None:
         """violations returns only failed checks."""

@@ -100,6 +100,7 @@ class CognitiveServicesResult:
     stasis_duration: float
     previous_session: dict[str, Any] | None
     semantic_layer: "SemanticKnowledgeLayer | None"
+    activation_tracker: Any = None  # AD-567d
 
 
 @dataclass

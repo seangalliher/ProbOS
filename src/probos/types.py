@@ -339,11 +339,11 @@ class AnchorFrame:
 
 @dataclass(frozen=True)
 class RecallScore:
-    """Salience-weighted recall result combining multiple ranking signals (AD-567b).
+    """Salience-weighted recall result combining multiple ranking signals (AD-567b/c).
 
     Returned by EpisodicMemory.recall_weighted() — wraps an Episode with
     composite scoring from semantic similarity, keyword hits, trust, Hebbian
-    weight, recency, and anchor completeness.
+    weight, recency, and anchor confidence (Johnson-weighted).
     """
     episode: Episode
     semantic_similarity: float = 0.0   # 0.0–1.0, from ChromaDB cosine distance
@@ -351,7 +351,7 @@ class RecallScore:
     trust_weight: float = 0.5          # agent trust score (0.0–1.0)
     hebbian_weight: float = 0.5        # intent-agent Hebbian weight (0.0–1.0)
     recency_weight: float = 0.0        # exponential decay by age
-    anchor_completeness: float = 0.0   # 0.0–1.0, proportion of filled anchor fields
+    anchor_confidence: float = 0.0     # 0.0–1.0, Johnson-weighted anchor confidence (AD-567c)
     composite_score: float = 0.0       # weighted combination of all signals
 
 
@@ -463,6 +463,9 @@ class DreamReport:
     retrieval_practices: int = 0
     retrieval_accuracy: float | None = None
     retrieval_concerns: int = 0
+    # AD-567d: Activation-based memory lifecycle
+    activation_pruned: int = 0
+    activation_reinforced: int = 0
 
 
 # ------------------------------------------------------------------
