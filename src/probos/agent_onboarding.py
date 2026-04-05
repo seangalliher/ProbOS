@@ -70,6 +70,7 @@ class AgentOnboardingService:
         self._ward_room = ward_room
         self._acm = acm
         self._start_time_wall: float = 0.0  # Set by runtime after creation
+        self._orientation_service: Any = None  # AD-567g: Late-bound
 
     async def wire_agent(self, agent: Any) -> None:
         """Connect an agent to the mesh infrastructure."""
@@ -165,6 +166,29 @@ class AgentOnboardingService:
                     agent._newly_commissioned = True
                 except Exception as e:
                     logger.warning("AD-442: Naming ceremony error for %s: %s", agent.agent_type, e)
+
+        # AD-567g: Cognitive re-localization — set orientation context after naming
+        if is_crew and self._orientation_service and self._config.orientation.enabled:
+            try:
+                _lifecycle = "cold_start" if not _existing_identity_callsign else "restart"
+                _depts: list[str] = []
+                if self._ontology:
+                    _depts = [d.name for d in self._ontology.get_departments()]
+                _ctx = self._orientation_service.build_orientation(
+                    agent,
+                    lifecycle_state=_lifecycle,
+                    crew_count=self._registry.count if self._registry else 0,
+                    departments=_depts,
+                    episodic_memory_count=0 if not _existing_identity_callsign else -1,
+                    trust_score=0.5,
+                )
+                if not _existing_identity_callsign:
+                    agent._orientation_rendered = self._orientation_service.render_cold_start_orientation(_ctx)
+                else:
+                    agent._orientation_rendered = self._orientation_service.render_warm_boot_orientation(_ctx)
+                agent._orientation_context = _ctx
+            except Exception:
+                logger.debug("AD-567g: Orientation failed for %s", agent.agent_type, exc_info=True)
 
         # AD-441c: Two-tier identity — crew get birth certificates, others get asset tags
         if self._identity_registry:

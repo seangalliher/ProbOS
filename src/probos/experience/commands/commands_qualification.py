@@ -142,6 +142,16 @@ async def _run(runtime: Any, console: Console, harness: Any, store: Any, target:
         console.print("[dim]No results.[/dim]")
         return
 
+    # BF-107: Pre-fetch baseline existence per agent+test pair.
+    # r.is_baseline only reflects whether *this* result was the auto-captured
+    # baseline — on subsequent runs it will be False even if a baseline exists.
+    baseline_exists: dict[str, bool] = {}
+    for r in results:
+        key = f"{r.agent_id}:{r.test_name}"
+        if key not in baseline_exists:
+            bl = await store.get_baseline(r.agent_id, r.test_name)
+            baseline_exists[key] = bl is not None
+
     table = Table(title="Qualification Results")
     table.add_column("Agent", style="cyan", width=16)
     table.add_column("Test", style="white")
@@ -156,17 +166,18 @@ async def _run(runtime: Any, console: Console, harness: Any, store: Any, target:
     for r in results:
         agent_label = r.agent_id[:12] if r.agent_id != "__crew__" else "[bold]CREW[/bold]"
         score_style = "green" if r.passed else "red"
+        has_baseline = baseline_exists.get(f"{r.agent_id}:{r.test_name}", False)
         table.add_row(
             agent_label,
             r.test_name,
             str(r.tier),
             f"[{score_style}]{r.score:.3f}[/{score_style}]",
             "[green]Y[/green]" if r.passed else "[red]N[/red]",
-            "[green]Y[/green]" if r.is_baseline else "-",
+            "[green]Y[/green]" if has_baseline else "-",
         )
         if r.passed:
             passed_count += 1
-        if r.is_baseline:
+        if has_baseline:
             baseline_count += 1
         agent_ids.add(r.agent_id)
 

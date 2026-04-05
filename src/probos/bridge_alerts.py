@@ -575,6 +575,37 @@ class BridgeAlertService:
                         alerts.append(a)
         return alerts
 
+    def check_cascade_risk(self, cascade_result: dict) -> list[BridgeAlert]:
+        """AD-567f: Alert Bridge when cascade confabulation is detected."""
+        if cascade_result.get("risk_level") not in ("medium", "high"):
+            return []
+
+        risk = cascade_result["risk_level"]
+        source = cascade_result.get("source_agent", "unknown")
+        affected = cascade_result.get("affected_agents", [])
+        count = cascade_result.get("propagation_count", 0)
+        independence = cascade_result.get("anchor_independence_score", 0.0)
+
+        key = f"cascade:{source}:{','.join(sorted(affected))}"
+        if not self._should_emit(key):
+            return []
+
+        severity = AlertSeverity.ALERT if risk == "high" else AlertSeverity.ADVISORY
+
+        a = BridgeAlert(
+            id=str(uuid.uuid4()),
+            severity=severity,
+            source="social_verification",
+            alert_type="cascade_confabulation",
+            title=f"Cascade confabulation risk ({risk}): {count} agents, anchor independence {independence:.0%}",
+            detail=f"Source: {source}. Affected: {', '.join(affected)}. "
+                   f"{cascade_result.get('detail', '')}",
+            department=None,
+            dedup_key=key,
+        )
+        self._record(a)
+        return [a]
+
     def get_recent_alerts(self, limit: int = 50) -> list[BridgeAlert]:
         """Return recent alerts for status/API exposure."""
         return self._alert_log[-limit:]

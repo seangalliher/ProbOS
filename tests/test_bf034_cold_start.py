@@ -86,9 +86,12 @@ class TestColdStartContext:
         runtime.bridge_alerts = None
         runtime.event_log = None
 
+        agent = MagicMock()
+        agent._orientation_rendered = None  # AD-567g: No orientation — BF-034 note should fire
+
         loop = ProactiveCognitiveLoop(interval=60)
         loop.set_runtime(runtime)
-        context = await loop._gather_context(MagicMock(), 0.5)
+        context = await loop._gather_context(agent, 0.5)
         assert "system_note" in context
         assert "fresh start" in context["system_note"].lower()
 

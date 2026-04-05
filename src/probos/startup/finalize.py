@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from probos.startup.results import FinalizationResult
 from probos.utils import format_duration
+from probos.crew_utils import is_crew_agent
 
 if TYPE_CHECKING:
     from probos.config import SystemConfig
@@ -71,6 +72,9 @@ async def finalize_startup(
         if runtime._knowledge_store:
             proactive_loop._knowledge_store = runtime._knowledge_store
             await proactive_loop.restore_cooldowns()
+        # AD-567g: Wire orientation service into proactive loop
+        if hasattr(runtime, '_orientation_service') and runtime._orientation_service:
+            proactive_loop._orientation_service = runtime._orientation_service
         await proactive_loop.start()
         logger.info("proactive-cognitive-loop started (interval=%ss)", config.proactive_cognitive.interval_seconds)
 
@@ -97,6 +101,15 @@ async def finalize_startup(
     # --- BF-100: Wire EmergentDetector to DreamScheduler for dream suppression ---
     if runtime.dream_scheduler and getattr(runtime, '_emergent_detector', None):
         runtime.dream_scheduler.set_emergent_detector(runtime._emergent_detector)
+
+    # --- AD-567f: Wire social verification into Ward Room ---
+    if hasattr(runtime, '_social_verification') and runtime._social_verification:
+        ward_room = runtime.ward_room
+        if ward_room:
+            if hasattr(ward_room, '_threads') and hasattr(ward_room._threads, 'set_social_verification'):
+                ward_room._threads.set_social_verification(runtime._social_verification)
+            if hasattr(ward_room, '_messages') and hasattr(ward_room._messages, 'set_social_verification'):
+                ward_room._messages.set_social_verification(runtime._social_verification)
 
     # --- AD-515: Create extracted service instances ---
     from probos.ward_room_router import WardRoomRouter
@@ -130,6 +143,9 @@ async def finalize_startup(
     runtime.onboarding._ward_room = runtime.ward_room
     runtime.onboarding._acm = runtime.acm
     runtime.onboarding._start_time_wall = runtime._start_time_wall
+    # AD-567g: Wire orientation service into onboarding
+    if hasattr(runtime, '_orientation_service') and runtime._orientation_service:
+        runtime.onboarding._orientation_service = runtime._orientation_service
 
     # Self-Modification Manager
     if runtime.self_mod_pipeline:
@@ -294,6 +310,40 @@ async def finalize_startup(
                     )
         except Exception:
             logger.debug("Startup announcement failed", exc_info=True)
+
+    # AD-567g: Warm boot orientation for stasis recovery
+    if (hasattr(runtime, '_orientation_service') and runtime._orientation_service
+            and runtime._lifecycle_state == "stasis_recovery"
+            and config.orientation.warm_boot_orientation):
+        try:
+            for agent in runtime.registry.all():
+                if is_crew_agent(agent, runtime.ontology):
+                    _ep_count = 0
+                    if runtime.episodic_memory:
+                        try:
+                            _sid = getattr(agent, 'sovereign_id', None) or agent.id
+                            _eps = await runtime.episodic_memory.recall("", agent_id=_sid, k=1)
+                            _ep_count = len(_eps) if _eps else 0
+                        except Exception:
+                            pass
+                    _trust = 0.5
+                    if runtime.trust_network:
+                        try:
+                            _trust = runtime.trust_network.get_trust(agent.id)
+                        except Exception:
+                            pass
+                    _ctx = runtime._orientation_service.build_orientation(
+                        agent,
+                        lifecycle_state="stasis_recovery",
+                        stasis_duration=runtime._stasis_duration,
+                        episodic_memory_count=_ep_count,
+                        trust_score=_trust,
+                    )
+                    agent._orientation_rendered = runtime._orientation_service.render_warm_boot_orientation(_ctx)
+                    agent._orientation_context = _ctx
+            logger.info("AD-567g: Warm boot orientation set for crew agents")
+        except Exception:
+            logger.debug("AD-567g: Warm boot orientation failed", exc_info=True)
 
     # BF-101/102 Enhancement: Batched auto-welcome for newly commissioned crew
     # Skip on cold start (reset) — the "Fresh Start" announcement handles it.

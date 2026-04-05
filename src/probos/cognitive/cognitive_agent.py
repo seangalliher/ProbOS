@@ -1692,6 +1692,11 @@ class CognitiveAgent(BaseAgent):
             if post_count is not None:
                 parts.append(f"Your posts this hour: {post_count}")
 
+        # AD-567g: Cognitive re-localization orientation
+        orientation = getattr(self, '_orientation_rendered', None)
+        if orientation:
+            parts.append(orientation)
+
         return "\n".join(parts)
 
     def _format_memory_section(self, memories: list[dict]) -> list[str]:

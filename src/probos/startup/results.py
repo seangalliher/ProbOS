@@ -101,6 +101,8 @@ class CognitiveServicesResult:
     previous_session: dict[str, Any] | None
     semantic_layer: "SemanticKnowledgeLayer | None"
     activation_tracker: Any = None  # AD-567d
+    social_verification: Any = None  # AD-567f
+    orientation_service: Any = None  # AD-567g
 
 
 @dataclass

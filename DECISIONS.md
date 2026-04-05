@@ -2018,7 +2018,7 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 
 **Status:** AD-538 CLOSED. 57 new tests across 7 test files. 569 total Cognitive JIT tests. 5,038 pytest + 149 vitest = 5,187 total (6 pre-existing flaky failures unchanged).
 
-**Context:** First empirical analysis of crew notebook production (2026-04-01): 419 files across 11 agents, ~72 hours of autonomous operation post-reset. Finding: ~84% of content is redundant. Agents write "establishing baseline, will monitor" at every startup cycle without referencing prior entries. Root cause: no read-before-write, no consolidation pipeline, no self-repetition detection at the knowledge layer, no quantitative auto-capture. However, the ~16% signal includes genuinely valuable cross-departmental convergence — three agents from two departments (Chapel, Cortez, Keiko) independently diagnosing iatrogenic trust detection through different professional lenses. This convergence is the first concrete evidence of the collaborative intelligence thesis at the knowledge-production level. Full analysis: `probos-commercial/research/crew-notebook-analysis-2026-04-01.md`.
+**Context:** First empirical analysis of crew notebook production (2026-04-01): 419 files across 11 agents, ~72 hours of autonomous operation post-reset. Finding: ~84% of content is redundant. Agents write "establishing baseline, will monitor" at every startup cycle without referencing prior entries. Root cause: no read-before-write, no consolidation pipeline, no self-repetition detection at the knowledge layer, no quantitative auto-capture. However, the ~16% signal includes genuinely valuable cross-departmental convergence — three agents from two departments (Chapel, Cortez, Keiko) independently diagnosing iatrogenic trust detection through different professional lenses. This convergence is the first concrete evidence of the collaborative intelligence thesis at the knowledge-production level.
 
 | AD | Decision |
 |----|----------|
@@ -2557,3 +2557,64 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 | AD-567d | **Provenance Composition:** `anchor_provenance.py` — `summarize_cluster_anchors()` aggregates channels/departments/participants/trigger_types/temporal_span from source episodes. `build_procedure_provenance()` builds source_anchors list for Procedure. `enrich_convergence_report()` adds source_anchors to convergence reports. `EpisodeCluster.anchor_summary` field. `Procedure.source_anchors` field with schema migration. Dream Steps 6/7/7g enriched. **Activation Lifecycle:** `activation_tracker.py` — ACT-R base-level activation B_i=ln(Σt_j^{-d}) with SQLite access log. `ActivationTracker` tracks recall/dream_replay accesses. `EpisodicMemory.set_activation_tracker()` late-binding. Recall methods (`recall_for_agent`, `recall_weighted`, `recall_for_agent_scored`) record access; `recent_for_agent` does NOT. `evict_by_ids()` handles audit+ChromaDB+FTS5+activation cleanup. Dream Step 12: reinforces replayed episodes, prunes low-activation episodes (>24h old, max 10%/cycle, configurable threshold). Micro-dream reinforcement (dream_replay). DreamingConfig: activation_enabled, activation_decay_d, activation_prune_threshold, activation_access_max_age_days. DreamReport: activation_pruned, activation_reinforced. |
 
 **Status:** AD-567d COMPLETE. 31 new tests in `test_ad567d_dream_provenance.py`. Files: `cognitive/anchor_provenance.py` (new), `cognitive/activation_tracker.py` (new), `cognitive/episode_clustering.py`, `cognitive/procedures.py`, `cognitive/procedure_store.py`, `cognitive/episodic.py`, `cognitive/dreaming.py`, `config.py`, `types.py`, `startup/cognitive_services.py`, `startup/dreaming.py`, `startup/shutdown.py`, `startup/results.py`, `runtime.py`.
+
+### AD-567f: Social Verification Protocol *(2026-04-05, OSS)*
+
+- **Absorbs:** AD-462d (Social Memory — cross-agent episodic queries)
+- **Depends:** AD-567a (Episode Anchor Metadata), AD-554 (Real-Time Convergence Detection), AD-506b (Peer Repetition Detection)
+- **Prior art:** Johnson & Raye (1981) reality monitoring, multi-sensor SLAM, circular reporting (intelligence analysis), OBS-015 cascade confabulation (April 3-4), March 26 cascade (11 agents, 5-stage anatomy)
+
+| AD | Decision |
+|----|----------|
+| AD-567f | Social Verification Protocol (absorbs AD-462d). Cross-agent claim verification, corroboration scoring, and cascade confabulation detection. Privacy-preserving: agents learn WHETHER evidence exists and WHO has it, never see other agents' content. Anchor independence as the discriminator: independent anchors = corroboration (good), dependent/missing anchors = cascade (bad). Ward Room integration: cascade check fires after AD-506b peer similarity detection. Bridge Alerts on medium/high cascade risk. Counselor subscription for therapeutic intervention. Prior art: Johnson & Raye (1981) reality monitoring, multi-sensor SLAM, circular reporting (intelligence analysis). Empirical evidence: OBS-015 (Horizon+Atlas cascade confabulation, April 3-4), March 26 cascade (11 agents, 5-stage anatomy). 28 tests. |
+
+**Core insight:** Anchor independence is what separates corroboration from cascade.
+- High content similarity + **independent anchors** (different duty cycles, channels, timestamps) = genuine corroboration
+- High content similarity + **no independent anchors** (all traceable to one unanchored social post) = cascade confabulation
+
+**Key components:**
+- `SocialVerificationService` (`cognitive/social_verification.py`, new): `check_corroboration()`, `check_cascade_risk()`, `get_verification_context()`
+- `CorroborationResult` / `CascadeRiskResult` frozen dataclasses
+- `compute_anchor_independence()` — pairwise independence scoring
+- Privacy boundary: `expose_episode_content` config MUST stay False
+- Events: `CASCADE_CONFABULATION_DETECTED`, `CORROBORATION_VERIFIED`
+- Bridge Alert: `check_cascade_risk()` on BridgeAlertService (ADVISORY for medium, ALERT for high)
+- Ward Room: cascade check fires after `check_peer_similarity()` in both ThreadManager and MessageStore
+- Counselor: subscribes to cascade events, DMs affected agents on high risk
+- Corroboration score: `0.5 * (agent_ratio) + 0.3 * anchor_independence + 0.2 * mean_confidence`
+- Cascade classification: none/low/medium/high based on propagation count + independence score
+
+**Status:** AD-567f COMPLETE. 28 new tests in `test_social_verification.py`. Files: `cognitive/social_verification.py` (new), `events.py`, `config.py`, `bridge_alerts.py`, `ward_room/threads.py`, `ward_room/messages.py`, `proactive.py`, `cognitive/counselor.py`, `startup/cognitive_services.py`, `startup/finalize.py`, `startup/results.py`, `runtime.py`.
+
+### AD-567g: Cognitive Re-Localization — Onboarding Enhancement *(2026-04-05, OSS)*
+
+- **Final AD in Memory Anchoring lineage:** AD-567a→b→c→d→f→g
+- **Prior art:** O'Keefe & Nadel (1978, Nobel 2014) hippocampal cognitive map theory, Tulving (1973) encoding specificity, MR re-localization
+- **Absorbs/extends:** BF-102 (commissioning awareness), BF-034 (cold-start suppression, subsumed into orientation content)
+- **Depends:** AD-567a (anchor metadata), AD-567f (social verification awareness)
+
+| AD | Decision |
+|----|----------|
+| AD-567g | Cognitive Re-Localization — Onboarding Enhancement. Structured orientation context for agent cognitive grounding at boot time. Three lifecycle modes: cold start (full identity + cognitive + first-duty orientation), warm boot (stasis summary + re-orientation reminder), proactive supplement (diminishing during orientation window). Anchor field gap fixes: watch_section (naval watch rotation from UTC hour), event_log_window (recent event count), department (Ward Room episode anchors). OrientationConfig with orientation_window_seconds (600s default). 28 tests. |
+
+**MR principle:** Reset/first boot = tracking loss (no reference frame). Warm boot = partial tracking loss (frame exists but may be stale). Orientation establishes the cognitive map before memories can be reliably anchored.
+
+**Key components:**
+- `OrientationService` (`cognitive/orientation.py`, new): `build_orientation()`, `render_cold_start_orientation()`, `render_warm_boot_orientation()`, `render_proactive_orientation()`
+- `OrientationContext` frozen dataclass — identity, ship context, lifecycle, cognitive grounding, social verification awareness
+- `derive_watch_section()` — naval watch rotation from UTC hour (Mid/Morning/Forenoon/Afternoon/Dog/First)
+- Cold start orientation: 3 sections (Identity Grounding, Cognitive Grounding, First Duty Guidance) — replaces BF-034 system note with positive framing
+- Warm boot orientation: 2 sections (Stasis Summary, Re-Orientation Reminder)
+- Proactive supplement: diminishes over orientation window (full → brief → minimal → absent)
+- Anchor field gap fixes: `watch_section` and `event_log_window` now populated in proactive.py AnchorFrame construction; `department` populated in Ward Room episode anchors
+- `OrientationConfig`: enabled, orientation_window_seconds, cold_start_full_orientation, warm_boot_orientation, proactive_supplement, populate_watch_section, populate_ward_room_department, populate_event_log_window
+
+**Integration points:**
+- `agent_onboarding.py` — orientation_service late-bound, orientation context set after naming ceremony
+- `cognitive_agent.py` — orientation injected into `_build_temporal_context()`
+- `proactive.py` — proactive supplement in `_gather_context()`, BF-034 note subsumed when orientation available, anchor field gaps fixed
+- `ward_room/messages.py` + `ward_room/threads.py` — department resolved in AnchorFrame via `_resolve_author_department()`
+- `startup/cognitive_services.py` — OrientationService created
+- `startup/finalize.py` — orientation_service wired to onboarding + proactive loop, warm boot orientation set on stasis recovery
+
+**Status:** AD-567g COMPLETE. 28 new tests in `test_orientation.py`. Files: `cognitive/orientation.py` (new), `config.py`, `agent_onboarding.py`, `cognitive/cognitive_agent.py`, `proactive.py`, `ward_room/messages.py`, `ward_room/threads.py`, `startup/cognitive_services.py`, `startup/results.py`, `startup/finalize.py`, `runtime.py`.

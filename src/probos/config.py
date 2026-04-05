@@ -452,6 +452,35 @@ class RecordsConfig(BaseModel):
     notebook_staleness_alert_rate: float = 0.7
 
 
+class OrientationConfig(BaseModel):
+    """AD-567g: Cognitive re-localization configuration."""
+
+    enabled: bool = True
+    orientation_window_seconds: float = 600.0  # 10 minutes
+    cold_start_full_orientation: bool = True
+    warm_boot_orientation: bool = True
+    proactive_supplement: bool = True
+    populate_watch_section: bool = True
+    populate_ward_room_department: bool = True
+    populate_event_log_window: bool = True
+
+
+class SocialVerificationConfig(BaseModel):
+    """AD-567f: Social Verification Protocol configuration."""
+
+    enabled: bool = True
+    # Corroboration
+    corroboration_threshold: float = 0.4  # Score above this = corroborated
+    corroboration_max_agents: int = 5  # Denominator for agent count scoring
+    corroboration_min_confidence: float = 0.3  # Anchor confidence gate for matches
+    # Cascade detection
+    cascade_enabled: bool = True
+    cascade_independence_threshold: float = 0.3  # Below this = cascade risk
+    cascade_cooldown_seconds: float = 300.0  # Dedup window for cascade alerts
+    # Privacy
+    expose_episode_content: bool = False  # MUST stay False — privacy boundary
+
+
 class OnboardingConfig(BaseModel):
     """AD-442: Onboarding ceremony configuration."""
 
@@ -749,6 +778,8 @@ class SystemConfig(BaseModel):
     workforce: WorkforceConfig = WorkforceConfig()
     temporal: TemporalConfig = TemporalConfig()
     qualification: QualificationConfig = QualificationConfig()
+    orientation: OrientationConfig = OrientationConfig()
+    social_verification: SocialVerificationConfig = SocialVerificationConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

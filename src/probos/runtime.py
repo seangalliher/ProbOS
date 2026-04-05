@@ -1115,6 +1115,8 @@ class ProbOSRuntime:
         self._stasis_duration = cog.stasis_duration
         self._previous_session = cog.previous_session
         self._activation_tracker = cog.activation_tracker  # AD-567d
+        self._social_verification = cog.social_verification  # AD-567f
+        self._orientation_service = cog.orientation_service  # AD-567g
 
         # AD-533: Procedure Store (after RecordsStore, before Dreaming)
         try:

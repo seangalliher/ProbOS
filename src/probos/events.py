@@ -140,6 +140,8 @@ class EventType(str, Enum):
     QUALIFICATION_TEST_COMPLETE = "qualification_test_complete"  # AD-566a
     QUALIFICATION_BASELINE_SET = "qualification_baseline_set"  # AD-566a
     QUALIFICATION_DRIFT_DETECTED = "qualification_drift_detected"  # AD-566c
+    CASCADE_CONFABULATION_DETECTED = "cascade_confabulation_detected"  # AD-567f
+    CORROBORATION_VERIFIED = "corroboration_verified"  # AD-567f
 
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
@@ -582,3 +584,28 @@ class ProcedureFallbackLearningEvent(BaseEvent):
     rejection_reason: str = ""     # Human-readable reason for rejection/failure
     llm_response: str = ""         # What the LLM did (truncated to MAX_FALLBACK_RESPONSE_CHARS)
     timestamp: float = 0.0
+
+
+@dataclass
+class CascadeConfabulationEvent(BaseEvent):
+    """AD-567f: Emitted when cascade confabulation risk is detected."""
+    event_type: EventType = field(default=EventType.CASCADE_CONFABULATION_DETECTED, init=False)
+    risk_level: str = ""                    # "low", "medium", "high"
+    source_agent: str = ""                  # Earliest poster (callsign)
+    affected_agents: list[str] = field(default_factory=list)
+    affected_departments: list[str] = field(default_factory=list)
+    propagation_count: int = 0
+    anchor_independence_score: float = 0.0
+    channel_id: str = ""
+    detail: str = ""
+
+
+@dataclass
+class CorroborationVerifiedEvent(BaseEvent):
+    """AD-567f: Emitted when a claim is independently corroborated."""
+    event_type: EventType = field(default=EventType.CORROBORATION_VERIFIED, init=False)
+    requesting_agent: str = ""              # Callsign of verifying agent
+    claim_preview: str = ""                 # First 100 chars of the claim
+    corroborating_agents: list[str] = field(default_factory=list)
+    corroboration_score: float = 0.0
+    anchor_independence_score: float = 0.0

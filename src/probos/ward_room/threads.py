@@ -104,6 +104,19 @@ class ThreadManager:
         self._archive_dir: Any = None
         self._last_stats: dict[str, Any] | None = None
         self._identity_registry = identity_registry
+        self._social_verification: Any = None  # AD-567f: late-bound
+
+    def set_social_verification(self, svc: Any) -> None:
+        """AD-567f: Late-bind social verification service."""
+        self._social_verification = svc
+
+    def _resolve_author_department(self, author_id: str) -> str:
+        """AD-567g: Resolve department for Ward Room episode anchors."""
+        try:
+            from probos.cognitive.standing_orders import get_department
+            return get_department(author_id) or ""
+        except Exception:
+            return ""
 
     # ------------------------------------------------------------------
     # List / browse
@@ -342,6 +355,27 @@ class ThreadManager:
                 "thread_id": thread.id,
             })
 
+        # AD-567f: Check cascade risk when peer similarity is detected
+        if peer_matches and self._social_verification:
+            try:
+                cascade = await self._social_verification.check_cascade_risk(
+                    author_id=author_id,
+                    author_callsign=author_callsign,
+                    post_body=body,
+                    channel_id=channel_id,
+                    peer_matches=peer_matches,
+                )
+                if cascade and cascade.risk_level in ("medium", "high"):
+                    import dataclasses
+                    from probos.events import EventType as _ET
+                    if self._emit:
+                        self._emit(
+                            _ET.CASCADE_CONFABULATION_DETECTED,
+                            dataclasses.asdict(cascade),
+                        )
+            except Exception:
+                logger.debug("AD-567f: cascade check failed", exc_info=True)
+
         # AD-430a: Store thread creation as authoring agent's episodic memory
         if self._episodic_memory and author_id:
             try:
@@ -375,6 +409,7 @@ class ThreadManager:
                         trigger_type="ward_room_post",
                         participants=[author_callsign or author_id],
                         trigger_agent=author_callsign or author_id,
+                        department=self._resolve_author_department(author_id),
                     ),
                 )
                 from probos.cognitive.episodic import EpisodicMemory
@@ -418,6 +453,7 @@ class ThreadManager:
                         thread_id=thread.id if thread else "",
                         trigger_type="peer_repetition",
                         trigger_agent=top_match["author_callsign"],
+                        department=self._resolve_author_department(author_id),
                     ),
                 )
                 await self._episodic_memory.store(ep)

@@ -292,6 +292,30 @@ async def init_cognitive_services(
             hebbian_router=hebbian_router,
         )
 
+    # AD-567g: Cognitive Re-Localization
+    orientation_service = None
+    if config.orientation.enabled:
+        try:
+            from probos.cognitive.orientation import OrientationService
+            orientation_service = OrientationService(config=config)
+            logger.info("AD-567g: OrientationService initialized")
+        except Exception as e:
+            logger.warning("OrientationService failed to start: %s — continuing without", e)
+
+    # AD-567f: Social Verification Protocol
+    social_verification = None
+    if config.social_verification.enabled:
+        try:
+            from probos.cognitive.social_verification import SocialVerificationService
+            social_verification = SocialVerificationService(
+                episodic_memory=episodic_memory,
+                config=config.social_verification,
+                emit_event_fn=emit_event_fn,
+            )
+            logger.info("AD-567f: SocialVerificationService initialized")
+        except Exception as e:
+            logger.warning("SocialVerificationService failed to start: %s — continuing without", e)
+
     logger.info("Startup [cognitive_services]: complete")
     return CognitiveServicesResult(
         self_mod_pipeline=self_mod_pipeline,
@@ -311,4 +335,6 @@ async def init_cognitive_services(
         previous_session=previous_session,
         semantic_layer=None,  # created in structural_services phase
         activation_tracker=activation_tracker,  # AD-567d
+        social_verification=social_verification,  # AD-567f
+        orientation_service=orientation_service,  # AD-567g
     )

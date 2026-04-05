@@ -16,6 +16,7 @@ from probos.events import EventType
 from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
+from probos.cognitive.orientation import OrientationContext, derive_watch_section
 from probos.types import AnchorFrame, IntentMessage
 from probos.utils import format_duration
 
@@ -166,6 +167,7 @@ class ProactiveCognitiveLoop:
         self._pending_notebook_reads: dict[str, str] = {}  # AD-504: agent_id -> topic_slug
         self._llm_failure_count: int = 0  # BF-069: consecutive proactive failures
         self._llm_failure_streak: int = 0  # BF-069: consecutive cycles with failure
+        self._orientation_service: Any = None  # AD-567g: Late-bound
 
     def set_runtime(self, runtime: ProbOSRuntime) -> None:
         """Wire the runtime reference (provides registry, trust, WR, memory, etc.)."""
@@ -514,6 +516,8 @@ class ProactiveCognitiveLoop:
                             duty_cycle_id=duty.duty_id if duty else "",
                             department=_dept,
                             trigger_type="duty_cycle" if duty else "proactive_think",
+                            watch_section=derive_watch_section(),
+                            event_log_window=float(len(rt.event_log.recent(seconds=60))) if hasattr(rt, 'event_log') and hasattr(rt.event_log, 'recent') else 0.0,
                         ),
                     )
                     from probos.cognitive.episodic import EpisodicMemory
@@ -686,6 +690,8 @@ class ProactiveCognitiveLoop:
                         duty_cycle_id=duty.duty_id if duty else "",
                         department=_dept,
                         trigger_type="duty_cycle" if duty else "proactive_think",
+                        watch_section=derive_watch_section(),
+                        event_log_window=float(len(rt.event_log.recent(seconds=60))) if hasattr(rt, 'event_log') and hasattr(rt.event_log, 'recent') else 0.0,
                     ),
                 )
                 from probos.cognitive.episodic import EpisodicMemory
@@ -725,13 +731,49 @@ class ProactiveCognitiveLoop:
             context["stasis_duration"] = rt._stasis_duration
 
         # BF-034: Cold-start context note for agents
-        if hasattr(rt, 'is_cold_start') and rt.is_cold_start:
+        # AD-567g: Orientation subsumes this note when available
+        _has_orientation = bool(getattr(agent, '_orientation_rendered', None))
+        if not _has_orientation and hasattr(rt, 'is_cold_start') and rt.is_cold_start:
             context["system_note"] = (
                 "SYSTEM NOTE: This is a fresh start after a system reset. "
                 "All trust scores are at baseline (0.5). This is normal initialization, "
                 "not a demotion. Build trust through demonstrated competence. "
                 "You have no prior episodic memories — do not reference or invent past experiences."
             )
+
+        # AD-567g: Proactive orientation supplement (diminishing)
+        if getattr(self, '_orientation_service', None) and self._config:
+            try:
+                _ocfg = getattr(rt, 'config', None)
+                if _ocfg and getattr(_ocfg, 'orientation', None) and _ocfg.orientation.proactive_supplement:
+                    _birth = getattr(agent, '_birth_timestamp', None)
+                    _age = (time.time() - _birth) if _birth else float('inf')
+                    if _age < _ocfg.orientation.orientation_window_seconds:
+                        _ep_count = 0
+                        if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
+                            try:
+                                _sid = getattr(agent, 'sovereign_id', None) or agent.id
+                                _eps = await rt.episodic_memory.recall("", agent_id=_sid, k=1)
+                                _ep_count = len(_eps) if _eps else 0
+                            except Exception:
+                                pass
+                        _ctx = self._orientation_service.build_orientation(
+                            agent,
+                            lifecycle_state=getattr(rt, '_lifecycle_state', 'restart'),
+                            episodic_memory_count=_ep_count,
+                            trust_score=trust_score,
+                        )
+                        _ctx = OrientationContext(
+                            **{
+                                **{f.name: getattr(_ctx, f.name) for f in _ctx.__dataclass_fields__.values()},
+                                'agent_age_seconds': _age,
+                            }
+                        )
+                        _supp = self._orientation_service.render_proactive_orientation(_ctx)
+                        if _supp:
+                            context["orientation_supplement"] = _supp
+            except Exception:
+                logger.debug("AD-567g: proactive supplement failed", exc_info=True)
 
         # 1. Recent episodic memories (sovereign — only this agent's experiences)
         if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
@@ -1106,6 +1148,8 @@ class ProactiveCognitiveLoop:
             logger.debug("Self-monitoring: memory state failed for %s", callsign, exc_info=True)
 
         # --- (8) Notebook continuity ---
+        # AD-567f: Cascade context delivered via Bridge Alerts + Counselor, not self-monitoring.
+        # Verification context available as a tool agents invoke, not default injection.
         if tier["notebooks"]:
             try:
                 if hasattr(rt, '_records_store') and rt._records_store:

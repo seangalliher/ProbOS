@@ -594,6 +594,7 @@ class CounselorAgent(CognitiveAgent):
                     EventType.FRAGMENTATION_WARNING,     # AD-557
                     EventType.RETRIEVAL_PRACTICE_CONCERN, # AD-541c
                     EventType.QUALIFICATION_DRIFT_DETECTED, # AD-566c
+                    EventType.CASCADE_CONFABULATION_DETECTED, # AD-567f
                 ],
             )
 
@@ -805,6 +806,8 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_retrieval_practice_concern(data)
             elif event_type == EventType.QUALIFICATION_DRIFT_DETECTED.value:
                 await self._on_qualification_drift(data)
+            elif event_type == EventType.CASCADE_CONFABULATION_DETECTED.value:
+                await self._on_cascade_confabulation(data)
         except Exception:
             logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
 
@@ -1193,6 +1196,42 @@ class CounselorAgent(CognitiveAgent):
                 "AD-566c: Warning qualification drift for %s on %s (z=%.2f)",
                 callsign, test_name, data.get("z_score", 0.0),
             )
+
+    async def _on_cascade_confabulation(self, data: dict[str, Any]) -> None:
+        """AD-567f: Handle cascade confabulation detection events.
+
+        On high risk: DM affected agents with a non-judgmental verification prompt.
+        On medium risk: log for wellness context.
+        """
+        risk_level = data.get("risk_level", "")
+        affected = data.get("affected_agents", [])
+        source = data.get("source_agent", "")
+        detail = data.get("detail", "")
+
+        logger.info(
+            "AD-567f: Cascade confabulation %s — source=%s, affected=%s",
+            risk_level, source, affected,
+        )
+
+        if risk_level == "high":
+            message = (
+                "I noticed several crew members are discussing a claim that may not "
+                "have independent verification. Could you each check your own observations "
+                "and anchors before building further analysis on this?"
+            )
+            for agent_callsign in affected:
+                # Resolve agent_id from callsign for DM
+                agent_id = self._resolve_agent_id_from_callsign(agent_callsign)
+                if agent_id and agent_id != self.id:
+                    await self._send_therapeutic_dm(agent_id, agent_callsign, message)
+
+    def _resolve_agent_id_from_callsign(self, callsign: str) -> str | None:
+        """Best-effort resolve agent_id from callsign using registry."""
+        if hasattr(self, '_registry') and self._registry:
+            for agent in self._registry.values():
+                if getattr(agent, 'callsign', None) == callsign:
+                    return getattr(agent, 'id', None)
+        return None
 
     async def _on_trust_update(self, data: dict[str, Any]) -> None:
         """React to significant trust changes — re-assess the agent."""
