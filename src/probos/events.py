@@ -137,6 +137,9 @@ class EventType(str, Enum):
     NOTEBOOK_QUALITY_UPDATED = "notebook_quality_updated"  # AD-555: quality snapshot computed
     RETRIEVAL_PRACTICE_CONCERN = "retrieval_practice_concern"  # AD-541c: recall failure streak
     REMINISCENCE_SESSION_COMPLETE = "reminiscence_session_complete"  # AD-541d: guided reminiscence
+    QUALIFICATION_TEST_COMPLETE = "qualification_test_complete"  # AD-566a
+    QUALIFICATION_BASELINE_SET = "qualification_baseline_set"  # AD-566a
+    QUALIFICATION_DRIFT_DETECTED = "qualification_drift_detected"  # AD-566c
 
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"

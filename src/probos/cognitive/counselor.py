@@ -586,6 +586,7 @@ class CounselorAgent(CognitiveAgent):
                     EventType.GROUPTHINK_WARNING,       # AD-557
                     EventType.FRAGMENTATION_WARNING,     # AD-557
                     EventType.RETRIEVAL_PRACTICE_CONCERN, # AD-541c
+                    EventType.QUALIFICATION_DRIFT_DETECTED, # AD-566c
                 ],
             )
 
@@ -795,6 +796,8 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_fragmentation_warning(data)
             elif event_type == EventType.RETRIEVAL_PRACTICE_CONCERN.value:
                 await self._on_retrieval_practice_concern(data)
+            elif event_type == EventType.QUALIFICATION_DRIFT_DETECTED.value:
+                await self._on_qualification_drift(data)
         except Exception:
             logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
 
@@ -1033,6 +1036,46 @@ class CounselorAgent(CognitiveAgent):
             await self._save_profile_and_assessment(agent_id, assessment)
             await self._maybe_send_therapeutic_dm(
                 agent_id, callsign, assessment, trigger="gap_identified"
+            )
+
+    async def _on_qualification_drift(self, data: dict[str, Any]) -> None:
+        """AD-566c: Handle qualification drift detection events.
+
+        Critical drift triggers full assessment + therapeutic DM.
+        Warning drift is logged for trend tracking only.
+        """
+        agent_id = data.get("agent_id", "")
+        severity = data.get("severity", "")
+        test_name = data.get("test_name", "")
+
+        if not agent_id or agent_id == self.id:
+            return
+
+        callsign = self._resolve_agent_callsign(agent_id)
+
+        if severity == "critical":
+            logger.info(
+                "AD-566c: Critical qualification drift for %s on %s (z=%.2f)",
+                callsign, test_name, data.get("z_score", 0.0),
+            )
+            metrics = self._gather_agent_metrics(agent_id)
+            assessment = self.assess_agent(
+                agent_id=agent_id,
+                current_trust=metrics["trust_score"],
+                current_confidence=metrics["confidence"],
+                hebbian_avg=metrics["hebbian_avg"],
+                success_rate=metrics["success_rate"],
+                personality_drift=metrics["personality_drift"],
+                trigger="qualification_drift_critical",
+            )
+            await self._save_profile_and_assessment(agent_id, assessment)
+            await self._maybe_send_therapeutic_dm(
+                agent_id, callsign, assessment, trigger="qualification_drift"
+            )
+        else:
+            logger.info(
+                "AD-566c: Warning qualification drift for %s on %s (z=%.2f)",
+                callsign, test_name, data.get("z_score", 0.0),
             )
 
     async def _on_trust_update(self, data: dict[str, Any]) -> None:

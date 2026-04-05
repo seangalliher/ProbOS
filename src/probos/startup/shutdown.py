@@ -178,6 +178,19 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime._procedure_store.stop()
         runtime._procedure_store = None
 
+    # Stop Drift Scheduler (AD-566c) — before qualification store
+    drift_sched = getattr(runtime, "_drift_scheduler", None)
+    if drift_sched is not None:
+        await drift_sched.stop()
+        runtime._drift_scheduler = None
+
+    # Stop Qualification Store (AD-566a)
+    qual_store = getattr(runtime, "_qualification_store", None)
+    if qual_store is not None:
+        await qual_store.stop()
+        runtime._qualification_store = None
+        runtime._qualification_harness = None
+
     # Stop Retrieval Practice Engine (AD-541c)
     if hasattr(runtime, '_retrieval_practice_engine') and runtime._retrieval_practice_engine:
         await runtime._retrieval_practice_engine.stop()

@@ -132,6 +132,21 @@ class VitalsMonitorAgent(HeartbeatAgent):
                 metrics["notebook_entries"] = _qs.total_entries
                 metrics["notebook_stale_rate"] = round(_qs.stale_entry_rate, 3)
 
+        # AD-566c: Qualification drift metrics
+        _drift_scheduler = getattr(rt, "_drift_scheduler", None)
+        if _drift_scheduler:
+            _reports = _drift_scheduler.latest_reports
+            if _reports:
+                drift_agents_warning = sum(
+                    1 for r in _reports.values() if r.overall_severity == "warning"
+                )
+                drift_agents_critical = sum(
+                    1 for r in _reports.values() if r.overall_severity == "critical"
+                )
+                metrics["qualification_drift_warning_count"] = drift_agents_warning
+                metrics["qualification_drift_critical_count"] = drift_agents_critical
+                metrics["qualification_last_check"] = _drift_scheduler.last_run_time
+
         # BF-069: LLM proxy health
         llm_health: dict[str, Any] = {"overall": "unknown", "tiers": {}}
         llm_client = getattr(rt, 'llm_client', None)
@@ -287,6 +302,19 @@ class VitalsMonitorAgent(HeartbeatAgent):
                     "alert": f"LLM proxy degraded — tier(s) unreachable: {', '.join(unreachable_tiers)}",
                     "timestamp": metrics["timestamp"],
                 })
+
+        # AD-566c: Qualification drift critical alert
+        drift_critical = metrics.get("qualification_drift_critical_count", 0)
+        if drift_critical > 0:
+            alerts.append({
+                "severity": "warning",
+                "metric": "qualification_drift",
+                "current_value": drift_critical,
+                "threshold": 0,
+                "affected": "qualification",
+                "alert": f"{drift_critical} agent(s) showing critical qualification drift",
+                "timestamp": metrics["timestamp"],
+            })
 
         # Broadcast alerts via intent bus
         for alert_data in alerts:

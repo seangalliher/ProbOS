@@ -397,6 +397,11 @@ class ProbOSRuntime:
         # --- Procedure Store (AD-533) ---
         self._procedure_store: Any = None
 
+        # --- Qualification Harness (AD-566a) ---
+        self._qualification_store: Any = None
+        self._qualification_harness: Any = None
+        self._drift_scheduler: Any = None  # AD-566c
+
         # --- Skill Framework (AD-428) ---
         self.skill_registry: SkillRegistry | None = None
         self.skill_service: AgentSkillService | None = None
@@ -1121,6 +1126,77 @@ class ProbOSRuntime:
         except Exception as e:
             logger.warning("ProcedureStore failed to start: %s — continuing without", e)
             self._procedure_store = None
+
+        # AD-566a: Qualification Harness
+        try:
+            from probos.cognitive.qualification import QualificationHarness, QualificationStore
+
+            qual_store = QualificationStore(data_dir=self._data_dir)
+            await qual_store.start()
+            self._qualification_store = qual_store
+
+            self._qualification_harness = QualificationHarness(
+                store=qual_store,
+                emit_event_fn=self._emit_event,
+                config=self.config.qualification,
+            )
+
+            # AD-566b: Register Tier 1 baseline tests
+            from probos.cognitive.qualification_tests import (
+                PersonalityProbe,
+                EpisodicRecallProbe,
+                ConfabulationProbe,
+                TemperamentProbe,
+            )
+            for test_cls in (PersonalityProbe, EpisodicRecallProbe, ConfabulationProbe, TemperamentProbe):
+                self._qualification_harness.register_test(test_cls())
+
+            # AD-566d: Register Tier 2 domain tests
+            from probos.cognitive.domain_tests import (
+                TheoryOfMindProbe,
+                CompartmentalizationProbe,
+                DiagnosticReasoningProbe,
+                AnalyticalSynthesisProbe,
+                CodeQualityProbe,
+            )
+            for test_cls in (TheoryOfMindProbe, CompartmentalizationProbe, DiagnosticReasoningProbe, AnalyticalSynthesisProbe, CodeQualityProbe):
+                self._qualification_harness.register_test(test_cls())
+
+            # AD-566e: Register Tier 3 collective tests
+            from probos.cognitive.collective_tests import (
+                CoordinationBreakevenProbe,
+                ScaffoldDecompositionProbe,
+                CollectiveIntelligenceProbe,
+                ConvergenceRateProbe,
+                EmergenceCapacityProbe,
+            )
+            for test_cls in (CoordinationBreakevenProbe, ScaffoldDecompositionProbe, CollectiveIntelligenceProbe, ConvergenceRateProbe, EmergenceCapacityProbe):
+                self._qualification_harness.register_test(test_cls())
+        except Exception as e:
+            logger.warning("QualificationStore failed to start: %s — continuing without", e)
+            self._qualification_store = None
+            self._qualification_harness = None
+
+        # AD-566c: Drift Detection Pipeline
+        if self._qualification_harness and self._qualification_store:
+            try:
+                from probos.cognitive.drift_detector import DriftDetector, DriftScheduler
+
+                drift_detector = DriftDetector(
+                    store=self._qualification_store,
+                    config=self.config.qualification,
+                )
+                self._drift_scheduler = DriftScheduler(
+                    harness=self._qualification_harness,
+                    detector=drift_detector,
+                    emit_event_fn=self._emit_event,
+                    config=self.config.qualification,
+                    runtime=self,
+                )
+                await self._drift_scheduler.start()
+            except Exception as e:
+                logger.warning("DriftScheduler failed to start: %s — continuing without", e)
+                self._drift_scheduler = None
 
         # Phase 5: Dreaming & Detection (AD-517)
         from probos.startup.dreaming import init_dreaming

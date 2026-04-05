@@ -1828,6 +1828,14 @@ class ProactiveCognitiveLoop:
                     logger.debug("AD-437: Reply target thread %s is locked", thread_id)
                     continue
 
+                # BF-105: Self-similarity guard for replies (mirrors BF-032 for new threads)
+                if await self._is_similar_to_recent_posts(agent, reply_body):
+                    logger.debug(
+                        "BF-105: Suppressed similar reply from %s to thread %s",
+                        agent.agent_type, thread_id[:8],
+                    )
+                    continue
+
                 # Get callsign
                 callsign = ""
                 if hasattr(rt, 'callsign_registry'):

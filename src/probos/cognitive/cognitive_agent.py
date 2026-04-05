@@ -2127,6 +2127,10 @@ class CognitiveAgent(BaseAgent):
         direct_message from hxi_profile is skipped (AD-430b stores in api.py).
         direct_message from captain (shell /hail) is skipped (shell.py stores).
         """
+        # AD-566a: Skip episode storage for qualification test interactions
+        if intent.params.get("_qualification_test"):
+            return
+
         # Skip intents that already have dedicated episode storage
         if intent.intent == "proactive_think":
             return

@@ -33,7 +33,7 @@ AD-566a builds the **harness** — the actual **tests** come in AD-566b through 
 | ProficiencyLevel | 7-level Dreyfus scale | `skill_framework.py` |
 | VitalsMonitor | Engine snapshot pattern (`latest_snapshot` property) | `agents/medical/vitals_monitor.py` |
 | EmergenceMetricsEngine | In-memory snapshot deque pattern | `cognitive/emergence_metrics.py` |
-| Event system | `emit()` / `subscribe()` bus | `events.py` |
+| Event system | `_emit_event_fn()` callable pattern | `events.py`, `cognitive/counselor.py:510` |
 
 ### Design Decision: SQLite for Results, Ship's Records for Reports
 
@@ -184,11 +184,11 @@ CREATE INDEX IF NOT EXISTS idx_qual_agent_baseline
 
 ```python
 class QualificationStore:
-    def __init__(self, connection_factory: ConnectionFactory | None = None):
+    def __init__(self, data_dir: str | Path | None = None, connection_factory: Any = None):
         ...
 
-    async def start(self, db_path: str = "qualification_results.db") -> None:
-        """Initialize DB connection and schema."""
+    async def start(self) -> None:
+        """Initialize DB connection and schema. Uses data_dir/qualification_results.db."""
 
     async def stop(self) -> None:
         """Close DB connection."""
@@ -244,11 +244,11 @@ class QualificationHarness:
     def __init__(
         self,
         store: QualificationStore,
-        event_bus: Any | None = None,
+        emit_event_fn: Any | None = None,
         config: "QualificationConfig | None" = None,
     ):
         self._store = store
-        self._event_bus = event_bus
+        self._emit_event_fn = emit_event_fn
         self._config = config or QualificationConfig()
         self._tests: dict[str, QualificationTest] = {}
         self._latest_results: dict[str, TestResult] = {}  # agent_id:test_name → result
@@ -355,16 +355,16 @@ async def run_test(self, agent_id: str, test_name: str, runtime: Any) -> TestRes
             result = dataclasses.replace(result, is_baseline=True)
             if self._event_bus:
                 self._event_bus.emit(
-                    "QUALIFICATION_BASELINE_SET",
+                    "qualification_baseline_set",
                     {"agent_id": agent_id, "test_name": test_name, "score": result.score},
                 )
 
     await self._store.save_result(result)
     self._latest_results[f"{agent_id}:{test_name}"] = result
 
-    if self._event_bus:
-        self._event_bus.emit(
-            "QUALIFICATION_TEST_COMPLETE",
+    if self._emit_event_fn:
+        self._emit_event_fn(
+            "qualification_test_complete",
             {
                 "agent_id": agent_id,
                 "test_name": test_name,
@@ -403,15 +403,17 @@ This is a 2-line addition. Tests call `agent.handle_intent(intent)` with
 
 ### D5 — Event Types (events.py)
 
-Add two event type constants. Find the existing event constant definitions and add:
+Add two event type constants to the `EventType` enum. Find the existing event
+constant definitions and add:
 
 ```python
-QUALIFICATION_TEST_COMPLETE = "qualification_test_complete"
-QUALIFICATION_BASELINE_SET = "qualification_baseline_set"
+QUALIFICATION_TEST_COMPLETE = "qualification_test_complete"  # AD-566a
+QUALIFICATION_BASELINE_SET = "qualification_baseline_set"    # AD-566a
 ```
 
-Follow the naming pattern of existing events (e.g., `DREAM_COMPLETE`,
-`TRUST_UPDATE`, `EMERGENCE_METRICS_UPDATED`).
+These are `EventType` enum members (see `events.py` — `class EventType(str, Enum)`),
+not standalone string constants. Follow the naming pattern of existing members
+(e.g., `DREAM_COMPLETE`, `EMERGENCE_METRICS_UPDATED`).
 
 ### D6 — Configuration (config.py)
 
@@ -436,23 +438,31 @@ qualification: QualificationConfig = QualificationConfig()
 ### D7 — Startup Wiring (startup/cognitive_services.py)
 
 Wire the QualificationHarness into the startup pipeline. Follow the pattern used
-for EmergenceMetricsEngine or RetrievalPracticeEngine:
+for CounselorProfileStore in `startup/agent_fleet.py`:
 
 ```python
 # AD-566a: Qualification Harness
 from probos.cognitive.qualification import QualificationHarness, QualificationStore
 
-qual_store = QualificationStore(connection_factory=connection_factory)
-await qual_store.start(db_path=str(data_dir / "qualification_results.db"))
+qual_store = QualificationStore(data_dir=data_dir)
+await qual_store.start()
 rt._qualification_store = qual_store
 
 qual_harness = QualificationHarness(
     store=qual_store,
-    event_bus=rt.event_bus,
+    emit_event_fn=emit_event_fn,
     config=rt.config.qualification,
 )
 rt._qualification_harness = qual_harness
 ```
+
+The `emit_event_fn` callable is NOT currently available in `cognitive_services.py`.
+Two options (builder should choose the simpler one):
+1. Pass `emit_event_fn=None` for now — events will be wired when AD-566b adds tests
+2. Thread `emit_event_fn` through the function signature like `startup/dreaming.py` does
+
+Option 1 is preferred — keep AD-566a minimal. The harness already handles `None`
+gracefully (checks `if self._emit_event_fn:` before calling).
 
 Add to the shutdown sequence (`startup/shutdown.py`):
 
@@ -513,7 +523,7 @@ started/stopped to match the exact pattern.
 
 | # | Test | Asserts |
 |---|------|---------|
-| 18 | `test_harness_emits_events` | Run test → `QUALIFICATION_TEST_COMPLETE` event emitted. Auto-baseline → `QUALIFICATION_BASELINE_SET` event emitted. |
+| 18 | `test_harness_emits_events` | Run test → `"qualification_test_complete"` emitted via `emit_event_fn`. Auto-baseline → `"qualification_baseline_set"` emitted. Use a mock callable to capture. |
 
 ### D6 — Config (1 test)
 
@@ -578,7 +588,7 @@ fixture — follow the pattern in existing store tests.
 | `src/probos/cognitive/cognitive_agent.py` | Edit | D4: 2-line guard in `_store_action_episode()` |
 | `src/probos/events.py` | Edit | D5: 2 event type constants |
 | `src/probos/config.py` | Edit | D6: QualificationConfig + SystemConfig field |
-| `src/probos/startup/cognitive_services.py` | Edit | D7: Harness + Store startup |
+| `src/probos/startup/cognitive_services.py` | Edit | D7: Harness + Store startup (follow `agent_fleet.py` CounselorProfileStore pattern) |
 | `src/probos/startup/shutdown.py` | Edit | D7: Store shutdown |
 | `tests/test_ad566a_qualification_harness.py` | **Create** | 19 tests |
 
@@ -608,7 +618,8 @@ No new dependencies.
 
 1. Read existing patterns: `cognitive/emergence_metrics.py` (engine pattern),
    `cognitive/counselor.py:277` (CounselorProfileStore SQLite pattern),
-   `cognitive/retrieval_practice.py` (ConnectionFactory + start/stop lifecycle)
+   `cognitive/retrieval_practice.py` (ConnectionFactory + start/stop lifecycle),
+   `startup/agent_fleet.py:109` (CounselorProfileStore startup wiring — follow this for D7)
 2. Create `cognitive/qualification.py` with all D1-D3 deliverables in one file
 3. The `QualificationTest` protocol uses `typing.Protocol` + `@runtime_checkable`
 4. `TestResult` is `@dataclass(frozen=True)` — immutable like Episode

@@ -670,6 +670,25 @@ class SystemInfo(BaseModel):
     log_level: str = "INFO"
 
 
+class QualificationConfig(BaseModel):
+    """Configuration for the Crew Qualification Battery (AD-566)."""
+
+    enabled: bool = True
+    baseline_auto_capture: bool = True
+    significance_threshold: float = 0.15
+    test_timeout_seconds: float = 60.0
+
+    # AD-566c: Drift Detection Pipeline
+    drift_check_enabled: bool = True
+    drift_check_interval_seconds: float = 604800.0  # 1 week
+    drift_warning_sigma: float = 2.0    # Counselor alert threshold
+    drift_critical_sigma: float = 3.0   # Bridge/Captain alert threshold
+    drift_min_samples: int = 3          # Minimum data points before drift analysis
+    drift_history_window: int = 20      # Max historical results for stats
+    drift_cooldown_seconds: float = 3600.0  # Min time between alerts per agent+test
+    drift_check_tiers: list[int] = [1, 2]  # AD-566d: Which tiers the drift scheduler runs
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -705,6 +724,7 @@ class SystemConfig(BaseModel):
     communications: CommunicationsConfig = CommunicationsConfig()
     workforce: WorkforceConfig = WorkforceConfig()
     temporal: TemporalConfig = TemporalConfig()
+    qualification: QualificationConfig = QualificationConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

@@ -521,6 +521,60 @@ class BridgeAlertService:
 
         return alerts
 
+    def check_qualification_drift(self, drift_reports: list) -> list[BridgeAlert]:
+        """AD-566c: Evaluate qualification drift and emit bridge alerts.
+
+        Warning severity (2σ): ADVISORY alert, routes to Medical department.
+        Critical severity (3σ): ALERT severity, routes to Bridge (all-hands).
+        """
+        alerts: list[BridgeAlert] = []
+        for report in drift_reports:
+            if not getattr(report, "drift_detected", False):
+                continue
+            for signal in getattr(report, "signals", []):
+                if signal.severity == "critical":
+                    key = f"qual_drift_critical:{signal.agent_id}:{signal.test_name}"
+                    if self._should_emit(key):
+                        a = BridgeAlert(
+                            id=str(uuid.uuid4()),
+                            severity=AlertSeverity.ALERT,
+                            source="qualification_drift",
+                            alert_type="qualification_drift_critical",
+                            title=f"Critical Drift — {signal.agent_id[:20]} on {signal.test_name}",
+                            detail=(
+                                f"Agent {signal.agent_id} shows {signal.z_score:.1f}σ deviation "
+                                f"on {signal.test_name} (score: {signal.current_score:.2f}, "
+                                f"mean: {signal.mean_score:.2f}, baseline: {signal.baseline_score:.2f}). "
+                                f"Direction: {signal.direction}. Automatic investigation recommended."
+                            ),
+                            department=None,
+                            dedup_key=key,
+                            related_agent_id=signal.agent_id,
+                        )
+                        self._record(a)
+                        alerts.append(a)
+                elif signal.severity == "warning":
+                    key = f"qual_drift_warning:{signal.agent_id}:{signal.test_name}"
+                    if self._should_emit(key):
+                        a = BridgeAlert(
+                            id=str(uuid.uuid4()),
+                            severity=AlertSeverity.ADVISORY,
+                            source="qualification_drift",
+                            alert_type="qualification_drift_warning",
+                            title=f"Drift Detected — {signal.agent_id[:20]} on {signal.test_name}",
+                            detail=(
+                                f"Agent {signal.agent_id} shows {signal.z_score:.1f}σ deviation "
+                                f"on {signal.test_name} (score: {signal.current_score:.2f}, "
+                                f"mean: {signal.mean_score:.2f}). Direction: {signal.direction}."
+                            ),
+                            department="medical",
+                            dedup_key=key,
+                            related_agent_id=signal.agent_id,
+                        )
+                        self._record(a)
+                        alerts.append(a)
+        return alerts
+
     def get_recent_alerts(self, limit: int = 50) -> list[BridgeAlert]:
         """Return recent alerts for status/API exposure."""
         return self._alert_log[-limit:]
