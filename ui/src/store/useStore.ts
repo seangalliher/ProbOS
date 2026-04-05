@@ -774,6 +774,7 @@ export const useStore = create<HXIState>((set, get) => ({
             confidence: a.confidence,
             trust: a.trust,
             tier: a.tier as Agent['tier'],
+            isCrew: (a as any).isCrew ?? false,
             position: [0, 0, 0],
           });
         }
@@ -896,6 +897,7 @@ export const useStore = create<HXIState>((set, get) => ({
               confidence: d.confidence,
               trust: d.trust,
               tier: 'domain',
+              isCrew: false,
               position: [0, 0, 0],
               createdAt: Date.now(),
             };

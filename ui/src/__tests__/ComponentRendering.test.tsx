@@ -174,6 +174,7 @@ const MOCK_AGENT: Agent = {
   confidence: 0.72,
   state: 'active',
   tier: 'domain',
+  isCrew: true,
   position: [0, 0, 0],
 };
 

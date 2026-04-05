@@ -10,6 +10,7 @@ export interface Agent {
   confidence: number;
   trust: number;
   tier: 'core' | 'utility' | 'domain';
+  isCrew: boolean;
   position: [number, number, number];
   createdAt?: number;
   activatedAt?: number;

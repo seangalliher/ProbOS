@@ -100,7 +100,7 @@ export function ContextRibbon({ bridgeState, compact }: ContextRibbonProps) {
       )}
 
       {sep}
-      <span>{[...agents.values()].filter(a => a.tier === 'domain').length} crew</span>
+      <span>{[...agents.values()].filter(a => a.isCrew).length} crew</span>
 
       {!compact && (
         <>

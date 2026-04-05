@@ -16,7 +16,7 @@ describe('AgentProfilePanel store (AD-406)', () => {
     const mockAgent = {
       id: 'a1', agentType: 'scout', callsign: 'Wesley', displayName: 'Scout', pool: 'scout',
       state: 'active' as const, confidence: 0.8, trust: 0.7,
-      tier: 'domain' as const, position: [0, 0, 0] as [number, number, number],
+      tier: 'domain' as const, isCrew: true, position: [0, 0, 0] as [number, number, number],
     };
     useStore.setState({ pinnedAgent: mockAgent });
     useStore.getState().openAgentProfile('a1');

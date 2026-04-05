@@ -41,7 +41,7 @@ export function DecisionSurface() {
     return () => document.removeEventListener('mousedown', handler);
   }, [showVoicePicker]);
 
-  const crewAgents = Array.from(agents.values()).filter(a => a.tier === 'domain');
+  const crewAgents = Array.from(agents.values()).filter(a => a.isCrew);
   const crewCount = crewAgents.length;
   const avgHealth = crewCount > 0
     ? crewAgents.reduce((s, a) => s + a.confidence, 0) / crewCount

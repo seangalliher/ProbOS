@@ -813,6 +813,7 @@ class ProbOSRuntime:
                 "confidence": agent.confidence,
                 "trust": format_trust(trust_score),
                 "tier": getattr(agent, "tier", "core"),
+                "isCrew": is_crew_agent(agent, self.ontology),
                 "agency": agency_from_rank(Rank.from_trust(trust_score)).value,
             })
 
