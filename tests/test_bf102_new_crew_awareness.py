@@ -84,7 +84,9 @@ class TestCommissioningAwareness:
 
     def test_exact_threshold_boundary(self):
         """Agent at exactly 300s should NOT get commissioning line (age >= 300)."""
-        agent = _make_agent(_birth_timestamp=time.time() - 300)
+        # Use 301 to avoid race: time.time() drift during execution
+        # can make age < 300 when set to exactly 300.
+        agent = _make_agent(_birth_timestamp=time.time() - 301)
         ctx = agent._build_temporal_context()
         assert "You were commissioned" not in ctx
 

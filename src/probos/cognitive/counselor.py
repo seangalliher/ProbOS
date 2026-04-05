@@ -875,6 +875,97 @@ class CounselorAgent(CognitiveAgent):
         # No DM, no intervention — amber is informational for the Counselor.
         # She tracks the pattern. If it escalates to red, _on_circuit_breaker_trip handles it.
 
+    async def _on_circuit_breaker_trip(self, data: dict[str, Any]) -> None:
+        """Handle circuit breaker trip with trip-aware clinical assessment (AD-495)."""
+        agent_id = data.get("agent_id", "")
+        if not agent_id or agent_id == self.id:
+            return
+
+        trip_count = data.get("trip_count", 1)
+        cooldown_seconds = data.get("cooldown_seconds", 900.0)
+        trip_reason = data.get("trip_reason", "unknown")
+        callsign = data.get("callsign", agent_id)
+        zone = data.get("zone", "red")  # AD-506a
+
+        # Gather current metrics
+        metrics = self._gather_agent_metrics(agent_id)
+
+        # Run assessment with circuit_breaker trigger
+        assessment = self.assess_agent(
+            agent_id,
+            current_trust=metrics["trust_score"],
+            current_confidence=metrics["confidence"],
+            hebbian_avg=metrics["hebbian_avg"],
+            success_rate=metrics["success_rate"],
+            personality_drift=metrics["personality_drift"],
+            trigger="circuit_breaker",
+        )
+
+        # Classify severity and enrich assessment
+        severity, recommendation = self._classify_trip_severity(
+            trip_count, trip_reason, assessment, zone=zone,
+        )
+
+        # Add trip-specific concerns
+        if trip_count == 1:
+            assessment.concerns.append(
+                f"First circuit breaker trip (reason: {trip_reason})"
+            )
+        elif trip_count <= 3:
+            assessment.concerns.append(
+                f"Repeated circuit breaker trip #{trip_count} (reason: {trip_reason})"
+            )
+        else:
+            assessment.concerns.append(
+                f"Frequent circuit breaker trips ({trip_count} total, reason: {trip_reason}) — pattern requires attention"
+            )
+
+        # Add trip-specific recommendation
+        if recommendation:
+            assessment.recommendations.append(recommendation)
+
+        # Add clinical note
+        assessment.notes = (
+            f"Circuit breaker trip #{trip_count}. "
+            f"Reason: {trip_reason}. "
+            f"Cooldown: {cooldown_seconds:.0f}s. "
+            f"Severity classification: {severity}."
+        )
+
+        # Persist
+        await self._save_profile_and_assessment(agent_id, assessment)
+
+        # Alert bridge (always for circuit breaker trips)
+        self._alert_bridge(agent_id, assessment)
+
+        # Post to Ward Room (AD-495)
+        await self._post_assessment_to_ward_room(
+            agent_id, callsign, assessment, severity, trip_count, trip_reason,
+        )
+
+        # AD-505: Therapeutic DM if severity warrants
+        if severity in ("concern", "intervention", "escalate"):
+            await self._maybe_send_therapeutic_dm(
+                agent_id, callsign, assessment, trigger="circuit_breaker"
+            )
+
+        # AD-505: Mechanical interventions for high severity
+        if severity in ("intervention", "escalate"):
+            await self._apply_intervention(agent_id, callsign, assessment, severity)
+
+        # Emit counselor assessment event
+        if self._emit_event_fn:
+            try:
+                self._emit_event_fn(EventType.COUNSELOR_ASSESSMENT, {
+                    "agent_id": agent_id,
+                    "wellness_score": assessment.wellness_score,
+                    "alert_level": self._cognitive_profiles.get(agent_id, CognitiveProfile()).alert_level,
+                    "fit_for_duty": assessment.fit_for_duty,
+                    "concerns_count": len(assessment.concerns),
+                })
+            except Exception:
+                logger.debug("Failed to emit counselor assessment event", exc_info=True)
+
     async def _on_zone_recovery(self, data: dict[str, Any]) -> None:
         """AD-506b: Credit agent for self-correction when zone improves."""
         agent_id = data.get("agent_id", "")
