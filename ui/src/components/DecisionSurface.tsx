@@ -41,9 +41,10 @@ export function DecisionSurface() {
     return () => document.removeEventListener('mousedown', handler);
   }, [showVoicePicker]);
 
-  const agentCount = agents.size;
-  const avgHealth = agentCount > 0
-    ? Array.from(agents.values()).reduce((s, a) => s + a.confidence, 0) / agentCount
+  const crewAgents = Array.from(agents.values()).filter(a => a.tier === 'domain');
+  const crewCount = crewAgents.length;
+  const avgHealth = crewCount > 0
+    ? crewAgents.reduce((s, a) => s + a.confidence, 0) / crewCount
     : 0;
 
   const modeColor = systemMode === 'dreaming' ? '#e8963c'
@@ -81,7 +82,7 @@ export function DecisionSurface() {
             boxShadow: connected ? '0 0 4px #80c878' : '0 0 4px #c84858',
           }} />
           <span style={{ color: connected ? '#a0c0a0' : '#c84858' }}>
-            {connected ? `Live \u2014 ${agentCount} agents` : 'Disconnected'}
+            {connected ? `Live \u2014 ${crewCount} crew` : 'Disconnected'}
           </span>
         </span>
 
