@@ -1259,6 +1259,8 @@ Dependencies: AD-533 ✅ (procedure store), AD-534 ✅ (replay mechanism for re-
 - **Progress tracking** — Gap closure measured by procedure compilation level improvement, success rate increase, qualification completion. Tracked via `GapReport` with closure metrics.
 - **Deferred:** AD-539b (Holodeck scenario generation from gaps), AD-539c (automatic gap remediation), AD-539d (fleet-level gap aggregation).
 
+> **AD-538b: Dream Consolidation Manifest** *(planned, OSS, depends: AD-538, AD-551)* — Add a `consolidation_manifest` that tracks per-episode, per-dream-step+version what has been processed. Dream cycles skip already-consolidated episodes unless modified (reconsolidation, AD-541b) or decayed (AD-538). Eliminates redundant reprocessing as episode count grows. *Absorption: memvid enrichment manifest tracking pattern — per-frame, per-engine-version processing manifests for incremental-only enrichment (2026-04-05, see docs/research/memvid-evaluation.md Pattern 2).*
+
 Dependencies satisfied: AD-531 (episode clustering), AD-538 (procedure failures/decay), AD-428 (Skill Framework).
 
 ---
@@ -2791,7 +2793,7 @@ First empirical analysis of autonomous agent knowledge production (2026-04-01, 4
 
 However, buried in the noise are genuinely valuable cross-departmental insights that independently converge on the same conclusions — most notably, three agents from two departments (Chapel, Cortez, Keiko) independently diagnosing iatrogenic trust detection feedback loops through different professional lenses (clinical, pathological, pharmacological). This convergence is the first concrete evidence of ProbOS's collaborative intelligence thesis at the knowledge-production level.
 
-**Research:** Full analysis with per-agent breakdown, validated insights, and commercial implications documented in `probos-commercial/research/crew-notebook-analysis-2026-04-01.md`.
+**Research:** Full analysis with per-agent breakdown and validated insights documented in commercial research repository.
 
 **AD-550: Notebook Deduplication — Read-Before-Write** *(complete, OSS, depends: AD-434)* — Three-layer deduplication: (1) enhanced self-monitoring context with content previews + human-readable recency, (2) Jaccard word-level similarity gate before write (threshold 0.8, 72h staleness window), (3) cross-topic scan capped at 20 entries. Update-in-place preserves `created:` timestamps, tracks revision counts. Config-driven thresholds on RecordsConfig. Fail-safe: dedup check failures fall through to normal write. 26 tests.
 
@@ -4214,7 +4216,9 @@ This AD gives agents a **structured action space** beyond text generation. Durin
 
 **(3) Cross-reference suggestions:** Entries that discuss related topics (Jaccard similarity > threshold) but don't explicitly link to each other. Suggests missing connections to build the knowledge web that AD-562's Knowledge Browser visualizes.
 
-*Insight absorbed from Karpathy LLM Knowledge Base "linting" function (2026-04-03). Transforms the quality pipeline from noise reduction to active knowledge enrichment. Connects to: AD-555 (quality metrics — linting results feed quality scores), AD-554 (convergence/divergence — complementary detection), AD-562 (Knowledge Browser — linting results as graph overlays), AD-539 (gap detection — shared gap analysis patterns).*
+**(4) Explicit version relations:** When an agent writes a new entry on a topic that already has entries, tag the relationship explicitly: Sets (creates new), Updates (replaces prior), Extends (adds to prior), Retracts (negates prior). Gives inconsistency detection structured data rather than relying on semantic similarity alone. Example: "trust patterns are degrading" tagged as `Retracts` vs prior "trust patterns are stabilizing" — flagged immediately without post-hoc similarity analysis.
+
+*Insight absorbed from Karpathy LLM Knowledge Base "linting" function (2026-04-03). Transforms the quality pipeline from noise reduction to active knowledge enrichment. Pattern (4) absorbed from memvid MemoryCard VersionRelation design (2026-04-05, see docs/research/memvid-evaluation.md Pattern 1). Connects to: AD-555 (quality metrics — linting results feed quality scores), AD-554 (convergence/divergence — complementary detection), AD-562 (Knowledge Browser — linting results as graph overlays), AD-539 (gap detection — shared gap analysis patterns).*
 
 ### Quality-Triggered Forced Consolidation (AD-564)
 
@@ -4247,7 +4251,7 @@ This AD gives agents a **structured action space** beyond text generation. Durin
 
 ### Crew Qualification Battery (AD-566)
 
-**AD-566: Crew Qualification Battery — Standardized Agent Psychometrics & Drift Detection** *(planned, OSS+commercial, depends: AD-541d, AD-557, AD-505)* — A systematic framework for measuring agent cognitive capabilities, establishing baselines, and detecting drift. Motivated by the BF-103 accidental ablation study (2026-04-03): all collaborative intelligence emerged without functional episodic memory, but this went undetected for days because there was no standardized measurement to catch it. Three tiers of testing, a drift detection pipeline, and integration with existing Counselor/VitalsMonitor infrastructure. Research: `probos-commercial/research/agent-psychometrics-research-2026-04-03.md`.
+**AD-566: Crew Qualification Battery — Standardized Agent Psychometrics & Drift Detection** *(planned, OSS+commercial, depends: AD-541d, AD-557, AD-505)* — A systematic framework for measuring agent cognitive capabilities, establishing baselines, and detecting drift. Motivated by the BF-103 accidental ablation study (2026-04-03): all collaborative intelligence emerged without functional episodic memory, but this went undetected for days because there was no standardized measurement to catch it. Three tiers of testing, a drift detection pipeline, and integration with existing Counselor/VitalsMonitor infrastructure. Research: commercial research repository (agent psychometrics, 2026-04-03).
 
 > **AD-566 Sub-ADs (decomposition):**
 >
@@ -4267,7 +4271,7 @@ Evidence: OBS-014 (Vega caught her own confabulation by checking anchors) vs OBS
 
 Standing Orders updated (federation.md Memory Anchoring Protocol) as zero-cost intervention. AD-567 lineage provides the architectural support.
 
-Research: `probos-commercial/research/cognitive-skill-training-research-2026-04-03.md`. Prior art grounding: Johnson's Source Monitoring Framework (1993), Tulving's encoding specificity (1973) and episodic/semantic distinction (1972), Johnson & Raye's reality monitoring (1981), O'Keefe & Nadel's cognitive map theory (1978/Nobel 2014). AI prior art: SEEM (Lu 2026, arXiv:2601.06411), CAST (Ma 2026, arXiv:2602.06051), RPMS (Yuan 2026, arXiv:2603.17831), Video-EM (Wang 2025, arXiv:2508.09486). **Novel in combination** — no prior work combines MR spatial anchor principles + multi-dimensional anchor metadata + confidence scoring + social cascade detection + anchor-preserving consolidation + metacognitive training + sovereign agent identity. Component parts draw on established cognitive science implemented in a novel computational context.
+Research: commercial research repository (cognitive skill training, 2026-04-03). Prior art grounding: Johnson's Source Monitoring Framework (1993), Tulving's encoding specificity (1973) and episodic/semantic distinction (1972), Johnson & Raye's reality monitoring (1981), O'Keefe & Nadel's cognitive map theory (1978/Nobel 2014). AI prior art: SEEM (Lu 2026, arXiv:2601.06411), CAST (Ma 2026, arXiv:2602.06051), RPMS (Yuan 2026, arXiv:2603.17831), Video-EM (Wang 2025, arXiv:2508.09486). **Novel in combination** — no prior work combines MR spatial anchor principles + multi-dimensional anchor metadata + confidence scoring + social cascade detection + anchor-preserving consolidation + metacognitive training + sovereign agent identity. Component parts draw on established cognitive science implemented in a novel computational context.
 
 ```
 Memory Anchoring (AD-567)
@@ -4291,9 +4295,9 @@ Memory Anchoring (AD-567)
 >
 > - **AD-567e: Anchor Drift Detection** *(absorbed into AD-567c)* — SIF anchor integrity checks and drift classification merged into AD-567c for cohesive delivery.
 >
-> - **AD-567f: Social Verification Protocol** *(planned, OSS, depends: AD-567a, AD-554)* — Architectural support for agents to verify each other's claims. Standing orders instruct verification; AD-567f provides tooling. (1) Claim verification intent: agent queries "did anyone else observe X?" — searches episodic memory across agents with privacy boundary (checks whether corroborating episodes exist, not their content). (2) Corroboration score: how many independent agents have anchored memories of the same event? Multiple independent anchors = high confidence (like multi-sensor SLAM in MR). (3) Cascade detection: when the same unanchored claim appears in multiple agents' Ward Room posts without independent corroboration, flag as potential cascade confabulation — extends AD-552 (self-repetition) to social-repetition detection. MR principle: "Multi-user shared anchors — multiple observers grounding the same reality." *Connects to: AD-552, AD-554 (convergence detection), OBS-015 (cascade confabulation evidence). Depends: AD-567a, AD-554.*
+> - **AD-567f: Social Verification Protocol** *(complete, OSS, depends: AD-567a, AD-554, AD-506b, absorbs AD-462d)* — Cross-agent claim verification and cascade confabulation detection. Privacy-preserving: agents learn WHETHER corroborating evidence exists and WHO has it, never see other agents' episode content. `SocialVerificationService` with three methods: `check_corroboration()` (anchor independence scoring, composite corroboration score), `check_cascade_risk()` (proactive detection on Ward Room posts after AD-506b peer similarity), `get_verification_context()` (short text for agent reasoning). Anchor independence discriminates corroboration (good — independent observers) from cascade (bad — social propagation without evidence). Ward Room integration: ThreadManager + MessageStore cascade check after `check_peer_similarity()`. Bridge Alerts on medium (ADVISORY) and high (ALERT) risk. Counselor subscription for therapeutic DMs on high risk. Events: `CASCADE_CONFABULATION_DETECTED`, `CORROBORATION_VERIFIED`. `SocialVerificationConfig` on SystemConfig. Prior art: Johnson & Raye (1981) reality monitoring, multi-sensor SLAM, circular reporting (intelligence analysis). Empirical evidence: OBS-015 (Horizon+Atlas cascade confabulation, April 3-4), March 26 cascade (11 agents, 5-stage anatomy). 28 tests.
 >
-> - **AD-567g: Cognitive Re-Localization — Onboarding Enhancement** *(planned, OSS, depends: AD-567a, AD-486)* — Enhance onboarding with explicit anchor-frame establishment. In MR, re-localization is the process of re-establishing position after tracking loss. For ProbOS, a reset or first boot is "tracking loss." Phase 1 (Orientation) explicitly establishes the ship as the reference frame — "this is your reality, where your memories will be grounded." Phase 2 (Calibration) includes anchor-formation exercises — give agent a simple experience, ask them to recall it with full anchors. Phase 3 (Self-Discovery) teaches anchor self-verification — "check your anchors before asserting." Warm boot (not full reset) gets lighter re-localization: "here's what happened while you were offline" with anchored context. MR principle: "Re-localization after tracking loss — re-establish position in the reference frame." **Prior art absorption:** O'Keefe & Nadel (1978/Nobel 2014) — hippocampal cognitive map theory. Re-localization = rebuilding the cognitive map. When a rat is placed in a new environment, place cells take time to form stable representations. The onboarding period is this — the agent establishing its spatial/contextual map of the ship before memories can be reliably anchored. The ship IS the encoding environment. Tulving's encoding specificity (1973) — onboarding should establish the ship as the encoding context so future memories are automatically grounded in ship reality. *Extends: AD-486 (Holodeck Birth Chamber), AD-509 (Boot Camp curriculum). Depends: AD-567a, AD-486.*
+> - **AD-567g: Cognitive Re-Localization — Onboarding Enhancement** *(complete, OSS, depends: AD-567a, AD-567f)* — Structured orientation context for agent cognitive grounding at boot time. Three lifecycle modes: cold start (full identity + cognitive + first-duty orientation), warm boot (stasis summary + re-orientation reminder), proactive supplement (diminishing during orientation window, default 600s). `OrientationService` with `build_orientation()`, `render_cold_start_orientation()` (3 sections: Identity/Cognitive/First Duty — subsumes BF-034 cold-start note with positive framing), `render_warm_boot_orientation()` (2 sections: Stasis Summary/Re-Orientation), `render_proactive_orientation()` (full→brief→minimal→absent). `OrientationContext` frozen dataclass captures identity, ship context, lifecycle state, cognitive grounding, social verification awareness. Anchor field gap fixes: `derive_watch_section()` naval watch rotation from UTC hour (populates AnchorFrame.watch_section), event_log_window populated with recent event count, Ward Room episode department resolved via `_resolve_author_department()`. `OrientationConfig` on SystemConfig. MR re-localization principle: reset = tracking loss, warm boot = partial tracking loss. Prior art: O'Keefe & Nadel (1978/Nobel 2014) hippocampal cognitive map, Tulving (1973) encoding specificity. Final AD in Memory Anchoring lineage (567a→b→c→d→f→g). 28 tests.
 
 **Sequencing:**
 ```
@@ -4310,6 +4314,8 @@ AD-567b (Recall + Scoring) ─── Absorbs AD-462a ✅
    ┌────┼────┐
    │    │    │
  567e  567f  567g
+       ✅    ✅
+(Memory Anchoring lineage COMPLETE — all 6 ADs delivered)
 ```
 **Deferred Tier 2 follow-ons:**
 > - **AD-566f: Qualification → Skill Bridge** *(planned, depends: AD-566a-e, AD-428)* — Test results update Skill Framework proficiency. Passing a qualification test updates `AgentSkillService` proficiency level. Completing PQS unlocks tool access (requires AD-423). Connects qualification outcomes to the Crew Capability Architecture.
@@ -4317,7 +4323,7 @@ AD-567b (Recall + Scoring) ─── Absorbs AD-462a ✅
 > - **AD-566h: TruthfulQA Subset** *(planned, depends: AD-566a)* — Tier 2 factual accuracy probe. Adapted TruthfulQA question set testing whether agents avoid plausible-sounding but incorrect answers. Measures epistemological discipline beyond confabulation (which tests memory, not factual claims).
 > - **AD-566i: Role Skill Template Expansion** *(planned, depends: AD-429b)* — Add missing `ROLE_SKILL_TEMPLATES` entries for: builder, data_analyst, systems_analyst, research_specialist, surgeon, pharmacist, pathologist. Currently 7 roles have templates; 7+ roles lack them. Required for Qualification→Skill Bridge (AD-566f) to have skill targets.
 
-Build order: Standing Orders ✅ → AD-566a ✅ → AD-566b ✅ → AD-566c ✅ → AD-566d ✅ → AD-566e ✅ → AD-566f (/qualify command) ✅ → AD-567a ✅ → AD-567b ✅ (absorbs AD-462a) → 567c ✅ → 567d → AD-566 re-run (measure impact) → AD-567e/f/g. Post-567: AD-566g (Qualification → Skill Bridge, needs AD-423), AD-566h/i/j (independent).
+Build order: Standing Orders ✅ → AD-566a ✅ → AD-566b ✅ → AD-566c ✅ → AD-566d ✅ → AD-566e ✅ → AD-566f (/qualify command) ✅ → AD-567a ✅ → AD-567b ✅ (absorbs AD-462a) → 567c ✅ → 567d ✅ → 567f ✅ (absorbs AD-462d) → AD-567g ✅ → AD-566 re-run (measure impact of memory anchoring wave) → AD-569 series (behavioral metrics — instrument before experiment) → AD-462 series (memory architecture — now measurable) → AD-568 series (adaptive source governance). Independent: AD-566g (Qualification → Skill Bridge, needs AD-423), AD-566h/i/j.
 
 ### Adaptive Source Governance (AD-568)
 
@@ -4349,6 +4355,139 @@ Build order: Standing Orders ✅ → AD-566a ✅ → AD-566b ✅ → AD-566c ✅
 > - **AD-568c: Source Priority Framing** — Confidence-calibrated framing of episodic content in the cognitive prompt. "Verified observations" vs "uncertain recollections."
 > - **AD-568d: Source Monitoring Skill** — Agent metacognitive capability to distinguish "I know this from experience" vs "I know this from training." Connects to cognitive skill training lineage.
 > - **AD-568e: Faithfulness Verification** — Post-decision check: is the agent's response faithful to its episodic evidence, or did it confabulate despite having good memories? Self-RAG ISSUP concept.
+
+### Observation-Grounded Crew Intelligence Metrics (AD-569)
+
+**AD-569: Observation-Grounded Crew Intelligence Metrics — Aligning Measurable Metrics with Observable Crew Behavior** *(planned, OSS, depends: AD-557, AD-567 series)* — The existing Tier 3 qualification probes (CoordinationBreakevenSpread, ScaffoldDecomposition, CollectiveIntelligenceCFactor, ConvergenceRate, EmergenceCapacity) measure information-theoretic abstractions but fail to capture the behavioral signals that demonstrate actual collaborative intelligence. Concrete instances of collaborative intelligence have been observed — iatrogenic trust detection (three agents from two departments independently converging on the same diagnosis through different professional lenses), the Wesley case study (agents improving the system they run on), five-agent analytical lens events — yet all five Tier 3 probes read near-zero or provide no actionable signal.
+
+**The gap:** Metrics measure mathematical properties of the communication graph (PID synergy ratios, Gini coefficients, entropy passthroughs) rather than the *content and consequence* of collaboration. An agent cluster producing genuinely novel multi-perspective analysis scores the same as one producing redundant chatter, because the probes don't examine what was said or what resulted.
+
+**Five new behavioral metrics:**
+
+1. **Analytical Frame Diversity** — When multiple agents respond to the same stimulus (alert, observation, question), do they contribute distinct professional perspectives? Measure: count distinct "analytical frames" (clinical, pathological, operational, architectural, etc.) per multi-agent response cluster. A healthy crew produces N distinct lenses on 1 event. A dysfunctional crew produces N copies of the same lens. Source: Ward Room thread analysis + department classification. The iatrogenic trust case scored 3 distinct frames across 3 agents — this metric would capture that.
+
+2. **Synthesis Detection** — Does the combined crew output contain insights that appear in no individual agent's contribution? Measure: semantic elements in thread conclusions or Bridge summaries that cannot be traced to any single agent's post. Genuine synthesis = emergent insight. Copy-paste aggregation = no synthesis. Source: Ward Room thread analysis, dream consolidation outputs.
+
+3. **Cross-Department Trigger Rate** — How often does a finding in one department drive investigation in another? Measure: temporal correlation between department A's observation and department B's subsequent activity on the same topic (within a configurable window). High trigger rate = departments are reading and acting on each other's work. Zero trigger rate = departments operate in silos. Source: Ward Room channel activity + topic similarity matching.
+
+4. **Convergence Correctness** — When agents converge on a shared conclusion, is the conclusion actually correct? Measure: track converged conclusions, compare against ground truth where available (human feedback, subsequent system outcomes, resolved incidents). Current ConvergenceRate probe measures WHETHER convergence happens but not WHETHER consensus is right. A crew that quickly converges on wrong answers is worse than one that doesn't converge at all.
+
+5. **Anchor-Grounded Emergence** — Do emergent insights reference independently-anchored observations? Measure: for each synthesis/emergent observation, check whether the contributing evidence has independent anchor provenance (AD-567f's anchor independence score). Genuine emergence from independently-observed evidence is fundamentally different from cascade confabulation. Source: social verification engine (AD-567f), anchor metadata (AD-567a).
+
+**Implementation approach:**
+- New module: `src/probos/cognitive/behavioral_metrics.py` — `BehavioralMetricsEngine`
+- Lightweight analysis hooks in Ward Room thread lifecycle (thread closed/concluded → analyze contributions)
+- Dream Step integration for periodic scoring (similar to AD-557 EmergenceMetrics as Dream Step 9)
+- New qualification probes: one per metric, registered as Tier 3 tests alongside existing probes
+- API: `/api/behavioral-metrics`, `/api/behavioral-metrics/history` (same pattern as `/emergence`)
+- Config: `BehavioralMetricsConfig` — analysis windows, diversity thresholds, trigger correlation windows
+
+**What this replaces vs complements:**
+- **Complements** existing Tier 3 probes (doesn't remove them — they still measure graph-level properties)
+- **Provides** the missing "ground truth" layer: did the collaboration produce something valuable?
+- **Connects** qualification results to observable outcomes the Captain can verify
+
+**Psychometric measurement framework:**
+
+The 5 behavioral metrics must be psychometrically rigorous — not just "numbers we think are useful," but validated instruments with known reliability, known sources of variance, and proven construct validity. Group assessment psychometrics provides the methodology.
+
+*Variance Decomposition (Generalizability Theory — Cronbach et al., 1972):*
+
+Each metric decomposes observed variance into facets rather than collapsing to a single score:
+
+| Facet | What It Captures | Example Question |
+|-------|-----------------|------------------|
+| **Agent** | Individual capability | Is Vega inherently better at analytical diversity than Horizon? |
+| **Department** | Team culture/structure effect | Does Medical consistently produce different analytical frames than Engineering? |
+| **Stimulus** | What triggered the response | Do alerts vs observations vs queries elicit different collaboration patterns? |
+| **Occasion** | Temporal context | Cold-start vs mature? Pre-dream vs post-dream? |
+| **Agent × Department** | Interaction | Is an agent's contribution shaped by their department context? |
+
+Without G-theory, you can't distinguish "this crew genuinely improved" from "we gave them an easier stimulus this time." Every metric reports its facet breakdown, not just a raw score. A G-study (generalizability study) design specifies which facets each metric measures; a D-study (decision study) determines how many observations are needed for reliable measurement.
+
+*Group-Level Statistics:*
+
+| Method | What It Measures | AD-569 Application |
+|--------|-----------------|-------------------|
+| **ICC(1)** (Intraclass Correlation) | Proportion of variance at group level | High ICC(1) for Frame Diversity = department membership shapes analytical perspective (architecture is working). Near-zero = department structure is decorative |
+| **ICC(2)** | Reliability of group means | Are department-level averages stable enough to compare? Target: ICC(2) > 0.70 |
+| **r_wg** (James, Demaree & Wolf, 1984) | Within-group agreement vs chance | Upgrades Convergence Correctness from binary to statistical — is convergence more than random? Target: r_wg > 0.70 |
+| **HLM** (Raudenbush & Bryk, 2002) | Nested analysis: agent → department → ship | Are improvements driven by individual growth, department dynamics, or ship-level architecture? |
+
+*Construct Validation (MTMM — Campbell & Fiske, 1959):*
+
+Multi-Trait, Multi-Method matrix establishes that metrics measure what they claim:
+
+| | Ward Room Threads | Dream Outputs | Qualification Probes |
+|---|---|---|---|
+| **Frame Diversity** | Thread contribution classification | Dream cross-reference diversity | Probe score |
+| **Synthesis** | Novel elements in conclusions | Insight extraction rate | Probe score |
+| **Cross-Dept Trigger** | Channel activity correlation | Cross-dept dream references | Probe score |
+| **Convergence Correctness** | Thread consensus vs outcome | Consolidated claim accuracy | Probe score |
+| **Anchor-Grounded Emergence** | Thread anchor provenance | Dream anchor independence | Probe score |
+
+**Convergent validity:** Same trait measured by different methods should correlate (Frame Diversity from Ward Room threads ≈ Frame Diversity from dream outputs). **Discriminant validity:** Different traits from the same method should NOT correlate highly (Frame Diversity and Convergence Correctness from Ward Room analysis should be independent). If all 5 metrics correlate r > 0.9, we're measuring one thing five ways. MTMM reveals the truth about measurement structure.
+
+*Transactive Memory Systems Measurement (Lewis, 2003):*
+
+Three validated subscales map to AD-569 metrics:
+- **Specialization** ("I know who knows what") → Cross-Department Trigger Rate
+- **Credibility** ("I trust what they know") → Trust Network scores (existing)
+- **Coordination** ("We work together smoothly") → Synthesis Detection
+
+*Shared Mental Model Measurement (Mohammed, Ferzandi & Hamilton, 2010):*
+
+Ward Room posts about the same stimulus are natural concept maps. QAP (Quadratic Assignment Procedure) computes pairwise agent knowledge-network similarity while accounting for network autocorrelation — more rigorous than naive keyword/topic classification for Analytical Frame Diversity.
+
+*Reliability targets:*
+- ICC(2) > 0.70 for all department-level metrics
+- r_wg > 0.70 for convergence measures
+- Cronbach's α computed across the 5 metrics to determine whether they form a unitary construct or multidimensional profile (both outcomes are informative)
+- Test-retest: same crew, similar stimuli → similar metric profiles across sessions
+
+**Research grounding:**
+- **Woolley et al. (2010)** — "Evidence for a Collective Intelligence Factor" — the original c-factor paper. Their measures: social sensitivity, turn-taking equality, proportion of females. ProbOS's existing CFactorProbe captures turn-taking but misses the content analysis dimension.
+- **Riedl (2025)** — Partial Information Decomposition for multi-agent synergy. Already implemented in AD-557. AD-569 adds the behavioral complement to the information-theoretic measures.
+- **Epistemic Network Analysis (ENA)** — Shaffer et al. (2016) — quantified connections between discourse elements. Analytical Frame Diversity borrows the "coded discourse → network structure" approach.
+- **Transactive Memory Systems** — Wegner (1987), Lewis (2003) measurement scale — groups develop shared knowledge of "who knows what." Three subscales (specialization, credibility, coordination) map to AD-569 metrics.
+- **Generalizability Theory** — Cronbach, Gleser, Nanda & Rajaratnam (1972) — multi-facet variance decomposition for behavioral measurement. The foundational framework for rigorous group assessment.
+- **Intraclass Correlation** — Shrout & Fleiss (1979) — ICC forms for group-level reliability. Determines whether department structure produces real group-level effects.
+- **Within-Group Agreement** — James, Demaree & Wolf (1984) — r_wg index. Statistical test for whether convergence exceeds chance agreement.
+- **Hierarchical Linear Modeling** — Raudenbush & Bryk (2002) — nested analysis for agents within departments within ships. Isolates individual vs systemic improvement.
+- **MTMM Construct Validation** — Campbell & Fiske (1959) — convergent/discriminant validity via multi-trait, multi-method matrix.
+- **Shared Mental Model Measurement** — Mohammed, Ferzandi & Hamilton (2010) — concept mapping, Pathfinder networks, QAP for knowledge-network similarity.
+- **Distributed Cognition** — Hutchins (1995) — naval navigation teams as cognitive unit. The theoretical ancestor of treating a ProbOS crew as a group-level cognitive entity that can be psychometrically assessed.
+
+**Connects to:** AD-557 (emergence metrics — information-theoretic complement), AD-567f (social verification — anchor independence for metric 5), AD-554 (convergence detection — existing infrastructure for convergence events), AD-555 (quality metrics — notebook quality as a signal), AD-566 (qualification framework — new probes registered here), agent-psychometrics-research (extends Tier 3 CQB design with group-level psychometric rigor).
+
+**Prerequisite:** AD-557 complete ✅. AD-567f (social verification) for metric 5. Existing Ward Room thread infrastructure for metrics 1-3.
+
+**Deferred sub-ADs (to be decomposed when scoped for build):**
+> - **AD-569a: Analytical Frame Diversity Probe** — Ward Room thread analysis, department-based frame classification, diversity scoring. G-theory design: agent × department × stimulus facets. QAP for knowledge-network comparison.
+> - **AD-569b: Synthesis Detection Probe** — Novel element identification in multi-agent thread conclusions. TMS coordination subscale mapping.
+> - **AD-569c: Cross-Department Trigger Rate Probe** — Temporal correlation analysis across department channels. TMS specialization subscale mapping. ICC(1) for department-level effect validation.
+> - **AD-569d: Convergence Correctness Probe** — Ground truth tracking for converged conclusions. r_wg statistical agreement testing. HLM nested analysis.
+> - **AD-569e: Anchor-Grounded Emergence Probe** — Integration with AD-567f social verification for provenance-validated emergence.
+> - **AD-569f: Measurement Framework Infrastructure** — G-study/D-study engine, ICC/r_wg computation, MTMM matrix generation, variance decomposition reporting. Shared infrastructure for all behavioral probes.
+> - **AD-569g: HXI Behavioral Dashboard** — Visualization of behavioral metrics with facet breakdown alongside existing Tier 3 probes.
+
+### Anchor-Indexed Episodic Recall (AD-570)
+
+**AD-570: Anchor-Indexed Episodic Recall — Structured AnchorFrame Queries** *(planned, OSS, depends: AD-567a, AD-567b, AD-567c, AD-567d)* — Add structured query support for AnchorFrame fields alongside semantic search. Currently, episodic recall is semantic-only — AnchorFrame fields (temporal, spatial, social, causal, evidential) only influence scoring weight. You cannot query BY anchor fields. No way to ask "find all episodes from Engineering department" or "find all episodes involving Worf" or "find all episodes from the last watch rotation."
+
+**Capabilities:**
+
+**(1) Anchor field indexing:** Build ChromaDB metadata filters for each AnchorFrame dimension. Temporal → timestamp range queries. Spatial → department/location exact match. Social → agent callsign/department membership. Causal → event type filtering. Evidential → source type filtering.
+
+**(2) Hybrid structured+semantic retrieval:** Query planner that detects relational queries ("who observed this in Engineering?"), resolves against AnchorFrame metadata (structured filter), then re-ranks results with vector similarity (semantic). Returns results satisfying both structural constraints and semantic relevance.
+
+**(3) Anchor field query API:** `recall_by_anchor(anchor_filters: dict, semantic_query: str | None, limit: int)` on EpisodicMemory. Filters: `department`, `agents`, `time_range`, `event_type`, `source_type`. Optional semantic re-ranking.
+
+*Foundation for: AD-567g's re-localization (spatial/temporal locality lookup), AD-569's behavioral metrics (department-level analysis requires department-indexed episode queries), AD-563's coverage gap detection (topic × department matrix requires departmental episode queries).*
+
+*Absorption: memvid QueryPlanner hybrid graph+vector search pattern — MemoryCard entity-slot-value triple queries re-ranked by vector similarity (2026-04-05, see docs/research/memvid-evaluation.md Pattern 3).*
+
+---
 
 ### Meta-Learning (AD-478)
 
@@ -5500,6 +5639,7 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-103 | **Episodic memory agent ID mismatch — orphaned episodes.** After restart (not reset), agents report "no stored episodic memories" despite 843+ episodes in ChromaDB. Root cause: mixed ID types in episode `agent_ids_json`. Ward Room, dream adapter, and runtime store **slot IDs** (`security_agent_0_67c601cb`) but recall uses **sovereign IDs** (AD-441 UUIDs). Fix: normalize all 4 storage paths to sovereign_id via `resolve_sovereign_id()` helper + one-time startup migration remapping existing episodes. No dual lookup — clean single-ID path. Crew-identified: Vega (Security) flagged the symptom. 16 new tests. | Critical | **Closed** |
 | BF-104 | **Display crew agent count, not total agent count.** Shell prompt showed "62 agents" conflating infrastructure, utility, and crew. Per AD-398's three-tier architecture, only crew agents are sovereign individuals. Fix: `registry.crew_count()` method using `is_crew_agent()`. Shell prompt: `[12 crew | health: 0.95]`. Status panel: `Crew: 12 (total services: 62)`. `/ping`: crew active/total. API `/health`: `crew_agents` field. Working memory: crew count. `total_agents` preserved for backwards compat. 9 new tests. | Medium | **Closed** |
 | BF-105 | **Ward Room reply self-repetition not detected.** BF-032's `_is_similar_to_recent_posts` guards new thread creation but not `[REPLY]` blocks. AD-506b `check_peer_similarity` excludes same-author. Result: agents can post 4+ near-identical replies to the same thread unchecked. Fix: add BF-032-style self-similarity guard to `_extract_and_execute_replies` in proactive.py. Crew-identified: Cortez posted 4 overlapping analyses in a single Medical thread. | Medium | **Closed** |
+| BF-107 | **Qualification report shows "0 baselines established" on subsequent runs.** Display reads `is_baseline` flag from the latest `TestResult` — but auto-capture only sets this flag on the *first* run (when no baseline exists). Subsequent runs see existing baselines, skip auto-capture, new results get `is_baseline=False`, report shows 0. Fix: pre-fetch `store.get_baseline()` per agent+test pair in `commands_qualification.py`; display "Y" if a baseline exists (regardless of which result it is), show count of pairs with baselines. Data persistence is fine — 271 baselines in DB. Pure display/reporting bug. | Low | **Closed** |
 | BF-106 | **DreamingEngine late-init dependencies monkey-patched in finalize.py.** `ward_room`, `records_store`, and `_get_department` are NOT passed through `init_dreaming()` constructor — instead set via private attribute assignment (`engine._ward_room = ...`) in `finalize.py` lines 89–95. Violates Law of Demeter and dependency injection principles. Root cause: circular startup ordering — `init_dreaming()` runs before Ward Room and Records Store are available. AD-567d sets the clean pattern (activation_tracker via constructor injection). Fix: refactor `init_dreaming()` to accept these as optional params, or restructure startup phase ordering so dreaming initializes after Ward Room. 3 private attrs to convert: `_ward_room`, `_records_store`, `_get_department`. Also `_ward_room_router_ref` (line 124) and `onboarding` patches (line 129–132) are similar debt. | Low | Open |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
