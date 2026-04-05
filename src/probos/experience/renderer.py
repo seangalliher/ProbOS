@@ -410,7 +410,7 @@ class ExecutionRenderer:
                         text, execution_result, t_start, t_end,
                     )
                 else:
-                    from probos.types import Episode
+                    from probos.types import AnchorFrame, Episode
                     episode = Episode(
                         timestamp=time.time(),
                         user_input=text,
@@ -419,6 +419,7 @@ class ExecutionRenderer:
                         agent_ids=[],
                         duration_ms=(t_end - t_start) * 1000,
                         source="direct",
+                        anchors=AnchorFrame(channel="dag", trigger_type="dag_execution"),
                     )
                 await self.runtime.episodic_memory.store(episode)
             except Exception as e:

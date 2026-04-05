@@ -260,6 +260,16 @@ class MemoryConfig(BaseModel):
     similarity_threshold: float = 0.6  # Semantic similarity threshold for recall/fuzzy lookup
     verify_content_hash: bool = True    # AD-541e: Verify episode hashes on recall
     eviction_audit_enabled: bool = True  # AD-541f: Append-only eviction audit trail
+    # AD-567b: Salience-weighted recall
+    recall_weights: dict[str, float] = {
+        "semantic": 0.35,
+        "keyword": 0.10,
+        "trust": 0.15,
+        "hebbian": 0.10,
+        "recency": 0.20,
+        "anchor": 0.10,
+    }
+    recall_context_budget_chars: int = 4000  # ~4K char memory budget
 
 
 class DreamingConfig(BaseModel):

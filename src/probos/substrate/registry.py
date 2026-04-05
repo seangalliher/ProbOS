@@ -70,6 +70,11 @@ class AgentRegistry:
     def count(self) -> int:
         return len(self._agents)
 
+    def crew_count(self) -> int:
+        """Count of sovereign crew agents (excludes infrastructure/utility)."""
+        from probos.crew_utils import is_crew_agent
+        return sum(1 for a in self._agents.values() if is_crew_agent(a))
+
     def summary(self) -> dict[str, int]:
         """Count of agents per pool."""
         pools: dict[str, int] = {}

@@ -396,7 +396,7 @@ class TestShellPrompt:
 
     def test_prompt_format(self, shell):
         prompt = shell._build_prompt()
-        assert "agents" in prompt
+        assert "crew" in prompt
         assert "health" in prompt
         assert "probos>" in prompt
 

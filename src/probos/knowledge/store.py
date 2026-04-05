@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from probos.config import KnowledgeConfig
-from probos.types import Episode
+from probos.types import AnchorFrame, Episode
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +101,8 @@ class KnowledgeStore:
         for fp in episodes_dir.glob("*.json"):
             try:
                 data = await self._read_json(fp)
+                anchors_data = data.get("anchors")
+                anchors = AnchorFrame(**anchors_data) if anchors_data else None
                 ep = Episode(
                     id=data["id"],
                     timestamp=data.get("timestamp", 0.0),
@@ -111,6 +113,7 @@ class KnowledgeStore:
                     agent_ids=data.get("agent_ids", []),
                     duration_ms=data.get("duration_ms", 0.0),
                     source=data.get("source", "direct"),
+                    anchors=anchors,
                 )
                 episodes.append(ep)
             except Exception as exc:

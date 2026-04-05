@@ -95,6 +95,7 @@ from probos.substrate.scaler import PoolScaler
 from probos.substrate.spawner import AgentSpawner
 from probos.substrate.identity import generate_agent_id, generate_pool_ids
 from probos.types import (
+    AnchorFrame,
     ConsensusOutcome,
     Episode,
     IntentDescriptor,
@@ -2190,6 +2191,7 @@ class ProbOSRuntime:
                         agent_ids=[],
                         duration_ms=(t_end - t_start) * 1000,
                         source="direct",
+                        anchors=AnchorFrame(channel="dag", trigger_type="dag_execution"),
                     )
                 await self.episodic_memory.store(episode)
 
@@ -2436,6 +2438,7 @@ class ProbOSRuntime:
         result = {
             "system": self.config.system.model_dump(),
             "started": self._started,
+            "crew_agents": self.registry.crew_count(),
             "total_agents": self.registry.count,
             "pools": {name: pool.info() for name, pool in self.pools.items()},
             "pool_groups": self.pool_groups.status(self.pools),
@@ -2943,6 +2946,7 @@ class ProbOSRuntime:
                     duration_ms=report.duration_ms,
                     embedding=[],
                     source="direct",
+                    anchors=AnchorFrame(channel="smoke_test", trigger_type="smoke_test"),
                 )
                 if EpisodicMemory.should_store(episode):
                     await self.episodic_memory.store(episode)

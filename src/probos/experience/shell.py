@@ -147,9 +147,9 @@ class ProbOSShell:
         """Build the prompt string: session mode or normal bridge mode."""
         if self.session.active:
             return f"{self.session.callsign} \u25b8 "
-        count = self.runtime.registry.count
+        crew = self.runtime.registry.crew_count()
         health = self._compute_health()
-        return f"[{count} agents | health: {health:.2f}] probos> "
+        return f"[{crew} crew | health: {health:.2f}] probos> "
 
     # ------------------------------------------------------------------
     # REPL loop

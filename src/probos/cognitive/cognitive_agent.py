@@ -1695,7 +1695,7 @@ class CognitiveAgent(BaseAgent):
         return "\n".join(parts)
 
     def _format_memory_section(self, memories: list[dict]) -> list[str]:
-        """Format recalled episodes with provenance boundary markers (AD-540/541)."""
+        """Format recalled episodes with anchor context headers (AD-567b)."""
         lines = [
             "=== SHIP MEMORY (your experiences aboard this vessel) ===",
             "These are YOUR experiences. Do NOT confuse with training knowledge.",
@@ -1704,15 +1704,27 @@ class CognitiveAgent(BaseAgent):
             "",
         ]
         for mem in memories:
-            entry = "  - "
-            # AD-541: Source and verification tags
+            # Anchor header line (AD-567b)
+            anchor_parts = []
+            if mem.get("age"):
+                anchor_parts.append(f"{mem['age']} ago")
+            if mem.get("anchor_channel"):
+                anchor_parts.append(mem["anchor_channel"])
+            if mem.get("anchor_department"):
+                anchor_parts.append(f"{mem['anchor_department']} dept")
+            if mem.get("anchor_participants"):
+                anchor_parts.append(f"with {mem['anchor_participants']}")
+            if mem.get("anchor_trigger"):
+                anchor_parts.append(f"re: {mem['anchor_trigger']}")
+
             source = mem.get("source", "direct")
             verified = "verified" if mem.get("verified") else "unverified"
-            entry += f"[{source} | {verified}] "
-            if mem.get("age"):
-                entry += f"[{mem['age']} ago] "
-            entry += mem.get("input", "") or mem.get("reflection", "")
-            lines.append(entry)
+            header = f"  [{source} | {verified}]"
+            if anchor_parts:
+                header += f" [{' | '.join(anchor_parts)}]"
+
+            lines.append(header)
+            lines.append(f"    {mem.get('input', '') or mem.get('reflection', '')}")
         lines.append("")
         lines.append("=== END SHIP MEMORY ===")
         return lines
@@ -2053,15 +2065,33 @@ class CognitiveAgent(BaseAgent):
                 return observation
 
             _mem_id = getattr(self, 'sovereign_id', None) or self.id  # AD-441
-            episodes = await self._runtime.episodic_memory.recall_for_agent(
-                _mem_id, query, k=3
-            )
 
-            # BF-027: Fallback to recent episodes when semantic recall returns nothing
-            if not episodes and hasattr(self._runtime.episodic_memory, 'recent_for_agent'):
-                episodes = await self._runtime.episodic_memory.recent_for_agent(
-                    _mem_id, k=3
+            # AD-567b: Use salience-weighted recall when available
+            em = self._runtime.episodic_memory
+            trust_net = getattr(self._runtime, 'trust_network', None)
+            heb_router = getattr(self._runtime, 'hebbian_router', None)
+            mem_cfg = None
+            if hasattr(self._runtime, 'config') and hasattr(self._runtime.config, 'memory'):
+                mem_cfg = self._runtime.config.memory
+
+            scored_results = []
+            if hasattr(em, 'recall_weighted'):
+                scored_results = await em.recall_weighted(
+                    _mem_id, query,
+                    trust_network=trust_net,
+                    hebbian_router=heb_router,
+                    intent_type=intent.intent,
+                    k=5,
+                    context_budget=getattr(mem_cfg, 'recall_context_budget_chars', 4000) if mem_cfg else 4000,
+                    weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
                 )
+
+            # Fallback to old recall path if recall_weighted unavailable or returned nothing
+            episodes = [rs.episode for rs in scored_results] if scored_results else []
+            if not episodes:
+                episodes = await em.recall_for_agent(_mem_id, query, k=3)
+            if not episodes and hasattr(em, 'recent_for_agent'):
+                episodes = await em.recent_for_agent(_mem_id, k=3)
 
             if episodes:
                 # AD-502: Include relative timestamps on recalled memories
@@ -2082,6 +2112,14 @@ class CognitiveAgent(BaseAgent):
                     }
                     if include_ts and ep.timestamp > 0:
                         mem["age"] = format_duration(time.time() - ep.timestamp)
+
+                    # AD-567b: Anchor context for formatting
+                    anchors = ep.anchors
+                    if anchors:
+                        mem["anchor_channel"] = anchors.channel or ""
+                        mem["anchor_department"] = anchors.department or ""
+                        mem["anchor_participants"] = ", ".join(anchors.participants) if anchors.participants else ""
+                        mem["anchor_trigger"] = anchors.trigger_type or ""
 
                     # AD-541 Pillar 1: Cross-check against EventLog
                     mem["verified"] = False
@@ -2155,7 +2193,7 @@ class CognitiveAgent(BaseAgent):
 
         try:
             import time as _time
-            from probos.types import Episode, MemorySource
+            from probos.types import AnchorFrame, Episode, MemorySource
 
             result_text = str(report.get("result", ""))[:500]
             callsign = ""
@@ -2163,6 +2201,36 @@ class CognitiveAgent(BaseAgent):
                 callsign = self._runtime.callsign_registry.get_callsign(self.agent_type) or ""
 
             query_text = params.get("text", intent.context or intent.intent)
+
+            # AD-567a: Resolve department for anchor
+            _dept = ""
+            try:
+                _ont = getattr(self._runtime, 'ontology', None)
+                if _ont:
+                    _dept = _ont.get_agent_department(self.agent_type) or ""
+                if not _dept:
+                    from probos.cognitive.standing_orders import get_department as _get_dept
+                    _dept = _get_dept(self.agent_type) or ""
+            except Exception:
+                pass
+
+            # AD-567b: SECONDHAND source wiring
+            # If this action was triggered by another agent's communication,
+            # tag the resulting episode as secondhand.
+            _source = MemorySource.DIRECT
+            _trigger_from = params.get("from", "")
+            if _trigger_from and intent.intent not in ("direct_message",):
+                # Check if trigger agent is someone else
+                _my_ids = {
+                    getattr(self, 'sovereign_id', None) or self.id,
+                    self.agent_type,
+                    callsign,
+                    self.id,
+                }
+                _my_ids.discard("")
+                _my_ids.discard(None)
+                if _trigger_from not in _my_ids:
+                    _source = MemorySource.SECONDHAND
 
             episode = Episode(
                 user_input=f"[Action: {intent.intent}] {callsign or self.agent_type}: {str(query_text)[:200]}",
@@ -2176,7 +2244,13 @@ class CognitiveAgent(BaseAgent):
                     "source": source or "intent_bus",
                 }],
                 reflection=f"{callsign or self.agent_type} handled {intent.intent}: {result_text[:100]}",
-                source=MemorySource.DIRECT,
+                source=_source,
+                anchors=AnchorFrame(
+                    channel="action",
+                    department=_dept,
+                    trigger_type=intent.intent,
+                    trigger_agent=params.get("from", ""),
+                ),
             )
             from probos.cognitive.episodic import EpisodicMemory
             if EpisodicMemory.should_store(episode):

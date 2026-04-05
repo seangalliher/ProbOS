@@ -53,10 +53,14 @@ async def cmd_ping(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     uptime = self_model.get("uptime_seconds")
 
     # Get agent counts and health
+    from probos.crew_utils import is_crew_agent
+
     total_agents = status.get("total_agents", 0)
     agents = runtime.registry.all()
     active_agents = [a for a in agents if a.state == AgentState.ACTIVE]
     active_count = len(active_agents)
+    crew_active = len([a for a in active_agents if is_crew_agent(a)])
+    crew_total = runtime.registry.crew_count()
     health_score = _compute_health(runtime)
 
     # Build status display
@@ -70,7 +74,7 @@ async def cmd_ping(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     # Display system information
     console.print(status_line)
     console.print(f"Uptime: {uptime_text}")
-    console.print(f"Agents: {active_count} active / {total_agents} total (health: {health_score:.2f})")
+    console.print(f"Crew: {crew_active} active / {crew_total} crew (health: {health_score:.2f})")
 
     # Show connectivity status if available
     cognitive = status.get("cognitive", {})

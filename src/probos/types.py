@@ -308,6 +308,54 @@ class MemorySource(str, Enum):
 
 
 @dataclass(frozen=True)
+class AnchorFrame:
+    """Contextual anchors grounding an episode in ship reality (AD-567a).
+
+    Inspired by Johnson's Source Monitoring Framework — the qualitative
+    characteristics that distinguish genuine memory from confabulation.
+    SEEM's Episodic Event Frame pattern — typed structure, not flat metadata.
+    """
+
+    # TEMPORAL — when did this happen?
+    duty_cycle_id: str = ""          # Links to duty assignment if from duty cycle
+    watch_section: str = ""          # e.g., "alpha", "beta" — temporal context
+
+    # SPATIAL — where in the ship did this happen?
+    channel: str = ""                # "ward_room", "dm", "duty_report", "dag", "feedback", "smoke_test"
+    channel_id: str = ""             # Specific Ward Room channel or thread ID
+    department: str = ""             # Agent's department at time of episode
+
+    # SOCIAL — who was involved?
+    participants: list[str] = field(default_factory=list)  # Callsigns present/involved
+    trigger_agent: str = ""          # Callsign of agent/entity that triggered this episode
+
+    # CAUSAL — why did this happen?
+    trigger_type: str = ""           # "duty_cycle", "proactive_think", "direct_message", etc.
+
+    # EVIDENTIAL — what corroborates this?
+    thread_id: str = ""              # Ward Room thread ID for cross-reference
+    event_log_window: float = 0.0    # Timestamp range for EventLog cross-verification
+
+
+@dataclass(frozen=True)
+class RecallScore:
+    """Salience-weighted recall result combining multiple ranking signals (AD-567b).
+
+    Returned by EpisodicMemory.recall_weighted() — wraps an Episode with
+    composite scoring from semantic similarity, keyword hits, trust, Hebbian
+    weight, recency, and anchor completeness.
+    """
+    episode: Episode
+    semantic_similarity: float = 0.0   # 0.0–1.0, from ChromaDB cosine distance
+    keyword_hits: int = 0              # FTS5 match count (0 if no keyword match)
+    trust_weight: float = 0.5          # agent trust score (0.0–1.0)
+    hebbian_weight: float = 0.5        # intent-agent Hebbian weight (0.0–1.0)
+    recency_weight: float = 0.0        # exponential decay by age
+    anchor_completeness: float = 0.0   # 0.0–1.0, proportion of filled anchor fields
+    composite_score: float = 0.0       # weighted combination of all signals
+
+
+@dataclass(frozen=True)
 class Episode:
     """A recorded episode from the cognitive pipeline."""
 
@@ -324,6 +372,8 @@ class Episode:
     trust_deltas: list[dict[str, Any]] = field(default_factory=list)
     # AD-541: Memory integrity fields
     source: str = "direct"       # MemorySource value — how this episode was acquired
+    # AD-567a: Contextual anchors grounding this episode in ship reality
+    anchors: AnchorFrame | None = None
 
 
 # ------------------------------------------------------------------

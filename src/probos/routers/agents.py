@@ -201,7 +201,7 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
         try:
             import time as _time
-            from probos.types import Episode
+            from probos.types import AnchorFrame, Episode
             episode = Episode(
                 user_input=f"[1:1 with {callsign or agent_id}] Captain: {req.message}",
                 timestamp=_time.time(),
@@ -217,6 +217,12 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                 }],
                 reflection=f"Captain had a 1:1 conversation with {callsign or agent_id} via HXI.",
                 source="direct",
+                anchors=AnchorFrame(
+                    channel="dm",
+                    trigger_type="direct_message",
+                    trigger_agent="captain",
+                    participants=["captain", callsign or agent_id],
+                ),
             )
             await runtime.episodic_memory.store(episode)
         except Exception:

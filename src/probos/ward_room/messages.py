@@ -138,7 +138,7 @@ class MessageStore:
         # AD-430a: Store reply as authoring agent's episodic memory
         if self._episodic_memory and author_id:
             try:
-                from probos.types import Episode
+                from probos.types import AnchorFrame, Episode
                 from probos.cognitive.episodic import resolve_sovereign_id_from_slot
                 sovereign_id = resolve_sovereign_id_from_slot(author_id, self._identity_registry)
                 thread_title = ""
@@ -168,6 +168,14 @@ class MessageStore:
                     }],
                     reflection=f"{author_callsign or author_id} replied in thread '{thread_title[:60]}': {body[:300]}",
                     source="direct",
+                    anchors=AnchorFrame(
+                        channel="ward_room",
+                        channel_id=channel_name,
+                        thread_id=thread_id,
+                        trigger_type="ward_room_reply",
+                        participants=[author_callsign or author_id],
+                        trigger_agent=author_callsign or author_id,
+                    ),
                 )
                 from probos.cognitive.episodic import EpisodicMemory
                 if EpisodicMemory.should_store(episode):
@@ -179,7 +187,7 @@ class MessageStore:
         if peer_matches and self._episodic_memory and author_id:
             top_match = peer_matches[0]
             try:
-                from probos.types import Episode
+                from probos.types import AnchorFrame, Episode
                 from probos.cognitive.episodic import resolve_sovereign_id_from_slot
                 sovereign_id_rep = resolve_sovereign_id_from_slot(author_id, self._identity_registry)
                 ep = Episode(
@@ -204,6 +212,13 @@ class MessageStore:
                         f"Similarity: {top_match['similarity']:.0%}."
                     ),
                     source="direct",
+                    anchors=AnchorFrame(
+                        channel="ward_room",
+                        channel_id=channel_name,
+                        thread_id=thread_id,
+                        trigger_type="peer_repetition",
+                        trigger_agent=top_match["author_callsign"],
+                    ),
                 )
                 await self._episodic_memory.store(ep)
             except Exception:

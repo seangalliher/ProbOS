@@ -2486,3 +2486,46 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Rationale:** Collective intelligence cannot be measured by testing individuals. CBS answers "does coordination add net value?" Scaffold decomposition answers "how much does the architecture amplify?" c-factor answers "how well does the crew collaborate?" These are the metrics that validate ProbOS's core differentiator. No LLM calls — all probes read existing infrastructure data (EmergenceSnapshot, WardRoom stats, Tier 1 results, personality profiles). The `__crew__` sentinel ID preserves protocol compatibility without modifying QualificationTest. Profile measurements (threshold=0.0) avoid false binary judgments — the value is in longitudinal drift tracking.
 
 **Status:** AD-566e COMPLETE. 42 new tests in `test_ad566e_collective_tests.py`. Files: `cognitive/collective_tests.py` (new), `cognitive/qualification.py` (run_collective + CREW_AGENT_ID), `cognitive/drift_detector.py` (collective integration), `runtime.py` (Tier 3 registration).
+
+### AD-566f: /qualify Shell Command *(2026-04-04, OSS)*
+
+**Context:** The AD-566 series delivered a 3-tier qualification battery but provided no manual trigger or inspection from the shell. DriftScheduler.run_now() existed but was unreachable from the Captain's console.
+
+| AD | Decision |
+|----|----------|
+| AD-566f | `/qualify` shell command for manual trigger and inspection of the qualification battery. Five subcommands: `status` (registered tests by tier, crew agent count, drift scheduler status), `run` (trigger DriftScheduler.run_now() for all crew), `run <callsign>` (run all tests for specific agent via QualificationHarness.run_all()), `agent <id>` (per-agent summary from QualificationStore), `baselines` (all established baselines across crew). Callsign resolution: callsign → agent_type → raw agent_id. Rich tables for all output. |
+
+**Status:** AD-566f COMPLETE. 11 new tests in `test_qualify_command.py`. Files: `experience/commands/commands_qualification.py` (new), `experience/shell.py` (import + COMMANDS + handler).
+
+### BF-104: Display Crew Agent Count, Not Total Agent Count *(2026-04-04, OSS)*
+
+**Context:** Shell prompt showed "62 agents" conflating infrastructure, utility, and crew agents. Per AD-398's three-tier agent architecture, only crew agents are sovereign individuals. Users think "agents" = crew.
+
+| BF | Decision |
+|----|----------|
+| BF-104 | Display crew count as headline number, total as secondary. Added `registry.crew_count()` method using `is_crew_agent()`. Shell prompt: `[12 crew | health: 0.95] probos>`. Status panel: `Crew: 12 (total services: 62)`. `/ping`: crew active/total. API `/health`: added `crew_agents` field. Working memory context: shows crew count. `total_agents` preserved everywhere for backwards compatibility. |
+
+**Status:** BF-104 CLOSED. 9 new tests in `test_bf104_crew_agent_count.py`. Files: `substrate/registry.py`, `experience/shell.py`, `experience/panels.py`, `runtime.py`, `experience/commands/commands_status.py`, `routers/system.py`, `cognitive/working_memory.py`.
+
+### AD-567a: Episode Anchor Metadata — Rich Contextual Storage *(2026-04-04, OSS)*
+
+**Context:** Agents contend with overlapping knowledge sources (LLM parametric + episodic memory) without explicit grounding. OBS-014 showed metacognitive skill works (Vega caught confabulation), OBS-015 showed cascade confabulation without anchors (Horizon+Atlas). Standing orders instruct grounding but had no architectural support.
+
+| AD | Decision |
+|----|----------|
+| AD-567a | Enrich episode storage with `AnchorFrame` — frozen dataclass with 10 fields across 5 dimensions (temporal: duty_cycle_id/watch_section; spatial: channel/channel_id/department; social: participants/trigger_agent; causal: trigger_type; evidential: thread_id/event_log_window). Added `anchors: AnchorFrame | None = None` to `Episode`. All 15 episode creation sites wired with contextual anchors. Serialization via `anchors_json` in ChromaDB metadata. Content hash explicitly excludes anchors (metadata framing, not content). Johnson SMF implementation for AI agents. |
+
+**Status:** AD-567a COMPLETE. 25 new tests in `test_ad567a_anchor_metadata.py`. Files: `types.py`, `cognitive/episodic.py`, `knowledge/store.py`, `dream_adapter.py`, `runtime.py`, `experience/renderer.py`, `cognitive/cognitive_agent.py`, `proactive.py`, `ward_room/threads.py`, `ward_room/messages.py`, `experience/commands/session.py`, `routers/agents.py`, `cognitive/feedback.py`.
+
+### AD-567b: Anchor-Aware Recall Formatting + Salience-Weighted Retrieval *(2026-04-05, OSS)*
+
+- **Absorbs:** AD-462a (Salience-Weighted Episodic Recall)
+- **Decision:** Four-part recall upgrade: (1) salience-weighted re-ranking (Trust × Hebbian × Recency × Anchor composite via `RecallScore` dataclass and `score_recall()` method), (2) FTS5 keyword search sidecar alongside ChromaDB vector search (`keyword_search()` + `aiosqlite` FTS5 table), (3) anchor context headers in recalled memory formatting (`_format_memory_section()` renders WHERE/WHEN/WHO/WHY), (4) SECONDHAND source wiring for episodes derived from other agents' communication. New `recall_weighted()` API with budget enforcement replaces hardcoded k=3/k=5. Composite formula: `0.35*semantic + 0.10*keyword + 0.15*trust + 0.10*hebbian + 0.20*recency + 0.10*anchor_completeness`. Configurable via `MemoryConfig.recall_weights`.
+- **Rationale:** Raw ChromaDB cosine similarity is insufficient — all signals (trust, Hebbian, recency, anchor grounding) available but unused in recall ranking. Hardcoded "recent activity" query and fixed k=5 waste context budget. Agents couldn't distinguish own observations from secondhand reports. Anchor headers implement Tulving's encoding specificity — resurfacing storage-time context cues improves recall accuracy. Prior art: Tulving (1973) encoding specificity, CAST axis organization, RPMS confidence gating.
+- **Deferred:** AD-567c (Anchor Quality & Integrity), AD-567d (Memory Lifecycle/Dream), AD-567f (Social Memory), AD-462c (Recall Depth & Oracle), AD-567g (Cognitive Re-Localization).
+
+| AD | Decision |
+|----|----------|
+| AD-567b | `RecallScore` frozen dataclass wrapping Episode with 8 scoring dimensions. `EpisodicMemory.score_recall()` computes composite score. `recall_weighted()` over-fetches k*3 candidates, merges FTS5 keyword hits, scores each, enforces context budget (default 4K chars). `recall_for_agent_scored()` returns `list[tuple[Episode, float]]` for composite re-ranking. FTS5 sidecar at `{data_dir}/episode_fts.db` with porter+unicode61 tokenizer — dual-write on `store()`, cleanup on `_evict()`, populate on `seed()`. Anchor-aware `_format_memory_section()` renders 5-part context headers. SECONDHAND source tagging in `_store_action_episode()` when trigger is from another agent. Proactive path `_gather_context()` uses dynamic query from duty context instead of hardcoded "recent activity" + adds source/verified/anchor_channel/anchor_department/anchor_participants/anchor_trigger fields (parity with conversational path). |
+
+**Status:** AD-567b COMPLETE. 24 new tests in `test_ad567b_anchor_recall.py`. Files: `types.py`, `config.py`, `cognitive/episodic.py`, `cognitive/cognitive_agent.py`, `proactive.py`.

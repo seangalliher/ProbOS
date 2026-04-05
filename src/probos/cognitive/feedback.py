@@ -192,7 +192,7 @@ class FeedbackEngine:
         # 3. Episodic memory — correction-tagged episode
         episode_stored = False
         if self._episodic:
-            from probos.types import Episode
+            from probos.types import AnchorFrame, Episode
 
             feedback_label = (
                 "correction_applied" if retry_success else "correction_failed"
@@ -221,6 +221,11 @@ class FeedbackEngine:
                 agent_ids=agents_updated,
                 reflection=f"Correction {feedback_label}: {changes_description}",
                 source="direct",
+                anchors=AnchorFrame(
+                    channel="feedback",
+                    trigger_type="human_correction",
+                    trigger_agent="captain",
+                ),
             )
             try:
                 await self._episodic.store(episode)
@@ -342,7 +347,7 @@ class FeedbackEngine:
         if not self._episodic:
             return False
 
-        from probos.types import Episode
+        from probos.types import AnchorFrame, Episode
 
         # Build outcomes list tagged with feedback type
         outcome_label = {
@@ -373,6 +378,11 @@ class FeedbackEngine:
             agent_ids=agent_ids,
             reflection=f"Human feedback: {feedback_type}",
             source="direct",
+            anchors=AnchorFrame(
+                channel="feedback",
+                trigger_type="human_feedback",
+                trigger_agent="captain",
+            ),
         )
 
         try:

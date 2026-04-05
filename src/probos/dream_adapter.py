@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from probos.config import format_trust
 from probos.events import EventType
-from probos.types import Episode, MemorySource
+from probos.types import AnchorFrame, Episode, MemorySource
 
 if TYPE_CHECKING:
     from probos.bridge_alerts import BridgeAlertService
@@ -351,4 +351,9 @@ class DreamAdapter:
             shapley_values=shapley_values,
             trust_deltas=trust_deltas,
             source=MemorySource.DIRECT,
+            anchors=AnchorFrame(
+                channel="dag",
+                trigger_type="dag_execution",
+                participants=agent_ids[:],
+            ),
         )

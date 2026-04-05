@@ -36,7 +36,7 @@ class WorkingMemorySnapshot:
         sections.append("## System State")
 
         if self.agent_summary:
-            sections.append(f"Agents: {self.agent_summary.get('total', 0)} total")
+            sections.append(f"Crew: {self.agent_summary.get('crew', 0)} agents")
             pools = self.agent_summary.get("pools", {})
             if pools:
                 pool_parts = [f"  {name}: {info}" for name, info in pools.items()]
@@ -153,6 +153,7 @@ class WorkingMemoryManager:
             summary_data = registry.summary()
             snapshot.agent_summary = {
                 "total": registry.count,
+                "crew": registry.crew_count(),
                 "pools": summary_data,
             }
 

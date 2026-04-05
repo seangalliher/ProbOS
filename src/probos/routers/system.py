@@ -23,6 +23,7 @@ async def health(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     status = runtime.status()
     return {
         "status": "ok",
+        "crew_agents": status.get("crew_agents", 0),
         "agents": status.get("total_agents", 0),
         "health": round(
             sum(

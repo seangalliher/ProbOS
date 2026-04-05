@@ -33,6 +33,7 @@ def mock_runtime():
     rt.registry = MagicMock()
     rt.registry.all.return_value = []
     rt.registry.count = 3
+    rt.registry.crew_count.return_value = 2
     rt.trust_network = MagicMock()
     rt.trust_network.all_scores.return_value = {}
     rt.pools = {}

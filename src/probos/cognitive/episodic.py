@@ -7,15 +7,17 @@ implementation (Phase 14b).
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import logging
+import math
 import time
 from pathlib import Path
 from typing import Any
 
 from probos.cognitive.similarity import jaccard_similarity
-from probos.types import Episode
+from probos.types import AnchorFrame, Episode, RecallScore
 
 logger = logging.getLogger(__name__)
 
@@ -224,6 +226,7 @@ class EpisodicMemory:
         self._eviction_audit = eviction_audit
         self._client: Any = None
         self._collection: Any = None
+        self._fts_db: Any = None  # AD-567b: FTS5 sidecar
 
     async def start(self) -> None:
         import chromadb
@@ -240,7 +243,28 @@ class EpisodicMemory:
             metadata={"hnsw:space": "cosine"},
         )
 
+        # AD-567b: FTS5 keyword search sidecar
+        try:
+            import aiosqlite
+            fts_path = str(db_dir / "episode_fts.db")
+            self._fts_db = await aiosqlite.connect(fts_path)
+            await self._fts_db.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS episode_fts USING fts5("
+                "episode_id UNINDEXED, content, tokenize='porter unicode61')"
+            )
+            await self._fts_db.commit()
+        except Exception:
+            logger.debug("AD-567b: FTS5 sidecar init failed — keyword search disabled", exc_info=True)
+            self._fts_db = None
+
     async def stop(self) -> None:
+        # AD-567b: Close FTS5 sidecar
+        if self._fts_db is not None:
+            try:
+                await self._fts_db.close()
+            except Exception:
+                pass
+            self._fts_db = None
         if self._client is not None:
             try:
                 self._client.close()
@@ -295,6 +319,21 @@ class EpisodicMemory:
             except Exception as e:
                 logger.warning("Seed batch add failed: %s", e)
                 seeded = 0
+
+        # AD-567b: Populate FTS5 sidecar for seeded episodes
+        if seeded > 0 and self._fts_db is not None:
+            try:
+                for i, ep in enumerate(episodes):
+                    if ep.id in existing_ids:
+                        continue
+                    fts_content = (ep.user_input or "") + " " + (ep.reflection or "")
+                    await self._fts_db.execute(
+                        "INSERT OR IGNORE INTO episode_fts(episode_id, content) VALUES (?, ?)",
+                        (ep.id, fts_content),
+                    )
+                await self._fts_db.commit()
+            except Exception:
+                logger.debug("AD-567b: FTS5 seed failed", exc_info=True)
 
         return seeded
 
@@ -388,6 +427,18 @@ class EpisodicMemory:
             metadatas=[metadata],
         )
 
+        # AD-567b: FTS5 dual-write
+        if self._fts_db is not None:
+            try:
+                fts_content = (episode.user_input or "") + " " + (episode.reflection or "")
+                await self._fts_db.execute(
+                    "INSERT INTO episode_fts(episode_id, content) VALUES (?, ?)",
+                    (episode.id, fts_content),
+                )
+                await self._fts_db.commit()
+            except Exception:
+                logger.debug("AD-567b: FTS5 insert failed for %s", episode.id[:8], exc_info=True)
+
         # Evict oldest beyond budget
         await self._evict()
 
@@ -461,6 +512,16 @@ class EpisodicMemory:
                         logger.warning("Eviction audit failed: %s", exc)
                 if ids_to_delete:
                     self._collection.delete(ids=ids_to_delete)
+                    # AD-567b: FTS5 cleanup on eviction
+                    if self._fts_db is not None:
+                        try:
+                            for eid in ids_to_delete:
+                                await self._fts_db.execute(
+                                    "DELETE FROM episode_fts WHERE episode_id = ?", (eid,)
+                                )
+                            await self._fts_db.commit()
+                        except Exception:
+                            logger.debug("AD-567b: FTS5 eviction cleanup failed", exc_info=True)
 
     def _is_rate_limited(self, episode: Episode) -> bool:
         """BF-039/BF-048: Check if agent has exceeded episode rate limit in the last hour."""
@@ -826,7 +887,7 @@ class EpisodicMemory:
         dur = float(ep.duration_ms)
         # Build normalized Episode for hashing so hash matches stored values
         from dataclasses import replace
-        normalized = replace(ep, timestamp=ts, duration_ms=dur, source=ep.source or "direct")
+        normalized = replace(ep, timestamp=ts, duration_ms=dur, source=ep.source or "direct", anchors=None)
 
         metadata = {
             "timestamp": ts,
@@ -839,6 +900,7 @@ class EpisodicMemory:
             "shapley_values_json": json.dumps(ep.shapley_values),
             "trust_deltas_json": json.dumps(ep.trust_deltas),
             "source": ep.source or "direct",
+            "anchors_json": json.dumps(dataclasses.asdict(ep.anchors)) if ep.anchors else "",
             "content_hash": compute_episode_hash(normalized),
             "_hash_v": 2,  # Hash normalization version (round(ts,6) + float coercion)
         }
@@ -849,6 +911,8 @@ class EpisodicMemory:
         doc_id: str, document: str, metadata: dict
     ) -> Episode:
         """Convert ChromaDB result back to an Episode."""
+        anchors_raw = metadata.get("anchors_json", "")
+        anchors = AnchorFrame(**json.loads(anchors_raw)) if anchors_raw else None
         return Episode(
             id=doc_id,
             timestamp=round(float(metadata.get("timestamp", 0.0)), 6),
@@ -862,4 +926,226 @@ class EpisodicMemory:
             shapley_values=json.loads(metadata.get("shapley_values_json", "{}")),
             trust_deltas=json.loads(metadata.get("trust_deltas_json", "[]")),
             source=metadata.get("source", "direct"),
+            anchors=anchors,
         )
+
+    # ---- AD-567b: Salience-weighted recall pipeline --------------------
+
+    async def keyword_search(self, query: str, k: int = 10) -> list[tuple[str, float]]:
+        """FTS5 keyword search. Returns [(episode_id, rank_score), ...].
+
+        AD-567b: Secondary retrieval channel alongside ChromaDB vector search.
+        """
+        if self._fts_db is None or not query.strip():
+            return []
+        try:
+            cursor = await self._fts_db.execute(
+                "SELECT episode_id, rank FROM episode_fts WHERE episode_fts MATCH ? ORDER BY rank LIMIT ?",
+                (query, k),
+            )
+            rows = await cursor.fetchall()
+            return [(row[0], float(row[1])) for row in rows]
+        except Exception:
+            logger.debug("AD-567b: FTS5 keyword search failed", exc_info=True)
+            return []
+
+    async def recall_for_agent_scored(
+        self, agent_id: str, query: str, k: int = 5,
+    ) -> list[tuple[Episode, float]]:
+        """Like recall_for_agent but returns (episode, similarity) tuples.
+
+        AD-567b: Exposes cosine similarity scores for composite re-ranking.
+        """
+        if not self._collection:
+            return []
+        count = self._collection.count()
+        if count == 0:
+            return []
+
+        n_results = min(k * 5, count)
+        result = self._collection.query(
+            query_texts=[query],
+            n_results=n_results,
+            include=["metadatas", "documents", "distances"],
+        )
+        if not result or not result["ids"] or not result["ids"][0]:
+            return []
+
+        scored: list[tuple[Episode, float]] = []
+        agent_recall_threshold = min(self.relevance_threshold, 0.3)
+        for i, doc_id in enumerate(result["ids"][0]):
+            distance = result["distances"][0][i] if result["distances"] else 0.0
+            similarity = 1.0 - distance
+            if similarity < agent_recall_threshold:
+                continue
+            metadata = result["metadatas"][0][i] if result["metadatas"] else {}
+            agent_ids_json = metadata.get("agent_ids_json", "[]")
+            try:
+                agent_ids = json.loads(agent_ids_json)
+            except (json.JSONDecodeError, TypeError):
+                agent_ids = []
+            if agent_id not in agent_ids:
+                continue
+            document = result["documents"][0][i] if result["documents"] else ""
+            ep = self._metadata_to_episode(doc_id, document, metadata)
+            if self._verify_on_recall:
+                stored_hash = metadata.get("content_hash", "")
+                _verify_episode_hash(ep, stored_hash, metadata, self._collection)
+            scored.append((ep, similarity))
+            if len(scored) >= k:
+                break
+
+        return scored
+
+    @staticmethod
+    def score_recall(
+        episode: Episode,
+        semantic_similarity: float,
+        keyword_hits: int = 0,
+        trust_weight: float = 0.5,
+        hebbian_weight: float = 0.5,
+        recency_weight: float = 0.0,
+        weights: dict[str, float] | None = None,
+    ) -> RecallScore:
+        """Compute composite salience score for a recalled episode (AD-567b).
+
+        Weights default to the AD-567b formula:
+          0.35*semantic + 0.10*keyword + 0.15*trust + 0.10*hebbian + 0.20*recency + 0.10*anchor
+        """
+        w = weights or {
+            "semantic": 0.35, "keyword": 0.10, "trust": 0.15,
+            "hebbian": 0.10, "recency": 0.20, "anchor": 0.10,
+        }
+
+        # Anchor completeness: count non-empty AnchorFrame fields / 10
+        anchor_completeness = 0.0
+        if episode.anchors is not None:
+            af = episode.anchors
+            filled = sum(1 for v in [
+                af.duty_cycle_id, af.watch_section, af.channel, af.channel_id,
+                af.department, af.participants, af.trigger_agent, af.trigger_type,
+                af.thread_id, af.event_log_window,
+            ] if v)  # truthy check: non-empty str, non-empty list, non-zero float
+            anchor_completeness = filled / 10.0
+
+        keyword_norm = min(keyword_hits / 3.0, 1.0) if keyword_hits > 0 else 0.0
+
+        composite = (
+            w.get("semantic", 0.35) * semantic_similarity
+            + w.get("keyword", 0.10) * keyword_norm
+            + w.get("trust", 0.15) * trust_weight
+            + w.get("hebbian", 0.10) * hebbian_weight
+            + w.get("recency", 0.20) * recency_weight
+            + w.get("anchor", 0.10) * anchor_completeness
+        )
+
+        return RecallScore(
+            episode=episode,
+            semantic_similarity=semantic_similarity,
+            keyword_hits=keyword_hits,
+            trust_weight=trust_weight,
+            hebbian_weight=hebbian_weight,
+            recency_weight=recency_weight,
+            anchor_completeness=anchor_completeness,
+            composite_score=composite,
+        )
+
+    async def recall_weighted(
+        self,
+        agent_id: str,
+        query: str,
+        *,
+        trust_network: Any = None,
+        hebbian_router: Any = None,
+        intent_type: str = "",
+        k: int = 5,
+        context_budget: int = 4000,
+        weights: dict[str, float] | None = None,
+    ) -> list[RecallScore]:
+        """Salience-weighted recall combining semantic + keyword + trust + Hebbian + recency + anchor (AD-567b).
+
+        Over-fetches from ChromaDB, merges FTS5 keyword hits, scores each
+        candidate with ``score_recall()``, and enforces context budget.
+        """
+        # 1. Semantic retrieval — over-fetch for re-ranking headroom
+        scored_eps = await self.recall_for_agent_scored(agent_id, query, k=k * 3)
+        ep_map: dict[str, tuple[Episode, float]] = {
+            ep.id: (ep, sim) for ep, sim in scored_eps
+        }
+
+        # 2. Keyword retrieval — merge any new episodes
+        keyword_map: dict[str, int] = {}
+        kw_results = await self.keyword_search(query, k=k * 3)
+        for ep_id, _rank in kw_results:
+            # Count keyword hits per episode
+            keyword_map[ep_id] = keyword_map.get(ep_id, 0) + 1
+            if ep_id not in ep_map:
+                # Fetch this episode from ChromaDB
+                try:
+                    result = self._collection.get(ids=[ep_id], include=["metadatas", "documents"])
+                    if result and result["ids"]:
+                        metadata = result["metadatas"][0] if result["metadatas"] else {}
+                        # Sovereign shard filter
+                        agent_ids_json = metadata.get("agent_ids_json", "[]")
+                        try:
+                            agent_ids = json.loads(agent_ids_json)
+                        except (json.JSONDecodeError, TypeError):
+                            agent_ids = []
+                        if agent_id in agent_ids:
+                            document = result["documents"][0] if result["documents"] else ""
+                            ep = self._metadata_to_episode(ep_id, document, metadata)
+                            ep_map[ep_id] = (ep, 0.0)  # No semantic score for keyword-only hits
+                except Exception:
+                    pass
+
+        # 3. Score each candidate
+        now = time.time()
+        results: list[RecallScore] = []
+        for ep_id, (ep, sim) in ep_map.items():
+            # Trust weight
+            tw = 0.5
+            if trust_network is not None:
+                try:
+                    tw = trust_network.get_score(agent_id)
+                except Exception:
+                    tw = 0.5
+
+            # Hebbian weight
+            hw = 0.5
+            if hebbian_router is not None and intent_type:
+                try:
+                    hw = hebbian_router.get_weight(intent_type, agent_id, rel_type="intent")
+                except Exception:
+                    hw = 0.5
+
+            # Recency weight: exp(-age_hours / 168)
+            age_hours = (now - ep.timestamp) / 3600.0 if ep.timestamp > 0 else 168.0 * 4
+            rw = math.exp(-age_hours / 168.0)
+
+            kw_hits = keyword_map.get(ep_id, 0)
+
+            rs = self.score_recall(
+                episode=ep,
+                semantic_similarity=sim,
+                keyword_hits=kw_hits,
+                trust_weight=tw,
+                hebbian_weight=hw,
+                recency_weight=rw,
+                weights=weights,
+            )
+            results.append(rs)
+
+        # 4. Sort by composite score descending
+        results.sort(key=lambda r: r.composite_score, reverse=True)
+
+        # 5. Budget enforcement — accumulate until context budget exceeded
+        budgeted: list[RecallScore] = []
+        total_chars = 0
+        for rs in results:
+            char_len = len(rs.episode.user_input) if rs.episode.user_input else 0
+            if total_chars + char_len > context_budget and budgeted:
+                break  # Over budget, stop (always include at least 1)
+            budgeted.append(rs)
+            total_chars += char_len
+
+        return budgeted

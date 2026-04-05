@@ -82,7 +82,7 @@ def render_status_panel(status: dict[str, Any]) -> Panel:
     lines: list[str] = []
     lines.append(f"[bold]{sys.get('name', 'ProbOS')}[/bold] v{sys.get('version', '?')}")
     lines.append(f"  Started: {'[green]yes[/green]' if status.get('started') else '[red]no[/red]'}")
-    lines.append(f"  Agents:  {status.get('total_agents', 0)}")
+    lines.append(f"  Crew:    {status.get('crew_agents', 0)}  (total services: {status.get('total_agents', 0)})")
 
     # Pool Groups (crew teams) — AD-291
     pool_groups = status.get("pool_groups", {})

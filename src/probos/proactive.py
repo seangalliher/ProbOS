@@ -479,10 +479,23 @@ class ProactiveCognitiveLoop:
             # AD-430a: Store no-response as episodic memory (prevents redundant re-analysis)
             if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
                 try:
-                    from probos.types import Episode, MemorySource
+                    from probos.types import AnchorFrame, Episode, MemorySource
                     callsign = ""
                     if hasattr(rt, 'callsign_registry'):
                         callsign = rt.callsign_registry.get_callsign(agent.agent_type)
+
+                    # AD-567a: Resolve department for anchor
+                    _dept = ""
+                    try:
+                        _ont = getattr(rt, 'ontology', None)
+                        if _ont:
+                            _dept = _ont.get_agent_department(agent.agent_type) or ""
+                        if not _dept:
+                            from probos.cognitive.standing_orders import get_department as _get_dept
+                            _dept = _get_dept(agent.agent_type) or ""
+                    except Exception:
+                        pass
+
                     episode = Episode(
                         user_input=f"[Proactive thought — no response] {callsign or agent.agent_type}: reviewed context, nothing to report",
                         timestamp=time.time(),
@@ -496,6 +509,12 @@ class ProactiveCognitiveLoop:
                         }],
                         reflection=f"{callsign or agent.agent_type} reviewed context but had nothing to report.",
                         source=MemorySource.DIRECT,
+                        anchors=AnchorFrame(
+                            channel="duty_report",
+                            duty_cycle_id=duty.duty_id if duty else "",
+                            department=_dept,
+                            trigger_type="duty_cycle" if duty else "proactive_think",
+                        ),
                     )
                     from probos.cognitive.episodic import EpisodicMemory
                     if EpisodicMemory.should_store(episode):
@@ -631,11 +650,24 @@ class ProactiveCognitiveLoop:
         wr_available = hasattr(rt, 'ward_room') and rt.ward_room
         if not wr_available and hasattr(rt, 'episodic_memory') and rt.episodic_memory:
             try:
-                from probos.types import Episode
+                from probos.types import AnchorFrame, Episode
                 callsign = ""
                 if hasattr(rt, 'callsign_registry'):
                     callsign = rt.callsign_registry.get_callsign(agent.agent_type)
                 thought_summary = response_text[:200]
+
+                # AD-567a: Resolve department for anchor
+                _dept = ""
+                try:
+                    _ont = getattr(rt, 'ontology', None)
+                    if _ont:
+                        _dept = _ont.get_agent_department(agent.agent_type) or ""
+                    if not _dept:
+                        from probos.cognitive.standing_orders import get_department as _get_dept
+                        _dept = _get_dept(agent.agent_type) or ""
+                except Exception:
+                    pass
+
                 episode = Episode(
                     user_input=f"[Proactive thought] {callsign or agent.agent_type}: {thought_summary}",
                     timestamp=time.time(),
@@ -649,6 +681,12 @@ class ProactiveCognitiveLoop:
                     }],
                     reflection=f"{callsign or agent.agent_type} observed: {thought_summary}",
                     source=MemorySource.DIRECT,
+                    anchors=AnchorFrame(
+                        channel="duty_report",
+                        duty_cycle_id=duty.duty_id if duty else "",
+                        department=_dept,
+                        trigger_type="duty_cycle" if duty else "proactive_think",
+                    ),
                 )
                 from probos.cognitive.episodic import EpisodicMemory
                 if EpisodicMemory.should_store(episode):
@@ -699,27 +737,67 @@ class ProactiveCognitiveLoop:
         if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
             try:
                 _agent_mem_id = getattr(agent, 'sovereign_id', None) or agent.id  # AD-441
-                episodes = await rt.episodic_memory.recall_for_agent(
-                    _agent_mem_id, "recent activity", k=5
-                )
-                # BF-028: Fallback to recent episodes when semantic recall misses
-                if not episodes and hasattr(rt.episodic_memory, 'recent_for_agent'):
-                    episodes = await rt.episodic_memory.recent_for_agent(_agent_mem_id, k=5)
+
+                # AD-567b: Use salience-weighted recall with dynamic query
+                em = rt.episodic_memory
+                episodes = []
+                if hasattr(em, 'recall_weighted'):
+                    # Derive query from agent context instead of hardcoded "recent activity"
+                    _duty_type = ""
+                    if duty:
+                        _duty_type = getattr(duty, 'duty_type', '') if hasattr(duty, 'duty_type') else str(duty)[:50]
+                    query = f"{agent.agent_type} {_duty_type} recent duty observations".strip()
+
+                    trust_net = getattr(rt, 'trust_network', None)
+                    heb_router = getattr(rt, 'hebbian_router', None)
+                    mem_cfg = None
+                    if hasattr(rt, 'config') and hasattr(rt.config, 'memory'):
+                        mem_cfg = rt.config.memory
+
+                    scored_results = await em.recall_weighted(
+                        _agent_mem_id, query,
+                        trust_network=trust_net,
+                        hebbian_router=heb_router,
+                        k=5,
+                        context_budget=getattr(mem_cfg, 'recall_context_budget_chars', 4000) if mem_cfg else 4000,
+                        weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
+                    )
+                    episodes = [rs.episode for rs in scored_results]
+
+                # Fallback to old recall path
+                if not episodes:
+                    episodes = await em.recall_for_agent(
+                        _agent_mem_id, "recent activity", k=5
+                    )
+                if not episodes and hasattr(em, 'recent_for_agent'):
+                    episodes = await em.recent_for_agent(_agent_mem_id, k=5)
+
                 if episodes:
                     # AD-502: Include relative timestamps on recalled memories
                     include_ts = True
                     if hasattr(rt, 'config') and hasattr(rt.config, 'temporal'):
                         include_ts = rt.config.temporal.include_episode_timestamps
 
-                    context["recent_memories"] = [
-                        {
+                    memory_list = []
+                    for ep in episodes:
+                        mem = {
                             "input": (ep.user_input[:500] + " [trimmed]") if ep.user_input and len(ep.user_input) > 500 else (ep.user_input or ""),
                             "reflection": (ep.reflection[:500] + " [trimmed]") if ep.reflection and len(ep.reflection) > 500 else (ep.reflection or ""),
-                            **({"age": format_duration(time.time() - ep.timestamp)}
-                               if include_ts and ep.timestamp > 0 else {}),
+                            "source": getattr(ep, 'source', 'direct'),
+                            "verified": False,  # AD-567b: proactive path parity
                         }
-                        for ep in episodes
-                    ]
+                        if include_ts and ep.timestamp > 0:
+                            mem["age"] = format_duration(time.time() - ep.timestamp)
+                        # AD-567b: Anchor context for formatting
+                        anchors = ep.anchors
+                        if anchors:
+                            mem["anchor_channel"] = anchors.channel or ""
+                            mem["anchor_department"] = anchors.department or ""
+                            mem["anchor_participants"] = ", ".join(anchors.participants) if anchors.participants else ""
+                            mem["anchor_trigger"] = anchors.trigger_type or ""
+                        memory_list.append(mem)
+
+                    context["recent_memories"] = memory_list
             except Exception:
                 logger.debug("Episodic recall failed for %s", agent.id, exc_info=True)
 

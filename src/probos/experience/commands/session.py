@@ -100,7 +100,7 @@ class SessionManager:
         if not self.agent_id or not self.callsign:
             return
 
-        from probos.types import IntentMessage, Episode
+        from probos.types import IntentMessage, Episode, AnchorFrame
 
         intent = IntentMessage(
             intent="direct_message",
@@ -154,6 +154,13 @@ class SessionManager:
                     }],
                     reflection=f"Captain had a 1:1 conversation with {self.callsign}.",
                     source="direct",
+                    anchors=AnchorFrame(
+                        channel="dm",
+                        department=self.department or "",
+                        trigger_type="direct_message",
+                        trigger_agent="captain",
+                        participants=["captain", self.callsign],
+                    ),
                 )
                 await runtime.episodic_memory.store(episode)
             except Exception:

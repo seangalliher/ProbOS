@@ -13,10 +13,10 @@ class TestWorkingMemorySnapshot:
 
     def test_snapshot_with_agents(self):
         snap = WorkingMemorySnapshot(
-            agent_summary={"total": 5, "pools": {"fs": "3 agents"}},
+            agent_summary={"total": 5, "crew": 3, "pools": {"fs": "3 agents"}},
         )
         text = snap.to_text()
-        assert "Agents: 5" in text
+        assert "Crew: 3 agents" in text
         assert "fs" in text
 
     def test_snapshot_with_capabilities(self):
