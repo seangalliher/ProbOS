@@ -43,12 +43,18 @@ async def cmd_conn(runtime: ProbOSRuntime, console: Console, args: str) -> None:
             rt._night_orders_mgr.expire()
         # Ward Room announcement
         if rt.ward_room:
-            await rt.ward_room.post_message(
-                channel_id="all-hands",
-                author_id="system",
-                author_callsign="Bridge",
-                content=f"Captain on the bridge. The conn has been returned from {result['holder']}. {result['actions_taken']} action(s) taken, {result['escalation_count']} escalation(s).",
-            )
+            try:
+                all_hands = await rt.ward_room.get_channel_by_name("All Hands")
+                if all_hands:
+                    await rt.ward_room.create_thread(
+                        channel_id=all_hands.id,
+                        author_id="system",
+                        title="Conn Returned",
+                        body=f"Captain on the bridge. The conn has been returned from {result['holder']}. {result['actions_taken']} action(s) taken, {result['escalation_count']} escalation(s).",
+                        author_callsign="Bridge",
+                    )
+            except Exception:
+                logger.debug("BF-112: Conn return announcement failed", exc_info=True)
         console.print(f"[bold green]Conn returned from {result['holder']}[/bold green]")
         console.print(f"  Duration: {result['duration_seconds']:.0f}s")
         console.print(f"  Actions taken: {result['actions_taken']}")
@@ -96,12 +102,18 @@ async def cmd_conn(runtime: ProbOSRuntime, console: Console, args: str) -> None:
 
         # Ward Room announcement
         if rt.ward_room:
-            await rt.ward_room.post_message(
-                channel_id="all-hands",
-                author_id="system",
-                author_callsign="Bridge",
-                content=f"{target_agent.callsign}, you have the conn. Captain is going offline.",
-            )
+            try:
+                all_hands = await rt.ward_room.get_channel_by_name("All Hands")
+                if all_hands:
+                    await rt.ward_room.create_thread(
+                        channel_id=all_hands.id,
+                        author_id="system",
+                        title="Conn Transfer",
+                        body=f"{target_agent.callsign}, you have the conn. Captain is going offline.",
+                        author_callsign="Bridge",
+                    )
+            except Exception:
+                logger.debug("BF-112: Conn grant announcement failed", exc_info=True)
         console.print(f"[bold cyan]{target_agent.callsign}[/bold cyan] has the conn.")
 
 
