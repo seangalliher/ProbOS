@@ -6,6 +6,19 @@ A graphical tic-tac-toe panel in the HXI so the Captain can challenge and play a
 
 Also fixes **BF-111**: `proactive.py` calls `rt.ward_room.post_message()` and `rt.ward_room.reply_to_thread()` which don't exist on `WardRoomService`. The correct methods are `create_thread()` and `create_post()`. Game challenge threads and board update posts have been silently failing since AD-526a.
 
+**NOTE:** BF-111 is already fixed in commit `1cc746e`. Skip the proactive.py changes in this prompt.
+
+## Engineering Principles
+
+- **SOLID (S):** Router (`recreation.py`) handles HTTP concerns only — delegates all game logic to `RecreationService`. GamePanel is a self-contained UI component; game state lives in the store, not the component.
+- **SOLID (O):** `RecreationService.forfeit_game()` extends the service without modifying existing `make_move()` or `create_game()` methods. `GAME_UPDATE` event type extends the EventType enum.
+- **SOLID (D):** Router depends on `get_runtime` and `get_ws_broadcast` injected via FastAPI `Depends()`, not direct imports. Service emits events via the existing `_emit` callback, not by importing the event bus.
+- **Law of Demeter:** Router calls `runtime.recreation_service.make_move()` — one dot through runtime to the service, then a method call. No reaching into `_active_games` or `_engines` dicts. Store actions call fetch → update local state, no cross-component state manipulation.
+- **Fail Fast:** Router validates agent exists and is crew before creating game. Returns 404/400 with clear messages. `forfeit_game()` returns early if game not found. Service-level `GAME_UPDATE` emission wrapped in try/except (log-and-degrade — game still works if event fails).
+- **Defense in Depth:** Router validates input at API boundary (agent exists, game exists, position valid). Service validates again (player's turn, valid move). Engine validates at lowest level (cell empty, game not over). PlayStopper overlay provides UI-level click prevention redundant to server validation.
+- **DRY:** Win line detection uses shared `WIN_LINES` constant. Board rendering reuses existing `RecreationService.render_board()`. Channel lookup pattern matches existing router code (`wardroom.py`).
+- **Cloud-Ready Storage:** N/A — RecreationService uses in-memory storage by design (games are ephemeral, not persisted across restarts). Game records posted to Ward Room threads provide the durable record via existing DB-backed WardRoomService.
+
 ## Architecture
 
 ```
