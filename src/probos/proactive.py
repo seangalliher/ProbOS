@@ -1882,14 +1882,14 @@ class ProactiveCognitiveLoop:
                             rec_ch = next((c for c in channels if c.name == "Recreation"), None)
                         thread_id = ""
                         if rec_ch and rt.ward_room:
-                            thread = await rt.ward_room.post_message(
+                            thread = await rt.ward_room.create_thread(
                                 channel_id=rec_ch.id,
                                 author_id=agent.id,
                                 title=f"[Challenge] {callsign} challenges {target_callsign} to {game_type}!",
                                 body=f"{callsign} has challenged {target_callsign} to a game of {game_type}! Reply to accept.",
                                 author_callsign=callsign,
                             )
-                            thread_id = thread.get("thread_id", "") if isinstance(thread, dict) else ""
+                            thread_id = thread.id if thread else ""
                         game_info = await rec_svc.create_game(
                             game_type=game_type,
                             challenger=callsign,
@@ -1945,7 +1945,7 @@ class ProactiveCognitiveLoop:
                                 else:
                                     body = f"```\n{board}\n```\nNext: {game_info['state']['current_player']}"
                                 try:
-                                    await rt.ward_room.reply_to_thread(
+                                    await rt.ward_room.create_post(
                                         thread_id=player_game["thread_id"],
                                         author_id=agent.id,
                                         body=body,
