@@ -2754,3 +2754,15 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Problem:** TrustNetwork, HebbianRouter, EarnedAgency, and EmergenceMetrics are completely tier-agnostic — they track all 62 agents identically. 48 utility/infrastructure agents sit at static trust 0.5, never changing. This causes: trust pollution (48 static agents dilute crew trust signals), cascade false positives (dampening based on total agent count includes non-crew), emergence noise (PID calculations include agents incapable of collaboration), meaningless rank (utility agents at "Lieutenant" via trust default), Hebbian weight bloat (routing weights accumulated for agents that never interact).
 
 **Solution — three phases:** AD-571a (Tier-Aware Trust Filtering — filter crew-only for metrics/cascades/emergence), AD-571b (Operational Status Model — replace rank with health/load/availability for utility agents), AD-571c (Hebbian Scope Reduction — restrict weight tracking to crew←→crew interactions).
+
+### AD-526b: HXI Tic-Tac-Toe — Captain vs Crew Game Panel (Draft)
+
+**Date:** 2026-04-06
+**Status:** Draft (build prompt ready)
+**Scope:** Medium | **Type:** Feature + Bug Fix (BF-111)
+
+**Problem:** AD-526a delivered the agent-to-agent recreation framework (RecreationService, TicTacToeEngine, proactive CHALLENGE/MOVE actions), but the Captain (human) cannot play. Games only work between agents via proactive think cycles. Additionally, BF-111: `proactive.py` calls `rt.ward_room.post_message()` and `rt.ward_room.reply_to_thread()` which don't exist on `WardRoomService` — correct methods are `create_thread()` and `create_post()`. Game challenge threads and board update posts have been silently failing since AD-526a.
+
+**Solution:** Full-stack Captain vs crew tic-tac-toe experience. REST router (`/api/recreation/` — challenge, move, active, forfeit endpoints). Floating `GamePanel.tsx` component following `AgentProfilePanel.tsx` pattern (CSS Grid board, piece-pop animations, PlayStopper overlay, win-line amber glow). `GAME_UPDATE` event emission from RecreationService for real-time WebSocket delivery. Game rehydration on page refresh via GET `/api/recreation/active`. "Challenge to Tic-Tac-Toe" button in agent profile panel (crew agents only). Captain always plays X (teal), agent responds on next proactive cycle.
+
+**Files:** 2 new (`routers/recreation.py`, `GamePanel.tsx`), 8 modified (`events.py`, `recreation/service.py`, `api.py`, `useStore.ts`, `types.ts`, `ProfileInfoTab.tsx`, `App.tsx`, `proactive.py`).
