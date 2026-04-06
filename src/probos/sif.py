@@ -468,7 +468,7 @@ class StructuralIntegrityField:
         if self._spawner:
             known_ids: set[str] = set()
             try:
-                registry = getattr(self._spawner, "_registry", None)
+                registry = getattr(self._spawner, "registry", None)
                 if registry:
                     known_ids = {a.id for a in registry.all()}
                     # Also include callsigns

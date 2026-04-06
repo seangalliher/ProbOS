@@ -74,6 +74,11 @@ class CognitiveAgent(BaseAgent):
         """Attach a StrategyAdvisor for cross-agent knowledge transfer (AD-384)."""
         self._strategy_advisor = advisor
 
+    def set_orientation(self, rendered: str, context: Any = None) -> None:
+        """AD-567g / BF-113: Set orientation text and context (public setter for LoD)."""
+        self._orientation_rendered = rendered
+        self._orientation_context = context
+
     @property
     def _cognitive_journal(self):
         """AD-431: Access journal via runtime (Ship's Computer service)."""

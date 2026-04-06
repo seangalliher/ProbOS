@@ -41,13 +41,24 @@ class MessageStore:
         """AD-567f: Late-bind social verification service."""
         self._social_verification = svc
 
-    def _resolve_author_department(self, author_id: str) -> str:
+    async def _check_cascade_risk(
+        self, peer_matches: list[dict], author_id: str,
+        author_callsign: str, post_body: str, channel_id: str,
+    ) -> None:
+        """AD-567f: Delegate cascade check to shared helper (BF-113 DRY)."""
+        from probos.ward_room._helpers import check_and_emit_cascade_risk
+        await check_and_emit_cascade_risk(
+            self._social_verification, self._emit,
+            author_id=author_id, author_callsign=author_callsign,
+            post_body=post_body, channel_id=channel_id,
+            peer_matches=peer_matches,
+        )
+
+    @staticmethod
+    def _resolve_author_department(author_id: str) -> str:
         """AD-567g: Resolve department for Ward Room episode anchors."""
-        try:
-            from probos.cognitive.standing_orders import get_department
-            return get_department(author_id) or ""
-        except Exception:
-            return ""
+        from probos.ward_room._helpers import resolve_author_department
+        return resolve_author_department(author_id)
 
     # ------------------------------------------------------------------
     # Post operations
@@ -149,25 +160,7 @@ class MessageStore:
             })
 
         # AD-567f: Check cascade risk when peer similarity is detected
-        if peer_matches and self._social_verification:
-            try:
-                cascade = await self._social_verification.check_cascade_risk(
-                    author_id=author_id,
-                    author_callsign=author_callsign,
-                    post_body=body,
-                    channel_id=thread_channel_id,
-                    peer_matches=peer_matches,
-                )
-                if cascade and cascade.risk_level in ("medium", "high"):
-                    import dataclasses
-                    from probos.events import EventType as _ET
-                    if self._emit:
-                        self._emit(
-                            _ET.CASCADE_CONFABULATION_DETECTED,
-                            dataclasses.asdict(cascade),
-                        )
-            except Exception:
-                logger.debug("AD-567f: cascade check failed", exc_info=True)
+        await self._check_cascade_risk(peer_matches, author_id, author_callsign, body, thread_channel_id)
 
         # AD-430a: Store reply as authoring agent's episodic memory
         if self._episodic_memory and author_id:

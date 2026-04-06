@@ -74,7 +74,7 @@ async def finalize_startup(
             await proactive_loop.restore_cooldowns()
         # AD-567g: Wire orientation service into proactive loop
         if hasattr(runtime, '_orientation_service') and runtime._orientation_service:
-            proactive_loop._orientation_service = runtime._orientation_service
+            proactive_loop.set_orientation_service(runtime._orientation_service)
         await proactive_loop.start()
         logger.info("proactive-cognitive-loop started (interval=%ss)", config.proactive_cognitive.interval_seconds)
 
@@ -106,10 +106,7 @@ async def finalize_startup(
     if hasattr(runtime, '_social_verification') and runtime._social_verification:
         ward_room = runtime.ward_room
         if ward_room:
-            if hasattr(ward_room, '_threads') and hasattr(ward_room._threads, 'set_social_verification'):
-                ward_room._threads.set_social_verification(runtime._social_verification)
-            if hasattr(ward_room, '_messages') and hasattr(ward_room._messages, 'set_social_verification'):
-                ward_room._messages.set_social_verification(runtime._social_verification)
+            ward_room.set_social_verification(runtime._social_verification)
 
     # --- AD-515: Create extracted service instances ---
     from probos.ward_room_router import WardRoomRouter
@@ -145,7 +142,7 @@ async def finalize_startup(
     runtime.onboarding._start_time_wall = runtime._start_time_wall
     # AD-567g: Wire orientation service into onboarding
     if hasattr(runtime, '_orientation_service') and runtime._orientation_service:
-        runtime.onboarding._orientation_service = runtime._orientation_service
+        runtime.onboarding.set_orientation_service(runtime._orientation_service)
 
     # AD-526a: Wire RecreationService with late-init dependencies
     from probos.recreation.service import RecreationService
@@ -347,8 +344,10 @@ async def finalize_startup(
                         episodic_memory_count=_ep_count,
                         trust_score=_trust,
                     )
-                    agent._orientation_rendered = runtime._orientation_service.render_warm_boot_orientation(_ctx)
-                    agent._orientation_context = _ctx
+                    agent.set_orientation(
+                        runtime._orientation_service.render_warm_boot_orientation(_ctx),
+                        _ctx,
+                    )
             logger.info("AD-567g: Warm boot orientation set for crew agents")
         except Exception:
             logger.debug("AD-567g: Warm boot orientation failed", exc_info=True)

@@ -845,7 +845,7 @@ class EpisodicMemory:
                     [ep.id for ep in episodes], access_type="recall"
                 )
             except Exception:
-                pass  # Non-critical — don't block recall
+                logger.debug("AD-567d: Activation tracking failed", exc_info=True)
 
         return episodes
 
@@ -1198,7 +1198,7 @@ class EpisodicMemory:
                     [ep.id for ep, _ in scored], access_type="recall"
                 )
             except Exception:
-                pass
+                logger.debug("AD-567d: Activation tracking failed", exc_info=True)
 
         return scored
 
@@ -1362,7 +1362,7 @@ class EpisodicMemory:
                     [rs.episode.id for rs in budgeted], access_type="recall"
                 )
             except Exception:
-                pass
+                logger.debug("AD-567d: Activation tracking failed", exc_info=True)
 
         return budgeted
 
@@ -1520,6 +1520,6 @@ class EpisodicMemory:
                     [ep.id for ep in episodes], access_type="recall"
                 )
             except Exception:
-                pass
+                logger.debug("AD-567d: Activation tracking failed", exc_info=True)
 
         return episodes

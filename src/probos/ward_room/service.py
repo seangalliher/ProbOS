@@ -124,6 +124,13 @@ class WardRoomService(EventEmitterMixin):
         """Whether the Ward Room database connection is active."""
         return self._db is not None
 
+    def set_social_verification(self, svc: Any) -> None:
+        """AD-567f / BF-113: Delegate social verification wiring to sub-services."""
+        if self._threads:
+            self._threads.set_social_verification(svc)
+        if self._messages:
+            self._messages.set_social_verification(svc)
+
     # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------

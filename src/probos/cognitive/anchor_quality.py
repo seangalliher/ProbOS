@@ -36,6 +36,21 @@ def _is_filled(value: Any) -> bool:
     return bool(value)
 
 
+def _compute_dimension_scores(anchors: AnchorFrame) -> dict[str, float]:
+    """Compute per-dimension fill rates for an AnchorFrame."""
+    temporal_fields = [anchors.duty_cycle_id, anchors.watch_section]
+    spatial_fields = [anchors.channel, anchors.channel_id, anchors.department]
+    social_fields = [anchors.participants, anchors.trigger_agent]
+    evidential_fields = [anchors.thread_id, anchors.event_log_window]
+    return {
+        "temporal": sum(1 for f in temporal_fields if _is_filled(f)) / len(temporal_fields),
+        "spatial": sum(1 for f in spatial_fields if _is_filled(f)) / len(spatial_fields),
+        "social": sum(1 for f in social_fields if _is_filled(f)) / len(social_fields),
+        "causal": 1.0 if _is_filled(anchors.trigger_type) else 0.0,
+        "evidential": sum(1 for f in evidential_fields if _is_filled(f)) / len(evidential_fields),
+    }
+
+
 def compute_anchor_confidence(
     anchors: AnchorFrame | None,
     weights: dict[str, float] | None = None,
@@ -53,31 +68,14 @@ def compute_anchor_confidence(
 
     w = weights or DEFAULT_DIMENSION_WEIGHTS
 
-    # Temporal: duty_cycle_id, watch_section (2 fields)
-    temporal_fields = [anchors.duty_cycle_id, anchors.watch_section]
-    temporal_score = sum(1 for f in temporal_fields if _is_filled(f)) / len(temporal_fields)
-
-    # Spatial: channel, channel_id, department (3 fields)
-    spatial_fields = [anchors.channel, anchors.channel_id, anchors.department]
-    spatial_score = sum(1 for f in spatial_fields if _is_filled(f)) / len(spatial_fields)
-
-    # Social: participants, trigger_agent (2 fields)
-    social_fields = [anchors.participants, anchors.trigger_agent]
-    social_score = sum(1 for f in social_fields if _is_filled(f)) / len(social_fields)
-
-    # Causal: trigger_type (1 field)
-    causal_score = 1.0 if _is_filled(anchors.trigger_type) else 0.0
-
-    # Evidential: thread_id, event_log_window (2 fields)
-    evidential_fields = [anchors.thread_id, anchors.event_log_window]
-    evidential_score = sum(1 for f in evidential_fields if _is_filled(f)) / len(evidential_fields)
+    scores = _compute_dimension_scores(anchors)
 
     confidence = (
-        w.get("temporal", 0.25) * temporal_score
-        + w.get("spatial", 0.25) * spatial_score
-        + w.get("social", 0.25) * social_score
-        + w.get("causal", 0.15) * causal_score
-        + w.get("evidential", 0.10) * evidential_score
+        w.get("temporal", 0.25) * scores["temporal"]
+        + w.get("spatial", 0.25) * scores["spatial"]
+        + w.get("social", 0.25) * scores["social"]
+        + w.get("causal", 0.15) * scores["causal"]
+        + w.get("evidential", 0.10) * scores["evidential"]
     )
     return confidence
 
@@ -140,30 +138,9 @@ async def build_anchor_profile(
         confidences.append(conf)
 
         if anchors is not None:
-            # Temporal
-            temporal_fields = [anchors.duty_cycle_id, anchors.watch_section]
-            dim_fills["temporal"].append(
-                sum(1 for f in temporal_fields if _is_filled(f)) / len(temporal_fields)
-            )
-            # Spatial
-            spatial_fields = [anchors.channel, anchors.channel_id, anchors.department]
-            dim_fills["spatial"].append(
-                sum(1 for f in spatial_fields if _is_filled(f)) / len(spatial_fields)
-            )
-            # Social
-            social_fields = [anchors.participants, anchors.trigger_agent]
-            dim_fills["social"].append(
-                sum(1 for f in social_fields if _is_filled(f)) / len(social_fields)
-            )
-            # Causal
-            dim_fills["causal"].append(
-                1.0 if _is_filled(anchors.trigger_type) else 0.0
-            )
-            # Evidential
-            evidential_fields = [anchors.thread_id, anchors.event_log_window]
-            dim_fills["evidential"].append(
-                sum(1 for f in evidential_fields if _is_filled(f)) / len(evidential_fields)
-            )
+            dim_scores = _compute_dimension_scores(anchors)
+            for dim in dim_fills:
+                dim_fills[dim].append(dim_scores[dim])
         else:
             for dim in dim_fills:
                 dim_fills[dim].append(0.0)

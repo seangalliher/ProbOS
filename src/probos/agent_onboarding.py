@@ -72,6 +72,10 @@ class AgentOnboardingService:
         self._start_time_wall: float = 0.0  # Set by runtime after creation
         self._orientation_service: Any = None  # AD-567g: Late-bound
 
+    def set_orientation_service(self, svc: Any) -> None:
+        """AD-567g / BF-113: Set orientation service (public setter for LoD)."""
+        self._orientation_service = svc
+
     async def wire_agent(self, agent: Any) -> None:
         """Connect an agent to the mesh infrastructure."""
         # Set callsign from registry (AD-397)
@@ -183,10 +187,10 @@ class AgentOnboardingService:
                     trust_score=0.5,
                 )
                 if not _existing_identity_callsign:
-                    agent._orientation_rendered = self._orientation_service.render_cold_start_orientation(_ctx)
+                    _rendered = self._orientation_service.render_cold_start_orientation(_ctx)
                 else:
-                    agent._orientation_rendered = self._orientation_service.render_warm_boot_orientation(_ctx)
-                agent._orientation_context = _ctx
+                    _rendered = self._orientation_service.render_warm_boot_orientation(_ctx)
+                agent.set_orientation(_rendered, _ctx)
             except Exception:
                 logger.debug("AD-567g: Orientation failed for %s", agent.agent_type, exc_info=True)
 

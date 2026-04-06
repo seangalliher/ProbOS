@@ -81,8 +81,9 @@ def derive_watch_section(hour: int | None = None) -> str:
 class OrientationService:
     """Builds structured orientation context for agent cognitive grounding."""
 
-    def __init__(self, *, config: Any) -> None:
+    def __init__(self, *, config: Any, ontology: Any = None) -> None:
         self._config = config
+        self._ontology = ontology
 
     def build_orientation(
         self,
@@ -108,20 +109,19 @@ class OrientationService:
             from probos.cognitive.standing_orders import get_department
             dept = get_department(agent_type) or ""
         except Exception:
-            pass
+            logger.debug("AD-567g: Department resolution failed for %s", agent_type, exc_info=True)
 
         # Resolve reports_to / department_chief
         dept_chief = ""
         reports_to = ""
         try:
-            ont = getattr(agent, '_runtime', None)
-            if ont and hasattr(ont, 'ontology') and ont.ontology:
-                assignment = ont.ontology.get_assignment(agent_type)
+            if self._ontology:
+                assignment = self._ontology.get_assignment(agent_type)
                 if assignment:
                     reports_to = getattr(assignment, 'reports_to', '') or ""
                     dept_chief = reports_to  # In ProbOS, reports_to IS the dept chief
         except Exception:
-            pass
+            logger.debug("AD-567g: Chain-of-command resolution failed for %s", agent_type, exc_info=True)
 
         # Resolve rank
         rank = ""
@@ -136,7 +136,7 @@ class OrientationService:
             if hasattr(self._config, 'system') and hasattr(self._config.system, 'ship_name'):
                 ship_name = self._config.system.ship_name or "ProbOS"
         except Exception:
-            pass
+            logger.debug("AD-567g: Ship name resolution failed", exc_info=True)
 
         # Agent age
         birth_ts = getattr(agent, '_birth_timestamp', None)

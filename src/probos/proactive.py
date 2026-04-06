@@ -169,6 +169,10 @@ class ProactiveCognitiveLoop:
         self._llm_failure_streak: int = 0  # BF-069: consecutive cycles with failure
         self._orientation_service: Any = None  # AD-567g: Late-bound
 
+    def set_orientation_service(self, svc: Any) -> None:
+        """AD-567g / BF-113: Set orientation service (public setter for LoD)."""
+        self._orientation_service = svc
+
     def set_runtime(self, runtime: ProbOSRuntime) -> None:
         """Wire the runtime reference (provides registry, trust, WR, memory, etc.)."""
         self._runtime = runtime

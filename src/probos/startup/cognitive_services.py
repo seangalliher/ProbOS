@@ -308,7 +308,7 @@ async def init_cognitive_services(
     if config.orientation.enabled:
         try:
             from probos.cognitive.orientation import OrientationService
-            orientation_service = OrientationService(config=config)
+            orientation_service = OrientationService(config=config, ontology=runtime.ontology)
             logger.info("AD-567g: OrientationService initialized")
         except Exception as e:
             logger.warning("OrientationService failed to start: %s — continuing without", e)
