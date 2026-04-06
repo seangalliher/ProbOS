@@ -246,9 +246,6 @@ class DreamAdapter:
         """Post-micro-dream callback: update emergent detector (AD-288)."""
         if not self._emergent_detector:
             return
-        # AD-417: Skip analysis during proactive-busy periods to reduce noise.
-        if self._dream_scheduler and self._dream_scheduler.is_proactively_busy:
-            return
         try:
             self._emergent_detector.analyze(dream_report=micro_report, duty_completions=[])
         except Exception as e:

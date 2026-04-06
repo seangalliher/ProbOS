@@ -286,7 +286,6 @@ class DreamingConfig(BaseModel):
 
     idle_threshold_seconds: float = 120.0  # Tier 2: full dream after idle (AD-288)
     dream_interval_seconds: float = 600.0
-    proactive_extends_idle: bool = True     # AD-417: Proactive activity extends idle timer
     replay_episode_count: int = 50
     pathway_strengthening_factor: float = 0.03
     pathway_weakening_factor: float = 0.02

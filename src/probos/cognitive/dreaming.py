@@ -1792,16 +1792,13 @@ class DreamScheduler:
         idle_threshold_seconds: float = 300.0,
         dream_interval_seconds: float = 600.0,
         micro_dream_interval_seconds: float = 10.0,
-        proactive_extends_idle: bool = True,  # AD-417
     ) -> None:
         self.engine = engine
         self.idle_threshold_seconds = idle_threshold_seconds
         self.dream_interval_seconds = dream_interval_seconds
         self.micro_dream_interval_seconds = micro_dream_interval_seconds
-        self.proactive_extends_idle = proactive_extends_idle
 
         self._last_activity_time: float = time.monotonic()
-        self._last_proactive_time: float = 0.0  # AD-417: Track proactive loop activity
         self._last_dream_time: float = 0.0
         self._last_micro_dream_time: float = 0.0
         self._micro_dream_count: int = 0
@@ -1827,21 +1824,6 @@ class DreamScheduler:
     def record_activity(self) -> None:
         """Record that user activity occurred (resets idle timer)."""
         self._last_activity_time = time.monotonic()
-
-    def record_proactive_activity(self) -> None:
-        """Record that proactive loop activity occurred (AD-417).
-
-        Proactive activity extends the idle timer but with a weaker effect
-        than user activity — the system is "busy but not user-driven".
-        """
-        self._last_proactive_time = time.monotonic()
-
-    @property
-    def is_proactively_busy(self) -> bool:
-        """True if proactive loop activity was recent (within idle threshold)."""
-        if not self.proactive_extends_idle or self._last_proactive_time == 0.0:
-            return False
-        return (time.monotonic() - self._last_proactive_time) < self.idle_threshold_seconds
 
     def start(self) -> None:
         """Start the background monitoring task."""
@@ -1959,15 +1941,8 @@ class DreamScheduler:
                 idle_time = now - self._last_activity_time
                 time_since_last_dream = now - self._last_dream_time
 
-                # AD-417: Proactive activity extends the idle threshold
-                proactive_idle = now - self._last_proactive_time
-                if self.proactive_extends_idle and self._last_proactive_time > 0:
-                    truly_idle = min(idle_time, proactive_idle)
-                else:
-                    truly_idle = idle_time
-
                 if (
-                    truly_idle >= self.idle_threshold_seconds
+                    idle_time >= self.idle_threshold_seconds
                     and time_since_last_dream >= self.dream_interval_seconds
                 ):
                     self._is_dreaming = True

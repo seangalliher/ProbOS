@@ -114,7 +114,6 @@ async def init_dreaming(
             engine=dreaming_engine,
             idle_threshold_seconds=dream_cfg.idle_threshold_seconds,
             dream_interval_seconds=dream_cfg.dream_interval_seconds,
-            proactive_extends_idle=dream_cfg.proactive_extends_idle,
         )
         dream_scheduler._emit_event_fn = emit_event_fn  # AD-503
         dream_scheduler.start()

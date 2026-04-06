@@ -416,10 +416,6 @@ class ProactiveCognitiveLoop:
                 if last > 0 and time.monotonic() - last < idle_cooldown:
                     return
 
-        # AD-417: Record proactive activity for dream scheduler awareness
-        if hasattr(self._runtime, 'dream_scheduler') and self._runtime.dream_scheduler:
-            self._runtime.dream_scheduler.record_proactive_activity()
-
         # AD-502: Inject post count for temporal awareness
         try:
             rt = self._runtime

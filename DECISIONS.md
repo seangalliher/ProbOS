@@ -2792,3 +2792,27 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Lineage:** AD-28 (WorkingMemoryManager), AD-462 (Unified Cognitive Bottleneck), AD-504 (self-monitoring), AD-572 (active game awareness) → AD-573 (unified working memory).
 
 **Files:** 2 new files (`cognitive/agent_working_memory.py`, `cognitive/working_memory_store.py`). 6 modified (`cognitive_agent.py`, `config.py`, `routers/agents.py`, `proactive.py`, `runtime.py`, `startup/shutdown.py`, `startup/finalize.py`). 2 new test files: `test_agent_working_memory.py` (28 tests), `test_working_memory_store.py` (7 tests).
+
+### BF-114: Full Dream Cycles Permanently Blocked by Proactive Loop
+
+**Date:** 2026-04-06
+**Status:** Closed
+**Severity:** Critical
+
+**Problem:** AD-417 added `proactive_extends_idle: true` so proactive thinking extends the dream scheduler's idle timer. The proactive loop fires every ~120s and calls `dream_scheduler.record_proactive_activity()`. The dream scheduler computes `truly_idle = min(idle_time, proactive_idle)`, which caps idle at ~120s. But `idle_threshold_seconds = 300`. Since 120 < 300, the full dream gate `truly_idle >= idle_threshold_seconds` can never be satisfied. Full dream cycles have never fired since AD-417 was integrated. Micro-dreams (dolphin, every 10s) fire unconditionally but only do lightweight consolidation — no proposals, no self-mod candidates, no deep consolidation.
+
+**Decision:** Set `proactive_extends_idle: false` in `config/system.yaml`. AD-417e specifically designed this toggle for cases where proactive activity should not block dreams. The original intent — "don't dream while the crew is busy" — was sound, but proactive thinking IS the steady state; the crew is always thinking. User idle time alone is the correct dream trigger. Existing test `test_proactive_extends_idle_disabled_allows_dreams` already validates the fix.
+
+**Files:** 1 modified (`config/system.yaml`). 0 new tests — existing AD-417 test suite covers this path.
+
+### BF-114b: Remove Dead `proactive_extends_idle` Code Path
+
+**Date:** 2026-04-06
+**Status:** Closed
+**Severity:** Medium (dead code cleanup)
+
+**Problem:** With BF-114 setting `proactive_extends_idle: false`, the entire AD-417 proactive-extends-idle feature became dead code: `record_proactive_activity()` updates a timestamp nothing reads, `is_proactively_busy` always returns `False`, the `truly_idle = min(...)` branch is never entered, and `DreamAdapter.on_post_micro_dream()` has a dead guard. The feature cannot work in any realistic configuration (proactive interval would need to exceed `idle_threshold_seconds`, meaning agents think less than once every 5 minutes).
+
+**Decision:** Remove the entire code path: `proactive_extends_idle` config field, `DreamScheduler` parameter/attributes/methods (`record_proactive_activity()`, `is_proactively_busy`, `_last_proactive_time`), idle calculation simplification (remove `truly_idle` intermediate, use `idle_time` directly), proactive.py caller, startup wiring, and `DreamAdapter` busy guard. Removed 9-test `TestDreamSchedulerProactiveAwareness` class. Added 1 focused test preserving `on_post_micro_dream` → `EmergentDetector.analyze()` coverage. `_last_proactive_scan_time` (AD-532e, unrelated) preserved.
+
+**Files:** 7 modified (`config.py`, `system.yaml`, `dreaming.py`, `proactive.py`, `startup/dreaming.py`, `dream_adapter.py`, `test_dreaming.py`). Net -8 tests (removed 9 dead-feature tests, added 1 targeted coverage test).

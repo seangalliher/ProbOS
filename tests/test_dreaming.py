@@ -893,184 +893,28 @@ class TestDreamingIntegration:
             await rt.stop()
 
 
-class TestDreamSchedulerProactiveAwareness:
-    """Tests for AD-417: Dream scheduler proactive-loop awareness."""
+def test_post_micro_dream_calls_emergent_detector():
+    """BF-114b: on_post_micro_dream triggers EmergentDetector analysis."""
+    from unittest.mock import MagicMock
+    from probos.dream_adapter import DreamAdapter
 
-    def _make_engine(self):
-        """Create a minimal DreamingEngine for testing."""
-        from unittest.mock import AsyncMock, MagicMock
-        engine = MagicMock(spec=DreamingEngine)
-        engine.dream_cycle = AsyncMock(return_value=MagicMock(episodes_replayed=0, weights_modified=0, pruned_connections=0))
-        engine.micro_dream = AsyncMock(return_value={"episodes_replayed": 0})
-        return engine
+    detector = MagicMock()
+    adapter = DreamAdapter(
+        dream_scheduler=None,
+        emergent_detector=detector,
+        episodic_memory=None,
+        knowledge_store=None,
+        hebbian_router=MagicMock(),
+        trust_network=MagicMock(),
+        event_emitter=MagicMock(),
+        self_mod_pipeline=None,
+        bridge_alerts=None,
+        ward_room=None,
+        registry=MagicMock(),
+        event_log=None,
+        config=MagicMock(),
+        pools={},
+    )
 
-    def test_record_proactive_activity_updates_timestamp(self):
-        """record_proactive_activity sets _last_proactive_time."""
-        engine = self._make_engine()
-        scheduler = DreamScheduler(engine=engine, idle_threshold_seconds=2.0)
-        assert scheduler._last_proactive_time == 0.0
-        scheduler.record_proactive_activity()
-        assert scheduler._last_proactive_time > 0
-
-    @pytest.mark.asyncio
-    async def test_proactive_activity_prevents_full_dream(self):
-        """Full dream doesn't fire when proactive activity keeps system busy."""
-        engine = self._make_engine()
-        scheduler = DreamScheduler(
-            engine=engine,
-            idle_threshold_seconds=0.5,
-            dream_interval_seconds=0.1,
-            micro_dream_interval_seconds=100,  # Disable micro-dreams
-        )
-        scheduler.start()
-        try:
-            # Keep proactive activity going for 2 seconds
-            for _ in range(8):
-                scheduler.record_proactive_activity()
-                await asyncio.sleep(0.25)
-            # Full dream should NOT have fired
-            engine.dream_cycle.assert_not_called()
-
-            # Now stop proactive activity and wait for idle threshold + dream interval
-            await asyncio.sleep(1.0)
-            # Full dream should now fire
-            assert engine.dream_cycle.call_count >= 1
-        finally:
-            await scheduler.stop()
-
-    @pytest.mark.asyncio
-    async def test_proactive_activity_does_not_affect_micro_dreams(self):
-        """Micro-dreams still fire during proactive activity."""
-        engine = self._make_engine()
-        scheduler = DreamScheduler(
-            engine=engine,
-            idle_threshold_seconds=100,  # Long threshold so no full dreams
-            dream_interval_seconds=100,
-            micro_dream_interval_seconds=0.1,
-        )
-        scheduler.record_proactive_activity()
-        scheduler.start()
-        try:
-            await asyncio.sleep(1.5)
-            assert engine.micro_dream.call_count >= 1
-        finally:
-            await scheduler.stop()
-
-    def test_is_proactively_busy_property(self):
-        """is_proactively_busy reflects recency of proactive activity."""
-        engine = self._make_engine()
-        scheduler = DreamScheduler(engine=engine, idle_threshold_seconds=0.3)
-        # No proactive activity yet
-        assert scheduler.is_proactively_busy is False
-        # Record activity
-        scheduler.record_proactive_activity()
-        assert scheduler.is_proactively_busy is True
-        # Manually backdate to simulate time passing
-        scheduler._last_proactive_time = time.monotonic() - 1.0
-        assert scheduler.is_proactively_busy is False
-
-    def test_proactive_extends_idle_disabled(self):
-        """When disabled, proactive activity doesn't affect dreams or busy state."""
-        engine = self._make_engine()
-        scheduler = DreamScheduler(
-            engine=engine,
-            idle_threshold_seconds=1.0,
-            proactive_extends_idle=False,
-        )
-        scheduler.record_proactive_activity()
-        # Even with recent proactive activity, not busy when disabled
-        assert scheduler.is_proactively_busy is False
-
-    @pytest.mark.asyncio
-    async def test_proactive_extends_idle_disabled_allows_dreams(self):
-        """With proactive_extends_idle=False, full dreams fire despite proactive activity."""
-        engine = self._make_engine()
-        scheduler = DreamScheduler(
-            engine=engine,
-            idle_threshold_seconds=0.3,
-            dream_interval_seconds=0.1,
-            micro_dream_interval_seconds=100,
-            proactive_extends_idle=False,
-        )
-        scheduler.start()
-        try:
-            # Keep proactive activity going
-            for _ in range(4):
-                scheduler.record_proactive_activity()
-                await asyncio.sleep(0.2)
-            # Wait for idle threshold
-            await asyncio.sleep(0.5)
-            # Dreams should fire because proactive activity is ignored
-            assert engine.dream_cycle.call_count >= 1
-        finally:
-            await scheduler.stop()
-
-    @pytest.mark.asyncio
-    async def test_user_activity_still_overrides_proactive(self):
-        """User activity also resets idle timer alongside proactive activity."""
-        engine = self._make_engine()
-        scheduler = DreamScheduler(
-            engine=engine,
-            idle_threshold_seconds=0.5,
-            dream_interval_seconds=0.1,
-            micro_dream_interval_seconds=100,
-        )
-        scheduler.start()
-        try:
-            # Proactive activity keeps system busy
-            scheduler.record_proactive_activity()
-            # User activity also resets idle
-            scheduler.record_activity()
-            await asyncio.sleep(0.3)
-            # Neither has expired — no dream
-            engine.dream_cycle.assert_not_called()
-            # Wait for both to expire
-            await asyncio.sleep(0.8)
-            assert engine.dream_cycle.call_count >= 1
-        finally:
-            await scheduler.stop()
-
-    def test_config_field_exists(self):
-        """DreamingConfig has proactive_extends_idle field."""
-        cfg = DreamingConfig()
-        assert cfg.proactive_extends_idle is True
-        cfg2 = DreamingConfig(proactive_extends_idle=False)
-        assert cfg2.proactive_extends_idle is False
-
-    def test_skip_emergent_during_proactive_busy(self):
-        """_on_post_micro_dream skips EmergentDetector when proactively busy."""
-        from unittest.mock import MagicMock, PropertyMock
-        from probos.runtime import ProbOSRuntime
-        from probos.dream_adapter import DreamAdapter
-
-        rt = ProbOSRuntime.__new__(ProbOSRuntime)
-        rt._emergent_detector = MagicMock()
-        rt.dream_scheduler = MagicMock()
-
-        # AD-515: Create DreamAdapter used by delegation
-        rt.dream_adapter = DreamAdapter(
-            dream_scheduler=rt.dream_scheduler,
-            emergent_detector=rt._emergent_detector,
-            episodic_memory=None,
-            knowledge_store=None,
-            hebbian_router=MagicMock(),
-            trust_network=MagicMock(),
-            event_emitter=MagicMock(),
-            self_mod_pipeline=None,
-            bridge_alerts=None,
-            ward_room=None,
-            registry=MagicMock(),
-            event_log=None,
-            config=MagicMock(),
-            pools={},
-        )
-
-        # When proactively busy — skip analysis
-        type(rt.dream_scheduler).is_proactively_busy = PropertyMock(return_value=True)
-        rt.dream_adapter.on_post_micro_dream({"episodes_replayed": 5})
-        rt._emergent_detector.analyze.assert_not_called()
-
-        # When not busy — run analysis
-        type(rt.dream_scheduler).is_proactively_busy = PropertyMock(return_value=False)
-        rt.dream_adapter.on_post_micro_dream({"episodes_replayed": 5})
-        rt._emergent_detector.analyze.assert_called_once()
+    adapter.on_post_micro_dream({"episodes_replayed": 5})
+    detector.analyze.assert_called_once()
