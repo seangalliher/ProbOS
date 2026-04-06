@@ -56,6 +56,7 @@ async def init_cognitive_services(
     set_probationary_trust_fn: Callable[..., Any],
     add_skill_to_agents_fn: Callable[..., Any],
     create_pool_fn: Callable[..., Any],
+    emit_event_fn: Callable[..., Any] | None = None,
 ) -> CognitiveServicesResult:
     """Initialize self-mod pipeline, feedback, memory, knowledge, and strategy."""
     logger.info("Startup [cognitive_services]: starting")

@@ -1825,104 +1825,111 @@ class ProactiveCognitiveLoop:
                         getattr(agent, 'callsign', agent.agent_type), topic_slug)
         text = re.sub(read_nb_pattern, '', text).strip()
 
-        # AD-526a: [CHALLENGE @callsign game_type] — challenge another crew member to a game
-        challenge_pattern = r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]'
-        for match in re.finditer(challenge_pattern, text):
-            target_callsign = match.group(1)
-            game_type = match.group(2)
-            try:
-                rec_svc = getattr(rt, 'recreation_service', None)
-                if rec_svc:
-                    # Resolve target callsign to agent
-                    target_agent = None
-                    if hasattr(rt, 'callsign_registry'):
-                        target_agent = rt.callsign_registry.resolve(target_callsign)
-                    if not target_agent:
-                        logger.debug("AD-526a: Target callsign %s not found", target_callsign)
-                        continue
-                    # Create game in Recreation channel thread
-                    rec_ch = None
-                    if rt.ward_room:
-                        channels = await rt.ward_room.list_channels()
-                        rec_ch = next((c for c in channels if c.name == "Recreation"), None)
-                    thread_id = ""
-                    if rec_ch and rt.ward_room:
-                        thread = await rt.ward_room.post_message(
-                            channel_id=rec_ch.id,
-                            author_id=agent.id,
-                            title=f"[Challenge] {callsign} challenges {target_callsign} to {game_type}!",
-                            body=f"{callsign} has challenged {target_callsign} to a game of {game_type}! Reply to accept.",
-                            author_callsign=callsign,
-                        )
-                        thread_id = thread.get("thread_id", "") if isinstance(thread, dict) else ""
-                    game_info = await rec_svc.create_game(
-                        game_type=game_type,
-                        challenger=callsign,
-                        opponent=target_callsign,
-                        thread_id=thread_id,
-                    )
-                    actions_executed.append({
-                        "action": "challenge",
-                        "target": target_callsign,
-                        "game_type": game_type,
-                        "game_id": game_info["game_id"],
-                    })
-                    logger.info("AD-526a: %s challenged %s to %s (game %s)",
-                                callsign, target_callsign, game_type, game_info["game_id"])
-            except Exception as e:
-                logger.warning("AD-526a: CHALLENGE failed for %s: %s", callsign, e)
-        text = re.sub(challenge_pattern, '', text).strip()
-
-        # AD-526a: [MOVE position] — make a move in an active game
-        move_pattern = r'\[MOVE\s+(\S+)\]'
-        for match in re.finditer(move_pattern, text):
-            position = match.group(1)
-            try:
-                rec_svc = getattr(rt, 'recreation_service', None)
-                if rec_svc:
-                    # Find active game for this player
-                    active_games = rec_svc.get_active_games()
-                    player_game = None
-                    for g in active_games:
-                        state = g.get("state", {})
-                        if state.get("current_player") == callsign:
-                            player_game = g
-                            break
-                    if player_game:
-                        game_info = await rec_svc.make_move(
-                            game_id=player_game["game_id"],
-                            player=callsign,
-                            move=position,
+        # AD-526a: Recreation actions — rank-gated via config
+        rec_min_rank_str = "ensign"
+        if hasattr(rt, 'config') and hasattr(rt.config, 'communications'):
+            rec_min_rank_str = rt.config.communications.recreation_min_rank
+        rec_min_rank = Rank[rec_min_rank_str.upper()] if rec_min_rank_str.upper() in Rank.__members__ else Rank.ENSIGN
+        _RANK_ORDER_REC = [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]
+        if _RANK_ORDER_REC.index(rank) >= _RANK_ORDER_REC.index(rec_min_rank):
+            # AD-526a: [CHALLENGE @callsign game_type] — challenge another crew member to a game
+            challenge_pattern = r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]'
+            for match in re.finditer(challenge_pattern, text):
+                target_callsign = match.group(1)
+                game_type = match.group(2)
+                try:
+                    rec_svc = getattr(rt, 'recreation_service', None)
+                    if rec_svc:
+                        # Resolve target callsign to agent
+                        target_agent = None
+                        if hasattr(rt, 'callsign_registry'):
+                            target_agent = rt.callsign_registry.resolve(target_callsign)
+                        if not target_agent:
+                            logger.debug("AD-526a: Target callsign %s not found", target_callsign)
+                            continue
+                        # Create game in Recreation channel thread
+                        rec_ch = None
+                        if rt.ward_room:
+                            channels = await rt.ward_room.list_channels()
+                            rec_ch = next((c for c in channels if c.name == "Recreation"), None)
+                        thread_id = ""
+                        if rec_ch and rt.ward_room:
+                            thread = await rt.ward_room.post_message(
+                                channel_id=rec_ch.id,
+                                author_id=agent.id,
+                                title=f"[Challenge] {callsign} challenges {target_callsign} to {game_type}!",
+                                body=f"{callsign} has challenged {target_callsign} to a game of {game_type}! Reply to accept.",
+                                author_callsign=callsign,
+                            )
+                            thread_id = thread.get("thread_id", "") if isinstance(thread, dict) else ""
+                        game_info = await rec_svc.create_game(
+                            game_type=game_type,
+                            challenger=callsign,
+                            opponent=target_callsign,
+                            thread_id=thread_id,
                         )
                         actions_executed.append({
-                            "action": "game_move",
-                            "game_id": player_game["game_id"],
-                            "move": position,
+                            "action": "challenge",
+                            "target": target_callsign,
+                            "game_type": game_type,
+                            "game_id": game_info["game_id"],
                         })
-                        # Post board update to Recreation channel
-                        if rt.ward_room and player_game.get("thread_id"):
-                            board = rec_svc.render_board(player_game["game_id"]) if not game_info.get("result") else ""
-                            result = game_info.get("result")
-                            if result:
-                                status = result.get("status", "")
-                                winner = result.get("winner", "")
-                                body = f"Game over! {'Winner: ' + winner if winner else 'Draw!'}"
-                            else:
-                                body = f"```\n{board}\n```\nNext: {game_info['state']['current_player']}"
-                            try:
-                                await rt.ward_room.reply_to_thread(
-                                    thread_id=player_game["thread_id"],
-                                    author_id=agent.id,
-                                    body=body,
-                                    author_callsign=callsign,
-                                )
-                            except Exception:
-                                logger.debug("AD-526a: Board update post failed", exc_info=True)
-                    else:
-                        logger.debug("AD-526a: No active game for %s", callsign)
-            except Exception as e:
-                logger.warning("AD-526a: MOVE failed for %s: %s", callsign, e)
-        text = re.sub(move_pattern, '', text).strip()
+                        logger.info("AD-526a: %s challenged %s to %s (game %s)",
+                                    callsign, target_callsign, game_type, game_info["game_id"])
+                except Exception as e:
+                    logger.warning("AD-526a: CHALLENGE failed for %s: %s", callsign, e)
+            text = re.sub(challenge_pattern, '', text).strip()
+
+            # AD-526a: [MOVE position] — make a move in an active game
+            move_pattern = r'\[MOVE\s+(\S+)\]'
+            for match in re.finditer(move_pattern, text):
+                position = match.group(1)
+                try:
+                    rec_svc = getattr(rt, 'recreation_service', None)
+                    if rec_svc:
+                        # Find active game for this player
+                        active_games = rec_svc.get_active_games()
+                        player_game = None
+                        for g in active_games:
+                            state = g.get("state", {})
+                            if state.get("current_player") == callsign:
+                                player_game = g
+                                break
+                        if player_game:
+                            game_info = await rec_svc.make_move(
+                                game_id=player_game["game_id"],
+                                player=callsign,
+                                move=position,
+                            )
+                            actions_executed.append({
+                                "action": "game_move",
+                                "game_id": player_game["game_id"],
+                                "move": position,
+                            })
+                            # Post board update to Recreation channel
+                            if rt.ward_room and player_game.get("thread_id"):
+                                board = rec_svc.render_board(player_game["game_id"]) if not game_info.get("result") else ""
+                                result = game_info.get("result")
+                                if result:
+                                    status = result.get("status", "")
+                                    winner = result.get("winner", "")
+                                    body = f"Game over! {'Winner: ' + winner if winner else 'Draw!'}"
+                                else:
+                                    body = f"```\n{board}\n```\nNext: {game_info['state']['current_player']}"
+                                try:
+                                    await rt.ward_room.reply_to_thread(
+                                        thread_id=player_game["thread_id"],
+                                        author_id=agent.id,
+                                        body=body,
+                                        author_callsign=callsign,
+                                    )
+                                except Exception:
+                                    logger.debug("AD-526a: Board update post failed", exc_info=True)
+                        else:
+                            logger.debug("AD-526a: No active game for %s", callsign)
+                except Exception as e:
+                    logger.warning("AD-526a: MOVE failed for %s: %s", callsign, e)
+            text = re.sub(move_pattern, '', text).strip()
 
         return text, actions_executed
 

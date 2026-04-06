@@ -66,6 +66,28 @@ export function BridgeCommunications() {
         </div>
       </div>
 
+      {/* AD-526a: Recreation Settings */}
+      <div style={sectionStyle}>
+        <span style={labelStyle}>Recreation Settings</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, color: '#c0bab0' }}>Minimum rank to play:</span>
+          <select
+            value={settings.recreation_min_rank}
+            onChange={e => updateSettings({ recreation_min_rank: e.target.value })}
+            style={{
+              background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 4, padding: '3px 8px', color: '#e0dcd4', fontSize: 11,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            <option value="ensign">Ensign (all crew)</option>
+            <option value="lieutenant">Lieutenant</option>
+            <option value="commander">Commander</option>
+            <option value="senior">Senior</option>
+          </select>
+        </div>
+      </div>
+
       {/* Message History Search */}
       <div style={sectionStyle}>
         <span style={labelStyle}>Message History Search</span>

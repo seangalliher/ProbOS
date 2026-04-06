@@ -693,6 +693,7 @@ class CognitiveJournalConfig(BaseModel):
 class CommunicationsConfig(BaseModel):
     """Communications settings (AD-485)."""
     dm_min_rank: str = "ensign"  # Minimum rank to send DMs: ensign|lieutenant|commander|senior
+    recreation_min_rank: str = "ensign"  # Minimum rank for game challenges: ensign|lieutenant|commander|senior
 
 
 class WorkforceConfig(BaseModel):

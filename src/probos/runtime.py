@@ -1108,6 +1108,7 @@ class ProbOSRuntime:
             set_probationary_trust_fn=self._set_probationary_trust,
             add_skill_to_agents_fn=self._add_skill_to_agents,
             create_pool_fn=self.create_pool,
+            emit_event_fn=self._emit_event,
         )
         self.self_mod_pipeline = cog.self_mod_pipeline
         self.behavioral_monitor = cog.behavioral_monitor

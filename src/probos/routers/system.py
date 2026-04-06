@@ -150,6 +150,7 @@ async def get_communications_settings(runtime: Any = Depends(get_runtime)):
     """Get current communications settings."""
     return {
         "dm_min_rank": runtime.config.communications.dm_min_rank,
+        "recreation_min_rank": runtime.config.communications.recreation_min_rank,
     }
 
 
@@ -162,6 +163,11 @@ async def update_communications_settings(body: dict, runtime: Any = Depends(get_
         if rank_val not in valid_ranks:
             raise HTTPException(status_code=400, detail=f"Invalid rank. Must be one of: {valid_ranks}")
         runtime.config.communications.dm_min_rank = rank_val
+    if "recreation_min_rank" in body:
+        rank_val = body["recreation_min_rank"].lower()
+        if rank_val not in valid_ranks:
+            raise HTTPException(status_code=400, detail=f"Invalid rank. Must be one of: {valid_ranks}")
+        runtime.config.communications.recreation_min_rank = rank_val
     return await get_communications_settings(runtime=runtime)
 
 

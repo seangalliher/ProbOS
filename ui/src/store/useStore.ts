@@ -295,9 +295,9 @@ export interface HXIState {
   setWardRoomView: (view: 'channels' | 'dms') => void;
   refreshWardRoomDmChannels: () => void;
   // Communications settings (AD-485)
-  communicationsSettings: { dm_min_rank: string };
+  communicationsSettings: { dm_min_rank: string; recreation_min_rank: string };
   refreshCommunicationsSettings: () => void;
-  updateCommunicationsSettings: (settings: Partial<{ dm_min_rank: string }>) => void;
+  updateCommunicationsSettings: (settings: Partial<{ dm_min_rank: string; recreation_min_rank: string }>) => void;
   setShowIntro: (v: boolean) => void;
   setShowLegend: (v: boolean) => void;
   setShowHistory: (v: boolean) => void;
@@ -411,7 +411,7 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomUnread: {},
   wardRoomView: 'channels' as const,
   wardRoomDmChannels: [],
-  communicationsSettings: { dm_min_rank: 'ensign' },
+  communicationsSettings: { dm_min_rank: 'ensign', recreation_min_rank: 'ensign' },
   // Assignments (AD-408)
   assignments: [],
   // Scheduled Tasks (Phase 25a)
