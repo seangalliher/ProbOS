@@ -234,6 +234,21 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime._federation_transport.stop()
         runtime._federation_transport = None
 
+    # AD-573: Freeze all agent working memory before pools stop
+    if hasattr(runtime, 'working_memory_store') and runtime.working_memory_store:
+        try:
+            states: dict = {}
+            for pool in runtime.pools.values():
+                for agent in pool.agents:
+                    wm = getattr(agent, 'working_memory', None)
+                    if wm:
+                        states[agent.id] = wm.to_dict()
+            if states:
+                await runtime.working_memory_store.save_all(states)
+                logger.info("AD-573: Froze working memory for %d agents", len(states))
+        except Exception as e:
+            logger.warning("AD-573: Working memory freeze failed: %s", e)
+
     # Stop pools (stops agents, unregisters from registry)
     for name, pool in runtime.pools.items():
         await pool.stop()
@@ -268,6 +283,14 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     await runtime.signal_manager.stop()
     await runtime.hebbian_router.stop()
     await runtime.trust_network.stop()
+
+    # AD-573: Stop working memory store
+    if hasattr(runtime, 'working_memory_store') and runtime.working_memory_store:
+        try:
+            await runtime.working_memory_store.stop()
+        except Exception:
+            pass
+
     try:
         await runtime.event_log.log(category="system", event="stopped")
     except (asyncio.CancelledError, Exception):

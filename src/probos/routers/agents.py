@@ -197,6 +197,45 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     else:
         response_text = "(no response)"
 
+    # AD-572: Parse [MOVE pos] from DM response and execute against RecreationService
+    game_move_result = None
+    if response_text and hasattr(runtime, 'recreation_service') and runtime.recreation_service:
+        import re
+        move_match = re.search(r'\[MOVE\s+(\S+)\]', response_text)
+        if move_match:
+            position = move_match.group(1)
+            try:
+                rec_svc = runtime.recreation_service
+                game = rec_svc.get_game_by_player(callsign)
+                if game:
+                    game_move_result = await rec_svc.make_move(
+                        game_id=game["game_id"],
+                        player=callsign,
+                        move=position,
+                    )
+                    # Post board update to Ward Room thread (same as proactive path)
+                    if runtime.ward_room and game.get("thread_id"):
+                        try:
+                            result_info = game_move_result.get("result")
+                            if result_info:
+                                body = f"Game over! {'Winner: ' + result_info.get('winner', '') if result_info.get('winner') else 'Draw!'}"
+                            else:
+                                board = rec_svc.render_board(game["game_id"])
+                                body = f"```\n{board}\n```\nNext: {game_move_result['state']['current_player']}"
+                            await runtime.ward_room.create_post(
+                                thread_id=game["thread_id"],
+                                author_id=agent_id,
+                                body=body,
+                                author_callsign=callsign,
+                            )
+                        except Exception:
+                            logger.debug("AD-572: Board update post failed", exc_info=True)
+            except Exception as e:
+                logger.warning("AD-572: DM game move failed for %s: %s", callsign, e)
+
+            # Strip [MOVE] tag from response text shown to Captain
+            response_text = re.sub(r'\[MOVE\s+\S+\]', '', response_text).strip()
+
     # AD-430b: Store HXI 1:1 interaction as episodic memory
     if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
         try:
@@ -228,11 +267,28 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
         except Exception:
             logger.debug("Failed to store HXI conversation episode", exc_info=True)
 
-    return {
+    # AD-573: Record DM conversation to agent's working memory
+    try:
+        wm = getattr(agent, 'working_memory', None)
+        if wm:
+            captain_text = req.message[:100] if req.message else ""
+            wm.record_conversation(
+                f"Captain DM: '{captain_text}' → responded",
+                partner="Captain",
+                source="dm",
+            )
+    except Exception:
+        logger.debug("AD-573: Working memory DM record failed", exc_info=True)
+
+    response = {
         "response": response_text,
         "callsign": callsign,
         "agentId": agent_id,
     }
+    if game_move_result:
+        response["gameMoveExecuted"] = True
+        response["gameStatus"] = game_move_result.get("state", {}).get("status", "")
+    return response
 
 
 @router.get("/{agent_id}/chat/history")

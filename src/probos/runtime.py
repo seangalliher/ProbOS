@@ -364,6 +364,14 @@ class ProbOSRuntime:
         # --- Episodic memory ---
         self.episodic_memory = episodic_memory  # None = disabled
 
+        # --- AD-573: Working memory persistence ---
+        from probos.cognitive.working_memory_store import WorkingMemoryStore
+        from probos.storage.sqlite_factory import default_factory as _wm_factory
+        self.working_memory_store = WorkingMemoryStore(
+            connection_factory=_wm_factory,
+            db_path=str(self._data_dir / "working_memory.db"),
+        )
+
         # --- Ward Room (AD-407) ---
         self.ward_room: WardRoomService | None = None  # Initialized in start()
 
@@ -1211,6 +1219,12 @@ class ProbOSRuntime:
             except Exception as e:
                 logger.warning("DriftScheduler failed to start: %s — continuing without", e)
                 self._drift_scheduler = None
+
+        # AD-573: Start working memory persistence store
+        try:
+            await self.working_memory_store.start()
+        except Exception as e:
+            logger.warning("AD-573: WorkingMemoryStore failed to start: %s — continuing without", e)
 
         # Phase 5: Dreaming & Detection (AD-517)
         from probos.startup.dreaming import init_dreaming

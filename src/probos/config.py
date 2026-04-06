@@ -481,6 +481,18 @@ class SocialVerificationConfig(BaseModel):
     expose_episode_content: bool = False  # MUST stay False — privacy boundary
 
 
+class WorkingMemoryConfig(BaseModel):
+    """AD-573: Unified agent working memory configuration."""
+
+    token_budget: int = 3000  # Max tokens for working memory context
+    max_recent_actions: int = 10  # Ring buffer capacity
+    max_recent_observations: int = 5
+    max_recent_conversations: int = 5
+    max_events: int = 10
+    proactive_budget: int = 1500  # Lower budget for proactive (supplemental)
+    stale_threshold_hours: float = 24.0  # Entries older than this pruned on restore
+
+
 class OnboardingConfig(BaseModel):
     """AD-442: Onboarding ceremony configuration."""
 
@@ -781,6 +793,7 @@ class SystemConfig(BaseModel):
     qualification: QualificationConfig = QualificationConfig()
     orientation: OrientationConfig = OrientationConfig()
     social_verification: SocialVerificationConfig = SocialVerificationConfig()
+    working_memory: WorkingMemoryConfig = WorkingMemoryConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

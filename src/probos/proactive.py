@@ -551,6 +551,17 @@ class ProactiveCognitiveLoop:
         if cleaned_text != response_text:
             response_text = cleaned_text
 
+        # AD-573: Record proactive observation to working memory
+        try:
+            wm = getattr(agent, 'working_memory', None)
+            if wm and response_text and "[NO_RESPONSE]" not in response_text:
+                wm.record_observation(
+                    response_text[:200],
+                    source="proactive",
+                )
+        except Exception:
+            logger.debug("AD-573: Working memory observation record failed", exc_info=True)
+
         # AD-412: Check for structured improvement proposals
         await self._extract_and_post_proposal(agent, response_text)
 
@@ -999,25 +1010,52 @@ class ProactiveCognitiveLoop:
                 if hasattr(rt, 'callsign_registry'):
                     callsign = rt.callsign_registry.get_callsign(agent.agent_type)
                 if callsign:
-                    for game in rec_svc.get_active_games():
+                    game = rec_svc.get_game_by_player(callsign)  # AD-572: DRY
+                    if game:
                         state = game.get("state", {})
                         players = [game.get("challenger", ""), game.get("opponent", "")]
-                        if callsign in players:
-                            board = rec_svc.render_board(game["game_id"])
-                            valid_moves = rec_svc.get_valid_moves(game["game_id"])
-                            is_my_turn = state.get("current_player") == callsign
-                            context["active_game"] = {
-                                "game_id": game["game_id"],
-                                "game_type": game.get("game_type", ""),
-                                "opponent": next((p for p in players if p != callsign), ""),
-                                "is_my_turn": is_my_turn,
-                                "board": board,
-                                "valid_moves": valid_moves,
-                                "moves_count": game.get("moves_count", 0),
-                            }
-                            break  # One active game at a time
+                        board = rec_svc.render_board(game["game_id"])
+                        valid_moves = rec_svc.get_valid_moves(game["game_id"])
+                        is_my_turn = state.get("current_player") == callsign
+                        context["active_game"] = {
+                            "game_id": game["game_id"],
+                            "game_type": game.get("game_type", ""),
+                            "opponent": next((p for p in players if p != callsign), ""),
+                            "is_my_turn": is_my_turn,
+                            "board": board,
+                            "valid_moves": valid_moves,
+                            "moves_count": game.get("moves_count", 0),
+                        }
             except Exception:
                 logger.debug("BF-110: Game context injection failed for %s", agent.id, exc_info=True)
+
+        # AD-573: Sync active game to working memory
+        if "active_game" in context:
+            try:
+                wm = getattr(agent, 'working_memory', None)
+                if wm:
+                    ag = context["active_game"]
+                    from probos.cognitive.agent_working_memory import ActiveEngagement
+                    game_id = ag["game_id"]
+                    if not wm.get_engagement(game_id):
+                        wm.add_engagement(ActiveEngagement(
+                            engagement_type="game",
+                            engagement_id=game_id,
+                            summary=f"Playing {ag.get('game_type', 'game')} against {ag.get('opponent', '?')}",
+                            state={
+                                "game_type": ag.get("game_type", ""),
+                                "opponent": ag.get("opponent", ""),
+                                "is_my_turn": ag.get("is_my_turn", False),
+                                "render": ag.get("board", ""),
+                            },
+                        ))
+                    else:
+                        wm.update_engagement(game_id, state={
+                            "is_my_turn": ag.get("is_my_turn", False),
+                            "render": ag.get("board", ""),
+                        })
+            except Exception:
+                logger.debug("AD-573: Working memory game sync failed for %s", agent.id, exc_info=True)
 
         # 5. Ontology context (AD-429a) — formal identity grounding
         if hasattr(rt, 'ontology') and rt.ontology:
@@ -1188,6 +1226,20 @@ class ProactiveCognitiveLoop:
         reason = self.get_cooldown_reason(agent.id)
         if reason:
             result["cooldown_reason"] = reason
+
+        # AD-573: Sync cognitive state to working memory
+        try:
+            wm = getattr(agent, 'working_memory', None)
+            if wm:
+                updates: dict = {}
+                if "cognitive_zone" in result:
+                    updates["zone"] = result["cognitive_zone"]
+                if "cooldown_reason" in result:
+                    updates["cooldown_reason"] = result["cooldown_reason"]
+                if updates:
+                    wm.update_cognitive_state(**updates)
+        except Exception:
+            logger.debug("AD-573: Working memory cognitive state sync failed", exc_info=True)
 
         # --- (7) Memory state awareness ---
         try:
@@ -1908,6 +1960,23 @@ class ProactiveCognitiveLoop:
                         })
                         logger.info("AD-526a: %s challenged %s to %s (game %s)",
                                     callsign, target_callsign, game_type, game_info["game_id"])
+
+                        # AD-573: Register game engagement in working memory
+                        try:
+                            wm = getattr(agent, 'working_memory', None)
+                            if wm:
+                                from probos.cognitive.agent_working_memory import ActiveEngagement
+                                wm.add_engagement(ActiveEngagement(
+                                    engagement_type="game",
+                                    engagement_id=game_info["game_id"],
+                                    summary=f"Playing {game_type} against {target_callsign}",
+                                    state={
+                                        "game_type": game_type,
+                                        "opponent": target_callsign,
+                                    },
+                                ))
+                        except Exception:
+                            logger.debug("AD-573: Working memory game engagement record failed", exc_info=True)
                 except Exception as e:
                     logger.warning("AD-526a: CHALLENGE failed for %s: %s", callsign, e)
             text = re.sub(challenge_pattern, '', text).strip()
@@ -1919,15 +1988,9 @@ class ProactiveCognitiveLoop:
                 try:
                     rec_svc = getattr(rt, 'recreation_service', None)
                     if rec_svc:
-                        # Find active game for this player
-                        active_games = rec_svc.get_active_games()
-                        player_game = None
-                        for g in active_games:
-                            state = g.get("state", {})
-                            if state.get("current_player") == callsign:
-                                player_game = g
-                                break
-                        if player_game:
+                        # AD-572: DRY — use get_game_by_player()
+                        player_game = rec_svc.get_game_by_player(callsign)
+                        if player_game and player_game.get("state", {}).get("current_player") == callsign:
                             game_info = await rec_svc.make_move(
                                 game_id=player_game["game_id"],
                                 player=callsign,
@@ -1957,6 +2020,23 @@ class ProactiveCognitiveLoop:
                                     )
                                 except Exception:
                                     logger.debug("AD-526a: Board update post failed", exc_info=True)
+
+                            # AD-573: Update/remove game engagement in working memory
+                            try:
+                                wm = getattr(agent, 'working_memory', None)
+                                if wm:
+                                    game_result = game_info.get("result")
+                                    if game_result:
+                                        # Game over — remove engagement
+                                        wm.remove_engagement(player_game["game_id"])
+                                    else:
+                                        # Game ongoing — update state
+                                        wm.update_engagement(
+                                            player_game["game_id"],
+                                            state={"last_move": position},
+                                        )
+                            except Exception:
+                                logger.debug("AD-573: Working memory game update failed", exc_info=True)
                         else:
                             logger.debug("AD-526a: No active game for %s", callsign)
                 except Exception as e:

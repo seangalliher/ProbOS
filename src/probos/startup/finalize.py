@@ -316,6 +316,41 @@ async def finalize_startup(
         except Exception:
             logger.debug("Startup announcement failed", exc_info=True)
 
+    # AD-573: Restore working memory from stasis
+    if (runtime._lifecycle_state == "stasis_recovery"
+            and hasattr(runtime, 'working_memory_store')
+            and runtime.working_memory_store):
+        try:
+            from probos.cognitive.agent_working_memory import AgentWorkingMemory
+            frozen_states = await runtime.working_memory_store.load_all()
+            stale_hours = config.working_memory.stale_threshold_hours
+            restored = 0
+            for agent in runtime.registry.all():
+                wm = getattr(agent, 'working_memory', None)
+                if wm is None:
+                    continue
+                state = frozen_states.get(agent.id)
+                if state:
+                    restored_wm = AgentWorkingMemory.from_dict(
+                        state,
+                        stale_threshold_seconds=stale_hours * 3600,
+                    )
+                    # Revalidate game engagements against live RecreationService
+                    if hasattr(runtime, 'recreation_service') and runtime.recreation_service:
+                        active_game_ids = {
+                            g["game_id"]
+                            for g in runtime.recreation_service.get_active_games()
+                        }
+                        for eng in list(restored_wm.get_engagements_by_type("game")):
+                            if eng.engagement_id not in active_game_ids:
+                                restored_wm.remove_engagement(eng.engagement_id)
+                    agent._working_memory = restored_wm
+                    restored += 1
+            if restored:
+                logger.info("AD-573: Restored working memory for %d agents", restored)
+        except Exception:
+            logger.debug("AD-573: Working memory restore failed", exc_info=True)
+
     # AD-567g: Warm boot orientation for stasis recovery
     if (hasattr(runtime, '_orientation_service') and runtime._orientation_service
             and runtime._lifecycle_state == "stasis_recovery"

@@ -4541,6 +4541,30 @@ Phase 3 — **Hebbian Scope Reduction** (AD-571c):
 
 ---
 
+### Captain Engagement Priority (AD-572)
+
+**AD-572: Captain Engagement Priority — Active State Awareness in DM Path** *(complete, OSS)* — When the Captain opens a 1:1 DM with an agent, the agent has zero awareness of active interactive state (games, alerts, tasks). The proactive cycle injects rich context (BF-110 game state, Ward Room activity, bridge alerts), but the DM path only includes temporal awareness, episodic memories, and session history. If the Captain is playing tic-tac-toe against an agent and DMs them "make your move", the agent doesn't know the game exists.
+
+**Broader principle:** The Captain's direct engagement should always get immediate, context-aware response. When the Captain engages an agent in DM, the agent should be aware of any active interactive state shared with the Captain — games, tasks, alerts.
+
+**AD-572 delivers:** (1) Active game state injection into DM `_build_user_message()`, reusing BF-110 context format. (2) `[MOVE pos]` parsing from DM responses in the agents router, with move execution against RecreationService. (3) `get_game_by_player()` DRY method on RecreationService (replaces 3 instances of iterate-and-match in proactive.py). (4) DM system prompt augmentation with `[MOVE]` instruction when game is active.
+
+**Deferred:** AD-572b (alert/event injection in DM), AD-572c (Ward Room activity in DM), AD-572d (Captain Priority Queue — immediate proactive trigger on Captain DM), AD-572e (task awareness in DM).
+
+---
+
+### Unified Agent Working Memory (AD-573)
+
+**AD-573: Unified Agent Working Memory — Cognitive Continuity Layer** *(complete, OSS)* — Per-agent AgentWorkingMemory maintaining the active situation model across all cognitive pathways. Ring-buffered entries (actions, observations, conversations, events) with token-budget-aware render_context() and 6-priority eviction. ActiveEngagement tracking for games/tasks/collaborations. All pathways write and read. SQLite-backed WorkingMemoryStore (ConnectionFactory, start()/stop(), BEGIN IMMEDIATE + asyncio.Lock). Freeze on shutdown, restore on stasis recovery with stale pruning + game revalidation. System prompt _has_active_game() replaced with working_memory.has_engagement("game"). WorkingMemoryConfig in SystemConfig. 2 new files, 7 modified, 35 tests.
+
+**Absorbs prior work:** AD-28 `WorkingMemoryManager` (budget/eviction architecture), AD-462 Unified Cognitive Bottleneck (theoretical framework), AD-504 self-monitoring (cognitive state as working memory facet), Letta pattern (agent-scoped persistent state), Memory Architecture Layer 2 (actual implementation).
+
+**Crew input (Echo):** "Right now I'm like a counselor who has perfect notes but no memory of actually being in the room with the client." Agents need: active situational awareness (what's happening now), relational continuity (where we left things), commitment tracking, collaborative thread continuity, emotional/professional tenor of relationships.
+
+**Deferred:** AD-573b (relational working memory — per-relationship state), AD-573c (agent-writable scratchpad — `[NOTE]` action tag), AD-573d (dream-to-working-memory pipeline), AD-573e (CognitiveJournal as WM source), AD-573f (commitment tracker).
+
+---
+
 ### Meta-Learning (AD-478)
 
 **AD-478: Meta-Learning — Cross-Session Concept Formation** *(planned)* — Move beyond per-session learning: (1) **Workspace Ontology** — auto-discovered conceptual vocabulary from usage patterns, stored in KnowledgeStore. (2) **Dream Cycle Abstractions** — dreaming produces abstract rules and recognized patterns, not just weight updates. (3) **Session Context** — conversation history across sessions with reference resolution (AD-273 foundation). (4) **Goal Management** — persistent goals with progress tracking, conflict arbitration, goal decomposition into sub-goals with dependency tracking. (5) **Cognitive Circuit Breaker** — correlation IDs on cognitive events (one thought = one episode), novelty gate (suppress semantically duplicate episodes), metacognitive loop detection (self-referential thought spirals → forced topic redirect), rumination detection (topic clustering > 60% → "change of scene"). *Evidence: 2026-03-27 commissioning — diagnostician "Pulse" self-diagnosed recursive metacognitive loops, proposed "observation quarantine protocol." First instance of agent self-identifying a systemic cognitive issue. See research.md.* *Connects to: EpisodicMemory, DreamingEngine, KnowledgeStore, AD-462 (Memory Architecture), BF-039 (episode flooding).*

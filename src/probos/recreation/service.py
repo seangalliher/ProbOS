@@ -200,6 +200,18 @@ class RecreationService:
         engine = self._engines[game_info["game_type"]]
         return engine.get_valid_moves(game_info["state"])
 
+    def get_game_by_player(self, callsign: str) -> dict[str, Any] | None:
+        """Find an active game where the given callsign is a player.
+
+        Returns the game info dict, or None if no active game found.
+        AD-572: DRY extraction — this pattern was duplicated in proactive.py.
+        """
+        for game in self._active_games.values():
+            players = [game.get("challenger", ""), game.get("opponent", "")]
+            if callsign in players:
+                return game
+        return None
+
     async def forfeit_game(self, game_id: str, player: str) -> None:
         """Forfeit/abandon an active game."""
         game_info = self._active_games.get(game_id)

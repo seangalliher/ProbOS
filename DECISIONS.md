@@ -2766,3 +2766,29 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Solution:** Full-stack Captain vs crew tic-tac-toe experience. REST router (`/api/recreation/` — challenge, move, active, forfeit endpoints) using Depends() DI. Floating `GamePanel.tsx` component following `AgentProfilePanel.tsx` pattern (CSS Grid board, piece-pop animations, win-line amber glow, pulse-dim waiting indicator). `GAME_UPDATE` event emission from RecreationService for real-time WebSocket delivery. Game rehydration on page refresh via GET `/api/recreation/active`. "Challenge to Tic-Tac-Toe" button in agent profile panel (crew agents only). Captain always plays X (teal), agent responds on next proactive cycle. `forfeit_game()` service method for game abandonment.
 
 **Files:** 2 new (`routers/recreation.py`, `GamePanel.tsx`), 7 modified (`events.py`, `recreation/service.py`, `api.py`, `useStore.ts`, `types.ts`, `ProfileInfoTab.tsx`, `App.tsx`). Tests: `test_recreation_router.py` (16 tests), updated `test_recreation_service.py`.
+
+### AD-572: Captain Engagement Priority — Active State Awareness in DM Path
+
+**Date:** 2026-04-06
+**Status:** Complete
+**Scope:** Medium | **Type:** Feature
+
+**Problem:** When the Captain opens a 1:1 DM with an agent, the agent has zero awareness of active interactive state (games, alerts, tasks). The proactive cycle injects rich context (BF-110 game state, Ward Room activity, bridge alerts), but the DM path only includes temporal awareness, episodic memories, and session history. If the Captain is playing tic-tac-toe against an agent and DMs them "make your move", the agent doesn't know the game exists.
+
+**Solution:** Four-part delivery: (1) `_build_active_game_context()` on CognitiveAgent — formats board, valid moves, turn indicator for DM user message injection. (2) DM system prompt augmentation with `[MOVE position]` instruction when `_has_active_game()` returns true. (3) `[MOVE pos]` parsing in agents router — regex scan of DM response, execute against RecreationService, post board update to Ward Room thread, strip tag from displayed text, return `gameMoveExecuted` flag. (4) `get_game_by_player()` DRY method on RecreationService — replaces 3 instances of iterate-and-match pattern in proactive.py (BF-110 context injection and [MOVE] action parsing).
+
+**Files:** 4 modified (`cognitive_agent.py`, `routers/agents.py`, `proactive.py`, `recreation/service.py`). 3 new test files: `test_recreation_get_game_by_player.py` (4 tests), `test_cognitive_agent_dm_game.py` (8 tests), `test_agents_router_game_move.py` (6 tests).
+
+### AD-573: Unified Agent Working Memory — Cognitive Continuity Layer
+
+**Date:** 2026-04-06
+**Status:** Complete
+**Scope:** Large | **Type:** Feature
+
+**Problem:** Agents lack cognitive continuity — there is no per-agent state tracking "what I recently did, what I'm currently engaged in, and what I know about the situation." Each cognitive pathway (proactive, DM, Ward Room) builds context independently from scratch. Result: an agent finishes a game move via proactive cycle, then the Captain DMs them and the agent has zero memory of just playing. Compounded by AD-572 which exposed the DM path's blindness to active game state.
+
+**Decision:** Implement `AgentWorkingMemory` — a per-agent in-memory object maintaining the active situation model across all cognitive pathways. All pathways write to it, all pathways read from it. Token-budget-aware `render_context()` with 6-priority eviction: (1) active engagements, (2) recent actions, (3) recent conversations, (4) recent observations, (5) cognitive state, (6) recent events. Ring-buffered entries (configurable maxlen). SQLite-backed persistence via `WorkingMemoryStore` following TrustNetwork/HebbianRouter canonical pattern (ConnectionFactory, start()/stop(), BEGIN IMMEDIATE + asyncio.Lock). Freeze on shutdown, restore on stasis recovery with stale entry pruning. Game engagement revalidation against live RecreationService on restore. System prompt `_has_active_game()` replaced with `working_memory.has_engagement("game")`. `WorkingMemoryConfig` in SystemConfig with token_budget, ring buffer sizes, proactive_budget, stale_threshold_hours.
+
+**Lineage:** AD-28 (WorkingMemoryManager), AD-462 (Unified Cognitive Bottleneck), AD-504 (self-monitoring), AD-572 (active game awareness) → AD-573 (unified working memory).
+
+**Files:** 2 new files (`cognitive/agent_working_memory.py`, `cognitive/working_memory_store.py`). 6 modified (`cognitive_agent.py`, `config.py`, `routers/agents.py`, `proactive.py`, `runtime.py`, `startup/shutdown.py`, `startup/finalize.py`). 2 new test files: `test_agent_working_memory.py` (28 tests), `test_working_memory_store.py` (7 tests).

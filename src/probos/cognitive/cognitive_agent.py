@@ -64,6 +64,10 @@ class CognitiveAgent(BaseAgent):
         # AD-534b: near-miss/failure context for fallback learning
         self._last_fallback_info: dict[str, Any] | None = None
 
+        # AD-573: Unified working memory — cognitive continuity across pathways
+        from probos.cognitive.agent_working_memory import AgentWorkingMemory
+        self._working_memory = AgentWorkingMemory()
+
         # Validate instructions exist
         if not self.instructions:
             raise ValueError(
@@ -78,6 +82,11 @@ class CognitiveAgent(BaseAgent):
         """AD-567g / BF-113: Set orientation text and context (public setter for LoD)."""
         self._orientation_rendered = rendered
         self._orientation_context = context
+
+    @property
+    def working_memory(self):
+        """AD-573: Agent's unified working memory — active situation model."""
+        return self._working_memory
 
     @property
     def _cognitive_journal(self):
@@ -1286,6 +1295,17 @@ class CognitiveAgent(BaseAgent):
                     "Be genuine, personable, and engage with what the Captain says. "
                     "Draw on your expertise and personality, but keep it conversational."
                 )
+
+                # AD-572/573: If agent has an active game, add [MOVE] instruction
+                if getattr(self, '_working_memory', None) and self._working_memory.has_engagement("game"):
+                    composed += (
+                        "\n\nYou are currently in an active game. "
+                        "If the Captain asks you to make a move or you decide to play, "
+                        "include [MOVE position] in your response (e.g. [MOVE 4]). "
+                        "The move will be executed automatically. "
+                        "You can still chat naturally — the move tag can appear "
+                        "anywhere in your response alongside your conversational text."
+                    )
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
@@ -1449,6 +1469,19 @@ class CognitiveAgent(BaseAgent):
 
         result = await self.act(decision)
         report = await self.report(result)
+
+        # AD-573: Record action to working memory (all pathways)
+        try:
+            _wm = getattr(self, '_working_memory', None)
+            if _wm:
+                action_summary = self._summarize_action(intent, decision, result)
+                if action_summary:
+                    _wm.record_action(
+                        action_summary,
+                        source=intent.intent,
+                    )
+        except Exception:
+            logger.debug("AD-573: Working memory action record failed", exc_info=True)
 
         # AD-430c (Pillar 5): Store action as episodic memory for crew agents
         await self._store_action_episode(intent, observation, report)
@@ -1661,6 +1694,89 @@ class CognitiveAgent(BaseAgent):
                 return cert.callsign
         return None
 
+    def _has_active_game(self) -> bool:
+        """AD-572: Check if this agent has an active game (lightweight check)."""
+        rt = getattr(self, '_runtime', None)
+        if not rt:
+            return False
+        rec_svc = getattr(rt, 'recreation_service', None)
+        if not rec_svc:
+            return False
+        callsign = self._resolve_callsign()
+        if not callsign:
+            return False
+        try:
+            return rec_svc.get_game_by_player(callsign) is not None
+        except Exception:
+            return False
+
+    def _build_active_game_context(self) -> str | None:
+        """AD-572: Build active game context for DM awareness.
+
+        Returns a formatted string if this agent has an active game, else None.
+        Uses RecreationService.get_game_by_player() (AD-572 DRY method).
+        """
+        rt = getattr(self, '_runtime', None)
+        if not rt:
+            return None
+        rec_svc = getattr(rt, 'recreation_service', None)
+        if not rec_svc:
+            return None
+
+        callsign = self._resolve_callsign()
+        if not callsign:
+            return None
+
+        try:
+            game = rec_svc.get_game_by_player(callsign)
+            if not game:
+                return None
+
+            game_id = game["game_id"]
+            state = game.get("state", {})
+            opponent = next(
+                (p for p in [game.get("challenger", ""), game.get("opponent", "")]
+                 if p != callsign),
+                "unknown",
+            )
+            board = rec_svc.render_board(game_id)
+            is_my_turn = state.get("current_player") == callsign
+            valid_moves = rec_svc.get_valid_moves(game_id) if is_my_turn else []
+
+            lines = ["--- Active Game ---"]
+            lines.append(
+                f"You are playing {game.get('game_type', 'a game')} against {opponent}. "
+                f"Moves so far: {game.get('moves_count', 0)}."
+            )
+            lines.append(f"\nCurrent board:\n```\n{board}\n```")
+            if is_my_turn:
+                lines.append(
+                    f"**It is YOUR turn.** Valid moves: {', '.join(str(m) for m in valid_moves)}. "
+                    f"Reply with [MOVE position] to play."
+                )
+            else:
+                lines.append("Waiting for your opponent to move.")
+            return "\n".join(lines)
+        except Exception:
+            return None
+
+    def _summarize_action(self, intent, decision: dict, result: dict) -> str:
+        """AD-573: Produce a one-line summary of what I just did."""
+        intent_type = intent.intent
+        output = (decision.get("llm_output") or "")[:200]
+
+        if intent_type == "direct_message":
+            captain_text = intent.params.get("text", "")[:100]
+            return f"Responded to Captain's DM: '{captain_text}' → '{output[:100]}'"
+        if intent_type == "ward_room_notification":
+            channel = intent.params.get("channel_name", "")
+            return f"Responded in Ward Room #{channel}: '{output[:100]}'"
+        if intent_type == "proactive_think":
+            if "[NO_RESPONSE]" in output:
+                return ""  # Don't record silence
+            return f"Proactive observation: '{output[:150]}'"
+        return f"Handled {intent_type}: '{output[:100]}'"
+
     def _build_temporal_context(self) -> str:
         """AD-502: Build temporal awareness header for agent prompts."""
         # Respect config if available
@@ -1770,6 +1886,13 @@ class CognitiveAgent(BaseAgent):
                 parts.append("---")
                 parts.append("")
 
+            # AD-573: Working memory — unified situational awareness
+            _wm = getattr(self, '_working_memory', None)
+            wm_context = _wm.render_context() if _wm else ""
+            if wm_context:
+                parts.append(wm_context)
+                parts.append("")
+
             # AD-430c / AD-540: Episodic memory with provenance boundary
             memories = observation.get("recent_memories", [])
             if memories:
@@ -1784,6 +1907,13 @@ class CognitiveAgent(BaseAgent):
                     text = entry.get("text", "")
                     parts.append(f"  {role}: {text}")
                 parts.append("")
+
+            # AD-572: Active game state awareness in DM path
+            active_game_ctx = self._build_active_game_context()
+            if active_game_ctx:
+                parts.append(active_game_ctx)
+                parts.append("")
+
             parts.append(f"Captain says: {params.get('text', '')}")
             return "\n".join(parts)
 
@@ -1805,6 +1935,13 @@ class CognitiveAgent(BaseAgent):
                 wr_parts.append("--- Temporal Awareness ---")
                 wr_parts.append(temporal_ctx)
                 wr_parts.append("---")
+
+            # AD-573: Working memory — unified situational awareness
+            _wm = getattr(self, '_working_memory', None)
+            wm_context = _wm.render_context() if _wm else ""
+            if wm_context:
+                wr_parts.append("")
+                wr_parts.append(wm_context)
 
             # BF-102: Cold-start system note in ward room context
             rt = getattr(self, '_runtime', None)
@@ -1867,6 +2004,13 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append("--- Temporal Awareness ---")
                 pt_parts.append(temporal_ctx)
                 pt_parts.append("---")
+                pt_parts.append("")
+
+            # AD-573: Working memory — supplements proactive context
+            _wm = getattr(self, '_working_memory', None)
+            wm_context = _wm.render_context(budget=1500) if _wm else ""
+            if wm_context:
+                pt_parts.append(wm_context)
                 pt_parts.append("")
 
             # BF-034: Cold-start system note
