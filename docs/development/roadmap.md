@@ -4503,6 +4503,43 @@ Ward Room posts about the same stimulus are natural concept maps. QAP (Quadratic
 
 ---
 
+### Agent Tier Trust Separation (AD-571)
+
+**AD-571: Agent Tier Trust Separation — Crew vs Non-Crew Trust Boundaries** *(planned, OSS, depends: AD-398)* — The trust infrastructure (TrustNetwork, HebbianRouter, EarnedAgency, EmergenceMetrics, cascade dampening) is completely tier-agnostic. All 62 agents — 14 sovereign crew and 48 utility/infrastructure tools — are tracked identically. Non-crew agents sit at default trust (0.5) permanently, never participate in trust-building interactions, yet count toward cascade thresholds, emergence calculations, and Hebbian weight budgets. AD-398 established the Three-Tier Agent Architecture (Core Infrastructure / Utility / Crew) but the trust system was never updated to respect it.
+
+**Problem statement:**
+1. **Trust pollution** — 48 utility agents at static 0.5 dilute trust metrics. `all_scores()` returns 62 entries when only 14 have meaningful trajectories.
+2. **Cascade false positives** — AD-558 cascade breaker counts unique agents + departments hitting anomaly threshold. Infrastructure agents with edge-case trust deltas can contribute to cascade triggering, potentially dampening crew trust updates incorrectly.
+3. **Emergence noise** — AD-557 emergence metrics should measure collaborative intelligence among sovereign agents, not tool utilization patterns.
+4. **Meaningless rank** — Utility agents get `Rank.LIEUTENANT` from `Rank.from_trust(0.5)`. A file_reader doesn't earn rank. The concepts of Earned Agency, proactive thought, and social participation don't apply to tools.
+5. **Hebbian weight bloat** — HebbianRouter tracks weights for all source/target pairs including utility agents, consuming memory for relationships that have no social or collaborative meaning.
+
+**Design:**
+
+Phase 1 — **Tier-Aware Trust Filtering** (AD-571a):
+- Add `is_crew: bool` parameter to `TrustNetwork.all_scores()`, `summary()`, `raw_scores()`. Default `True` (crew only). Inject `crew_agent_ids: set[str]` at initialization from ontology.
+- `record_outcome()` still records for all agents (tools need reliability tracking) but with a `tier` tag.
+- Cascade dampening only counts crew agents toward `cascade_agent_threshold`.
+- Emergence metrics filters to crew-only participants.
+
+Phase 2 — **Operational Status Model** (AD-571b):
+- New `OperationalStatus` enum: `AVAILABLE`, `DEGRADED`, `OFFLINE`, `MAINTENANCE` (replaces meaningless Rank for non-crew).
+- Utility agents get reliability metrics: success rate, response time p50/p95, error count — not trust scores.
+- `Rank.from_trust()` returns `None` for non-crew agents. `is_crew_agent()` check added.
+- HXI crew roster shows Rank for crew, Operational Status for tools.
+
+Phase 3 — **Hebbian Scope Reduction** (AD-571c):
+- HebbianRouter partitions weights: `crew_weights` (social/collaborative) vs `routing_weights` (intent routing).
+- `get_preferred_targets()` for social queries (Ward Room, DM, recreation) only searches crew weights.
+- `decay_all()` applies different decay rates: crew weights decay slowly (social bonds persist), routing weights decay normally.
+- Prune utility-to-utility Hebbian weights entirely (tools don't form relationships).
+
+**Files impacted:** `consensus/trust.py`, `mesh/routing.py`, `earned_agency.py`, `crew_profile.py`, `crew_utils.py`, `cognitive/emergence_metrics.py`, `routers/agents.py`, HXI crew components.
+
+**Principle alignment:** AD-398 ("If it doesn't have Character/Reason/Duty, it's not crew"), Sovereign Agent Identity, Interface Segregation (narrow protocol for each tier).
+
+---
+
 ### Meta-Learning (AD-478)
 
 **AD-478: Meta-Learning — Cross-Session Concept Formation** *(planned)* — Move beyond per-session learning: (1) **Workspace Ontology** — auto-discovered conceptual vocabulary from usage patterns, stored in KnowledgeStore. (2) **Dream Cycle Abstractions** — dreaming produces abstract rules and recognized patterns, not just weight updates. (3) **Session Context** — conversation history across sessions with reference resolution (AD-273 foundation). (4) **Goal Management** — persistent goals with progress tracking, conflict arbitration, goal decomposition into sub-goals with dependency tracking. (5) **Cognitive Circuit Breaker** — correlation IDs on cognitive events (one thought = one episode), novelty gate (suppress semantically duplicate episodes), metacognitive loop detection (self-referential thought spirals → forced topic redirect), rumination detection (topic clustering > 60% → "change of scene"). *Evidence: 2026-03-27 commissioning — diagnostician "Pulse" self-diagnosed recursive metacognitive loops, proposed "observation quarantine protocol." First instance of agent self-identifying a systemic cognitive issue. See research.md.* *Connects to: EpisodicMemory, DreamingEngine, KnowledgeStore, AD-462 (Memory Architecture), BF-039 (episode flooding).*

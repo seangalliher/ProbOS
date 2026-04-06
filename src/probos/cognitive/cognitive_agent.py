@@ -1935,6 +1935,24 @@ class CognitiveAgent(BaseAgent):
                     pt_parts.append(f"  - {prefix}{ids}{score_str} {a.get('author', '?')}: {a.get('body', '?')}")
                 pt_parts.append("")
 
+            # BF-110: Active game state — show board so agent knows it's their turn
+            active_game = context_parts.get("active_game")
+            if active_game:
+                pt_parts.append("--- Active Game ---")
+                pt_parts.append(
+                    f"You are playing {active_game['game_type']} against {active_game['opponent']}. "
+                    f"Moves so far: {active_game['moves_count']}."
+                )
+                pt_parts.append(f"\nCurrent board:\n```\n{active_game['board']}\n```")
+                if active_game["is_my_turn"]:
+                    pt_parts.append(
+                        f"**It is YOUR turn.** Valid moves: {', '.join(str(m) for m in active_game['valid_moves'])}. "
+                        f"Reply with [MOVE position] to play."
+                    )
+                else:
+                    pt_parts.append("Waiting for your opponent to move.")
+                pt_parts.append("")
+
             # AD-504: Self-monitoring context
             self_mon = context_parts.get("self_monitoring")
             if self_mon:

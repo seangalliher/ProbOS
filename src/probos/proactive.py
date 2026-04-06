@@ -987,6 +987,34 @@ class ProactiveCognitiveLoop:
             except Exception:
                 logger.debug("Ward Room context fetch failed for %s", agent.id, exc_info=True)
 
+        # BF-110: Inject active game state so agent can see the board and know it's their turn
+        rec_svc = getattr(rt, 'recreation_service', None)
+        if rec_svc:
+            try:
+                callsign = ""
+                if hasattr(rt, 'callsign_registry'):
+                    callsign = rt.callsign_registry.get_callsign(agent.agent_type)
+                if callsign:
+                    for game in rec_svc.get_active_games():
+                        state = game.get("state", {})
+                        players = [game.get("challenger", ""), game.get("opponent", "")]
+                        if callsign in players:
+                            board = rec_svc.render_board(game["game_id"])
+                            valid_moves = rec_svc.get_valid_moves(game["game_id"])
+                            is_my_turn = state.get("current_player") == callsign
+                            context["active_game"] = {
+                                "game_id": game["game_id"],
+                                "game_type": game.get("game_type", ""),
+                                "opponent": next((p for p in players if p != callsign), ""),
+                                "is_my_turn": is_my_turn,
+                                "board": board,
+                                "valid_moves": valid_moves,
+                                "moves_count": game.get("moves_count", 0),
+                            }
+                            break  # One active game at a time
+            except Exception:
+                logger.debug("BF-110: Game context injection failed for %s", agent.id, exc_info=True)
+
         # 5. Ontology context (AD-429a) — formal identity grounding
         if hasattr(rt, 'ontology') and rt.ontology:
             try:
