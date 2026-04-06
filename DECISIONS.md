@@ -2641,4 +2641,11 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 
 **Fix:** One-line change — `"message"` → `"text"` in `_send_probe()` (`qualification_tests.py:48`).
 
-**Status:** AD-567g COMPLETE. 28 new tests in `test_orientation.py`. Files: `cognitive/orientation.py` (new), `config.py`, `agent_onboarding.py`, `cognitive/cognitive_agent.py`, `proactive.py`, `ward_room/messages.py`, `ward_room/threads.py`, `startup/cognitive_services.py`, `startup/results.py`, `startup/finalize.py`, `runtime.py`.
+**First real qualification run (2026-04-05, post-fix):** 130/131 pass (99.2%), 15 agents, 130 baselines.
+- Before fix: 107/131 (81.7%) — 24 failures from "inverted expertise" pattern (Medical fails diagnosis, Science fails synthesis, Builder fails code quality)
+- After fix: Only failure is Security Officer `mti_temperament_profile` at 0.000
+- Confabulation: 14/14 at 1.000 (was 8/14). All agents correctly reject fabricated scenarios.
+- Medical diagnostic reasoning: real differentiation — Diagnostician 0.867, Pharmacist/Pathologist 0.667, Surgeon 0.583 (was 0.033–0.100)
+- Code quality: Builder 0.835, Engineering 0.915 (was 0.000/0.000)
+- ToM: 14/14 pass including all Medical (was 5 failures)
+- Tier 3 collective: scaffold_decomposition 0.791 (up from 0.701)
