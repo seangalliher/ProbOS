@@ -2728,3 +2728,29 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Tests:** 47 new tests across 3 files — `test_recreation_engine.py` (17: protocol, new game, moves, wins, draw, rendering), `test_recreation_service.py` (18: registration, creation, moves, completion, events, records, threading, no-dependency), `test_recreation_channels.py` (12: event type, patterns, integration).
 
 **Deferred:** AD-526b (chess engine + ratings), AD-526c (additional game types), AD-526d (game preference tracking), AD-526e (spectator commentary), AD-526f (Holodeck integration), AD-526g (creative channel content).
+
+### BF-110: Game Board Invisible to Agents
+
+**Date:** 2026-04-06
+**Status:** Closed
+**Scope:** Small | **Type:** Bug Fix
+
+**Problem:** Agents can't see the game board during proactive think cycles. `get_recent_activity()` only returns top-level Ward Room threads, not replies where board updates are posted as thread posts. When a game is created and moves are made, the board state is posted as replies within the game thread — invisible to the proactive context pipeline.
+
+**Solution — two changes:**
+
+**(1) Direct game state injection in `_gather_context()` (proactive.py):** After Recreation channel activity gathering, look up the agent's active game via `RecreationService.get_active_games()`. If found, inject `active_game` context dict with: game_id, game_type, opponent callsign, is_my_turn flag, rendered board, valid moves list, moves count. Bypasses Ward Room thread limitation entirely.
+
+**(2) Board rendering in `_compose_prompt()` (cognitive_agent.py):** New "Active Game" section in proactive prompt renders the board in a code block, shows opponent and move count, and when it's the agent's turn, lists valid moves with `[MOVE position]` instruction.
+
+**Files modified:** `src/probos/proactive.py` (context injection), `src/probos/cognitive/cognitive_agent.py` (prompt rendering).
+
+### AD-571: Agent Tier Trust Separation (Draft)
+
+**Date:** 2026-04-06
+**Status:** Draft (3 phases planned)
+**Scope:** Large | **Type:** Architecture
+
+**Problem:** TrustNetwork, HebbianRouter, EarnedAgency, and EmergenceMetrics are completely tier-agnostic — they track all 62 agents identically. 48 utility/infrastructure agents sit at static trust 0.5, never changing. This causes: trust pollution (48 static agents dilute crew trust signals), cascade false positives (dampening based on total agent count includes non-crew), emergence noise (PID calculations include agents incapable of collaboration), meaningless rank (utility agents at "Lieutenant" via trust default), Hebbian weight bloat (routing weights accumulated for agents that never interact).
+
+**Solution — three phases:** AD-571a (Tier-Aware Trust Filtering — filter crew-only for metrics/cascades/emergence), AD-571b (Operational Status Model — replace rank with health/load/availability for utility agents), AD-571c (Hebbian Scope Reduction — restrict weight tracking to crew←→crew interactions).

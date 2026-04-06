@@ -889,6 +889,41 @@ body {
     </div>
   </div>
 
+  <div class="section">
+    <div class="section-head">
+      <span class="section-label sl-green">Post-Wave Fixes</span>
+      <span class="section-rule"></span>
+      <span class="section-count">3 closed</span>
+    </div>
+
+    <div style="max-width:700px;display:flex;flex-direction:column;gap:0.5rem">
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-110 — Game Board Invisible to Agents</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">Agents can't see game board in proactive context — <code>get_recent_activity()</code> only returns top-level threads, not replies. Fixed: inject active game state directly from RecreationService into proactive context.</div>
+        <div class="card-meta"><span class="tag t-team">Recreation / Proactive</span></div>
+      </div>
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-109 — Qualification Probe Param Key Mismatch</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc"><code>_send_probe()</code> used "message" key but <code>perceive()</code> reads "text". All prior qualification probe results unreliable. One-line fix.</div>
+        <div class="card-meta"><span class="tag t-team">Qualification / Probe</span></div>
+      </div>
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-108 — LLM Unreachable — No Runtime Visibility</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">MockLLMClient.get_health_status() reports mock/offline, runtime.llm_is_mock property, chat endpoint shows explicit offline message, self-mod suppressed when mock.</div>
+        <div class="card-meta"><span class="tag t-team">Runtime / LLM</span></div>
+      </div>
+    </div>
+  </div>
+
 </div><!-- /tab-bugs -->
 
 
@@ -1298,6 +1333,7 @@ body {
       <div class="tl-item done"><span class="tl-check">✓</span> BF-109: Qualification Probe Param Key Mismatch — _send_probe() used "message" key but perceive() reads "text". All prior probe results unreliable. One-line fix.</div>
       <div class="tl-item done"><span class="tl-check">✓</span> AD-526a: Social Channels + Tic-Tac-Toe — Recreation &amp; Creative channels, GameEngine protocol, TicTacToeEngine, RecreationService, proactive CHALLENGE/MOVE actions (Lieutenant+ gated), Ship's Records game recording. 10 files, 47 tests.</div>
       <div class="tl-item done"><span class="tl-check">✓</span> AD-570: Anchor-Indexed Episodic Recall — 4 anchor fields promoted to ChromaDB metadata, recall_by_anchor() API (enumeration + semantic re-ranking), one-time migration. 2 files, 23 tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-110: Game Board Invisible to Agents — get_recent_activity() only returns top-level threads, not replies where board updates are posted. Fixed by injecting active game state (board, valid moves, turn indicator) directly from RecreationService into proactive context.</div>
       <div class="tl-item">Communications — channel adapters, mobile PWA, voice interaction (AD-472–474)</div>
       <div class="tl-item">Naval Organization — qualifications, 3M, damage control, SORM (AD-477)</div>
       <div class="tl-item">Captain's Yeoman — personal AI assistant front door (AD-359, Phase 36)</div>
@@ -1334,6 +1370,15 @@ body {
       <span class="section-label sl-green">Era IV: Evolution — AD milestones</span>
       <span class="section-rule"></span>
       <span class="section-count">Most recent first</span>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-110</div>
+        <div class="ci-title">Game Board Invisible to Agents</div>
+        <div class="ci-tests">0 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">get_recent_activity() only returns top-level Ward Room threads, not replies where board updates are posted. Agents couldn't see the game board during proactive cycles. Fixed by injecting active game state (board rendering, valid moves, turn indicator) directly from RecreationService into proactive context in _gather_context(), rendered in _compose_prompt(). 2 files modified.</div>
     </div>
 
     <div class="completed-item">
