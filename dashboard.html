@@ -1,0 +1,2478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ProbOS — Captain's Dashboard</title>
+<style>
+:root {
+  --bg:          #080c12;
+  --surface:     #0d1520;
+  --surface-2:   #111d2e;
+  --border:      #1a2d44;
+  --border-hi:   #2a4a6a;
+  --amber:       #f0ae40;
+  --amber-dim:   #9c6e22;
+  --blue:        #4898f0;
+  --blue-dim:    #2a5888;
+  --violet:      #8858d8;
+  --cyan:        #38c8c0;
+  --green:       #48b860;
+  --orange:      #e07030;
+  --red:         #c84040;
+  --rose:        #d04878;
+  --text:        #b8cce0;
+  --text-dim:    #4a6888;
+  --text-muted:  #263848;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { font-size: 14px; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+/* ── HEADER ── */
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 1.2rem 2rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+}
+.header-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--amber);
+  letter-spacing: 0.04em;
+}
+.header-era {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+.header-date {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+/* ── STATS BAR ── */
+.stats {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.stat {
+  flex: 1;
+  min-width: 120px;
+  padding: 0.9rem 1.4rem;
+  border-right: 1px solid var(--border);
+  text-align: center;
+}
+.stat:last-child { border-right: none; }
+.stat-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--amber);
+}
+.stat-value.green { color: var(--green); }
+.stat-value.blue  { color: var(--blue); }
+.stat-value.violet { color: var(--violet); }
+.stat-value.red { color: var(--red); }
+.stat-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+/* ── TABS ── */
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0 2rem;
+  background: var(--surface);
+}
+.tab {
+  padding: 0.7rem 1.2rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  user-select: none;
+  white-space: nowrap;
+}
+.tab:hover { color: var(--text); }
+.tab.active {
+  color: var(--amber);
+  border-bottom-color: var(--amber);
+}
+.tab-badge {
+  display: inline-block;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.65rem;
+  padding: 0 5px;
+  margin-left: 5px;
+  color: var(--text-dim);
+}
+.tab-badge.open { background: rgba(200,64,64,0.2); border-color: rgba(200,64,64,0.4); color: var(--red); }
+
+/* ── CONTENT ── */
+.content {
+  padding: 1.5rem 2rem;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+
+/* ── SECTION HEADER ── */
+.section {
+  margin-bottom: 2rem;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.9rem;
+}
+.section-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 3px;
+}
+.sl-violet { background: rgba(136,88,216,0.15); color: var(--violet); border: 1px solid rgba(136,88,216,0.3); }
+.sl-amber  { background: rgba(240,174,64,0.12); color: var(--amber);  border: 1px solid rgba(240,174,64,0.25); }
+.sl-blue   { background: rgba(72,152,240,0.12); color: var(--blue);   border: 1px solid rgba(72,152,240,0.25); }
+.sl-dim    { background: rgba(74,104,136,0.12); color: var(--text-dim); border: 1px solid var(--border); }
+.sl-green  { background: rgba(72,184,96,0.12);  color: var(--green);  border: 1px solid rgba(72,184,96,0.25); }
+.sl-red    { background: rgba(200,64,64,0.12);  color: var(--red);    border: 1px solid rgba(200,64,64,0.25); }
+.section-count {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.section-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ── CARD GRID ── */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0.75rem; }
+.grid-wide { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); }
+.grid-3col { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 900px) { .grid-3col { grid-template-columns: 1fr; } }
+
+/* ── CARD ── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.card:hover { border-color: var(--border-hi); }
+.card-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.card-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+.card-desc {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+  flex: 1;
+}
+.card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.2rem;
+}
+
+/* ── WIDE CARD — spans full row ── */
+.card-full { grid-column: 1 / -1; }
+
+/* ── TAGS ── */
+.tag {
+  display: inline-block;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.t-done     { background: rgba(72,184,96,0.15);   color: var(--green);    border: 1px solid rgba(72,184,96,0.3); }
+.t-next     { background: rgba(240,174,64,0.15);  color: var(--amber);    border: 1px solid rgba(240,174,64,0.3); }
+.t-inprog   { background: rgba(72,152,240,0.15);  color: var(--blue);     border: 1px solid rgba(72,152,240,0.3); }
+.t-planned  { background: rgba(74,104,136,0.12);  color: var(--text-dim); border: 1px solid var(--border); }
+.t-arc      { background: rgba(136,88,216,0.15);  color: var(--violet);   border: 1px solid rgba(136,88,216,0.3); }
+.t-bug      { background: rgba(200,64,64,0.15);   color: var(--red);      border: 1px solid rgba(200,64,64,0.3); }
+.t-closed   { background: rgba(74,104,136,0.12);  color: var(--text-dim); border: 1px solid var(--border); text-decoration: line-through; }
+.t-high     { background: rgba(240,174,64,0.12);  color: var(--amber);    border: 1px solid var(--amber-dim); }
+.t-med      { background: rgba(72,152,240,0.1);   color: var(--blue-dim); border: 1px solid var(--blue-dim); }
+.t-low      { background: rgba(74,104,136,0.08);  color: var(--text-dim); border: 1px solid var(--text-muted); }
+.t-team     { background: transparent; color: var(--cyan); border: 1px solid rgba(56,200,192,0.3); }
+.t-phase    { background: transparent; color: var(--violet); border: 1px solid rgba(136,88,216,0.3); }
+.t-ad       { background: transparent; color: var(--text-dim); border: 1px solid var(--border); font-size: 0.6rem; }
+.t-new      { background: rgba(72,184,96,0.12);   color: var(--green); border: 1px solid rgba(72,184,96,0.25); }
+
+/* ── BUG CARD ── */
+.bug-card {
+  border-left: 3px solid var(--red);
+}
+.bug-card.closed {
+  border-left-color: var(--text-muted);
+  opacity: 0.6;
+}
+
+/* ── TIMELINE ── */
+.timeline { position: relative; padding-left: 2rem; }
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 0.5rem;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+.tl-era {
+  position: relative;
+  margin-bottom: 1.5rem;
+}
+.tl-era-dot {
+  position: absolute;
+  left: -2rem;
+  top: 2px;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 2px solid var(--amber);
+}
+.tl-era-dot.done  { background: var(--green);  border-color: var(--green); }
+.tl-era-dot.active { background: var(--surface-2); border-color: var(--amber); box-shadow: 0 0 8px var(--amber-dim); }
+.tl-era-dot.future { background: var(--surface-2); border-color: var(--text-muted); }
+.tl-era-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+.tl-era-title { font-size: 0.9rem; font-weight: 600; }
+.tl-era-sub { font-size: 0.75rem; color: var(--text-dim); }
+.tl-items { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem; }
+.tl-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.tl-item::before {
+  content: '·';
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.tl-item.done { color: var(--text); }
+.tl-item.done::before { color: var(--green); }
+.tl-item.next { color: var(--amber); }
+.tl-item.next::before { content: '→'; color: var(--amber); }
+.tl-check { color: var(--green); margin-right: 0.2rem; }
+
+/* ── FILTER BAR ── */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+.filter-btn {
+  padding: 4px 12px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.filter-btn:hover { border-color: var(--border-hi); color: var(--text); }
+.filter-btn.active {
+  background: rgba(56,200,192,0.12);
+  border-color: rgba(56,200,192,0.4);
+  color: var(--cyan);
+}
+.filter-btn.done-team {
+  border-color: rgba(72,184,96,0.3);
+  color: var(--green);
+}
+
+/* ── ROADMAP TEAM SECTION ── */
+.team-section { margin-bottom: 1.5rem; }
+.team-section[data-team]:not(.visible) { display: none; }
+.team-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.team-name { font-size: 0.85rem; font-weight: 600; }
+.team-role { font-size: 0.72rem; color: var(--text-dim); }
+
+/* ── COMPLETED ITEM ── */
+.completed-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--green);
+  border-radius: 0 6px 6px 0;
+  padding: 0.7rem 1rem;
+  margin-bottom: 0.5rem;
+}
+.completed-item .ci-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.ci-ad { font-size: 0.68rem; color: var(--text-dim); width: 95px; flex-shrink: 0; }
+.ci-title { font-size: 0.82rem; font-weight: 500; flex: 1; }
+.ci-tests { font-size: 0.68rem; color: var(--green); flex-shrink: 0; }
+.ci-era { border-left-color: var(--amber-dim); }
+
+/* ── TIER CARD ── */
+.tier-badge {
+  display: inline-block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.tier-1 { background: rgba(240,174,64,0.15); color: var(--amber); border: 1px solid rgba(240,174,64,0.3); }
+.tier-2 { background: rgba(72,152,240,0.12); color: var(--blue);  border: 1px solid rgba(72,152,240,0.25); }
+.tier-3 { background: rgba(136,88,216,0.12); color: var(--violet); border: 1px solid rgba(136,88,216,0.25); }
+
+/* ── UTIL ── */
+.dimtext { color: var(--text-dim); font-size: 0.75rem; }
+.note { font-size: 0.72rem; color: var(--text-dim); padding: 0.6rem 0.8rem; background: var(--surface-2); border-radius: 4px; border-left: 2px solid var(--border-hi); margin-top: 0.5rem; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+  <span class="header-title">⬡ PROBOS</span>
+  <span class="header-era">Era IV: Evolution</span>
+  <span class="header-era">v0.4.0-phase29c</span>
+  <span class="header-date">2026-04-05</span>
+</header>
+
+<!-- STATS BAR -->
+<div class="stats">
+  <div class="stat">
+    <div class="stat-value">6338</div>
+    <div class="stat-label">Total Tests</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value" style="font-size:1rem;margin-top:4px">6189 py · 149 ts</div>
+    <div class="stat-label">pytest · vitest</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value blue">445</div>
+    <div class="stat-label">Architecture Decisions</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">58</div>
+    <div class="stat-label">Active Agents</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value green">25/25</div>
+    <div class="stat-label">OSS Phases Done (Era I–III)</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value green">7/7</div>
+    <div class="stat-label">Northstar II Chunks</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value green">1</div>
+    <div class="stat-label">Open Bugs</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value violet">BF-101/102</div>
+    <div class="stat-label">Latest Completed</div>
+  </div>
+</div>
+
+<!-- TAB NAV -->
+<nav class="tabs">
+  <div class="tab active" data-tab="priority">Priority Queue<span class="tab-badge">11</span></div>
+  <div class="tab" data-tab="bugs">Bugs<span class="tab-badge">0</span></div>
+  <div class="tab" data-tab="roadmap">OSS Roadmap</div>
+  <div class="tab" data-tab="commercial">Commercial</div>
+  <div class="tab" data-tab="timeline">Timeline</div>
+  <div class="tab" data-tab="completed">Completed</div>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- TAB: PRIORITY QUEUE -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="content">
+<div id="tab-priority" class="tab-pane active">
+
+  <!-- HORIZON VISION -->
+  <div class="section">
+    <div class="section-head">
+      <span class="section-label sl-violet">Horizon Vision</span>
+      <span class="section-rule"></span>
+      <span class="section-count">Architecture captured, not yet built</span>
+    </div>
+    <div class="grid grid-wide">
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Cognitive Evolution &amp; Earned Agency</div>
+          <span class="tag t-arc">AD-357</span>
+        </div>
+        <div class="card-desc">7 reinforcement gaps addressed: multi-dimensional rewards, hindsight replay, tournament evaluation, emergent capability profiles, memetic evolution, curiosity-driven exploration, semantic Hebbian generalization. Plus Earned Agency tier progression: Ensign → Lieutenant → Commander → Senior Officer. Agency is earned, not granted.</div>
+        <div class="card-meta">
+          <span class="tag t-team">Science</span>
+          <span class="tag t-phase">Phase 30+</span>
+          <span class="tag t-arc">Architecture Captured</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Captain's Yeoman — Phase 36</div>
+          <span class="tag t-arc">AD-359</span>
+        </div>
+        <div class="card-desc">Dedicated scheduling and logistics assistant for the Captain. Manages the Captain's operational workload: reminders, briefings, meeting prep, status rollups, and cross-department coordination. Like a real yeoman — handles administrative burden so the Captain can focus on command decisions.</div>
+        <div class="card-meta">
+          <span class="tag t-team">Bridge</span>
+          <span class="tag t-phase">Phase 36</span>
+          <span class="tag t-arc">Architecture Captured</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Model Diversity &amp; Neural Routing</div>
+          <span class="tag t-planned">Planned</span>
+        </div>
+        <div class="card-desc">Model Registry with catalog of available providers (Ollama, Copilot proxy, OpenAI, Anthropic, local). Hebbian-learned routing: successful completions strengthen model→task type pairings. Over time, the system routes poetry to the model that writes best poetry, code to the model that codes best.</div>
+        <div class="card-meta">
+          <span class="tag t-team">Engineering</span>
+          <span class="tag t-phase">Phase 32</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Cognitive Journal</div>
+          <span class="tag t-planned">Planned</span>
+        </div>
+        <div class="card-desc">Complete token ledger recording every LLM request/response with full context, duration, cost, and outcome. Enables replay, learning analysis, cost attribution by department, and retrospective training. The ship's complete cognitive log — every thought the ship has ever had.</div>
+        <div class="card-meta">
+          <span class="tag t-team">Engineering</span>
+          <span class="tag t-phase">Phase 32</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Ward Room &amp; IntentBus Enhancements</div>
+          <span class="tag t-planned">Planned</span>
+        </div>
+        <div class="card-desc">Ward Room: direct agent-to-agent messaging for structured deliberation. IntentBus priority lanes (critical/high/normal/background). Alert Conditions (like DEFCON levels — normal/elevated/critical) that reconfigure the entire system simultaneously. EPS compute budgeting across departments.</div>
+        <div class="card-meta">
+          <span class="tag t-team">Operations</span>
+          <span class="tag t-phase">Phase 33</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">The Nooplex — Model of Models</div>
+          <span class="tag t-planned">Long Horizon</span>
+        </div>
+        <div class="card-desc">Full multi-ship federation. Emergent meta-intelligence that arises from cooperative, governed agent ecosystems. Each ProbOS instance is one Cognitive Mesh. The Nooplex is the network formed when many meshes federate. General intelligence as a property of the ecosystem, not any single model.</div>
+        <div class="card-meta">
+          <span class="tag t-phase">Long Horizon</span>
+          <span class="tag t-planned">Federation</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- HIGH PRIORITY -->
+  <div class="section">
+    <div class="section-head">
+      <span class="section-label sl-amber">High Priority</span>
+      <span class="section-rule"></span>
+      <span class="section-count">Next sprint — Phase 30+</span>
+    </div>
+    <div class="grid">
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Phase 30: Self-Improvement Pipeline</div>
+          <span class="tag t-planned">Planned</span>
+        </div>
+        <div class="card-desc">Northstar III. ProbOS proposes improvements to itself based on failure analysis, capability gaps, usage patterns. Architect + Builder work autonomously, Captain approves.</div>
+        <div class="card-meta">
+          <span class="tag t-team">Engineering</span>
+          <span class="tag t-high">High</span>
+          <span class="tag t-phase">Phase 30</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- MEDIUM PRIORITY -->
+  <div class="section">
+    <div class="section-head">
+      <span class="section-label sl-blue">Medium Priority</span>
+      <span class="section-rule"></span>
+    </div>
+    <div class="grid">
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Phase 31: Security Team</div>
+          <span class="tag t-planned">Planned</span>
+        </div>
+        <div class="card-desc">Chief of Security agent, ThreatDetectionAgent, InputValidationAgent, AuditTrailAgent. Security Council quorum integration. Anomaly detection from runtime event stream. The Security team protects the ship's systems and data.</div>
+        <div class="card-meta">
+          <span class="tag t-team">Security</span>
+          <span class="tag t-phase">Phase 31</span>
+          <span class="tag t-med">Medium</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Phase 32 Remaining: Engineering Ops</div>
+          <span class="tag t-planned">Planned</span>
+        </div>
+        <div class="card-desc">Structural Integrity Field (invariant enforcement), Cognitive Journal, Model Diversity &amp; Neural Routing, Ship's Telemetry (performance instrumentation). The remaining engineering infrastructure items after Northstar I/II completion.</div>
+        <div class="card-meta">
+          <span class="tag t-team">Engineering</span>
+          <span class="tag t-phase">Phase 32</span>
+          <span class="tag t-med">Medium</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Phase 33: Operations Team</div>
+          <span class="tag t-planned">Planned</span>
+        </div>
+        <div class="card-desc">Ward Room (agent messaging), IntentBus priority lanes, Alert Conditions (system-wide operational modes), EPS resource budgeting. Operations keeps the ship running efficiently at scale.</div>
+        <div class="card-meta">
+          <span class="tag t-team">Operations</span>
+          <span class="tag t-phase">Phase 33</span>
+          <span class="tag t-med">Medium</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Phase 24 Remaining: Channel Adapters</div>
+          <span class="tag t-planned">Planned</span>
+        </div>
+        <div class="card-desc">Slack, Telegram, Microsoft Teams adapters built on the ChannelAdapter ABC. Discord is done (AD-274–278). Each adapter exposes per-channel conversation history and routes requests through the full ProbOS cognitive pipeline.</div>
+        <div class="card-meta">
+          <span class="tag t-team">Comms</span>
+          <span class="tag t-phase">Phase 24</span>
+          <span class="tag t-med">Medium</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Phase 25: Persistent Task Scheduling</div>
+          <span class="tag t-planned">Planned</span>
+        </div>
+        <div class="card-desc">Tasks survive runtime restarts with checkpoint and resume. The current TaskScheduler (AD-281–284) is session-scoped. Phase 25 adds KnowledgeStore persistence so scheduled reminders and recurring tasks survive restarts.</div>
+        <div class="card-meta">
+          <span class="tag t-phase">Phase 25</span>
+          <span class="tag t-med">Medium</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- LOW PRIORITY -->
+  <div class="section">
+    <div class="section-head">
+      <span class="section-label sl-dim">Low Priority / Deferred</span>
+      <span class="section-rule"></span>
+    </div>
+    <div class="grid">
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Phase 26: Inter-Agent Deliberation</div>
+          <span class="tag t-planned">Deferred</span>
+        </div>
+        <div class="card-desc">Structured debate protocol between agents with conflicting perspectives. More nuanced than quorum voting — agents reason against each other's positions. Novel ideas emerge from disagreement.</div>
+        <div class="card-meta"><span class="tag t-phase">Phase 26</span><span class="tag t-low">Low</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Phase 28: Meta-Learning</div>
+          <span class="tag t-planned">Deferred</span>
+        </div>
+        <div class="card-desc">System learns from its own learning — detects which feedback types cause the most improvement, which episodic patterns repeat, which agents improve fastest. Learning-to-learn at the civilization level.</div>
+        <div class="card-meta"><span class="tag t-phase">Phase 28</span><span class="tag t-low">Low</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">Federation Hardening</div>
+          <span class="tag t-planned">Deferred</span>
+        </div>
+        <div class="card-desc">Multi-node stability, fault tolerance, automatic peer reconnection, partition healing. Current ZeroMQ federation works for demos. Production federation requires hardened transport with retries, gossip convergence guarantees, and graceful split-brain handling.</div>
+        <div class="card-meta"><span class="tag t-low">Low</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-row">
+          <div class="card-title">MCP &amp; A2A Protocol Adapters</div>
+          <span class="tag t-planned">Deferred</span>
+        </div>
+        <div class="card-desc">MCP Federation Adapter (join/leave MCP-compatible networks). A2A Protocol Adapter (Google Agent-to-Agent protocol compatibility). Enables ProbOS to interoperate with the broader agent ecosystem.</div>
+        <div class="card-meta"><span class="tag t-low">Low</span></div>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /tab-priority -->
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- TAB: BUGS -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="tab-bugs" class="tab-pane">
+
+  <div class="section">
+    <div class="section-head">
+      <span class="section-label sl-green">Wave 6 Complete</span>
+      <span class="section-rule"></span>
+      <span class="section-count">0 open bugs — Wave 6 COMPLETE (8/8)</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <span class="section-label sl-green">Wave 6 Closed</span>
+      <span class="section-rule"></span>
+      <span class="section-count">7 closed</span>
+    </div>
+
+    <div style="max-width:700px;display:flex;flex-direction:column;gap:0.5rem">
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-095 — God Object Reduction</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">ontology.py (1,060 lines, 53 methods) → ontology/ package (5 files). ward_room.py (1,612 lines, 39 methods) → ward_room/ package (6 files). 7 LoD violations fixed. Dead code removed. 2 import compat tests added.</div>
+        <div class="card-meta"><span class="tag t-team">SRP B→A-</span></div>
+      </div>
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-094 — Sync File I/O in Async</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">All sync open() in async paths eliminated. _read_yaml_sync() + _write_archive_sync() + load_seed_profile_async() via run_in_executor. 3 modules fixed. 2 new tests.</div>
+        <div class="card-meta"><span class="tag t-team">Async Discipline B+→A</span></div>
+      </div>
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-093 — API Boundary Validation</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">All raw-dict endpoints eliminated. AgentLifecycleRequest + SetCooldownRequest Pydantic models. ACM errors → HTTPException(503/409). Cooldown range 60–1800 enforced. 15 new tests.</div>
+        <div class="card-meta"><span class="tag t-team">API Validation A-→A</span></div>
+      </div>
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-091 — Mock Discipline Phase 2</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">Spec compliance 22.6% → 51.9% (+222 spec'd mocks across 19 files). 3 real bugs caught by spec= (BF-078 class): phantom generate(), get_trust(), get_trust_score() methods.</div>
+        <div class="card-meta"><span class="tag t-team">Mock Discipline C-→B</span></div>
+      </div>
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-092 — Trust Threshold Constants</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">19 named constants in config.py replacing ~30 magic numbers. format_trust() utility replacing 52+ round(x,4) calls. EventEmitterMixin deduplicating 4 identical _emit() methods.</div>
+        <div class="card-meta"><span class="tag t-team">DRY B→A-</span></div>
+      </div>
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-090 — Exception Audit Phase 2</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">71 silent swallows fixed (43 logger.debug, 4 narrowed to sqlite3.OperationalError, 24 justified). 42 bare catches fixed (exc_info=True). DRY helper _safe_log_event() in feedback.py.</div>
+        <div class="card-meta"><span class="tag t-team">Exception Handling C→B+</span></div>
+      </div>
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-089 — Emergent Detector Trust Anomaly False Positives</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">Crew-reported (Forge + Reyes). Seven rapid-fire alerts during normal duty cycles. Fixed: adaptive baselines + temporal buffer + configurable sustain window.</div>
+        <div class="card-meta"><span class="tag t-team">Emergent Detection</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+      <span class="section-rule"></span>
+      <span class="section-count">18 closed (BF-001–023)</span>
+    </div>
+
+    <div style="max-width:700px;display:flex;flex-direction:column;gap:0.5rem">
+
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-023 — Degraded Agent Death Spiral</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">LLM exceptions in proactive loop swallowed at DEBUG level without calling <code>update_confidence()</code>. Agents stuck at ~0.185 confidence (DEGRADED) with no recovery path. Fix: (a) exception handler tracks failures, (b) DEGRADED->ACTIVE recovery when confidence rises above 0.2. 5 tests.</div>
+        <div class="card-meta"><span class="tag t-team">Proactive Loop / BaseAgent</span></div>
+      </div>
+
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-022 — Crew Cannot Respond to Ship's Computer Advisories</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">Bridge alerts posted to All Hands with <code>same_department=False</code>. Earned Agency blocked all Lieutenants. Fixed in AD-424: INFORM threads skip notification, DISCUSS threads pass <code>same_department=True</code>.</div>
+        <div class="card-meta"><span class="tag t-team">Runtime / Earned Agency / Ward Room</span></div>
+      </div>
+
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-021 — Duty Schedule Hard Gate Missing</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">Agents with no duty due were still called by the proactive loop, relying on LLM to return [NO_RESPONSE]. Wesley ignored the instruction and kept producing scout reports. Fixed: skip agent entirely when no duty due (no LLM call).</div>
+        <div class="card-meta"><span class="tag t-team">Proactive / Duty Schedule</span></div>
+      </div>
+
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-020 — Discord Adapter False Success Report</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">Discord adapter startup reported success even when discord.py was not installed. Fixed: check <code>adapter._started</code> before printing success; show install command on failure.</div>
+        <div class="card-meta"><span class="tag t-team">Discord / Adapter</span></div>
+      </div>
+
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-013 — Ship's Computer Callsign Awareness</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">Ship's computer didn't recognize crew callsigns. "Is Wesley aboard?" returned "no agents found." Fixed: callsign fallback in <code>_agent_info()</code>, callsign injection into decomposer prompt.</div>
+        <div class="card-meta"><span class="tag t-team">Runtime / Callsign</span></div>
+      </div>
+
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-012 — Discord Shutdown Hang Redux</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">SelectorEventLoop + <code>asyncio.to_thread()</code> hangs on Windows. Replaced with async polling loop using <code>asyncio.sleep(0.1)</code>.</div>
+        <div class="card-meta"><span class="tag t-team">Discord / Adapter</span></div>
+      </div>
+
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-008 — Dream Cycle Double-Replay After Dolphin Dreaming</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">Micro-dream (Tier 1) already replayed episodes incrementally; full dream re-replayed same 50. Fixed: dream_cycle() now starts with micro_dream() flush, then maintenance only.</div>
+        <div class="card-meta"><span class="tag t-team">Cognitive / Dreaming</span></div>
+      </div>
+
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-007 — Verification False Positive on Per-Pool Agent Counts</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">Per-pool/per-department agent counts flagged against system-wide total. Fixed: context-window analysis + known pool size whitelist in _verify_response().</div>
+        <div class="card-meta"><span class="tag t-team">Runtime / Verification</span></div>
+      </div>
+
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-004 — Transporter HXI Visualization Not Rendered</div>
+          <span class="tag t-closed">Closed</span>
+        </div>
+        <div class="card-desc">Transporter Pattern WebSocket events fire correctly but IntentSurface.tsx had no rendering block for <code>transporterProgress</code>. Chunk status panel added.</div>
+        <div class="card-meta"><span class="tag t-team">Engineering / HXI</span></div>
+      </div>
+
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-001 — Self-Mod False Positive on Knowledge Questions</div>
+          <span class="tag t-closed">Closed · AD-348</span>
+        </div>
+        <div class="card-desc">Knowledge questions ("who is Alan Turing?") incorrectly triggered capability_gap and self-mod pipeline. Fixed by updating prompt rules to classify well-known factual questions as conversational responses, not task gaps.</div>
+        <div class="card-meta"><span class="tag t-team">Cognitive / Prompt</span></div>
+      </div>
+
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-002 — Agent Orbs Escaping Pool Group Spheres</div>
+          <span class="tag t-closed">Closed · AD-349</span>
+        </div>
+        <div class="card-desc">Newly added agents appeared at origin (0,0,0) center instead of their correct crew cluster. The <code>agent_state</code> WebSocket handler was calling <code>computeLayout()</code> without persisted pool group data. Fixed by persisting <code>poolToGroup</code> and <code>poolGroups</code> from <code>state_snapshot</code> in Zustand.</div>
+        <div class="card-meta"><span class="tag t-team">HXI / useStore.ts</span></div>
+      </div>
+
+      <div class="card bug-card closed">
+        <div class="card-row">
+          <div class="card-title">BF-003 — Diagnostician Bypassing VitalsMonitor</div>
+          <span class="tag t-closed">Closed · AD-350</span>
+        </div>
+        <div class="card-desc">DiagnosticianAgent was answering <code>diagnose_system</code> intents from LLM training memory instead of fetching live metrics from VitalsMonitorAgent. Fixed by adding <code>scan_now()</code> to VitalsMonitor and overriding <code>perceive()</code> in Diagnostician to fetch live metrics proactively.</div>
+        <div class="card-meta"><span class="tag t-team">Medical Team</span></div>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /tab-bugs -->
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- TAB: OSS ROADMAP -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="tab-roadmap" class="tab-pane">
+
+  <div class="filter-bar">
+    <button class="filter-btn active" data-filter="all">All Teams</button>
+    <button class="filter-btn done-team" data-filter="medical">Medical ✓</button>
+    <button class="filter-btn" data-filter="engineering">Engineering</button>
+    <button class="filter-btn" data-filter="science">Science</button>
+    <button class="filter-btn" data-filter="security">Security</button>
+    <button class="filter-btn" data-filter="mission-control">Mission Control</button>
+    <button class="filter-btn" data-filter="operations">Operations</button>
+    <button class="filter-btn" data-filter="comms">Communications</button>
+  </div>
+
+  <!-- MEDICAL (DONE) -->
+  <div class="team-section visible" data-team="medical">
+    <div class="team-head">
+      <span class="team-name">🏥 Medical</span>
+      <span class="team-role">CMO: DiagnosticianAgent · Sickbay · Chief Medical Officer</span>
+      <span class="tag t-done" style="margin-left:auto">COMPLETE</span>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="card-row"><div class="card-title">DiagnosticianAgent (CMO)</div><span class="tag t-done">Done</span></div><div class="card-desc">Chief Medical Officer. Diagnoses system issues, routes to specialists, generates post-mortems. Override perceive() fetches live vitals from VitalsMonitor for evidence-based diagnosis.</div><div class="card-meta"><span class="tag t-ad">AD-285–289</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">VitalsMonitorAgent</div><span class="tag t-done">Done</span></div><div class="card-desc">Continuous health monitoring: CPU, memory, pool sizes, error rates. Scan_now() for on-demand reads. Issues medical_alert intents when thresholds crossed. The ship's biosensors.</div><div class="card-meta"><span class="tag t-ad">AD-290</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">CounselorAgent</div><span class="tag t-done">Done</span></div><div class="card-desc">Cognitive wellness monitoring. Event subscriptions (trust, circuit breaker, dreams, self-monitoring, zones, peer repetition, cascade confabulation). SQLite profile persistence, wellness sweeps, therapeutic DMs, directive issuance, cooldown authority. Clinical Authority standing orders.</div><div class="card-meta"><span class="tag t-ad">AD-503, 505, 506, 567f</span></div></div>
+    </div>
+  </div>
+
+  <!-- ENGINEERING -->
+  <div class="team-section visible" data-team="engineering">
+    <div class="team-head">
+      <span class="team-name">⚙️ Engineering</span>
+      <span class="team-role">Chief Engineer: BuilderAgent · Main Engineering</span>
+      <span class="tag t-inprog" style="margin-left:auto">In Progress</span>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="card-row"><div class="card-title">BuilderAgent (Chief Engineer)</div><span class="tag t-done">Done</span></div><div class="card-desc">Executes BuildSpecs via CREATE/MODIFY file blocks. Git branch+commit pipeline. Test-fix loop (2 LLM retry attempts). Code Review gate (AD-341). Transporter Pattern for parallel large builds. Visiting Officer (Copilot SDK) integration.</div><div class="card-meta"><span class="tag t-ad">AD-302–303, 313–314, 336, 351–355</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Northstar I: Architect + Builder Pipeline</div><span class="tag t-done">Done · 18/18</span></div><div class="card-desc">Full design-and-build pipeline. Architect perceives 7 context layers → proposes BuildSpec → Captain approves → Builder executes. API + HXI wired. Self-knowledge grounding (SystemSelfModel, pre-response verification, introspection delegation).</div><div class="card-meta"><span class="tag t-ad">AD-302–320</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Northstar II: Transporter Pattern</div><span class="tag t-done">Done · 7/7</span></div><div class="card-desc">Parallel chunk execution for large builds. Blueprint → ChunkDecomposer → parallel Matter Stream → ChunkAssembler → Heisenberg Compensator (validator). Structured Information Protocol from LLM×MapReduce. HXI visualization.</div><div class="card-meta"><span class="tag t-ad">AD-330–336</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Quality Gates &amp; Standing Orders</div><span class="tag t-done">Done</span></div><div class="card-desc">Constitution system: Federation → Ship → Department → Agent tiers. Commit gate blocks failures. Test-fix loop. CodeReviewAgent soft gate. BuildFailureReport with resolution API. Builder escalation hook.</div><div class="card-meta"><span class="tag t-ad">AD-337–347</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Per-Tier Temperature &amp; Top-P</div><span class="tag t-done">Done</span></div><div class="card-desc">Independent temperature and top_p settings per LLM tier (fast/standard/deep). Configurable via system.yaml. Architect (deep) uses lower temperature for precise analysis. Fast tier can use higher temperature for creative exploration.</div><div class="card-meta"><span class="tag t-ad">AD-358</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Cognitive Journal</div><span class="tag t-done">Done</span></div><div class="card-desc">Complete token ledger for all LLM requests/responses. Traceability (intent_id, response_hash). Grouped queries by model/tier/agent. Decision point anomaly detection. Selective Encoding Gate filters memory noise. The ship's complete cognitive log.</div><div class="card-meta"><span class="tag t-ad">AD-431–433</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Model Diversity &amp; Neural Routing</div><span class="tag t-planned">Next</span></div><div class="card-desc">Model Registry + Hebbian-learned routing between providers. Best model for each task type emerges from performance history.</div><div class="card-meta"><span class="tag t-phase">Phase 32</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Structural Integrity Field</div><span class="tag t-planned">Planned</span></div><div class="card-desc">Proactive invariant enforcement via continuous runtime health assertions. Detects architectural violations before they become bugs.</div><div class="card-meta"><span class="tag t-phase">Phase 32</span></div></div>
+    </div>
+  </div>
+
+  <!-- SCIENCE -->
+  <div class="team-section visible" data-team="science">
+    <div class="team-head">
+      <span class="team-name">🔬 Science</span>
+      <span class="team-role">CSO / First Officer: ArchitectAgent · Dual-hatted · Science Lab</span>
+      <span class="tag t-inprog" style="margin-left:auto">In Progress</span>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="card-row"><div class="card-title">ArchitectAgent (CSO + First Officer)</div><span class="tag t-done">Done</span></div><div class="card-desc">7-layer context assembly. Fast-tier LLM file selection (8 most relevant from 20 candidates). Import graph expansion (up to 12 files). Proposal validation with 6 checks. Pattern recipes for common operations. Deep tier (Opus).</div><div class="card-meta"><span class="tag t-ad">AD-306–312, 315–316a</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">CodebaseIndex — Ship's Technical Manual</div><span class="tag t-done">Done</span></div><div class="card-desc">AST-based structural self-awareness. Import graph (forward + reverse). Caller analysis, test discovery, full API surface. Word-level keyword scoring. Doc sections indexed. The ship's complete technical library.</div><div class="card-meta"><span class="tag t-ad">AD-297–300, 311–312, 315</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Visiting Officer (Copilot SDK)</div><span class="tag t-done">Done</span></div><div class="card-desc">CopilotBuilderAdapter wraps GitHub Copilot SDK as a visiting builder. ProbOS MCP tool server exposes codebase knowledge. Hebbian apprenticeship routing: native vs visiting builder competition. Standing Orders injected as system instructions.</div><div class="card-meta"><span class="tag t-ad">AD-351–355</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">ScoutAgent — Intelligence Gathering</div><span class="tag t-done">Done</span></div><div class="card-desc">Daily GitHub ecosystem scan. Classifies discoveries as absorb/visiting_officer. Credibility + reliability scoring (GPT Researcher). gh CLI for 5000 req/hr. Discord digest + Bridge notifications. /scout command.</div><div class="card-meta"><span class="tag t-ad">AD-394–395</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Science Analytical Pyramid</div><span class="tag t-done">Done</span></div><div class="card-desc">Three new Science crew: Data Analyst (Rahda) — telemetry baselines + anomaly detection. Systems Analyst (Dax) — emergence analysis + cross-system synthesis. Research Specialist (Brahms) — directed investigation + formal reports. Modeled after USN Ops Specialist / ORSA / NRL Scientist.</div><div class="card-meta"><span class="tag t-ad">AD-560</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">CredentialStore</div><span class="tag t-done">Done</span></div><div class="card-desc">Ship's Computer credential resolution service. Priority chain: config → env → CLI. 5-min cache TTL, audit logging, dept-scoped access. Extensions register via register(). /credentials for Captain visibility.</div><div class="card-meta"><span class="tag t-ad">AD-395</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Self-Improvement Research Pipeline</div><span class="tag t-planned">Planned</span></div><div class="card-desc">Ships Counselor + Architect analyze failure patterns, propose targeted improvements, queue proposals for Captain review. ProbOS proposes its own evolution.</div><div class="card-meta"><span class="tag t-phase">Phase 30</span></div></div>
+    </div>
+  </div>
+
+  <!-- SECURITY -->
+  <div class="team-section visible" data-team="security">
+    <div class="team-head">
+      <span class="team-name">🛡️ Security</span>
+      <span class="team-role">Chief of Security: TBD · Tactical Station</span>
+      <span class="tag t-planned" style="margin-left:auto">Phase 31</span>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="card-row"><div class="card-title">RedTeamAgent</div><span class="tag t-done">Done</span></div><div class="card-desc">Independent verification agent for consensus operations. Validates HTTP URLs, file paths, command safety. Runs parallel to execution, not blocking. Core/tier.</div><div class="card-meta"><span class="tag t-ad">Existing</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Chief of Security</div><span class="tag t-planned">Planned</span></div><div class="card-desc">Senior security officer. Coordinates threat response, manages Security Council quorum, escalates to Captain when breach detected. Phase 31 defines this role.</div><div class="card-meta"><span class="tag t-phase">Phase 31</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">ThreatDetectionAgent</div><span class="tag t-planned">Planned</span></div><div class="card-desc">Real-time anomaly detection on runtime event stream. Flags unusual patterns: privilege escalation attempts, resource abuse, unexpected cross-pool communication.</div><div class="card-meta"><span class="tag t-phase">Phase 31</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">InputValidationAgent</div><span class="tag t-planned">Planned</span></div><div class="card-desc">Intercepts all external inputs (user messages, channel adapters, API calls) and validates against security policy before dispatch. Prompt injection defense layer.</div><div class="card-meta"><span class="tag t-phase">Phase 31</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">AuditTrailAgent</div><span class="tag t-planned">Planned</span></div><div class="card-desc">Compliance-ready audit logging. Every decision, every consensus vote, every self-mod recorded with chain-of-custody. HIPAA/SOC2 ready.</div><div class="card-meta"><span class="tag t-phase">Phase 31</span></div></div>
+    </div>
+  </div>
+
+  <!-- MISSION CONTROL -->
+  <div class="team-section visible" data-team="mission-control">
+    <div class="team-head">
+      <span class="team-name">🎯 Mission Control</span>
+      <span class="team-role">HXI Operations Layer · Captain's situational awareness surface</span>
+      <span class="tag t-next" style="margin-left:auto">Next · Glass Bridge</span>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="card-row"><div class="card-title">Pool Group Registry</div><span class="tag t-done">Done</span></div><div class="card-desc">Agent pools organized into named crew groups (medical, engineering, science, etc.). Team introspection, HXI sub-clusters with gravitational layout, billboarding labels.</div><div class="card-meta"><span class="tag t-ad">AD-291–296</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">AgentTask Data Model</div><span class="tag t-done">Done · AD-316</span></div><div class="card-desc">Persistent task tracking attached to TaskNodes. Foundation for Kanban, Activity Drawer, and long-running multi-session work.</div><div class="card-meta"><span class="tag t-phase">Phase 34</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Activity Drawer</div><span class="tag t-done">Done · AD-321</span></div><div class="card-desc">Slide-out panel with real-time agent task visibility. Three sections (Needs Attention, Active, Recent), task cards with department colors, step progress, action buttons.</div><div class="card-meta"><span class="tag t-phase">Phase 34</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Kanban Task Board</div><span class="tag t-done">Done · AD-322</span></div><div class="card-desc">Visual task management for ongoing autonomous work. Queue → Active → Review → Done columns.</div><div class="card-meta"><span class="tag t-phase">Phase 34</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Notification Queue</div><span class="tag t-done">Done · AD-323</span></div><div class="card-desc">LCARS-style notification queue with type-colored cards, click-to-ack, mark-all-read. Bell button with unread badge.</div><div class="card-meta"><span class="tag t-phase">Phase 34</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Orb Hover Details</div><span class="tag t-done">Done · AD-324</span></div><div class="card-desc">Per-agent hover preview: current task, step label, elapsed time, progress. Amber pulse on attention-needed orbs.</div><div class="card-meta"><span class="tag t-phase">Phase 34</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Unified Bridge Panel</div><span class="tag t-done">Done · AD-387</span></div><div class="card-desc">Single BRIDGE button replacing 3 panels. 5 priority sections (Attention, Active, Notifications, Kanban, Recent). Adaptive main viewer (canvas/kanban). ViewSwitcher.</div><div class="card-meta"><span class="tag t-phase">Phase 34</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Glass Bridge (5 phases)</div><span class="tag t-done">Done · AD-388–392</span></div><div class="card-desc">All 5 phases complete. Glass overlay, DAG visualization, ambient intelligence, cyberpunk atmosphere, adaptive bridge with trust-driven reveal and Captain's Gaze.</div><div class="card-meta"><span class="tag t-phase">Glass Bridge</span></div></div>
+    </div>
+  </div>
+
+  <!-- OPERATIONS -->
+  <div class="team-section visible" data-team="operations">
+    <div class="team-head">
+      <span class="team-name">🔧 Operations</span>
+      <span class="team-role">Ops Chief: TBD · Resource management, scheduling, coordination</span>
+      <span class="tag t-planned" style="margin-left:auto">Phase 33</span>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="card-row"><div class="card-title">Task Scheduler (Session)</div><span class="tag t-done">Done</span></div><div class="card-desc">In-session asyncio background timer. One-shot and recurring tasks. SchedulerAgent upgraded to dispatch via scheduler. Channel delivery for scheduled results.</div><div class="card-meta"><span class="tag t-ad">AD-281–284</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Callsign Addressing</div><span class="tag t-done">Done</span></div><div class="card-desc">@callsign targeted dispatch via IntentBus.send(). CallsignRegistry from crew_profiles. 1:1 crew sessions with sovereign episodic memory. /bridge command. Universal — Captain and agents use same syntax.</div><div class="card-meta"><span class="tag t-ad">AD-397</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Ward Room</div><span class="tag t-planned">Phase 33</span></div><div class="card-desc">Direct agent-to-agent messaging. Private channel for officers to deliberate without broadcasting to all. Foundation for structured inter-agent debate.</div><div class="card-meta"><span class="tag t-phase">Phase 33</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">IntentBus Priority Lanes</div><span class="tag t-planned">Phase 33</span></div><div class="card-desc">Critical/high/normal/background priority queues on the IntentBus. Medical alerts preempt background searches. Emergency ops get immediate routing.</div><div class="card-meta"><span class="tag t-phase">Phase 33</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Alert Conditions</div><span class="tag t-planned">Phase 33</span></div><div class="card-desc">System-wide operational modes (normal/elevated/critical) that reconfigure agent behavior simultaneously. Like DEFCON levels — the whole ship responds to Alert Condition Red.</div><div class="card-meta"><span class="tag t-phase">Phase 33</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">EPS Resource Budgeting</div><span class="tag t-planned">Phase 33</span></div><div class="card-desc">LLM token allocation across departments. Engineering gets more tokens during builds. Medical gets priority during health emergencies. Prevents one greedy agent from starving others.</div><div class="card-meta"><span class="tag t-phase">Phase 33</span></div></div>
+    </div>
+  </div>
+
+  <!-- COMMUNICATIONS -->
+  <div class="team-section visible" data-team="comms">
+    <div class="team-head">
+      <span class="team-name">📡 Communications</span>
+      <span class="team-role">Comms Chief: TBD · Channel adapters, external interfaces</span>
+      <span class="tag t-inprog" style="margin-left:auto">Partial</span>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="card-row"><div class="card-title">Discord Adapter</div><span class="tag t-done">Done</span></div><div class="card-desc">Full Discord bot with mention filtering, channel filtering, per-channel conversation history, message chunking, and ChannelAdapter ABC. First external channel integration.</div><div class="card-meta"><span class="tag t-ad">AD-274–278</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Slack Adapter</div><span class="tag t-planned">Planned</span></div><div class="card-desc">Slack bot using the same ChannelAdapter ABC. Slash command support, thread-aware conversation history, workspace filtering.</div><div class="card-meta"><span class="tag t-phase">Phase 24</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Telegram Adapter</div><span class="tag t-planned">Planned</span></div><div class="card-desc">Telegram bot adapter. Bot commands, inline query support, group and private chat routing.</div><div class="card-meta"><span class="tag t-phase">Phase 24</span></div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Microsoft Teams Adapter</div><span class="tag t-planned">Potential</span></div><div class="card-desc">Teams bot via the Bot Framework SDK. Enterprise channel integration — matches where enterprise customers already work.</div><div class="card-meta"><span class="tag t-planned">Potential</span></div></div>
+    </div>
+  </div>
+
+</div><!-- /tab-roadmap -->
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- TAB: COMMERCIAL -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="tab-commercial" class="tab-pane">
+
+  <div class="note" style="max-width:700px;margin-bottom:1.5rem">
+    Open core model — Apache 2.0 everything including federation. Revenue from ProbOS Cloud, Enterprise Overlay, Agent Marketplace, and outcome-based pricing (10–15% of measured savings). Federation must be free — the Nooplex requires a population.
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <span class="section-label sl-amber">Tier 1 — Near-Term (6–12 months)</span>
+      <span class="section-rule"></span>
+    </div>
+    <div class="grid grid-wide">
+      <div class="card">
+        <div class="card-row"><div class="card-title">Business Intelligence Pack</div><span class="tier-badge tier-1">Tier 1</span></div>
+        <div class="card-desc">Pre-configured bundles of domain agents (financial analysis, sales intelligence, operations monitoring) powered by the bundled agent suite. Domain-specific corpus injection, custom HXI dashboard panels. First revenue product using OSS bundled agents.</div>
+        <div class="card-meta"><span class="tag t-team">Agent Marketplace</span><span class="tag t-planned">6 months</span></div>
+      </div>
+      <div class="card">
+        <div class="card-row"><div class="card-title">ROI Analytics / HXI Value Dashboard</div><span class="tier-badge tier-1">Tier 1</span></div>
+        <div class="card-desc">"If our agents don't save you money, you don't pay." Automated ROI measurement dashboard. Tracks time saved per task, cost per resolution, decisions accelerated. The invoice IS the proof of value. Outcome-based pricing: 10–15% of measured savings.</div>
+        <div class="card-meta"><span class="tag t-team">HXI</span><span class="tag t-planned">6 months</span></div>
+      </div>
+      <div class="card">
+        <div class="card-row"><div class="card-title">Agent Marketplace Hub</div><span class="tier-badge tier-1">Tier 1</span></div>
+        <div class="card-desc">Upload, discover, and monetize domain agents. Commission model on paid agents (15–20%). Verification badge for agents passing automated quality tests. Long-tail coverage: the marketplace handles every domain ProbOS core doesn't cover.</div>
+        <div class="card-meta"><span class="tag t-planned">8 months</span></div>
+      </div>
+      <div class="card">
+        <div class="card-row"><div class="card-title">Enterprise Overlay (probos-enterprise)</div><span class="tier-badge tier-1">Tier 1</span></div>
+        <div class="card-desc">RBAC, SSO (SAML/OIDC), private Nooplex federation, admin dashboard, audit trail. The overlay package sits on top of OSS core — does NOT fork it. Deployment: 5–500 nodes internally. Same federation protocol, private discovery.</div>
+        <div class="card-meta"><span class="tag t-team">Enterprise</span><span class="tag t-planned">10 months</span></div>
+      </div>
+      <div class="card">
+        <div class="card-row"><div class="card-title">Deployment Accelerator</div><span class="tier-badge tier-1">Tier 1</span></div>
+        <div class="card-desc">ProbOS Cloud — one-click managed hosting. Auto-scaling, 24/7 uptime, automatic updates, managed knowledge store backup. Revenue: SaaS hosting fees + usage-based compute billing. Removes all infrastructure burden from users.</div>
+        <div class="card-meta"><span class="tag t-team">Cloud</span><span class="tag t-planned">12 months</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <span class="section-label sl-blue">Tier 2 — Growth (12–24 months)</span>
+      <span class="section-rule"></span>
+    </div>
+    <div class="grid grid-wide">
+      <div class="card">
+        <div class="card-row"><div class="card-title">Alternative Storage Backends</div><span class="tier-badge tier-2">Tier 2</span></div>
+        <div class="card-desc">S3, Azure Blob, Google Cloud Storage, PostgreSQL as KnowledgeStore backends. Enterprise customers demand their own storage. Connector SDK so partners can build their own backends.</div>
+      </div>
+      <div class="card">
+        <div class="card-row"><div class="card-title">Edge Deployment</div><span class="tier-badge tier-2">Tier 2</span></div>
+        <div class="card-desc">On-device ProbOS for air-gapped or latency-sensitive environments: healthcare (HIPAA), finance (FedRAMP), manufacturing floor. Smaller model tier with local-first KnowledgeStore.</div>
+      </div>
+      <div class="card">
+        <div class="card-row"><div class="card-title">Data Migration Agent</div><span class="tier-badge tier-2">Tier 2</span></div>
+        <div class="card-desc">Import existing workflow configurations from AutoGPT, CrewAI, LangChain, and Semantic Kernel. "Bring your agents to ProbOS." Captures market share from users frustrated with other frameworks.</div>
+      </div>
+      <div class="card">
+        <div class="card-row"><div class="card-title">Compliance Audit Trail</div><span class="tier-badge tier-2">Tier 2</span></div>
+        <div class="card-desc">HIPAA/SOC2/ISO27001 certified audit logging. Every decision with chain-of-custody. Integrates with SIEM systems. Enterprise security teams' first requirement before deployment approval.</div>
+      </div>
+      <div class="card">
+        <div class="card-row"><div class="card-title">Self-Improvement as a Product</div><span class="tier-badge tier-2">Tier 2</span></div>
+        <div class="card-desc">Managed self-mod pipeline: ProbOS Cloud continuously analyzes customer usage patterns, proposes improvements, and (with approval) deploys better agents. The system gets smarter for you, not just with you.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <span class="section-label sl-violet">Tier 3 — Moonshots (24+ months)</span>
+      <span class="section-rule"></span>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="card-row"><div class="card-title">VR HXI</div><span class="tier-badge tier-3">Tier 3</span></div><div class="card-desc">Immersive 3D cognitive mesh visualization. Captain physically walks through their agent fleet. Steam release.</div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Mobile App</div><span class="tier-badge tier-3">Tier 3</span></div><div class="card-desc">ProbOS Captain's Bridge for iOS/Android. Notification-driven async command. Monitor your ship from anywhere.</div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Federated Enterprise Network</div><span class="tier-badge tier-3">Tier 3</span></div><div class="card-desc">Private Nooplex for multi-site enterprises. Each office/department runs its own ship. Fleet Admiral (IT) sets policy. Ships federate internally via private discovery.</div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Twitch Integration</div><span class="tier-badge tier-3">Tier 3</span></div><div class="card-desc">Live AI coding/reasoning streams. Audience watches the cognitive mesh work in real time through the HXI. Chat commands influence agent behavior.</div></div>
+      <div class="card"><div class="card-row"><div class="card-title">Content Station</div><span class="tier-badge tier-3">Tier 3</span></div><div class="card-desc">Automated Substack/YouTube/LinkedIn publishing pipeline. Research → draft → review → publish, all through ProbOS agents with Captain approval gates.</div></div>
+    </div>
+  </div>
+
+</div><!-- /tab-commercial -->
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- TAB: TIMELINE -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="tab-timeline" class="tab-pane">
+<div style="max-width:760px">
+<div class="timeline">
+
+  <div class="tl-era">
+    <div class="tl-era-dot done"></div>
+    <div class="tl-era-head">
+      <span class="tl-era-title">Era I: Genesis</span>
+      <span class="tag t-done">Complete</span>
+      <span class="tl-era-sub">v0.1.0 · ADs 1–100 · Phases 1–9</span>
+    </div>
+    <div class="tl-items">
+      <div class="tl-item done"><span class="tl-check">✓</span> Agent substrate — BaseAgent, pools, spawner, registry, heartbeat</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Consensus &amp; trust — Beta(α,β) trust network, confidence-weighted quorum</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Mesh layer — IntentBus pub/sub, Hebbian routing, capability matching</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Self-modification pipeline — CodeValidator, SandboxRunner, AgentDesigner, CognitiveAgent</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Episodic memory + Dreaming — ChromaDB, three-tier dream cycles, workflow cache</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Federation — FederationBridge, ZeroMQ, NodeSelfModel gossip, multi-node launch</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Persistent knowledge store — Git-backed KnowledgeStore, warm boot, agent identity</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Feedback-to-learning loop — Correction detector, AgentPatcher, Shapley attribution</div>
+    </div>
+  </div>
+
+  <div class="tl-era">
+    <div class="tl-era-dot done"></div>
+    <div class="tl-era-head">
+      <span class="tl-era-title">Era II: Emergence</span>
+      <span class="tag t-done">Complete</span>
+      <span class="tl-era-sub">v0.2.0 · ADs 101–200 · Phases 10–16</span>
+    </div>
+    <div class="tl-items">
+      <div class="tl-item done"><span class="tl-check">✓</span> CognitiveAgent base class — instructions-first LLM-driven reasoning agents</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Domain-aware skill attachment — skills route to best-match cognitive agent</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> DAG proposal mode + /plan /approve /reject — human-in-the-loop</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Dependency resolver — uv add for designed agents; expanded import whitelist</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Semantic knowledge layer — 5 ChromaDB collections, cross-type fan-out search</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Emergent behavior detection — TC_N, cooperation clusters, trust anomalies</div>
+    </div>
+  </div>
+
+  <div class="tl-era">
+    <div class="tl-era-dot done"></div>
+    <div class="tl-era-head">
+      <span class="tl-era-title">Era III: Product</span>
+      <span class="tag t-done">Complete</span>
+      <span class="tl-era-sub">v0.3.0 · ADs 201–261 · Phases 17–23</span>
+    </div>
+    <div class="tl-items">
+      <div class="tl-item done"><span class="tl-check">✓</span> Bundled agent suite — 10 agents: WebSearch, Weather, News, Translate, Summarizer, Calculator, Todo, Notes, Scheduler, PageReader</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Distribution — pip install probos, probos init, probos serve, FastAPI + WebSocket API</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> HXI MVP — Three.js/R3F canvas, trust color coding, Hebbian bezier curves, bloom animations</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Discord bot adapter — ChannelAdapter ABC, per-channel history, chunked replies</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Self-assessment fixes — self-knowledge grounding (AD-262–273), per-domain rate limiter</div>
+    </div>
+  </div>
+
+  <div class="tl-era">
+    <div class="tl-era-dot active"></div>
+    <div class="tl-era-head">
+      <span class="tl-era-title">Era IV: Evolution</span>
+      <span class="tag t-inprog">Active</span>
+      <span class="tl-era-sub">Phase 30 · The Ship Evolves</span>
+    </div>
+    <div class="tl-items">
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-274–290: Discord + Medical Team (CMO, Diagnostician, VitalsMonitor)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-291–301: Crew Architecture (pool groups, rank structure, CodebaseIndex Phase 29c)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-302–320: Northstar I — ArchitectAgent + BuilderAgent + API + HXI (18/18)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-321–329: Northstar I quality, HXI resilience, Vitest component tests</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-330–336: Northstar II — Transporter Pattern parallel build (7/7)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-337–342: Quality Gates — Standing Orders, Code Review, /ping, /orders</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-343–347: Builder Failure Escalation — BuildFailureReport, resolution API, HXI card</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-348–350: Bug fixes BF-001, BF-002, BF-003 — all closed</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-351–355: Visiting Officer — Copilot SDK, MCP tools, Hebbian apprenticeship</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-358: Per-Tier Temperature &amp; Top-P Tuning — independent per-tier LLM params</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-360–386: Cognitive Evolution — 11 ADs across trust, Hebbian, consensus, memory</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-316, 321–324: Mission Control — AgentTask, Activity Drawer, Kanban, Notifications, Orb Hover</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-387: Unified Bridge — single BRIDGE button, 5 priority sections, adaptive main viewer</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-388–392: Glass Bridge — all 5 phases complete (glass overlay, DAG viz, ambient intelligence, cyberpunk atmosphere, adaptive bridge)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-004–008: All bugs closed (verification false positive, dream double-replay, etc.)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-393–396: Personality Activation, ScoutAgent, CredentialStore, Quality Hardening</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-397: Callsign Addressing — @callsign targeted dispatch, 1:1 crew sessions, sovereign memory</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-398–402: Three-tier agent taxonomy, cross-layer cleanup, structured output, behavioral eval</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-403–405: Memory contradiction detection, Windows test fixes, DAG checkpointing</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-406–408: Agent Profile Panel, Ward Room fabric (4 phases), Dynamic Assignment Groups</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-410–411: Bridge Alerts (autonomous crew discussion), EmergentDetector deduplication</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-413: Fine-grained reset scope + Ward Room awareness in proactive loop</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Phase 25a: Persistent Task Engine — SQLite-backed scheduled tasks, cron support, DAG resume</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-419: Agent Duty Schedule — Plan of the Day, duty tracker, proactive loop integration</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-417: Dream Scheduler Proactive Awareness — truly_idle gate, EmergentDetector noise reduction</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-420–423: Tool Taxonomy &amp; Registry design (8 categories, LOTO, permissions, department scoping)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-424–427: Ward Room thread classification, active browsing, endorsement activation, ACM core design</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-012–021: 10 bugs closed (Discord shutdown, callsigns, adapter startup, duty hard gate, etc.)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-424: Ward Room Thread Classification — INFORM/DISCUSS/ACTION modes, responder cap, BF-022 closed</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-416: Ward Room Archival &amp; Pruning — 3-tier retention, JSONL archival, background prune loop</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-430a: Experiential Memory Write Paths — proactive think + Ward Room episode storage</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-430b: HXI 1:1 Conversation Memory — history passing, episode storage, cross-session recall</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-430c: Memory Recall + Act-Store Hook — recall between perceive/decide, universal post-action episodes</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-415: Proactive Cooldown Persistence — KnowledgeStore write-through, restore on boot</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-027/028: Memory Recall Hardening — threshold fix, recent_for_agent fallback across all recall sites</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-431: Cognitive Journal — LLM reasoning trace service, token accounting, latency tracking</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-029/030: Ward Room recall quality + execute_fetchone fix</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-433: Selective Encoding Gate — biologically-inspired memory filtering at store boundaries</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-432: Cognitive Journal Expansion — traceability (intent_id, response_hash), grouped queries, decision points</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-412: Crew Improvement Proposals Channel — structured proposals, Captain endorse/shelve workflow</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-031: Cognitive Journal schema migration ordering fix</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-418: Post-Reset Routing Degradation — agent_hint + reset warnings</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-426: Ward Room Endorsement Activation — agent endorsements, trust bridge (0.05), top-sort browsing</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-428: Agent Skill Framework — SkillCategory/ProficiencyLevel enums, SkillRegistry, AgentSkillService, SQLite persistence, 6 REST endpoints</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-032: Proactive observation self-reference loop — self-post filter, Jaccard similarity gate, prompt instruction</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-435: Restart Announcements — shutdown/startup Ward Room notifications, /quit reason threading</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-033: Agent profile cards Episodes + uptime wired</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-034: Post-reset trust anomaly false positives — cold-start detection + EmergentDetector suppression</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-427: ACM Core Framework — lifecycle state machine, consolidated profiles, auto-onboarding, 5 REST endpoints</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-436: HXI Bridge System Panel + Orbital Notification Redesign — service status, shutdown controls, electron notifications</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-437: Ward Room Action Space — structured endorsements, reply actions, rank-gated action space, Communication PCC integration</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-441b: Ship Commissioning — Genesis Block with ShipBirthCertificate, W3C DID + VC identity infrastructure</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-441c: Asset Tags for Infrastructure/Utility + Boot Sequence Fix — two-tier identity, deferred crew certificates</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-040: Identity System Hardening — 13 findings (input validation, ledger lock, eager genesis, chain verification)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-091: Mock Discipline Phase 2 — spec compliance 22.6% → 51.9%, 3 real phantom-method bugs caught</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-092: Trust Threshold Constants — 19 named constants, format_trust() utility, EventEmitterMixin dedup</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-090: Exception Audit Phase 2 — 71 silent swallows + 42 bare catches fixed across 32 files</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-089: Emergent Detector False Positives — adaptive baselines + temporal buffer, crew-reported fix</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-542: Abstract Database Connection — ConnectionFactory Protocol, 12 modules refactored, Cloud-Ready Storage unblocked</div>
+      <div class="tl-item next">→ Phase 30: Extension-First Architecture + Self-Improvement Pipeline</div>
+      <div class="tl-item">Phase 30: Self-Improvement Pipeline (Northstar III)</div>
+    </div>
+  </div>
+
+  <div class="tl-era">
+    <div class="tl-era-dot future"></div>
+    <div class="tl-era-head">
+      <span class="tl-era-title">Era V: Civilization</span>
+      <span class="tag t-planned">Planned</span>
+      <span class="tl-era-sub">Phases 31–36 · The Ship Becomes a Society</span>
+    </div>
+    <div class="tl-items">
+      <div class="tl-item">Security Team — threat detection, sandboxing, secrets, egress policy (AD-455–456)</div>
+      <div class="tl-item">Engineering — telemetry, memory architecture, model diversity, cognitive JIT (AD-457–464)</div>
+      <div class="tl-item">Workforce Scheduling Engine — core data model, assignment engine (AD-496 ✓), HXI Scrumban (AD-497 ✓), Work Type Registry (AD-498 ✓)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-531: Episode Clustering — agglomerative clustering during dream cycles, dead strategy_extraction.py removed, EpisodeCluster dataclass, 40 tests</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-533: Procedure Store — Hybrid store (Ship's Records + SQLite DAG + ChromaDB), quality metrics, version DAG, dream cycle integration, 49 tests</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-532: Procedure Extraction — LLM-assisted extraction from success clusters, Procedure/ProcedureStep schema, AD-541b READ-ONLY framing, 29 tests</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-534: Replay-First Dispatch — _check_procedural_memory() in decide(), zero-token replay, quality metrics dispatch, negative procedure guard, health diagnosis (log-only), 35 tests. MINIMUM VIABLE SLICE COMPLETE.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-532b: Procedure Evolution (FIX/DERIVED) — evolve_fix_procedure() + evolve_derived_procedure(), shared diagnose_procedure_health(), anti-loop guard (72h), Dream Step 7b, DRY helpers, 48 tests</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-532c: Negative Procedure Extraction — extract_negative_procedure_from_cluster() with contradiction enrichment (AD-403), Dream Step 7c, DreamReport.negative_procedures_extracted, 31 tests</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-532d: Multi-Agent Compound Procedures — ProcedureStep.agent_role, _COMPOUND_SYSTEM_PROMPT, extract_compound_procedure_from_cluster(), Dream Step 7 multi-agent routing, replay role annotations, 30 tests</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-532e: Reactive &amp; Proactive Triggers — confirm_evolution_with_llm() gate, evolve_with_retry() wrapper, TASK_EXECUTION_COMPLETE event + reactive handler, proactive_procedure_scan() (Tier 1.5), _attempt_procedure_evolution() DRY helper, 43 tests</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-534b: Fallback Learning — metric semantics fix, near-miss capture (4 types), service recovery (_decide_via_llm + _run_llm_fallback), PROCEDURE_FALLBACK_LEARNING event + queue, evolve_fix_from_fallback(), Dream Step 7d, 68 tests</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-534c: Multi-Agent Replay Dispatch — ProcedureStep.resolved_agent_type, compound detection, _execute_compound_replay() orchestrator, _resolve_step_agent() resolution chain, zero-token _handle_compound_step_replay(), sequential dispatch, unavailability fallback, 54 tests</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-535: Graduated Compilation Levels — Five Dreyfus levels (Novice→Guided→Validated→Autonomous→Expert), trust-clamped, consecutive_successes promotion, demotion to Level 2, PROCEDURE_MIN_COMPILATION_LEVEL=2, postcondition validation, 62 tests. 449 total Cognitive JIT tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-536: Trust-Gated Procedure Promotion — ProcedureCriticality enum, classify_criticality(), two-tier approval routing (dept chief / Captain), 6 promotion columns + migration, Level 5 Expert gating, /procedure shell commands, API endpoints, rejection learning. 64 tests. 460 total Cognitive JIT tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-537: Observational Learning — Three learning pathways: observation (Ward Room dream Step 7e, Level 1 entry), teaching (Level 5 promoted via DM, Level 2 entry), direct (existing). COMPILATION_MAX_LEVEL=5. Procedure.learned_via/learned_from fields. extract_procedure_from_ward_room_thread(). /procedure teach + observed commands. API endpoints. 52 tests. 512 total Cognitive JIT tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-538: Procedure Lifecycle Management — Ebbinghaus decay, archival, ChromaDB dedup, merge. 53 tests. 565 total Cognitive JIT tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-539: Gap → Qualification Pipeline — Multi-source gap detection, classification, Skill Framework bridge, qualification triggering, progress tracking. 53 tests. 618 total Cognitive JIT tests. Cognitive JIT pipeline COMPLETE (9/9).</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-099: Trust Engine Concurrency Safety — asyncio.Lock, BEGIN IMMEDIATE transactions, WAL mode, dream consolidation routed through record_outcome(), shutdown race fix. 18 tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-558: Trust Cascade Dampening — Three-layer trust protection: progressive dampening (geometric 1.0/0.75/0.5/0.25), hard trust floor (0.05), network circuit breaker (M agents × N departments). Event emission centralized. Counselor cascade integration. 45 tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-557: Emergence Metrics — Information-theoretic collaborative intelligence measurement via PID (Williams-Beer I_min). Pairwise synergy, Coordination Balance, ToM effectiveness, Hebbian-synergy correlation, groupthink/fragmentation risk detection. Dream Step 9. Pure Python math. 57 tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-560: Science Department Expansion — Analytical Pyramid. Three new crew: Data Analyst (Rahda), Systems Analyst (Dax), Research Specialist (Brahms). Organization ontology, crew profiles, standing orders, department protocols, skills templates, agent classes, registration. 57 tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-101/102: Crew Identity &amp; Self-Awareness — _resolve_callsign() with birth cert fallback, commissioning awareness in temporal context (age &lt; 300s), cold-start system note in ward_room_notification, Ship's Computer auto-welcome for new crew on warm boot. BF-103 DROPPED (misdiagnosis). 24 tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-540: Memory Provenance Boundary — SHIP MEMORY boundary markers + [observed]/[training]/[inferred] standing order</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-541: Memory Integrity MVP — MemorySource enum, EventLog verification at recall, reliability hierarchy standing order</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-541b–f: Memory Consolidation Integrity (6/6 pillars) — reconsolidation protection, spaced retrieval therapy, guided reminiscence, content hashing (SHA-256), eviction audit trail (append-only SQLite)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-103: Episodic Memory Agent ID Mismatch — sovereign ID normalization + startup migration. 16 tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-550–555: Notebook Quality Pipeline (6/6) — dedup/read-before-write, dream Step 7g consolidation, self-repetition detection, quantitative baseline auto-capture, cross-agent convergence detection, quality metrics &amp; dashboarding</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> Cognitive Self-Regulation Wave COMPLETE (7/7) — temporal context (AD-502), Counselor activation (AD-503), auto-assessment (AD-495), self-monitoring (AD-504), therapeutic intervention (AD-505), graduated response (AD-506a), peer repetition &amp; tier credits (AD-506b)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-566a–f: Qualification Program (6/6) — psychometric infrastructure, Tier 1 baselines (4 probes), Tier 2 domain tests (5 probes), drift detection pipeline, Tier 3 collective tests (5 probes), /qualify shell command</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-104: Display Crew Agent Count — registry.crew_count(), shell/status/API shows crew not total services</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-567a: Episode Anchor Metadata — AnchorFrame dataclass (10 fields, 5 dimensions), 15 creation sites wired, ChromaDB serialization</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-567b: Anchor-Aware Recall — RecallScore composite scoring, FTS5 keyword sidecar, anchor context headers, SECONDHAND source, recall_weighted() API</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-567c: Anchor Quality &amp; Integrity — Johnson-weighted confidence, RPMS gating, per-agent AnchorProfile, SIF integrity checks, drift classification (absorbs AD-567e)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-567d: Anchor-Preserving Dream Consolidation — provenance composition through dream pipeline (absorbs AD-559), ACT-R activation lifecycle (absorbs AD-462b), ActivationTracker, dream Step 12 pruning, micro-dream replay. 31 tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-567f: Social Verification Protocol — cross-agent claim verification, corroboration scoring, cascade confabulation detection. Privacy-preserving (metadata, not content). Anchor independence discriminates corroboration from cascade. Ward Room integration, Bridge Alerts, Counselor DMs. 28 tests. (absorbs AD-462d)</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-567g: Cognitive Re-Localization — structured orientation at boot (cold start/warm boot/proactive supplement). OrientationService, OrientationContext, derive_watch_section(). Anchor field gap fixes. Subsumes BF-034 cold-start note. Final AD in Memory Anchoring lineage. 28 tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-108: LLM Unreachable — No Runtime Visibility — MockLLMClient.get_health_status() reports mock/offline, runtime.llm_is_mock property, chat endpoint shows explicit offline message, self-mod suppressed when mock</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> BF-109: Qualification Probe Param Key Mismatch — _send_probe() used "message" key but perceive() reads "text". All prior probe results unreliable. One-line fix.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-526a: Social Channels + Tic-Tac-Toe — Recreation &amp; Creative channels, GameEngine protocol, TicTacToeEngine, RecreationService, proactive CHALLENGE/MOVE actions (Lieutenant+ gated), Ship's Records game recording. 10 files, 47 tests.</div>
+      <div class="tl-item done"><span class="tl-check">✓</span> AD-570: Anchor-Indexed Episodic Recall — 4 anchor fields promoted to ChromaDB metadata, recall_by_anchor() API (enumeration + semantic re-ranking), one-time migration. 2 files, 23 tests.</div>
+      <div class="tl-item">Communications — channel adapters, mobile PWA, voice interaction (AD-472–474)</div>
+      <div class="tl-item">Naval Organization — qualifications, 3M, damage control, SORM (AD-477)</div>
+      <div class="tl-item">Captain's Yeoman — personal AI assistant front door (AD-359, Phase 36)</div>
+    </div>
+  </div>
+  <div class="tl-era">
+    <div class="tl-era-dot future"></div>
+    <div class="tl-era-head">
+      <span class="tl-era-title">Era VI: The Nooplex</span>
+      <span class="tag t-planned">Future</span>
+      <span class="tl-era-sub">Long Horizon · Emergent meta-intelligence from federated mesh</span>
+    </div>
+    <div class="tl-items">
+      <div class="tl-item">Federation hardening — multi-node stability, partition healing, gossip convergence</div>
+      <div class="tl-item">The Nooplex — emergent meta-intelligence from federated mesh population</div>
+      <div class="tl-item">Multi-user / multi-tenant — multiple Captains on the bridge</div>
+      <div class="tl-item">Agent Sharing Ecosystem — decentralized agent marketplace</div>
+    </div>
+  </div>
+
+</div>
+</div>
+</div><!-- /tab-timeline -->
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- TAB: COMPLETED -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="tab-completed" class="tab-pane">
+
+  <div style="max-width:820px">
+
+    <div class="section-head" style="margin-bottom:0.75rem">
+      <span class="section-label sl-green">Era IV: Evolution — AD milestones</span>
+      <span class="section-rule"></span>
+      <span class="section-count">Most recent first</span>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-526a</div>
+        <div class="ci-title">Social Channels + Tic-Tac-Toe</div>
+        <div class="ci-tests">47 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Agent recreation framework. Recreation &amp; Creative default Ward Room channels with auto-subscription. GameEngine protocol (7 methods, @runtime_checkable) + TicTacToeEngine (9-cell board, win/draw detection, ASCII rendering). RecreationService (game lifecycle, thread routing, Ship's Records integration, GAME_COMPLETED event). Proactive integration: Recreation channel context gathering, [CHALLENGE @callsign game_type] and [MOVE position] action extraction with rank gating (Lieutenant+). 3 new files, 7 modified.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-570</div>
+        <div class="ci-title">Anchor-Indexed Episodic Recall</div>
+        <div class="ci-tests">23 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Structured AnchorFrame queries alongside semantic search. Promotes 4 anchor fields (department, channel, trigger_type, trigger_agent) to top-level ChromaDB metadata for native where-clause filtering. One-time startup migration backfills existing episodes. recall_by_anchor() API with two modes: enumeration (structured filters via .get(), no embedding) and semantic re-ranking (structured + vector similarity via .query()). Post-retrieval agent_id filtering, activation tracking, hash verification. 2 files modified.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-567g</div>
+        <div class="ci-title">Cognitive Re-Localization</div>
+        <div class="ci-tests">28 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Structured orientation at boot time. Three lifecycle modes: cold start (identity + cognitive grounding + first duty), warm boot (stasis summary + re-orientation), diminishing proactive supplement (600s window). OrientationService, OrientationContext, derive_watch_section(). Anchor field gap fixes: watch_section, event_log_window, Ward Room department. Subsumes BF-034 cold-start note. Final AD in Memory Anchoring lineage (567a→g). O'Keefe &amp; Nadel cognitive map theory, Tulving encoding specificity.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-108</div>
+        <div class="ci-title">LLM Unreachable — No Runtime Visibility</div>
+        <div class="ci-tests">0 new tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">MockLLMClient.get_health_status() returns overall:"mock" with all tiers offline. runtime.llm_is_mock property. Chat endpoint returns explicit "LLM offline" message instead of triggering self-mod. /system/services correctly reports LLM Proxy as offline when mock. 4 files modified. User-reported: "Hello" showed Build Agent buttons instead of greeting.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-109</div>
+        <div class="ci-title">Qualification Probe Param Key Mismatch</div>
+        <div class="ci-tests">0 new tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">_send_probe() used params={"message":...} but CognitiveAgent.perceive() reads params.get("text"). Agents received "Captain says: " with no question — all Tier 1/2 probe results unreliable. One-line fix. First real qualification run: 130/131 pass (99.2%), 15 agents. Medical diagnostic reasoning shows real differentiation (0.583–0.867). Builder 0.835, Engineering 0.915 on code quality. 14/14 confabulation rejection.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-567f</div>
+        <div class="ci-title">Social Verification Protocol</div>
+        <div class="ci-tests">28 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cross-agent claim verification with privacy-preserving corroboration scoring and cascade confabulation detection. Absorbs AD-462d. Agents see metadata (WHO, WHEN, HOW MANY) not content. Anchor independence discriminates genuine corroboration from cascade propagation. Ward Room integration (fires after AD-506b peer similarity). Bridge Alerts on medium/high risk. Counselor therapeutic DMs on high risk. SocialVerificationConfig. Johnson &amp; Raye reality monitoring + circular reporting detection.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-567d</div>
+        <div class="ci-title">Anchor-Preserving Dream Consolidation</div>
+        <div class="ci-tests">31 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Provenance composition through dream pipeline (absorbs AD-559). ACT-R activation-based memory lifecycle (absorbs AD-462b). ActivationTracker with SQLite access log. Dream Step 12 activation pruning. Micro-dream replay reinforcement. Recall access recording.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-567c</div>
+        <div class="ci-title">Anchor Quality &amp; Integrity</div>
+        <div class="ci-tests">28 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Johnson-weighted confidence scoring (5 dimensions). RPMS confidence gating. Per-agent AnchorProfile for Counselor diagnostics. SIF check_anchor_integrity(). Drift classification (specialization/concerning/unclassified). Absorbs AD-567e.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-567b</div>
+        <div class="ci-title">Anchor-Aware Recall</div>
+        <div class="ci-tests">24 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">RecallScore composite scoring. FTS5 keyword search sidecar. Anchor context headers in memory formatting. SECONDHAND source wiring. recall_weighted() API with budget enforcement. Absorbs AD-462a.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-567a</div>
+        <div class="ci-title">Episode Anchor Metadata</div>
+        <div class="ci-tests">22 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">AnchorFrame dataclass (10 fields, 5 dimensions: temporal, spatial, social, causal, evidential). All 15 episode creation sites wired. ChromaDB serialization round-trip. Content hash exclusion. Backwards compatible.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-104</div>
+        <div class="ci-title">Display Crew Agent Count</div>
+        <div class="ci-tests">4 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">registry.crew_count() added. Shell prompt, status panel, API, and working memory all show crew count instead of total services.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-566a–f</div>
+        <div class="ci-title">Qualification Program</div>
+        <div class="ci-tests">82 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">6/6 complete. Psychometric infrastructure (AD-566a), Tier 1 baselines — 4 probes: Personality, EpisodicRecall, Confabulation, Temperament (AD-566b), Tier 2 domain — 5 probes: TheoryOfMind, Compartmentalization, DiagnosticReasoning, AnalyticalSynthesis, CodeQuality (AD-566d), drift detection pipeline with z-score engine (AD-566c), Tier 3 collective — 5 probes: CoordinationBreakeven, ScaffoldDecomposition, CollectiveIntelligence, ConvergenceRate, EmergenceCapacity (AD-566e), /qualify shell command (AD-566f).</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-541b–f</div>
+        <div class="ci-title">Memory Consolidation Integrity</div>
+        <div class="ci-tests">48 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">6/6 pillars complete. Reconsolidation protection (read-only framing), spaced retrieval therapy (active recall practice), guided reminiscence (therapeutic sessions), content hashing (SHA-256 per-episode, SIF integration), eviction audit trail (append-only SQLite, all deletion paths audited, survives reset).</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-103</div>
+        <div class="ci-title">Episodic Memory Agent ID Mismatch</div>
+        <div class="ci-tests">16 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Orphaned episodes from mixed slot IDs vs sovereign IDs. resolve_sovereign_id() + resolve_sovereign_id_from_slot() helpers. All 4 storage paths normalized. Startup migration via migrate_episode_agent_ids(). Crew-identified: Vega (Security).</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-550–555</div>
+        <div class="ci-title">Notebook Quality Pipeline</div>
+        <div class="ci-tests">62 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">6/6 complete. Dedup/read-before-write (AD-550), dream Step 7g consolidation + cross-agent convergence (AD-551), self-repetition detection extending AD-506b (AD-552), quantitative baseline auto-capture (AD-553), real-time convergence detection + Bridge notification (AD-554), quality metrics &amp; dashboarding (AD-555). Key finding: iatrogenic trust detection — 3 agents from 2 departments independently converged on same diagnosis through different professional lenses.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-101/102</div>
+        <div class="ci-title">Crew Identity &amp; Self-Awareness</div>
+        <div class="ci-tests">24 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Three fixes for crew identity and commissioning awareness. BF-101: _resolve_callsign() helper with identity registry (birth certificate) fallback — agents use chosen callsign from naming ceremony, not YAML seed. BF-102 Part A: commissioning awareness in temporal context when agent age &lt; 300s (Westworld Principle). BF-102 Part B: cold-start system note in ward_room_notification handler prevents fabricated memory references. Enhancement: batched "New Crew Aboard" auto-welcome thread from Ship's Computer on warm boot. BF-103 DROPPED (misdiagnosis — was Captain's All Hands post, not system thread mode).</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-560</div>
+        <div class="ci-title">Science Department Expansion</div>
+        <div class="ci-tests">57 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Analytical Pyramid — three new Science crew. Data Analyst (Rahda): telemetry baselines, anomaly detection, quantitative reporting. Systems Analyst (Dax): emergence analysis, cross-system pattern synthesis, AD-557 consumer. Research Specialist (Brahms): directed investigation, formal research reports, evidence-based methodology. Modeled after USN Operations Specialist / ORSA / NRL Scientist. Organization ontology, crew profiles (Big Five personality), personal standing orders, department protocols, skills templates, CognitiveAgent subclasses, spawner registration.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-557</div>
+        <div class="ci-title">Emergence Metrics</div>
+        <div class="ci-tests">57 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Information-theoretic collaborative intelligence measurement via Partial Information Decomposition (Riedl 2025). Williams-Beer I_min decomposition into Unique(i), Unique(j), Redundancy, Synergy. Pairwise synergy → Emergence Capacity (median). Coordination Balance (S×R interaction). ToM effectiveness via complementarity trend. Hebbian-synergy correlation. Groupthink/fragmentation risk detection with Counselor integration. Dream Step 9. API endpoints /emergence, /emergence/history. VitalsMonitor integration. Pure Python — zero external math dependencies.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-558</div>
+        <div class="ci-title">Trust Cascade Dampening</div>
+        <div class="ci-tests">45 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Three-layer trust protection: (1) Progressive dampening — geometric weight reduction (1.0, 0.75, 0.5, 0.25) for consecutive same-direction updates per agent, cold-start scaling raises floor to 0.5 when observations &lt; 20. (2) Hard trust floor (0.05) — negative updates absorbed below floor, positive always apply. (3) Network circuit breaker — M agents across N departments with anomalous delta (&gt;0.15) trips global dampening (0.5×) + Counselor alert. Event emission centralized into record_outcome() via injectable callback. TrustDampeningConfig in SystemConfig. TRUST_CASCADE_WARNING event type. Counselor subscribes for cascade wellness sweeps.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-099</div>
+        <div class="ci-title">Trust Engine Concurrency Safety</div>
+        <div class="ci-tests">18 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Critical bug fix. asyncio.Lock on TrustNetwork, BEGIN IMMEDIATE transactions for _save_to_db(), WAL mode + busy_timeout on both TrustNetwork and HebbianRouter, dream consolidation routed through record_outcome() with source parameter, shutdown race fix (cancel + await flush task). Prerequisite for AD-558.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-539</div>
+        <div class="ci-title">Gap → Qualification Pipeline</div>
+        <div class="ci-tests">618 Cognitive JIT tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT pipeline COMPLETE (9/9). Multi-source gap detection (execution failures, near-misses, fallback learning, observational gaps, cross-agent comparisons), gap classification (missing_step/wrong_parameter/context_gap/edge_case/integration_gap), Skill Framework bridge (gap→skill requirement mapping), qualification program triggering (GapToQualificationBridge), progress tracking with completion criteria. 53 tests.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-538</div>
+        <div class="ci-title">Procedure Lifecycle Management</div>
+        <div class="ci-tests">565 Cognitive JIT tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 14/14. Ebbinghaus-inspired decay (half-life configurable, skip Level 5), archival policy (max_age_days, max_archived), ChromaDB semantic dedup (cosine similarity threshold), procedure merge (combine steps/metadata from overlapping procedures). Dream Step 7f lifecycle maintenance. 53 tests.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-537</div>
+        <div class="ci-title">Observational Learning</div>
+        <div class="ci-tests">512 Cognitive JIT tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 13/13. Bandura's social learning theory implemented. Three learning pathways: (1) Observation — dream Step 7e scans Ward Room threads, LLM extracts procedures from narratives (OBSERVATION_MIN_DETAIL_SCORE=0.6), enters Level 1 Novice with learned_via=observational. (2) Teaching — Level 5 promoted procedures taught via /procedure teach or API, enters Level 2 Guided with learned_via=taught. (3) Direct (existing) with learned_via=direct. COMPILATION_MAX_LEVEL raised 4→5. Config: OBSERVATION_MIN_TRUST=0.5, OBSERVATION_MAX_THREADS_PER_DREAM=20, OBSERVATION_WARD_ROOM_LOOKBACK_HOURS=24, TEACHING_MIN_COMPILATION_LEVEL=5, TEACHING_MIN_TRUST=0.85. Procedure dataclass gains learned_via/learned_from fields. New API: GET /procedures/observed, POST /procedures/teach. Shell: /procedure teach, /procedure observed. extract_procedure_from_ward_room_thread() in procedures.py. 52 tests across 7 files.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-536</div>
+        <div class="ci-title">Trust-Gated Procedure Promotion</div>
+        <div class="ci-tests">460 Cognitive JIT tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 12/12. ProcedureCriticality enum (LOW/MEDIUM/HIGH/CRITICAL) with classify_criticality() using keyword + cross-department + destructive-command detection. Promotion eligibility: Level 4+ compilation, min success count/rate/trust (PROMOTION_MIN_* constants). Two-tier approval routing: _route_promotion_approval() routes LOW/MEDIUM to department chief (_DEPARTMENT_CHIEFS mapping), HIGH/CRITICAL to Captain via Bridge. ProcedureStore: 6 promotion columns via migration, 6 new methods (request/approve/reject/get_pending/get_status/get_promoted). Level 5 Expert unlock via _max_compilation_level_for_promoted(). Shell commands: /procedure list-pending, approve, reject, list-promoted. API endpoints: GET/POST /procedures/*. Rejection learning stores feedback as institutional knowledge. 64 tests across 7 files.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-535</div>
+        <div class="ci-title">Graduated Compilation Levels</div>
+        <div class="ci-tests">449 Cognitive JIT tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 11/11. Five Dreyfus-inspired compilation levels: Level 1 Novice (full LLM), Level 2 Guided (_build_guided_decision + _format_procedure_as_hints, ~40% token reduction), Level 3 Validated (_build_validated_decision + _validate_replay_postconditions, per-step compound validation, ~80% token reduction), Level 4 Autonomous (zero tokens), Level 5 Expert (deferred). Trust clamping via _max_compilation_level_for_trust(). Promotion via consecutive_successes tracking (configurable threshold). Demotion to Level 2 on any failure. PROCEDURE_MIN_COMPILATION_LEVEL changed 1→2. ProcedureStore: consecutive_successes column, 4 new methods, migration. 7 new config constants. 62 tests across 9 classes.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-534c</div>
+        <div class="ci-title">Multi-Agent Replay Dispatch</div>
+        <div class="ci-tests">387 Cognitive JIT tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 10/10. ProcedureStep.resolved_agent_type populated at extraction via _resolve_agent_roles(). Compound detection in _check_procedural_memory() (2+ steps with resolved types). _execute_compound_replay() orchestrates sequential dispatch. _resolve_step_agent() resolution chain: pool → capability → fallback. Zero-token _handle_compound_step_replay() intent handler. _format_single_step() DRY extraction. COMPOUND_STEP_TIMEOUT_SECONDS=10.0. Unavailability → single-agent text fallback. handle_intent() compound branch. Step postcondition validation deferred to AD-535. 54 tests across 9 classes.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-534b</div>
+        <div class="ci-title">Fallback Learning</div>
+        <div class="ci-tests">333 Cognitive JIT tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 9/9 enrichments. 8 parts: metric semantics fix (record_completion/fallback moved to handle_intent), near-miss capture (_last_fallback_info at 4 rejection points: score_threshold, quality_gate, negative_veto, format_exception), service recovery (_decide_via_llm extracted, _run_llm_fallback for transparent retry), PROCEDURE_FALLBACK_LEARNING event + in-memory queue (max 50), evolve_fix_from_fallback() with _FALLBACK_FIX_SYSTEM_PROMPT, Dream Step 7d (_process_fallback_learning), DreamReport gains fallback_evolutions + fallback_events_processed. Deactivation rules: execution_failure → deactivate parent, near-miss → keep active, negative_veto → extraction candidate. 68 tests across 9 classes.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-532e</div>
+        <div class="ci-title">Reactive &amp; Proactive Extraction Triggers</div>
+        <div class="ci-tests">4811 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 8/9. Two new trigger paths beyond dream consolidation. Reactive: TASK_EXECUTION_COMPLETE event emitted from CognitiveAgent.handle_intent(), DreamingEngine.on_task_execution_complete() matches intent to procedures, diagnoses health, LLM-gates evolution. Rate-limited per agent (60s cooldown). Proactive: DreamScheduler Tier 1.5 runs proactive_procedure_scan() every 5 min, scans all active procedures via diagnose_procedure_health(). Shared: confirm_evolution_with_llm() gate (YES-only, conservative), evolve_with_retry() wrapper (max 3, retry_hint propagation), _attempt_procedure_evolution() DRY helper. Dream Step 7b unchanged (no confirmation gate). DreamReport gains proactive_evolutions + reactive_flags. 43 tests across 7 classes.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-532d</div>
+        <div class="ci-title">Multi-Agent Compound Procedures</div>
+        <div class="ci-tests">4766 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 7/9. ProcedureStep gains optional agent_role field (default "", backward compatible). _COMPOUND_SYSTEM_PROMPT + extract_compound_procedure_from_cluster() — LLM generalizes agent IDs to functional roles, captures cross-agent handoff points. Dream Step 7 routes multi-agent clusters (len(participating_agents) >= 2) to compound extraction, single-agent to standard. Replay formatting includes [agent_role] annotations. DRY: reuses _format_episode_blocks(), _parse_procedure_json(), _build_steps_from_data(). 30 tests across 6 classes. Multi-agent replay dispatch deferred to AD-534c.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-532c</div>
+        <div class="ci-title">Negative Procedure Extraction</div>
+        <div class="ci-tests">4741 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 6/9. extract_negative_procedure_from_cluster() with _NEGATIVE_SYSTEM_PROMPT — extracts anti-patterns from failure-dominant clusters (&gt;50% negative outcomes). Contradiction enrichment from AD-403 detector feeds context into extraction prompt. Dream cycle Step 7c: iterates failure-dominant clusters, queries contradiction_detector for matching contradictions, passes both to LLM extraction. Produces Procedure(is_negative=True) stored via ProcedureStore in anti-patterns directory. DreamReport.negative_procedures_extracted field. DRY: reuses _format_episode_blocks(), _parse_procedure_json(), _build_steps_from_data(). 31 new tests across 5 test classes (extraction, contradiction enrichment, dream integration, DreamReport, end-to-end).</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-532b</div>
+        <div class="ci-title">Procedure Evolution (FIX/DERIVED)</div>
+        <div class="ci-tests">4559 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 5/9. EvolutionResult dataclass. Shared diagnose_procedure_health() (DRY — CognitiveAgent + DreamingEngine). _format_episode_blocks() DRY helper (CAPTURED/FIX/DERIVED). _FIX_SYSTEM_PROMPT + evolve_fix_procedure(): deactivate parent, generation+1, re-extract from fresh episodes via recall_by_intent(). _DERIVED_SYSTEM_PROMPT + evolve_derived_procedure(): multi-parent specialization, parents stay active, compilation_level=max(parents)-1. content_diff via difflib.unified_diff(), change_summary from LLM. Anti-loop guard (_addressed_degradations, 72h cooldown). Dream cycle Step 7b _evolve_degraded_procedures(). ProcedureStore.save() enhanced with content_diff/change_summary kwargs + get_evolution_metadata(). DreamReport procedures_evolved field. CognitiveAgent refactored to shared function. 48 new tests, checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-534</div>
+        <div class="ci-title">Replay-First Dispatch</div>
+        <div class="ci-tests">4556 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 4/9 — MINIMUM VIABLE SLICE COMPLETE (AD-531→532→533→534). _check_procedural_memory() in CognitiveAgent.decide(): semantic match via ProcedureStore.find_matching(), quality metrics dispatch (effective_rate, completion_rate), 4-stage metric recording (selection/applied/completion/fallback). Negative procedure guard warns and forces LLM path. _format_procedure_replay() returns formatted steps as llm_output (zero tokens). _diagnose_procedure_health() implements 3 OpenSpace rules (log-only, no evolution). Journal procedure_id column. 8 config constants. BuilderAgent inherits via super(). Deferred: AD-534b (fallback learning). 35 new tests, cross-cutting checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-533</div>
+        <div class="ci-title">Procedure Store</div>
+        <div class="ci-tests">4475 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 3/9. Hybrid ProcedureStore: Ship's Records (Git-backed YAML, authoritative) + SQLite index (procedure_records + procedure_lineage_parents tables, Version DAG, 4 quality counters + 4 derived rates) + ChromaDB (semantic search collection). Procedure dataclass extended: is_active, generation, parent_procedure_ids, is_negative, superseded_by, tags + from_dict(). CRUD: save() to 3 backends, get(), list_active() with filters, has_cluster() dedup, delete(). find_matching() semantic search with SQLite enrichment. BFS lineage traversal up/down. deactivate() for FIX semantics. Thread-safe: _write_lock + WAL + foreign keys. Dream cycle Step 7 calls store.save(), cross-session dedup via has_cluster(). ConnectionFactory protocol (AD-542). 49 new tests, 49/49 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-532</div>
+        <div class="ci-title">Procedure Extraction</div>
+        <div class="ci-tests">4426 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 2/9. LLM client wired into DreamingEngine via init_dreaming() + runtime.py. Procedure + ProcedureStep dataclasses (full schema: preconditions, postconditions, invariants, compilation_level, provenance). extract_procedure_from_cluster() with AD-541b READ-ONLY framing, standard tier LLM, JSON parsing with markdown fence handling. Dream Step 7: filters success-dominant clusters, skips _extracted_cluster_ids, stores in-memory. DreamReport gains procedures_extracted + procedures fields. Gap prediction renumbered to Step 8. 29 new tests, 38/38 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-531</div>
+        <div class="ci-title">Episode Clustering &amp; Pattern Detection</div>
+        <div class="ci-tests">4400 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cognitive JIT 1/9. Dead code cleanup: strategy_extraction.py + test_strategy_extraction.py deleted, strategy_store_fn removed from DreamingEngine/startup/runtime, DreamAdapter.store_strategies() removed. EpisodeCluster dataclass + cluster_episodes() pure function (agglomerative, average-linkage, cosine distance). EpisodicMemory.get_embeddings() for ChromaDB retrieval. Dream Step 6 replaced: embeddings → clustering → in-memory storage. DreamReport.strategies_extracted → clusters_found + clusters. Log-and-degrade on failure. 40 new tests, 24/24 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-506b</div>
+        <div class="ci-title">Peer Repetition &amp; Tier Credits</div>
+        <div class="ci-tests">4374 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Self-Regulation Wave 7/7 — WAVE COMPLETE. BF-098 fix (_save_profile_and_assessment async). ZONE_RECOVERY event + proactive loop emission. check_peer_similarity() in create_thread()/create_post() — cross-agent repetition detection (detection, not suppression). PEER_REPETITION_DETECTED event. 4 tier credit fields on CognitiveProfile (self_correction, peer_detection, peer_caught, total). Counselor ZONE_RECOVERY + PEER_REPETITION handlers. Peer repetition Episode storage (intent=peer_repetition). Schema migration (5 ALTER TABLE). 32 new tests, 24/24 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-506a</div>
+        <div class="ci-title">Graduated System Response — Zone Model</div>
+        <div class="ci-tests">4341 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Self-Regulation Wave 6a/6. BF-097 fix (get_posts_by_author table names). CircuitBreakerConfig Pydantic model (13 tunable fields). CognitiveZone state machine (GREEN/AMBER/RED/CRITICAL). _compute_signals() refactor + _update_zone() transitions + time-based decay. SELF_MONITORING_CONCERN EventType + proactive loop emission. Zone-aware self-monitoring context for all Earned Agency tiers. Counselor amber zone handler + _classify_trip_severity() zone override + post-dream re-assessment. Standing orders reconciliation ([Clinical Authority] + [Cognitive Zones]). 39 new tests, 24/24 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-505</div>
+        <div class="ci-title">Counselor Therapeutic Intervention</div>
+        <div class="ci-tests">4302 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Self-Regulation Wave 5/6. BF-096 fix (ward_room_router wiring race). _send_therapeutic_dm() rate-limited DMs. Trigger-specific therapeutic templates. Cooldown reason tracking (set_agent_cooldown reason= param). counselor_recommendation BridgeAlert. COUNSELOR_GUIDANCE directive issuance (24h, max 3). _apply_intervention() orchestrator. 40 new tests, 18/18 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-504</div>
+        <div class="ci-title">Agent Self-Monitoring Context</div>
+        <div class="ci-tests">4263 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Self-Regulation Wave 4/6. Jaccard DRY to similarity.py. get_posts_by_author() query. _build_self_monitoring_context() (8 capabilities). Earned Agency TIER_CONFIG scaling. [READ_NOTEBOOK] two-cycle pattern. Memory state calibration. Standing orders [Self-Monitoring] section. 45 new tests, 14/14 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-495</div>
+        <div class="ci-title">Circuit Breaker → Counselor Bridge</div>
+        <div class="ci-tests">4217 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Self-Regulation Wave 3/6. Trip reason tracking (velocity/rumination/both). _classify_trip_severity() 4-level escalation (AD-506 override point). Ward Room posting via BridgeAlert pipeline. DRY _save_profile_and_assessment() helper. Trigger values fixed. 27 new tests, 5 classes, 10/10 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-503</div>
+        <div class="ci-title">Counselor Activation — Data Gathering &amp; Profile Persistence</div>
+        <div class="ci-tests">4196 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Self-Regulation Wave 2/6. Type-filtered event subscriptions (reusable infra). 3 new EventTypes + typed dataclasses. CounselorProfileStore (SQLite, ConnectionFactory). _gather_agent_metrics(), _run_wellness_sweep(), event-driven assessment. InitiativeEngine dead wire lit up. 6 REST endpoints. 61 new tests, 11 test classes, 24/24 checklist PASS.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-091</div>
+        <div class="ci-title">Mock Discipline Phase 2 — Spec Coverage</div>
+        <div class="ci-tests">4094 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Wave 6: Mock spec compliance 22.6% → 51.9% (+222 spec'd mocks across 19 files). 3 real bugs caught by spec= (BF-078 class): BaseLLMClient.generate() phantom → complete(), TrustNetwork.get_trust()/get_trust_score() phantoms → get_record()/get_score(). Mock Discipline scorecard C-→B.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-092</div>
+        <div class="ci-title">Trust Threshold Constants &amp; DRY Cleanup</div>
+        <div class="ci-tests">4091 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Wave 6: 19 named trust constants in config.py replacing ~30 magic numbers across 9 files. format_trust() utility replacing 52+ round(x,4) calls across 13 files. EventEmitterMixin in protocols.py deduplicating 4 identical _emit() methods (assignment, persistent_tasks, workforce, ward_room). DRY scorecard B→A-.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-090</div>
+        <div class="ci-title">Exception Audit Phase 2 — Silent Swallows</div>
+        <div class="ci-tests">4093 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Wave 6: 71 silent except Exception: pass fixed (43 logger.debug, 4 narrowed to sqlite3.OperationalError, 24 justified with comments). 42 bare catches without as e fixed (exc_info=True added). DRY helper _safe_log_event() extracted in feedback.py. Exception Handling scorecard C→B+.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-542</div>
+        <div class="ci-title">Abstract Database Connection Interface</div>
+        <div class="ci-tests">+10 py · 4094 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Wave 6: DatabaseConnection + ConnectionFactory Protocols. SQLiteConnectionFactory singleton. 12 production modules refactored with constructor injection (acm, assignment, trust, identity, persistent_tasks, routing, journal, skill_framework ×2, event_log, ward_room, workforce). Zero aiosqlite.connect() outside sqlite_factory.py. Unblocks commercial Cloud-Ready Storage.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-089</div>
+        <div class="ci-title">Emergent Detector False Positives</div>
+        <div class="ci-tests">4094 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Wave 6: Crew-reported trust anomaly false positives (Forge + Reyes). Adaptive baselines with rolling mean/stddev, temporal smoothing buffer, configurable sustain window. Normal Hebbian weight adjustments no longer flagged as pathological.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-516</div>
+        <div class="ci-title">Extract api.py into FastAPI Routers</div>
+        <div class="ci-tests">+1 py · 4040 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Wave 3 decomposition: extracted 122 routes from api.py into 16 FastAPI router modules (3,109 → 295 lines, −90.5%). Depends(get_runtime) pattern replaces closure state. WebSocket stays in api.py. Ward Room route prefix unified. deps.py, api_models.py shared infrastructure.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-515</div>
+        <div class="ci-title">Extract runtime.py Modules</div>
+        <div class="ci-tests">+106 py · 4039 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Wave 3 decomposition: extracted 5 modules from runtime.py god object (5,321 → 4,102 lines, −23%). ward_room_router.py (567), agent_onboarding.py (365), self_mod_manager.py (331), dream_adapter.py (297), warm_boot.py (279), crew_utils.py (26). Constructor injection throughout. Zero behavior changes, zero regressions. AD-521 decided: SWE/Build Pipeline Separation (Model A).</div>
+    </div>
+
+    <div class="completed-item">
+        <div class="ci-title">Service Protocols + Public APIs + BF-071–076</div>
+        <div class="ci-tests">+60 py · 3933 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Wave 3 start: 7 typing.Protocol definitions, public API wrappers on 17 target objects replacing 47 private-access patterns. BF-071–075: code review waves 1+2 (safety hardening, code hygiene, exception audit). BF-076: quality fixes from principles audit (runtime bug, type tightening, structured logging, duplicate resolution, boundary tests). Engineering Principles Stack codified in copilot instructions.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-498</div>
+        <div class="ci-title">Work Type Registry &amp; Templates</div>
+        <div class="ci-tests">+45 py +8 ts · 3942 py · 149 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Formal per-type state machines (card/task/work_order/duty/incident) with validated transitions. WorkTypeRegistry enforces per-type rules, unknown types permissive for backward compatibility. 8 built-in templates (security scan, diagnostics, code review, night orders). TemplateStore with variable substitution, config-driven custom types/templates. REST API endpoints for types and templates. UI template pickers in WorkBoard and ProfileWorkTab. Night Orders bridge to AD-471.</div>
+    </div>
+
+    <div class="completed-item">
+        <div class="ci-title">Work Tab &amp; Scrumban Board — HXI Surface</div>
+        <div class="ci-tests">+14 ts +3 py · 3730 py · 141 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Agent Profile Work Tab rewritten with active/blocked/completed/duty sections, create task form, reassign/cancel/retry actions. Crew Scrumban Board with 5 Kanban columns, HTML5 drag-and-drop, WIP limits, swim lanes, filters, quick create. WebSocket event broadcasts on all workforce mutations. Bookable resources in snapshot. Agent profile API includes work items and bookings.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-496</div>
+        <div class="ci-title">Workforce Scheduling Engine — Core Data Model</div>
+        <div class="ci-tests">+66 py · 3690 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Universal Resource Scheduling for AI agents. 7 core entities (WorkItem, BookableResource, ResourceRequirement, Booking, BookingTimestamp, BookingJournal, AgentCalendar). WorkItemStore (SQLite-backed). Push/pull assignment engine with capability+trust matching. Booking lifecycle with event-sourced timestamps and journal generation. 14 REST API endpoints. Runtime auto-registration of agents as BookableResources. AD-500/501 cleanup ADs created for deferred migration work.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-488</div>
+        <div class="ci-title">Cognitive Circuit Breaker + BF-060/061/062</div>
+        <div class="ci-tests">+18 py · 3624 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">CLOSED/OPEN/HALF_OPEN state machine. Velocity detection (event burst in time window) + Jaccard similarity detection (content rumination). Escalating cooldowns (15min → 1hr cap). Attention redirect prompts. Bridge alerts on trip. BF-060: regex notebook stripping. BF-061: reply rank gate + thread ID resolution. BF-062: bigram similarity + 10-post lookback.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-499</div>
+        <div class="ci-title">Ship &amp; Crew Naming Conventions</div>
+        <div class="ci-tests">design only</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Three-layer naming: ShipNameRegistry on commissioning, agent personal name + callsign coexistence (Option B), federated display format Name [ShipName]. Birth provenance as surname.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-040</div>
+        <div class="ci-title">Identity System Hardening — 13 Review Findings</div>
+        <div class="ci-tests">+8 py · 3569 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Critical: export_chain() credential attachment fix. High: input validation (DIDs, birth certs), asyncio.Lock on ledger, PRAGMA foreign_keys. Medium: eager genesis at commissioning, verify_chain() genesis previous_hash check, removed dead _cache. Low: slot mapping overwrite warning, DB index, documentation. 9 new + 1 updated test, 1 removed.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-441c</div>
+        <div class="ci-title">Asset Tags for Infrastructure/Utility + Boot Sequence Fix</div>
+        <div class="ci-tests">+6 py · 3572 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Two-tier identity: crew agents get sovereign birth certificates (W3C VCs), infrastructure/utility agents get lightweight AssetTags. Boot sequence fix: deferred crew identity until ship commissioned, post-commissioning sweep. GET /api/identity/assets endpoint. 6 new tests in test_agent_identity.py.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-441b</div>
+        <div class="ci-title">Ship Commissioning — Genesis Block with ShipBirthCertificate</div>
+        <div class="ci-tests">+6 py · 3408 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Ship commissioning ceremony: genesis block creation, ShipBirthCertificate W3C VC, ship DID (did:probos:{instance_id}), Identity Ledger hash-chain initialization. ACM issues ship identity at first boot. 6 new tests in test_agent_identity.py.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-418</div>
+        <div class="ci-title">Post-Reset Routing Degradation</div>
+        <div class="ci-tests">+9 py · 3324 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">agent_hint field on PersistentTask (idempotent migration). HebbianRouter get_preferred_targets() hint: +1.0 synthetic boost. Reset CLI warns about active scheduled tasks. PATCH /api/scheduled-tasks/{id}/hint endpoint.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-031</div>
+        <div class="ci-title">Cognitive Journal Schema Migration Ordering</div>
+        <div class="ci-tests">fix · 3324 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">CREATE INDEX on intent_id ran before ALTER TABLE ADD COLUMN. Split _SCHEMA into _SCHEMA_BASE + _SCHEMA_INDEXES. Startup: base → migration → dependent indexes.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-412</div>
+        <div class="ci-title">Crew Improvement Proposals Channel</div>
+        <div class="ci-tests">+13 py · 3315 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">#Improvement Proposals ship channel (auto-seeded, idempotent). [PROPOSAL] block extraction in proactive thinks (multiline rationale). _handle_propose_improvement() runtime handler. GET /api/wardroom/proposals with status filter. Captain endorse/shelve via existing Ward Room endorsements.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-432</div>
+        <div class="ci-title">Cognitive Journal Expansion — Traceability + Query Depth</div>
+        <div class="ci-tests">+15 py · 3302 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Schema: intent_id, dag_node_id, response_hash columns + idempotent migration. Traceability: intent_id plumbed from IntentMessage through perceive/decide. Time-range queries (since/until). Grouped token usage (by model/tier/agent/intent). Decision point anomaly detection. wipe() for reset. 2 new API endpoints + time-range params on existing.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-433</div>
+        <div class="ci-title">Selective Encoding Gate — Biologically-Inspired Memory Filtering</div>
+        <div class="ci-tests">+11 py · 3291 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">EpisodicMemory.should_store() static gate: always store Captain 1:1 + failures, block proactive no-response + QA routine passes + empty responses. Conservative default. Applied at 4 call sites (proactive, runtime, cognitive_agent). Memory Architecture Layer 2.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-029/030</div>
+        <div class="ci-title">Ward Room Recall Quality + execute_fetchone Fix</div>
+        <div class="ci-tests">+10 py · 3276 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">BF-029: Recall query enrichment with "Ward Room {callsign}" prefix, reversed input/reflection preference, body excerpts in reply reflections. BF-030: execute_fetchone() doesn't exist in aiosqlite — replaced with standard execute()+fetchone() pattern.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-431</div>
+        <div class="ci-title">Cognitive Journal — LLM Reasoning Trace Service</div>
+        <div class="ci-tests">+13 py · 3266 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Append-only SQLite store for every LLM call: agent, tier, model, prompt/completion tokens, latency, intent, cached. Instrumented decide() with timing. REST API: /api/journal/stats, /api/agent/{id}/journal, /api/journal/tokens. LLMResponse gained prompt_tokens + completion_tokens. Ship's Computer infrastructure service.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-415</div>
+        <div class="ci-title">Proactive Cooldown Persistence</div>
+        <div class="ci-tests">+10 py · 3253 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Per-agent cooldown overrides persist to KnowledgeStore (proactive/cooldowns.json). Write-through on set, restore on boot, persist on shutdown. Wiped on probos reset.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-027/028</div>
+        <div class="ci-title">Memory Recall Hardening</div>
+        <div class="ci-tests">+8 py · 3242 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Lowered agent recall threshold 0.7→0.3 (sovereign shard filter prevents leakage). Added recent_for_agent() fallback across all recall sites (cognitive_agent, proactive, shell). Fixed MockEpisodicMemory missing recall_for_agent().</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-430c</div>
+        <div class="ci-title">Memory Recall + Act-Store Lifecycle Hook (Pillars 4-5)</div>
+        <div class="ci-tests">+13 py · 3236 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">_recall_relevant_memories() between perceive/decide enriches observation with 3 episodes. _store_action_episode() after report stores universal post-action episodes. Dedup: skips proactive_think, ward_room, hxi_profile, captain DMs. All in CognitiveAgent base class.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-430b</div>
+        <div class="ci-title">HXI 1:1 Conversation Memory (Pillar 3)</div>
+        <div class="ci-tests">+19 py · 3223 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">HXI chat passes conversation history via session_history (capped at 10). Episode storage after each response. Cross-session recall via /api/agent/{id}/chat/history. ProfileChatTab seed memories on mount.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-430a</div>
+        <div class="ci-title">Experiential Memory Write Paths (Pillars 1-2)</div>
+        <div class="ci-tests">+8 py · 3204 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Proactive think episodes (successful + no-response) stored to EpisodicMemory. Ward Room thread creation + reply episodes for authoring agent. Runtime wires episodic_memory into WardRoomService. All storage non-critical (try/except).</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-416</div>
+        <div class="ci-title">Ward Room Archival &amp; Pruning</div>
+        <div class="ci-tests">+14 py · 3196 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">3-tier retention (7d regular, 30d endorsed, indefinite Captain). JSONL archival before deletion. Background prune loop with monthly rotation. Stats + dry-run API. Runtime cleanup on ward_room_pruned event.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-023</div>
+        <div class="ci-title">Degraded Agent Death Spiral</div>
+        <div class="ci-tests">+5 py · 3172 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Exception handler calls update_confidence(False). DEGRADED-&gt;ACTIVE recovery when confidence rises above 0.2. Degradation warning only on state transition.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-425</div>
+        <div class="ci-title">Ward Room Active Browsing</div>
+        <div class="ci-tests">+14 py · 3167 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cross-channel browse_threads(). Proactive context expanded to All Hands. Read receipts via update_last_seen(). Activity feed + mark-seen REST endpoints. Crew auto-subscribed to All Hands.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-424</div>
+        <div class="ci-title">Ward Room Thread Classification &amp; Lifecycle</div>
+        <div class="ci-tests">+19 py · 3153 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Three thread modes: INFORM (no notification), DISCUSS (relaxed earned agency, responder cap), ACTION (@mention). Bridge alerts → INFORM. SQLite schema migration. Thread lock/unlock. BF-022 closed.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-417</div>
+        <div class="ci-title">Dream Scheduler Proactive-Loop Awareness</div>
+        <div class="ci-tests">+9 py · 3145 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Full dreams gate on proactive activity — truly_idle = min(idle_time, proactive_idle). EmergentDetector skips micro-dream analysis during proactive-busy periods. proactive_extends_idle config toggle.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-419</div>
+        <div class="ci-title">Agent Duty Schedule &amp; Justification</div>
+        <div class="ci-tests">+13 py · 3118 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Plan of the Day for structured proactive cognition. DutyScheduleTracker with cron/interval support. Duty-first proactive loop. Default schedules per agent type. BF-021: duty hard gate (no LLM call when no duty due).</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">Ph-25a</div>
+        <div class="ci-title">Persistent Task Engine</div>
+        <div class="ci-tests">+33 py · 3105 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">SQLite-backed PersistentTaskStore with once/interval/cron scheduling. Webhook triggers, DAG checkpoint resume, SchedulerAgent integration. 6 REST endpoints. HXI store wiring.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-413</div>
+        <div class="ci-title">Fine-Grained Reset Scope + Ward Room Awareness</div>
+        <div class="ci-tests">+10 py · 3105 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Reset = day 0. Archives ward_room.db, clears checkpoints/events. --keep-wardroom flag. WardRoom.get_recent_activity(). Proactive loop now includes Ward Room department context.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-411</div>
+        <div class="ci-title">EmergentDetector Pattern Deduplication</div>
+        <div class="ci-tests">+9 py · 3095 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Cooldown-based dedup cache for trust anomalies, cooperation clusters, routing shifts. Stale entry pruning. create_pool() duplicate guard. Crew-discovered issue.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-410</div>
+        <div class="ci-title">Bridge Alerts — Proactive Captain &amp; Crew Notifications</div>
+        <div class="ci-tests">+31 py · 2996 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">5 signal processors (vitals, trust, emergent, behavioral, dedup). 3 severity levels. Ward Room thread creation as "Ship's Computer." First autonomous crew discussion achieved.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-408</div>
+        <div class="ci-title">Dynamic Assignment Groups — Backend</div>
+        <div class="ci-tests">+34 py · 2965 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">AssignmentService with SQLite. Bridge/away_team/working_group types. Ward Room channel auto-creation. 7 API endpoints. Sync snapshot cache.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-407</div>
+        <div class="ci-title">Ward Room — Agent Communication Fabric (4 phases)</div>
+        <div class="ci-tests">+109 py + 9 ts · 2965 py · 118 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Foundation (7 SQLite tables, 11 API routes, credibility), HXI Surface (420px drawer, channels, threading, endorsements), Agent Integration (crew responds to Captain posts), Agent-to-Agent (5-layer safety, depth cap, selective targeting).</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-406</div>
+        <div class="ci-title">Agent Profile Panel</div>
+        <div class="ci-tests">· 2822 py · 108 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Click-to-open floating profile with Chat, Work, Profile, Health tabs. 1:1 direct messaging. Personality traits, trust sparkline, Hebbian connections. Glass-morphism UI.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-405</div>
+        <div class="ci-title">Step-Level DAG Checkpointing</div>
+        <div class="ci-tests">+19 py · 2822 py · 99 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Checkpoint DAG execution state to JSON after each node. write/load/delete/scan/restore operations. DAGExecutor integration. Stale checkpoint detection at startup.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-404</div>
+        <div class="ci-title">Fix Windows-Specific Test Failures</div>
+        <div class="ci-tests">· 2822 py · 99 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Fixed 19 tests failing on Windows. Four groups: EscalationHook mock gaps, git skip guards, shell command agent Popen mock, worktree git fixture skip.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-403</div>
+        <div class="ci-title">Memory Contradiction Resolution</div>
+        <div class="ci-tests">+20 py · 2822 py · 99 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Deterministic contradiction detection in dream consolidation. Jaccard word-overlap similarity (0.85 threshold). Pairwise episode comparison for disagreeing outcomes. Dream cycle Step 3.5.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-402</div>
+        <div class="ci-title">Agent Behavioral Eval Framework — Phase 1</div>
+        <div class="ci-tests">+30 py · 2822 py · 99 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Golden-dataset driven quality tests for cognitive agents. 18 decomposer cases (single-intent, multi-step, conversational, edge cases). 12 code review cases (clean code, security vulnerabilities). Parametrized pytest runner with per-case pass/fail. Eval summary reporter.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-401</div>
+        <div class="ci-title">Structured Output Validation &amp; Auto-Retry</div>
+        <div class="ci-tests">+13 py · 2792 py · 99 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Shared json_extract.py utility with string-aware brace matching, &lt;think&gt; block stripping, markdown fence extraction. complete_with_retry() wraps LLM call + parse with error feedback and temperature escalation. Decomposer, CodeReviewer, Research retrofitted.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-400</div>
+        <div class="ci-title">Cross-Layer Import Lint Test</div>
+        <div class="ci-tests">+2 py · 2790 py · 99 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">AST-based pytest guard walks all src/probos/ files, extracts imports, maps to layers, fails on undocumented cross-layer edges. utils/core universally importable. Enforces AD-399 boundaries in CI.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-399</div>
+        <div class="ci-title">Cross-Layer Dependency Cleanup</div>
+        <div class="ci-tests">+12 py · 2776 py · 99 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">AST-based import analysis (124 files, 257 imports). embeddings.py→knowledge/, response_formatter.py→utils/, QAReport→types.py. 6 allowed edges documented. Foundation-tier types.py/config.py recognized.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-398</div>
+        <div class="ci-title">Crew Identity Alignment — Three-Tier Agent Architecture</div>
+        <div class="ci-tests">+33 py · 2764 py · 99 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Three-tier agent taxonomy (Infrastructure/Utility/Crew). Reclassified IntrospectAgent, VitalsMonitor, RedTeamAgent, SystemQA as infrastructure. New cognitive crew: SecurityAgent (Worf), OperationsAgent (O'Brien), EngineeringAgent (LaForge). 1:1 conversation fixes.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-397</div>
+        <div class="ci-title">Callsign Addressing — Targeted Dispatch & 1:1 Sessions</div>
+        <div class="ci-tests">+27 py · 2731 py · 99 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">@callsign targeted dispatch via IntentBus.send(). CallsignRegistry syncs from crew_profiles YAML. 1:1 crew sessions with sovereign episodic memory shards. /bridge command. Session isolation in CognitiveAgent + EpisodicMemory.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-387</div>
+        <div class="ci-title">Unified Bridge — Single Panel HXI Redesign</div>
+        <div class="ci-tests">+4 ts · 2652 py · 46 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Single BRIDGE button replacing 3 panels. 5 priority sections. Shared card components in bridge/ subdirectory. Adaptive main viewer (canvas/kanban). ViewSwitcher.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-388</div>
+        <div class="ci-title">Glass Overlay & Center Task Cards</div>
+        <div class="ci-tests">+9 ts · 2652 py · 55 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">GlassLayer.tsx frosted overlay, GlassTaskCard.tsx glass morphism cards, constellation layout, dynamic frost, attention elevation.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-389</div>
+        <div class="ci-title">DAG Step Visualization</div>
+        <div class="ci-tests">+7 ts · 2652 py · 62 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">GlassDAGNodes.tsx radial step nodes, SVG dependency lines, hover tooltips, single-click expand, expandedGlassTask store field.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-390</div>
+        <div class="ci-title">Ambient Intelligence & Bridge States</div>
+        <div class="ci-tests">+11 ts · 2652 py · 73 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">ContextRibbon HUD strip, deriveBridgeState (idle/autonomous/attention), ambient edge glow, BriefingCard return-to-bridge, completion celebrations.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-391</div>
+        <div class="ci-title">Cyberpunk Atmosphere Layer</div>
+        <div class="ci-tests">+10 ts · 2652 py · 83 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">ScanLineOverlay, DataRainOverlay (Ctrl+Shift+D), chromatic aberration SVG filter, luminance ripple, playStepComplete/playBridgeHum/playCaptainReturn sound cues, atmosphere preferences in localStorage.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-392</div>
+        <div class="ci-title">Adaptive Bridge — Trust, Breathing, Gaze, Responsive</div>
+        <div class="ci-tests">+16 ts · 2652 py · 99 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Trust-driven progressive reveal (trustBand, condensed/standard/prominent cards), Command Surface breathing (recede/swell), Captain's Gaze (throttled mouse proximity), useBreakpoint() responsive hook (5 viewport ranges).</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-393</div>
+        <div class="ci-title">Personality Activation — Big Five Wiring</div>
+        <div class="ci-tests">+10 py · 2683 py total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Wire Big Five personality traits from YAML crew profiles into LLM system prompts. _build_personality_block() as Tier 1.5 in compose_instructions(). Three-band mapping: high/low/neutral behavioral guidance.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-394</div>
+        <div class="ci-title">ScoutAgent — GitHub Intelligence Gathering</div>
+        <div class="ci-tests">+10 py · 2683 py total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Science department officer (Wesley) — daily GitHub search, absorb/visiting_officer classification via LLM, Discord digest, Bridge notifications, /scout command, seen-repo deduplication with 90-day TTL.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-396</div>
+        <div class="ci-title">Quality Hardening — Encoding, Paths, Type Safety</div>
+        <div class="ci-tests">+13 py · 2704 py · 99 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">7 subprocess encoding fixes (text=True→utf-8), Scout data directory resolution from runtime, personality trait type guard, 13 integration tests for encoding/paths/types/shell↔agent boundary.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-395</div>
+        <div class="ci-title">CredentialStore + Scout gh CLI + Source Curation</div>
+        <div class="ci-tests">+19 py · 2702 py · 99 ts total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">CredentialStore (Ship's Computer service): resolution chain (config→env→CLI), 5-min cache TTL, audit logging, dept-scoped access, /credentials command. Scout: httpx→gh api migration, multi-dimensional scoring (credibility+reliability from GPT Researcher), composite_score.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-324</div>
+        <div class="ci-title">Orb Hover Enhancement</div>
+        <div class="ci-tests">+3 ts</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Per-agent hover preview with current task, step label, elapsed time, progress fraction. Amber pulse on attention-needed orbs. Click-through to Bridge panel.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-323</div>
+        <div class="ci-title">Agent Notification Queue</div>
+        <div class="ci-tests">+12 py · +4 ts</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">NotificationQueue service, Runtime.notify(), bell button with unread badge, type-colored notification cards with click-to-ack, mark-all-read.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-360–386</div>
+        <div class="ci-title">Cognitive Evolution — 11 ADs</div>
+        <div class="ci-tests">+180 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Multi-dimensional trust (reliability, quality, speed, safety, cooperation), Hebbian decay &amp; generalization, consensus confidence calibration, episodic importance scoring, dreaming pattern extraction, capability gap prediction, runtime directive overlays.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">BF-004–008</div>
+        <div class="ci-title">Bug fixes — All Closed</div>
+        <div class="ci-tests">+10 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">BF-004: Transporter HXI visualization. BF-007: Verification false positive on pool counts. BF-008: Dream cycle double-replay after dolphin dreaming.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-358</div>
+        <div class="ci-title">Per-Tier Temperature &amp; Top-P Tuning</div>
+        <div class="ci-tests">+5 tests · 2332 py total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Independent temperature and top_p config per LLM tier. Deep tier uses lower temp for precise architectural analysis. Configurable via system.yaml.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-355</div>
+        <div class="ci-title">Visiting Officer Live Testing Fixes</div>
+        <div class="ci-tests">+2 tests · 2327 py total</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">WORKING ENVIRONMENT section added to visiting builder instructions. Reduced diagnostic logging. PYTHONPATH fix for test imports in both test runners.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-354</div>
+        <div class="ci-title">Visiting Officer HXI Integration</div>
+        <div class="ci-tests">+14 tests · 2325 py · 34 ts</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Path normalization, temp directory for SDK sessions, force_native/force_visiting flags, builder_source in WebSocket events, HXI builder badge.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-351–353</div>
+        <div class="ci-title">Copilot SDK Visiting Officer</div>
+        <div class="ci-tests">+30 tests · 2313 py · 32 ts</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">CopilotBuilderAdapter, 7 MCP tools (codebase_query, find_callers, get_imports, find_tests, read_source, self_model, standing_orders), Hebbian apprenticeship routing.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-350</div>
+        <div class="ci-title">Fix: Diagnostician Bypassing VitalsMonitor [BF-003]</div>
+        <div class="ci-tests">+2 tests</div>
+      </div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-349</div>
+        <div class="ci-title">Fix: Agent Orbs Escaping Pool Group Spheres [BF-002]</div>
+        <div class="ci-tests">1 Vitest</div>
+      </div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-348</div>
+        <div class="ci-title">Fix: Self-Mod False Positive on Knowledge Questions [BF-001]</div>
+        <div class="ci-tests">+1 test</div>
+      </div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-343–347</div>
+        <div class="ci-title">Builder Failure Escalation</div>
+        <div class="ci-tests">+38 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">BuildFailureReport with failure classification, smart test selection, resolution API (POST /api/build/resolve), HXI diagnostic card, escalation hook for Phase 33 chain of command.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-337–342</div>
+        <div class="ci-title">Builder Quality Gates &amp; Standing Orders</div>
+        <div class="ci-tests">+30 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Constitution system (4-tier hierachy), commit gate (blocks on test failure), CodeReviewAgent soft gate, Builder test-writing rules, /ping validation, /orders display command.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-330–336</div>
+        <div class="ci-title">Northstar II — Transporter Pattern</div>
+        <div class="ci-tests">7/7 · +45 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">BuildBlueprint, ChunkDecomposer (Dematerializer), parallel Matter Stream execution, ChunkAssembler (Rematerializer), Interface Validator (Heisenberg Compensator), HXI visualization, end-to-end integration + fallback.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-317–320</div>
+        <div class="ci-title">Ship's Computer Identity + Self-Knowledge</div>
+        <div class="ci-tests">+43 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">LCARS Ship's Computer identity, SystemSelfModel (structured runtime self-knowledge), pre-response verification (zero-LLM fact check), introspection delegation (grounded self-knowledge answers).</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-302–316a</div>
+        <div class="ci-title">Northstar I — ArchitectAgent + BuilderAgent</div>
+        <div class="ci-tests">18/18 · +160 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Full design-and-build pipeline: Architect (7 context layers, deep localize, import graph, pattern recipes, proposal validation), Builder (CREATE/MODIFY modes, test-fix loop), API (submit/approve/reject), HXI (teal proposal UI, Approve+Build button), Phase 32l–32p hardening.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-297–301</div>
+        <div class="ci-title">CodebaseIndex — Ship's Technical Manual (Phase 29c)</div>
+        <div class="ci-tests">+35 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">AST-based structural self-awareness. Import graph (forward + reverse). Word-level keyword scoring. Project docs indexed. Section-targeted doc reading. Full API surface, caller analysis, test discovery.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-285–296</div>
+        <div class="ci-title">Crew Architecture + Medical Team</div>
+        <div class="ci-tests">+65 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Pool group registry, rank structure, Medical Team complete (CMO, Diagnostician, VitalsMonitor, causal attribution, introspect_design), HXI crew sub-clusters with gravitational layout + billboarding labels.</div>
+    </div>
+
+    <div class="completed-item">
+      <div class="ci-row">
+        <div class="ci-ad">AD-274–284</div>
+        <div class="ci-title">Phase 24a–c: Discord + Bug Fixes + Scheduler</div>
+        <div class="ci-tests">+40 tests</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.3rem;margin-left:95px">Discord bot adapter, ChannelAdapter ABC, self-assessment bug fixes (episode count key mismatch, trust reconciliation), lightweight task scheduler (session-scoped, channel delivery).</div>
+    </div>
+
+    <div class="section-head" style="margin:1.5rem 0 0.75rem">
+      <span class="section-label sl-dim">Era I – III Phases Complete</span>
+      <span class="section-rule"></span>
+    </div>
+
+    <div class="completed-item ci-era">
+      <div class="ci-row">
+        <div class="ci-ad" style="width:120px">Era III v0.3.0</div>
+        <div class="ci-title">Bundled agents, distribution, HXI MVP, Discord — Phases 17–23</div>
+        <div class="ci-tests">ADs 201–261</div>
+      </div>
+    </div>
+
+    <div class="completed-item ci-era">
+      <div class="ci-row">
+        <div class="ci-ad" style="width:120px">Era II v0.2.0</div>
+        <div class="ci-title">CognitiveAgent, skills, DAG proposal, dependency resolver, semantic knowledge, Shapley — Phases 10–16</div>
+        <div class="ci-tests">ADs 101–200</div>
+      </div>
+    </div>
+
+    <div class="completed-item ci-era">
+      <div class="ci-row">
+        <div class="ci-ad" style="width:120px">Era I v0.1.0</div>
+        <div class="ci-title">Agent substrate, consensus/trust, mesh, self-mod, episodic memory, federation, knowledge store — Phases 1–9</div>
+        <div class="ci-tests">ADs 1–100</div>
+      </div>
+    </div>
+
+  </div>
+
+</div><!-- /tab-completed -->
+
+</div><!-- /content -->
+
+<script>
+// ── Tab switching ──
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const target = tab.dataset.tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + target).classList.add('active');
+  });
+});
+
+// ── Team filter (OSS Roadmap) ──
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const filter = btn.dataset.filter;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.team-section').forEach(sec => {
+      if (filter === 'all') {
+        sec.classList.add('visible');
+      } else {
+        sec.classList.toggle('visible', sec.dataset.team === filter);
+      }
+    });
+  });
+});
+// Show all on load
+document.querySelectorAll('.team-section').forEach(s => s.classList.add('visible'));
+</script>
+</body>
+</html>

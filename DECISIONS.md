@@ -2676,3 +2676,55 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Tests:** 23 new tests in `tests/test_anchor_indexed_recall.py` — metadata promotion (5), migration (5), enumeration recall (6), semantic recall (4), edge cases (3).
 
 **Deferred:** AD-570b (participant array filtering — multi-value, needs sidecar index), AD-570c (natural language anchor query routing — NL intent → structured query).
+
+### AD-526a: Social Channels + Tic-Tac-Toe — Agent Recreation Framework
+
+**Date:** 2026-04-05
+**Status:** Complete
+**Scope:** Medium | **Type:** New Feature
+
+**Problem:** ProbOS agents have Ward Room for operational communication but no social or recreational channels. The proactive cognitive loop only gathers context from department and All Hands channels. Agents have no structured way to engage in recreational activities that build crew cohesion, generate shared experiences, and strengthen Hebbian connections.
+
+**Solution — four components:**
+
+**(1) Social channels:** Two new default Ward Room channels — Recreation (type: `ship`) and Creative (type: `ship`). Created in `_ensure_default_channels()`. All crew auto-subscribed at startup via `communication.py`.
+
+**(2) GameEngine protocol:** `@runtime_checkable` Protocol with 7 methods (`game_type`, `new_game()`, `make_move()`, `get_valid_moves()`, `render_board()`, `is_finished()`, `get_result()`). Pluggable — new games register via `RecreationService.register_engine()`. TicTacToeEngine: 9-cell board, 8 win lines, draw detection, ASCII board rendering.
+
+**(3) RecreationService:** Game lifecycle management — challenge creation (Ward Room thread), move validation and execution, turn tracking, game completion with GAME_COMPLETED event emission. Game records written to Ship's Records (`recreation/games/{game_type}/{game_id}.md`). Thread-to-game routing lookup.
+
+**(4) Proactive integration:** `_gather_context()` expanded to include Recreation channel (3rd source alongside dept + All Hands). Two new action extractions: `[CHALLENGE @callsign game_type]` (creates game via RecreationService) and `[MOVE position]` (submits move to active game in thread). Both rank-gated to Lieutenant+. Added to `_compose_prompt()` available actions.
+
+**Files created (3):** `src/probos/recreation/__init__.py`, `engine.py` (GameEngine + TicTacToeEngine), `service.py` (RecreationService).
+
+**Files modified (7):** `events.py` (GAME_COMPLETED), `channels.py` (Recreation + Creative channels), `communication.py` (auto-subscribe), `proactive.py` (context gathering + action extraction), `cognitive_agent.py` (CHALLENGE/MOVE instructions), `runtime.py` (recreation_service attribute), `finalize.py` (RecreationService wiring).
+
+**Tests:** 47 new tests across 3 files — `test_recreation_engine.py` (17: protocol, moves, wins, draw, rendering), `test_recreation_service.py` (18: lifecycle, events, records, threading), `test_recreation_channels.py` (12: patterns, event type, integration).
+
+**Deferred:** AD-526b (Chess engine + Elo ratings), AD-526c (additional game types), AD-526d (game preference tracking), AD-526e (spectator commentary), AD-526f (Holodeck recreation integration), AD-526g (Creative Channel content).
+
+### AD-526a: Social Channels + Tic-Tac-Toe — Agent Recreation Framework
+
+**Date:** 2026-04-05
+**Status:** Complete
+**Scope:** Medium | **Type:** Social Infrastructure
+
+**Problem:** Agents have no recreational or social interaction channels beyond work-focused Ward Room threads. No game framework exists. Social bonding signals (Hebbian) have no recreational pathway.
+
+**Solution — five components:**
+
+**(1) Recreation package:** New `src/probos/recreation/` with `GameEngine` protocol (`@runtime_checkable`, 7 methods) and `TicTacToeEngine` (9-cell board, X/O symbols, 8 win lines, draw detection). `RecreationService` manages game lifecycle — create, move, render, validate, record to Ship's Records, emit `GAME_COMPLETED` event for Hebbian bond strengthening.
+
+**(2) Ward Room social channels:** "Recreation" and "Creative" ship-wide channels added to `_ensure_default_channels()`. All crew auto-subscribed at startup alongside existing All Hands and Improvement Proposals channels.
+
+**(3) Proactive integration:** Recreation channel activity included in `_gather_context()` (limit 2, filtered by last_seen). Two new action patterns: `[CHALLENGE @callsign game_type]` creates a game thread + RecreationService game, `[MOVE position]` applies a move and posts board update. Both rank-gated (Lieutenant+). Integrated into `_extract_and_execute_actions()` after notebook processing.
+
+**(4) Cognitive agent instructions:** CHALLENGE and MOVE action syntax added to proactive available actions section. Rank-gated display (Lieutenant+). Social guidance: "Challenge when the mood is light, not during alert conditions."
+
+**(5) Runtime wiring:** `recreation_service` attribute on Runtime. RecreationService created in `finalize.py` with late-init dependencies (ward_room, records_store, emit_event_fn).
+
+**Files modified:** `src/probos/recreation/__init__.py`, `src/probos/recreation/engine.py`, `src/probos/recreation/service.py` (new), `src/probos/events.py` (GAME_COMPLETED), `src/probos/ward_room/channels.py` (default channels), `src/probos/startup/communication.py` (auto-subscribe), `src/probos/proactive.py` (context + actions), `src/probos/cognitive/cognitive_agent.py` (instructions), `src/probos/runtime.py` (attribute), `src/probos/startup/finalize.py` (wiring).
+
+**Tests:** 47 new tests across 3 files — `test_recreation_engine.py` (17: protocol, new game, moves, wins, draw, rendering), `test_recreation_service.py` (18: registration, creation, moves, completion, events, records, threading, no-dependency), `test_recreation_channels.py` (12: event type, patterns, integration).
+
+**Deferred:** AD-526b (chess engine + ratings), AD-526c (additional game types), AD-526d (game preference tracking), AD-526e (spectator commentary), AD-526f (Holodeck integration), AD-526g (creative channel content).

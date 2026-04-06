@@ -131,12 +131,18 @@ async def init_communication(
         wr_channels = await ward_room.list_channels()
         all_hands_id = None
         proposals_ch_id = None
+        recreation_ch_id = None
+        creative_ch_id = None
         dept_channel_map: dict[str, str] = {}
         for ch in wr_channels:
             if ch.name == "All Hands":
                 all_hands_id = ch.id
             elif ch.name == "Improvement Proposals":
                 proposals_ch_id = ch.id
+            elif ch.name == "Recreation":
+                recreation_ch_id = ch.id
+            elif ch.name == "Creative":
+                creative_ch_id = ch.id
             elif ch.channel_type == "department" and ch.department:
                 dept_channel_map[ch.department] = ch.id
 
@@ -150,6 +156,11 @@ async def init_communication(
                 await ward_room.subscribe(agent.id, all_hands_id)
             if proposals_ch_id:
                 await ward_room.subscribe(agent.id, proposals_ch_id)
+            # AD-526a: Subscribe all crew to social channels
+            if recreation_ch_id:
+                await ward_room.subscribe(agent.id, recreation_ch_id)
+            if creative_ch_id:
+                await ward_room.subscribe(agent.id, creative_ch_id)
 
         # AD-416: Start Ward Room pruning loop
         archive_dir = data_dir / "ward_room_archive"

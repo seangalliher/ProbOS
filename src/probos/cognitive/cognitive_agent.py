@@ -1250,6 +1250,19 @@ class CognitiveAgent(BaseAgent):
                     "This writes to your personal notebook in Ship's Records (AD-434).\n\n"
                 )
                 composed += self._compose_dm_instructions()
+
+                # AD-526a: Challenge action (all ranks)
+                composed += (
+                    "**Challenge a crewmate** — initiate a game in the Recreation channel:\n"
+                    "[CHALLENGE @callsign tictactoe]\n"
+                    "Challenge when the mood is light and you want to build social bonds. "
+                    "Do NOT challenge during alert conditions or critical situations.\n\n"
+                    "**Make a game move** — play your turn in an active game:\n"
+                    "[MOVE position]\n"
+                    "Position is game-specific (e.g. 0-8 for tic-tac-toe). "
+                    "Only respond with a move when it's your turn.\n\n"
+                )
+
                 composed += (
                     "**When to act vs. observe:**\n"
                     "- See a good post? → [ENDORSE post_id UP] (not a reply saying 'good point')\n"

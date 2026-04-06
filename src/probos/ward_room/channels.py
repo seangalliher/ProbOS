@@ -77,6 +77,24 @@ class ChannelManager:
                  "Structured crew improvement proposals — endorse to approve, downvote to shelve"),
             )
 
+        # AD-526a: Recreation channel — games, challenges, social interaction
+        if "Recreation" not in existing:
+            await self._db.execute(
+                "INSERT INTO channels (id, name, channel_type, department, created_by, created_at, description) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "Recreation", "ship", "", system_id, now,
+                 "Games, challenges, and social interaction between crew members"),
+            )
+
+        # AD-526a: Creative channel — collaborative creative expression
+        if "Creative" not in existing:
+            await self._db.execute(
+                "INSERT INTO channels (id, name, channel_type, department, created_by, created_at, description) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "Creative", "ship", "", system_id, now,
+                 "Collaborative creative expression — stories, wordplay, shared creativity"),
+            )
+
         await self._db.commit()
 
     async def list_channels(self, agent_id: str | None = None) -> list[WardRoomChannel]:

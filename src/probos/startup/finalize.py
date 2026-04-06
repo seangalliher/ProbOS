@@ -147,6 +147,14 @@ async def finalize_startup(
     if hasattr(runtime, '_orientation_service') and runtime._orientation_service:
         runtime.onboarding._orientation_service = runtime._orientation_service
 
+    # AD-526a: Wire RecreationService with late-init dependencies
+    from probos.recreation.service import RecreationService
+    runtime.recreation_service = RecreationService(
+        ward_room=runtime.ward_room,
+        records_store=runtime._records_store,
+        emit_event_fn=runtime._emit_event,
+    )
+
     # Self-Modification Manager
     if runtime.self_mod_pipeline:
         self_mod_manager = SelfModManager(

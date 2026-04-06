@@ -407,6 +407,9 @@ class ProbOSRuntime:
         self.skill_registry: SkillRegistry | None = None
         self.skill_service: AgentSkillService | None = None
 
+        # --- Recreation Service (AD-526a) ---
+        self.recreation_service: Any = None
+
         # --- Agent Capital Management (AD-427) ---
         self.acm: AgentCapitalService | None = None
 
