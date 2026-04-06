@@ -2617,4 +2617,28 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 - `startup/cognitive_services.py` — OrientationService created
 - `startup/finalize.py` — orientation_service wired to onboarding + proactive loop, warm boot orientation set on stasis recovery
 
+### BF-108: LLM Unreachable — No Runtime Visibility
+
+**Date:** 2026-04-05
+**Severity:** High → **Closed**
+**Root cause:** When all LLM endpoints are unreachable at startup, ProbOS falls back to `MockLLMClient` (pattern-matched only). Three compounding failures: (1) `MockLLMClient` inherited `BaseLLMClient.get_health_status()` which returns `"operational"` — so `/system/services` falsely reported LLM as "online"; (2) chat endpoint received empty DAG response, self-mod fired, user saw "I don't have a capability for 'hello'" with Build Agent buttons; (3) no persistent indicator that LLM is mock.
+
+**Fix (4 files):**
+1. `llm_client.py` — Override `get_health_status()` on `MockLLMClient` to return `overall: "mock"`, all tiers offline
+2. `runtime.py` — `llm_is_mock` property (matches existing `_is_mock_llm()` pattern in `escalation.py`)
+3. `routers/chat.py` — Detect `llm_is_mock`, return explicit "LLM is offline" message instead of running diagnostics; suppress self-mod proposal when mock
+4. `routers/system.py` — BF-108 comment: `"mock"` maps to `"offline"` (was already falling through to offline, but now explicit)
+
+### BF-109: Qualification Probe Param Key Mismatch
+
+**Date:** 2026-04-05
+**Severity:** Critical → **Closed**
+**Root cause:** `_send_probe()` in `qualification_tests.py` sent `params={"message": message}` but `CognitiveAgent.perceive()` reads `params.get("text", "")` for `direct_message` intents. Production code (`routers/agents.py:179`, `routers/chat.py:117`) correctly uses `"text"`. The agent received `Captain says: ` with no question content — every probe was testing the agent's stasis-recovery greeting, not its actual cognitive capabilities.
+
+**Why some agents scored 1.0 despite the bug:** The procedure store matching path (`cognitive_agent.py:107`) reads `params.get("message")` — so agents with compiled procedures for similar queries could match and return a procedure-based result, bypassing the broken LLM path entirely.
+
+**Impact:** All Tier 1/2 qualification results are unreliable. Prior baselines must be discarded and re-established after the fix.
+
+**Fix:** One-line change — `"message"` → `"text"` in `_send_probe()` (`qualification_tests.py:48`).
+
 **Status:** AD-567g COMPLETE. 28 new tests in `test_orientation.py`. Files: `cognitive/orientation.py` (new), `config.py`, `agent_onboarding.py`, `cognitive/cognitive_agent.py`, `proactive.py`, `ward_room/messages.py`, `ward_room/threads.py`, `startup/cognitive_services.py`, `startup/results.py`, `startup/finalize.py`, `runtime.py`.

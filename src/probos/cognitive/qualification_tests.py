@@ -45,7 +45,7 @@ async def _send_probe(agent: Any, message: str) -> str:
 
     intent = IntentMessage(
         intent="direct_message",
-        params={"message": message, "_qualification_test": True},
+        params={"text": message, "_qualification_test": True},  # BF-109: was "message", but perceive() reads "text"
         target_agent_id=agent.id,
     )
     result = await agent.handle_intent(intent)

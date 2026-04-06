@@ -522,6 +522,13 @@ class MockLLMClient(BaseLLMClient):
         self._default_response: str = '{"intents": []}'
         self._register_defaults()
 
+    def get_health_status(self) -> dict[str, Any]:
+        """BF-108: Report honestly — MockLLMClient has no real LLM."""
+        tiers = {t: {"status": "offline", "consecutive_failures": 0,
+                      "last_success": None, "last_failure": None}
+                 for t in ("fast", "standard", "deep")}
+        return {"tiers": tiers, "overall": "mock"}
+
     def _register_defaults(self) -> None:
         """Register default pattern → response mappings.
 

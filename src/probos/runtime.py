@@ -793,6 +793,11 @@ class ProbOSRuntime:
         """True during first cycle after a clean reset (no prior state)."""
         return self._cold_start
 
+    @property
+    def llm_is_mock(self) -> bool:
+        """BF-108: True when LLM is MockLLMClient (no real LLM available)."""
+        return type(self.llm_client).__name__ == "MockLLMClient"
+
     def build_state_snapshot(self) -> dict[str, Any]:
         """Build a full state snapshot for HXI clients (AD-254)."""
         from probos.earned_agency import agency_from_rank

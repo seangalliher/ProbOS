@@ -74,6 +74,7 @@ async def system_services(runtime: Any = Depends(get_runtime)) -> dict[str, Any]
         elif overall == "degraded":
             llm_status = "degraded"
         else:
+            # BF-108: "mock" and "offline" both map to offline
             llm_status = "offline"
         services.append({"name": "LLM Proxy", "status": llm_status})
     else:

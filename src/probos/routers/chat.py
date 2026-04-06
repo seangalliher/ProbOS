@@ -181,54 +181,65 @@ async def chat(
 
     # Diagnose empty response — check decomposer state for LLM issues
     if not response_text:
-        diag_parts: list[str] = []
-        decomposer = getattr(runtime, "decomposer", None)
-        if decomposer:
-            raw = getattr(decomposer, "last_raw_response", "")
-            tier = getattr(decomposer, "last_tier", "")
-            model = getattr(decomposer, "last_model", "")
-            logger.warning(
-                "Empty response. Decomposer: tier=%s model=%s "
-                "raw_len=%d node_count=%d",
-                tier, model, len(raw),
-                dag_result.get("node_count", -1),
-            )
-            if not raw and not tier:
-                diag_parts.append(
-                    "LLM not connected — check that Ollama is running "
-                    "and the model is loaded (run: ollama list)"
-                )
-            elif raw and not response_text:
-                diag_parts.append(
-                    f"LLM responded but produced no output. "
-                    f"Tier: {tier}, Model: {model}"
-                )
-
-        # Live connectivity check
-        llm_client = getattr(runtime, "llm_client", None)
-        if llm_client and hasattr(llm_client, "check_connectivity"):
-            try:
-                connectivity = await llm_client.check_connectivity()
-                unreachable = [t for t, v in connectivity.items() if not v]
-                if unreachable:
-                    diag_parts.append(
-                        f"Unreachable LLM tiers: {', '.join(unreachable)}"
-                    )
-                logger.warning("LLM connectivity: %s", connectivity)
-            except Exception:
-                logger.debug("Chat context failed", exc_info=True)
-
-        if diag_parts:
-            response_text = " | ".join(diag_parts)
-        else:
+        # BF-108: If MockLLMClient is active, tell the user directly
+        if getattr(runtime, "llm_is_mock", False):
             response_text = (
-                "(Empty response — check probos serve terminal)"
+                "LLM is offline — running on MockLLMClient "
+                "(pattern-matched responses only). "
+                "Start the Copilot Proxy or Ollama and restart ProbOS."
             )
+        else:
+            diag_parts: list[str] = []
+            decomposer = getattr(runtime, "decomposer", None)
+            if decomposer:
+                raw = getattr(decomposer, "last_raw_response", "")
+                tier = getattr(decomposer, "last_tier", "")
+                model = getattr(decomposer, "last_model", "")
+                logger.warning(
+                    "Empty response. Decomposer: tier=%s model=%s "
+                    "raw_len=%d node_count=%d",
+                    tier, model, len(raw),
+                    dag_result.get("node_count", -1),
+                )
+                if not raw and not tier:
+                    diag_parts.append(
+                        "LLM not connected — check that Ollama is running "
+                        "and the model is loaded (run: ollama list)"
+                    )
+                elif raw and not response_text:
+                    diag_parts.append(
+                        f"LLM responded but produced no output. "
+                        f"Tier: {tier}, Model: {model}"
+                    )
+
+            # Live connectivity check
+            llm_client = getattr(runtime, "llm_client", None)
+            if llm_client and hasattr(llm_client, "check_connectivity"):
+                try:
+                    connectivity = await llm_client.check_connectivity()
+                    unreachable = [t for t, v in connectivity.items() if not v]
+                    if unreachable:
+                        diag_parts.append(
+                            f"Unreachable LLM tiers: {', '.join(unreachable)}"
+                        )
+                    logger.warning("LLM connectivity: %s", connectivity)
+                except Exception:
+                    logger.debug("Chat context failed", exc_info=True)
+
+            if diag_parts:
+                response_text = " | ".join(diag_parts)
+            else:
+                response_text = (
+                    "(Empty response — check probos serve terminal)"
+                )
 
     # Check for self-mod proposal (capability gap detected, API mode)
+    # BF-108: Skip self-mod when MockLLMClient is active — no point offering
+    # to build agents when LLM can't run them.
     self_mod = dag_result.get("self_mod")
     self_mod_proposal: dict[str, Any] | None = None
-    if self_mod and self_mod.get("status") == "proposed":
+    is_mock = getattr(runtime, "llm_is_mock", False)
+    if self_mod and self_mod.get("status") == "proposed" and not is_mock:
         self_mod_proposal = {
             "intent_name": self_mod.get("intent", ""),
             "intent_description": self_mod.get("description", ""),
