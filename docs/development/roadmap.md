@@ -3023,6 +3023,15 @@ Each game type implements the `GameEngine` protocol: `new_game()`, `make_move()`
 
 *Connects to: AD-525 (Creative Expression — games are one dimension of crew recreation), AD-524 (Archive — game records and ratings persist across generations; future crews inherit the chess legacy), AD-434 (Ship's Records — game storage), Ward Room (communication medium for gameplay), AD-357 (Earned Agency — discretionary time for recreation), Holodeck (future venue for complex multiplayer scenarios), Big Five (personality-influenced play style), Counselor (game behavior as cognitive diagnostic signal). Inspired by: Star Trek 3D chess (Kirk vs Spock), Holodeck adventures, and the naval tradition of crew recreation as operational readiness (2026-03-29).*
 
+**Decomposition:**
+> - **AD-526a: Social Channels + Tic-Tac-Toe** *(planned)* — Recreation and Creative default channels, agent awareness (proactive context + startup subscriptions), GameEngine protocol, TicTacToeEngine, RecreationService, [CHALLENGE] proactive action, game records to Ship's Records.
+> - **AD-526b: Chess Engine + Ratings** *(planned, depends: AD-526a)* — python-chess integration, Elo rating system, PGN game recording, chess-specific move validation and board rendering.
+> - **AD-526c: Additional Game Types** *(planned, depends: AD-526a)* — Checkers, Go, word games, trivia. Each implements GameEngine protocol. Progressive complexity validation.
+> - **AD-526d: Game Preference Tracking** *(planned, depends: AD-526a)* — Personality-correlated play style analysis. Game preference as Big Five signal. Ship's Records play frequency per agent per game type.
+> - **AD-526e: Spectator Commentary** *(planned, depends: AD-526a)* — Agents watching games and posting commentary. Gallery reactions. Spectator behavior as social engagement signal.
+> - **AD-526f: Holodeck Recreation Integration** *(planned, depends: AD-526a, Holodeck)* — Simulated game scenarios, multiplayer environments, creative recreation beyond board games.
+> - **AD-526g: Creative Channel Content** *(planned, depends: AD-526a)* — Stories, poetry, essays, code-as-expression. Creative output as personality expression. Shared creative experiences.
+
 Design inspiration: Rudy Vessup's holographic glass UI production design for *Star Trek Into Darkness* (Paramount). The transparent layered panels with spatial depth, entity position badges (callsign pills), bio-feedback crew readouts, and ALERT indicators map directly to ProbOS's Bridge interface concepts.
 
 The Bridge view currently uses flat full-screen panels (Canvas, Kanban, System). The next evolution is a **wraparound holographic glass layout** — translucent glass panels curving around the user's viewpoint, each hosting a different station. The codebase already uses `GlassLayer` for 2D HUD overlays; Glass Panels extend this to spatially-positioned holographic station displays. Same frosted glass aesthetic (`backdrop-filter: blur()`), but arranged in a cockpit arc.
@@ -4473,7 +4482,7 @@ Ward Room posts about the same stimulus are natural concept maps. QAP (Quadratic
 
 ### Anchor-Indexed Episodic Recall (AD-570)
 
-**AD-570: Anchor-Indexed Episodic Recall — Structured AnchorFrame Queries** *(planned, OSS, depends: AD-567a, AD-567b, AD-567c, AD-567d)* — Add structured query support for AnchorFrame fields alongside semantic search. Currently, episodic recall is semantic-only — AnchorFrame fields (temporal, spatial, social, causal, evidential) only influence scoring weight. You cannot query BY anchor fields. No way to ask "find all episodes from Engineering department" or "find all episodes involving Worf" or "find all episodes from the last watch rotation."
+**AD-570: Anchor-Indexed Episodic Recall — Structured AnchorFrame Queries** *(complete, OSS, depends: AD-567a, AD-567b, AD-567c, AD-567d)* — Structured query support for AnchorFrame fields alongside semantic search. Promotes 4 anchor fields (department, channel, trigger_type, trigger_agent) to top-level ChromaDB metadata for native `where`-clause filtering. One-time startup migration backfills existing episodes. `recall_by_anchor()` API with two modes: enumeration (structured filters, no embedding) and semantic re-ranking (structured + vector similarity). Post-retrieval agent_id filtering, activation tracking, hash verification. 2 files, 23 tests.
 
 **Capabilities:**
 
@@ -4486,6 +4495,10 @@ Ward Room posts about the same stimulus are natural concept maps. QAP (Quadratic
 *Foundation for: AD-567g's re-localization (spatial/temporal locality lookup), AD-569's behavioral metrics (department-level analysis requires department-indexed episode queries), AD-563's coverage gap detection (topic × department matrix requires departmental episode queries).*
 
 *Absorption: memvid QueryPlanner hybrid graph+vector search pattern — MemoryCard entity-slot-value triple queries re-ranked by vector similarity (2026-04-05, see docs/research/memvid-evaluation.md Pattern 3).*
+
+**Deferred sub-ADs:**
+> - **AD-570b: Participant Array Filtering** — AnchorFrame `participants` is `list[str]`, which cannot be stored as a ChromaDB scalar metadata field. AD-570 v1 filters participants in Python post-retrieval. AD-570b adds native multi-value participant filtering — either via a secondary SQLite sidecar index (participant_id → episode_id many-to-many) or ChromaDB metadata explosion (one metadata key per known participant). Enables queries like "find all episodes where Worf and LaForge were both present" at the index level. *Depends: AD-570.*
+> - **AD-570c: Natural Language Anchor Query Routing** — Detect when a recall query is relational ("who observed this in Engineering?", "what happened last watch rotation?") and automatically route through `recall_by_anchor()` instead of pure semantic search. Requires NL intent classification (trigger_type detection, department name extraction, temporal phrase parsing). AD-570 provides the structured query API; AD-570c adds the NL front door. *Depends: AD-570.*
 
 ---
 

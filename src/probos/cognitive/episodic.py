@@ -121,6 +121,79 @@ async def migrate_episode_agent_ids(
     return migrated
 
 
+async def migrate_anchor_metadata(episodic_memory: "EpisodicMemory") -> int:
+    """AD-570: Promote anchor fields to top-level metadata for ChromaDB filtering.
+
+    One-time startup migration. Scans all episodes. For each episode that has
+    anchors_json but is missing anchor_department, extracts key anchor fields
+    and writes them as top-level metadata via upsert.
+
+    Follows BF-103 migration pattern. Returns count of episodes updated.
+    """
+    if not episodic_memory or not episodic_memory._collection:
+        return 0
+
+    t0 = time.time()
+    migrated = 0
+
+    try:
+        result = episodic_memory._collection.get(include=["metadatas", "documents"])
+        if not result or not result.get("ids"):
+            return 0
+
+        ids_list = result["ids"]
+        metadatas = result.get("metadatas", [])
+        documents = result.get("documents", [])
+
+        for i, ep_id in enumerate(ids_list):
+            meta = metadatas[i] if i < len(metadatas) else {}
+            # Migration guard: if anchor_department already present, skip
+            if "anchor_department" in meta:
+                continue
+
+            anchors_json = meta.get("anchors_json", "")
+            anchor_department = ""
+            anchor_channel = ""
+            anchor_trigger_type = ""
+            anchor_trigger_agent = ""
+
+            if anchors_json:
+                try:
+                    anchors_data = json.loads(anchors_json)
+                    anchor_department = anchors_data.get("department", "") or ""
+                    anchor_channel = anchors_data.get("channel", "") or ""
+                    anchor_trigger_type = anchors_data.get("trigger_type", "") or ""
+                    anchor_trigger_agent = anchors_data.get("trigger_agent", "") or ""
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            meta["anchor_department"] = anchor_department
+            meta["anchor_channel"] = anchor_channel
+            meta["anchor_trigger_type"] = anchor_trigger_type
+            meta["anchor_trigger_agent"] = anchor_trigger_agent
+
+            doc = documents[i] if i < len(documents) else ""
+            episodic_memory._collection.upsert(
+                ids=[ep_id],
+                metadatas=[meta],
+                documents=[doc or ""],
+            )
+            migrated += 1
+
+        elapsed = time.time() - t0
+        if migrated > 0:
+            logger.info(
+                "AD-570: Promoted anchor metadata for %d episodes (%.1fs)",
+                migrated, elapsed,
+            )
+        else:
+            logger.debug("AD-570: No episodes needed anchor metadata migration (%.1fs)", elapsed)
+    except Exception:
+        logger.warning("AD-570: Anchor metadata migration failed", exc_info=True)
+
+    return migrated
+
+
 # ---------------------------------------------------------------------------
 # AD-541e: Episode content hashing — cryptographic tamper detection
 # ---------------------------------------------------------------------------
@@ -1016,6 +1089,17 @@ class EpisodicMemory:
             "content_hash": compute_episode_hash(normalized),
             "_hash_v": 2,  # Hash normalization version (round(ts,6) + float coercion)
         }
+        # AD-570: Promote key anchor fields for ChromaDB where-clause filtering
+        if ep.anchors:
+            metadata["anchor_department"] = ep.anchors.department or ""
+            metadata["anchor_channel"] = ep.anchors.channel or ""
+            metadata["anchor_trigger_type"] = ep.anchors.trigger_type or ""
+            metadata["anchor_trigger_agent"] = ep.anchors.trigger_agent or ""
+        else:
+            metadata["anchor_department"] = ""
+            metadata["anchor_channel"] = ""
+            metadata["anchor_trigger_type"] = ""
+            metadata["anchor_trigger_agent"] = ""
         return metadata
 
     @staticmethod
@@ -1281,3 +1365,161 @@ class EpisodicMemory:
                 pass
 
         return budgeted
+
+    # ---- AD-570: Anchor-indexed recall ------------------------------------
+
+    async def recall_by_anchor(
+        self,
+        *,
+        department: str = "",
+        channel: str = "",
+        trigger_type: str = "",
+        trigger_agent: str = "",
+        agent_id: str = "",
+        time_range: tuple[float, float] | None = None,
+        semantic_query: str = "",
+        limit: int = 50,
+    ) -> list[Episode]:
+        """AD-570: Structured anchor-field recall with optional semantic re-ranking.
+
+        Two retrieval modes:
+        1. **Enumeration** (no semantic_query): Uses ChromaDB .get() with where
+           filters. Returns ALL matching episodes up to limit. No embedding needed.
+        2. **Top-k with re-ranking** (semantic_query provided): Uses ChromaDB
+           .query() with where filters + semantic similarity. Returns top-k
+           matches that satisfy BOTH structural constraints and semantic relevance.
+
+        Args:
+            department: Filter by anchor_department (exact match).
+            channel: Filter by anchor_channel (exact match).
+            trigger_type: Filter by anchor_trigger_type (exact match).
+            trigger_agent: Filter by anchor_trigger_agent (exact match).
+            agent_id: Filter by agent_ids_json (post-retrieval Python filter).
+            time_range: Filter by timestamp range (start, end) inclusive.
+            semantic_query: If provided, uses .query() for semantic re-ranking.
+                If empty, uses .get() for pure structured enumeration.
+            limit: Max results to return.
+
+        Returns:
+            List of Episode objects matching the filters, sorted by:
+            - Semantic similarity (descending) if semantic_query provided
+            - Timestamp (descending) if enumeration mode
+        """
+        if not self._collection:
+            return []
+
+        # Build ChromaDB where filter from non-empty params
+        conditions: list[dict] = []
+        if department:
+            conditions.append({"anchor_department": department})
+        if channel:
+            conditions.append({"anchor_channel": channel})
+        if trigger_type:
+            conditions.append({"anchor_trigger_type": trigger_type})
+        if trigger_agent:
+            conditions.append({"anchor_trigger_agent": trigger_agent})
+        if time_range:
+            conditions.append({"timestamp": {"$gte": time_range[0]}})
+            conditions.append({"timestamp": {"$lte": time_range[1]}})
+
+        where: dict | None = None
+        if len(conditions) == 1:
+            where = conditions[0]
+        elif len(conditions) > 1:
+            where = {"$and": conditions}
+
+        # No filters + no query = refuse to dump entire collection
+        if not where and not semantic_query:
+            return []
+
+        episodes: list[Episode] = []
+
+        if not semantic_query:
+            # Mode 1: Enumeration — use .get() with where filters
+            try:
+                result = self._collection.get(
+                    where=where,
+                    include=["metadatas", "documents"],
+                )
+            except Exception:
+                logger.debug("AD-570: recall_by_anchor enumeration failed", exc_info=True)
+                return []
+
+            if not result or not result.get("ids"):
+                return []
+
+            for i, doc_id in enumerate(result["ids"]):
+                metadata = result["metadatas"][i] if result.get("metadatas") and i < len(result["metadatas"]) else {}
+                document = result["documents"][i] if result.get("documents") and i < len(result["documents"]) else ""
+                # Post-retrieval agent_id filter
+                if agent_id:
+                    agent_ids_json = metadata.get("agent_ids_json", "[]")
+                    try:
+                        agent_ids = json.loads(agent_ids_json)
+                    except (json.JSONDecodeError, TypeError):
+                        agent_ids = []
+                    if agent_id not in agent_ids:
+                        continue
+                ep = self._metadata_to_episode(doc_id, document, metadata)
+                if self._verify_on_recall:
+                    stored_hash = metadata.get("content_hash", "")
+                    _verify_episode_hash(ep, stored_hash, metadata, self._collection)
+                episodes.append(ep)
+
+            # Sort by timestamp descending
+            episodes.sort(key=lambda e: e.timestamp, reverse=True)
+            episodes = episodes[:limit]
+        else:
+            # Mode 2: Top-k with semantic re-ranking
+            count = self._collection.count()
+            if count == 0:
+                return []
+
+            n_results = min(limit * 3, count)
+            kwargs: dict[str, Any] = {
+                "query_texts": [semantic_query],
+                "n_results": n_results,
+                "include": ["metadatas", "documents", "distances"],
+            }
+            if where:
+                kwargs["where"] = where
+
+            try:
+                result = self._collection.query(**kwargs)
+            except Exception:
+                logger.debug("AD-570: recall_by_anchor semantic query failed", exc_info=True)
+                return []
+
+            if not result or not result.get("ids") or not result["ids"][0]:
+                return []
+
+            for i, doc_id in enumerate(result["ids"][0]):
+                metadata = result["metadatas"][0][i] if result.get("metadatas") and result["metadatas"] else {}
+                document = result["documents"][0][i] if result.get("documents") and result["documents"] else ""
+                # Post-retrieval agent_id filter
+                if agent_id:
+                    agent_ids_json = metadata.get("agent_ids_json", "[]")
+                    try:
+                        agent_ids = json.loads(agent_ids_json)
+                    except (json.JSONDecodeError, TypeError):
+                        agent_ids = []
+                    if agent_id not in agent_ids:
+                        continue
+                ep = self._metadata_to_episode(doc_id, document, metadata)
+                if self._verify_on_recall:
+                    stored_hash = metadata.get("content_hash", "")
+                    _verify_episode_hash(ep, stored_hash, metadata, self._collection)
+                episodes.append(ep)
+                if len(episodes) >= limit:
+                    break
+
+        # AD-567d: Record deliberate recall access for activation tracking
+        if episodes and self._activation_tracker:
+            try:
+                await self._activation_tracker.record_batch_access(
+                    [ep.id for ep in episodes], access_type="recall"
+                )
+            except Exception:
+                pass
+
+        return episodes

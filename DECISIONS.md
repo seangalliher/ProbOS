@@ -2649,3 +2649,30 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 - Code quality: Builder 0.835, Engineering 0.915 (was 0.000/0.000)
 - ToM: 14/14 pass including all Medical (was 5 failures)
 - Tier 3 collective: scaffold_decomposition 0.791 (up from 0.701)
+
+### AD-570: Anchor-Indexed Episodic Recall — Structured AnchorFrame Queries
+
+**Date:** 2026-04-05
+**Status:** Complete
+**Scope:** Medium | **Type:** Infrastructure Enhancement
+
+**Problem:** Episodic recall is semantic-only. AnchorFrame fields (department, channel, trigger_type, trigger_agent) are packed into a single `anchors_json` blob. ChromaDB `where` filters only work on top-level scalar metadata fields, not values inside JSON strings. No way to query "find all episodes from Engineering" or "find all episodes triggered by Worf."
+
+**Solution — three components:**
+
+**(1) Metadata promotion:** Promote 4 key anchor fields (`anchor_department`, `anchor_channel`, `anchor_trigger_type`, `anchor_trigger_agent`) to top-level ChromaDB metadata in `_episode_to_metadata()`. Co-exists with `anchors_json` blob (backward compatible). Both `store()` and `seed()` paths automatically pick up promoted fields.
+
+**(2) One-time migration:** `migrate_anchor_metadata()` backfills promoted fields from existing `anchors_json` blobs (follows BF-103 migration pattern). Migration guard: skips episodes where `anchor_department` already present. Wired into startup after BF-103 migration.
+
+**(3) `recall_by_anchor()` API:** Two retrieval modes on EpisodicMemory:
+- **Enumeration** (no semantic_query): ChromaDB `.get()` with where filters. Returns all matching episodes up to limit. No embedding needed.
+- **Top-k with re-ranking** (semantic_query provided): ChromaDB `.query()` with where filters + semantic similarity. Returns top-k matches satisfying both structural constraints and semantic relevance.
+- Post-retrieval `agent_id` filtering (JSON array, same pattern as `recall_for_agent_scored()`).
+- Activation tracking and content hash verification integrated.
+- No filters + no semantic_query = returns empty list (refuses to dump entire collection).
+
+**Files modified:** `src/probos/cognitive/episodic.py` (promoted metadata, migration function, recall_by_anchor method), `src/probos/startup/cognitive_services.py` (startup wiring).
+
+**Tests:** 23 new tests in `tests/test_anchor_indexed_recall.py` — metadata promotion (5), migration (5), enumeration recall (6), semantic recall (4), edge cases (3).
+
+**Deferred:** AD-570b (participant array filtering — multi-value, needs sidecar index), AD-570c (natural language anchor query routing — NL intent → structured query).

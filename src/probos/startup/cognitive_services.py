@@ -176,6 +176,16 @@ async def init_cognitive_services(
         except Exception:
             logger.warning("BF-103: Episode ID migration failed (non-fatal)", exc_info=True)
 
+    # AD-570: Promote anchor fields to top-level ChromaDB metadata
+    if episodic_memory:
+        try:
+            from probos.cognitive.episodic import migrate_anchor_metadata
+            migrated = await migrate_anchor_metadata(episodic_memory)
+            if migrated > 0:
+                logger.info("AD-570: Promoted anchor metadata for %d episodes", migrated)
+        except Exception:
+            logger.warning("AD-570: Anchor metadata migration failed (non-fatal)", exc_info=True)
+
     # Create FeedbackEngine (AD-219)
     from probos.cognitive.feedback import FeedbackEngine
 
