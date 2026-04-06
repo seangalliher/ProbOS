@@ -522,3 +522,18 @@ export interface ServiceStatus {
   name: string;
   status: 'online' | 'offline' | 'degraded';
 }
+
+// AD-526b: Recreation Game state (Captain vs Crew)
+export interface GameState {
+  gameId: string;
+  gameType: string;
+  board: string[];           // 9 cells: "" | "X" | "O"
+  currentPlayer: string;     // callsign whose turn ("Captain" or agent callsign)
+  status: 'in_progress' | 'won' | 'draw' | 'forfeited';
+  winner: string;
+  validMoves: string[];
+  movesCount: number;
+  opponent: string;          // agent callsign
+  opponentAgentId: string;
+  threadId: string;
+}

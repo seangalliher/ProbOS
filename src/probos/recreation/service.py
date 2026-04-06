@@ -124,6 +124,24 @@ class RecreationService:
         game_info["state"] = new_state
         game_info["moves_count"] += 1
 
+        # AD-526b: Emit game state update for HXI WebSocket
+        if self._emit:
+            try:
+                from probos.events import EventType
+                self._emit(EventType.GAME_UPDATE, {
+                    "game_id": game_id,
+                    "board": new_state["board"],
+                    "current_player": new_state.get("current_player", ""),
+                    "status": new_state["status"],
+                    "winner": new_state.get("winner", ""),
+                    "valid_moves": engine.get_valid_moves(new_state) if new_state["status"] == "in_progress" else [],
+                    "moves_count": game_info["moves_count"],
+                    "last_move": {"player": player, "position": move},
+                    "thread_id": game_info.get("thread_id", ""),
+                })
+            except Exception:
+                pass
+
         # Check if game is finished
         if engine.is_finished(new_state):
             result = engine.get_result(new_state)
@@ -181,6 +199,32 @@ class RecreationService:
             return []
         engine = self._engines[game_info["game_type"]]
         return engine.get_valid_moves(game_info["state"])
+
+    async def forfeit_game(self, game_id: str, player: str) -> None:
+        """Forfeit/abandon an active game."""
+        game_info = self._active_games.get(game_id)
+        if not game_info:
+            return
+
+        thread_id = game_info.get("thread_id", "")
+        if thread_id and thread_id in self._thread_games:
+            del self._thread_games[thread_id]
+        del self._active_games[game_id]
+
+        if self._emit:
+            try:
+                from probos.events import EventType
+                self._emit(EventType.GAME_UPDATE, {
+                    "game_id": game_id,
+                    "status": "forfeited",
+                    "board": [],
+                    "current_player": "",
+                    "winner": "",
+                    "valid_moves": [],
+                    "moves_count": 0,
+                })
+            except Exception:
+                pass
 
     async def _record_game(
         self, game_info: dict[str, Any], engine: GameEngine,

@@ -106,10 +106,13 @@ class TestMakeMove:
         await service.make_move(gid, "a", "1")
         await service.make_move(gid, "b", "4")
         await service.make_move(gid, "a", "2")
-        service._emit.assert_called_once()
-        call_args = service._emit.call_args
-        assert call_args[0][1]["game_type"] == "tictactoe"
-        assert call_args[0][1]["result"]["winner"] == "a"
+        # AD-526b: now emits GAME_UPDATE per move + GAME_COMPLETED at end
+        from probos.events import EventType
+        completed_calls = [c for c in service._emit.call_args_list
+                           if len(c[0]) >= 1 and c[0][0] == EventType.GAME_COMPLETED]
+        assert len(completed_calls) == 1
+        assert completed_calls[0][0][1]["game_type"] == "tictactoe"
+        assert completed_calls[0][0][1]["result"]["winner"] == "a"
 
     @pytest.mark.asyncio
     async def test_game_completion_records(self, service):

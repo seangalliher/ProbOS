@@ -2755,14 +2755,14 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 
 **Solution — three phases:** AD-571a (Tier-Aware Trust Filtering — filter crew-only for metrics/cascades/emergence), AD-571b (Operational Status Model — replace rank with health/load/availability for utility agents), AD-571c (Hebbian Scope Reduction — restrict weight tracking to crew←→crew interactions).
 
-### AD-526b: HXI Tic-Tac-Toe — Captain vs Crew Game Panel (Draft)
+### AD-526b: HXI Tic-Tac-Toe — Captain vs Crew Game Panel
 
 **Date:** 2026-04-06
-**Status:** Draft (build prompt ready)
-**Scope:** Medium | **Type:** Feature + Bug Fix (BF-111)
+**Status:** Complete
+**Scope:** Medium | **Type:** Feature
 
-**Problem:** AD-526a delivered the agent-to-agent recreation framework (RecreationService, TicTacToeEngine, proactive CHALLENGE/MOVE actions), but the Captain (human) cannot play. Games only work between agents via proactive think cycles. Additionally, BF-111: `proactive.py` calls `rt.ward_room.post_message()` and `rt.ward_room.reply_to_thread()` which don't exist on `WardRoomService` — correct methods are `create_thread()` and `create_post()`. Game challenge threads and board update posts have been silently failing since AD-526a.
+**Problem:** AD-526a delivered the agent-to-agent recreation framework (RecreationService, TicTacToeEngine, proactive CHALLENGE/MOVE actions), but the Captain (human) cannot play. Games only work between agents via proactive think cycles. BF-111 (Ward Room API mismatch) was already fixed in commit 1cc746e — no proactive.py changes needed.
 
-**Solution:** Full-stack Captain vs crew tic-tac-toe experience. REST router (`/api/recreation/` — challenge, move, active, forfeit endpoints). Floating `GamePanel.tsx` component following `AgentProfilePanel.tsx` pattern (CSS Grid board, piece-pop animations, PlayStopper overlay, win-line amber glow). `GAME_UPDATE` event emission from RecreationService for real-time WebSocket delivery. Game rehydration on page refresh via GET `/api/recreation/active`. "Challenge to Tic-Tac-Toe" button in agent profile panel (crew agents only). Captain always plays X (teal), agent responds on next proactive cycle.
+**Solution:** Full-stack Captain vs crew tic-tac-toe experience. REST router (`/api/recreation/` — challenge, move, active, forfeit endpoints) using Depends() DI. Floating `GamePanel.tsx` component following `AgentProfilePanel.tsx` pattern (CSS Grid board, piece-pop animations, win-line amber glow, pulse-dim waiting indicator). `GAME_UPDATE` event emission from RecreationService for real-time WebSocket delivery. Game rehydration on page refresh via GET `/api/recreation/active`. "Challenge to Tic-Tac-Toe" button in agent profile panel (crew agents only). Captain always plays X (teal), agent responds on next proactive cycle. `forfeit_game()` service method for game abandonment.
 
-**Files:** 2 new (`routers/recreation.py`, `GamePanel.tsx`), 8 modified (`events.py`, `recreation/service.py`, `api.py`, `useStore.ts`, `types.ts`, `ProfileInfoTab.tsx`, `App.tsx`, `proactive.py`).
+**Files:** 2 new (`routers/recreation.py`, `GamePanel.tsx`), 7 modified (`events.py`, `recreation/service.py`, `api.py`, `useStore.ts`, `types.ts`, `ProfileInfoTab.tsx`, `App.tsx`). Tests: `test_recreation_router.py` (16 tests), updated `test_recreation_service.py`.

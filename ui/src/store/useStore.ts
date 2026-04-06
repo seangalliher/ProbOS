@@ -15,6 +15,7 @@ import type {
   WorkTypeDefinitionView, WorkItemTemplateView,  // AD-498
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
+  GameState,  // AD-526b
 } from './types';
 
 export interface GroupCenter {
@@ -325,6 +326,14 @@ export interface HXIState {
   fetchWorkTypes: () => Promise<void>;
   fetchWorkTemplates: () => Promise<void>;
   createFromTemplate: (templateId: string, variables?: Record<string, string>, overrides?: Record<string, any>) => Promise<void>;
+  // AD-526b: Recreation Game (Captain vs Crew)
+  activeGame: GameState | null;
+  gamePanelPos: { x: number; y: number };
+  challengeAgent: (agentId: string) => Promise<void>;
+  makeGameMove: (position: string) => Promise<void>;
+  forfeitGame: () => Promise<void>;
+  closeGame: () => void;
+  setGamePanelPos: (pos: { x: number; y: number }) => void;
 }
 
 /** Derive MissionControlTasks from BuildQueueItems (AD-322). */
@@ -442,6 +451,10 @@ export const useStore = create<HXIState>((set, get) => ({
     } catch {}
     return { scanLinesEnabled: false, chromaticAberrationEnabled: false, dataRainEnabled: false, atmosphereIntensity: 0.3 };
   })(),
+
+  // AD-526b: Recreation Game
+  activeGame: null,
+  gamePanelPos: { x: 200, y: 120 },
 
   setConnected: (v) => { soundEngine.setConnected(v); set({ connected: v }); },
   setHoveredAgent: (agent, pos) => set(pos ? { hoveredAgent: agent, tooltipPos: pos } : { hoveredAgent: agent }),
@@ -727,6 +740,92 @@ export const useStore = create<HXIState>((set, get) => ({
     }));
   },
 
+  // AD-526b: Recreation Game actions
+  challengeAgent: async (agentId: string) => {
+    try {
+      const resp = await fetch('/api/recreation/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opponent_agent_id: agentId, game_type: 'tictactoe' }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        console.warn('Challenge failed:', err.detail || resp.statusText);
+        return;
+      }
+      const data = await resp.json();
+      set({
+        activeGame: {
+          gameId: data.game_id,
+          gameType: data.game_type || 'tictactoe',
+          board: data.board || Array(9).fill(''),
+          currentPlayer: data.current_player || 'Captain',
+          status: data.status || 'in_progress',
+          winner: data.winner || '',
+          validMoves: data.valid_moves || [],
+          movesCount: data.moves_count || 0,
+          opponent: data.opponent || '',
+          opponentAgentId: data.opponent_agent_id || agentId,
+          threadId: data.thread_id || '',
+        },
+      });
+    } catch (e) {
+      console.warn('Challenge error:', e);
+    }
+  },
+
+  makeGameMove: async (position: string) => {
+    const game = get().activeGame;
+    if (!game) return;
+    try {
+      const resp = await fetch('/api/recreation/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ game_id: game.gameId, position }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        console.warn('Move failed:', err.detail || resp.statusText);
+        return;
+      }
+      const data = await resp.json();
+      set({
+        activeGame: {
+          ...game,
+          board: data.board || game.board,
+          currentPlayer: data.current_player || '',
+          status: data.status || game.status,
+          winner: data.winner || '',
+          validMoves: data.valid_moves || [],
+          movesCount: data.moves_count || game.movesCount,
+        },
+      });
+    } catch (e) {
+      console.warn('Move error:', e);
+    }
+  },
+
+  forfeitGame: async () => {
+    const game = get().activeGame;
+    if (!game) return;
+    try {
+      await fetch('/api/recreation/forfeit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ game_id: game.gameId }),
+      });
+    } catch { /* swallow */ }
+    set({ activeGame: null });
+  },
+
+  closeGame: () => {
+    set({ activeGame: null });
+  },
+
+  setGamePanelPos: (pos) => {
+    set({ gamePanelPos: pos });
+  },
+
   addChatMessage: (role, text, meta) => {
     const msg: ChatMessage = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -869,6 +968,27 @@ export const useStore = create<HXIState>((set, get) => ({
             workTemplates: wf.templates?.length ? wf.templates : null,
           });
         }
+        // AD-526b: Rehydrate active game on page refresh
+        fetch('/api/recreation/active').then(r => r.json()).then(gameData => {
+          if (gameData.game) {
+            const g = gameData.game;
+            set({
+              activeGame: {
+                gameId: g.game_id,
+                gameType: g.game_type || 'tictactoe',
+                board: g.board || Array(9).fill(''),
+                currentPlayer: g.current_player || '',
+                status: g.status || 'in_progress',
+                winner: g.winner || '',
+                validMoves: g.valid_moves || [],
+                movesCount: g.moves_count || 0,
+                opponent: g.opponent || '',
+                opponentAgentId: g.opponent_agent_id || '',
+                threadId: g.thread_id || '',
+              },
+            });
+          }
+        }).catch(() => {});
         break;
       }
 
@@ -1496,6 +1616,26 @@ export const useStore = create<HXIState>((set, get) => ({
       }
       case 'scheduled_task_dag_stale': {
         // Surface as notification — stale DAGs need Captain review
+        break;
+      }
+
+      // AD-526b: Game state updates via WebSocket
+      case 'game_update': {
+        const game = get().activeGame;
+        const d = data as Record<string, unknown>;
+        if (game && d.game_id === game.gameId) {
+          set({
+            activeGame: {
+              ...game,
+              board: (d.board as string[]) || game.board,
+              currentPlayer: (d.current_player as string) || '',
+              status: (d.status as GameState['status']) || game.status,
+              winner: (d.winner as string) || '',
+              validMoves: (d.valid_moves as string[]) || [],
+              movesCount: (d.moves_count as number) || game.movesCount,
+            },
+          });
+        }
         break;
       }
 

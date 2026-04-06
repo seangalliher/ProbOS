@@ -40,6 +40,8 @@ interface Props {
 export function ProfileInfoTab({ profileData, agent }: Props) {
   const dmChannels = useStore(s => s.wardRoomDmChannels);
   const refreshDms = useStore(s => s.refreshWardRoomDmChannels);
+  const activeGame = useStore(s => s.activeGame);
+  const challengeAgent = useStore(s => s.challengeAgent);
   useEffect(() => { refreshDms(); }, [refreshDms]);
 
   // Filter DM channels involving this agent (by agent ID prefix in channel name)
@@ -178,6 +180,31 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* AD-526b: Challenge to game */}
+      {agent.isCrew && (
+        <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <button
+            onClick={() => challengeAgent(agent.id)}
+            disabled={!!activeGame}
+            style={{
+              width: '100%',
+              padding: '8px 0',
+              background: activeGame ? 'rgba(100, 100, 100, 0.1)' : 'rgba(240, 176, 96, 0.1)',
+              border: `1px solid ${activeGame ? 'rgba(100, 100, 100, 0.15)' : 'rgba(240, 176, 96, 0.25)'}`,
+              borderRadius: 6,
+              color: activeGame ? '#666' : '#f0b060',
+              fontSize: 12,
+              fontFamily: "'JetBrains Mono', monospace",
+              cursor: activeGame ? 'default' : 'pointer',
+              fontWeight: 500,
+              letterSpacing: 0.5,
+            }}
+          >
+            {activeGame ? 'Game in progress...' : 'Challenge to Tic-Tac-Toe'}
+          </button>
         </div>
       )}
     </div>

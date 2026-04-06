@@ -14,6 +14,7 @@ import { AgentTooltip } from './components/AgentTooltip';
 import { AgentProfilePanel } from './components/profile';
 import { WardRoomPanel } from './components/wardroom';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
+import { GamePanel } from './components/GamePanel';
 
 function WardRoomToggle() {
   const open = useStore(s => s.wardRoomOpen);
@@ -91,6 +92,7 @@ export default function App() {
       <DecisionSurface />
       <AgentTooltip />
       <AgentProfilePanel />
+      <GamePanel />
       <WardRoomPanel />
       <WardRoomToggle />
       <WelcomeOverlay />

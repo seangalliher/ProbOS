@@ -131,6 +131,7 @@ class EventType(str, Enum):
     GROUPTHINK_WARNING = "groupthink_warning"  # AD-557: redundancy dominates
     FRAGMENTATION_WARNING = "fragmentation_warning"  # AD-557: synergy near zero
     GAME_COMPLETED = "game_completed"  # AD-526a: Game finished
+    GAME_UPDATE = "game_update"  # AD-526b: game state changed (move made)
     LLM_HEALTH_CHANGED = "llm_health_changed"  # BF-069: LLM proxy status transition
     CONVERGENCE_DETECTED = "convergence_detected"  # AD-551: cross-agent convergence
     DIVERGENCE_DETECTED = "divergence_detected"  # AD-554: cross-agent divergence
