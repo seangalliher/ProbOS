@@ -291,8 +291,10 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                 report.weights_strengthened,
                 report.weights_pruned,
             )
+        except asyncio.TimeoutError:
+            logger.warning("Shutdown consolidation timed out (5s limit) — partial consolidation completed")
         except (asyncio.CancelledError, Exception) as e:
-            logger.warning("Shutdown consolidation failed: %s", e)
+            logger.warning("Shutdown consolidation failed: %s", e or type(e).__name__)
 
     # Stop dreaming scheduler
     if runtime.dream_scheduler:
