@@ -353,6 +353,17 @@ class WardRoomRouter:
                             continue
                     target_ids.append(agent.id)
 
+        elif channel.channel_type == "dm":
+            # AD-574: DM channel — notify the other participant (no EA gating)
+            for agent in self._registry.all():
+                if (agent.is_alive
+                        and agent.id != author_id
+                        and agent.id not in target_ids
+                        and hasattr(agent, 'handle_intent')
+                        and is_crew_agent(agent, self._ontology)
+                        and agent.id[:8] in channel.name):
+                    target_ids.append(agent.id)
+
         return target_ids
 
     def find_targets_for_agent(

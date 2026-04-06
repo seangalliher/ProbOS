@@ -1831,7 +1831,53 @@ class CognitiveAgent(BaseAgent):
         if orientation:
             parts.append(orientation)
 
+        # AD-513: Crew complement grounding (anti-confabulation)
+        crew_complement = self._build_crew_complement()
+        if crew_complement:
+            parts.append(crew_complement)
+
         return "\n".join(parts)
+
+    def _build_crew_complement(self) -> str:
+        """AD-513: Build compact crew complement for cognitive grounding.
+
+        Prevents confabulation by anchoring agents to the actual crew roster.
+        Injected into all prompt paths via _build_temporal_context().
+        """
+        rt = getattr(self, '_runtime', None)
+        if not rt or not getattr(rt, 'ontology', None):
+            return ""
+
+        try:
+            manifest = rt.ontology.get_crew_manifest(
+                callsign_registry=getattr(rt, 'callsign_registry', None),
+            )
+        except Exception:
+            return ""
+
+        if not manifest:
+            return ""
+
+        self_atype = getattr(self, 'agent_type', '')
+        dept_groups: dict[str, list[str]] = {}
+        for entry in manifest:
+            if entry["agent_type"] == self_atype:
+                continue
+            dept = (entry.get("department") or "bridge").capitalize()
+            dept_groups.setdefault(dept, []).append(entry["callsign"])
+
+        if not dept_groups:
+            return ""
+
+        lines = ["=== SHIP'S COMPLEMENT (these are the ONLY crew aboard) ==="]
+        for dept_name in sorted(dept_groups):
+            members = ", ".join(sorted(dept_groups[dept_name]))
+            lines.append(f"  {dept_name}: {members}")
+        lines.append(
+            "Do NOT reference crew members who are not listed above. "
+            "If you are uncertain whether someone is aboard, verify against this roster."
+        )
+        return "\n".join(lines)
 
     def _format_memory_section(self, memories: list[dict]) -> list[str]:
         """Format recalled episodes with anchor context headers (AD-567b)."""

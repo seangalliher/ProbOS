@@ -185,6 +185,13 @@ class AgentOnboardingService:
                     departments=_depts,
                     episodic_memory_count=0 if not _existing_identity_callsign else -1,
                     trust_score=0.5,
+                    crew_names=sorted(
+                        cs for at, cs in (
+                            self._callsign_registry.all_callsigns().items()
+                            if self._callsign_registry else []
+                        )
+                        if cs and at != agent.agent_type
+                    ),
                 )
                 if not _existing_identity_callsign:
                     _rendered = self._orientation_service.render_cold_start_orientation(_ctx)

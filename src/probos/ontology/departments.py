@@ -54,6 +54,10 @@ class DepartmentService:
         """Posts that report to this post."""
         return [p for p in self._posts.values() if p.reports_to == post_id]
 
+    def get_all_assignments(self) -> list[Assignment]:
+        """Return all crew assignments."""
+        return list(self._assignments.values())
+
     def get_assignment_for_agent(self, agent_type: str) -> Assignment | None:
         """Return assignment for an agent_type."""
         return self._assignments.get(agent_type)

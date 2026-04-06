@@ -116,6 +116,9 @@ class VesselOntologyService:
     def get_direct_reports(self, post_id: str) -> list[Post]:
         return self._dept.get_direct_reports(post_id)  # type: ignore[union-attr]
 
+    def get_all_assignments(self) -> list[Assignment]:
+        return self._dept.get_all_assignments()  # type: ignore[union-attr]
+
     def get_assignment_for_agent(self, agent_type: str) -> Assignment | None:
         return self._dept.get_assignment_for_agent(agent_type)  # type: ignore[union-attr]
 
@@ -387,3 +390,68 @@ class VesselOntologyService:
             }
 
         return context
+
+    # -------------------------------------------------------------------
+    # Crew manifest (AD-513)
+    # -------------------------------------------------------------------
+
+    def get_crew_manifest(
+        self,
+        *,
+        department: str | None = None,
+        trust_network: Any | None = None,
+        callsign_registry: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Assemble live crew roster from ship subsystems.
+
+        Returns one entry per crew agent with fields:
+          agent_type, callsign, department, post, rank, trust_score, agent_id.
+
+        Enrichment sources are optional — omit for a minimal roster.
+        """
+        from probos.crew_profile import Rank
+
+        crew_types = self.get_crew_agent_types()
+        manifest: list[dict[str, Any]] = []
+
+        for agent_type in sorted(crew_types):
+            assignment = self.get_assignment_for_agent(agent_type)
+            if not assignment:
+                continue
+
+            post = self.get_post(assignment.post_id) if assignment.post_id else None
+            dept_id = self.get_agent_department(agent_type) or ""
+
+            entry: dict[str, Any] = {
+                "agent_type": agent_type,
+                "callsign": assignment.callsign,
+                "department": dept_id,
+                "post": post.title if post else "",
+                "agent_id": assignment.agent_id or "",
+            }
+
+            # Enrich with callsign registry (live callsign may differ)
+            if callsign_registry:
+                live_cs = callsign_registry.get_callsign(agent_type)
+                if live_cs:
+                    entry["callsign"] = live_cs
+
+            # Enrich with trust score + rank
+            if trust_network and assignment.agent_id:
+                try:
+                    trust_score = trust_network.get_trust(assignment.agent_id)
+                    entry["trust_score"] = round(trust_score, 3)
+                    entry["rank"] = Rank.from_trust(trust_score).value
+                except Exception:
+                    entry["trust_score"] = 0.5
+                    entry["rank"] = Rank.ENSIGN.value
+            else:
+                entry["trust_score"] = 0.5
+                entry["rank"] = Rank.ENSIGN.value
+
+            manifest.append(entry)
+
+        if department:
+            manifest = [e for e in manifest if e["department"] == department]
+
+        return manifest

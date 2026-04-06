@@ -16,6 +16,7 @@ import type {
   StateSnapshot, TrustUpdateEvent, HebbianUpdateEvent,
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
   GameState,  // AD-526b
+  CrewManifestEntry,  // AD-513
 } from './types';
 
 export interface GroupCenter {
@@ -245,6 +246,9 @@ export interface HXIState {
   wardRoomUnread: Record<string, number>;
   wardRoomView: 'channels' | 'dms';
   wardRoomDmChannels: { channel: { id: string; name: string; description: string; created_at: number }; latest_thread: any; thread_count: number }[];
+  // Crew Manifest (AD-513)
+  crewManifestOpen: boolean;
+  crewManifest: CrewManifestEntry[] | null;
   // Assignments (AD-408)
   assignments: Assignment[];
   // Scheduled Tasks (Phase 25a)
@@ -285,6 +289,9 @@ export interface HXIState {
   addAgentMessage: (agentId: string, role: 'user' | 'agent', text: string) => void;
   markAgentRead: (agentId: string) => void;
   setProfilePanelPos: (pos: { x: number; y: number }) => void;
+  // Crew Manifest actions (AD-513)
+  openCrewManifest: () => void;
+  closeCrewManifest: () => void;
   // Ward Room HXI actions (AD-407c)
   openWardRoom: (channelId?: string) => void;
   closeWardRoom: () => void;
@@ -421,6 +428,9 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomView: 'channels' as const,
   wardRoomDmChannels: [],
   communicationsSettings: { dm_min_rank: 'ensign', recreation_min_rank: 'ensign' },
+  // Crew Manifest (AD-513)
+  crewManifestOpen: false,
+  crewManifest: null,
   // Assignments (AD-408)
   assignments: [],
   // Scheduled Tasks (Phase 25a)
@@ -465,6 +475,27 @@ export const useStore = create<HXIState>((set, get) => ({
     pinnedAgent: null,  // dismiss tooltip when profile opens
   }),
   closeAgentProfile: () => set({ activeProfileAgent: null }),
+  // AD-513: Crew Manifest actions
+  openCrewManifest: async () => {
+    set({ crewManifestOpen: true });
+    try {
+      const res = await fetch('/api/ontology/crew-manifest');
+      if (res.ok) {
+        const data = await res.json();
+        const manifest: CrewManifestEntry[] = (data.manifest || []).map((e: any) => ({
+          agentType: e.agent_type || '',
+          callsign: e.callsign || '',
+          department: e.department || '',
+          post: e.post || '',
+          rank: e.rank || 'ensign',
+          trustScore: e.trust_score ?? 0.5,
+          agentId: e.agent_id || '',
+        }));
+        set({ crewManifest: manifest });
+      }
+    } catch { /* non-critical */ }
+  },
+  closeCrewManifest: () => set({ crewManifestOpen: false }),
   minimizeAgentProfile: () => {
     const agentId = get().activeProfileAgent;
     if (!agentId) return;

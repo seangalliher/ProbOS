@@ -15,6 +15,40 @@ import { AgentProfilePanel } from './components/profile';
 import { WardRoomPanel } from './components/wardroom';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
 import { GamePanel } from './components/GamePanel';
+import CrewRosterPanel from './components/CrewRosterPanel';
+
+function CrewRosterToggle() {
+  const open = useStore(s => s.crewManifestOpen);
+  const openManifest = useStore(s => s.openCrewManifest);
+
+  if (open) return null;
+
+  return (
+    <div
+      onClick={() => openManifest()}
+      style={{
+        position: 'fixed',
+        top: 12, left: 130,
+        zIndex: 25,
+        padding: '6px 12px',
+        background: 'rgba(10, 10, 18, 0.75)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        border: '1px solid rgba(240, 176, 96, 0.15)',
+        borderRadius: 6,
+        cursor: 'pointer',
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: 1.5,
+        fontFamily: "'JetBrains Mono', monospace",
+        color: '#8888a0',
+        userSelect: 'none' as const,
+      }}
+    >
+      CREW
+    </div>
+  );
+}
 
 function WardRoomToggle() {
   const open = useStore(s => s.wardRoomOpen);
@@ -95,6 +129,8 @@ export default function App() {
       <GamePanel />
       <WardRoomPanel />
       <WardRoomToggle />
+      <CrewRosterPanel />
+      <CrewRosterToggle />
       <WelcomeOverlay />
     </div>
   );

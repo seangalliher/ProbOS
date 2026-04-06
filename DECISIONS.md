@@ -2816,3 +2816,38 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Decision:** Remove the entire code path: `proactive_extends_idle` config field, `DreamScheduler` parameter/attributes/methods (`record_proactive_activity()`, `is_proactively_busy`, `_last_proactive_time`), idle calculation simplification (remove `truly_idle` intermediate, use `idle_time` directly), proactive.py caller, startup wiring, and `DreamAdapter` busy guard. Removed 9-test `TestDreamSchedulerProactiveAwareness` class. Added 1 focused test preserving `on_post_micro_dream` → `EmergentDetector.analyze()` coverage. `_last_proactive_scan_time` (AD-532e, unrelated) preserved.
 
 **Files:** 7 modified (`config.py`, `system.yaml`, `dreaming.py`, `proactive.py`, `startup/dreaming.py`, `dream_adapter.py`, `test_dreaming.py`). Net -8 tests (removed 9 dead-feature tests, added 1 targeted coverage test).
+
+### AD-574: DM Reply Agent Notification
+
+**Date:** 2026-04-06
+**Status:** Complete
+**Priority:** High (UX bug — Captain messages silently lost)
+
+**Problem:** When the Captain replies to an agent's DM through the Ward Room DM Log or Thread Detail panel, the agent never responds. Two independent gaps: (1) `WardRoomRouter.find_targets()` handles `ship` and `department` channel types but has no case for `dm` — Captain posts in DM channels produce an empty target list. (2) `get_unread_dms()` only returns threads where the agent has zero posts (`p.id IS NULL`) — if the agent initiated the DM conversation, Captain replies don't appear as "unread" because the agent already posted in the thread.
+
+**Decision:** Fix both gaps for defense-in-depth. Added `elif channel.channel_type == "dm"` case to `find_targets()` matching `agent.id[:8]` against channel name (mirrors existing `find_targets_for_agent()` pattern). No Earned Agency gating — DMs are 1:1 targeted communication. Rewrote `get_unread_dms()` query to use LEFT JOIN subquery finding the last post author per thread, using `COALESCE(lp.last_author, t.author_id) != agent_id` — thread is "unread" if the most recent activity is from someone other than the agent.
+
+**Files:** 2 modified (`ward_room_router.py`, `ward_room/messages.py`), 2 test files updated (`test_ward_room_agents.py`, `test_ward_room_dms.py`). +9 tests (5 routing + 4 query).
+
+### AD-513: Ship's Crew Manifest — Queryable Crew Roster
+
+**Date:** 2026-04-06
+**Status:** Complete (Phase 1 — manifest, cognitive grounding, HXI panel)
+
+**Problem:** ProbOS has crew data scattered across subsystems (ontology, trust network, callsign registry, earned agency) but no unified query surface. Agents confabulate crew members from LLM parametric knowledge because no grounding roster exists. Shepard (Security) requesting a crew manifest with trust levels is the canonical use case.
+
+**Decision:** Three-layer delivery:
+
+**(1) Backend — `get_crew_manifest()` on VesselOntologyService.** Assembles live roster at query time from existing subsystems. Fields: agent_type, callsign, department, post, rank, trust_score, agent_id. Optional enrichment via dependency-injected `trust_network` and `callsign_registry` parameters (dependency inversion — no reaching into runtime). Sorted by agent_type for determinism. Department filter parameter. `get_all_assignments()` public method added to DepartmentService to fix LoD violation (`_assignments` was accessed directly in the ontology router's organization endpoint).
+
+**(2) Cognitive grounding — `_build_crew_complement()` in CognitiveAgent.** Anti-confabulation block injected into `_build_temporal_context()` so it appears in ALL cognitive pathways (DM, Ward Room, proactive). Format: `=== SHIP'S COMPLEMENT (these are the ONLY crew aboard) ===` followed by department-grouped callsigns, ending with "Do NOT reference crew members who are not listed above." Excludes self from roster. Graceful degradation: returns empty string if ontology unavailable. OrientationContext extended with `crew_names` field for cold/warm boot identity grounding ("Your shipmates aboard are: ...").
+
+**(3) HXI — CrewRosterPanel floating panel.** 360×520px draggable panel following AgentProfilePanel pattern. Department-grouped crew list with filter chips, rank badges, trust bars, click-to-profile navigation. CREW toggle button at top-left. Zustand store fetches from `/api/ontology/crew-manifest` REST endpoint.
+
+**REST endpoint:** `GET /api/ontology/crew-manifest?department=engineering` — returns vessel identity, crew count, department-grouped and flat manifest. Router uses Depends() DI, validates ontology availability before delegating.
+
+**Rationale:** The ship manifest IS the ontology — not a report generated from it. Query-time assembly means no stale cache. Anti-confabulation grounding in temporal context ensures it reaches every cognitive pathway without modifying each pathway individually.
+
+**Files:** 6 Python modified (`ontology/service.py`, `ontology/departments.py`, `routers/ontology.py`, `cognitive/cognitive_agent.py`, `cognitive/orientation.py`, `startup/finalize.py`, `agent_onboarding.py`), 3 TypeScript modified/created (`store/types.ts`, `store/useStore.ts`, `App.tsx`, `components/CrewRosterPanel.tsx`), 2 test files (`test_ontology.py` +7 tests, `test_cognitive_crew_grounding.py` +7 tests). Total: +14 tests.
+
+**Deferred:** AD-513 Phase 2 — shell command (`crew manifest`), trust-gated visibility (redacted view for lower tiers), agent tool access (internal API for crew-to-crew queries), watch filter, ACM lifecycle state/competency fields, ship manifest for federation.

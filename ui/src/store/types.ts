@@ -537,3 +537,14 @@ export interface GameState {
   opponentAgentId: string;
   threadId: string;
 }
+
+// AD-513: Crew manifest entry from /api/ontology/crew-manifest
+export interface CrewManifestEntry {
+  agentType: string;
+  callsign: string;
+  department: string;
+  post: string;
+  rank: string;
+  trustScore: number;
+  agentId: string;
+}

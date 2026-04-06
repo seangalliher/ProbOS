@@ -568,6 +568,93 @@ class TestRoundParticipation:
 
 
 # ---------------------------------------------------------------------------
+# DM Channel Routing (AD-574)
+# ---------------------------------------------------------------------------
+
+class TestDmChannelRouting:
+    """AD-574: Captain posts in DM channels notify the target agent."""
+
+    @pytest.mark.asyncio
+    async def test_captain_post_in_dm_notifies_agent(self):
+        """find_targets returns the agent when Captain posts in their DM channel."""
+        runtime = _make_mock_runtime()
+        agent = _make_agent("abc12345-full-uuid", "architect")
+        runtime.registry.all.return_value = [agent]
+
+        channel = _make_channel("dm-ch1", "dm")
+        channel.name = "dm-captain-abc12345"
+
+        targets = runtime.ward_room_router.find_targets(
+            channel=channel, author_id="captain",
+        )
+        assert "abc12345-full-uuid" in targets
+
+    @pytest.mark.asyncio
+    async def test_captain_post_in_dm_does_not_notify_self(self):
+        """Captain is never in the target list."""
+        runtime = _make_mock_runtime()
+        agent = _make_agent("abc12345-full-uuid", "architect")
+        runtime.registry.all.return_value = [agent]
+
+        channel = _make_channel("dm-ch1", "dm")
+        channel.name = "dm-captain-abc12345"
+
+        targets = runtime.ward_room_router.find_targets(
+            channel=channel, author_id="captain",
+        )
+        assert "captain" not in targets
+
+    @pytest.mark.asyncio
+    async def test_captain_post_in_dm_no_earned_agency_gating(self):
+        """DM routing bypasses Earned Agency trust-tier check."""
+        runtime = _make_mock_runtime()
+        runtime.config.earned_agency.enabled = True
+        # Low trust agent — would be filtered by EA on ship/dept channels
+        runtime.trust_network.get_score.return_value = 0.1
+
+        agent = _make_agent("abc12345-full-uuid", "architect")
+        runtime.registry.all.return_value = [agent]
+
+        channel = _make_channel("dm-ch1", "dm")
+        channel.name = "dm-captain-abc12345"
+
+        targets = runtime.ward_room_router.find_targets(
+            channel=channel, author_id="captain",
+        )
+        assert "abc12345-full-uuid" in targets
+
+    @pytest.mark.asyncio
+    async def test_agent_not_in_channel_not_notified(self):
+        """Agents whose ID prefix doesn't match are excluded."""
+        runtime = _make_mock_runtime()
+        agent = _make_agent("zzz99999-other-uuid", "architect")
+        runtime.registry.all.return_value = [agent]
+
+        channel = _make_channel("dm-ch1", "dm")
+        channel.name = "dm-captain-abc12345"
+
+        targets = runtime.ward_room_router.find_targets(
+            channel=channel, author_id="captain",
+        )
+        assert len(targets) == 0
+
+    @pytest.mark.asyncio
+    async def test_agent_initiated_dm_captain_reply_routes(self):
+        """Agent-initiated DM (channel name dm-{agent}-{captain}) routes Captain reply."""
+        runtime = _make_mock_runtime()
+        agent = _make_agent("abc12345-full-uuid", "architect")
+        runtime.registry.all.return_value = [agent]
+
+        channel = _make_channel("dm-ch1", "dm")
+        channel.name = "dm-abc12345-captain"
+
+        targets = runtime.ward_room_router.find_targets(
+            channel=channel, author_id="captain",
+        )
+        assert "abc12345-full-uuid" in targets
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

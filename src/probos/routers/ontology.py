@@ -36,7 +36,7 @@ async def get_organization(runtime: Any = Depends(get_runtime)) -> Any:
     return {
         "departments": [asdict(d) for d in ont.get_departments()],
         "posts": [asdict(p) for p in ont.get_posts()],
-        "assignments": [asdict(a) for a in ont._assignments.values()],
+        "assignments": [asdict(a) for a in ont.get_all_assignments()],
     }
 
 
@@ -49,6 +49,36 @@ async def get_crew_member(agent_type: str, runtime: Any = Depends(get_runtime)) 
     if not ctx:
         return JSONResponse({"error": "Agent not found in ontology"}, status_code=404)
     return ctx
+
+
+@router.get("/crew-manifest")
+async def get_crew_manifest(
+    runtime: Any = Depends(get_runtime),
+    department: str | None = None,
+) -> dict:
+    """AD-513: Ship's Crew Manifest — unified crew roster."""
+    ont = runtime.ontology
+    if not ont:
+        return JSONResponse({"error": "Ontology not initialized"}, status_code=503)
+
+    manifest = ont.get_crew_manifest(
+        department=department,
+        trust_network=getattr(runtime, 'trust_network', None),
+        callsign_registry=getattr(runtime, 'callsign_registry', None),
+    )
+
+    departments: dict[str, list] = {}
+    for entry in manifest:
+        dept = entry.get("department", "unassigned") or "unassigned"
+        departments.setdefault(dept, []).append(entry)
+
+    vessel = ont.get_vessel_identity()
+    return {
+        "vessel": {"name": vessel.name, "instance_id": vessel.instance_id},
+        "crew_count": len(manifest),
+        "departments": departments,
+        "manifest": manifest,
+    }
 
 
 @router.get("/skills/{agent_type}")

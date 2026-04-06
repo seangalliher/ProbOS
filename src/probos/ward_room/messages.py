@@ -575,7 +575,12 @@ class MessageStore:
         return counts
 
     async def get_unread_dms(self, agent_id: str, limit: int = 3) -> list[dict]:
-        """Return DM threads where agent_id is a participant but hasn't replied."""
+        """Return DM threads with unread activity for an agent.
+
+        AD-574: A thread is 'unread' if the most recent activity (thread
+        creation or latest post) is from someone other than this agent.
+        This catches Captain replies in agent-initiated threads.
+        """
         if not self._db:
             return []
         prefix = agent_id[:8]
@@ -584,15 +589,19 @@ class MessageStore:
             "       t.title, t.body, t.created_at "
             "FROM threads t "
             "JOIN channels c ON c.id = t.channel_id "
-            "LEFT JOIN posts p ON p.thread_id = t.id AND p.author_id = ? "
+            "LEFT JOIN ("
+            "    SELECT thread_id, author_id AS last_author,"
+            "           MAX(created_at) AS last_post_time"
+            "    FROM posts WHERE deleted = 0"
+            "    GROUP BY thread_id"
+            ") lp ON lp.thread_id = t.id "
             "WHERE c.channel_type = 'dm' "
             "  AND c.name LIKE ? "
             "  AND (t.archived = 0 OR t.archived IS NULL) "
-            "  AND t.author_id != ? "
-            "  AND p.id IS NULL "
-            "ORDER BY t.created_at DESC "
+            "  AND COALESCE(lp.last_author, t.author_id) != ? "
+            "ORDER BY COALESCE(lp.last_post_time, t.created_at) DESC "
             "LIMIT ?",
-            (agent_id, f"%{prefix}%", agent_id, limit),
+            (f"%{prefix}%", agent_id, limit),
         ) as cursor:
             results = []
             async for row in cursor:

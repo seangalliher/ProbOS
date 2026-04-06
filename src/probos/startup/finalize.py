@@ -356,6 +356,11 @@ async def finalize_startup(
             and runtime._lifecycle_state == "stasis_recovery"
             and config.orientation.warm_boot_orientation):
         try:
+            # AD-513: Build crew names lookup for orientation
+            _all_crew_names: dict[str, str] = {}
+            if hasattr(runtime, 'callsign_registry') and runtime.callsign_registry:
+                _all_crew_names = runtime.callsign_registry.all_callsigns()
+
             for agent in runtime.registry.all():
                 if is_crew_agent(agent, runtime.ontology):
                     _ep_count = 0
@@ -372,12 +377,18 @@ async def finalize_startup(
                             _trust = runtime.trust_network.get_trust(agent.id)
                         except Exception:
                             pass
+                    # AD-513: Crew names excluding self
+                    _crew_names = sorted(
+                        cs for at, cs in _all_crew_names.items()
+                        if cs and at != agent.agent_type
+                    )
                     _ctx = runtime._orientation_service.build_orientation(
                         agent,
                         lifecycle_state="stasis_recovery",
                         stasis_duration=runtime._stasis_duration,
                         episodic_memory_count=_ep_count,
                         trust_score=_trust,
+                        crew_names=_crew_names,
                     )
                     agent.set_orientation(
                         runtime._orientation_service.render_warm_boot_orientation(_ctx),

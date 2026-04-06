@@ -49,6 +49,8 @@ class OrientationContext:
     )
     # Social verification awareness
     social_verification_available: bool = False
+    # AD-513: Crew roster for cognitive grounding
+    crew_names: list[str] = field(default_factory=list)
 
 
 def derive_watch_section(hour: int | None = None) -> str:
@@ -95,6 +97,7 @@ class OrientationService:
         departments: list[str] | None = None,
         episodic_memory_count: int = 0,
         trust_score: float = 0.5,
+        crew_names: list[str] | None = None,
     ) -> OrientationContext:
         """Build orientation context for an agent."""
         import time
@@ -165,6 +168,7 @@ class OrientationService:
             ) is not None and getattr(
                 getattr(self._config, 'social_verification', None), 'enabled', False
             ),
+            crew_names=crew_names or [],
         )
 
     def render_cold_start_orientation(self, ctx: OrientationContext) -> str:
@@ -193,6 +197,10 @@ class OrientationService:
             )
         if ctx.rank:
             identity_lines.append(f"Your rank is {ctx.rank}. You were commissioned moments ago.")
+        if ctx.crew_names:
+            identity_lines.append(
+                f"Your shipmates aboard are: {', '.join(ctx.crew_names)}."
+            )
         parts.append("\n".join(identity_lines))
 
         # Section 2: Cognitive Grounding

@@ -294,3 +294,94 @@ class TestAD485CaptainDmAndArchival:
         assert "@Troi" in dm_crew_list
         assert "@LaForge" in dm_crew_list
         assert dm_crew_list.startswith("Available crew to DM:")
+
+
+class TestUnreadDmsQuery:
+    """AD-574: Unread DM detection handles Captain replies in agent-initiated threads."""
+
+    @pytest.mark.asyncio
+    async def test_captain_reply_in_agent_thread_is_unread(self, wr):
+        """Agent initiates DM, Captain replies -> thread appears as unread for agent."""
+        agent_id = "abc12345-full-uuid"
+        ch = await wr.get_or_create_dm_channel(agent_id, "captain", "Bones", "Captain")
+        thread = await wr.create_thread(
+            channel_id=ch.id, author_id=agent_id,
+            title="Report", body="Captain, I have a report.",
+            author_callsign="Bones",
+        )
+        # Agent authored the thread — not unread yet
+        unread = await wr._messages.get_unread_dms(agent_id)
+        assert len(unread) == 0
+
+        # Captain replies
+        await wr.create_post(
+            thread_id=thread.id, author_id="captain",
+            body="Go ahead, Bones.", author_callsign="Captain",
+        )
+        # Now the last author is Captain — thread is unread for agent
+        unread = await wr._messages.get_unread_dms(agent_id)
+        assert len(unread) == 1
+        assert unread[0]["thread_id"] == thread.id
+
+    @pytest.mark.asyncio
+    async def test_agent_reply_clears_unread(self, wr):
+        """Agent replies to Captain's post -> thread is no longer unread."""
+        agent_id = "abc12345-full-uuid"
+        ch = await wr.get_or_create_dm_channel(agent_id, "captain")
+        thread = await wr.create_thread(
+            channel_id=ch.id, author_id="captain",
+            title="Question", body="Status report?",
+            author_callsign="Captain",
+        )
+        # Captain authored — unread for agent
+        unread = await wr._messages.get_unread_dms(agent_id)
+        assert len(unread) == 1
+
+        # Agent replies
+        await wr.create_post(
+            thread_id=thread.id, author_id=agent_id,
+            body="All systems nominal.", author_callsign="Bones",
+        )
+        # Agent is now last author — no longer unread
+        unread = await wr._messages.get_unread_dms(agent_id)
+        assert len(unread) == 0
+
+    @pytest.mark.asyncio
+    async def test_agent_initiated_no_reply_not_unread(self, wr):
+        """Agent initiates DM with no replies -> NOT unread."""
+        agent_id = "abc12345-full-uuid"
+        ch = await wr.get_or_create_dm_channel(agent_id, "captain")
+        await wr.create_thread(
+            channel_id=ch.id, author_id=agent_id,
+            title="Note", body="Just a note.",
+            author_callsign="Bones",
+        )
+        unread = await wr._messages.get_unread_dms(agent_id)
+        assert len(unread) == 0
+
+    @pytest.mark.asyncio
+    async def test_multiple_exchanges_last_author_wins(self, wr):
+        """Multiple back-and-forth -> unread status based on who posted last."""
+        agent_id = "abc12345-full-uuid"
+        ch = await wr.get_or_create_dm_channel(agent_id, "captain")
+        thread = await wr.create_thread(
+            channel_id=ch.id, author_id="captain",
+            title="Discussion", body="Let's discuss.",
+            author_callsign="Captain",
+        )
+        # Captain authored -> unread
+        assert len(await wr._messages.get_unread_dms(agent_id)) == 1
+
+        # Agent replies -> not unread
+        await wr.create_post(
+            thread_id=thread.id, author_id=agent_id,
+            body="Understood.", author_callsign="Bones",
+        )
+        assert len(await wr._messages.get_unread_dms(agent_id)) == 0
+
+        # Captain replies again -> unread
+        await wr.create_post(
+            thread_id=thread.id, author_id="captain",
+            body="One more thing.", author_callsign="Captain",
+        )
+        assert len(await wr._messages.get_unread_dms(agent_id)) == 1

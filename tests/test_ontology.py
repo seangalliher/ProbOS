@@ -367,3 +367,79 @@ class TestPostForAgent:
     async def test_get_post_for_unknown_agent(self, service: VesselOntologyService):
         """Unknown agent returns None."""
         assert service.get_post_for_agent("nonexistent") is None
+
+
+# -----------------------------------------------------------------------
+# AD-513: Crew Manifest
+# -----------------------------------------------------------------------
+
+class TestCrewManifest:
+    @pytest.mark.asyncio
+    async def test_manifest_returns_all_crew(self, service: VesselOntologyService):
+        """get_crew_manifest() returns one entry per crew-tier agent."""
+        manifest = service.get_crew_manifest()
+        crew_types = service.get_crew_agent_types()
+        assert len(manifest) > 0
+        # Every crew type with an assignment should be in the manifest
+        for entry in manifest:
+            assert entry["agent_type"] in crew_types
+
+    @pytest.mark.asyncio
+    async def test_manifest_entry_fields(self, service: VesselOntologyService):
+        """Each entry has required fields."""
+        manifest = service.get_crew_manifest()
+        assert len(manifest) > 0
+        for entry in manifest:
+            assert "agent_type" in entry
+            assert "callsign" in entry
+            assert "department" in entry
+            assert "post" in entry
+            assert "rank" in entry
+            assert "trust_score" in entry
+
+    @pytest.mark.asyncio
+    async def test_manifest_enriched_with_trust(self, service: VesselOntologyService):
+        """trust_network enrichment adds trust_score and rank."""
+        # Wire an agent to give it an ID
+        service.wire_agent("architect", "test-agent-id-123")
+        trust_net = MagicMock()
+        trust_net.get_trust.return_value = 0.85
+        manifest = service.get_crew_manifest(trust_network=trust_net)
+        arch_entry = next((e for e in manifest if e["agent_type"] == "architect"), None)
+        assert arch_entry is not None
+        assert arch_entry["trust_score"] == 0.85
+
+    @pytest.mark.asyncio
+    async def test_manifest_enriched_with_live_callsign(self, service: VesselOntologyService):
+        """callsign_registry enrichment uses live callsign over ontology."""
+        cs_reg = MagicMock()
+        cs_reg.get_callsign.return_value = "Meridian-Custom"
+        manifest = service.get_crew_manifest(callsign_registry=cs_reg)
+        arch_entry = next((e for e in manifest if e["agent_type"] == "architect"), None)
+        assert arch_entry is not None
+        assert arch_entry["callsign"] == "Meridian-Custom"
+
+    @pytest.mark.asyncio
+    async def test_manifest_department_filter(self, service: VesselOntologyService):
+        """department parameter filters results."""
+        full = service.get_crew_manifest()
+        eng_only = service.get_crew_manifest(department="engineering")
+        assert len(eng_only) < len(full)
+        for entry in eng_only:
+            assert entry["department"] == "engineering"
+
+    @pytest.mark.asyncio
+    async def test_manifest_without_enrichment(self, service: VesselOntologyService):
+        """Returns minimal roster when trust/callsign not provided."""
+        manifest = service.get_crew_manifest()
+        assert len(manifest) > 0
+        for entry in manifest:
+            assert entry["trust_score"] == 0.5
+            assert entry["rank"] == "ensign"
+
+    @pytest.mark.asyncio
+    async def test_manifest_sorted_deterministic(self, service: VesselOntologyService):
+        """Manifest entries are sorted by agent_type for determinism."""
+        manifest = service.get_crew_manifest()
+        types = [e["agent_type"] for e in manifest]
+        assert types == sorted(types)
