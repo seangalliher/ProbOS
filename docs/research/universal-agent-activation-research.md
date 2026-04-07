@@ -244,6 +244,47 @@ Atlan's analysis of EDA for AI agents provides a comprehensive framework that va
 
 **Choreography vs. Orchestration.** The article distinguishes two models that ProbOS needs both of: *choreography* (agents independently react to events — our "subscribe" pattern) and *orchestration* (a coordinator manages workflow state — our "push" pattern via the dispatcher). Most EDA systems pick one. ProbOS needs both because of the chain of command — some work is self-directed (earned agency, choreography), some is directed (Captain orders, Standing Orders, orchestration).
 
+### Solace Agent Mesh (SolaceLabs, 2025-2026)
+
+Solace Agent Mesh (SAM) is an open-source framework for building event-driven multi-agent AI systems, built on the Solace Event Broker (enterprise message broker) with Google ADK (Agent Development Kit) for agent intelligence. It's the most architecturally committed EDA multi-agent framework in the landscape — every agent-to-agent interaction flows through the broker, with no direct connections.
+
+**Three-Layer Architecture.** SAM separates concerns cleanly: Layer 1 is the Solace Event Broker (pub/sub messaging with hierarchical topic routing, guaranteed delivery), Layer 2 is the Solace AI Connector (agent lifecycle, subscription management, message deserialization), and Layer 3 is Google ADK (LLM integration, tool execution, session management). This separation means the messaging infrastructure, agent runtime, and cognitive layer are independently replaceable — in theory. In practice, the coupling to Solace's topic hierarchy and user properties makes the broker layer structural, not pluggable.
+
+**Hierarchical Topic-Based Routing.** All communication uses a topic taxonomy:
+
+```
+{namespace}/a2a/v1/discovery/agentcards          # Agent self-advertisement
+{namespace}/a2a/v1/agent/request/{agent_name}     # Task delivery
+{namespace}/a2a/v1/gateway/status/{gw}/{task_id}  # Streaming updates
+{namespace}/a2a/v1/gateway/response/{gw}/{task_id}# Final responses
+{namespace}/a2a/v1/agent/status/{agent}/{sub_id}  # Peer delegation status
+{namespace}/a2a/v1/agent/response/{agent}/{sub_id}# Peer delegation response
+```
+
+The A2A protocol itself is JSON-RPC 2.0 over Solace messages, with security scopes propagated through Solace user properties (not in the JSON body). This is a clean separation: the protocol is the message format, the broker is the transport, and scopes travel as metadata.
+
+**AgentCard Discovery (Eventually Consistent).** Rather than a central registry service, agents self-advertise by periodically broadcasting AgentCards (name, description, input/output modes, skills) to a well-known discovery topic. Any participant (orchestrator, gateway, other agents) maintains its own local `AgentRegistry` with TTL-based health tracking. This is eventually consistent — there's a window where newly deployed agents aren't yet discoverable, or removed agents are still in registries.
+
+**Orchestrator as Agent, Not Middleware.** SAM's `OrchestratorAgent` is a regular agent that happens to have planning capabilities — it receives tasks, uses AI to decompose them into sub-tasks, delegates via `PeerAgentTool` to target agents, tracks completion, and aggregates responses. Multiple orchestrators can coexist, each specializing in a domain. The orchestrator uses the same A2A protocol as any other agent — it publishes to target agents' request topics, with the original user's scopes forwarded through message properties. SAM also offers deterministic Workflows (YAML-defined DAGs with typed nodes: Agent, Switch, Map, Loop) as an alternative to AI-driven orchestration — experimental, but architecturally sound.
+
+**Gateway Abstraction.** Protocol bridges (REST API, WebSocket, Slack, Teams) handle authentication, session management, and translation between external protocols and A2A. Internal agents only speak A2A-over-Solace. Adding a new external protocol requires only a new gateway, not changes to any agent. This is the same pattern as ProbOS's Transporter Pattern (AD-330-336) but applied to the messaging layer rather than the data ingestion layer.
+
+**Bidirectional MCP Integration.** SAM can both consume MCP tools (agents connect to external MCP servers, discover tools, register them as agent tools) and expose agents as MCP tools (MCP Gateway publishes SAM agents to external MCP clients with dynamic `tools/list_changed` notifications). This bidirectional bridge between MCP and event-driven agent systems is well-executed and directly relevant to ProbOS's Phase 4 external integration.
+
+**ProbOS connections and differentiators:**
+
+1. **Communication model alignment.** SAM's broker-mediated pub/sub is architecturally similar to ProbOS's Ward Room — shared communication fabric, no direct agent-to-agent connections. But ProbOS layers sovereign identity, trust evolution, and chain of command on top. SAM agents are stateless service endpoints; ProbOS agents are crew members with Character/Reason/Duty.
+
+2. **Topic hierarchy → TaskEvent routing.** SAM's hierarchical topic taxonomy is a clean pattern. ProbOS's Dispatcher could adopt a similar namespace-based routing scheme for TaskEvents, where topic segments encode source type, event type, and target — enabling efficient subscription filtering without parsing every event.
+
+3. **AgentCard ≈ Qualification Framework.** SAM's AgentCards (self-advertised capability profiles) are structurally similar to ProbOS's Qualification Framework (AD-539) — both answer "what can this agent do?" The difference is that ProbOS qualifications are *earned* through demonstrated competence, while SAM AgentCards are *declared* by configuration. ProbOS's earned qualifications are richer but harder to bootstrap.
+
+4. **No identity, no trust, no memory.** SAM agents have names and capability declarations but no persistent identity, no trust evolution, no episodic memory, no personality. This is the fundamental gap the industry hasn't crossed — and ProbOS's core differentiator. SAM can orchestrate tools; ProbOS can orchestrate *colleagues*.
+
+5. **Bidirectional MCP is a pattern to absorb.** SAM's ability to both consume and expose MCP tools is directly applicable to ProbOS's external integration (Phase 4). ProbOS agents as MCP tools for external consumption aligns with the Visiting Officer model — external systems can invoke ProbOS crew members through standard MCP protocol.
+
+6. **Broker dependency is a cautionary note.** SAM's architectural coupling to Solace Event Broker (topic hierarchies, user properties, wildcard patterns are all Solace-specific) makes it vendor-locked at the infrastructure layer. ProbOS should ensure the TaskEvent Bus abstraction doesn't couple to any specific message broker — the event protocol should be transport-agnostic, with broker-specific adapters as pluggable infrastructure.
+
 ### Prior Art in Multi-Agent Activation
 
 **Actor Model (Hewitt, 1973):** Each agent is an actor with a mailbox that processes messages sequentially. Messages arrive asynchronously; the actor decides how to respond. ProbOS agents are already conceptually actors — they have identity, state, and behavior. What they lack is the mailbox. The cognitive queue *is* the mailbox.
@@ -400,4 +441,5 @@ When `create_game()` fires, both challenger and opponent get `ActiveEngagement` 
 - Bandarra, A. C. (2026). "WebMCP: Making websites agent-ready." Chrome for Developers Blog. https://developer.chrome.com/blog/webmcp-epp
 - Microsoft. (2026). "Microsoft Agent Framework." GitHub. https://github.com/microsoft/agent-framework
 - Atlan. (2026). "Event-Driven Architecture for AI Agents." https://atlan.com/know/event-driven-architecture-for-ai-agents/
+- SolaceLabs. (2025). "Solace Agent Mesh." GitHub. https://github.com/SolaceLabs/solace-agent-mesh
 - Riedl, M. (2025). "Measuring Emergence in Multi-Agent Systems." arXiv:2510.05174.
