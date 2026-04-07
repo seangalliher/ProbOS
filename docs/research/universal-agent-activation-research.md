@@ -191,6 +191,41 @@ Apple's App Intents framework allows iOS/macOS applications to declare structure
 
 **ProbOS connection:** Same architectural pattern as MCP but in Apple's ecosystem. An App Intent maps directly to a TaskEvent: the app declares "I can emit these event types with these parameters," and the orchestrator (Siri / ProbOS dispatcher) routes them to the appropriate handler. ProbOS's advantage is multi-agent routing — where Siri has a single agent (itself), ProbOS can dispatch app signals to the *most qualified* crew member.
 
+### Microsoft Agent Framework (2025-2026)
+
+Microsoft's open-source Agent Framework (`github.com/microsoft/agent-framework`) provides a comprehensive multi-language framework for building, orchestrating, and deploying AI agents. While not marketed as "event-driven architecture," the framework embeds EDA patterns throughout its core design — particularly in its Durable Agents and workflow orchestration layers.
+
+**Durable Agents as Virtual Actors.** The framework's most architecturally significant feature is Durable Agents, built on top of Durable Entities (Microsoft's "virtual actor" abstraction). Each agent session maps to an entity with a durable identity (`AgentSessionId`), persisted state (full conversation history), and serialized message processing. This is a production-grade implementation of the Actor Model — the same pattern our research identifies as the theoretical foundation for the Agent Cognitive Queue. Key properties:
+
+- State survives process restarts, failures, and scale-out events
+- Any worker can resume a session (location transparency)
+- Concurrent messages to the same session are serialized (no race conditions)
+- Sessions can persist indefinitely with zero compute (relevant for human-in-the-loop waits)
+
+**Deterministic Multi-Agent Orchestration.** The framework defines four orchestration patterns — the same four the Atlan article identifies as the universal EDA patterns for agent systems:
+
+| Pattern | Microsoft AF | ProbOS Equivalent |
+|---------|-------------|-------------------|
+| Sequential (chaining) | Agent outputs piped to next agent | Science Analytical Pyramid, TaskEvent chaining |
+| Parallel (fan-out/fan-in) | Multiple agents run concurrently, results aggregated | Department broadcast, multi-agent alerts |
+| Conditional | Branch logic based on structured agent output | Dispatcher routing based on capability/department |
+| Human-in-the-loop | Pause for external events with optional timeouts | Captain approval gates, earned agency escalation |
+
+All orchestrations are **checkpointed** — completed agent calls are not re-executed on failure replay. This is event sourcing applied to agent workflow execution.
+
+**Fire-and-Forget Activation.** The framework supports asynchronous task submission via `x-ms-wait-for-response: false` header (returns HTTP 202). This is the push-based activation model — an external system submits a task and gets notified when it completes, without blocking. Directly maps to our TaskEvent with `priority=immediate` or `priority=soon`.
+
+**Agent Skills as Extensible Capability Sources.** The Skills system (`AgentSkillsSource` → `AgentSkillsProvider`) allows agents to discover capabilities from multiple sources — filesystem, inline code, cloud services, and custom sources. Skills carry typed resources (data) and scripts (executable actions). The extensibility model (subclass four base types to add any skill source) parallels our TaskEvent emitter concept: any object can become a skill/event source by implementing the right interface.
+
+**ProbOS differentiators:** Microsoft's framework is powerful but fundamentally different in philosophy:
+
+1. **No agent identity.** Microsoft's agents are stateless functions with persisted conversation history. ProbOS agents have sovereign identity (Character/Reason/Duty), trust relationships, episodic memory, and dream consolidation. An AF agent is a tool; a ProbOS agent is a crew member.
+2. **No inter-agent trust or social dynamics.** AF agents orchestrate via deterministic graph flows. ProbOS agents develop trust through interaction, form Hebbian routing preferences, and evolve standing orders through dream consolidation.
+3. **External orchestration vs. emergent coordination.** AF workflows are designed by developers and executed deterministically. ProbOS aims for agents to self-organize collaborative work through the TaskEvent dispatcher + earned agency + trust-gated activation — where the coordination pattern *emerges* from agent capabilities and relationships, not from a pre-defined graph.
+4. **No cognitive queue concept.** AF agents respond to explicit invocations. They don't have ambient awareness, proactive observation, or priority-based activation. The cognitive queue — where an agent autonomously processes a mix of immediate tasks, social interactions, and ambient observations — has no AF equivalent.
+
+**What we should absorb:** The Durable Entities pattern for agent state persistence and failure recovery is production-proven and architecturally sound. If ProbOS moves to a distributed deployment model (Nooplex Cloud), the virtual actor pattern for agent sessions is the right infrastructure. The checkpointed orchestration model is also valuable for long-running collaborative workflows where partial progress must survive failures.
+
 ### Event-Driven Architecture for AI Agents (Atlan, 2026)
 
 Atlan's analysis of EDA for AI agents provides a comprehensive framework that validates and extends our TaskEvent model. Key contributions:
@@ -362,5 +397,6 @@ When `create_game()` fires, both challenger and opponent get `ActiveEngagement` 
 - Anthropic. (2024). "Model Context Protocol (MCP) Specification." https://modelcontextprotocol.io
 - Microsoft. (2025). "MCP Server Capabilities for Windows." Build 2025 announcement.
 - Bandarra, A. C. (2026). "WebMCP: Making websites agent-ready." Chrome for Developers Blog. https://developer.chrome.com/blog/webmcp-epp
+- Microsoft. (2026). "Microsoft Agent Framework." GitHub. https://github.com/microsoft/agent-framework
 - Atlan. (2026). "Event-Driven Architecture for AI Agents." https://atlan.com/know/event-driven-architecture-for-ai-agents/
 - Riedl, M. (2025). "Measuring Emergence in Multi-Agent Systems." arXiv:2510.05174.
