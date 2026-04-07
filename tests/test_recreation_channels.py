@@ -61,6 +61,65 @@ class TestMovePattern:
         assert "[MOVE" not in cleaned
 
 
+class TestBF120MarkdownStripping:
+    """BF-120: Markdown formatting around structured tags breaks regex parsing."""
+
+    @staticmethod
+    def _strip_markdown(text: str) -> str:
+        """Apply the BF-120 normalization (mirrors proactive.py implementation)."""
+        text = re.sub(r'[`*]{1,3}\[', '[', text)
+        text = re.sub(r'\][`*]{1,3}', ']', text)
+        return text
+
+    def test_bold_wrapped_challenge(self):
+        text = "Let's play! **[CHALLENGE @Horizon tictactoe]**"
+        cleaned = self._strip_markdown(text)
+        pattern = r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]'
+        match = re.search(pattern, cleaned)
+        assert match, f"Regex should match after stripping, got: {cleaned!r}"
+        assert match.group(1) == "Horizon"
+        assert match.group(2) == "tictactoe"
+
+    def test_backtick_wrapped_challenge(self):
+        text = "Issuing: `[CHALLENGE @Echo tictactoe]`"
+        cleaned = self._strip_markdown(text)
+        match = re.search(r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]', cleaned)
+        assert match
+        assert match.group(1) == "Echo"
+
+    def test_italic_wrapped_move(self):
+        text = "My move: *[MOVE 4]*"
+        cleaned = self._strip_markdown(text)
+        match = re.search(r'\[MOVE\s+(\S+)\]', cleaned)
+        assert match
+        assert match.group(1) == "4"
+
+    def test_bold_italic_wrapped(self):
+        text = "***[CHALLENGE @Forge tictactoe]***"
+        cleaned = self._strip_markdown(text)
+        match = re.search(r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]', cleaned)
+        assert match
+        assert match.group(1) == "Forge"
+
+    def test_code_block_wrapped_notebook(self):
+        text = "`[NOTEBOOK my-topic]`Content here`[/NOTEBOOK]`"
+        cleaned = self._strip_markdown(text)
+        assert "[NOTEBOOK my-topic]" in cleaned
+        assert "[/NOTEBOOK]" in cleaned
+
+    def test_unformatted_tag_unchanged(self):
+        """Tags without markdown formatting should pass through unchanged."""
+        text = "I challenge you! [CHALLENGE @bones tictactoe] Let's go!"
+        cleaned = self._strip_markdown(text)
+        assert cleaned == text
+
+    def test_mixed_formatted_and_plain(self):
+        text = "**[CHALLENGE @Atlas tictactoe]** and [MOVE 4]"
+        cleaned = self._strip_markdown(text)
+        assert re.search(r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]', cleaned)
+        assert re.search(r'\[MOVE\s+(\S+)\]', cleaned)
+
+
 class TestRecreationServiceIntegration:
     """Integration tests for RecreationService game flow."""
 
@@ -101,3 +160,108 @@ class TestRecreationServiceIntegration:
                              (8, "a"), (5, "b"), (7, "a")]:
             await svc.make_move(gid, player, str(pos))
         assert len(svc.get_active_games()) == 0
+
+
+class TestBF122CallsignResolution:
+    """BF-122: callsign was undefined in _extract_and_execute_actions recreation block.
+
+    The recreation block at the challenge parsing section used `callsign` without
+    defining it — it relied on a variable leaked from the notebook loop's try block.
+    If the agent produced [CHALLENGE] without [NOTEBOOK], NameError crashed the
+    entire _extract_and_execute_actions method silently (caught by DEBUG-level except).
+    """
+
+    def test_callsign_not_defined_by_notebook_loop(self):
+        """Verify the bug scenario: no notebook → callsign undefined."""
+        # If this code ran, `callsign` would be undefined since it's only set
+        # inside the notebook `for` loop's `try` block
+        callsign_defined = False
+        text = "[CHALLENGE @Vega tictactoe]"
+        notebook_pattern = r'\[NOTEBOOK\s+([\w-]+)\](.*?)\[/NOTEBOOK\]'
+        notebook_matches = re.findall(notebook_pattern, text, re.DOTALL)
+        for _topic, _content in notebook_matches:
+            callsign_defined = True  # Only set if notebook match found
+        # No notebook blocks → callsign never set
+        assert not callsign_defined, "No notebook blocks should mean callsign is never defined"
+
+    def test_challenge_regex_matches_standard_format(self):
+        """Verify challenge regex works on typical agent output."""
+        # The regex pattern from proactive.py
+        pattern = r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]'
+        text = "I'll challenge you! [CHALLENGE @Vega tictactoe] Let's play!"
+        match = re.search(pattern, text)
+        assert match, "Challenge pattern should match standard format"
+        assert match.group(1) == "Vega"
+        assert match.group(2) == "tictactoe"
+
+
+class TestBF121ReplyBlockNesting:
+    """BF-121: CHALLENGE tags inside REPLY blocks are posted as text but never parsed.
+
+    When agents wrap output in [REPLY thread_id]...[/REPLY] blocks, the reply
+    extraction at line 1636 consumes the CHALLENGE tag: it posts the reply body
+    (including [CHALLENGE ...]) to Ward Room as text, then strips the entire
+    [REPLY]...[/REPLY] block from `text`. When the challenge regex runs later,
+    the CHALLENGE tag is gone from `text` — no match, no game, no logs.
+    """
+
+    def test_reply_pattern_consumes_nested_challenge(self):
+        """Demonstrate the pre-fix bug: REPLY extraction eats CHALLENGE tags."""
+        reply_pattern = re.compile(
+            r'\[REPLY\s+(?:thread:?\s*)?(\S+)\]\s*(.*?)\s*\[/REPLY\]',
+            re.DOTALL | re.IGNORECASE,
+        )
+        text = "[REPLY abc123]Challenge accepted! [CHALLENGE @Vega tictactoe][/REPLY]"
+        match = reply_pattern.search(text)
+        assert match, "REPLY pattern should match"
+        reply_body = match.group(2).strip()
+        assert "[CHALLENGE" in reply_body, "CHALLENGE tag should be captured in reply body"
+
+        # After stripping REPLY blocks, CHALLENGE is gone from text
+        cleaned = reply_pattern.sub('', text).strip()
+        challenge_pattern = r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]'
+        assert not re.search(challenge_pattern, cleaned), \
+            "CHALLENGE should NOT survive REPLY block stripping"
+
+    def test_challenge_in_reply_body_matches_regex(self):
+        """Verify CHALLENGE regex works on extracted reply body."""
+        reply_body = "Challenge accepted! [CHALLENGE @Horizon tictactoe] Fair warning!"
+        pattern = r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]'
+        match = re.search(pattern, reply_body)
+        assert match
+        assert match.group(1) == "Horizon"
+        assert match.group(2) == "tictactoe"
+        # After stripping
+        cleaned = re.sub(pattern, '', reply_body).strip()
+        assert "[CHALLENGE" not in cleaned
+
+    def test_move_in_reply_body_matches_regex(self):
+        """Verify MOVE regex works on extracted reply body."""
+        reply_body = "My turn! [MOVE 4] Good game!"
+        pattern = r'\[MOVE\s+(\S+)\]'
+        match = re.search(pattern, reply_body)
+        assert match
+        assert match.group(1) == "4"
+
+    def test_mixed_challenge_and_reply_text(self):
+        """Reply body with both conversational text and CHALLENGE tag."""
+        text = "[REPLY abc123]Your analysis is sound. [CHALLENGE @Atlas tictactoe] Care to play while we wait for results?[/REPLY]"
+        reply_pattern = re.compile(
+            r'\[REPLY\s+(?:thread:?\s*)?(\S+)\]\s*(.*?)\s*\[/REPLY\]',
+            re.DOTALL | re.IGNORECASE,
+        )
+        match = reply_pattern.search(text)
+        assert match
+        reply_body = match.group(2).strip()
+
+        # Extract challenge from reply body (the BF-121 fix)
+        challenge_pattern = r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]'
+        ch_match = re.search(challenge_pattern, reply_body)
+        assert ch_match
+        assert ch_match.group(1) == "Atlas"
+
+        # Clean reply body after command extraction
+        cleaned_body = re.sub(challenge_pattern, '', reply_body).strip()
+        assert "Your analysis is sound." in cleaned_body
+        assert "Care to play" in cleaned_body
+        assert "[CHALLENGE" not in cleaned_body

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -197,10 +198,74 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     else:
         response_text = "(no response)"
 
+    # BF-120: Strip markdown formatting that wraps structured tags.
+    # LLMs sometimes emit **[COMMAND ...]** or `[COMMAND ...]` which
+    # prevents regex patterns from matching.
+    if response_text:
+        response_text = re.sub(r'[`*]{1,3}\[', '[', response_text)
+        response_text = re.sub(r'\][`*]{1,3}', ']', response_text)
+
+    # BF-119: Parse [CHALLENGE @callsign game_type] from DM response
+    if response_text and hasattr(runtime, 'recreation_service') and runtime.recreation_service:
+        challenge_match = re.search(r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]', response_text)
+        if challenge_match:
+            target_callsign = challenge_match.group(1)
+            game_type = challenge_match.group(2)
+            try:
+                rec_svc = runtime.recreation_service
+                # Resolve target callsign
+                target_agent = None
+                if hasattr(runtime, 'callsign_registry'):
+                    target_agent = runtime.callsign_registry.resolve(target_callsign)
+                if target_agent:
+                    # Create Recreation channel thread
+                    thread_id = ""
+                    if runtime.ward_room:
+                        channels = await runtime.ward_room.list_channels()
+                        rec_ch = next((c for c in channels if c.name == "Recreation"), None)
+                        if rec_ch:
+                            thread = await runtime.ward_room.create_thread(
+                                channel_id=rec_ch.id,
+                                author_id=agent_id,
+                                title=f"[Challenge] {callsign} challenges {target_callsign} to {game_type}!",
+                                body=f"{callsign} has challenged {target_callsign} to a game of {game_type}! Reply to accept.",
+                                author_callsign=callsign,
+                            )
+                            thread_id = thread.id if thread else ""
+                    game_info = await rec_svc.create_game(
+                        game_type=game_type,
+                        challenger=callsign,
+                        opponent=target_callsign,
+                        thread_id=thread_id,
+                    )
+                    logger.info("BF-119: %s challenged %s to %s via DM (game %s)",
+                                callsign, target_callsign, game_type, game_info["game_id"])
+                    # Register game engagement in working memory
+                    try:
+                        wm = getattr(agent, 'working_memory', None)
+                        if wm:
+                            from probos.cognitive.agent_working_memory import ActiveEngagement
+                            wm.add_engagement(ActiveEngagement(
+                                engagement_type="game",
+                                engagement_id=game_info["game_id"],
+                                summary=f"Playing {game_type} against {target_callsign}",
+                                state={
+                                    "game_type": game_type,
+                                    "opponent": target_callsign,
+                                },
+                            ))
+                    except Exception:
+                        logger.debug("BF-119: Working memory game engagement record failed", exc_info=True)
+                else:
+                    logger.debug("BF-119: Target callsign %s not found", target_callsign)
+            except Exception as e:
+                logger.warning("BF-119: DM game challenge failed for %s: %s", callsign, e)
+            # Strip [CHALLENGE] tag from response text shown to Captain
+            response_text = re.sub(r'\[CHALLENGE\s+@\w+\s+\w+\]', '', response_text).strip()
+
     # AD-572: Parse [MOVE pos] from DM response and execute against RecreationService
     game_move_result = None
     if response_text and hasattr(runtime, 'recreation_service') and runtime.recreation_service:
-        import re
         move_match = re.search(r'\[MOVE\s+(\S+)\]', response_text)
         if move_match:
             position = move_match.group(1)

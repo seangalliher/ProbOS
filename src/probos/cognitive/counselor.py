@@ -864,6 +864,14 @@ class CounselorAgent(CognitiveAgent):
         if not agent_id or agent_id == self.id:
             return
 
+        # AD-576: Suppress clinical intervention during infrastructure brownout
+        if data.get("infrastructure_correlated"):
+            logger.info(
+                "AD-576: Suppressing self-monitoring concern for %s — infrastructure-correlated",
+                data.get("agent_callsign", agent_id[:8]),
+            )
+            return
+
         callsign = data.get("agent_callsign", agent_id[:8])
         logger.info("AD-506a: Amber zone concern for %s", callsign)
 

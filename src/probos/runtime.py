@@ -1117,6 +1117,7 @@ class ProbOSRuntime:
             add_skill_to_agents_fn=self._add_skill_to_agents,
             create_pool_fn=self.create_pool,
             emit_event_fn=self._emit_event,
+            ontology=self.ontology,  # BF-118
         )
         self.self_mod_pipeline = cog.self_mod_pipeline
         self.behavioral_monitor = cog.behavioral_monitor

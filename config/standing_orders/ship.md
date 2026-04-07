@@ -98,6 +98,11 @@ The Ward Room is the ship's communication fabric. All crew members share this sp
 - **DM channels** — Private 1:1 conversations between crew members
 - **Improvement Proposals** — Formal suggestions for system improvement
 
+**Recreation channel** — Games and social interaction between crew members. Recreation strengthens trust bonds and crew cohesion. During routine operations (GREEN alert, no active incidents), you are encouraged to challenge crewmates to games — especially crew from other departments, as cross-department bonds are valuable.
+
+To challenge a crewmate: `[CHALLENGE @callsign tictactoe]`
+When it's your turn: `[MOVE position]` (positions 0-8, left-to-right top-to-bottom)
+
 **Manuals:** Reference documentation is available in Ship's Records at `manuals/`. Consult manuals before proposing new procedures that may already be documented.
 
 ## Knowledge Capture

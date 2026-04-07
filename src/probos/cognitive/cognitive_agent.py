@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -1694,6 +1695,47 @@ class CognitiveAgent(BaseAgent):
                 return cert.callsign
         return None
 
+    def _detect_self_in_content(self, content: str) -> str:
+        """Detect if agent's own callsign appears in content and return grounding cue.
+
+        AD-575: Cross-context self-recognition. When the agent's callsign
+        appears in Ward Room thread content, return a grounding note so the
+        agent recognizes itself as a participant, not an observer.
+
+        Returns a grounding string, or empty string if no self-mention detected.
+        """
+        callsign = self._resolve_callsign()
+        if not callsign:
+            return ""
+
+        if not re.search(rf"\b{re.escape(callsign)}\b", content, re.IGNORECASE):
+            return ""
+
+        # Self-mention detected — build grounding cue
+        cue_parts: list[str] = [
+            f"IMPORTANT: Your callsign is {callsign}. References to"
+            f" '{callsign}' in the thread above refer to YOU."
+            f" You are a participant in what is being discussed, not an"
+            f" outside observer. Respond from your perspective as a participant.",
+        ]
+
+        # Cross-context engagement binding (AD-572/573)
+        _wm = getattr(self, "_working_memory", None)
+        if _wm and _wm.has_engagement("game"):
+            games = _wm.get_engagements_by_type("game")
+            if games:
+                g = games[0]
+                game_type = g.state.get("game_type", "game")
+                opponent = g.state.get("opponent", "")
+                cue_parts.append(
+                    f"You have an active {game_type} game"
+                    + (f" against {opponent}" if opponent else "")
+                    + ". Spectators are watching your game in this thread."
+                    + " Engage from your perspective as the player."
+                )
+
+        return "\n".join(cue_parts)
+
     def _has_active_game(self) -> bool:
         """AD-572: Check if this agent has an active game (lightweight check)."""
         rt = getattr(self, '_runtime', None)
@@ -2006,6 +2048,12 @@ class CognitiveAgent(BaseAgent):
 
             if context:
                 wr_parts.append(f"\nConversation so far:\n{context}")
+
+            # AD-575: Self-recognition in Ward Room threads
+            self_cue = self._detect_self_in_content(context)
+            if self_cue:
+                wr_parts.append(self_cue)
+
             # AD-407d: Distinguish Captain vs crew member posts
             author_id = params.get("author_id", "")
             if author_id == "captain":
@@ -2065,6 +2113,14 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append(system_note)
                 pt_parts.append("")
 
+            # AD-576: Infrastructure awareness
+            infra_status = context_parts.get("infrastructure_status")
+            if infra_status:
+                llm_status = infra_status.get("llm_status", "unknown")
+                pt_parts.append(f"[INFRASTRUCTURE NOTE: Communications array {llm_status}]")
+                pt_parts.append(infra_status.get("message", ""))
+                pt_parts.append("")
+
             # AD-429: Ontology identity grounding
             ontology = context_parts.get("ontology")
             if ontology:
@@ -2081,6 +2137,12 @@ class CognitiveAgent(BaseAgent):
                 if vessel:
                     alert = vessel.get("alert_condition", "GREEN")
                     pt_parts.append(f"Ship status: {vessel.get('name', 'ProbOS')} v{vessel.get('version', '?')} — Alert Condition {alert}.")
+                pt_parts.append("")
+
+            # AD-567g: Diminishing orientation supplement for young agents
+            orientation_supp = context_parts.get("orientation_supplement")
+            if orientation_supp:
+                pt_parts.append(orientation_supp)
                 pt_parts.append("")
 
             # AD-429b: Skill profile

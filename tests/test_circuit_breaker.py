@@ -365,8 +365,8 @@ class TestProactiveIntegration:
         assert status["state"] == "open"
 
     @pytest.mark.asyncio
-    async def test_context_includes_redirect_after_recovery(self):
-        """After breaker recovery, _gather_context includes redirect."""
+    async def test_context_excludes_redirect_after_bf116(self):
+        """BF-116: circuit_breaker_redirect context path removed — dead code."""
         loop, rt = _make_loop()
 
         agent = MagicMock(spec=BaseAgent)
@@ -380,8 +380,7 @@ class TestProactiveIntegration:
         state.state = BreakerState.HALF_OPEN
 
         context = await loop._gather_context(agent, 0.6)
-        assert "circuit_breaker_redirect" in context
-        assert "circuit breaker" in context["circuit_breaker_redirect"].lower()
+        assert "circuit_breaker_redirect" not in context
 
 
 # ── API endpoint test ──

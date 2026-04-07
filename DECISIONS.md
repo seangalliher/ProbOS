@@ -2817,6 +2817,18 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 
 **Files:** 7 modified (`config.py`, `system.yaml`, `dreaming.py`, `proactive.py`, `startup/dreaming.py`, `dream_adapter.py`, `test_dreaming.py`). Net -8 tests (removed 9 dead-feature tests, added 1 targeted coverage test).
 
+### AD-575: Unified Self-Awareness — Cross-Context Identity Recognition
+
+**Date:** 2026-04-06
+**Status:** Complete
+**Priority:** Medium (cognitive accuracy — agents spectate their own activities)
+
+**Problem:** When an agent's callsign appears in Ward Room thread content (e.g., a game broadcast to the Recreation channel), the agent responds as a spectator rather than recognizing itself as a participant. Root cause: the Ward Room notification path in `_build_user_message()` injects identity context via temporal context/orientation, but never scans the thread content for self-references. The agent knows who it IS but fails to connect that identity to references of its callsign in the thread. Observed: Echo referring to herself in third person as an observer of her own game.
+
+**Decision:** Added `_detect_self_in_content()` method to CognitiveAgent — word-boundary regex scan of thread content for the agent's own callsign, returning a grounding cue ("References to '{callsign}' refer to YOU — respond as a participant, not an observer"). Cross-context engagement binding: when self-mentioned AND has active game engagement in AgentWorkingMemory, injects participatory awareness ("Spectators are watching your game, engage as the player"). Injected in Ward Room branch of `_build_user_message()` after conversation context, before author attribution. Generalizes BF-102 commissioning awareness pattern (which was gated to agents < 300s old).
+
+**Files:** 1 modified (`cognitive_agent.py` — `import re`, new method, WR injection), 1 new test file (`test_ad575_self_awareness.py`). 10 new tests (8 unit + 2 integration).
+
 ### AD-574: DM Reply Agent Notification
 
 **Date:** 2026-04-06
@@ -2849,5 +2861,25 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Rationale:** The ship manifest IS the ontology — not a report generated from it. Query-time assembly means no stale cache. Anti-confabulation grounding in temporal context ensures it reaches every cognitive pathway without modifying each pathway individually.
 
 **Files:** 6 Python modified (`ontology/service.py`, `ontology/departments.py`, `routers/ontology.py`, `cognitive/cognitive_agent.py`, `cognitive/orientation.py`, `startup/finalize.py`, `agent_onboarding.py`), 3 TypeScript modified/created (`store/types.ts`, `store/useStore.ts`, `App.tsx`, `components/CrewRosterPanel.tsx`), 2 test files (`test_ontology.py` +7 tests, `test_cognitive_crew_grounding.py` +7 tests). Total: +14 tests.
+
+### AD-576: LLM Unavailability Awareness — EPS Power Brownout Protocol
+
+**Date:** 2026-04-06
+**Status:** Complete
+**Priority:** High (cognitive health — agents misattribute infrastructure failures as personal cognitive issues)
+
+**Problem:** When the LLM backend goes down, agents experience empty proactive cycles and misattribute them as personal cognitive health issues (e.g., self-diagnosing "repetitive cognitive pattern" and escalating to CMO). Agents have zero awareness of their own infrastructure dependencies — Westworld Principle gap. The circuit breaker counts brownout events toward velocity/similarity thresholds, causing false trips. The Counselor responds to infrastructure-correlated concerns with unnecessary therapeutic interventions. The `LLM_HEALTH_CHANGED` event type existed but was never emitted. Two dead context paths in the proactive→cognitive pipeline (`circuit_breaker_redirect` never consumed, `orientation_supplement` gathered but never rendered). Convergence/divergence bridge alerts used nonexistent `_bridge_alerts`/`_deliver_bridge_alert` attributes.
+
+**Decision:** Three-layer infrastructure awareness following the EPS Power Brownout metaphor:
+
+**(1) LLM Status State Machine** — `_update_llm_status()` in ProactiveCognitiveLoop with three states: operational → degraded (≥1 failure) → offline (≥3 failures, matches `_UNREACHABLE_THRESHOLD`). Recovery: any non-operational → operational on first success. Emits `LlmHealthChangedEvent` on transitions. Triggers `_emit_llm_status_bridge_alert()` with severity mapping: offline=ALERT ("Communications Array Offline"), degraded=ADVISORY, restored=INFO with downtime duration.
+
+**(2) Infrastructure Context Injection** — `_gather_context()` adds `infrastructure_status` dict (llm_status, consecutive_failures, human-readable anti-misattribution message) when LLM is not operational. `_build_user_message()` renders `[INFRASTRUCTURE NOTE: Communications array {status}]` block positioned before self-monitoring section, so agents know empty cycles are infrastructure-caused before processing their own cognitive metrics.
+
+**(3) Circuit Breaker Infra-Correlation** — `CognitiveEvent.infrastructure_degraded` flag on recorded events. `_compute_signals()` filters infrastructure events from velocity and similarity computation. Counselor `_on_self_monitoring_concern()` checks `infrastructure_correlated` flag and suppresses clinical response for infrastructure-caused concerns (scoped to amber only — genuine RED/CRITICAL trips still reach Counselor).
+
+**Also fixes:** BF-116 (removed dead `circuit_breaker_redirect` context path; wired `orientation_supplement` rendering in `_build_user_message()` completing AD-567g implementation). BF-117 (convergence/divergence bridge alert delivery uses correct `rt.bridge_alerts` + `rt.ward_room_router.deliver_bridge_alert()` public API).
+
+**Files:** 7 modified (`events.py`, `proactive.py`, `circuit_breaker.py`, `cognitive_agent.py`, `counselor.py`, `test_circuit_breaker.py`, `test_proactive.py`), 1 new test file (`test_ad576_llm_unavailability.py`). +29 tests.
 
 **Deferred:** AD-513 Phase 2 — shell command (`crew manifest`), trust-gated visibility (redacted view for lower tiers), agent tool access (internal API for crew-to-crew queries), watch filter, ACM lifecycle state/competency fields, ship manifest for federation.

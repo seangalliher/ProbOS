@@ -166,7 +166,8 @@ class ProactiveCognitiveLoop:
         self._notified_dm_threads_reset: float = time.monotonic()  # hourly reset
         self._pending_notebook_reads: dict[str, str] = {}  # AD-504: agent_id -> topic_slug
         self._llm_failure_count: int = 0  # BF-069: consecutive proactive failures
-        self._llm_failure_streak: int = 0  # BF-069: consecutive cycles with failure
+        self._llm_status: str = "operational"  # AD-576: "operational" | "degraded" | "offline"
+        self._llm_offline_since: float = 0.0   # AD-576: monotonic timestamp of first failure
         self._orientation_service: Any = None  # AD-567g: Late-bound
 
     def set_orientation_service(self, svc: Any) -> None:
@@ -450,6 +451,8 @@ class ProactiveCognitiveLoop:
 
         if not result or not result.success or not result.result:
             self._llm_failure_count += 1
+            # AD-576: Update LLM status state machine
+            await self._update_llm_status(failure=True)
             # BF-069: Log failure details for visibility
             error_detail = ""
             if result and hasattr(result, 'error') and result.error:
@@ -566,17 +569,23 @@ class ProactiveCognitiveLoop:
         self._last_proactive[agent.id] = time.monotonic()
         self._llm_failure_count = 0  # BF-069: reset on successful post
 
+        # AD-576: Update LLM status on recovery
+        if self._llm_status != "operational":
+            await self._update_llm_status(failure=False)
+
         # AD-488: Record cognitive event and check for rumination
         self._circuit_breaker.record_event(
             agent.id,
             "proactive_think",
             response_text[:500] if response_text else "",
+            infrastructure_degraded=(self._llm_status != "operational"),  # AD-576
         )
         # AD-488: Record Ward Room post as cognitive event
         self._circuit_breaker.record_event(
             agent.id,
             "ward_room_post",
             response_text[:500] if response_text else "",
+            infrastructure_degraded=(self._llm_status != "operational"),  # AD-576
         )
         if self._circuit_breaker.check_and_trip(agent.id):
             # Breaker tripped — fire bridge alert for Counselor awareness
@@ -622,6 +631,7 @@ class ProactiveCognitiveLoop:
                         "zone": "amber",
                         "similarity_ratio": status.get("similarity_ratio", 0.0),
                         "velocity_ratio": status.get("velocity_ratio", 0.0),
+                        "infrastructure_correlated": self._llm_status != "operational",  # AD-576
                     },
                 })
 
@@ -1075,11 +1085,6 @@ class ProactiveCognitiveLoop:
             except Exception:
                 logger.debug("Skill profile fetch failed for %s", agent.id, exc_info=True)
 
-        # AD-488: Attention redirect after circuit breaker recovery
-        redirect = self._circuit_breaker.get_attention_redirect(agent.id)
-        if redirect:
-            context["circuit_breaker_redirect"] = redirect
-
         # AD-504: Self-monitoring context
         try:
             callsign = ""
@@ -1090,6 +1095,20 @@ class ProactiveCognitiveLoop:
                 context["self_monitoring"] = self_monitoring
         except Exception:
             logger.debug("Self-monitoring context failed for %s", agent.id, exc_info=True)
+
+        # AD-576: Infrastructure awareness context
+        if self._llm_status != "operational":
+            context["infrastructure_status"] = {
+                "llm_status": self._llm_status,
+                "consecutive_failures": self._llm_failure_count,
+                "message": (
+                    "The ship's communications array (LLM backend) is currently"
+                    f" {self._llm_status}. If you receive an empty or degraded"
+                    " response, this is an infrastructure issue — not a reflection"
+                    " of your cognitive state. Do not self-diagnose based on empty"
+                    " cycles during this period."
+                ),
+            }
 
         # AD-471: Night Orders context for conn-holder
         if hasattr(rt, 'conn_manager') and rt.conn_manager and rt.conn_manager.is_active:
@@ -1588,6 +1607,12 @@ class ProactiveCognitiveLoop:
         rank = Rank.from_trust(trust_score)
         actions_executed: list[dict] = []
 
+        # BF-120: Strip markdown formatting that wraps structured tags.
+        # LLMs sometimes emit **[COMMAND ...]** or `[COMMAND ...]` which
+        # prevents the regex patterns below from matching.
+        text = re.sub(r'[`*]{1,3}\[', '[', text)
+        text = re.sub(r'\][`*]{1,3}', ']', text)
+
         # --- Endorsements (Lieutenant+) ---
         if rank.value != Rank.ENSIGN.value:
             cleaned, endorsements = rt.ward_room_router.extract_endorsements(text) if rt.ward_room_router else (text, [])
@@ -1912,6 +1937,13 @@ class ProactiveCognitiveLoop:
         rec_min_rank = Rank[rec_min_rank_str.upper()] if rec_min_rank_str.upper() in Rank.__members__ else Rank.ENSIGN
         _RANK_ORDER_REC = [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]
         if _RANK_ORDER_REC.index(rank) >= _RANK_ORDER_REC.index(rec_min_rank):
+            # BF-122: Resolve callsign for this agent (was undefined — relied on
+            # leaked variable from notebook loop, causing NameError when agent
+            # produced [CHALLENGE] without [NOTEBOOK])
+            callsign = ""
+            if hasattr(rt, 'callsign_registry'):
+                callsign = rt.callsign_registry.get_callsign(agent.agent_type)
+
             # AD-526a: [CHALLENGE @callsign game_type] — challenge another crew member to a game
             challenge_pattern = r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]'
             for match in re.finditer(challenge_pattern, text):
@@ -2102,29 +2134,31 @@ class ProactiveCognitiveLoop:
 
     async def _emit_convergence_bridge_alert(self, conv_result: dict) -> None:
         """AD-554: Create and deliver a convergence BridgeAlert."""
-        ba_svc = getattr(self._runtime, '_bridge_alerts', None)
-        deliver_fn = getattr(self._runtime, '_deliver_bridge_alert', None)
-        if not ba_svc or not deliver_fn:
+        rt = self._runtime
+        if not rt or not hasattr(rt, 'bridge_alerts') or not rt.bridge_alerts:
+            return
+        if not hasattr(rt, 'ward_room_router') or not rt.ward_room_router:
             return
 
-        alerts = ba_svc.check_realtime_convergence(conv_result)
+        alerts = rt.bridge_alerts.check_realtime_convergence(conv_result)
         for alert in alerts:
             try:
-                await deliver_fn(alert)
+                await rt.ward_room_router.deliver_bridge_alert(alert)
             except Exception:
                 logger.debug("AD-554: Bridge alert delivery failed", exc_info=True)
 
     async def _emit_divergence_bridge_alert(self, conv_result: dict) -> None:
         """AD-554: Create and deliver a divergence BridgeAlert."""
-        ba_svc = getattr(self._runtime, '_bridge_alerts', None)
-        deliver_fn = getattr(self._runtime, '_deliver_bridge_alert', None)
-        if not ba_svc or not deliver_fn:
+        rt = self._runtime
+        if not rt or not hasattr(rt, 'bridge_alerts') or not rt.bridge_alerts:
+            return
+        if not hasattr(rt, 'ward_room_router') or not rt.ward_room_router:
             return
 
-        alerts = ba_svc.check_divergence(conv_result)
+        alerts = rt.bridge_alerts.check_divergence(conv_result)
         for alert in alerts:
             try:
-                await deliver_fn(alert)
+                await rt.ward_room_router.deliver_bridge_alert(alert)
             except Exception:
                 logger.debug("AD-554: Divergence bridge alert delivery failed", exc_info=True)
 
@@ -2202,6 +2236,15 @@ class ProactiveCognitiveLoop:
                 if hasattr(rt, 'callsign_registry'):
                     callsign = rt.callsign_registry.get_callsign(agent.agent_type)
 
+                # BF-121: Extract CHALLENGE/MOVE from reply body before posting.
+                # Agents wrap structured commands inside [REPLY] blocks when
+                # responding to threads. Without this, commands are posted as
+                # text but never parsed — the REPLY block is stripped from
+                # `text` before the command regexes run.
+                reply_body, reply_cmd_actions = await self._extract_commands_from_reply(
+                    agent, reply_body, callsign,
+                )
+
                 await rt.ward_room.create_post(
                     thread_id=thread_id,
                     author_id=agent.id,
@@ -2213,6 +2256,7 @@ class ProactiveCognitiveLoop:
                     "thread_id": thread_id,
                     "length": len(reply_body),
                 })
+                actions.extend(reply_cmd_actions)
                 logger.debug(
                     "AD-437: %s replied to thread %s (%d chars)",
                     agent.agent_type, thread_id, len(reply_body),
@@ -2226,6 +2270,116 @@ class ProactiveCognitiveLoop:
         # Strip all [REPLY]...[/REPLY] blocks from text
         cleaned = pattern.sub('', text).strip()
         return cleaned, actions
+
+    async def _extract_commands_from_reply(
+        self, agent: Any, reply_body: str, callsign: str,
+    ) -> tuple[str, list[dict]]:
+        """BF-121: Extract CHALLENGE/MOVE structured commands from reply body.
+
+        When agents wrap their output in [REPLY] blocks, structured commands
+        inside the reply are posted as text but never parsed — the reply
+        extraction strips them from the main text before command regexes run.
+        This extracts and executes commands from the reply body, returning
+        the cleaned body text and any actions taken.
+        """
+        rt = self._runtime
+        actions: list[dict] = []
+
+        # BF-120: Strip markdown from reply body too
+        reply_body = re.sub(r'[`*]{1,3}\[', '[', reply_body)
+        reply_body = re.sub(r'\][`*]{1,3}', ']', reply_body)
+
+        # --- CHALLENGE ---
+        challenge_pattern = r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]'
+        for match in re.finditer(challenge_pattern, reply_body):
+            target_callsign = match.group(1)
+            game_type = match.group(2)
+            try:
+                rec_svc = getattr(rt, 'recreation_service', None)
+                if not rec_svc:
+                    continue
+                target_agent = None
+                if hasattr(rt, 'callsign_registry'):
+                    target_agent = rt.callsign_registry.resolve(target_callsign)
+                if not target_agent:
+                    logger.debug("BF-121: Target callsign %s not found in reply", target_callsign)
+                    continue
+                # Create Recreation channel thread
+                rec_ch = None
+                if rt.ward_room:
+                    channels = await rt.ward_room.list_channels()
+                    rec_ch = next((c for c in channels if c.name == "Recreation"), None)
+                thread_id = ""
+                if rec_ch and rt.ward_room:
+                    thread = await rt.ward_room.create_thread(
+                        channel_id=rec_ch.id,
+                        author_id=agent.id,
+                        title=f"[Challenge] {callsign} challenges {target_callsign} to {game_type}!",
+                        body=f"{callsign} has challenged {target_callsign} to a game of {game_type}! Reply to accept.",
+                        author_callsign=callsign,
+                    )
+                    thread_id = thread.id if thread else ""
+                game_info = await rec_svc.create_game(
+                    game_type=game_type,
+                    challenger=callsign,
+                    opponent=target_callsign,
+                    thread_id=thread_id,
+                )
+                actions.append({
+                    "action": "challenge",
+                    "target": target_callsign,
+                    "game_type": game_type,
+                    "game_id": game_info["game_id"],
+                })
+                logger.info("BF-121: %s challenged %s to %s via reply (game %s)",
+                            callsign, target_callsign, game_type, game_info["game_id"])
+
+                # Register game engagement in working memory
+                try:
+                    wm = getattr(agent, 'working_memory', None)
+                    if wm:
+                        from probos.cognitive.agent_working_memory import ActiveEngagement
+                        wm.add_engagement(ActiveEngagement(
+                            engagement_type="game",
+                            engagement_id=game_info["game_id"],
+                            summary=f"Playing {game_type} against {target_callsign}",
+                            state={
+                                "game_type": game_type,
+                                "opponent": target_callsign,
+                            },
+                        ))
+                except Exception:
+                    logger.debug("BF-121: Working memory game engagement failed", exc_info=True)
+            except Exception as e:
+                logger.warning("BF-121: CHALLENGE in reply failed for %s: %s", callsign, e)
+        reply_body = re.sub(challenge_pattern, '', reply_body).strip()
+
+        # --- MOVE ---
+        move_pattern = r'\[MOVE\s+(\S+)\]'
+        for match in re.finditer(move_pattern, reply_body):
+            position = match.group(1)
+            try:
+                rec_svc = getattr(rt, 'recreation_service', None)
+                if rec_svc:
+                    player_game = rec_svc.get_game_by_player(callsign)
+                    if player_game and player_game.get("state", {}).get("current_player") == callsign:
+                        game_info = await rec_svc.make_move(
+                            game_id=player_game["game_id"],
+                            player=callsign,
+                            move=position,
+                        )
+                        actions.append({
+                            "action": "move",
+                            "position": position,
+                            "game_id": player_game["game_id"],
+                        })
+                        logger.info("BF-121: %s played move %s via reply (game %s)",
+                                    callsign, position, player_game["game_id"])
+            except Exception as e:
+                logger.warning("BF-121: MOVE in reply failed for %s: %s", callsign, e)
+        reply_body = re.sub(move_pattern, '', reply_body).strip()
+
+        return reply_body, actions
 
     async def _extract_and_execute_dms(
         self, agent: Any, text: str,
@@ -2365,3 +2519,124 @@ class ProactiveCognitiveLoop:
     def llm_failure_count(self) -> int:
         """BF-069: Number of consecutive proactive loop failures."""
         return self._llm_failure_count
+
+    async def _update_llm_status(self, failure: bool) -> None:
+        """AD-576: Update LLM status state machine and emit events on transitions.
+
+        State transitions:
+            operational -> degraded (failure_count >= 1)
+            degraded -> offline (failure_count >= 3, matches _UNREACHABLE_THRESHOLD)
+            any non-operational -> operational (on first success)
+        """
+        old_status = self._llm_status
+
+        if failure:
+            if self._llm_failure_count >= 3:
+                new_status = "offline"
+            else:
+                new_status = "degraded"
+            if self._llm_offline_since == 0.0:
+                self._llm_offline_since = time.monotonic()
+        else:
+            new_status = "operational"
+            # Don't reset _llm_offline_since yet — bridge alert needs it for downtime calc
+
+        if old_status == new_status:
+            return
+
+        self._llm_status = new_status
+
+        # Emit typed event on transition
+        if self._on_event:
+            from probos.events import LlmHealthChangedEvent
+            downtime = (time.monotonic() - self._llm_offline_since) if self._llm_offline_since else 0.0
+            try:
+                event = LlmHealthChangedEvent(
+                    old_status=old_status,
+                    new_status=new_status,
+                    consecutive_failures=self._llm_failure_count,
+                    downtime_seconds=downtime if new_status == "operational" else 0.0,
+                )
+                self._on_event(event.to_dict())
+            except Exception:
+                logger.debug("AD-576: LLM health event emission failed", exc_info=True)
+
+        # Emit Bridge Alerts on transition
+        await self._emit_llm_status_bridge_alert(old_status, new_status)
+
+        # Now safe to reset offline_since after alert delivery
+        if not failure:
+            self._llm_offline_since = 0.0
+
+    async def _emit_llm_status_bridge_alert(self, old_status: str, new_status: str) -> None:
+        """AD-576: Emit Bridge Alert on LLM status transitions."""
+        rt = self._runtime
+        if not rt or not hasattr(rt, 'bridge_alerts') or not rt.bridge_alerts:
+            return
+        if not hasattr(rt, 'ward_room_router') or not rt.ward_room_router:
+            return
+
+        from probos.bridge_alerts import AlertSeverity, BridgeAlert
+
+        downtime_str = ""
+        if new_status == "operational" and self._llm_offline_since:
+            elapsed = time.monotonic() - self._llm_offline_since
+            minutes = int(elapsed // 60)
+            seconds = int(elapsed % 60)
+            downtime_str = f" ({minutes}m {seconds}s total downtime)" if minutes else f" ({seconds}s total downtime)"
+
+        alert_map = {
+            "offline": BridgeAlert(
+                id=f"llm_status_{int(time.time())}",
+                severity=AlertSeverity.ALERT,
+                source="proactive_loop",
+                alert_type="llm_offline",
+                title="Communications Array Offline",
+                detail=(
+                    "The LLM backend is unreachable. All crew cognitive functions are"
+                    " suspended. Proactive cycles will continue but produce no output"
+                    " until the array is restored. This is an infrastructure issue —"
+                    " not a crew performance concern."
+                ),
+                department=None,
+                dedup_key="llm_offline",
+            ),
+            "degraded": BridgeAlert(
+                id=f"llm_status_{int(time.time())}",
+                severity=AlertSeverity.ADVISORY,
+                source="proactive_loop",
+                alert_type="llm_degraded",
+                title="Communications Array Degraded",
+                detail=(
+                    "The LLM backend is experiencing intermittent connectivity."
+                    f" {self._llm_failure_count} consecutive failures."
+                    " Crew cognition may be temporarily impaired."
+                    " This is an infrastructure issue — not a crew performance concern."
+                ),
+                department=None,
+                dedup_key="llm_degraded",
+            ),
+            "operational": BridgeAlert(
+                id=f"llm_status_{int(time.time())}",
+                severity=AlertSeverity.INFO,
+                source="proactive_loop",
+                alert_type="llm_restored",
+                title="Communications Array Restored",
+                detail=(
+                    "LLM backend connectivity has been re-established."
+                    " All crew cognitive functions resuming normal operations."
+                    + downtime_str
+                ),
+                department=None,
+                dedup_key="llm_restored",
+            ),
+        }
+
+        alert = alert_map.get(new_status)
+        if not alert:
+            return
+
+        try:
+            await rt.ward_room_router.deliver_bridge_alert(alert)
+        except Exception:
+            logger.debug("AD-576: LLM status bridge alert delivery failed", exc_info=True)

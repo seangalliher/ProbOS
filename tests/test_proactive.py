@@ -742,6 +742,8 @@ class TestProactiveWardRoomContext:
         loop._cooldown = 300
         loop._agent_cooldowns = {}
         loop._circuit_breaker = CognitiveCircuitBreaker()
+        loop._llm_status = "operational"  # AD-576
+        loop._llm_failure_count = 0  # AD-576
 
         # Mock runtime with ward_room
         rt = MagicMock(spec=ProbOSRuntime)
@@ -779,6 +781,8 @@ class TestProactiveWardRoomContext:
         loop._cooldown = 300
         loop._agent_cooldowns = {}
         loop._circuit_breaker = CognitiveCircuitBreaker()
+        loop._llm_status = "operational"  # AD-576
+        loop._llm_failure_count = 0  # AD-576
 
         rt = MagicMock(spec=ProbOSRuntime)
         rt.episodic_memory = None
@@ -814,6 +818,8 @@ class TestProactiveWardRoomContext:
         loop._cooldown = 300
         loop._agent_cooldowns = {}
         loop._circuit_breaker = CognitiveCircuitBreaker()
+        loop._llm_status = "operational"  # AD-576
+        loop._llm_failure_count = 0  # AD-576
 
         rt = MagicMock(spec=ProbOSRuntime)
         rt.episodic_memory = None
@@ -1621,6 +1627,8 @@ class TestSelfPostFiltering:
         loop._cooldown = 300
         loop._agent_cooldowns = {}
         loop._circuit_breaker = CognitiveCircuitBreaker()
+        loop._llm_status = "operational"  # AD-576
+        loop._llm_failure_count = 0  # AD-576
 
         rt = MagicMock(spec=ProbOSRuntime)
         rt.episodic_memory = None

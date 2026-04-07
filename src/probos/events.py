@@ -528,6 +528,16 @@ class PeerRepetitionDetectedEvent(BaseEvent):
 
 
 @dataclass
+class LlmHealthChangedEvent(BaseEvent):
+    """AD-576: Emitted on LLM backend status transitions."""
+    event_type: EventType = field(default=EventType.LLM_HEALTH_CHANGED, init=False)
+    old_status: str = ""       # "operational", "degraded", "offline"
+    new_status: str = ""       # "operational", "degraded", "offline"
+    consecutive_failures: int = 0
+    downtime_seconds: float = 0.0  # Time since first failure (0 on recovery)
+
+
+@dataclass
 class NotebookSelfRepetitionEvent(BaseEvent):
     """AD-552: Emitted when an agent writes about the same topic repeatedly."""
     event_type: EventType = field(default=EventType.NOTEBOOK_SELF_REPETITION, init=False)

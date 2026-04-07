@@ -57,6 +57,7 @@ async def init_cognitive_services(
     add_skill_to_agents_fn: Callable[..., Any],
     create_pool_fn: Callable[..., Any],
     emit_event_fn: Callable[..., Any] | None = None,
+    ontology: Any = None,  # BF-118: for OrientationService
 ) -> CognitiveServicesResult:
     """Initialize self-mod pipeline, feedback, memory, knowledge, and strategy."""
     logger.info("Startup [cognitive_services]: starting")
@@ -308,7 +309,7 @@ async def init_cognitive_services(
     if config.orientation.enabled:
         try:
             from probos.cognitive.orientation import OrientationService
-            orientation_service = OrientationService(config=config, ontology=runtime.ontology)
+            orientation_service = OrientationService(config=config, ontology=ontology)
             logger.info("AD-567g: OrientationService initialized")
         except Exception as e:
             logger.warning("OrientationService failed to start: %s — continuing without", e)

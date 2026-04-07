@@ -43,6 +43,7 @@ class CognitiveEvent:
     event_type: str          # "proactive_think", "ward_room_post", "episode_store"
     content_fingerprint: set  # Word set for Jaccard comparison
     agent_id: str
+    infrastructure_degraded: bool = False  # AD-576: event during LLM brownout
 
 
 @dataclass
@@ -141,6 +142,7 @@ class CognitiveCircuitBreaker:
         agent_id: str,
         event_type: str,
         content: str,
+        infrastructure_degraded: bool = False,  # AD-576
     ) -> None:
         """Record a cognitive event for pattern analysis.
 
@@ -154,6 +156,7 @@ class CognitiveCircuitBreaker:
             event_type=event_type,
             content_fingerprint=words,
             agent_id=agent_id,
+            infrastructure_degraded=infrastructure_degraded,  # AD-576
         )
         state.events.append(event)
 
@@ -209,7 +212,9 @@ class CognitiveCircuitBreaker:
         # --- Signal 1: Velocity (event burst) ---
         window_start = now - self._velocity_window
         recent = [e for e in state.events if e.timestamp >= window_start]
-        velocity_count = len(recent)
+        # AD-576: Exclude infrastructure-correlated events from cognitive signal computation
+        recent_cognitive = [e for e in recent if not e.infrastructure_degraded]
+        velocity_count = len(recent_cognitive)
         velocity_ratio = velocity_count / self._velocity_threshold if self._velocity_threshold > 0 else 0.0
 
         if velocity_count >= self._velocity_threshold:
@@ -218,8 +223,8 @@ class CognitiveCircuitBreaker:
 
         # --- Signal 2: Similarity (content rumination) ---
         similarity_ratio = 0.0
-        if len(recent) >= self._similarity_min_events:
-            fingerprints = [e.content_fingerprint for e in recent if e.content_fingerprint]
+        if len(recent_cognitive) >= self._similarity_min_events:
+            fingerprints = [e.content_fingerprint for e in recent_cognitive if e.content_fingerprint]
             if len(fingerprints) >= self._similarity_min_events:
                 similar_pairs = 0
                 total_pairs = 0
