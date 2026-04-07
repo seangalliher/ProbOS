@@ -2650,6 +2650,14 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 - ToM: 14/14 pass including all Medical (was 5 failures)
 - Tier 3 collective: scaffold_decomposition 0.791 (up from 0.701)
 
+### AD-569: Observation-Grounded Crew Intelligence Metrics
+
+**Date:** 2026-04-07
+**Status:** Complete
+**Scope:** Large | **Type:** Cognitive Architecture
+
+**Decision:** Five content-level behavioral metrics complement AD-557's information-theoretic measures. Follows EmergenceMetricsEngine pattern: dedicated config, snapshot-based engine, Dream Step 13 integration, API routes, Tier 3 qualification probes. Metrics: (1) Analytical Frame Diversity — embedding-based department frame classification, Shannon entropy. (2) Synthesis Detection — novel semantic elements in thread conclusions not attributable to any single contributor. (3) Cross-Department Trigger Rate — temporal correlation of cross-departmental activity on the same topic. (4) Convergence Correctness — placeholder ground-truth tracking for converged conclusions (requires human feedback loop). (5) Anchor-Grounded Emergence — consumes social_verification.compute_anchor_independence() for provenance-validated emergence. Pure Python math, no external dependencies. Deferred: psychometric framework (ICC, r_wg, G-theory, MTMM), HXI dashboard.
+
 ### AD-570b: Episode Participant Index
 
 **Date:** 2026-04-07
