@@ -339,7 +339,7 @@ class ProactiveCognitiveLoop:
                 # agents stay permanently degraded with no recovery path.
                 agent.update_confidence(False)
                 logger.debug(
-                    "Proactive think failed for %s (fail-open, confidence=%.3f)",
+                    "Proactive think failed for %s (confidence=%.3f)",
                     agent.agent_type,
                     agent.confidence,
                     exc_info=True,

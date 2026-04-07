@@ -270,6 +270,14 @@ class WardRoomRouter:
                                 agent, response_text,
                             )
                             response_text = response_text.strip()
+                        # BF-123: Extract CHALLENGE/MOVE from Ward Room responses.
+                        # Ward Room router only extracted endorsements + DMs — recreation
+                        # commands were silently ignored because this path bypasses
+                        # _extract_and_execute_actions() in proactive.py.
+                        if agent and self._proactive_loop:
+                            response_text = await self._extract_recreation_commands(
+                                agent, response_text, agent_callsign,
+                            )
                         if not response_text:
                             continue  # entire response was DM blocks, nothing to post publicly
                         await self._ward_room.create_post(
@@ -291,6 +299,150 @@ class WardRoomRouter:
         # Increment round counter if any agent responded to an agent post
         if is_agent_post and responded_this_event:
             self._thread_rounds[thread_id] = current_round + 1
+
+    async def _extract_recreation_commands(
+        self,
+        agent: Any,
+        text: str,
+        callsign: str,
+    ) -> str:
+        """BF-123: Extract CHALLENGE/MOVE tags from Ward Room response text.
+
+        The Ward Room router response path only extracted endorsements and DMs.
+        CHALLENGE/MOVE tags were posted as raw text because this path bypasses
+        ``_extract_and_execute_actions()`` in proactive.py.
+        """
+        rt = getattr(self._proactive_loop, '_runtime', None) if self._proactive_loop else None
+        if not rt:
+            return text
+
+        # BF-120: Strip markdown formatting that wraps structured tags
+        text = re.sub(r'[`*]{1,3}\[', '[', text)
+        text = re.sub(r'\][`*]{1,3}', ']', text)
+
+        # --- Rank gate (same as proactive.py) ---
+        from probos.crew_profile import Rank
+        agent_trust = self._trust_network.get_score(agent.id) if self._trust_network else 0.5
+        rank = Rank.from_trust(agent_trust)
+        rec_min_rank_str = "ensign"
+        if hasattr(self._config, 'communications'):
+            rec_min_rank_str = self._config.communications.recreation_min_rank
+        rec_min_rank = Rank[rec_min_rank_str.upper()] if rec_min_rank_str.upper() in Rank.__members__ else Rank.ENSIGN
+        _RANK_ORDER = [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]
+        if _RANK_ORDER.index(rank) < _RANK_ORDER.index(rec_min_rank):
+            return text  # Below minimum rank — don't parse recreation commands
+
+        rec_svc = getattr(rt, 'recreation_service', None)
+        if not rec_svc:
+            return text
+
+        # --- CHALLENGE ---
+        challenge_pattern = r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]'
+        for match in re.finditer(challenge_pattern, text):
+            target_callsign = match.group(1)
+            game_type = match.group(2)
+            try:
+                target_agent = None
+                if self._callsign_registry:
+                    target_agent = self._callsign_registry.resolve(target_callsign)
+                if not target_agent:
+                    logger.debug("BF-123: Target callsign %s not found", target_callsign)
+                    continue
+                # Create Recreation channel thread
+                rec_ch = None
+                if self._ward_room:
+                    channels = await self._ward_room.list_channels()
+                    rec_ch = next((c for c in channels if c.name == "Recreation"), None)
+                thread_id = ""
+                if rec_ch and self._ward_room:
+                    thread = await self._ward_room.create_thread(
+                        channel_id=rec_ch.id,
+                        author_id=agent.id,
+                        title=f"[Challenge] {callsign} challenges {target_callsign} to {game_type}!",
+                        body=f"{callsign} has challenged {target_callsign} to a game of {game_type}! Reply to accept.",
+                        author_callsign=callsign,
+                    )
+                    thread_id = thread.id if thread else ""
+                game_info = await rec_svc.create_game(
+                    game_type=game_type,
+                    challenger=callsign,
+                    opponent=target_callsign,
+                    thread_id=thread_id,
+                )
+                logger.info("BF-123: %s challenged %s to %s (game %s)",
+                            callsign, target_callsign, game_type, game_info["game_id"])
+                # AD-573: Register game engagement in working memory
+                try:
+                    wm = getattr(agent, 'working_memory', None)
+                    if wm:
+                        from probos.cognitive.agent_working_memory import ActiveEngagement
+                        wm.add_engagement(ActiveEngagement(
+                            engagement_type="game",
+                            engagement_id=game_info["game_id"],
+                            summary=f"Playing {game_type} against {target_callsign}",
+                            state={
+                                "game_type": game_type,
+                                "opponent": target_callsign,
+                            },
+                        ))
+                except Exception:
+                    logger.debug("BF-123: Working memory game engagement failed", exc_info=True)
+            except Exception as e:
+                logger.warning("BF-123: CHALLENGE failed for %s: %s", callsign, e)
+        text = re.sub(challenge_pattern, '', text).strip()
+
+        # --- MOVE ---
+        move_pattern = r'\[MOVE\s+(\S+)\]'
+        for match in re.finditer(move_pattern, text):
+            position = match.group(1)
+            try:
+                player_game = rec_svc.get_game_by_player(callsign)
+                if player_game and player_game.get("state", {}).get("current_player") == callsign:
+                    game_info = await rec_svc.make_move(
+                        game_id=player_game["game_id"],
+                        player=callsign,
+                        move=position,
+                    )
+                    # Post board update to Recreation channel
+                    if self._ward_room and player_game.get("thread_id"):
+                        board = rec_svc.render_board(player_game["game_id"]) if not game_info.get("result") else ""
+                        result = game_info.get("result")
+                        if result:
+                            status = result.get("status", "")
+                            winner = result.get("winner", "")
+                            body = f"Game over! {'Winner: ' + winner if winner else 'Draw!'}"
+                        else:
+                            body = f"```\n{board}\n```\nNext: {game_info['state']['current_player']}"
+                        try:
+                            await self._ward_room.create_post(
+                                thread_id=player_game["thread_id"],
+                                author_id=agent.id,
+                                body=body,
+                                author_callsign=callsign,
+                            )
+                        except Exception:
+                            logger.debug("BF-123: Board update post failed", exc_info=True)
+                    # AD-573: Update/remove game engagement in working memory
+                    try:
+                        wm = getattr(agent, 'working_memory', None)
+                        if wm:
+                            game_result = game_info.get("result")
+                            if game_result:
+                                wm.remove_engagement(player_game["game_id"])
+                            else:
+                                wm.update_engagement(
+                                    player_game["game_id"],
+                                    state={"last_move": position},
+                                )
+                    except Exception:
+                        logger.debug("BF-123: Working memory game update failed", exc_info=True)
+                else:
+                    logger.debug("BF-123: No active game for %s", callsign)
+            except Exception as e:
+                logger.warning("BF-123: MOVE failed for %s: %s", callsign, e)
+        text = re.sub(move_pattern, '', text).strip()
+
+        return text
 
     def find_targets(
         self,

@@ -265,3 +265,124 @@ class TestBF121ReplyBlockNesting:
         assert "Your analysis is sound." in cleaned_body
         assert "Care to play" in cleaned_body
         assert "[CHALLENGE" not in cleaned_body
+
+
+class TestBF123WardRoomRouterExtraction:
+    """BF-123: Ward Room router response path must parse CHALLENGE/MOVE tags.
+
+    When Captain posts in Ward Room, agents respond through
+    ward_room_router.handle_event() → intent_bus.send(). This path only
+    extracted endorsements and DMs — CHALLENGE/MOVE tags were posted as
+    raw text. The _extract_recreation_commands() method fixes this.
+    """
+
+    @pytest.fixture
+    def mock_runtime(self):
+        """Minimal runtime with recreation_service + callsign_registry."""
+        rt = MagicMock()
+        rt.recreation_service = MagicMock()
+        rt.recreation_service.create_game = AsyncMock(return_value={"game_id": "game-001"})
+        rt.recreation_service.get_game_by_player = MagicMock(return_value={
+            "game_id": "game-001",
+            "state": {"current_player": "forge"},
+            "thread_id": "th-001",
+        })
+        rt.recreation_service.make_move = AsyncMock(return_value={
+            "state": {"current_player": "echo"},
+            "result": None,
+        })
+        rt.recreation_service.render_board = MagicMock(return_value="X| |O\n-+-+-\n |X| \n-+-+-\n | |O")
+        rt.callsign_registry = MagicMock()
+        rt.callsign_registry.resolve = MagicMock(return_value={
+            "agent_id": "agent-echo-001",
+            "agent_type": "counselor",
+        })
+        rt.config = MagicMock()
+        rt.config.communications.recreation_min_rank = "ensign"
+        rec_channel = MagicMock(id="rec-ch-001")
+        rec_channel.name = "Recreation"
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[rec_channel])
+        rt.ward_room.create_thread = AsyncMock(return_value=MagicMock(id="th-new-001"))
+        rt.ward_room.create_post = AsyncMock()
+        return rt
+
+    @pytest.fixture
+    def router(self, mock_runtime):
+        """WardRoomRouter with mocked dependencies."""
+        from probos.ward_room_router import WardRoomRouter
+        proactive = MagicMock()
+        proactive._runtime = mock_runtime
+        trust_network = MagicMock()
+        trust_network.get_score = MagicMock(return_value=0.5)  # Ensign rank
+        return WardRoomRouter(
+            ward_room=mock_runtime.ward_room,
+            registry=MagicMock(),
+            intent_bus=MagicMock(),
+            trust_network=trust_network,
+            ontology=None,
+            callsign_registry=mock_runtime.callsign_registry,
+            episodic_memory=None,
+            event_emitter=MagicMock(),
+            event_log=MagicMock(),
+            config=mock_runtime.config,
+            proactive_loop=proactive,
+        )
+
+    @pytest.fixture
+    def mock_agent(self):
+        agent = MagicMock()
+        agent.id = "agent-forge-001"
+        agent.agent_type = "engineering"
+        agent.working_memory = None
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_challenge_extracted_and_game_created(self, router, mock_agent, mock_runtime):
+        """CHALLENGE tag should create a game via recreation_service."""
+        text = "Let's play! [CHALLENGE @echo tictactoe] What do you say?"
+        result = await router._extract_recreation_commands(mock_agent, text, "forge")
+        # Tag should be stripped
+        assert "[CHALLENGE" not in result
+        assert "Let's play!" in result
+        # Game should be created
+        mock_runtime.recreation_service.create_game.assert_awaited_once_with(
+            game_type="tictactoe",
+            challenger="forge",
+            opponent="echo",
+            thread_id="th-new-001",
+        )
+
+    @pytest.mark.asyncio
+    async def test_move_extracted_and_executed(self, router, mock_agent, mock_runtime):
+        """MOVE tag should execute a move via recreation_service."""
+        text = "Here's my move! [MOVE 5] Your turn."
+        result = await router._extract_recreation_commands(mock_agent, text, "forge")
+        assert "[MOVE" not in result
+        assert "Here's my move!" in result
+        mock_runtime.recreation_service.make_move.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_markdown_stripped_before_parsing(self, router, mock_agent, mock_runtime):
+        """BF-120: Markdown-wrapped tags should still be parsed."""
+        text = "Let's go! **[CHALLENGE @echo tictactoe]**"
+        result = await router._extract_recreation_commands(mock_agent, text, "forge")
+        assert "[CHALLENGE" not in result
+        mock_runtime.recreation_service.create_game.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_recreation_service_passes_through(self, router, mock_agent):
+        """Without recreation_service, text should pass through unchanged."""
+        router._proactive_loop._runtime.recreation_service = None
+        text = "Let's play! [CHALLENGE @echo tictactoe]"
+        result = await router._extract_recreation_commands(mock_agent, text, "forge")
+        assert result == text
+
+    @pytest.mark.asyncio
+    async def test_unresolved_target_skipped(self, router, mock_agent, mock_runtime):
+        """Unknown callsign should skip the challenge, not crash."""
+        mock_runtime.callsign_registry.resolve.return_value = None
+        text = "Hello [CHALLENGE @nobody tictactoe]"
+        result = await router._extract_recreation_commands(mock_agent, text, "forge")
+        assert "[CHALLENGE" not in result
+        mock_runtime.recreation_service.create_game.assert_not_awaited()
