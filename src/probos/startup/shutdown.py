@@ -238,11 +238,10 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     if hasattr(runtime, 'working_memory_store') and runtime.working_memory_store:
         try:
             states: dict = {}
-            for pool in runtime.pools.values():
-                for agent in pool.agents:
-                    wm = getattr(agent, 'working_memory', None)
-                    if wm:
-                        states[agent.id] = wm.to_dict()
+            for agent in runtime.registry.all():
+                wm = getattr(agent, 'working_memory', None)
+                if wm:
+                    states[agent.id] = wm.to_dict()
             if states:
                 await runtime.working_memory_store.save_all(states)
                 logger.info("AD-573: Froze working memory for %d agents", len(states))
