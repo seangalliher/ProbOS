@@ -4499,7 +4499,7 @@ Ward Room posts about the same stimulus are natural concept maps. QAP (Quadratic
 *Absorption: memvid QueryPlanner hybrid graph+vector search pattern — MemoryCard entity-slot-value triple queries re-ranked by vector similarity (2026-04-05, see docs/research/memvid-evaluation.md Pattern 3).*
 
 **Deferred sub-ADs:**
-> - **AD-570b: Participant Array Filtering** — AnchorFrame `participants` is `list[str]`, which cannot be stored as a ChromaDB scalar metadata field. AD-570 v1 filters participants in Python post-retrieval. AD-570b adds native multi-value participant filtering — either via a secondary SQLite sidecar index (participant_id → episode_id many-to-many) or ChromaDB metadata explosion (one metadata key per known participant). Enables queries like "find all episodes where Worf and LaForge were both present" at the index level. *Depends: AD-570.*
+> - **AD-570b: Episode Participant Index** *(complete)* — SQLite sidecar junction table for native multi-value participant filtering. Replaces AD-570 v1's Python post-retrieval participant filtering with index-level queries (e.g., "find all episodes where Worf and LaForge were both present"). 20 tests, zero regressions. *Depends: AD-570.*
 > - **AD-570c: Natural Language Anchor Query Routing** — Detect when a recall query is relational ("who observed this in Engineering?", "what happened last watch rotation?") and automatically route through `recall_by_anchor()` instead of pure semantic search. Requires NL intent classification (trigger_type detection, department name extraction, temporal phrase parsing). AD-570 provides the structured query API; AD-570c adds the NL front door. *Depends: AD-570.*
 
 ---

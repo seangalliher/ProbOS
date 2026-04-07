@@ -2650,6 +2650,14 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 - ToM: 14/14 pass including all Medical (was 5 failures)
 - Tier 3 collective: scaffold_decomposition 0.791 (up from 0.701)
 
+### AD-570b: Episode Participant Index
+
+**Date:** 2026-04-07
+**Status:** Complete
+**Scope:** Small | **Type:** Infrastructure Enhancement
+
+**Decision:** SQLite sidecar junction table chosen over metadata explosion (doesn't scale with 55+ agents) and string substring matching (ChromaDB lacks $contains, fragile with short IDs). Follows established sidecar pattern (activation_tracker.db, eviction_audit.db). Indexes both sovereign IDs (agent_ids, role=author) and callsigns (participants, role=participant) per episode. Also fixed string-contains bugs in is_rate_limited/is_duplicate_content (lines 719/739).
+
 ### AD-570: Anchor-Indexed Episodic Recall — Structured AnchorFrame Queries
 
 **Date:** 2026-04-05
