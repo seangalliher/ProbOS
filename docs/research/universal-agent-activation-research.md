@@ -191,6 +191,23 @@ Apple's App Intents framework allows iOS/macOS applications to declare structure
 
 **ProbOS connection:** Same architectural pattern as MCP but in Apple's ecosystem. An App Intent maps directly to a TaskEvent: the app declares "I can emit these event types with these parameters," and the orchestrator (Siri / ProbOS dispatcher) routes them to the appropriate handler. ProbOS's advantage is multi-agent routing — where Siri has a single agent (itself), ProbOS can dispatch app signals to the *most qualified* crew member.
 
+### Event-Driven Architecture for AI Agents (Atlan, 2026)
+
+Atlan's analysis of EDA for AI agents provides a comprehensive framework that validates and extends our TaskEvent model. Key contributions:
+
+**Four Named Patterns.** The article identifies four EDA patterns for agent systems, all of which map to ProbOS use cases:
+
+1. **Event Chaining (Pipeline)** — sequential agent activation where each agent's output triggers the next. In ProbOS: the Science Analytical Pyramid (Data Analyst → Systems Analyst → Research Specialist) is exactly this pattern. A `research.complete` event from Kira triggers Lynx, whose `analysis.complete` triggers Atlas.
+2. **Fan-Out (Parallel)** — a single event triggers multiple agents simultaneously. In ProbOS: a Security Alert should simultaneously activate Worf (threat assessment), LaForge (system impact), and Chapel (crew wellness check). The TaskEvent dispatcher with department broadcast enables this natively.
+3. **Event Sourcing (Stateful Audit)** — every state change stored as an immutable event. ProbOS already does this partially through EpisodicMemory and the Identity Ledger hash-chain. The TaskEvent log would extend this to agent *activation* decisions — why was this agent activated, what event triggered it, what action resulted.
+4. **Saga Orchestration (Long-Running Workflow)** — a coordinator manages multi-agent workflows spanning seconds to hours, with compensating events for rollback. In ProbOS: the Workforce Scheduling Engine (AD-496-498) is the saga coordinator. WorkItems are the command events; BookingJournals are the audit trail; the dispatcher handles sequencing and failure recovery.
+
+**The Semantic Context Layer.** The article's central thesis: *"event infrastructure alone is insufficient — agents react to changes without understanding them."* An agent knowing a pipeline completed is useless without knowing what the data represents, who owns it, or its fitness for purpose. This directly validates ProbOS's approach of carrying context with the event (Principle 3: "context travels with the event"). The TaskEvent payload isn't just "something happened" — it's enriched context that gives the agent enough to act intelligently. ProbOS has a structural advantage here: the Ship's Computer services (KnowledgeStore, TrustNetwork, VesselOntology, CrewManifest) provide exactly the semantic layer that generic EDA systems lack.
+
+**O(N²) → O(N) Complexity.** Without an event bus, N agents communicating directly require O(N²) connections. With a central TaskEvent bus, each agent connects once — O(N). ProbOS already experiences the N² problem informally: the Ward Room router, proactive loop, DM router, and intent bus are separate agent activation paths that each maintain their own connection logic. Unifying through the TaskEvent bus reduces this to one path with priority-based dispatch.
+
+**Choreography vs. Orchestration.** The article distinguishes two models that ProbOS needs both of: *choreography* (agents independently react to events — our "subscribe" pattern) and *orchestration* (a coordinator manages workflow state — our "push" pattern via the dispatcher). Most EDA systems pick one. ProbOS needs both because of the chain of command — some work is self-directed (earned agency, choreography), some is directed (Captain orders, Standing Orders, orchestration).
+
 ### Prior Art in Multi-Agent Activation
 
 **Actor Model (Hewitt, 1973):** Each agent is an actor with a mailbox that processes messages sequentially. Messages arrive asynchronously; the actor decides how to respond. ProbOS agents are already conceptually actors — they have identity, state, and behavior. What they lack is the mailbox. The cognitive queue *is* the mailbox.
@@ -345,4 +362,5 @@ When `create_game()` fires, both challenger and opponent get `ActiveEngagement` 
 - Anthropic. (2024). "Model Context Protocol (MCP) Specification." https://modelcontextprotocol.io
 - Microsoft. (2025). "MCP Server Capabilities for Windows." Build 2025 announcement.
 - Bandarra, A. C. (2026). "WebMCP: Making websites agent-ready." Chrome for Developers Blog. https://developer.chrome.com/blog/webmcp-epp
+- Atlan. (2026). "Event-Driven Architecture for AI Agents." https://atlan.com/know/event-driven-architecture-for-ai-agents/
 - Riedl, M. (2025). "Measuring Emergence in Multi-Agent Systems." arXiv:2510.05174.
