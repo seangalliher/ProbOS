@@ -415,6 +415,30 @@ When `create_game()` fires, both challenger and opponent get `ActiveEngagement` 
 
 **6. Backward compatible.** The existing proactive loop, Ward Room router, and DM router continue to work. The cognitive queue is additive — it provides a faster path for events that need one, while ambient observation continues through the established mechanisms.
 
+## The Agent Experience Principle
+
+*"Everything in ProbOS should provide a first-class native agent experience."*
+
+Humans interact with applications through events designed for human perception — visual changes (a button turning red, a notification badge, a progress bar), auditory signals (alert sounds, voice prompts), and haptic feedback. Applications are engineered to produce these signals because that's how humans notice things and decide to act. The entire field of UX design exists to optimize this human-facing event surface.
+
+Agents have none of these sensory channels. An agent's perceptual modality is its **context window** — structured text injected into a cognitive cycle. The "agent experience" (AX) is: what does this application look like *to an agent*? Not a screenshot parsed by a vision model, but a native structured event with semantic payload that the agent can reason about directly.
+
+This reframes the Universal Agent Activation architecture. The TaskEvent protocol isn't just a technical mechanism for routing work — it's the **agent-native UX layer**. Every TaskEvent is the agent equivalent of a visual notification: "something happened that you should notice and potentially act on." The payload is the agent equivalent of the visual context a human would see when they look at the notification.
+
+**The spectrum of agent experience quality:**
+
+| Level | Pattern | Example | Quality |
+|-------|---------|---------|---------|
+| **0. Blind** | No agent awareness | Legacy desktop app with no API | Agent can't interact |
+| **1. Brute Force** | Computer Use (screenshot → vision → act) | Anthropic Computer Use, browser automation | Functional but fragile, expensive, slow |
+| **2. API Wrapper** | REST/SDK calls translated to events | Transporter Pattern adapters, webhook listeners | Works but requires per-app adapter code |
+| **3. Declared Capabilities** | App exposes structured tools | MCP servers, WebMCP, Apple App Intents | Clean but still pull-based (agent calls app) |
+| **4. Native Agent Events** | App emits structured events for agent consumption | ProbOS internal emitters, future MCP push | Full AX — app is agent-aware by design |
+
+The industry is converging on Level 3 (Microsoft MCP for Windows, Google WebMCP, Apple App Intents). ProbOS's contribution is Level 4 — where applications don't just *respond* to agent queries but proactively *emit* events that activate agent cognition. The difference between "agent can use this app" and "this app can activate agents."
+
+**The Universal Wrapper problem:** The hard challenge is bridging Level 0-1 applications (the vast majority of existing software) to Level 3-4. Computer Use is the crude universal wrapper — it works for anything with a screen, but at enormous cost in tokens, latency, and fragility. The right universal wrapper would intercept the same signals designed for human perception (UI state changes, notifications, accessibility tree mutations) and translate them into structured TaskEvents — essentially building the agent experience layer that the app's developers never created. This is where accessibility APIs, OS-level event hooks, and platform integration (Windows UI Automation, macOS Accessibility, web DOM mutation observers) become the bridge technology.
+
 ## Open Questions
 
 1. **Queue depth limits.** What happens when an agent's queue grows faster than they can process? Need backpressure, overflow handling, or priority-based shedding. An agent overwhelmed with game challenges shouldn't miss a security alert.
