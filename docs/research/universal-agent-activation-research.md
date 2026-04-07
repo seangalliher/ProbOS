@@ -133,7 +133,7 @@ External App Ecosystem
 ┌──────────────────────────────────────────┐
 │  Windows Apps (MCP native)               │
 │  macOS Apps (App Intents / Siri Signals) │
-│  Web Apps (Webhooks)                     │
+│  Web Apps (WebMCP / structured tools)    │
 │  CLI Tools (stdout/file watchers)        │
 │  IoT / Sensors (MQTT → adapter)          │
 │  Business Systems (ERP, CRM, ITSM)      │
@@ -174,6 +174,16 @@ External App Ecosystem
 Microsoft announced MCP server capabilities integrated into Windows, allowing native applications to expose structured interfaces that AI agents can consume. This is the OS-level realization of the "wrap existing apps" pattern — every Windows application becomes a potential event source and tool provider for AI agents.
 
 **ProbOS connection:** If Windows apps natively emit MCP-compatible signals, ProbOS agents could react to *any Windows application event* without custom adapters. A user opens a file in an editor → ProbOS CodebaseIndex agent notices. A CI/CD pipeline fails → ProbOS Engineering agent investigates. An email arrives → ProbOS Yeoman triages. The integration layer becomes thinner as the OS does more of the adaptation work.
+
+### Google WebMCP for Chrome (2026)
+
+Google's WebMCP initiative (announced February 2026, Early Preview Program) makes websites "agent-ready" by providing structured tool declarations instead of requiring agents to manipulate the DOM directly. Two APIs: a **declarative API** for standard actions definable in HTML forms, and an **imperative API** for complex interactions requiring JavaScript execution. The core principle: a "direct communication channel eliminates ambiguity and allows for faster, more robust agent workflows."
+
+This completes the trifecta: Windows apps (Microsoft MCP), mobile/desktop apps (Apple App Intents), and now **web applications** (Google WebMCP) all converging on the same architectural pattern — applications explicitly declare their capabilities as structured tools for AI agent consumption.
+
+**ProbOS connection:** WebMCP is the web integration layer we need. Instead of building custom scrapers or Transporter adapters for every web application, WebMCP-enabled sites expose structured tools that ProbOS agents can consume natively. An e-commerce site declares a "search products" tool → ProbOS Operations agent uses it for procurement. A project management web app declares "create ticket" and "update status" tools → ProbOS agents interact with external project trackers. A customer's web application exposes WebMCP tools → Nooplex crew agents can operate it directly. The TaskEvent model extends naturally: WebMCP tools are invocable actions, and WebMCP-enabled sites could emit events (form submissions, state changes) that become TaskEvents in ProbOS's dispatcher.
+
+The convergence across all three platform vendors (Microsoft, Apple, Google) on "apps declare structured capabilities for AI agents" validates the TaskEvent protocol design — the industry is moving toward exactly this pattern at the platform level.
 
 ### Apple App Intents and Siri Signals
 
@@ -334,4 +344,5 @@ When `create_game()` fires, both challenger and opponent get `ActiveEngagement` 
 - Van Brussel, H. et al. (1998). "Reference architecture for holonic manufacturing systems: PROSA." Computers in Industry.
 - Anthropic. (2024). "Model Context Protocol (MCP) Specification." https://modelcontextprotocol.io
 - Microsoft. (2025). "MCP Server Capabilities for Windows." Build 2025 announcement.
+- Bandarra, A. C. (2026). "WebMCP: Making websites agent-ready." Chrome for Developers Blog. https://developer.chrome.com/blog/webmcp-epp
 - Riedl, M. (2025). "Measuring Emergence in Multi-Agent Systems." arXiv:2510.05174.
