@@ -194,6 +194,53 @@ async def migrate_anchor_metadata(episodic_memory: "EpisodicMemory") -> int:
     return migrated
 
 
+async def migrate_participant_index(
+    episodic_memory: "EpisodicMemory",
+) -> int:
+    """AD-570b: Backfill participant index from existing episodes.
+
+    Reads agent_ids_json and anchors_json from all episodes,
+    populates the participant index sidecar.
+    """
+    if not episodic_memory or not episodic_memory._collection:
+        return 0
+    if not episodic_memory._participant_index:
+        return 0
+
+    t0 = time.time()
+    result = episodic_memory._collection.get(include=["metadatas"])
+    ids = result.get("ids") or []
+    metas = result.get("metadatas") or []
+
+    batch = []
+    for ep_id, meta in zip(ids, metas):
+        # Parse agent_ids
+        try:
+            agent_ids = json.loads(meta.get("agent_ids_json", "[]"))
+        except (json.JSONDecodeError, TypeError):
+            agent_ids = []
+
+        # Parse participants from anchors
+        participants: list[str] = []
+        anchors_raw = meta.get("anchors_json", "")
+        if anchors_raw:
+            try:
+                anchors_dict = json.loads(anchors_raw)
+                participants = anchors_dict.get("participants", [])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        if agent_ids or participants:
+            batch.append((ep_id, agent_ids, participants))
+
+    if batch:
+        await episodic_memory._participant_index.record_episode_batch(batch)
+
+    elapsed = time.time() - t0
+    logger.info("AD-570b: Participant index populated for %d episodes in %.1fs", len(batch), elapsed)
+    return len(batch)
+
+
 # ---------------------------------------------------------------------------
 # AD-541e: Episode content hashing — cryptographic tamper detection
 # ---------------------------------------------------------------------------
@@ -301,10 +348,15 @@ class EpisodicMemory:
         self._collection: Any = None
         self._fts_db: Any = None  # AD-567b: FTS5 sidecar
         self._activation_tracker: Any = None  # AD-567d: ACT-R activation tracker
+        self._participant_index: Any = None  # AD-570b: Participant index sidecar
 
     def set_activation_tracker(self, tracker: Any) -> None:
         """AD-567d: Wire the activation tracker after construction."""
         self._activation_tracker = tracker
+
+    def set_participant_index(self, index: Any) -> None:
+        """AD-570b: Wire the participant index after construction."""
+        self._participant_index = index
 
     async def start(self) -> None:
         import chromadb
@@ -343,6 +395,13 @@ class EpisodicMemory:
             except Exception:
                 pass
             self._fts_db = None
+        # AD-570b: Close participant index
+        if self._participant_index is not None:
+            try:
+                await self._participant_index.stop()
+            except Exception:
+                pass
+            self._participant_index = None
         if self._client is not None:
             try:
                 self._client.close()
@@ -412,6 +471,20 @@ class EpisodicMemory:
                 await self._fts_db.commit()
             except Exception:
                 logger.debug("AD-567b: FTS5 seed failed", exc_info=True)
+
+        # AD-570b: Populate participant index for seeded episodes
+        if seeded > 0 and self._participant_index is not None:
+            try:
+                batch = []
+                for ep in episodes:
+                    if ep.id in existing_ids:
+                        continue
+                    participants = ep.anchors.participants if ep.anchors else []
+                    batch.append((ep.id, ep.agent_ids, participants))
+                if batch:
+                    await self._participant_index.record_episode_batch(batch)
+            except Exception:
+                logger.debug("AD-570b: Participant index seed failed", exc_info=True)
 
         return seeded
 
@@ -517,6 +590,16 @@ class EpisodicMemory:
             except Exception:
                 logger.debug("AD-567b: FTS5 insert failed for %s", episode.id[:8], exc_info=True)
 
+        # AD-570b: Participant index dual-write
+        if self._participant_index is not None:
+            try:
+                participants = episode.anchors.participants if episode.anchors else []
+                await self._participant_index.record_episode(
+                    episode.id, episode.agent_ids, participants,
+                )
+            except Exception:
+                logger.debug("AD-570b: Participant index insert failed for %s", episode.id[:8], exc_info=True)
+
         # Evict oldest beyond budget
         await self._evict()
 
@@ -606,6 +689,12 @@ class EpisodicMemory:
                             await self._activation_tracker.delete_episode_accesses(ids_to_delete)
                         except Exception:
                             logger.debug("AD-567d: Activation cleanup on eviction failed", exc_info=True)
+                    # AD-570b: Participant index cleanup on eviction
+                    if self._participant_index:
+                        try:
+                            await self._participant_index.delete_episodes(ids_to_delete)
+                        except Exception:
+                            logger.debug("AD-570b: Participant index eviction cleanup failed", exc_info=True)
 
     async def evict_by_ids(self, episode_ids: list[str], reason: str = "activation_pruning") -> int:
         """AD-567d: Evict specific episodes by ID. Handles audit, FTS5, ChromaDB, and activation cleanup.
@@ -674,6 +763,13 @@ class EpisodicMemory:
                 except Exception:
                     logger.debug("AD-567d: Activation cleanup failed", exc_info=True)
 
+            # AD-570b: Participant index cleanup
+            if self._participant_index:
+                try:
+                    await self._participant_index.delete_episodes(valid_ids)
+                except Exception:
+                    logger.debug("AD-570b: Participant index eviction cleanup failed", exc_info=True)
+
         except Exception as e:
             logger.debug("evict_by_ids failed: %s", e)
 
@@ -716,7 +812,11 @@ class EpisodicMemory:
             return True
         count = 0
         for meta in (recent.get("metadatas") or []):
-            if agent_id in meta.get("agent_ids_json", "[]"):
+            try:
+                _ids = json.loads(meta.get("agent_ids_json", "[]"))
+            except (json.JSONDecodeError, TypeError):
+                _ids = []
+            if agent_id in _ids:
                 count += 1
         return count >= self.MAX_EPISODES_PER_HOUR
 
@@ -736,7 +836,11 @@ class EpisodicMemory:
             return False
         episode_words = set(episode.user_input.lower().split())
         for i, meta in enumerate(recent.get("metadatas") or []):
-            if agent_id not in meta.get("agent_ids_json", "[]"):
+            try:
+                _ids = json.loads(meta.get("agent_ids_json", "[]"))
+            except (json.JSONDecodeError, TypeError):
+                _ids = []
+            if agent_id not in _ids:
                 continue
             doc = (recent.get("documents") or [None])[i]
             if not doc:
@@ -1376,6 +1480,7 @@ class EpisodicMemory:
         trigger_type: str = "",
         trigger_agent: str = "",
         agent_id: str = "",
+        participants: list[str] | None = None,
         time_range: tuple[float, float] | None = None,
         semantic_query: str = "",
         limit: int = 50,
@@ -1395,6 +1500,9 @@ class EpisodicMemory:
             trigger_type: Filter by anchor_trigger_type (exact match).
             trigger_agent: Filter by anchor_trigger_agent (exact match).
             agent_id: Filter by agent_ids_json (post-retrieval Python filter).
+            participants: AD-570b: Filter by episode participants (callsigns).
+                If provided and participant_index is available, pre-filters
+                episode IDs via the sidecar index.
             time_range: Filter by timestamp range (start, end) inclusive.
             semantic_query: If provided, uses .query() for semantic re-ranking.
                 If empty, uses .get() for pure structured enumeration.
@@ -1407,6 +1515,19 @@ class EpisodicMemory:
         """
         if not self._collection:
             return []
+
+        # AD-570b: Pre-filter by participant using sidecar index
+        candidate_ids: list[str] | None = None
+        if participants and self._participant_index:
+            try:
+                candidate_ids = await self._participant_index.get_episode_ids_for_participants(
+                    participants, require_all=True,
+                )
+                if not candidate_ids:
+                    return []  # No episodes match the participant filter
+            except Exception:
+                logger.debug("AD-570b: Participant index query failed, falling back", exc_info=True)
+                candidate_ids = None
 
         # Build ChromaDB where filter from non-empty params
         conditions: list[dict] = []
@@ -1428,8 +1549,8 @@ class EpisodicMemory:
         elif len(conditions) > 1:
             where = {"$and": conditions}
 
-        # No filters + no query = refuse to dump entire collection
-        if not where and not semantic_query:
+        # No filters + no query + no participant pre-filter = refuse to dump entire collection
+        if not where and not semantic_query and candidate_ids is None:
             return []
 
         episodes: list[Episode] = []
@@ -1437,10 +1558,12 @@ class EpisodicMemory:
         if not semantic_query:
             # Mode 1: Enumeration — use .get() with where filters
             try:
-                result = self._collection.get(
-                    where=where,
-                    include=["metadatas", "documents"],
-                )
+                get_kwargs: dict[str, Any] = {"include": ["metadatas", "documents"]}
+                if candidate_ids is not None:
+                    get_kwargs["ids"] = candidate_ids
+                if where:
+                    get_kwargs["where"] = where
+                result = self._collection.get(**get_kwargs)
             except Exception:
                 logger.debug("AD-570: recall_by_anchor enumeration failed", exc_info=True)
                 return []
@@ -1493,7 +1616,11 @@ class EpisodicMemory:
             if not result or not result.get("ids") or not result["ids"][0]:
                 return []
 
+            candidate_set = set(candidate_ids) if candidate_ids is not None else None
             for i, doc_id in enumerate(result["ids"][0]):
+                # AD-570b: Post-filter by participant index candidate_ids
+                if candidate_set is not None and doc_id not in candidate_set:
+                    continue
                 metadata = result["metadatas"][0][i] if result.get("metadatas") and result["metadatas"] else {}
                 document = result["documents"][0][i] if result.get("documents") and result["documents"] else ""
                 # Post-retrieval agent_id filter

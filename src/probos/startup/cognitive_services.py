@@ -188,6 +188,26 @@ async def init_cognitive_services(
         except Exception:
             logger.warning("AD-570: Anchor metadata migration failed (non-fatal)", exc_info=True)
 
+    # AD-570b: Create and wire participant index
+    if episodic_memory:
+        try:
+            from probos.cognitive.participant_index import ParticipantIndex
+
+            participant_index = ParticipantIndex(
+                db_path=str(data_dir / "participant_index.db"),
+            )
+            await participant_index.start()
+            episodic_memory.set_participant_index(participant_index)
+            logger.info("AD-570b: Participant index started")
+
+            # One-time migration: backfill from existing episodes
+            from probos.cognitive.episodic import migrate_participant_index
+            migrated = await migrate_participant_index(episodic_memory)
+            if migrated > 0:
+                logger.info("AD-570b: Indexed participants for %d episodes", migrated)
+        except Exception:
+            logger.warning("AD-570b: Participant index start failed (non-fatal)", exc_info=True)
+
     # Create FeedbackEngine (AD-219)
     from probos.cognitive.feedback import FeedbackEngine
 
