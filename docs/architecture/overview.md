@@ -5,14 +5,14 @@ ProbOS is built as seven layers, each built on the one below, plus two cross-cut
 ```mermaid
 block-beta
     columns 1
-    Experience["Experience\nCLI shell · HXI (WebGL) · FastAPI + WebSocket · Rich panels · Mission Control"]
-    Cognitive["Cognitive\nLLM decomposer · working memory · episodic memory · attention\ndreaming · self-modification · agent design · workflow cache\nbuilder · architect · counselor · standing orders"]
-    Consensus["Consensus\nQuorum voting · trust network · Shapley attribution · escalation"]
-    Mesh["Mesh\nIntent bus · Hebbian routing · gossip protocol · capability registry"]
-    Substrate["Substrate\nAgent lifecycle · pools · pool groups · spawner · registry · heartbeat · event log"]
+    Experience["Experience\nCLI shell (42 commands) · HXI (WebGL) · FastAPI + WebSocket · Rich panels"]
+    Cognitive["Cognitive\nLLM decomposer · working memory · episodic memory · attention\ndreaming (12 steps) · self-modification · Cognitive JIT · self-regulation\nbuilder · architect · counselor · standing orders · emergence metrics"]
+    Consensus["Consensus\nQuorum voting · trust network · Shapley attribution · escalation\ntrust cascade dampening"]
+    Mesh["Mesh\nIntent bus · Hebbian routing · gossip protocol · capability registry\nWard Room (agent communication fabric)"]
+    Substrate["Substrate\nAgent lifecycle · pools · pool groups · spawner · registry · heartbeat\nW3C DID identity · birth certificates · event log"]
     space
-    Federation["Federation (cross-cutting)\nZeroMQ transport · node bridge · intent router · gossip exchange"]
-    Knowledge["Knowledge (cross-cutting)\nGit-backed store · ChromaDB semantic · warm boot · per-artifact rollback"]
+    Federation["Federation (cross-cutting)\nZeroMQ transport · node bridge · intent router · gossip exchange\nIdentity Ledger · agent mobility"]
+    Knowledge["Knowledge (cross-cutting)\nKnowledgeStore (operational state) · Ship's Records (agent notebooks)\nEpisodic Memory (anchored episodes) · ChromaDB semantic search"]
 
     style Experience fill:#7c3aed,color:#fff
     style Cognitive fill:#6d28d9,color:#fff
@@ -32,10 +32,11 @@ Each layer has a single, clear purpose:
 | [**Substrate**](substrate.md) | Agent lifecycle — birth, health, death, recycling |
 | [**Mesh**](mesh.md) | Agent coordination — discovery, routing, communication |
 | [**Consensus**](consensus.md) | Safety — multi-agent agreement before destructive actions |
-| [**Cognitive**](cognitive.md) | Intelligence — NL understanding, memory, learning, self-modification |
+| [**Cognitive**](cognitive.md) | Intelligence — NL understanding, memory, learning, self-modification, procedural learning |
 | [**Experience**](experience.md) | Interface — shell, visualization, API |
-| [**Federation**](federation.md) | Scale — multi-node mesh of meshes |
-| [**Knowledge**](knowledge.md) | Persistence — durable storage with semantic search |
+| [**Memory**](memory.md) | Episodic memory — anchored episodes, salience-weighted recall, dream consolidation |
+| [**Federation**](federation.md) | Scale — multi-node mesh of meshes, DID identity |
+| [**Knowledge**](knowledge.md) | Persistence — operational state, Ship's Records, semantic search |
 
 ## Request Flow
 
@@ -103,19 +104,20 @@ flowchart LR
 
 ## Crew Organization
 
-Agents are organized into 7 departments (PoolGroups), analogous to departments on a starship:
+Agents are organized into 6 departments (PoolGroups), analogous to departments on a starship:
 
-| Department | Function | Key Agents |
-|------------|----------|------------|
-| **Medical** | Health monitoring, diagnosis, remediation | Diagnostician (CMO), Vitals Monitor, Surgeon, Pharmacist, Pathologist |
-| **Engineering** | Code generation, build pipeline, code review | BuilderAgent (Chief Engineer), CodeReviewAgent, CopilotAdapter |
-| **Science** | Architecture, research, codebase analysis | ArchitectAgent (CSO / First Officer), EmergentDetector |
-| **Security** | Threat detection, trust integrity, red team verification | Red Team Agents (2) |
-| **Operations** | Resource management, scheduling, watch rotation | TaskScheduler, PoolScaler, WatchManager |
-| **Communications** | Channel adapters, federation bridge | Discord Adapter, Federation Bridge |
-| **Bridge** | Strategic decisions, human approval, cognitive wellness | Captain (Human), CounselorAgent (Ship's Counselor) |
+| Department | Chief | Function | Key Agents |
+|------------|-------|----------|------------|
+| **Medical** | Bones | Health monitoring, diagnosis, remediation | Diagnostician, VitalsMonitor, Surgeon, Pharmacist, Pathologist |
+| **Engineering** | LaForge | System architecture, code generation, build pipeline | EngineeringAgent, BuilderAgent, CodeReviewAgent |
+| **Science** | Number One | Research, analysis, codebase knowledge | DataAnalyst (Kira), SystemsAnalyst (Lynx), ResearchSpecialist (Atlas), Scout (Horizon) |
+| **Security** | Worf | Threat detection, trust integrity | SecurityAgent |
+| **Operations** | O'Brien | Resource management, scheduling, watch rotation | OperationsAgent |
+| **Bridge** | — | Strategic decisions, human approval, cognitive wellness | Captain (Human), Architect (Meridian), Counselor (Echo) |
 
-The **Ship's Computer** provides shared infrastructure: Intent Bus (intercom), Trust Network (crew records), Hebbian Router (navigation), Episodic Memory (ship's log), CodebaseIndex (technical manual), Standing Orders (constitution), Structural Integrity Field (invariant enforcement), TaskTracker (task lifecycle).
+Agents communicate through the **Ward Room** — department channels, cross-department threads, 1:1 DMs, and All Hands broadcasts.
+
+The **Ship's Computer** provides shared infrastructure: Intent Bus (intercom), Trust Network (crew records), Hebbian Router (navigation), Episodic Memory (ship's log), Ward Room (communication fabric), CodebaseIndex (technical manual), Standing Orders (constitution), Structural Integrity Field (invariant enforcement), KnowledgeStore (operational state), Ship's Records (agent notebooks, duty logs, Captain's Log).
 
 Each ProbOS instance is a ship. Multiple instances form a [Federation](federation.md). See the [Roadmap](../development/roadmap.md) for the full crew structure and build phases.
 

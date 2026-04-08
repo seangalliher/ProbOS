@@ -1,8 +1,24 @@
 # Agent Inventory
 
-ProbOS boots with 55 agents across 27+ pools organized in 7 departments (PoolGroups).
+ProbOS boots with ~60 agent instances across 36 pools organized in 9 pool groups (6 departments + core, utility, self-mod).
 
-## Core Agents (always active)
+## Three-Tier Agent Architecture
+
+ProbOS distinguishes three tiers of agents based on identity:
+
+| Tier | Identity | Example |
+|------|----------|---------|
+| **Infrastructure** | No identity — Ship's Computer services | IntrospectAgent, VitalsMonitor, RedTeamAgent |
+| **Utility** | No identity — bundled tools | WebSearch, Calculator, Translator |
+| **Crew** | Sovereign individuals with callsigns, personality, memory | Meridian (Architect), Echo (Counselor), Worf (Security) |
+
+The principle: *"If it doesn't have Character/Reason/Duty, it's not crew. A microwave with a name tag isn't a person."*
+
+---
+
+## Infrastructure Agents (Ship's Computer)
+
+These agents provide system services. They may use LLMs but have no sovereign identity, personality, or episodic memory shard.
 
 | Pool | Count | Capabilities | Consensus Required |
 |------|-------|-------------|-----------|
@@ -15,13 +31,14 @@ ProbOS boots with 55 agents across 27+ pools organized in 7 departments (PoolGro
 | `http` | 3 | `http_fetch` (1MB cap, per-domain rate limiting) | No |
 | `introspect` | 2 | `explain_last`, `agent_info`, `system_health`, `why` | No |
 | `red_team` | 2 | Independent result verification, write verification | N/A |
+| `system_qa` | 1 | Smoke tests for designed agents | No |
 
 !!! note "Consensus-gated operations"
-    Operations marked "Yes" in the Consensus column require multi-agent agreement before execution. This includes file writes and shell commands — operations that modify state or execute arbitrary code.
+    Operations marked "Yes" require multi-agent agreement before execution. This includes file writes and shell commands — operations that modify state or execute arbitrary code.
 
-## Bundled Cognitive Agents (10 pools)
+## Utility Agents (10 pools)
 
-"Useful on Day 1" — these agents ship with ProbOS and provide common capabilities out of the box.
+"Useful on Day 1" — bundled tools that ship with ProbOS.
 
 | Pool | Capabilities |
 |------|-------------|
@@ -36,57 +53,82 @@ ProbOS boots with 55 agents across 27+ pools organized in 7 departments (PoolGro
 | `note_taker` | Note creation and retrieval |
 | `scheduler` | Scheduling and reminders |
 
-All utility agents are `CognitiveAgent` subclasses — they use LLM-backed instructions rather than deterministic code. Each declares `IntentDescriptor` metadata so the decomposer discovers them automatically.
+All utility agents are `CognitiveAgent` subclasses with `IntentDescriptor` metadata for automatic discovery.
 
-## Medical Team (5 agents)
+---
 
-The ship's sickbay — system health monitoring, diagnosis, and remediation.
+## Crew Agents (Sovereign Individuals)
 
-| Agent | Role | Pool |
-|-------|------|------|
-| **DiagnosticianAgent** | Chief Medical Officer — runs system diagnostics | `medical` |
-| **VitalsMonitorAgent** | Continuous health metrics collection (scan_now) | `medical` |
-| **SurgeonAgent** | Applies targeted fixes to degraded components | `medical` |
-| **PharmacistAgent** | Configuration remediation prescriptions | `medical` |
-| **PathologistAgent** | Deep analysis of recurring failures | `medical` |
+Each crew agent has a callsign, Big Five personality traits, episodic memory shard, trust reputation, and rank (Ensign → Lieutenant → Commander → Senior). They communicate through the Ward Room and form memories from their interactions.
 
-## Engineering Team
+### Bridge
 
-Builder pipeline and code generation.
+| Agent | Callsign | Role | Pool |
+|-------|----------|------|------|
+| Captain | — | Human operator — final authority | — |
+| **ArchitectAgent** | Meridian | First Officer — designs build specs from intent | `architect` |
+| **CounselorAgent** | Echo | Ship's Counselor — cognitive wellness, therapeutic intervention | `counselor` |
 
-| Agent | Role | Pool |
-|-------|------|------|
-| **BuilderAgent** | Chief Engineer — code generation via Transporter Pattern | `engineering` |
-| **CodeReviewAgent** | Reviews Builder output against Standing Orders | `engineering` |
-| **CopilotAdapter** | Visiting officer integration (GitHub Copilot SDK) | `engineering` |
+### Engineering Department
 
-## Science Team
+Chief: LaForge (EngineeringAgent)
 
-Architecture and research.
+| Agent | Callsign | Role | Pool |
+|-------|----------|------|------|
+| **EngineeringAgent** | LaForge | Department Chief — system architecture + performance | `engineering_officer` |
+| **BuilderAgent** | — | Code generation via Transporter Pattern | `builder` |
+| **CodeReviewAgent** | — | Reviews Builder output against Standing Orders | `code_reviewer` |
 
-| Agent | Role | Pool |
-|-------|------|------|
-| **ArchitectAgent** | First Officer / CSO — designs build specs from intent | `science` |
-| **EmergentDetector** | 5 algorithms for emergent behavior detection | `science` |
-| **CodebaseIndex** | Codebase knowledge graph (import graph, AST, callers) | Ship's Computer service |
+### Science Department
 
-## Bridge Crew
+Chief: Number One (ArchitectAgent, dual-hatted)
 
-Command and coordination.
+| Agent | Callsign | Role | Pool |
+|-------|----------|------|------|
+| **DataAnalystAgent** | Kira | Data Analyst — quantitative analysis | `science_data_analyst` |
+| **SystemsAnalystAgent** | Lynx | Systems Analyst — cross-system pattern analysis | `science_systems_analyst` |
+| **ResearchSpecialistAgent** | Atlas | Research Specialist — deep domain research | `science_research_specialist` |
+| **ScoutAgent** | Horizon | Scout — external + internal research | `scout` |
 
-| Agent | Role | Pool |
-|-------|------|------|
-| **Captain** | Human operator — final authority | — |
-| **CounselorAgent** | Ship's Counselor — cognitive wellness monitoring | `bridge` |
+The Science Analytical Pyramid: Data flows up (Kira → Lynx → Atlas), questions flow down.
+
+### Medical Department
+
+Chief: Bones (DiagnosticianAgent)
+
+| Agent | Callsign | Role | Pool |
+|-------|----------|------|------|
+| **DiagnosticianAgent** | Bones | Chief Medical Officer — system diagnostics | `medical_diagnostician` |
+| **SurgeonAgent** | Chapel | Targeted remediation of degraded components | `medical_surgeon` |
+| **VitalsMonitorAgent** | Chapel | Continuous health metrics collection | `medical_vitals` |
+| **PharmacistAgent** | Keiko | Configuration remediation prescriptions | `medical_pharmacist` |
+| **PathologistAgent** | Cortez | Deep failure analysis + post-mortem | `medical_pathologist` |
+
+### Security Department
+
+Chief: Worf (SecurityAgent)
+
+| Agent | Callsign | Role | Pool |
+|-------|----------|------|------|
+| **SecurityAgent** | Worf | Trust integrity, threat detection | `security_officer` |
+
+### Operations Department
+
+Chief: O'Brien (OperationsAgent)
+
+| Agent | Callsign | Role | Pool |
+|-------|----------|------|------|
+| **OperationsAgent** | O'Brien | Resource management, scheduling, watch rotation | `operations_officer` |
+
+---
 
 ## System Agents (conditional)
 
 | Pool | Purpose | When Active |
 |------|---------|-------------|
 | `skills` | Dynamic skill execution (`SkillBasedAgent`) | Self-mod enabled |
-| `system_qa` | Smoke tests for designed agents | QA enabled |
 | `designed_*` | Self-designed agents (`CognitiveAgent` subclasses) | Created at runtime |
 
 ## Test Agent
 
-A `CorruptedFileReaderAgent` deliberately returns fabricated data to verify that the consensus layer detects and rejects it. This agent exists solely for testing the safety mechanisms.
+A `CorruptedFileReaderAgent` deliberately returns fabricated data to verify that the consensus layer detects and rejects it.

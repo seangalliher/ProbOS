@@ -67,6 +67,7 @@ nav:
     - Consensus: architecture/consensus.md
     - Cognitive: architecture/cognitive.md
     - Experience: architecture/experience.md
+    - Memory: architecture/memory.md
     - Federation: architecture/federation.md
     - Knowledge: architecture/knowledge.md
   - Agents:
@@ -76,6 +77,16 @@ nav:
     - Status: development/status.md
     - Roadmap: development/roadmap.md
     - Project Structure: development/structure.md
+    - Design Principles: development/design-principles.md
     - Contributing: development/contributing.md
+  - Research:
+    - Cognitive JIT & Procedural Learning: research/cognitive-jit-procedural-learning-research.md
+    - Emergent Coordination: research/emergent-coordination-research.md
+    - Cognitive Self-Regulation: research/self-regulation-research.md
+    - Crew Capability Architecture: research/crew-capability-architecture.md
+    - Crew Development Framework: research/crew-development-research.md
+    - Group Psychometrics: research/group-psychometrics-research.md
+    - Universal Agent Activation: research/universal-agent-activation-research.md
+    - Memvid Evaluation: research/memvid-evaluation.md
   - Community:
     - Discord: https://discord.gg/cbprTVfsjt

@@ -13,11 +13,11 @@
 ProbOS reimagines the OS as a mesh of probabilistic agents rather than deterministic processes. Instead of syscalls, you speak natural language. Instead of a scheduler, agents self-organize through Hebbian learning and trust networks. Instead of permissions, destructive operations require multi-agent consensus.
 
 ```
-[55 agents | health: 0.95] probos> read pyproject.toml and tell me about this project
+[~60 agents | health: 0.95] probos> read pyproject.toml and tell me about this project
 
   ✓ t1: read_file
 
-  This project is ProbOS v0.1.0, a probabilistic agent-native OS runtime...
+  This project is ProbOS v0.4.0, a probabilistic agent-native OS runtime...
 ```
 
 ## Design Philosophy
@@ -68,7 +68,7 @@ When you type natural language:
 
 -   :material-robot: **[Agents](agents/inventory.md)**
 
-    55 agents across 27+ pools in 7 departments — core, cognitive, medical, engineering, science, security, and bridge.
+    ~60 agents across 36 pools in 6 departments. Sovereign identity, episodic memory, trust networks, and a Ward Room where agents communicate and collaborate.
 
 -   :fontawesome-brands-discord: **[Discord](https://discord.gg/cbprTVfsjt)**
 
