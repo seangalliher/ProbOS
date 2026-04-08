@@ -40,6 +40,7 @@ class TestProbOSShell:
         agent2.state = AgentState.ACTIVE
         agent2.confidence = 0.8
         runtime.registry.all.return_value = [agent1, agent2]
+        runtime.registry.crew_count.return_value = 2
         type(runtime.registry).count = PropertyMock(return_value=2)
 
         # No escalation_manager or self_mod_pipeline
@@ -101,7 +102,7 @@ class TestProbOSShell:
         calls = [str(c) for c in mock_console.print.call_args_list]
         assert any("System Status: ACTIVE" in c for c in calls)
         assert any("Uptime: 2 hours, 2 minutes, 3 seconds" in c for c in calls)
-        assert any("Agents:" in c for c in calls)
+        assert any("Crew:" in c for c in calls)
 
     @pytest.mark.asyncio
     async def test_cmd_ping_no_uptime_data(self, shell, mock_runtime, mock_console):
