@@ -118,7 +118,12 @@ class TestMetadataPromotion:
             ep = _make_episode(
                 anchors=_anchor(department="engineering", channel="dm"),
             )
-            await mem.store(ep)
+            try:
+                await mem.store(ep)
+            except Exception as exc:
+                if "INVALID_PROTOBUF" in str(exc) or "onnx" in str(exc).lower() or "No such file" in str(exc):
+                    pytest.skip(f"ChromaDB ONNX model unavailable: {exc}")
+                raise
             # Fetch back from ChromaDB
             result = mem._collection.get(ids=[ep.id], include=["metadatas"])
             meta = result["metadatas"][0]
