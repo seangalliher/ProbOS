@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 
@@ -13,11 +12,11 @@ from probos.cognitive.procedures import Procedure, ProcedureStep
 
 
 @pytest.fixture
-def store(tmp_path):
+async def store(tmp_path):
     s = ProcedureStore(data_dir=tmp_path)
-    asyncio.get_event_loop().run_until_complete(s.start())
+    await s.start()
     yield s
-    asyncio.get_event_loop().run_until_complete(s.stop())
+    await s.stop()
 
 
 def _make_procedure(
