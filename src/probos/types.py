@@ -319,6 +319,8 @@ class AnchorFrame:
     # TEMPORAL — when did this happen?
     duty_cycle_id: str = ""          # Links to duty assignment if from duty cycle
     watch_section: str = ""          # e.g., "alpha", "beta" — temporal context
+    sequence_index: int = 0          # AD-577: intra-cycle ordering (monotonic within a batch)
+    source_timestamp: float = 0.0    # AD-577: original event time (e.g. WR post created_at)
 
     # SPATIAL — where in the ship did this happen?
     channel: str = ""                # "ward_room", "dm", "duty_report", "dag", "feedback", "smoke_test"

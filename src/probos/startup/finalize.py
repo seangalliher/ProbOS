@@ -154,6 +154,7 @@ async def finalize_startup(
 
     # BF-125: Subscribe to GAME_COMPLETED to clean both players' working memory
     from probos.events import EventType
+    from probos.crew_utils import is_crew_agent  # BF-127
 
     async def _on_game_completed(event: dict) -> None:
         """BF-125: Clean both players' working memory on game completion."""
@@ -162,6 +163,9 @@ async def finalize_startup(
         if not game_id:
             return
         for agent in runtime.registry.all():
+            # BF-127: Only crew agents have meaningful working memory
+            if not is_crew_agent(agent, getattr(runtime, 'ontology', None)):
+                continue
             wm = getattr(agent, 'working_memory', None)
             if wm and wm.get_engagement(game_id):
                 wm.remove_engagement(game_id)
@@ -343,10 +347,14 @@ async def finalize_startup(
             and runtime.working_memory_store):
         try:
             from probos.cognitive.agent_working_memory import AgentWorkingMemory
+            from probos.crew_utils import is_crew_agent  # BF-127
             frozen_states = await runtime.working_memory_store.load_all()
             stale_hours = config.working_memory.stale_threshold_hours
             restored = 0
             for agent in runtime.registry.all():
+                # BF-127: Only restore working memory for sovereign crew agents
+                if not is_crew_agent(agent, getattr(runtime, 'ontology', None)):
+                    continue
                 wm = getattr(agent, 'working_memory', None)
                 if wm is None:
                     continue

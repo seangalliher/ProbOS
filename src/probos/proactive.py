@@ -693,6 +693,13 @@ class ProactiveCognitiveLoop:
                 except Exception:
                     pass
 
+                # AD-577: Use earliest WR source timestamp if available
+                _wr_activity = context.get("ward_room_activity", [])
+                _earliest_source_ts = min(
+                    (a.get("created_at", 0.0) for a in _wr_activity if a.get("created_at", 0.0) > 0),
+                    default=0.0,
+                )
+
                 episode = Episode(
                     user_input=f"[Proactive thought] {callsign or agent.agent_type}: {thought_summary}",
                     timestamp=time.time(),
@@ -713,6 +720,7 @@ class ProactiveCognitiveLoop:
                         trigger_type="duty_cycle" if duty else "proactive_think",
                         watch_section=derive_watch_section(),
                         event_log_window=float(len(rt.event_log.recent(seconds=60))) if hasattr(rt, 'event_log') and hasattr(rt.event_log, 'recent') else 0.0,
+                        source_timestamp=_earliest_source_ts,  # AD-577
                     ),
                 )
                 from probos.cognitive.episodic import EpisodicMemory
@@ -1039,6 +1047,7 @@ class ProactiveCognitiveLoop:
                                     "net_score": a.get("net_score", 0),       # AD-426
                                     "post_id": a.get("post_id", a.get("id", "")),  # AD-426
                                     "thread_id": a.get("thread_id", ""),  # AD-437
+                                    "created_at": a.get("created_at", 0.0),  # AD-577
                                 }
                                 for a in activity
                                 if (a.get("author_id", "") or a.get("author", "")) not in self_ids  # BF-032
@@ -1071,6 +1080,7 @@ class ProactiveCognitiveLoop:
                                     "net_score": item.get("net_score", 0),       # AD-426
                                     "post_id": item.get("post_id", item.get("id", "")),  # AD-426
                                     "thread_id": item.get("thread_id", ""),  # AD-437
+                                    "created_at": item.get("created_at", 0.0),  # AD-577
                                 }
                                 for item in all_hands_filtered[:3]
                                 if (item.get("author_id", "") or item.get("author", "")) not in self_ids  # BF-032
@@ -1103,11 +1113,18 @@ class ProactiveCognitiveLoop:
                                     "net_score": item.get("net_score", 0),
                                     "post_id": item.get("post_id", item.get("id", "")),
                                     "thread_id": item.get("thread_id", ""),
+                                    "created_at": item.get("created_at", 0.0),  # AD-577
                                 }
                                 for item in rec_filtered[:2]
                             ])
             except Exception:
                 logger.debug("Ward Room context fetch failed for %s", agent.id, exc_info=True)
+
+        # AD-577: Sort ward_room_activity by source timestamp and assign sequence indices
+        if context.get("ward_room_activity"):
+            context["ward_room_activity"].sort(key=lambda a: a.get("created_at", 0.0))
+            for idx, item in enumerate(context["ward_room_activity"], start=1):
+                item["sequence_index"] = idx
 
         # BF-110: Inject active game state so agent can see the board and know it's their turn
         rec_svc = getattr(rt, 'recreation_service', None)

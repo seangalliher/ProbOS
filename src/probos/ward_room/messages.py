@@ -203,6 +203,7 @@ class MessageStore:
                         participants=[author_callsign or author_id],
                         trigger_agent=author_callsign or author_id,
                         department=self._resolve_author_department(author_id),
+                        source_timestamp=post.created_at,  # AD-577
                     ),
                 )
                 from probos.cognitive.episodic import EpisodicMemory

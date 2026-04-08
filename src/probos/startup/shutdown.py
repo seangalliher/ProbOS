@@ -237,8 +237,12 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # AD-573: Freeze all agent working memory before pools stop
     if hasattr(runtime, 'working_memory_store') and runtime.working_memory_store:
         try:
+            from probos.crew_utils import is_crew_agent  # BF-127
             states: dict = {}
             for agent in runtime.registry.all():
+                # BF-127: Only persist working memory for sovereign crew agents
+                if not is_crew_agent(agent, getattr(runtime, 'ontology', None)):
+                    continue
                 wm = getattr(agent, 'working_memory', None)
                 if wm:
                     states[agent.id] = wm.to_dict()
