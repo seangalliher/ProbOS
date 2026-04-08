@@ -422,20 +422,7 @@ class WardRoomRouter:
                             )
                         except Exception:
                             logger.debug("BF-123: Board update post failed", exc_info=True)
-                    # AD-573: Update/remove game engagement in working memory
-                    try:
-                        wm = getattr(agent, 'working_memory', None)
-                        if wm:
-                            game_result = game_info.get("result")
-                            if game_result:
-                                wm.remove_engagement(player_game["game_id"])
-                            else:
-                                wm.update_engagement(
-                                    player_game["game_id"],
-                                    state={"last_move": position},
-                                )
-                    except Exception:
-                        logger.debug("BF-123: Working memory game update failed", exc_info=True)
+                    # BF-125: Game-over WM cleanup handled by GAME_COMPLETED subscriber.
                 else:
                     logger.debug("BF-123: No active game for %s", callsign)
             except Exception as e:

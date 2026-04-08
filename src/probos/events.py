@@ -130,6 +130,7 @@ class EventType(str, Enum):
     EMERGENCE_METRICS_UPDATED = "emergence_metrics_updated"  # AD-557: emergence snapshot computed
     GROUPTHINK_WARNING = "groupthink_warning"  # AD-557: redundancy dominates
     FRAGMENTATION_WARNING = "fragmentation_warning"  # AD-557: synergy near zero
+    BEHAVIORAL_METRICS_UPDATED = "behavioral_metrics_updated"  # AD-569: behavioral snapshot computed
     GAME_COMPLETED = "game_completed"  # AD-526a: Game finished
     GAME_UPDATE = "game_update"  # AD-526b: game state changed (move made)
     LLM_HEALTH_CHANGED = "llm_health_changed"  # BF-069: LLM proxy status transition

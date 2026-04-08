@@ -69,6 +69,9 @@ async def init_dreaming(
     if hasattr(config, 'records'):
         staleness_hours = getattr(config.records, 'notebook_staleness_hours', 72.0)
     notebook_quality_engine = NotebookQualityEngine(staleness_hours=staleness_hours)
+    # AD-569: Behavioral Metrics Engine
+    from probos.cognitive.behavioral_metrics import BehavioralMetricsEngine
+    behavioral_metrics_engine = BehavioralMetricsEngine(config.behavioral_metrics)
     # AD-541c: Spaced Retrieval Therapy
     retrieval_practice_engine = None
     retrieval_llm_client = None
@@ -109,6 +112,7 @@ async def init_dreaming(
             retrieval_practice_engine=retrieval_practice_engine,
             retrieval_llm_client=retrieval_llm_client,
             activation_tracker=activation_tracker,
+            behavioral_metrics_engine=behavioral_metrics_engine,
         )
         dream_scheduler = DreamScheduler(
             engine=dreaming_engine,
@@ -235,5 +239,6 @@ async def init_dreaming(
         flush_task=flush_task,
         notebook_quality_engine=notebook_quality_engine,
         retrieval_practice_engine=retrieval_practice_engine,
+        behavioral_metrics_engine=behavioral_metrics_engine,
     )
     return result, cold_start

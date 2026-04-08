@@ -804,35 +804,121 @@ class ProactiveCognitiveLoop:
                 # AD-567b: Use salience-weighted recall with dynamic query
                 em = rt.episodic_memory
                 episodes = []
-                if hasattr(em, 'recall_weighted'):
-                    # Derive query from agent context instead of hardcoded "recent activity"
-                    _duty_type = ""
-                    query = f"{agent.agent_type} {_duty_type} recent duty observations".strip()
 
-                    trust_net = getattr(rt, 'trust_network', None)
-                    heb_router = getattr(rt, 'hebbian_router', None)
-                    mem_cfg = None
-                    if hasattr(rt, 'config') and hasattr(rt.config, 'memory'):
-                        mem_cfg = rt.config.memory
+                # AD-462c: Resolve recall tier from agent rank
+                from probos.earned_agency import recall_tier_from_rank, RecallTier
+                from probos.cognitive.episodic import resolve_recall_tier_params
+                _rank = getattr(agent, 'rank', None)
+                _recall_tier = recall_tier_from_rank(_rank) if _rank else RecallTier.ENHANCED
+                mem_cfg = None
+                if hasattr(rt, 'config') and hasattr(rt.config, 'memory'):
+                    mem_cfg = rt.config.memory
+                _tier_cfg = getattr(mem_cfg, 'recall_tiers', None) if mem_cfg else None
+                _tier_params = resolve_recall_tier_params(_recall_tier.value, _tier_cfg)
 
-                    scored_results = await em.recall_weighted(
-                        _agent_mem_id, query,
-                        trust_network=trust_net,
-                        hebbian_router=heb_router,
-                        k=5,
-                        context_budget=getattr(mem_cfg, 'recall_context_budget_chars', 4000) if mem_cfg else 4000,
-                        weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
-                        anchor_confidence_gate=getattr(mem_cfg, 'anchor_confidence_gate', 0.3) if mem_cfg else 0.3,
+                # AD-568a: Classify retrieval strategy
+                from probos.cognitive.source_governance import (
+                    classify_retrieval_strategy, RetrievalStrategy,
+                    compute_adaptive_budget, compute_source_framing,
+                )
+                _episode_count = 0
+                if hasattr(em, 'count_for_agent'):
+                    try:
+                        _episode_count = await em.count_for_agent(_agent_mem_id)
+                    except Exception:
+                        _episode_count = 1
+                _retrieval_strategy = classify_retrieval_strategy(
+                    "proactive_think",
+                    episodic_count=_episode_count,
+                )
+
+                scored_results = []
+                if _retrieval_strategy == RetrievalStrategy.NONE:
+                    logger.debug("AD-568a: Skipping episodic recall for proactive (strategy=NONE)")
+                    episodes = []
+                else:
+                    # AD-568a DEEP: Expand params (unlikely for proactive_think, but handled)
+                    if _retrieval_strategy == RetrievalStrategy.DEEP:
+                        _tier_params = dict(_tier_params)
+                        _tier_params["k"] = int(_tier_params.get("k", 5) * 1.5)
+                        _tier_params["context_budget"] = int(_tier_params.get("context_budget", 4000) * 1.5)
+                        _tier_params["anchor_confidence_gate"] = max(
+                            0.0, _tier_params.get("anchor_confidence_gate", 0.3) - 0.1
+                        )
+
+                    if hasattr(em, 'recall_weighted') and _tier_params.get("use_salience_weights", True):
+                        # Derive query from agent context instead of hardcoded "recent activity"
+                        _duty_type = ""
+                        query = f"{agent.agent_type} {_duty_type} recent duty observations".strip()
+
+                        trust_net = getattr(rt, 'trust_network', None)
+                        heb_router = getattr(rt, 'hebbian_router', None)
+
+                        scored_results = await em.recall_weighted(
+                            _agent_mem_id, query,
+                            trust_network=trust_net,
+                            hebbian_router=heb_router,
+                            intent_type="proactive_think",
+                            k=_tier_params.get("k", 5),
+                            context_budget=_tier_params.get("context_budget", 4000),
+                            weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
+                            anchor_confidence_gate=_tier_params.get("anchor_confidence_gate", 0.3),
+                        )
+                        episodes = [rs.episode for rs in scored_results]
+                    else:
+                        # BASIC tier: vector similarity only
+                        episodes = await em.recall_for_agent(
+                            _agent_mem_id, "recent activity", k=_tier_params.get("k", 3)
+                        )
+
+                    # AD-568b: Adaptive budget scaling
+                    if scored_results and _retrieval_strategy != RetrievalStrategy.NONE:
+                        _budget_adj = compute_adaptive_budget(
+                            _tier_params.get("context_budget", 4000),
+                            recall_scores=scored_results,
+                            episode_count=_episode_count,
+                            strategy=_retrieval_strategy,
+                        )
+                        if _budget_adj.scale_factor != 1.0:
+                            logger.debug(
+                                "AD-568b: Proactive budget adjusted %d→%d (%s)",
+                                _budget_adj.original_budget, _budget_adj.adjusted_budget,
+                                _budget_adj.reason,
+                            )
+                            _adjusted_episodes = []
+                            _budget_used = 0
+                            for rs in scored_results:
+                                _ep_len = len(rs.episode.user_input) if hasattr(rs.episode, 'user_input') else 0
+                                if _budget_used + _ep_len > _budget_adj.adjusted_budget and _adjusted_episodes:
+                                    break
+                                _adjusted_episodes.append(rs)
+                                _budget_used += _ep_len
+                            scored_results = _adjusted_episodes
+                            episodes = [rs.episode for rs in scored_results]
+
+                    # Fallback to old recall path
+                    if not episodes:
+                        episodes = await em.recall_for_agent(
+                            _agent_mem_id, "recent activity", k=_tier_params.get("k", 5)
+                        )
+                    if not episodes and hasattr(em, 'recent_for_agent'):
+                        episodes = await em.recent_for_agent(_agent_mem_id, k=_tier_params.get("k", 5))
+
+                # AD-568c: Source framing for proactive path
+                _framing = None
+                if scored_results:
+                    _scores = [getattr(rs, 'composite_score', 0.0) for rs in scored_results]
+                    _confs = [getattr(rs, 'anchor_confidence', 0.0) for rs in scored_results]
+                    _framing = compute_source_framing(
+                        mean_anchor_confidence=sum(_confs) / len(_confs) if _confs else 0.0,
+                        recall_count=len(scored_results),
+                        mean_recall_score=sum(_scores) / len(_scores) if _scores else 0.0,
+                        strategy=_retrieval_strategy,
                     )
-                    episodes = [rs.episode for rs in scored_results]
-
-                # Fallback to old recall path
-                if not episodes:
-                    episodes = await em.recall_for_agent(
-                        _agent_mem_id, "recent activity", k=5
-                    )
-                if not episodes and hasattr(em, 'recent_for_agent'):
-                    episodes = await em.recent_for_agent(_agent_mem_id, k=5)
+                elif _retrieval_strategy == RetrievalStrategy.NONE:
+                    _framing = compute_source_framing(strategy=RetrievalStrategy.NONE)
+                if _framing:
+                    context["_source_framing"] = _framing
 
                 if episodes:
                     # AD-502: Include relative timestamps on recalled memories
@@ -862,6 +948,21 @@ class ProactiveCognitiveLoop:
                     context["recent_memories"] = memory_list
             except Exception:
                 logger.debug("Episodic recall failed for %s", agent.id, exc_info=True)
+
+        # AD-462d: Social Memory — check for open memory queries to respond to
+        if hasattr(rt, '_social_memory_service') and rt._social_memory_service:
+            try:
+                since = time.time() - 3600  # Last hour
+                responses = await rt._social_memory_service.check_and_respond_to_queries(
+                    agent_id=getattr(agent, 'sovereign_id', None) or agent.id,
+                    agent_callsign=getattr(agent, 'callsign', '') or '',
+                    since=since,
+                    max_queries=2,
+                )
+                if responses:
+                    context["memory_query_responses"] = responses
+            except Exception:
+                logger.debug("AD-462d: Social memory check failed", exc_info=True)
 
         # 2. Recent bridge alerts
         if hasattr(rt, 'bridge_alerts') and rt.bridge_alerts:
@@ -2049,22 +2150,8 @@ class ProactiveCognitiveLoop:
                                 except Exception:
                                     logger.debug("AD-526a: Board update post failed", exc_info=True)
 
-                            # AD-573: Update/remove game engagement in working memory
-                            try:
-                                wm = getattr(agent, 'working_memory', None)
-                                if wm:
-                                    game_result = game_info.get("result")
-                                    if game_result:
-                                        # Game over — remove engagement
-                                        wm.remove_engagement(player_game["game_id"])
-                                    else:
-                                        # Game ongoing — update state
-                                        wm.update_engagement(
-                                            player_game["game_id"],
-                                            state={"last_move": position},
-                                        )
-                            except Exception:
-                                logger.debug("AD-573: Working memory game update failed", exc_info=True)
+                            # BF-125: Game-over WM cleanup handled by GAME_COMPLETED subscriber.
+                            # In-progress state sync handled by proactive loop (line 1139-1165).
                         else:
                             logger.debug("AD-526a: No active game for %s", callsign)
                 except Exception as e:

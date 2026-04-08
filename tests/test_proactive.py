@@ -135,6 +135,8 @@ def _make_mock_runtime(agents=None, trust_scores=None, ward_room=True):
     # Episodic memory
     rt.episodic_memory = MagicMock(spec=EpisodicMemory)
     rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
+    rt.episodic_memory.count_for_agent = AsyncMock(return_value=0)  # AD-568a: default zero episodes
+    rt.episodic_memory.recall_weighted = AsyncMock(return_value=[])  # AD-568a: default empty
 
     # Bridge alerts
     rt.bridge_alerts = MagicMock(spec=BridgeAlertService)
@@ -367,6 +369,7 @@ class TestProactiveContextGathering:
         rs = RecallScore(episode=ep, composite_score=0.5)
         rt.episodic_memory.recall_weighted = AsyncMock(return_value=[rs])
         rt.episodic_memory.recall_for_agent.return_value = [ep]
+        rt.episodic_memory.count_for_agent = AsyncMock(return_value=5)  # AD-568a
 
         loop = _make_loop()
         loop.set_runtime(rt)
@@ -435,6 +438,7 @@ class TestProactiveContextGathering:
         agent = _make_mock_agent()
         rt = _make_mock_runtime(agents=[agent])
         rt.episodic_memory.recall_for_agent.return_value = []  # semantic recall empty
+        rt.episodic_memory.count_for_agent = AsyncMock(return_value=5)  # AD-568a: non-zero to enable retrieval
 
         ep1 = Episode(user_input="recent task 1", reflection="Did task 1.")
         ep2 = Episode(user_input="recent task 2", reflection="Did task 2.")

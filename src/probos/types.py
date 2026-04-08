@@ -463,6 +463,12 @@ class DreamReport:
     retrieval_practices: int = 0
     retrieval_accuracy: float | None = None
     retrieval_concerns: int = 0
+    # AD-569: Behavioral metrics
+    behavioral_quality_score: float | None = None
+    frame_diversity_score: float | None = None
+    synthesis_rate: float | None = None
+    cross_dept_trigger_rate: float | None = None
+    anchor_grounded_rate: float | None = None
     # AD-567d: Activation-based memory lifecycle
     activation_pruned: int = 0
     activation_reinforced: int = 0

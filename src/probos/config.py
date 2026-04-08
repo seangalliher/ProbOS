@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pydantic import BaseModel
@@ -279,6 +280,37 @@ class MemoryConfig(BaseModel):
         "evidential": 0.10,
     }
     anchor_confidence_gate: float = 0.3  # RPMS: suppress below this from default recall
+    # AD-462c: Variable Recall Tiers
+    recall_tiers: dict[str, dict[str, Any]] = {
+        "basic": {
+            "k": 3,
+            "context_budget": 1500,
+            "anchor_confidence_gate": 0.0,
+            "use_salience_weights": False,
+            "cross_department_anchors": False,
+        },
+        "enhanced": {
+            "k": 5,
+            "context_budget": 4000,
+            "anchor_confidence_gate": 0.3,
+            "use_salience_weights": True,
+            "cross_department_anchors": False,
+        },
+        "full": {
+            "k": 8,
+            "context_budget": 6000,
+            "anchor_confidence_gate": 0.3,
+            "use_salience_weights": True,
+            "cross_department_anchors": True,
+        },
+        "oracle": {
+            "k": 10,
+            "context_budget": 8000,
+            "anchor_confidence_gate": 0.2,
+            "use_salience_weights": True,
+            "cross_department_anchors": True,
+        },
+    }
 
 
 class DreamingConfig(BaseModel):
@@ -686,6 +718,36 @@ class EmergenceMetricsConfig(BaseModel):
     hebbian_synergy_min_interactions: int = 5  # Minimum Hebbian interactions to correlate
 
 
+class BehavioralMetricsConfig(BaseModel):
+    """AD-569: Observation-Grounded Crew Intelligence Metrics."""
+
+    # Thread analysis
+    thread_lookback_hours: float = 72.0  # How far back to analyze threads
+    min_thread_contributors: int = 2  # Minimum unique authors for a qualifying thread
+    min_thread_posts: int = 3  # Minimum posts for a qualifying thread
+
+    # Frame Diversity (Metric 1)
+    frame_diversity_min_departments: int = 2  # Need 2+ departments represented
+
+    # Synthesis Detection (Metric 2)
+    synthesis_novelty_threshold: float = 0.35  # Cosine distance threshold for "novel"
+    synthesis_min_thread_posts: int = 4  # Threads need 4+ posts for synthesis analysis
+
+    # Cross-Department Trigger (Metric 3)
+    trigger_correlation_window_hours: float = 24.0  # Window for topic trigger correlation
+    trigger_topic_similarity_threshold: float = 0.6  # Cosine similarity for "same topic"
+
+    # Convergence Correctness (Metric 4)
+    convergence_similarity_threshold: float = 0.75  # When posts are "converging"
+    convergence_min_agreeing: int = 2  # Minimum agents agreeing for convergence
+
+    # Anchor-Grounded Emergence (Metric 5)
+    anchor_independence_min_episodes: int = 3  # Minimum episodes for anchor analysis
+
+    # Snapshot history
+    max_snapshots: int = 100  # Rolling window of historical snapshots
+
+
 class EventLogConfig(BaseModel):
     """Event log retention configuration."""
     retention_days: int = 7          # Delete events older than N days (0 = keep forever)
@@ -784,6 +846,7 @@ class SystemConfig(BaseModel):
     circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
     trust_dampening: TrustDampeningConfig = TrustDampeningConfig()
     emergence_metrics: EmergenceMetricsConfig = EmergenceMetricsConfig()
+    behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
     communications: CommunicationsConfig = CommunicationsConfig()

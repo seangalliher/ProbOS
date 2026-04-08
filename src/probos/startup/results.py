@@ -103,6 +103,7 @@ class CognitiveServicesResult:
     activation_tracker: Any = None  # AD-567d
     social_verification: Any = None  # AD-567f
     orientation_service: Any = None  # AD-567g
+    oracle_service: Any = None  # AD-462e
 
 
 @dataclass
@@ -117,6 +118,7 @@ class DreamingResult:
     flush_task: asyncio.Task[None]
     notebook_quality_engine: Any = None  # AD-555
     retrieval_practice_engine: Any = None  # AD-541c
+    behavioral_metrics_engine: Any = None  # AD-569
 
 
 @dataclass

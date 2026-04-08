@@ -169,6 +169,10 @@ class EmergentDetector:
         # BF-034: Cold-start suppression — suppress trust anomalies for N seconds after reset
         self._suppress_trust_until: float = 0.0
 
+        # BF-126: Post-stasis cooperation cluster suppression — synchronized agent
+        # startup creates false positive cooperation clusters
+        self._suppress_clusters_until: float = 0.0
+
         # BF-100: Dream cycle suppression — suppress trust anomalies during dream consolidation
         self._dreaming: bool = False
 
@@ -181,13 +185,15 @@ class EmergentDetector:
         self._pattern_cooldown_seconds = max(0, seconds)
 
     def set_cold_start_suppression(self, duration_seconds: float) -> None:
-        """Suppress trust anomaly detection for *duration_seconds* after a cold start.
+        """Suppress trust anomaly and cooperation cluster detection after a cold start.
 
-        Cooperation clusters and routing shifts still fire — those are useful
-        even post-reset. Only trust anomalies are suppressed since baseline
-        trust (0.5) is expected, not anomalous.
+        BF-034: Trust anomalies suppressed since baseline trust (0.5) is expected.
+        BF-126: Cooperation clusters suppressed since synchronized agent startup
+        creates correlated Hebbian activity that looks like cooperation but is
+        just simultaneous initialization. Routing shifts still fire.
         """
         self._suppress_trust_until = time.monotonic() + duration_seconds
+        self._suppress_clusters_until = time.monotonic() + duration_seconds
 
     def set_dreaming(self, active: bool) -> None:
         """Set dream cycle state. Suppresses trust anomaly detection during dreams.
@@ -344,6 +350,11 @@ class EmergentDetector:
         set are filtered out before cluster detection (prevents ghost clusters
         from agents removed by /reset).
         """
+        # BF-126: Suppress during post-stasis window — synchronized startup
+        # creates false positive cooperation clusters
+        if time.monotonic() < self._suppress_clusters_until:
+            return []
+
         # Don't detect cooperation clusters until we have enough data (AD-288)
         if self._episodic_memory:
             try:

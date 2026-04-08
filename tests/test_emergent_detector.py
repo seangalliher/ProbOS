@@ -1236,3 +1236,31 @@ class TestBF089RegressionGuards:
         # Cooperation clusters are independent of trust anomaly settings
         assert len(clusters) == 1
         assert clusters[0]["size"] == 3
+
+    def test_cold_start_suppresses_cooperation_clusters(self) -> None:
+        """BF-126: Cold-start suppression also suppresses cooperation clusters."""
+        weights = {
+            ("intent_a", "agent_pool_0_abc", REL_INTENT): 0.5,
+            ("intent_a", "agent_pool_1_def", REL_INTENT): 0.3,
+        }
+        d = _make_detector(weights=weights)
+        # Without suppression — clusters detected
+        clusters = d.detect_cooperation_clusters()
+        assert len(clusters) == 1
+
+        # With suppression — clusters suppressed
+        d.set_cold_start_suppression(9999.0)
+        clusters = d.detect_cooperation_clusters()
+        assert len(clusters) == 0
+
+    def test_cluster_suppression_expires(self) -> None:
+        """BF-126: Cluster suppression expires after the window."""
+        weights = {
+            ("intent_a", "agent_pool_0_abc", REL_INTENT): 0.5,
+            ("intent_a", "agent_pool_1_def", REL_INTENT): 0.3,
+        }
+        d = _make_detector(weights=weights)
+        # Set suppression to already-expired time
+        d._suppress_clusters_until = time.monotonic() - 1.0
+        clusters = d.detect_cooperation_clusters()
+        assert len(clusters) == 1

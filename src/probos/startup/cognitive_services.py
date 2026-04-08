@@ -348,6 +348,21 @@ async def init_cognitive_services(
         except Exception as e:
             logger.warning("SocialVerificationService failed to start: %s — continuing without", e)
 
+    # AD-462e: Oracle Service — cross-tier unified memory query
+    oracle_service = None
+    try:
+        from probos.cognitive.oracle_service import OracleService
+        oracle_service = OracleService(
+            episodic_memory=episodic_memory,
+            records_store=records_store,
+            knowledge_store=knowledge_store,
+            trust_network=trust_network,
+            hebbian_router=hebbian_router,
+        )
+        logger.info("AD-462e: OracleService initialized")
+    except Exception as e:
+        logger.warning("OracleService failed to start: %s — continuing without", e)
+
     logger.info("Startup [cognitive_services]: complete")
     return CognitiveServicesResult(
         self_mod_pipeline=self_mod_pipeline,
@@ -369,4 +384,5 @@ async def init_cognitive_services(
         activation_tracker=activation_tracker,  # AD-567d
         social_verification=social_verification,  # AD-567f
         orientation_service=orientation_service,  # AD-567g
+        oracle_service=oracle_service,  # AD-462e
     )

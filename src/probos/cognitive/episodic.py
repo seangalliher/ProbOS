@@ -323,6 +323,26 @@ def _verify_episode_hash(
     return True
 
 
+def resolve_recall_tier_params(
+    tier: str,
+    tier_config: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Resolve recall parameters for a given tier (AD-462c).
+
+    Returns dict with keys: k, context_budget, anchor_confidence_gate,
+    use_salience_weights, cross_department_anchors.
+    Falls back to 'enhanced' tier defaults if tier not found.
+    """
+    defaults: dict[str, dict[str, Any]] = {
+        "basic": {"k": 3, "context_budget": 1500, "anchor_confidence_gate": 0.0, "use_salience_weights": False, "cross_department_anchors": False},
+        "enhanced": {"k": 5, "context_budget": 4000, "anchor_confidence_gate": 0.3, "use_salience_weights": True, "cross_department_anchors": False},
+        "full": {"k": 8, "context_budget": 6000, "anchor_confidence_gate": 0.3, "use_salience_weights": True, "cross_department_anchors": True},
+        "oracle": {"k": 10, "context_budget": 8000, "anchor_confidence_gate": 0.2, "use_salience_weights": True, "cross_department_anchors": True},
+    }
+    source = tier_config if tier_config else defaults
+    return source.get(tier, source.get("enhanced", defaults["enhanced"]))
+
+
 class EpisodicMemory:
     """ChromaDB-backed episodic memory with semantic similarity recall."""
 

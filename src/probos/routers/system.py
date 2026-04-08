@@ -214,6 +214,60 @@ async def get_emergence_history(
     }
 
 
+@router.get("/behavioral-metrics")
+async def get_behavioral_metrics(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-569: Return cached behavioral metrics from last dream cycle."""
+    engine = getattr(runtime, "_behavioral_metrics_engine", None)
+    if not engine:
+        return {"status": "not_available", "message": "Behavioral metrics engine not wired"}
+    snapshot = engine.latest_snapshot
+    if not snapshot:
+        return {"status": "no_data", "message": "No behavioral metrics computed yet"}
+    return {"status": "ok", **snapshot.to_dict()}
+
+
+@router.get("/behavioral-metrics/history")
+async def get_behavioral_metrics_history(
+    limit: int = 20,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-569: Return behavioral metrics time series."""
+    engine = getattr(runtime, "_behavioral_metrics_engine", None)
+    if not engine:
+        return {"status": "not_available", "snapshots": []}
+    snapshots = engine.snapshots
+    return {
+        "status": "ok",
+        "count": len(snapshots),
+        "snapshots": [s.to_dict() for s in snapshots[-limit:]],
+    }
+
+
+@router.get("/oracle")
+async def oracle_query(
+    q: str,
+    agent_id: str = "",
+    k: int = 3,
+    tiers: str = "",
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-462e: Cross-tier unified memory query."""
+    oracle = getattr(runtime, "_oracle_service", None)
+    if not oracle:
+        return {"status": "not_available", "message": "Oracle service not wired"}
+    tier_list = [t.strip() for t in tiers.split(",") if t.strip()] or None
+    results = await oracle.query(q, agent_id=agent_id, k_per_tier=k, tiers=tier_list)
+    return {
+        "status": "ok",
+        "count": len(results),
+        "results": [
+            {"source_tier": r.source_tier, "content": r.content[:500], "score": r.score,
+             "provenance": r.provenance, "metadata": r.metadata}
+            for r in results
+        ],
+    }
+
+
 @router.get("/notebook-quality")
 async def get_notebook_quality(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """AD-555: Return cached notebook quality metrics from last dream cycle."""

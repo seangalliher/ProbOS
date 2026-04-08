@@ -152,6 +152,27 @@ async def finalize_startup(
         emit_event_fn=runtime._emit_event,
     )
 
+    # BF-125: Subscribe to GAME_COMPLETED to clean both players' working memory
+    from probos.events import EventType
+
+    async def _on_game_completed(event: dict) -> None:
+        """BF-125: Clean both players' working memory on game completion."""
+        event_data = event.get("data", event)
+        game_id = event_data.get("game_id", "")
+        if not game_id:
+            return
+        for agent in runtime.registry.all():
+            wm = getattr(agent, 'working_memory', None)
+            if wm and wm.get_engagement(game_id):
+                wm.remove_engagement(game_id)
+                logger.debug("BF-125: Removed game %s from %s working memory",
+                             game_id, getattr(agent, 'callsign', agent.id))
+
+    runtime.add_event_listener(
+        _on_game_completed,
+        event_types=[EventType.GAME_COMPLETED],
+    )
+
     # Self-Modification Manager
     if runtime.self_mod_pipeline:
         self_mod_manager = SelfModManager(

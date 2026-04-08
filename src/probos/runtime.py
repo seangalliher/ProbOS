@@ -483,6 +483,7 @@ class ProbOSRuntime:
 
         # --- Emergence metrics (AD-557) ---
         self._emergence_metrics_engine: Any = None
+        self._behavioral_metrics_engine: Any = None  # AD-569
 
         # --- Structural Integrity Field (AD-370) ---
         self.sif: StructuralIntegrityField | None = None
@@ -1135,6 +1136,7 @@ class ProbOSRuntime:
         self._activation_tracker = cog.activation_tracker  # AD-567d
         self._social_verification = cog.social_verification  # AD-567f
         self._orientation_service = cog.orientation_service  # AD-567g
+        self._oracle_service = cog.oracle_service  # AD-462e
 
         # AD-533: Procedure Store (after RecordsStore, before Dreaming)
         try:
@@ -1194,6 +1196,17 @@ class ProbOSRuntime:
                 EmergenceCapacityProbe,
             )
             for test_cls in (CoordinationBreakevenProbe, ScaffoldDecompositionProbe, CollectiveIntelligenceProbe, ConvergenceRateProbe, EmergenceCapacityProbe):
+                self._qualification_harness.register_test(test_cls())
+
+            # AD-569: Register Tier 3 behavioral probes
+            from probos.cognitive.behavioral_probes import (
+                FrameDiversityProbe,
+                SynthesisDetectionProbe,
+                CrossDeptTriggerProbe,
+                ConvergenceCorrectnessProbe,
+                AnchorGroundedEmergenceProbe,
+            )
+            for test_cls in (FrameDiversityProbe, SynthesisDetectionProbe, CrossDeptTriggerProbe, ConvergenceCorrectnessProbe, AnchorGroundedEmergenceProbe):
                 self._qualification_harness.register_test(test_cls())
         except Exception as e:
             logger.warning("QualificationStore failed to start: %s — continuing without", e)
@@ -1258,6 +1271,7 @@ class ProbOSRuntime:
         self._emergence_metrics_engine = dream_result.emergence_metrics_engine
         self._notebook_quality_engine = dream_result.notebook_quality_engine  # AD-555
         self._retrieval_practice_engine = dream_result.retrieval_practice_engine  # AD-541c
+        self._behavioral_metrics_engine = dream_result.behavioral_metrics_engine  # AD-569
         self.task_scheduler = dream_result.task_scheduler
         self._flush_task = dream_result.flush_task
         self._cold_start = cold_start
@@ -1310,6 +1324,19 @@ class ProbOSRuntime:
         self.persistent_task_store = comm.persistent_task_store
         self.work_item_store = comm.work_item_store
         self.ward_room = comm.ward_room
+
+        # AD-462d: Social Memory Service (late-bound, needs ward_room from communication phase)
+        self._social_memory_service = None
+        if self.ward_room and getattr(self, 'episodic_memory', None):
+            try:
+                from probos.cognitive.social_memory import SocialMemoryService
+                self._social_memory_service = SocialMemoryService(
+                    ward_room=self.ward_room,
+                    episodic_memory=self.episodic_memory,
+                )
+                logger.info("AD-462d: SocialMemoryService initialized")
+            except Exception as e:
+                logger.warning("SocialMemoryService failed to start: %s", e)
 
         # AD-567c: Late-bind WardRoom into SIF for anchor integrity cross-reference
         if self.sif and self.ward_room:

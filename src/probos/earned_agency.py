@@ -13,6 +13,24 @@ class AgencyLevel(str, Enum):
     UNRESTRICTED = "unrestricted"   # Senior: cross-department, mentoring (future)
 
 
+class RecallTier(str, Enum):
+    """Memory recall capability tier — mapped from Earned Agency rank (AD-462c)."""
+    BASIC = "basic"            # Vector similarity only, small budget
+    ENHANCED = "enhanced"      # Vector + keyword + salience weights, standard budget
+    FULL = "full"              # Full recall_weighted + recall_by_anchor, large budget
+    ORACLE = "oracle"          # All recall paths + Oracle Service (AD-462e)
+
+
+def recall_tier_from_rank(rank: Rank) -> RecallTier:
+    """Map rank to recall capability tier."""
+    return {
+        Rank.ENSIGN: RecallTier.BASIC,
+        Rank.LIEUTENANT: RecallTier.ENHANCED,
+        Rank.COMMANDER: RecallTier.FULL,
+        Rank.SENIOR: RecallTier.ORACLE,
+    }[rank]
+
+
 def agency_from_rank(rank: Rank) -> AgencyLevel:
     """Map rank to agency level."""
     return {

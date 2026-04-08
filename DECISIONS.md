@@ -2522,7 +2522,7 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 - **Absorbs:** AD-462a (Salience-Weighted Episodic Recall)
 - **Decision:** Four-part recall upgrade: (1) salience-weighted re-ranking (Trust × Hebbian × Recency × Anchor composite via `RecallScore` dataclass and `score_recall()` method), (2) FTS5 keyword search sidecar alongside ChromaDB vector search (`keyword_search()` + `aiosqlite` FTS5 table), (3) anchor context headers in recalled memory formatting (`_format_memory_section()` renders WHERE/WHEN/WHO/WHY), (4) SECONDHAND source wiring for episodes derived from other agents' communication. New `recall_weighted()` API with budget enforcement replaces hardcoded k=3/k=5. Composite formula: `0.35*semantic + 0.10*keyword + 0.15*trust + 0.10*hebbian + 0.20*recency + 0.10*anchor_completeness`. Configurable via `MemoryConfig.recall_weights`.
 - **Rationale:** Raw ChromaDB cosine similarity is insufficient — all signals (trust, Hebbian, recency, anchor grounding) available but unused in recall ranking. Hardcoded "recent activity" query and fixed k=5 waste context budget. Agents couldn't distinguish own observations from secondhand reports. Anchor headers implement Tulving's encoding specificity — resurfacing storage-time context cues improves recall accuracy. Prior art: Tulving (1973) encoding specificity, CAST axis organization, RPMS confidence gating.
-- **Deferred:** AD-567c (Anchor Quality & Integrity), AD-567d (Memory Lifecycle/Dream), AD-567f (Social Memory), AD-462c (Recall Depth & Oracle), AD-567g (Cognitive Re-Localization).
+- **Deferred:** AD-567c (Anchor Quality & Integrity), AD-567d (Memory Lifecycle/Dream), AD-567f (Social Memory), AD-567g (Cognitive Re-Localization).
 
 | AD | Decision |
 |----|----------|
@@ -2650,6 +2650,22 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 - ToM: 14/14 pass including all Medical (was 5 failures)
 - Tier 3 collective: scaffold_decomposition 0.791 (up from 0.701)
 
+### AD-568a/b/c: Adaptive Source Governance
+
+**Date:** 2026-04-07
+**Status:** Complete
+**Scope:** Large | **Type:** Cognitive Architecture
+
+**Decision:** Three Adaptive Source Governance sub-ADs delivered together. Dynamic episodic vs parametric memory weighting across the entire cognitive pipeline. (1) **AD-568a Task-Type Retrieval Router** — `RetrievalStrategy` enum (`NONE`/`SHALLOW`/`DEEP`), `classify_retrieval_strategy()` maps intent types to strategies via `_INTENT_STRATEGY_MAP` (game_* → NONE, proactive_think/ward_room → SHALLOW, incident_response/diagnostic → DEEP). Confabulation safety gate: high confab rate (>0.3) downgrades DEEP → SHALLOW. `count_for_agent()` on EpisodicMemory wired for DEEP expansion. Oracle Service integration for ORACLE+DEEP tiers. (2) **AD-568b Adaptive Budget Scaling** — `BudgetAdjustment` frozen dataclass, `compute_adaptive_budget()` scales context budget based on anchor confidence, episode count, recall score distribution. Floor 500, ceiling 12000. Wires previously dead `cross_department_anchors` config through `recall_by_anchor()`. (3) **AD-568c Source Priority Framing** — `SourceAuthority` enum (`HIGH`/`MODERATE`/`LOW`), `SourceFraming` dataclass with authority + framing text, `compute_source_framing()` produces confidence-calibrated framing (AUTHORITATIVE/SUPPLEMENTARY/PERIPHERAL). `_format_memory_section()` accepts `source_framing` param, all 3 call sites (DM, WR, proactive) pass framing. New file: `cognitive/source_governance.py`. AD-568d (Source Monitoring Skill) and AD-568e (Faithfulness Verification) deferred — need runtime data from 568a/b/c.
+
+| AD | Decision |
+|----|----------|
+| AD-568a | Intent-type routing over blanket retrieval — game/creative tasks skip episodic entirely |
+| AD-568b | Dynamic budget scaling over static 4000 chars — anchor confidence drives expansion |
+| AD-568c | Explicit framing instructions over implicit LLM attention — agent told HOW to weight sources |
+| AD-568d | DEFERRED — cognitive proprioception sense, needs runtime data |
+| AD-568e | DEFERRED — faithfulness verification (Self-RAG ISSUP), needs runtime data |
+
 ### AD-569: Observation-Grounded Crew Intelligence Metrics
 
 **Date:** 2026-04-07
@@ -2657,6 +2673,23 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Scope:** Large | **Type:** Cognitive Architecture
 
 **Decision:** Five content-level behavioral metrics complement AD-557's information-theoretic measures. Follows EmergenceMetricsEngine pattern: dedicated config, snapshot-based engine, Dream Step 13 integration, API routes, Tier 3 qualification probes. Metrics: (1) Analytical Frame Diversity — embedding-based department frame classification, Shannon entropy. (2) Synthesis Detection — novel semantic elements in thread conclusions not attributable to any single contributor. (3) Cross-Department Trigger Rate — temporal correlation of cross-departmental activity on the same topic. (4) Convergence Correctness — placeholder ground-truth tracking for converged conclusions (requires human feedback loop). (5) Anchor-Grounded Emergence — consumes social_verification.compute_anchor_independence() for provenance-validated emergence. Pure Python math, no external dependencies. Deferred: psychometric framework (ICC, r_wg, G-theory, MTMM), HXI dashboard.
+
+### AD-462c/d/e: Memory Architecture Extensions
+
+**Date:** 2026-04-07
+**Status:** Complete
+**Scope:** Medium | **Type:** Cognitive Architecture
+
+**Decision:** Three final Memory Architecture sub-ADs delivered together. (1) **AD-462c Variable Recall Tiers** — `RecallTier` enum (`BASIC`/`ENHANCED`/`FULL`/`ORACLE`) parallels `AgencyLevel` (Ensign=BASIC, Lieutenant=ENHANCED, Commander=FULL, Senior=ORACLE). `resolve_recall_tier_params()` DRY helper centralizes tier→parameter mapping (k, context_budget, anchor_confidence_gate, cross_agent_access). Wired into both `_recall_relevant_memories()` and `_gather_context()` in cognitive_agent.py. (2) **AD-462d Social Memory** — `SocialMemoryService` implements "does anyone remember?" protocol via Ward Room `thread_mode="memory_query"`. Agents detect memory queries in proactive cycle and respond from their sovereign episodic shard. Protocol-based, not infrastructure — uses existing Ward Room + recall pipeline. (3) **AD-462e Oracle Service** — `OracleService` aggregates all 3 knowledge tiers (EpisodicMemory vector search, RecordsStore keyword search, KnowledgeStore filesystem search) with normalized scoring and source provenance tags. Trust-gated: only ORACLE tier (Senior officers) gets Oracle access. Ward Room wiring done in runtime.py (not cognitive_services.py) due to startup phase ordering — Ward Room initializes in finalize.py (Phase 7), cognitive services initialize in Phase 5. AD-462f (concept graphs) deferred — AnchorFrame (AD-567a) covers near-term structured metadata needs.
+
+| AD | Decision |
+|----|----------|
+| AD-462a | ABSORBED BY AD-567b (salience-weighted recall) |
+| AD-462b | ABSORBED BY AD-567d (active forgetting) |
+| AD-462c | RecallTier enum mirrors AgencyLevel; DRY helper over per-callsite duplication |
+| AD-462d | Ward Room thread protocol over dedicated query bus — leverages existing fabric |
+| AD-462e | Normalized scoring across heterogeneous tiers over separate query endpoints |
+| AD-462f | DEFERRED — concept graphs, AnchorFrame sufficient for now |
 
 ### AD-570b: Episode Participant Index
 

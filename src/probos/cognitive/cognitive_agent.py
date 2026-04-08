@@ -1232,7 +1232,10 @@ class CognitiveAgent(BaseAgent):
                     "related to your expertise — compose a brief observation (2-4 sentences). "
                     "This will be posted to the Ward Room as a new thread. "
                     "Speak in your natural voice. Be specific and actionable. "
-                    "If nothing warrants attention right now, respond with exactly: [NO_RESPONSE]"
+                    "If nothing warrants attention right now, respond with exactly: [NO_RESPONSE]\n"
+                    "Keep game-related discussions (tic-tac-toe, game strategy, match commentary) "
+                    "in the Recreation channel using [REPLY] to existing game threads. "
+                    "Your department channel is for professional observations related to your role."
                     "\n\nIf you identify a concrete, actionable improvement to the ship's systems "
                     "(not a vague observation), propose it using:\n"
                     "[PROPOSAL]\n"
@@ -1242,7 +1245,12 @@ class CognitiveAgent(BaseAgent):
                     "Priority: low|medium|high\n"
                     "[/PROPOSAL]\n"
                     "Only propose improvements you have evidence for — not speculation. "
-                    "Reserve proposals for genuine insights."
+                    "Reserve proposals for genuine insights.\n"
+                    "IMPORTANT: If you recently participated in a discussion that identified a system "
+                    "problem, diagnosed a root cause, or suggested an improvement — and no formal "
+                    "improvement proposal has been submitted for it yet — you should submit one now. "
+                    "Collaborative diagnosis should culminate in a formal proposal so the Captain "
+                    "can track and act on the finding."
                     "\n\n## Available Actions\n"
                     "Beyond posting observations, you can take structured actions on Ward Room content. "
                     "Place action tags AFTER your observation text, each on its own line.\n\n"
@@ -1921,15 +1929,25 @@ class CognitiveAgent(BaseAgent):
         )
         return "\n".join(lines)
 
-    def _format_memory_section(self, memories: list[dict]) -> list[str]:
-        """Format recalled episodes with anchor context headers (AD-567b)."""
-        lines = [
-            "=== SHIP MEMORY (your experiences aboard this vessel) ===",
-            "These are YOUR experiences. Do NOT confuse with training knowledge.",
-            "Markers: [direct] = you experienced it, [secondhand] = you heard about it.",
-            "[verified] = corroborated by ship's log, [unverified] = not yet corroborated.",
-            "",
-        ]
+    def _format_memory_section(self, memories: list[dict], source_framing: Any = None) -> list[str]:
+        """Format recalled episodes with anchor context headers (AD-567b/568c)."""
+        # AD-568c: Use source-authority-calibrated framing if available
+        if source_framing:
+            lines = [
+                source_framing.header,
+                source_framing.instruction,
+                "Markers: [direct] = you experienced it, [secondhand] = you heard about it.",
+                "[verified] = corroborated by ship's log, [unverified] = not yet corroborated.",
+                "",
+            ]
+        else:
+            lines = [
+                "=== SHIP MEMORY (your experiences aboard this vessel) ===",
+                "These are YOUR experiences. Do NOT confuse with training knowledge.",
+                "Markers: [direct] = you experienced it, [secondhand] = you heard about it.",
+                "[verified] = corroborated by ship's log, [unverified] = not yet corroborated.",
+                "",
+            ]
         for mem in memories:
             # Anchor header line (AD-567b)
             anchor_parts = []
@@ -1984,7 +2002,19 @@ class CognitiveAgent(BaseAgent):
             # AD-430c / AD-540: Episodic memory with provenance boundary
             memories = observation.get("recent_memories", [])
             if memories:
-                parts.extend(self._format_memory_section(memories))
+                _framing = observation.get("_source_framing")
+                parts.extend(self._format_memory_section(memories, source_framing=_framing))
+                parts.append("")
+
+            # AD-568a: Oracle Service cross-tier context (ORACLE tier + DEEP strategy only)
+            if observation.get("_oracle_context"):
+                parts.append(
+                    "=== CROSS-TIER KNOWLEDGE (Ship's Records + Operational State) ===\n"
+                    "These are NOT your personal experiences. They are from the ship's shared "
+                    "knowledge stores. Treat as reference material, not memory."
+                )
+                parts.append(observation["_oracle_context"])
+                parts.append("=== END CROSS-TIER KNOWLEDGE ===")
                 parts.append("")
 
             session_history = params.get("session_history", [])
@@ -2044,7 +2074,19 @@ class CognitiveAgent(BaseAgent):
             memories = observation.get("recent_memories", [])
             if memories:
                 wr_parts.append("")
-                wr_parts.extend(self._format_memory_section(memories))
+                _framing = observation.get("_source_framing")
+                wr_parts.extend(self._format_memory_section(memories, source_framing=_framing))
+
+            # AD-568a: Oracle Service cross-tier context
+            if observation.get("_oracle_context"):
+                wr_parts.append("")
+                wr_parts.append(
+                    "=== CROSS-TIER KNOWLEDGE (Ship's Records + Operational State) ===\n"
+                    "These are NOT your personal experiences. They are from the ship's shared "
+                    "knowledge stores. Treat as reference material, not memory."
+                )
+                wr_parts.append(observation["_oracle_context"])
+                wr_parts.append("=== END CROSS-TIER KNOWLEDGE ===")
 
             if context:
                 wr_parts.append(f"\nConversation so far:\n{context}")
@@ -2154,7 +2196,8 @@ class CognitiveAgent(BaseAgent):
             # AD-540: Episodic memory with provenance boundary
             memories = context_parts.get("recent_memories", [])
             if memories:
-                pt_parts.extend(self._format_memory_section(memories))
+                _framing = context_parts.get("_source_framing")
+                pt_parts.extend(self._format_memory_section(memories, source_framing=_framing))
                 pt_parts.append("")
             else:
                 pt_parts.append("You have no stored episodic memories yet. Do not reference or invent past experiences you do not have.")
@@ -2367,25 +2410,135 @@ class CognitiveAgent(BaseAgent):
             if hasattr(self._runtime, 'config') and hasattr(self._runtime.config, 'memory'):
                 mem_cfg = self._runtime.config.memory
 
-            scored_results = []
-            if hasattr(em, 'recall_weighted'):
-                scored_results = await em.recall_weighted(
-                    _mem_id, query,
-                    trust_network=trust_net,
-                    hebbian_router=heb_router,
-                    intent_type=intent.intent,
-                    k=5,
-                    context_budget=getattr(mem_cfg, 'recall_context_budget_chars', 4000) if mem_cfg else 4000,
-                    weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
-                    anchor_confidence_gate=getattr(mem_cfg, 'anchor_confidence_gate', 0.3) if mem_cfg else 0.3,
-                )
+            # AD-462c: Resolve recall tier from agent rank
+            from probos.earned_agency import recall_tier_from_rank, RecallTier
+            from probos.cognitive.episodic import resolve_recall_tier_params
+            _rank = getattr(self, 'rank', None)
+            _recall_tier = recall_tier_from_rank(_rank) if _rank else RecallTier.ENHANCED
+            _tier_cfg = getattr(mem_cfg, 'recall_tiers', None) if mem_cfg else None
+            _tier_params = resolve_recall_tier_params(_recall_tier.value, _tier_cfg)
 
-            # Fallback to old recall path if recall_weighted unavailable or returned nothing
-            episodes = [rs.episode for rs in scored_results] if scored_results else []
-            if not episodes:
-                episodes = await em.recall_for_agent(_mem_id, query, k=3)
-            if not episodes and hasattr(em, 'recent_for_agent'):
-                episodes = await em.recent_for_agent(_mem_id, k=3)
+            # AD-568a: Classify retrieval strategy based on intent type
+            from probos.cognitive.source_governance import (
+                classify_retrieval_strategy, RetrievalStrategy,
+                compute_adaptive_budget, compute_source_framing,
+            )
+            _intent_type = intent.intent if hasattr(intent, 'intent') else ""
+            _episode_count = 0
+            if hasattr(em, 'count_for_agent'):
+                try:
+                    _episode_count = await em.count_for_agent(_mem_id)
+                except Exception:
+                    _episode_count = 1  # Assume non-zero on error — fail toward retrieval
+            _retrieval_strategy = classify_retrieval_strategy(
+                _intent_type,
+                episodic_count=_episode_count,
+            )
+
+            scored_results = []
+            if _retrieval_strategy == RetrievalStrategy.NONE:
+                # Skip episodic recall entirely — agent uses parametric + personality
+                logger.debug("AD-568a: Skipping episodic recall for intent '%s' (strategy=NONE)", _intent_type)
+                episodes = []
+            else:
+                # AD-568a DEEP: Expand parameters for deep retrieval
+                if _retrieval_strategy == RetrievalStrategy.DEEP:
+                    _tier_params = dict(_tier_params)  # Copy to avoid mutating shared config
+                    _tier_params["k"] = int(_tier_params.get("k", 5) * 1.5)
+                    _tier_params["context_budget"] = int(_tier_params.get("context_budget", 4000) * 1.5)
+                    _tier_params["anchor_confidence_gate"] = max(
+                        0.0, _tier_params.get("anchor_confidence_gate", 0.3) - 0.1
+                    )
+
+                if hasattr(em, 'recall_weighted') and _tier_params.get("use_salience_weights", True):
+                    scored_results = await em.recall_weighted(
+                        _mem_id, query,
+                        trust_network=trust_net,
+                        hebbian_router=heb_router,
+                        intent_type=intent.intent,
+                        k=_tier_params.get("k", 5),
+                        context_budget=_tier_params.get("context_budget", 4000),
+                        weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
+                        anchor_confidence_gate=_tier_params.get("anchor_confidence_gate", 0.3),
+                    )
+                elif hasattr(em, 'recall_for_agent'):
+                    # BASIC tier: vector similarity only, no salience weighting
+                    episodes_raw = await em.recall_for_agent(
+                        _mem_id, query, k=_tier_params.get("k", 3)
+                    )
+                    scored_results = []
+                    if episodes_raw:
+                        observation["_basic_recall_episodes"] = episodes_raw
+
+                # AD-568b: Adaptive budget scaling based on retrieval quality
+                if scored_results and _retrieval_strategy != RetrievalStrategy.NONE:
+                    _budget_adj = compute_adaptive_budget(
+                        _tier_params.get("context_budget", 4000),
+                        recall_scores=scored_results,
+                        episode_count=_episode_count,
+                        strategy=_retrieval_strategy,
+                    )
+                    if _budget_adj.scale_factor != 1.0:
+                        logger.debug(
+                            "AD-568b: Budget adjusted %d→%d (%s)",
+                            _budget_adj.original_budget, _budget_adj.adjusted_budget,
+                            _budget_adj.reason,
+                        )
+                        # Re-apply budget enforcement with adjusted budget
+                        _adjusted_episodes = []
+                        _budget_used = 0
+                        for rs in scored_results:
+                            _ep_len = len(rs.episode.user_input) if hasattr(rs.episode, 'user_input') else 0
+                            if _budget_used + _ep_len > _budget_adj.adjusted_budget and _adjusted_episodes:
+                                break
+                            _adjusted_episodes.append(rs)
+                            _budget_used += _ep_len
+                        scored_results = _adjusted_episodes
+
+                # Fallback to old recall path if recall_weighted unavailable or returned nothing
+                episodes = [rs.episode for rs in scored_results] if scored_results else []
+                if not episodes:
+                    episodes = observation.pop("_basic_recall_episodes", [])
+                if not episodes:
+                    episodes = await em.recall_for_agent(_mem_id, query, k=_tier_params.get("k", 3))
+                if not episodes and hasattr(em, 'recent_for_agent'):
+                    episodes = await em.recent_for_agent(_mem_id, k=_tier_params.get("k", 3))
+
+                # AD-568a: Oracle Service for ORACLE-tier agents with DEEP strategy
+                if (
+                    _recall_tier == RecallTier.ORACLE
+                    and _retrieval_strategy == RetrievalStrategy.DEEP
+                    and hasattr(self, '_runtime')
+                    and hasattr(self._runtime, '_oracle_service')
+                    and self._runtime._oracle_service
+                ):
+                    try:
+                        oracle = self._runtime._oracle_service
+                        oracle_text = await oracle.query_formatted(
+                            query_text=query,
+                            agent_id=_mem_id,
+                            k_per_tier=3,
+                            max_chars=2000,
+                        )
+                        if oracle_text:
+                            observation["_oracle_context"] = oracle_text
+                    except Exception:
+                        logger.debug("AD-568a: Oracle query failed, continuing without")
+
+            # AD-568c: Compute source priority framing
+            _framing = None
+            if scored_results:
+                _scores = [getattr(rs, 'composite_score', 0.0) for rs in scored_results]
+                _confs = [getattr(rs, 'anchor_confidence', 0.0) for rs in scored_results]
+                _framing = compute_source_framing(
+                    mean_anchor_confidence=sum(_confs) / len(_confs) if _confs else 0.0,
+                    recall_count=len(scored_results),
+                    mean_recall_score=sum(_scores) / len(_scores) if _scores else 0.0,
+                    strategy=_retrieval_strategy,
+                )
+            elif _retrieval_strategy == RetrievalStrategy.NONE:
+                _framing = compute_source_framing(strategy=RetrievalStrategy.NONE)
+            observation["_source_framing"] = _framing
 
             if episodes:
                 # AD-502: Include relative timestamps on recalled memories

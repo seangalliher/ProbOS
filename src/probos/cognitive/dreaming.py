@@ -74,6 +74,7 @@ class DreamingEngine:
         retrieval_practice_engine: Any = None,  # AD-541c: spaced retrieval therapy
         retrieval_llm_client: Any = None,  # AD-541c: fast-tier LLM for recall practice
         activation_tracker: Any = None,  # AD-567d: activation-based memory lifecycle
+        behavioral_metrics_engine: Any = None,  # AD-569: behavioral metrics engine
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -97,6 +98,7 @@ class DreamingEngine:
         self._retrieval_practice_engine = retrieval_practice_engine  # AD-541c
         self._retrieval_llm_client = retrieval_llm_client  # AD-541c
         self._activation_tracker = activation_tracker  # AD-567d
+        self._behavioral_metrics_engine = behavioral_metrics_engine  # AD-569
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
         self._addressed_degradations: dict[str, float] = {}  # AD-532b: procedure_id -> timestamp
@@ -916,6 +918,37 @@ class DreamingEngine:
             except Exception:
                 logger.debug("AD-567d Step 12: Activation pruning failed", exc_info=True)
 
+        # Step 13: Behavioral Metrics (AD-569)
+        behavioral_quality_score = None
+        frame_diversity_score = None
+        synthesis_rate = None
+        cross_dept_trigger_rate = None
+        anchor_grounded_rate = None
+        if self._behavioral_metrics_engine and self._ward_room:
+            try:
+                bm_snapshot = await self._behavioral_metrics_engine.compute_behavioral_metrics(
+                    ward_room=self._ward_room,
+                    episodic_memory=self.episodic_memory,
+                    get_department=self._get_department,
+                )
+                behavioral_quality_score = bm_snapshot.behavioral_quality_score
+                frame_diversity_score = bm_snapshot.frame_diversity_score
+                synthesis_rate = bm_snapshot.synthesis_rate
+                cross_dept_trigger_rate = bm_snapshot.cross_dept_trigger_rate
+                anchor_grounded_rate = bm_snapshot.anchor_grounded_rate
+                logger.debug(
+                    "Step 13 behavioral metrics: quality=%.3f, diversity=%.3f, "
+                    "synthesis=%.3f, triggers=%.3f, anchored=%.3f, threads=%d",
+                    bm_snapshot.behavioral_quality_score,
+                    bm_snapshot.frame_diversity_score,
+                    bm_snapshot.synthesis_rate,
+                    bm_snapshot.cross_dept_trigger_rate,
+                    bm_snapshot.anchor_grounded_rate,
+                    bm_snapshot.threads_analyzed,
+                )
+            except Exception as e:
+                logger.debug("Step 13 behavioral metrics failed: %s", e)
+
         duration_ms = (time.monotonic() - t_start) * 1000
 
         report = DreamReport(
@@ -965,6 +998,12 @@ class DreamingEngine:
             # AD-567d: Activation-based lifecycle
             activation_pruned=activation_pruned,
             activation_reinforced=activation_reinforced,
+            # AD-569: Behavioral metrics
+            behavioral_quality_score=behavioral_quality_score,
+            frame_diversity_score=frame_diversity_score,
+            synthesis_rate=synthesis_rate,
+            cross_dept_trigger_rate=cross_dept_trigger_rate,
+            anchor_grounded_rate=anchor_grounded_rate,
         )
 
         logger.info(
