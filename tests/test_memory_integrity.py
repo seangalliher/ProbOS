@@ -132,6 +132,9 @@ class TestEventLogVerification:
         rt = MagicMock()
         rt.episodic_memory = AsyncMock()
         rt.episodic_memory.recall_for_agent = AsyncMock(return_value=episodes)
+        # AD-567b: recall_weighted is the primary path; return empty to fall through to recall_for_agent
+        rt.episodic_memory.recall_weighted = AsyncMock(return_value=[])
+        rt.episodic_memory.count_for_agent = AsyncMock(return_value=len(episodes))
 
         # Ontology + crew check
         mock_ontology = MagicMock()

@@ -116,6 +116,10 @@ class MockEpisodicMemory:
         agent_eps = [ep for ep in self._episodes if agent_id in ep.agent_ids]
         return list(reversed(agent_eps[-k:]))
 
+    async def count_for_agent(self, agent_id: str) -> int:
+        """BF-033: Return the total episode count for a specific agent."""
+        return sum(1 for ep in self._episodes if agent_id in ep.agent_ids)
+
     async def recall_by_intent(self, intent_type: str, k: int = 5) -> list[Episode]:
         results: list[Episode] = []
         for ep in reversed(self._episodes):  # most recent first

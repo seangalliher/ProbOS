@@ -444,6 +444,7 @@ def _build_dreaming_engine(
     engine._observed_threads = set()
     # AD-567d fields
     engine._activation_tracker = None
+    engine._behavioral_metrics_engine = None  # AD-569
     return engine
 
 

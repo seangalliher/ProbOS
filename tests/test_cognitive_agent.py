@@ -472,10 +472,17 @@ class TestMemoryRecall:
         rt.callsign_registry.get_callsign.return_value = "Wesley"
         if has_memory:
             rt.episodic_memory = MagicMock(spec=EpisodicMemory)
+            # AD-567b: recall_weighted is now the primary recall path
             if recall_side_effect:
+                rt.episodic_memory.recall_weighted = AsyncMock(side_effect=recall_side_effect)
                 rt.episodic_memory.recall_for_agent = AsyncMock(side_effect=recall_side_effect)
             else:
+                # Wrap episodes in RecallScore-like objects for recall_weighted
+                episodes = recall_result or []
+                scored = [MagicMock(episode=ep, composite_score=0.8, anchor_confidence=0.5) for ep in episodes]
+                rt.episodic_memory.recall_weighted = AsyncMock(return_value=scored)
                 rt.episodic_memory.recall_for_agent = AsyncMock(return_value=recall_result or [])
+            rt.episodic_memory.count_for_agent = AsyncMock(return_value=len(recall_result or []))
             rt.episodic_memory.store = AsyncMock()
         else:
             rt.episodic_memory = None
@@ -504,7 +511,7 @@ class TestMemoryRecall:
         )
         result = await agent.handle_intent(intent)
 
-        rt.episodic_memory.recall_for_agent.assert_called_once()
+        rt.episodic_memory.recall_weighted.assert_called_once()
         assert result.success is True
         # Verify _build_user_message got the memories (check LLM call content)
         prompt = llm.last_request.prompt
@@ -526,6 +533,7 @@ class TestMemoryRecall:
         )
         await agent.handle_intent(intent)
 
+        rt.episodic_memory.recall_weighted.assert_not_called()
         rt.episodic_memory.recall_for_agent.assert_not_called()
 
     @pytest.mark.asyncio
@@ -544,6 +552,7 @@ class TestMemoryRecall:
         )
         await agent.handle_intent(intent)
 
+        rt.episodic_memory.recall_weighted.assert_not_called()
         rt.episodic_memory.recall_for_agent.assert_not_called()
 
     @pytest.mark.asyncio
@@ -823,8 +832,11 @@ class TestMemoryRecallFallback:
         rt.callsign_registry = MagicMock(spec=CallsignRegistry)
         rt.callsign_registry.get_callsign.return_value = "Wesley"
         rt.episodic_memory = MagicMock(spec=EpisodicMemory)
+        # AD-567b: recall_weighted is the primary path; return empty to force fallback
+        rt.episodic_memory.recall_weighted = AsyncMock(return_value=[])
         rt.episodic_memory.recall_for_agent = AsyncMock(return_value=recall_result or [])
         rt.episodic_memory.recent_for_agent = AsyncMock(return_value=recent_result or [])
+        rt.episodic_memory.count_for_agent = AsyncMock(return_value=1)  # Non-zero to enable recall
         rt.episodic_memory.store = AsyncMock()
         return rt
 
@@ -864,12 +876,16 @@ class TestMemoryRecallFallback:
 
     @pytest.mark.asyncio
     async def test_fallback_does_not_fire_when_semantic_returns_results(self):
-        """Test 5: recent_for_agent NOT called when recall_for_agent returns results."""
+        """Test 5: recent_for_agent NOT called when recall_weighted returns results."""
         ep = MagicMock()
         ep.user_input = "Semantic match"
         ep.reflection = "Found via semantics."
+        ep.timestamp = 0
 
         rt = self._make_crew_runtime_with_fallback(recall_result=[ep])
+        # Override recall_weighted to return scored results so fallback is skipped
+        scored = [MagicMock(episode=ep, composite_score=0.8, anchor_confidence=0.5)]
+        rt.episodic_memory.recall_weighted = AsyncMock(return_value=scored)
         llm = MockLLMClient()
         agent = SampleCogAgent(llm_client=llm, runtime=rt)
 
@@ -896,8 +912,11 @@ class TestRecallQueryEnrichment:
         rt.ontology = MagicMock(spec=VesselOntologyService)
         rt.ontology.get_crew_agent_types.return_value = {"test_cognitive", "analyzer"}
         rt.episodic_memory = MagicMock(spec=EpisodicMemory)
+        # AD-567b: recall_weighted is the primary path
+        rt.episodic_memory.recall_weighted = AsyncMock(return_value=[])
         rt.episodic_memory.recall_for_agent = AsyncMock(return_value=recall_result or [])
         rt.episodic_memory.recent_for_agent = AsyncMock(return_value=recent_result or [])
+        rt.episodic_memory.count_for_agent = AsyncMock(return_value=1)  # Non-zero to enable recall
         rt.episodic_memory.store = AsyncMock()
         if has_registry:
             rt.callsign_registry = MagicMock(spec=CallsignRegistry)
@@ -922,8 +941,8 @@ class TestRecallQueryEnrichment:
         obs = await agent.perceive(intent)
         obs = await agent._recall_relevant_memories(intent, obs)
 
-        # Verify the query passed to recall_for_agent
-        call_args = rt.episodic_memory.recall_for_agent.call_args
+        # Verify the query passed to recall_weighted (primary path)
+        call_args = rt.episodic_memory.recall_weighted.call_args
         query = call_args[0][1]  # second positional arg
         assert query.startswith("Ward Room Counselor")
         assert "What did you post?" in query
@@ -943,8 +962,8 @@ class TestRecallQueryEnrichment:
         obs = await agent.perceive(intent)
         obs = await agent._recall_relevant_memories(intent, obs)
 
-        rt.episodic_memory.recall_for_agent.assert_called_once()
-        call_args = rt.episodic_memory.recall_for_agent.call_args
+        rt.episodic_memory.recall_weighted.assert_called_once()
+        call_args = rt.episodic_memory.recall_weighted.call_args
         query = call_args[0][1]
         assert query.startswith("Ward Room")
 
@@ -1074,8 +1093,11 @@ class TestEndToEndWardRoomRecall:
         rt.callsign_registry = MagicMock(spec=CallsignRegistry)
         rt.callsign_registry.get_callsign.return_value = "Bones"
         rt.episodic_memory = MagicMock(spec=EpisodicMemory)
+        # AD-567b: recall_weighted is the primary path; return empty to force fallback
+        rt.episodic_memory.recall_weighted = AsyncMock(return_value=[])
         rt.episodic_memory.recall_for_agent = AsyncMock(return_value=[])
         rt.episodic_memory.recent_for_agent = AsyncMock(return_value=[ep1, ep2])
+        rt.episodic_memory.count_for_agent = AsyncMock(return_value=1)  # Non-zero to enable recall
         rt.episodic_memory.store = AsyncMock()
 
         llm = MockLLMClient()

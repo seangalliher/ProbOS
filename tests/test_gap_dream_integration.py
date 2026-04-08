@@ -26,6 +26,7 @@ def _make_engine(**overrides) -> DreamingEngine:
     engine._config = overrides.get("config", MagicMock())
     # AD-567d fields
     engine._activation_tracker = None
+    engine._behavioral_metrics_engine = None  # AD-569
     return engine
 
 

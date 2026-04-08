@@ -113,6 +113,7 @@ def _make_dreaming_engine(**overrides):
     engine._retrieval_llm_client = None
     # AD-567d fields
     engine._activation_tracker = None
+    engine._behavioral_metrics_engine = None  # AD-569
     return engine
 
 
