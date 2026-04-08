@@ -346,7 +346,12 @@ class TestNumericCoercion:
     async def test_chromadb_roundtrip_int_duration(self, tmp_path):
         """Hash survives ChromaDB round-trip when duration_ms is an integer."""
         em = EpisodicMemory(db_path=str(tmp_path / "ep.db"), verify_content_hash=True)
-        await em.start()
+        try:
+            await em.start()
+        except Exception as exc:
+            if "INVALID_PROTOBUF" in str(exc) or "onnx" in str(exc).lower() or "No such file" in str(exc):
+                pytest.skip(f"ChromaDB ONNX model unavailable: {exc}")
+            raise
         try:
             ep = _make_episode(duration_ms=150, agent_ids=["agent-1"])
             await em.store(ep)

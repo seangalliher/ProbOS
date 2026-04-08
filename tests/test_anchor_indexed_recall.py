@@ -108,7 +108,12 @@ class TestMetadataPromotion:
         mem = EpisodicMemory(
             db_path=tmp_path / "promo.db", max_episodes=100, relevance_threshold=0.3
         )
-        await mem.start()
+        try:
+            await mem.start()
+        except Exception as exc:
+            if "INVALID_PROTOBUF" in str(exc) or "onnx" in str(exc).lower() or "No such file" in str(exc):
+                pytest.skip(f"ChromaDB ONNX model unavailable: {exc}")
+            raise
         try:
             ep = _make_episode(
                 anchors=_anchor(department="engineering", channel="dm"),

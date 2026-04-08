@@ -83,6 +83,17 @@ class TestCapabilityRegistry:
 
     def test_semantic_match_open_file_finds_read_document(self):
         """Semantic match: 'access file data' finds 'read_file' with detail 'Read a document from disk'."""
+        # Skip if embedding model is unavailable (CI ONNX corruption)
+        try:
+            from probos.knowledge.embeddings import get_embedding_function
+            ef = get_embedding_function()
+            if ef is not None:
+                ef(["test"])  # force-load model
+        except Exception:
+            ef = None
+        if ef is None:
+            pytest.skip("Embedding model unavailable — semantic matching requires ONNX")
+
         reg = CapabilityRegistry(semantic_matching=True)
         reg.register("agent-1", [
             CapabilityDescriptor(can="read_file", detail="Read a document from disk"),
@@ -95,6 +106,17 @@ class TestCapabilityRegistry:
 
     def test_semantic_matching_disabled(self):
         """When semantic_matching=False, scores are lower (keyword-only)."""
+        # Skip if embedding model is unavailable (CI ONNX corruption)
+        try:
+            from probos.knowledge.embeddings import get_embedding_function
+            ef = get_embedding_function()
+            if ef is not None:
+                ef(["test"])
+        except Exception:
+            ef = None
+        if ef is None:
+            pytest.skip("Embedding model unavailable — semantic matching requires ONNX")
+
         caps = [CapabilityDescriptor(can="deploy_application",
                                      detail="Push the app to production servers")]
 
