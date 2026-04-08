@@ -23,6 +23,21 @@ async def _start_episodic_memory(em: "EpisodicMemory") -> None:
             pytest.skip(f"ChromaDB ONNX model unavailable: {exc}")
         raise
 
+
+def _skip_on_onnx_error(func):
+    """Decorator: skip test if ChromaDB ONNX model is corrupted/unavailable."""
+    import functools
+
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as exc:
+            if "INVALID_PROTOBUF" in str(exc) or "onnx" in str(exc).lower():
+                pytest.skip(f"ChromaDB ONNX model unavailable: {exc}")
+            raise
+    return wrapper
+
 def _make_episode(
     *,
     user_input: str = "test input",
@@ -181,6 +196,7 @@ class TestAnchorCompleteness:
 
 class TestBudgetEnforcement:
     @pytest.mark.asyncio
+    @_skip_on_onnx_error
     async def test_budget_stops_accumulation(self, tmp_path):
         """recall_weighted() stops accumulating when context budget exceeded."""
         from probos.cognitive.episodic import EpisodicMemory
@@ -214,6 +230,7 @@ class TestBudgetEnforcement:
 
 class TestFTS5Integration:
     @pytest.mark.asyncio
+    @_skip_on_onnx_error
     async def test_fts5_dual_write(self, tmp_path):
         """store() writes to FTS5; keyword_search finds it."""
         from probos.cognitive.episodic import EpisodicMemory
@@ -232,6 +249,7 @@ class TestFTS5Integration:
             await em.stop()
 
     @pytest.mark.asyncio
+    @_skip_on_onnx_error
     async def test_fts5_eviction(self, tmp_path):
         """Evicted episodes are removed from FTS5."""
         from probos.cognitive.episodic import EpisodicMemory
@@ -253,6 +271,7 @@ class TestFTS5Integration:
             await em.stop()
 
     @pytest.mark.asyncio
+    @_skip_on_onnx_error
     async def test_fts5_seed(self, tmp_path):
         """seed() populates FTS5; keyword_search finds seeded episodes."""
         from probos.cognitive.episodic import EpisodicMemory
@@ -271,6 +290,7 @@ class TestFTS5Integration:
             await em.stop()
 
     @pytest.mark.asyncio
+    @_skip_on_onnx_error
     async def test_fts5_semantic_merge(self, tmp_path):
         """Episode found by keyword but not vector still appears in recall_weighted()."""
         from probos.cognitive.episodic import EpisodicMemory
@@ -427,6 +447,7 @@ class TestConfigWeights:
 
 class TestBackwardsCompatibility:
     @pytest.mark.asyncio
+    @_skip_on_onnx_error
     async def test_recall_for_agent_still_returns_episodes(self, tmp_path):
         """recall_for_agent() still returns list[Episode] (not RecallScore)."""
         from probos.cognitive.episodic import EpisodicMemory
