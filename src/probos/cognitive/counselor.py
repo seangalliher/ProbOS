@@ -1634,7 +1634,7 @@ class CounselorAgent(CognitiveAgent):
 
         import time as _time
         now = _time.monotonic()
-        last_dm = self._dm_cooldowns.get(agent_id, 0.0)
+        last_dm = self._dm_cooldowns.get(agent_id, float("-inf"))
         if now - last_dm < self.DM_COOLDOWN_SECONDS:
             return False
 
@@ -1773,7 +1773,9 @@ class CounselorAgent(CognitiveAgent):
         callsign = self._resolve_agent_callsign(agent_id)
 
         # Rate limit: one session per agent per cooldown period
-        last = self._reminiscence_cooldowns.get(agent_id, 0.0)
+        # Use -inf as default so first session is never blocked by cooldown
+        # (time.monotonic() can be small on fresh systems/CI runners)
+        last = self._reminiscence_cooldowns.get(agent_id, float("-inf"))
         if (time.monotonic() - last) < self._REMINISCENCE_COOLDOWN_SECONDS:
             return
 

@@ -14,6 +14,15 @@ from probos.types import AnchorFrame, Episode, MemorySource, RecallScore
 # Helpers
 # ---------------------------------------------------------------------------
 
+async def _start_episodic_memory(em: "EpisodicMemory") -> None:
+    """Start EpisodicMemory, skipping if ChromaDB ONNX model is unavailable."""
+    try:
+        await em.start()
+    except Exception as exc:
+        if "INVALID_PROTOBUF" in str(exc) or "onnx" in str(exc).lower():
+            pytest.skip(f"ChromaDB ONNX model unavailable: {exc}")
+        raise
+
 def _make_episode(
     *,
     user_input: str = "test input",
@@ -177,7 +186,7 @@ class TestBudgetEnforcement:
         from probos.cognitive.episodic import EpisodicMemory
 
         em = EpisodicMemory(str(tmp_path / "ep.db"), max_episodes=100)
-        await em.start()
+        await _start_episodic_memory(em)
         try:
             # Store 5 episodes with ~100 chars each
             for i in range(5):
@@ -210,7 +219,7 @@ class TestFTS5Integration:
         from probos.cognitive.episodic import EpisodicMemory
 
         em = EpisodicMemory(str(tmp_path / "ep.db"), max_episodes=100)
-        await em.start()
+        await _start_episodic_memory(em)
         try:
             ep = _make_episode(user_input="quantum entanglement experiment results")
             await em.store(ep)
@@ -228,7 +237,7 @@ class TestFTS5Integration:
         from probos.cognitive.episodic import EpisodicMemory
 
         em = EpisodicMemory(str(tmp_path / "ep.db"), max_episodes=2)
-        await em.start()
+        await _start_episodic_memory(em)
         try:
             ep1 = _make_episode(user_input="first experiment alpha", timestamp=100.0)
             ep2 = _make_episode(user_input="second experiment beta", timestamp=200.0)
@@ -249,7 +258,7 @@ class TestFTS5Integration:
         from probos.cognitive.episodic import EpisodicMemory
 
         em = EpisodicMemory(str(tmp_path / "ep.db"), max_episodes=100)
-        await em.start()
+        await _start_episodic_memory(em)
         try:
             ep = _make_episode(user_input="warp drive calibration anomaly")
             await em.seed([ep])
@@ -268,7 +277,7 @@ class TestFTS5Integration:
 
         em = EpisodicMemory(str(tmp_path / "ep.db"), max_episodes=100,
                             relevance_threshold=0.99)  # Very high threshold blocks semantic
-        await em.start()
+        await _start_episodic_memory(em)
         try:
             # Store with very specific keyword content
             ep = _make_episode(
@@ -423,7 +432,7 @@ class TestBackwardsCompatibility:
         from probos.cognitive.episodic import EpisodicMemory
 
         em = EpisodicMemory(str(tmp_path / "ep.db"), max_episodes=100)
-        await em.start()
+        await _start_episodic_memory(em)
         try:
             ep = _make_episode(user_input="backwards compatibility test")
             await em.store(ep)
@@ -441,7 +450,7 @@ class TestBackwardsCompatibility:
         from probos.cognitive.episodic import EpisodicMemory
 
         em = EpisodicMemory(str(tmp_path / "ep.db"), max_episodes=100)
-        await em.start()
+        await _start_episodic_memory(em)
         try:
             ep = _make_episode(user_input="recent test episode")
             await em.store(ep)
