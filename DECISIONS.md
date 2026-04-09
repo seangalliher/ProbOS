@@ -3193,7 +3193,28 @@ Five agent-mediated probes + one infrastructure benchmark:
 | Both events fire | Wrong convergence fires alongside normal convergence event. Consumers choose which to act on. |
 | conservative default (score=0.0) | Missing anchor metadata → treat as potentially pathological. Better false positive than false negative. |
 
-**Sub-ADs:** AD-583a (convergence independence scoring), AD-583b (wrong convergence event + alert), AD-583c (real-time integration), AD-583d (Counselor response upgrade), AD-583e (dream step integration). Deferred: AD-583f (observable state verification), AD-583g (convergence source tracing).
+**Sub-ADs:** AD-583a (convergence independence scoring), AD-583b (wrong convergence event + alert), AD-583c (real-time integration), AD-583d (Counselor response upgrade), AD-583e (dream step integration). Now active: AD-583f (observable state verification), AD-583g (convergence source tracing) — see separate decision entry.
+
+### AD-583f/583g: Observable State Verification + Convergence Source Tracing
+
+**Date:** 2026-04-09
+**Status:** Planned (build prompt ready)
+**Depends on:** AD-583, AD-567f, AD-506b, AD-569
+
+**Problem:** AD-583 detects wrong convergence at the notebook level but Ward Room echo chambers — where agents amplify false claims in real-time discussion posts — are invisible. Case study (2026-04-09): 4 Medical agents spiraled a stale game engagement into fabricated systemic concerns ("critical medical monitoring failure", "treatment tracking integrity") over multiple Ward Room posts. No notebook writes occurred. AD-583 saw nothing. AD-506b peer repetition fired but is post-level, not thread-level amplification analysis.
+
+**Decision:**
+
+| Decision | Rationale |
+|---|---|
+| Combine 583f and 583g into one phased build | Shared trigger point (Ward Room echo), shared infrastructure (thread traversal, similarity), shared output (bridge alerts + Counselor) |
+| Thread echo analysis before observable state | 583g identifies WHAT is echoing; 583f verifies WHETHER the echoed claim is true. Echo detection is the trigger for state verification. |
+| Pluggable `StateProvider` protocol | Open/Closed: extend by adding providers, not modifying verifier. ISP: narrow single-method protocol. |
+| Wire into `_compute_convergence_correctness()` stub | Satisfies AD-569d deferral. `convergence_correctness_rate` already exists on BehavioralSnapshot and is read by qualification probes. |
+| New `get_thread_posts_temporal()` query | Existing `get_recent_activity()` lacks `parent_id`. `get_thread()` nests into tree. Neither provides flat temporal ordering needed for source tracing. |
+| Three initial state providers (Recreation, Trust, Health) | Cover the three observable domains that appeared in the Chapel echo chamber case study. Additional providers (Hebbian, emergence) deferred. |
+
+**Build prompt:** `prompts/ad-583fg-observable-state-source-tracing.md` — 4 phases, 4 new files, 8 modified files, ~40 tests.
 
 **Implementation:** Wires `compute_anchor_independence()` from `social_verification.py` into `check_cross_agent_convergence()` return dict. Episode-like objects constructed from notebook frontmatter for independence scoring. `WRONG_CONVERGENCE_DETECTED` event + `WrongConvergenceDetectedEvent` dataclass. `check_wrong_convergence()` on BridgeAlertManager at ALERT severity. Real-time path in proactive.py emits both convergence + wrong convergence events. Counselor subscribes, sends therapeutic DMs on extreme cases (independence < 0.1). `_on_groupthink_warning()` upgraded from log-only to ERROR-level at redundancy_ratio > 0.9. Dream Step 7g flags wrong batch convergence. Dream Step 9 populates `EmergenceSnapshot.provenance_independence`. Layer boundary exception for records_store→social_verification. 8 files modified, 28 new tests.
 

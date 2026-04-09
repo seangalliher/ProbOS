@@ -4682,7 +4682,18 @@ Phase 3 — **Hebbian Scope Reduction** (AD-571c):
 
 **Case study motivation:** Chapel tic-tac-toe game (2026-04-08) — Medical department (4 agents, 11 posts) amplified false diagnosis without independent verification. System flagged as positive convergence. All posts shared same thread/duty cycle → independence_score ≈ 0.0.
 
-**Deferred:** AD-583f (observable state verification — verify claims against system state), AD-583g (convergence source tracing — information-chain reconstruction for "Patient Zero" identification).
+**Deferred:** AD-559 (full provenance model — per-claim evidence chains). AD-583h (cross-thread echo detection), AD-583i (automated correction).
+
+### Observable State Verification + Convergence Source Tracing (AD-583f/583g) *(planned, OSS)*
+
+**AD-583f/583g: Observable State Verification + Convergence Source Tracing** *(OSS, depends: AD-583, AD-567f, AD-506b, AD-569)* — AD-583 catches notebook-level echo chambers but Ward Room discussions — where agents amplify false claims in real-time posts — are invisible. Case study: 4 Medical agents spiraled a stale game engagement into fabricated "critical medical monitoring failure" over multiple posts in one thread, with zero notebook writes. AD-583 saw nothing. Two complementary capabilities close this gap:
+
+- **AD-583g (Ward Room Thread Echo Detector):** Analyze Ward Room threads for amplification chains — trace which post introduced a claim ("Patient Zero") and how subsequent posts echoed it. New `ThreadEchoAnalyzer` service with flat temporal post ordering (new `get_thread_posts_temporal()` query), pairwise Jaccard similarity, chain detection, and anchor independence scoring via `compute_anchor_independence()`. `WARD_ROOM_ECHO_DETECTED` event + ALERT-severity bridge alert.
+- **AD-583f (Observable State Verifier):** Pluggable `StateProvider` protocol for verifying agent claims against actual system state. Three initial providers: `RecreationStateProvider` (game board via `RecreationService`), `TrustStateProvider` (trust scores via `TrustNetwork`), `SystemHealthProvider` (vitals via `VitalsMonitor`). Satisfies AD-569d deferral — wires into `_compute_convergence_correctness()` stub to populate `convergence_correctness_rate` on `BehavioralSnapshot`. `OBSERVABLE_STATE_MISMATCH` event + ADVISORY/ALERT-severity bridge alert.
+
+**Integration:** `check_and_trace_echo()` helper in `ward_room/_helpers.py` (follows `check_and_emit_cascade_risk()` pattern). Triggered after `create_post()`/`create_thread()` when peer matches found. Counselor subscribes to both new events with targeted therapeutic DMs.
+
+**Build prompt:** `prompts/ad-583fg-observable-state-source-tracing.md` — 4 phases, ~40 tests across 2 test files.
 
 ---
 
