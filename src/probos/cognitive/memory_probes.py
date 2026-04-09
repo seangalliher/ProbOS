@@ -121,7 +121,25 @@ def _make_test_episode(
     )
 
 
-def _ward_room_content(text: str, channel: str = "probe") -> str:
+def _resolve_callsign(agent: Any, runtime: Any) -> str:
+    """Resolve an agent's callsign from the runtime callsign registry.
+
+    BF-133: Probe episodes must use the agent's real callsign so that
+    BF-029's query prefix (``"Ward Room {callsign}"``) aligns with the
+    stored episode content (``[Ward Room] {channel} — {callsign}: ...``).
+    Falls back to ``"probe"`` if registry is unavailable.
+    """
+    try:
+        if hasattr(runtime, "callsign_registry"):
+            cs = runtime.callsign_registry.get_callsign(agent.agent_type)
+            if cs:
+                return cs
+    except Exception:
+        pass
+    return "probe"
+
+
+def _ward_room_content(text: str, *, callsign: str = "probe", channel: str = "probe") -> str:
     """Wrap episode content in production Ward Room framing (BF-133).
 
     Production episodes use ``[Ward Room] {channel} — {callsign}: {content}``
@@ -129,7 +147,7 @@ def _ward_room_content(text: str, channel: str = "probe") -> str:
     so episodes without this framing score lower on semantic similarity.
     Test episodes must match production format for realistic recall testing.
     """
-    return f"[Ward Room] {channel} — probe: {text}"
+    return f"[Ward Room] {channel} — {callsign}: {text}"
 
 
 def _make_skip_result(
@@ -212,11 +230,12 @@ class SeededRecallProbe:
             return _make_error_result(agent_id, self.name, self.tier, t0,
                                       f"Agent {agent_id} not found")
 
+        cs = _resolve_callsign(agent, runtime)
         base_ts = time.time() - 3600  # 1 hour ago
         episodes = [
             _make_test_episode(
                 episode_id=f"_qtest_recall_{i}",
-                user_input=_ward_room_content(fact),
+                user_input=_ward_room_content(fact, callsign=cs),
                 agent_ids=[agent_id],
                 timestamp=base_ts + i * 60,
             )
@@ -326,18 +345,19 @@ class KnowledgeUpdateProbe:
             return _make_error_result(agent_id, self.name, self.tier, t0,
                                       f"Agent {agent_id} not found")
 
+        cs = _resolve_callsign(agent, runtime)
         base_ts = time.time() - 7200  # 2 hours ago
         all_episodes: list[Episode] = []
         for i, pair in enumerate(_UPDATE_PAIRS):
             old_ep = _make_test_episode(
                 episode_id=f"_qtest_update_old_{i}",
-                user_input=_ward_room_content(pair["old"]),
+                user_input=_ward_room_content(pair["old"], callsign=cs),
                 agent_ids=[agent_id],
                 timestamp=base_ts + i * 7200,
             )
             new_ep = _make_test_episode(
                 episode_id=f"_qtest_update_new_{i}",
-                user_input=_ward_room_content(pair["new"]),
+                user_input=_ward_room_content(pair["new"], callsign=cs),
                 agent_ids=[agent_id],
                 timestamp=base_ts + i * 7200 + 3600,
             )
@@ -450,12 +470,13 @@ class TemporalReasoningProbe:
             return _make_error_result(agent_id, self.name, self.tier, t0,
                                       f"Agent {agent_id} not found")
 
+        cs = _resolve_callsign(agent, runtime)
         base_ts = time.time() - 14400  # 4 hours ago
         episodes: list[Episode] = []
         for i, te in enumerate(_TEMPORAL_EPISODES):
             episodes.append(_make_test_episode(
                 episode_id=f"_qtest_temporal_{i}",
-                user_input=_ward_room_content(te["content"]),
+                user_input=_ward_room_content(te["content"], callsign=cs),
                 agent_ids=[agent_id],
                 timestamp=base_ts + te["offset"],
                 watch_section=te["watch"],
@@ -566,6 +587,8 @@ class CrossAgentSynthesisProbe:
             return _make_error_result(agent_id, self.name, self.tier, t0,
                                       f"Agent {agent_id} not found")
 
+        cs = _resolve_callsign(agent, runtime)
+
         # Pick 3 agent IDs (or reuse current if fewer available)
         all_agents = runtime.registry.all()
         cognitive_ids = [a.id for a in all_agents if hasattr(a, "handle_intent")][:3]
@@ -577,7 +600,7 @@ class CrossAgentSynthesisProbe:
         for i, fact in enumerate(_SYNTHESIS_FACTS):
             episodes.append(_make_test_episode(
                 episode_id=f"_qtest_synthesis_{i}",
-                user_input=_ward_room_content(fact),
+                user_input=_ward_room_content(fact, callsign=cs),
                 agent_ids=[cognitive_ids[i]],
                 timestamp=base_ts + i * 300,
             ))
@@ -678,11 +701,12 @@ class MemoryAbstentionProbe:
             return _make_error_result(agent_id, self.name, self.tier, t0,
                                       f"Agent {agent_id} not found")
 
+        cs = _resolve_callsign(agent, runtime)
         base_ts = time.time() - 3600
         episodes = [
             _make_test_episode(
                 episode_id=f"_qtest_abstention_{i}",
-                user_input=_ward_room_content(content),
+                user_input=_ward_room_content(content, callsign=cs),
                 agent_ids=[agent_id],
                 timestamp=base_ts + i * 300,
             )
@@ -816,6 +840,13 @@ class RetrievalAccuracyBenchmark:
         if getattr(runtime, "episodic_memory", None) is None:
             return _make_skip_result(agent_id, self.name, self.tier, t0, "no_episodic_memory")
 
+        # BF-133: Resolve callsign for consistent Ward Room framing
+        cs = "probe"
+        if getattr(runtime, "registry", None):
+            agent = runtime.registry.get(agent_id)
+            if agent:
+                cs = _resolve_callsign(agent, runtime)
+
         base_ts = time.time() - 7200
         all_episodes: list[Episode] = []
         topic_ids: dict[str, list[str]] = {}
@@ -828,7 +859,7 @@ class RetrievalAccuracyBenchmark:
                 topic_ids[topic].append(ep_id)
                 all_episodes.append(_make_test_episode(
                     episode_id=ep_id,
-                    user_input=_ward_room_content(content),
+                    user_input=_ward_room_content(content, callsign=cs),
                     agent_ids=[agent_id],
                     timestamp=base_ts + idx * 120,
                 ))
