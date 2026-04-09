@@ -145,6 +145,7 @@ class EventType(str, Enum):
     QUALIFICATION_DRIFT_DETECTED = "qualification_drift_detected"  # AD-566c
     CASCADE_CONFABULATION_DETECTED = "cascade_confabulation_detected"  # AD-567f
     CORROBORATION_VERIFIED = "corroboration_verified"  # AD-567f
+    WRONG_CONVERGENCE_DETECTED = "wrong_convergence_detected"  # AD-583
 
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
@@ -561,6 +562,18 @@ class ConvergenceDetectedEvent(BaseEvent):
     coherence: float = 0.0
     source: str = ""  # "realtime" or "dream_consolidation"
     report_path: str = ""
+
+
+@dataclass
+class WrongConvergenceDetectedEvent(BaseEvent):
+    """AD-583: Convergence with insufficient independent evidence."""
+    event_type: EventType = field(default=EventType.WRONG_CONVERGENCE_DETECTED, init=False)
+    agents: list[str] = field(default_factory=list)
+    departments: list[str] = field(default_factory=list)
+    topic: str = ""
+    coherence: float = 0.0
+    independence_score: float = 0.0
+    source: str = ""  # "realtime" or "dream_consolidation"
 
 
 @dataclass

@@ -595,6 +595,7 @@ class CounselorAgent(CognitiveAgent):
                     EventType.RETRIEVAL_PRACTICE_CONCERN, # AD-541c
                     EventType.QUALIFICATION_DRIFT_DETECTED, # AD-566c
                     EventType.CASCADE_CONFABULATION_DETECTED, # AD-567f
+                    EventType.WRONG_CONVERGENCE_DETECTED,    # AD-583
                 ],
             )
 
@@ -808,6 +809,8 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_qualification_drift(data)
             elif event_type == EventType.CASCADE_CONFABULATION_DETECTED.value:
                 await self._on_cascade_confabulation(data)
+            elif event_type == EventType.WRONG_CONVERGENCE_DETECTED.value:
+                await self._on_wrong_convergence_detected(data)
         except Exception:
             logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
 
@@ -1322,11 +1325,55 @@ class CounselorAgent(CognitiveAgent):
         """AD-557: Respond to groupthink risk — redundancy dominates synergy."""
         redundancy_ratio = data.get("redundancy_ratio", 0.0)
         top_pairs = data.get("top_synergy_pairs", [])
+        # AD-583: Escalate to ERROR for extreme groupthink
+        if redundancy_ratio > 0.9:
+            logger.error(
+                "AD-557: Extreme groupthink — redundancy_ratio=%.3f, "
+                "AD-583 wrong convergence detection may provide targeted response",
+                redundancy_ratio,
+            )
+        else:
+            logger.warning(
+                "AD-557: Groupthink warning — redundancy_ratio=%.3f, "
+                "agents may be echoing rather than complementing",
+                redundancy_ratio,
+            )
+
+    async def _on_wrong_convergence_detected(self, data: dict[str, Any]) -> None:
+        """AD-583: Respond to convergence with low anchor independence."""
+        agents = data.get("agents", [])
+        departments = data.get("departments", [])
+        topic = data.get("topic", "unknown")
+        independence_score = data.get("independence_score", 0.0)
         logger.warning(
-            "AD-557: Groupthink warning — redundancy_ratio=%.3f, "
-            "agents may be echoing rather than complementing",
-            redundancy_ratio,
+            "AD-583: Wrong convergence detected — topic='%s', agents=%s, "
+            "independence=%.3f",
+            topic, agents, independence_score,
         )
+        # Extreme case: near-zero independence — DM converging agents
+        if independence_score < 0.1:
+            for agent_id_or_callsign in agents:
+                # Resolve agent_id from callsign
+                agent_id = agent_id_or_callsign
+                callsign = agent_id_or_callsign
+                if self._registry:
+                    for aid, agent in self._registry.items():
+                        if getattr(agent, 'callsign', '') == agent_id_or_callsign:
+                            agent_id = aid
+                            callsign = agent_id_or_callsign
+                            break
+                if agent_id == self.id:
+                    continue
+                message = (
+                    f"I've noticed that the conclusion on '{topic}' may be based on "
+                    f"echoed rather than independently verified information "
+                    f"(independence score: {independence_score:.0%}). "
+                    f"Could you verify this finding against primary sources?"
+                )
+                try:
+                    await self._send_therapeutic_dm(agent_id, callsign, message)
+                except Exception:
+                    logger.debug("AD-583: Failed to DM %s", callsign, exc_info=True)
 
     async def _on_fragmentation_warning(self, data: dict[str, Any]) -> None:
         """AD-557: Respond to fragmentation risk — synergy near zero."""
@@ -1528,6 +1575,79 @@ class CounselorAgent(CognitiveAgent):
                 )
 
         return base_severity, base_recommendation
+
+    async def update_source_metrics(
+        self,
+        agent_id: str,
+        *,
+        confabulation_rate: float = 0.0,
+        source_diversity: float = 0.0,
+        source_distribution: dict[str, int] | None = None,
+    ) -> None:
+        """Update source attribution metrics on agent profile (AD-568d).
+
+        Called by dream step 14 to feed source monitoring data back
+        into the Counselor's wellness tracking.
+        """
+        profile = self._cognitive_profiles.get(agent_id)
+        if not profile:
+            return
+
+        # Update confabulation rate (exponential moving average)
+        alpha = 0.3  # Weight for new observation
+        profile.confabulation_rate = round(
+            alpha * confabulation_rate + (1 - alpha) * profile.confabulation_rate,
+            4,
+        )
+
+        # Persist
+        if self._profile_store:
+            try:
+                await self._profile_store.save_profile(profile)
+            except Exception:
+                logger.debug("AD-568d: Failed to persist updated source metrics for %s", agent_id)
+
+    async def record_faithfulness_event(
+        self,
+        agent_id: str,
+        *,
+        faithfulness_score: float,
+        grounded: bool,
+    ) -> None:
+        """AD-568e: Per-response faithfulness feedback into confabulation rate.
+
+        Updates confabulation rate with real-time signal (not just dream-consolidated).
+        Unfaithful responses (grounded=False) increase confabulation rate.
+        Faithful responses slowly decrease it.
+
+        Uses EMA with alpha=0.1 (slower than Dream Step 14's alpha=0.3) to
+        avoid overreacting to individual responses.
+        """
+        try:
+            profile = self.get_or_create_profile(agent_id)
+
+            # EMA update: unfaithful = 1.0, faithful = 0.0
+            signal = 0.0 if grounded else 1.0
+            alpha = 0.1  # Slower than dream EMA (0.3) — individual responses are noisy
+            new_rate = alpha * signal + (1.0 - alpha) * profile.confabulation_rate
+
+            profile.confabulation_rate = round(new_rate, 4)
+
+            if self._profile_store:
+                try:
+                    await self._profile_store.save_profile(profile)
+                except Exception:
+                    logger.debug("AD-568e: Failed to persist profile for %s", agent_id)
+
+            # Alert if crossing threshold
+            if new_rate >= self._confabulation_alert_threshold and not grounded:
+                logger.warning(
+                    "AD-568e: Agent %s confabulation rate %.3f exceeds threshold %.2f",
+                    agent_id, new_rate, self._confabulation_alert_threshold,
+                )
+
+        except Exception:
+            logger.debug("AD-568e: record_faithfulness_event failed", exc_info=True)
 
     async def _save_profile_and_assessment(
         self, agent_id: str, assessment: CounselorAssessment,

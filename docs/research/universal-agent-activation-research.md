@@ -392,14 +392,16 @@ When `create_game()` fires, both challenger and opponent get `ActiveEngagement` 
 
 **Validates:** All internal ProbOS systems can activate agents through one unified mechanism.
 
-### Phase 4: External Integration
+### Phase 4: External Integration (MCP Apps + MCP Provider/Consumer)
 
+- MCP Apps as interactive UI surfaces for agent-mediated capabilities (see MCP Apps Integration below)
 - MCP provider interface (ProbOS as MCP server — external systems trigger agents)
 - MCP consumer reactive events (external MCP servers push to ProbOS)
 - Webhook adapter framework (Transporter Pattern extension)
 - OS-level signal integration (Windows MCP, Apple App Intents when available)
+- Tic-Tac-Toe MCP App as the first interactive agent application (see below)
 
-**Validates:** ProbOS agents can react to events from any application, making ProbOS a universal agent orchestration layer.
+**Validates:** ProbOS agents can react to events from any application, making ProbOS a universal agent orchestration layer. MCP Apps validates the bidirectional UI surface — agents and humans interact through the same rich interface.
 
 ## Architectural Principles
 
@@ -453,6 +455,161 @@ The industry is converging on Level 3 (Microsoft MCP for Windows, Google WebMCP,
 
 6. **Observability.** The dispatcher becomes a critical control point. It needs logging, metrics, and potentially an HXI dashboard showing event flow, queue depths, activation latency, and agent utilization.
 
+## MCP Apps Integration: Interactive UI Surfaces for Agent Activation
+
+*Added 2026-04-08. Triggered by: analysis of the MCP Apps extension specification (`@modelcontextprotocol/ext-apps`, Apache 2.0) and its alignment with the Universal Agent Activation Architecture.*
+
+### What Are MCP Apps?
+
+MCP Apps is an extension to the Model Context Protocol specification that enables MCP servers to deliver **interactive user interfaces** rendered inline within AI chat clients. The core MCP protocol handles text and structured data; MCP Apps adds rich UI components (charts, forms, dashboards, game boards) embedded in sandboxed iframes with **bidirectional communication** back to MCP tools.
+
+**Architecture flow:**
+1. An MCP tool declares a `ui://` resource containing its HTML interface
+2. The LLM invokes the tool on the MCP server (standard MCP tool call)
+3. The host client fetches the resource and displays it in a sandboxed iframe
+4. The UI can call other tools through the host via PostMessageTransport, and the host passes data to the UI via notifications
+
+**SDK structure:**
+
+| Package | Role |
+|---|---|
+| `@modelcontextprotocol/ext-apps` | Core App class + PostMessageTransport |
+| `@modelcontextprotocol/ext-apps/react` | React hooks for View development |
+| `@modelcontextprotocol/ext-apps/app-bridge` | Host-side SDK for embedding Views |
+| `@modelcontextprotocol/ext-apps/server` | Server-side SDK for tool + resource registration |
+
+Supported hosts include ChatGPT, Claude, VS Code, Goose, Postman, and MCPJam. The specification is stable (version 2026-01-26).
+
+### Three Integration Levels with UAAA
+
+MCP Apps intersects the Universal Agent Activation Architecture at three distinct levels, each progressively deeper:
+
+#### Level 1: MCP Apps as External Event Emitters
+
+The UAAA Phase 4 already identifies "MCP Provider" and "MCP Consumer" as external event emitters. MCP Apps extends this with an **interactive UI surface**:
+
+```
+User interacts with MCP App (clicks button, submits form, makes game move)
+  → App calls back to MCP server via PostMessageTransport
+    → MCP server emits TaskEvent into ProbOS Dispatcher
+      → Dispatcher routes to appropriate agent's Cognitive Queue
+        → Agent processes event, produces response
+          → Response flows back through MCP server → App View updates
+```
+
+This is the **Level 3→4 bridge** from the Agent Experience (AX) spectrum. MCP Apps provide Level 3 (Declared Capabilities — tools with parameters); ProbOS extends them to Level 4 (Native Agent Events — the app proactively emits structured events that activate agent cognition).
+
+**Key mapping:**
+
+| UAAA Concept | MCP Apps Analog |
+|---|---|
+| TaskEvent | MCP tool call + notification payload |
+| Event Emitter (external) | MCP App calling tools via PostMessageTransport |
+| Dispatcher routing | MCP server receiving tool calls → TaskEvent emission |
+| Agent response | MCP tool result → notification back to App View |
+| Transporter Pattern adapters | `convert-web-app` agent skill (wraps existing web apps) |
+
+#### Level 2: ProbOS HXI as an MCP App Host
+
+The HXI (Human-Experience Interface) can implement the App Bridge SDK (`@modelcontextprotocol/ext-apps/app-bridge`) to **render MCP Apps inline in the Ward Room or Captain's cockpit**. External MCP servers provide tools with `ui://` resources; HXI renders them in sandboxed iframes alongside the existing agent conversation.
+
+This means: external tools get rich UIs inside ProbOS without ProbOS needing to build those UIs. The tool ecosystem renders itself. A third-party monitoring tool, a project tracker, or a data visualization service can all appear as interactive panels within the HXI — discoverable, sandboxed, and integrated with the agent communication fabric.
+
+**Connects to HXI Cockpit View Principle:** "Every agent-mediated capability must have a direct manual control in HXI." MCP Apps provides the implementation mechanism — each agent capability exposed as an MCP tool gets an interactive View that serves as both the agent's interface and the Captain's manual control.
+
+#### Level 3: ProbOS Agents as MCP App Providers
+
+ProbOS can expose agent capabilities as MCP servers where each tool has a `ui://` View. When an external host (ChatGPT, Claude, VS Code) connects to a ProbOS MCP server:
+
+- The host discovers ProbOS agent tools (diagnose, analyze, schedule, play game)
+- Each tool has an associated MCP App (interactive dashboard showing trust scores, emergence metrics, game boards, agent status)
+- The external host renders ProbOS UIs inline in its own conversation
+
+This is the **federation outbound** direction — ProbOS ships project their capabilities into external AI ecosystems. A Claude user could connect to a ProbOS MCP server and interact with ProbOS agents through rich interactive Views without leaving their own chat client.
+
+**Boundary rule application:** The MCP protocol integration and App rendering infrastructure (how it works) is OSS. Packaging ProbOS agents as commercially deployable MCP App servers with fleet management (how it makes money) is commercial.
+
+### Tic-Tac-Toe as the First MCP App
+
+The existing proof of concept (tic-tac-toe) is the natural first MCP App. This extends the original tic-tac-toe PoC from text-only Ward Room commands to a full interactive application:
+
+**What changes:**
+
+1. **MCP Server:** A ProbOS MCP server exposes `tictactoe_challenge`, `tictactoe_move`, and `tictactoe_status` tools
+2. **MCP App View:** A `ui://tictactoe/board` resource renders an interactive 3×3 grid with game state, move history, and player info
+3. **Bidirectional flow:**
+   - Human clicks a cell → PostMessageTransport calls `tictactoe_move` tool → MCP server emits `move_required` TaskEvent → Agent processes move → result flows back → View updates board
+   - Agent makes a move → MCP server sends notification → View animates the agent's move
+4. **Three play modes:**
+   - **Agent vs Agent:** Both players are ProbOS agents. The View is a spectator display. TaskEvents flow between agents at immediate priority (< 10s per move). Humans watch in real-time.
+   - **Human vs Agent:** Human plays through the MCP App View. Human moves emit TaskEvents to the agent. Agent moves flow back through notifications to the View.
+   - **External Human vs Agent:** A user in Claude, ChatGPT, or VS Code connects to the ProbOS MCP server and plays against a ProbOS agent through the MCP App rendered in their own host client.
+
+**Architecture:**
+
+```
+┌──────────────────────────────────────┐
+│  MCP App View (ui://tictactoe/board) │
+│  ┌────────────────────────────────┐  │
+│  │   3×3 Grid + Game State UI    │  │
+│  │   (React / Preact / Vanilla)  │  │
+│  └─────────────┬──────────────────┘  │
+│                │ PostMessageTransport │
+└────────────────┼─────────────────────┘
+                 │
+┌────────────────┼─────────────────────┐
+│  MCP Server (ProbOS)                 │
+│  ┌─────────────▼──────────────────┐  │
+│  │  tictactoe_move tool           │  │
+│  │  tictactoe_challenge tool      │  │
+│  │  tictactoe_status tool         │  │
+│  └─────────────┬──────────────────┘  │
+│                │                     │
+│  ┌─────────────▼──────────────────┐  │
+│  │  RecreationService             │  │
+│  │  (TaskEvent emitter)           │  │
+│  └─────────────┬──────────────────┘  │
+│                │                     │
+│  ┌─────────────▼──────────────────┐  │
+│  │  Dispatcher → Agent Queue      │  │
+│  └────────────────────────────────┘  │
+└──────────────────────────────────────┘
+```
+
+**Why tic-tac-toe first:**
+- Simplest possible interactive MCP App (one `ui://` resource, three tools, finite state)
+- Validates the full bidirectional flow: View → MCP tool → TaskEvent → Agent → response → View
+- Tests all three play modes (agent×agent, human×agent, external host)
+- Already has RecreationService backend (BF-119–123)
+- Success metric is unambiguous: games complete, moves render, latency < 10s per turn
+- Provides the template for all future MCP Apps (dashboards, kanban boards, agent status panels)
+
+### Implications for the AX Principle
+
+MCP Apps adds a new row to the Agent Experience spectrum:
+
+| Level | Pattern | Example | Quality |
+|-------|---------|---------|---------|
+| **0. Blind** | No agent awareness | Legacy desktop app with no API | Agent can't interact |
+| **1. Brute Force** | Computer Use | Screenshot → vision → act | Functional but fragile |
+| **2. API Wrapper** | REST/SDK → events | Transporter Pattern adapters | Per-app adapter code |
+| **3. Declared Capabilities** | Structured tools | MCP servers, WebMCP, App Intents | Clean but pull-based |
+| **3.5 Interactive Declared** | **Structured tools + interactive UI** | **MCP Apps** | **Pull-based + human-agent shared UI** |
+| **4. Native Agent Events** | App emits events for agents | ProbOS internal emitters, future MCP push | Full AX |
+
+MCP Apps sits between Level 3 and Level 4. It provides Level 3 tool declaration with the addition of a **shared UI surface** where humans and agents can interact with the same application through the same interface. This aligns directly with ProbOS's "Brains are brains" principle — human and AI participants share the same communication fabric. The MCP App View is a terminal into that shared fabric, just like the Shell, HXI, and Discord.
+
+### Open Questions
+
+7. **MCP App hosting in HXI.** The OSS Web HXI could implement the App Bridge SDK as a Vue component or raw iframe manager. What's the right security model for rendering third-party MCP Apps inside the Captain's cockpit? The sandboxed iframe provides browser-level isolation, but the tools the App can call back to need to be scoped.
+
+8. **MCP App authentication for external play.** When an external user plays tic-tac-toe against a ProbOS agent via an external host, how does the ProbOS MCP server authenticate the external user? DID-based identity? OAuth? Anonymous play?
+
+9. **MCP App state persistence.** Game state currently lives in RecreationService (in-memory). Should MCP App state be persisted separately? Or does the underlying ProbOS service (RecreationService, KanbanBoard, etc.) own all state while the App is a pure UI layer?
+
+10. **MCP Apps as Ward Room attachments.** Should agent Ward Room messages be able to embed MCP App Views? An agent says "I've prepared this analysis" and the message renders an interactive chart inline. This would make the Ward Room a rich multimedia communication channel.
+
+
 ## Citations
 
 - Hewitt, C. (1973). "A Universal Modular ACTOR Formalism for Artificial Intelligence." IJCAI.
@@ -461,6 +618,7 @@ The industry is converging on Level 3 (Microsoft MCP for Windows, Google WebMCP,
 - Quigley, M. et al. (2009). "ROS: an open-source Robot Operating System." ICRA Workshop.
 - Van Brussel, H. et al. (1998). "Reference architecture for holonic manufacturing systems: PROSA." Computers in Industry.
 - Anthropic. (2024). "Model Context Protocol (MCP) Specification." https://modelcontextprotocol.io
+- Anthropic. (2026). "MCP Apps Extension Specification." https://apps.extensions.modelcontextprotocol.io — `@modelcontextprotocol/ext-apps` (Apache 2.0).
 - Microsoft. (2025). "MCP Server Capabilities for Windows." Build 2025 announcement.
 - Bandarra, A. C. (2026). "WebMCP: Making websites agent-ready." Chrome for Developers Blog. https://developer.chrome.com/blog/webmcp-epp
 - Microsoft. (2026). "Microsoft Agent Framework." GitHub. https://github.com/microsoft/agent-framework

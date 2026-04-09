@@ -474,6 +474,11 @@ class DreamReport:
     # AD-567d: Activation-based memory lifecycle
     activation_pruned: int = 0
     activation_reinforced: int = 0
+    # AD-568d: Source attribution consolidation
+    source_attribution: dict[str, Any] = field(default_factory=dict)
+    # AD-568e: Faithfulness verification
+    mean_faithfulness_score: float | None = None
+    unfaithful_episodes: int = 0
 
 
 # ------------------------------------------------------------------

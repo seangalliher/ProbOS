@@ -119,6 +119,11 @@ class EmergentDetector:
         trust_anomaly_min_count: int = 3,
         max_trust_anomalies_per_pass: int = 3,
         duty_correlation_window: float = 120.0,
+        # BF-124: Configurable cooperation cluster thresholds
+        cluster_edge_threshold: float = 0.3,
+        cluster_min_size: int = 3,
+        cluster_min_avg_weight: float = 0.25,
+        cluster_cooldown_seconds: float = 1800.0,
     ) -> None:
         self._router = hebbian_router
         self._trust = trust_network
@@ -138,6 +143,12 @@ class EmergentDetector:
         self._trust_anomaly_min_count = trust_anomaly_min_count
         self._max_trust_anomalies_per_pass = max_trust_anomalies_per_pass
         self._duty_correlation_window = duty_correlation_window
+
+        # BF-124: Cooperation cluster detection thresholds
+        self._cluster_edge_threshold = cluster_edge_threshold
+        self._cluster_min_size = cluster_min_size
+        self._cluster_min_avg_weight = cluster_min_avg_weight
+        self._cluster_cooldown_seconds = cluster_cooldown_seconds
 
         # BF-089: Adaptive EMA baselines for sigma detection
         self._ema_trust_mean: float | None = None
@@ -214,7 +225,12 @@ class EmergentDetector:
         now = time.monotonic()
         cache_key = (pattern_type, dedup_key)
         last_fired = self._last_pattern_fired.get(cache_key)
-        if last_fired is not None and (now - last_fired) < self._pattern_cooldown_seconds:
+        # BF-124: Per-type cooldown — structural patterns (cooperation clusters)
+        # change slowly and don't need frequent re-alerting
+        cooldown = self._pattern_cooldown_seconds
+        if pattern_type == "cooperation_cluster":
+            cooldown = self._cluster_cooldown_seconds
+        if last_fired is not None and (now - last_fired) < cooldown:
             return True  # Suppress — fired too recently
         self._last_pattern_fired[cache_key] = now
         return False
@@ -222,7 +238,9 @@ class EmergentDetector:
     def _prune_stale_dedup_entries(self) -> None:
         """Remove expired entries from the dedup cache to prevent unbounded growth."""
         now = time.monotonic()
-        cutoff = now - self._pattern_cooldown_seconds * 2
+        # BF-124: Use max cooldown for pruning so cluster entries survive
+        max_cooldown = max(self._pattern_cooldown_seconds, self._cluster_cooldown_seconds)
+        cutoff = now - max_cooldown * 2
         stale_keys = [k for k, t in self._last_pattern_fired.items() if t < cutoff]
         for k in stale_keys:
             del self._last_pattern_fired[k]
@@ -379,7 +397,7 @@ class EmergentDetector:
             return []
 
         # Build adjacency: group by shared source or target above threshold
-        threshold = 0.1
+        threshold = self._cluster_edge_threshold  # BF-124 (was 0.1)
         strong_edges: list[tuple[str, str, float]] = []
         for (source, target, _), weight in intent_weights.items():
             if weight >= threshold:
@@ -434,6 +452,13 @@ class EmergentDetector:
                 "avg_weight": avg_weight,
                 "size": len(members),
             })
+
+        # BF-124: Filter clusters by minimum size and average weight
+        clusters = [
+            c for c in clusters
+            if c["size"] >= self._cluster_min_size
+            and c["avg_weight"] >= self._cluster_min_avg_weight
+        ]
 
         return clusters
 

@@ -123,10 +123,15 @@ async def init_dreaming(
         dream_scheduler.start()
 
     # Create EmergentDetector (AD-237) — unconditional, pure observer
+    _edc = config.emergent_detector  # BF-124
     emergent_detector = EmergentDetector(
         hebbian_router=hebbian_router,
         trust_network=trust_network,
         episodic_memory=episodic_memory,
+        cluster_edge_threshold=_edc.cluster_edge_threshold,
+        cluster_min_size=_edc.cluster_min_size,
+        cluster_min_avg_weight=_edc.cluster_min_avg_weight,
+        cluster_cooldown_seconds=_edc.cluster_cooldown_seconds,
     )
     # Provide live agent roster so detector filters out defunct agents
     refresh_emergent_detector_roster_fn()

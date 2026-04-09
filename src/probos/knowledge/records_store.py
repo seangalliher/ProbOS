@@ -428,6 +428,8 @@ class RecordsStore:
             "convergence_coherence": 0.0,
             "convergence_topic": "",
             "convergence_matches": [],
+            "convergence_independence_score": 0.0,  # AD-583
+            "convergence_is_independent": True,      # AD-583
             "divergence_detected": False,
             "divergence_agents": [],
             "divergence_departments": [],
@@ -481,7 +483,7 @@ class RecordsStore:
                 for _, md_file, topic, dept in entries[:max_scan_per_agent]:
                     try:
                         raw = md_file.read_text(encoding="utf-8")
-                        _, content = self._parse_document(raw)
+                        fm, content = self._parse_document(raw)
                         similarity = _jaccard_similarity(anchor_content, content)
                         rel_path = f"notebooks/{other_callsign}/{md_file.name}"
                         match_info = {
@@ -491,6 +493,7 @@ class RecordsStore:
                             "similarity": similarity,
                             "path": rel_path,
                             "content": content,
+                            "frontmatter": fm,  # AD-583: preserved for anchor independence
                         }
 
                         # Convergence: high similarity from different department
@@ -539,8 +542,48 @@ class RecordsStore:
                 result["convergence_coherence"] = coherence
                 result["convergence_topic"] = topic
                 result["convergence_matches"] = [
-                    {k: v for k, v in m.items() if k != "content"} for m in convergence_matches
+                    {k: v for k, v in m.items() if k not in ("content", "frontmatter")}
+                    for m in convergence_matches
                 ]
+
+                # AD-583: Compute anchor independence for converging entries
+                try:
+                    from types import SimpleNamespace
+                    from probos.cognitive.social_verification import compute_anchor_independence
+
+                    independence_threshold = convergence_threshold  # reuse param as fallback
+                    try:
+                        # Try to get config threshold
+                        from probos.config import RecordsConfig as _RC583
+                        _rc = _RC583()
+                        independence_threshold = _rc.convergence_independence_threshold
+                    except Exception:
+                        independence_threshold = 0.3
+
+                    episodes = []
+                    for m in convergence_matches:
+                        fm = m.get("frontmatter", {})
+                        anchors = SimpleNamespace(
+                            duty_cycle_id=fm.get("duty_cycle_id", ""),
+                            channel_id=fm.get("channel_id", ""),
+                            thread_id=fm.get("thread_id", ""),
+                        )
+                        ts = 0.0
+                        updated_str = fm.get("updated", "")
+                        if updated_str:
+                            try:
+                                ts = datetime.fromisoformat(updated_str).timestamp()
+                            except (ValueError, TypeError):
+                                pass
+                        episodes.append(SimpleNamespace(anchors=anchors, timestamp=ts))
+
+                    independence_score = compute_anchor_independence(episodes)
+                    result["convergence_independence_score"] = independence_score
+                    result["convergence_is_independent"] = independence_score >= independence_threshold
+                except Exception:
+                    # Non-critical — default to conservative (potentially pathological)
+                    result["convergence_independence_score"] = 0.0
+                    result["convergence_is_independent"] = False
 
         # Evaluate divergence
         if divergence_matches:

@@ -476,6 +476,8 @@ class RecordsConfig(BaseModel):
     realtime_max_scan_per_agent: int = 5
     realtime_min_convergence_agents: int = 2
     realtime_min_convergence_departments: int = 2
+    # AD-583: Wrong convergence detection
+    convergence_independence_threshold: float = 0.3
     # AD-555: Notebook quality metrics
     notebook_quality_enabled: bool = True
     notebook_quality_low_threshold: float = 0.3
@@ -566,6 +568,16 @@ class BridgeAlertConfig(BaseModel):
     cooldown_seconds: float = 300        # Dedup window per alert type+subject
     trust_drop_threshold: float = 0.15   # Trust drop triggering advisory
     trust_drop_alert_threshold: float = 0.25  # Trust drop triggering alert
+    resolve_clean_period: float = 3600.0       # AD-580: seconds before resolved alert can re-fire
+    default_dismiss_duration: float = 14400.0  # AD-580: default dismiss duration (4 hours)
+
+
+class EmergentDetectorConfig(BaseModel):
+    """BF-124: Emergent detector calibration parameters."""
+    cluster_edge_threshold: float = 0.3
+    cluster_min_size: int = 3
+    cluster_min_avg_weight: float = 0.25
+    cluster_cooldown_seconds: float = 1800.0
 
 
 class EarnedAgencyConfig(BaseModel):
@@ -837,6 +849,7 @@ class SystemConfig(BaseModel):
     ward_room: WardRoomConfig = WardRoomConfig()
     assignments: AssignmentConfig = AssignmentConfig()
     bridge_alerts: BridgeAlertConfig = BridgeAlertConfig()
+    emergent_detector: EmergentDetectorConfig = EmergentDetectorConfig()
     earned_agency: EarnedAgencyConfig = EarnedAgencyConfig()
     proactive_cognitive: ProactiveCognitiveConfig = ProactiveCognitiveConfig()
     persistent_tasks: PersistentTasksConfig = PersistentTasksConfig()

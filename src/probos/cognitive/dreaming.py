@@ -75,6 +75,7 @@ class DreamingEngine:
         retrieval_llm_client: Any = None,  # AD-541c: fast-tier LLM for recall practice
         activation_tracker: Any = None,  # AD-567d: activation-based memory lifecycle
         behavioral_metrics_engine: Any = None,  # AD-569: behavioral metrics engine
+        counselor: Any = None,  # AD-568d: Counselor agent for source metric updates
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -99,6 +100,7 @@ class DreamingEngine:
         self._retrieval_llm_client = retrieval_llm_client  # AD-541c
         self._activation_tracker = activation_tracker  # AD-567d
         self._behavioral_metrics_engine = behavioral_metrics_engine  # AD-569
+        self._counselor = counselor  # AD-568d
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
         self._addressed_degradations: dict[str, float] = {}  # AD-532b: procedure_id -> timestamp
@@ -701,6 +703,54 @@ class DreamingEngine:
                                     self._emit_event_fn("convergence_detected", conv_data)
                                 except Exception:
                                     pass
+                            # AD-583: Check anchor independence for wrong convergence
+                            try:
+                                from types import SimpleNamespace as _NS583
+                                from probos.cognitive.social_verification import compute_anchor_independence
+                                _episodes_583 = []
+                                for ce in cluster_entries:
+                                    _fm = ce.get("frontmatter", ce.get("_doc", {}).get("frontmatter", {}))
+                                    _anch = _NS583(
+                                        duty_cycle_id=_fm.get("duty_cycle_id", ""),
+                                        channel_id=_fm.get("channel_id", ""),
+                                        thread_id=_fm.get("thread_id", ""),
+                                    )
+                                    _ts583 = 0.0
+                                    _upd = _fm.get("updated", "")
+                                    if _upd:
+                                        try:
+                                            _ts583 = _dt.datetime.fromisoformat(_upd).timestamp()
+                                        except Exception:
+                                            pass
+                                    _episodes_583.append(_NS583(anchors=_anch, timestamp=_ts583))
+                                _ind_score = compute_anchor_independence(_episodes_583)
+                                _ind_threshold = 0.3
+                                try:
+                                    _ind_threshold = self.config.convergence_independence_threshold
+                                except Exception:
+                                    pass
+                                conv_data["independence_score"] = _ind_score
+                                conv_data["independence"] = "low" if _ind_score < _ind_threshold else "high"
+                                if _ind_score < _ind_threshold:
+                                    # Emit wrong convergence event
+                                    if hasattr(self, "_emit_event_fn") and self._emit_event_fn:
+                                        try:
+                                            self._emit_event_fn("wrong_convergence_detected", {
+                                                "agents": sorted(cluster_agents),
+                                                "departments": sorted(cluster_depts),
+                                                "topic": topic,
+                                                "coherence": coherence,
+                                                "independence_score": _ind_score,
+                                                "source": "dream_consolidation",
+                                            })
+                                        except Exception:
+                                            pass
+                                    logger.warning(
+                                        "AD-583: Wrong convergence in dream — topic='%s', independence=%.3f",
+                                        topic, _ind_score,
+                                    )
+                            except Exception:
+                                logger.debug("AD-583: Dream independence scoring failed", exc_info=True)
                 if convergence_reports_generated:
                     logger.debug(
                         "Step 7g: Detected %d convergence events", convergence_reports_generated,
@@ -823,6 +873,16 @@ class DreamingEngine:
                     snapshot.pairs_analyzed,
                     snapshot.significant_pairs,
                 )
+                # AD-583: Populate provenance_independence (AD-559 reservation)
+                try:
+                    from probos.cognitive.social_verification import compute_anchor_independence as _cai583
+                    if self.episodic_memory:
+                        _sample = await self.episodic_memory.recent(k=20)
+                        if _sample:
+                            _prov_score = _cai583(_sample)
+                            snapshot.provenance_independence = _prov_score
+                except Exception:
+                    logger.debug("AD-583: Provenance independence computation failed", exc_info=True)
             except Exception as e:
                 logger.debug("Step 9 emergence metrics failed: %s", e)
 
@@ -949,6 +1009,13 @@ class DreamingEngine:
             except Exception as e:
                 logger.debug("Step 13 behavioral metrics failed: %s", e)
 
+        # Step 14: Source Attribution Consolidation (AD-568d)
+        _source_attr_result: dict[str, Any] = {}
+        try:
+            _source_attr_result = await self._step_14_source_attribution(episodes)
+        except Exception:
+            logger.debug("AD-568d: Dream step 14 (source attribution) failed")
+
         duration_ms = (time.monotonic() - t_start) * 1000
 
         report = DreamReport(
@@ -1004,6 +1071,11 @@ class DreamingEngine:
             synthesis_rate=synthesis_rate,
             cross_dept_trigger_rate=cross_dept_trigger_rate,
             anchor_grounded_rate=anchor_grounded_rate,
+            # AD-568d: Source attribution
+            source_attribution=_source_attr_result,
+            # AD-568e: Faithfulness verification
+            mean_faithfulness_score=_source_attr_result.get("mean_faithfulness_score"),
+            unfaithful_episodes=_source_attr_result.get("unfaithful_episodes", 0),
         )
 
         logger.info(
@@ -1821,6 +1893,131 @@ class DreamingEngine:
             "concerns": total_concerns,
         }
 
+    # ---------------------------------------------------------------
+    # Step 14: Source Attribution Consolidation (AD-568d)
+    # ---------------------------------------------------------------
+    async def _step_14_source_attribution(
+        self, episodes: list[Any],
+    ) -> dict[str, Any]:
+        """Dream step 14: Consolidate source attribution patterns (AD-568d/e).
+
+        Aggregates source attribution metadata from recent episodes to:
+        1. Compute running confabulation rate estimate
+        2. Measure source diversity (healthy agents use multiple sources)
+        3. Update Counselor's CognitiveProfile with findings
+        4. (AD-568e) Aggregate per-episode faithfulness scores
+
+        Returns dict with consolidation metrics for DreamReport.
+        """
+        result: dict[str, Any] = {
+            "episodes_with_attribution": 0,
+            "source_distribution": {},
+            "mean_confabulation_rate": 0.0,
+            "source_diversity_score": 0.0,
+            # AD-568e: Faithfulness aggregation
+            "mean_faithfulness_score": 0.0,
+            "unfaithful_episodes": 0,
+            "faithfulness_episodes_assessed": 0,
+        }
+
+        if not episodes:
+            return result
+
+        # Extract source attribution and faithfulness from episode metadata
+        attributions: list[dict[str, Any]] = []
+        _faithfulness_scores: list[float] = []  # AD-568e
+
+        for ep in episodes:
+            # Try metadata attr first (test mocks), then dag_summary (real episodes)
+            _meta = getattr(ep, 'metadata', None) or {}
+            if isinstance(_meta, str):
+                try:
+                    import json
+                    _meta = json.loads(_meta)
+                except Exception:
+                    _meta = {}
+            if not isinstance(_meta, dict):
+                _meta = {}
+
+            # Also check dag_summary (where _store_action_episode puts data)
+            _dag = getattr(ep, 'dag_summary', None) or {}
+            if isinstance(_dag, str):
+                try:
+                    import json
+                    _dag = json.loads(_dag)
+                except Exception:
+                    _dag = {}
+            if not isinstance(_dag, dict):
+                _dag = {}
+
+            # Source attribution: check both locations
+            _attr = _meta.get("source_attribution") or _dag.get("source_attribution")
+            if _attr and isinstance(_attr, dict):
+                attributions.append(_attr)
+
+            # AD-568e: Extract faithfulness score
+            _faith_score = _meta.get("faithfulness_score") or _dag.get("faithfulness_score")
+            if _faith_score is not None:
+                try:
+                    _faithfulness_scores.append(float(_faith_score))
+                except (ValueError, TypeError):
+                    pass
+
+        # Source attribution aggregation
+        if attributions:
+            result["episodes_with_attribution"] = len(attributions)
+
+            # 1. Source distribution
+            source_counts: dict[str, int] = {}
+            for attr in attributions:
+                src = attr.get("primary_source", "unknown")
+                source_counts[src] = source_counts.get(src, 0) + 1
+            result["source_distribution"] = source_counts
+
+            # 2. Mean confabulation rate from attribution snapshots
+            confab_rates = [
+                attr.get("confabulation_rate", 0.0) for attr in attributions
+            ]
+            mean_confab = sum(confab_rates) / len(confab_rates) if confab_rates else 0.0
+            result["mean_confabulation_rate"] = round(mean_confab, 4)
+
+            # 3. Source diversity score (Shannon entropy normalized to [0, 1])
+            total = sum(source_counts.values())
+            if total > 0 and len(source_counts) > 1:
+                import math
+                entropy = -sum(
+                    (c / total) * math.log2(c / total)
+                    for c in source_counts.values()
+                    if c > 0
+                )
+                max_entropy = math.log2(len(source_counts))
+                diversity = entropy / max_entropy if max_entropy > 0 else 0.0
+            else:
+                diversity = 0.0
+            result["source_diversity_score"] = round(diversity, 4)
+
+            # 4. Update Counselor profile if available
+            try:
+                if self._counselor and hasattr(self._counselor, 'update_source_metrics'):
+                    await self._counselor.update_source_metrics(
+                        agent_id=self._agent_id,
+                        confabulation_rate=mean_confab,
+                        source_diversity=diversity,
+                        source_distribution=source_counts,
+                    )
+            except Exception:
+                logger.debug("AD-568d: Could not update Counselor source metrics")
+
+        # AD-568e: Aggregate faithfulness scores
+        if _faithfulness_scores:
+            _mean_faithfulness = sum(_faithfulness_scores) / len(_faithfulness_scores)
+            _unfaithful_count = sum(1 for s in _faithfulness_scores if s < 0.5)
+            result["mean_faithfulness_score"] = round(_mean_faithfulness, 4)
+            result["unfaithful_episodes"] = _unfaithful_count
+            result["faithfulness_episodes_assessed"] = len(_faithfulness_scores)
+
+        return result
+
 
 class DreamScheduler:
     """Background scheduler that triggers dream cycles during idle periods."""
@@ -2050,3 +2247,4 @@ class DreamScheduler:
     def set_emergent_detector(self, detector: Any) -> None:
         """Wire EmergentDetector for BF-100 dream cycle suppression."""
         self._emergent_detector = detector
+

@@ -201,6 +201,8 @@ async def init_communication(
             cooldown_seconds=config.bridge_alerts.cooldown_seconds,
             trust_drop_threshold=config.bridge_alerts.trust_drop_threshold,
             trust_drop_alert_threshold=config.bridge_alerts.trust_drop_alert_threshold,
+            resolve_clean_period=config.bridge_alerts.resolve_clean_period,
+            default_dismiss_duration=config.bridge_alerts.default_dismiss_duration,
         )
         logger.info("bridge-alerts started")
 

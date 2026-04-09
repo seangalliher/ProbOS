@@ -218,7 +218,8 @@ class TestCooperationClusters:
         weights = {
             ("read_file", "agent_pool_0_abc", REL_INTENT): 0.5,
         }
-        d = _make_detector(weights=weights)
+        # BF-124: Use min_size=1 to preserve legacy test (default is now 3)
+        d = _make_detector(weights=weights, cluster_min_size=1, cluster_edge_threshold=0.1)
         clusters = d.detect_cooperation_clusters()
         assert len(clusters) == 1
         assert clusters[0]["size"] == 2
@@ -228,13 +229,14 @@ class TestCooperationClusters:
             ("read_file", "reader_pool_0_abc", REL_INTENT): 0.5,
             ("write_file", "writer_pool_0_def", REL_INTENT): 0.4,
         }
-        d = _make_detector(weights=weights)
+        # BF-124: Use min_size=1 to preserve legacy test
+        d = _make_detector(weights=weights, cluster_min_size=1, cluster_edge_threshold=0.1)
         clusters = d.detect_cooperation_clusters()
         assert len(clusters) == 2
 
     def test_weights_below_threshold_filtered(self) -> None:
         weights = {
-            ("read_file", "agent_pool_0_abc", REL_INTENT): 0.05,  # below 0.1
+            ("read_file", "agent_pool_0_abc", REL_INTENT): 0.05,  # below threshold
         }
         d = _make_detector(weights=weights)
         clusters = d.detect_cooperation_clusters()
@@ -245,7 +247,8 @@ class TestCooperationClusters:
             ("intent_a", "agent_pool_0_abc", REL_INTENT): 0.5,
             ("intent_a", "agent_pool_1_def", REL_INTENT): 0.3,
         }
-        d = _make_detector(weights=weights)
+        # BF-124: Use min_size=1 and edge_threshold=0.1 to preserve legacy test
+        d = _make_detector(weights=weights, cluster_min_size=1, cluster_edge_threshold=0.1)
         clusters = d.detect_cooperation_clusters()
         assert len(clusters) == 1
         assert clusters[0]["size"] == 3  # intent_a + 2 agents
@@ -831,7 +834,7 @@ class TestPatternDeduplication:
         """Stale dedup entries are cleaned up."""
         router = HebbianRouter()
         trust = TrustNetwork()
-        detector = EmergentDetector(router, trust)
+        detector = EmergentDetector(router, trust, cluster_cooldown_seconds=1.0)
         detector.set_pattern_cooldown(1.0)
 
         detector._is_duplicate_pattern("trust_anomaly", "agent1:high")
@@ -1264,3 +1267,267 @@ class TestBF089RegressionGuards:
         d._suppress_clusters_until = time.monotonic() - 1.0
         clusters = d.detect_cooperation_clusters()
         assert len(clusters) == 1
+
+
+# ===========================================================================
+# BF-124: Cooperation cluster calibration
+# ===========================================================================
+
+
+class TestBF124ThresholdCalibration:
+    """BF-124: Configurable cluster thresholds and quality filtering."""
+
+    def test_default_cluster_threshold_is_030(self) -> None:
+        """Default cluster_edge_threshold is 0.3, not the old 0.1."""
+        d = _make_detector()
+        assert d._cluster_edge_threshold == 0.3
+
+    def test_cluster_threshold_configurable(self) -> None:
+        """Constructor accepts custom cluster_edge_threshold; weights below threshold excluded."""
+        weights = {
+            ("intent_a", "agent_pool_0_abc", REL_INTENT): 0.25,  # below 0.4
+            ("intent_b", "agent_pool_1_def", REL_INTENT): 0.5,   # above 0.4
+        }
+        d = _make_detector(
+            weights=weights,
+            cluster_edge_threshold=0.4,
+            cluster_min_size=1,
+        )
+        clusters = d.detect_cooperation_clusters()
+        # Only intent_b + agent_pool_1_def should form a cluster
+        assert len(clusters) == 1
+        assert clusters[0]["size"] == 2
+
+    def test_cluster_min_size_filters_small(self) -> None:
+        """Clusters with 2 nodes filtered out when cluster_min_size=3."""
+        weights = {
+            ("intent_a", "agent_pool_0_abc", REL_INTENT): 0.5,
+        }
+        # min_size=3 → the 2-node cluster (intent_a + agent) is filtered
+        d = _make_detector(
+            weights=weights,
+            cluster_edge_threshold=0.1,
+            cluster_min_size=3,
+        )
+        clusters = d.detect_cooperation_clusters()
+        assert clusters == []
+
+    def test_cluster_min_avg_weight_filters_weak(self) -> None:
+        """Cluster with avg_weight below threshold is filtered."""
+        weights = {
+            ("intent_a", "agent_pool_0_abc", REL_INTENT): 0.15,
+            ("intent_a", "agent_pool_1_def", REL_INTENT): 0.12,
+        }
+        # edge_threshold=0.1 includes these, but avg ≈ 0.135 < min_avg=0.25
+        d = _make_detector(
+            weights=weights,
+            cluster_edge_threshold=0.1,
+            cluster_min_size=1,
+            cluster_min_avg_weight=0.25,
+        )
+        clusters = d.detect_cooperation_clusters()
+        assert clusters == []
+
+    def test_cluster_quality_combined(self) -> None:
+        """Cluster passes edge threshold but fails min_avg_weight → filtered."""
+        weights = {
+            ("intent_a", "agent_pool_0_abc", REL_INTENT): 0.35,
+            ("intent_a", "agent_pool_1_def", REL_INTENT): 0.12,
+        }
+        # edge_threshold=0.1 → both edges included → 3-node cluster
+        # avg_weight ≈ (0.35 + 0.12) / 2 = 0.235 < min_avg_weight=0.30
+        d = _make_detector(
+            weights=weights,
+            cluster_edge_threshold=0.1,
+            cluster_min_size=1,
+            cluster_min_avg_weight=0.30,
+        )
+        clusters = d.detect_cooperation_clusters()
+        assert clusters == []
+
+    def test_genuine_cluster_detected(self) -> None:
+        """Strong cluster (multiple nodes, high avg_weight) detected correctly."""
+        weights = {
+            ("intent_a", "agent_pool_0_abc", REL_INTENT): 0.8,
+            ("intent_a", "agent_pool_1_def", REL_INTENT): 0.7,
+            ("intent_b", "agent_pool_0_abc", REL_INTENT): 0.6,
+            ("intent_b", "agent_pool_1_def", REL_INTENT): 0.9,
+        }
+        d = _make_detector(
+            weights=weights,
+            cluster_edge_threshold=0.3,
+            cluster_min_size=3,
+            cluster_min_avg_weight=0.25,
+        )
+        clusters = d.detect_cooperation_clusters()
+        # All four nodes connected with strong weights → 1 cluster, size 4
+        assert len(clusters) >= 1
+        assert clusters[0]["size"] >= 3
+        assert clusters[0]["avg_weight"] >= 0.25
+
+    def test_cluster_cooldown_longer_than_default(self) -> None:
+        """Cooperation cluster dedup cooldown is 1800s, not the default 600s."""
+        d = _make_detector()
+        assert d._cluster_cooldown_seconds == 1800.0
+        assert d._pattern_cooldown_seconds == 600.0
+        assert d._cluster_cooldown_seconds > d._pattern_cooldown_seconds
+
+    def test_cluster_cooldown_per_type(self) -> None:
+        """Trust anomaly uses 600s cooldown, cooperation_cluster uses 1800s."""
+        d = _make_detector()
+        d.set_pattern_cooldown(600.0)
+
+        # Trust anomaly — first fire allowed
+        assert not d._is_duplicate_pattern("trust_anomaly", "agent1:high")
+        # Trust anomaly — second fire suppressed (within 600s)
+        assert d._is_duplicate_pattern("trust_anomaly", "agent1:high")
+
+        # Cooperation cluster — first fire allowed
+        assert not d._is_duplicate_pattern("cooperation_cluster", "cluster1")
+        # Cooperation cluster — second fire suppressed (within 1800s)
+        assert d._is_duplicate_pattern("cooperation_cluster", "cluster1")
+
+        # Now manually expire the trust anomaly entry (advance past 600s)
+        key_trust = ("trust_anomaly", "agent1:high")
+        d._last_pattern_fired[key_trust] = time.monotonic() - 650
+        # Trust anomaly allowed again (past 600s cooldown)
+        assert not d._is_duplicate_pattern("trust_anomaly", "agent1:high")
+
+        # But cluster entry still suppressed (only 650s elapsed < 1800s)
+        key_cluster = ("cooperation_cluster", "cluster1")
+        d._last_pattern_fired[key_cluster] = time.monotonic() - 650
+        assert d._is_duplicate_pattern("cooperation_cluster", "cluster1")
+
+
+class TestBF124Config:
+    """BF-124: EmergentDetectorConfig exists and wires to SystemConfig."""
+
+    def test_emergent_detector_config_exists(self) -> None:
+        """EmergentDetectorConfig is importable from probos.config."""
+        from probos.config import EmergentDetectorConfig
+        cfg = EmergentDetectorConfig()
+        assert cfg.cluster_edge_threshold == 0.3
+        assert cfg.cluster_min_size == 3
+        assert cfg.cluster_min_avg_weight == 0.25
+        assert cfg.cluster_cooldown_seconds == 1800.0
+
+    def test_system_config_has_emergent_detector(self) -> None:
+        """SystemConfig().emergent_detector returns EmergentDetectorConfig with defaults."""
+        from probos.config import SystemConfig, EmergentDetectorConfig
+        sc = SystemConfig()
+        assert isinstance(sc.emergent_detector, EmergentDetectorConfig)
+        assert sc.emergent_detector.cluster_edge_threshold == 0.3
+
+    def test_config_values_override(self) -> None:
+        """Custom values override defaults."""
+        from probos.config import EmergentDetectorConfig
+        cfg = EmergentDetectorConfig(
+            cluster_edge_threshold=0.5,
+            cluster_min_size=5,
+            cluster_min_avg_weight=0.4,
+            cluster_cooldown_seconds=3600.0,
+        )
+        assert cfg.cluster_edge_threshold == 0.5
+        assert cfg.cluster_min_size == 5
+        assert cfg.cluster_min_avg_weight == 0.4
+        assert cfg.cluster_cooldown_seconds == 3600.0
+
+
+class TestBF124DivergenceDedup:
+    """BF-124: Divergence alert dedup is agent-pair + topic aware."""
+
+    def test_divergence_same_pair_same_topic_deduped(self) -> None:
+        """Same agent pair + same topic → suppressed within cooldown."""
+        from probos.bridge_alerts import BridgeAlertService
+        svc = BridgeAlertService(cooldown_seconds=600.0)
+
+        data = {
+            "divergence_detected": True,
+            "divergence_topic": "warp core efficiency",
+            "divergence_agents": ["LaForge", "Scotty"],
+            "divergence_departments": ["Engineering"],
+            "divergence_similarity": 0.3,
+        }
+        # First call should emit
+        alerts1 = svc.check_divergence(data)
+        assert len(alerts1) == 1
+
+        # Second call same pair + same topic — suppressed
+        alerts2 = svc.check_divergence(data)
+        assert len(alerts2) == 0
+
+    def test_divergence_same_pair_new_topic_fires(self) -> None:
+        """Same agent pair + different topic → new alert fires."""
+        from probos.bridge_alerts import BridgeAlertService
+        svc = BridgeAlertService(cooldown_seconds=600.0)
+
+        data1 = {
+            "divergence_detected": True,
+            "divergence_topic": "warp core efficiency",
+            "divergence_agents": ["LaForge", "Scotty"],
+            "divergence_departments": ["Engineering"],
+            "divergence_similarity": 0.3,
+        }
+        data2 = dict(data1, divergence_topic="shield modulation")
+
+        alerts1 = svc.check_divergence(data1)
+        assert len(alerts1) == 1
+
+        alerts2 = svc.check_divergence(data2)
+        assert len(alerts2) == 1  # New topic fires
+
+    def test_divergence_different_pair_same_topic_fires(self) -> None:
+        """Different agent pair + same topic → new alert fires."""
+        from probos.bridge_alerts import BridgeAlertService
+        svc = BridgeAlertService(cooldown_seconds=600.0)
+
+        data1 = {
+            "divergence_detected": True,
+            "divergence_topic": "warp core efficiency",
+            "divergence_agents": ["LaForge", "Scotty"],
+            "divergence_departments": ["Engineering"],
+            "divergence_similarity": 0.3,
+        }
+        data2 = dict(data1, divergence_agents=["Chapel", "Bones"])
+
+        alerts1 = svc.check_divergence(data1)
+        assert len(alerts1) == 1
+
+        alerts2 = svc.check_divergence(data2)
+        assert len(alerts2) == 1  # Different pair fires
+
+
+class TestBF124Regression:
+    """BF-124: Existing behavior is preserved."""
+
+    def test_bf126_suppression_still_works(self) -> None:
+        """Post-stasis suppression window still suppresses with new thresholds."""
+        weights = {
+            ("intent_a", "agent_pool_0_abc", REL_INTENT): 0.8,
+            ("intent_a", "agent_pool_1_def", REL_INTENT): 0.7,
+            ("intent_b", "agent_pool_0_abc", REL_INTENT): 0.6,
+        }
+        d = _make_detector(
+            weights=weights,
+            cluster_edge_threshold=0.3,
+            cluster_min_size=1,
+        )
+        # Without suppression — clusters detected
+        clusters = d.detect_cooperation_clusters()
+        assert len(clusters) >= 1
+
+        # With suppression — clusters suppressed
+        d.set_cold_start_suppression(9999.0)
+        clusters = d.detect_cooperation_clusters()
+        assert len(clusters) == 0
+
+    def test_existing_trust_anomaly_detection_unchanged(self) -> None:
+        """Trust anomaly detection params/behavior unchanged by BF-124."""
+        records = _outlier_records()
+        d = _make_detector(trust_records=records, trust_anomaly_min_count=1)
+        # BF-124 cluster params should not affect trust detection
+        assert d._trust_sigma_threshold == 2.0
+        assert d._trust_change_threshold == 0.15
+        patterns = d.detect_trust_anomalies()
+        trust_patterns = [p for p in patterns if p.pattern_type == "trust_anomaly"]
+        assert len(trust_patterns) >= 1

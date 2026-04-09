@@ -450,6 +450,10 @@ class TestIntegration:
         bas._recent = {}
         bas._cooldown = 300
         bas._max_log = 100
+        bas._dismissed = {}
+        bas._resolved = {}
+        bas._muted = set()
+        bas._last_detected = {}
 
         alerts = bas.check_cascade_risk({
             "risk_level": "medium",
@@ -472,6 +476,10 @@ class TestIntegration:
         bas._recent = {}
         bas._cooldown = 300
         bas._max_log = 100
+        bas._dismissed = {}
+        bas._resolved = {}
+        bas._muted = set()
+        bas._last_detected = {}
 
         alerts = bas.check_cascade_risk({
             "risk_level": "high",

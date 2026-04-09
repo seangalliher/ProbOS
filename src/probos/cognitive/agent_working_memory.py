@@ -36,6 +36,7 @@ class WorkingMemoryEntry:
     source_pathway: str  # "proactive", "dm", "ward_room", "system"
     timestamp: float = field(default_factory=time.time)
     metadata: dict[str, Any] = field(default_factory=dict)
+    knowledge_source: str = "unknown"  # AD-568d: "episodic", "parametric", "procedural", "oracle", "unknown"
 
     def age_seconds(self) -> float:
         return time.time() - self.timestamp
@@ -101,6 +102,7 @@ class AgentWorkingMemory:
 
     def record_action(
         self, summary: str, *, source: str, metadata: dict[str, Any] | None = None,
+        knowledge_source: str = "unknown",
     ) -> None:
         """Record an action the agent just took (any pathway)."""
         self._recent_actions.append(WorkingMemoryEntry(
@@ -108,10 +110,12 @@ class AgentWorkingMemory:
             category="action",
             source_pathway=source,
             metadata=metadata or {},
+            knowledge_source=knowledge_source,
         ))
 
     def record_observation(
         self, summary: str, *, source: str, metadata: dict[str, Any] | None = None,
+        knowledge_source: str = "unknown",
     ) -> None:
         """Record an observation from a proactive think or duty cycle."""
         self._recent_observations.append(WorkingMemoryEntry(
@@ -119,11 +123,13 @@ class AgentWorkingMemory:
             category="observation",
             source_pathway=source,
             metadata=metadata or {},
+            knowledge_source=knowledge_source,
         ))
 
     def record_conversation(
         self, summary: str, *, partner: str, source: str,
         metadata: dict[str, Any] | None = None,
+        knowledge_source: str = "unknown",
     ) -> None:
         """Record a DM or Ward Room conversation exchange."""
         self._recent_conversations.append(WorkingMemoryEntry(
@@ -131,11 +137,13 @@ class AgentWorkingMemory:
             category="conversation",
             source_pathway=source,
             metadata={"partner": partner, **(metadata or {})},
+            knowledge_source=knowledge_source,
         ))
 
     def record_event(
         self, summary: str, *, source: str = "system",
         metadata: dict[str, Any] | None = None,
+        knowledge_source: str = "unknown",
     ) -> None:
         """Record a system event the agent should be aware of."""
         self._recent_events.append(WorkingMemoryEntry(
@@ -143,6 +151,7 @@ class AgentWorkingMemory:
             category="event",
             source_pathway=source,
             metadata=metadata or {},
+            knowledge_source=knowledge_source,
         ))
 
     def add_engagement(self, engagement: ActiveEngagement) -> None:
@@ -191,7 +200,8 @@ class AgentWorkingMemory:
             action_lines = ["Recent actions:"]
             for entry in self._recent_actions:
                 age = self._format_age(entry.age_seconds())
-                action_lines.append(f"  - ({age} ago, {entry.source_pathway}) {entry.content}")
+                _src_tag = f" [{entry.knowledge_source}]" if entry.knowledge_source != "unknown" else ""
+                action_lines.append(f"  - ({age} ago, {entry.source_pathway}) {entry.content}{_src_tag}")
             sections.append((2, "\n".join(action_lines)))
 
         # Priority 3: Recent conversations — who I just talked to
@@ -208,7 +218,8 @@ class AgentWorkingMemory:
             obs_lines = ["Recent observations:"]
             for entry in self._recent_observations:
                 age = self._format_age(entry.age_seconds())
-                obs_lines.append(f"  - ({age} ago) {entry.content}")
+                _src_tag = f" [{entry.knowledge_source}]" if entry.knowledge_source != "unknown" else ""
+                obs_lines.append(f"  - ({age} ago) {entry.content}{_src_tag}")
             sections.append((4, "\n".join(obs_lines)))
 
         # Priority 5: Cognitive state — zone, cooldown
@@ -284,25 +295,25 @@ class AgentWorkingMemory:
             "recent_actions": [
                 {"content": e.content, "category": e.category,
                  "source_pathway": e.source_pathway, "timestamp": e.timestamp,
-                 "metadata": e.metadata}
+                 "metadata": e.metadata, "knowledge_source": e.knowledge_source}
                 for e in self._recent_actions
             ],
             "recent_observations": [
                 {"content": e.content, "category": e.category,
                  "source_pathway": e.source_pathway, "timestamp": e.timestamp,
-                 "metadata": e.metadata}
+                 "metadata": e.metadata, "knowledge_source": e.knowledge_source}
                 for e in self._recent_observations
             ],
             "recent_conversations": [
                 {"content": e.content, "category": e.category,
                  "source_pathway": e.source_pathway, "timestamp": e.timestamp,
-                 "metadata": e.metadata}
+                 "metadata": e.metadata, "knowledge_source": e.knowledge_source}
                 for e in self._recent_conversations
             ],
             "recent_events": [
                 {"content": e.content, "category": e.category,
                  "source_pathway": e.source_pathway, "timestamp": e.timestamp,
-                 "metadata": e.metadata}
+                 "metadata": e.metadata, "knowledge_source": e.knowledge_source}
                 for e in self._recent_events
             ],
             "active_engagements": {
@@ -345,6 +356,7 @@ class AgentWorkingMemory:
                         source_pathway=raw.get("source_pathway", "restored"),
                         timestamp=raw.get("timestamp", now),
                         metadata=raw.get("metadata", {}),
+                        knowledge_source=raw.get("knowledge_source", "unknown"),
                     ))
 
         _restore_entries(data.get("recent_actions", []), wm._recent_actions)

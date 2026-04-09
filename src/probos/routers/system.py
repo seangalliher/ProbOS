@@ -311,3 +311,82 @@ async def get_agent_notebook_quality(
         if aq.callsign.lower() == callsign.lower():
             return {"status": "ok", **aq.to_dict()}
     return {"status": "not_found", "message": f"No quality data for {callsign}"}
+
+
+# --- AD-580: Alert resolution feedback ---
+
+
+@router.post("/alerts/dismiss")
+async def dismiss_alert(
+    body: dict[str, Any],
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, str]:
+    """AD-580: Dismiss an alert for a specified duration."""
+    bas = getattr(runtime, "bridge_alerts", None)
+    if not bas:
+        raise HTTPException(404, "bridge_alerts not enabled")
+    key = body.get("dedup_key", "")
+    if not key:
+        raise HTTPException(400, "dedup_key required")
+    duration = body.get("duration_seconds")
+    bas.dismiss_alert(key, duration)
+    return {"status": "dismissed", "dedup_key": key}
+
+
+@router.post("/alerts/resolve")
+async def resolve_alert(
+    body: dict[str, Any],
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, str]:
+    """AD-580: Mark an alert as resolved."""
+    bas = getattr(runtime, "bridge_alerts", None)
+    if not bas:
+        raise HTTPException(404, "bridge_alerts not enabled")
+    key = body.get("dedup_key", "")
+    if not key:
+        raise HTTPException(400, "dedup_key required")
+    bas.resolve_alert(key)
+    return {"status": "resolved", "dedup_key": key}
+
+
+@router.post("/alerts/mute")
+async def mute_alert(
+    body: dict[str, Any],
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, str]:
+    """AD-580: Indefinitely mute an alert."""
+    bas = getattr(runtime, "bridge_alerts", None)
+    if not bas:
+        raise HTTPException(404, "bridge_alerts not enabled")
+    key = body.get("dedup_key", "")
+    if not key:
+        raise HTTPException(400, "dedup_key required")
+    bas.mute_alert(key)
+    return {"status": "muted", "dedup_key": key}
+
+
+@router.post("/alerts/unmute")
+async def unmute_alert(
+    body: dict[str, Any],
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, str]:
+    """AD-580: Remove indefinite suppression for an alert."""
+    bas = getattr(runtime, "bridge_alerts", None)
+    if not bas:
+        raise HTTPException(404, "bridge_alerts not enabled")
+    key = body.get("dedup_key", "")
+    if not key:
+        raise HTTPException(400, "dedup_key required")
+    bas.unmute_alert(key)
+    return {"status": "unmuted", "dedup_key": key}
+
+
+@router.get("/alerts/suppressed")
+async def alerts_suppressed(
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-580: List all currently suppressed alerts."""
+    bas = getattr(runtime, "bridge_alerts", None)
+    if not bas:
+        return {"status": "no_data", "suppressed": []}
+    return {"status": "ok", "suppressed": bas.list_suppressed()}

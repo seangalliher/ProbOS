@@ -835,12 +835,28 @@ class ProactiveCognitiveLoop:
                         _episode_count = await em.count_for_agent(_agent_mem_id)
                     except Exception:
                         _episode_count = 1
+                # AD-568d: Thread confabulation rate from Counselor profile
+                _confab_rate = 0.0
+                try:
+                    if rt and hasattr(rt, 'registry'):
+                        _counselor_agents = rt.registry.get_by_pool("counselor")
+                        if _counselor_agents:
+                            _counselor = _counselor_agents[0]
+                            if hasattr(_counselor, 'get_profile'):
+                                _profile = _counselor.get_profile(agent.id)
+                                if _profile:
+                                    _confab_rate = getattr(_profile, 'confabulation_rate', 0.0)
+                except Exception:
+                    pass  # Non-critical — default 0.0
+
                 _retrieval_strategy = classify_retrieval_strategy(
                     "proactive_think",
                     episodic_count=_episode_count,
+                    recent_confabulation_rate=_confab_rate,  # AD-568d
                 )
 
                 scored_results = []
+                _anchor_episodes = None  # AD-570c
                 if _retrieval_strategy == RetrievalStrategy.NONE:
                     logger.debug("AD-568a: Skipping episodic recall for proactive (strategy=NONE)")
                     episodes = []
@@ -858,6 +874,34 @@ class ProactiveCognitiveLoop:
                         # Derive query from agent context instead of hardcoded "recent activity"
                         _duty_type = ""
                         query = f"{agent.agent_type} {_duty_type} recent duty observations".strip()
+
+                        # AD-570c: Try anchor-indexed recall for proactive queries
+                        _anchor_episodes = None
+                        try:
+                            from probos.cognitive.source_governance import parse_anchor_query
+                            known_callsigns = []
+                            if hasattr(rt, 'callsign_registry'):
+                                try:
+                                    _all = rt.callsign_registry.all_callsigns()
+                                    known_callsigns = list(_all.values()) if isinstance(_all, dict) else list(_all)
+                                except Exception:
+                                    pass
+                            _anchor_q = parse_anchor_query(query, known_callsigns=known_callsigns)
+                            if _anchor_q.has_anchor_signal and hasattr(em, 'recall_by_anchor'):
+                                _anchor_results = await em.recall_by_anchor(
+                                    department=_anchor_q.department,
+                                    trigger_agent=_anchor_q.trigger_agent,
+                                    participants=_anchor_q.participants if _anchor_q.participants else None,
+                                    time_range=_anchor_q.time_range,
+                                    semantic_query=_anchor_q.semantic_query,
+                                    agent_id=_agent_mem_id,
+                                    limit=10,
+                                )
+                                if _anchor_results and isinstance(_anchor_results, list) and len(_anchor_results) > 0:
+                                    _anchor_episodes = _anchor_results
+                                    logger.debug("AD-570c: Proactive anchor recall returned %d episodes", len(_anchor_results))
+                        except Exception:
+                            logger.debug("AD-570c: Proactive anchor recall failed", exc_info=True)
 
                         trust_net = getattr(rt, 'trust_network', None)
                         heb_router = getattr(rt, 'hebbian_router', None)
@@ -911,6 +955,15 @@ class ProactiveCognitiveLoop:
                         )
                     if not episodes and hasattr(em, 'recent_for_agent'):
                         episodes = await em.recent_for_agent(_agent_mem_id, k=_tier_params.get("k", 5))
+
+                    # AD-570c: Merge anchor recall into proactive context
+                    if _anchor_episodes:
+                        _seen = {getattr(ep, 'id', id(ep)) for ep in _anchor_episodes}
+                        for ep in episodes:
+                            if getattr(ep, 'id', id(ep)) not in _seen:
+                                _anchor_episodes.append(ep)
+                                _seen.add(getattr(ep, 'id', id(ep)))
+                        episodes = _anchor_episodes
 
                 # AD-568c: Source framing for proactive path
                 _framing = None
@@ -1985,6 +2038,31 @@ class ProactiveCognitiveLoop:
                             # 3. Bridge Alert
                             await self._emit_convergence_bridge_alert(conv_result)
 
+                            # AD-583: Wrong convergence escalation
+                            if not conv_result.get("convergence_is_independent", True):
+                                # Emit WrongConvergenceDetectedEvent
+                                if hasattr(self._runtime, '_emit_event'):
+                                    from probos.events import WrongConvergenceDetectedEvent
+                                    wc_evt = WrongConvergenceDetectedEvent(
+                                        agents=conv_result["convergence_agents"],
+                                        departments=conv_result["convergence_departments"],
+                                        topic=conv_result.get("convergence_topic", topic_slug),
+                                        coherence=conv_result.get("convergence_coherence", 0.0),
+                                        independence_score=conv_result.get("convergence_independence_score", 0.0),
+                                        source="realtime",
+                                    )
+                                    try:
+                                        await self._runtime._emit_event(wc_evt.to_dict())
+                                    except Exception:
+                                        logger.debug("AD-583: Wrong convergence event emission failed", exc_info=True)
+                                # Bridge Alert (ALERT severity)
+                                await self._emit_wrong_convergence_bridge_alert(conv_result)
+                                logger.warning(
+                                    "AD-583: Wrong convergence detected — %d agents, independence=%.2f",
+                                    len(conv_result["convergence_agents"]),
+                                    conv_result.get("convergence_independence_score", 0.0),
+                                )
+
                             # AD-555: Record convergence for quality metrics
                             _quality_engine = getattr(self._runtime, '_notebook_quality_engine', None)
                             if _quality_engine:
@@ -2250,6 +2328,21 @@ class ProactiveCognitiveLoop:
                 await rt.ward_room_router.deliver_bridge_alert(alert)
             except Exception:
                 logger.debug("AD-554: Bridge alert delivery failed", exc_info=True)
+
+    async def _emit_wrong_convergence_bridge_alert(self, conv_result: dict) -> None:
+        """AD-583: Create and deliver a wrong convergence BridgeAlert."""
+        rt = self._runtime
+        if not rt or not hasattr(rt, 'bridge_alerts') or not rt.bridge_alerts:
+            return
+        if not hasattr(rt, 'ward_room_router') or not rt.ward_room_router:
+            return
+
+        alerts = rt.bridge_alerts.check_wrong_convergence(conv_result)
+        for alert in alerts:
+            try:
+                await rt.ward_room_router.deliver_bridge_alert(alert)
+            except Exception:
+                logger.debug("AD-583: Wrong convergence alert delivery failed", exc_info=True)
 
     async def _emit_divergence_bridge_alert(self, conv_result: dict) -> None:
         """AD-554: Create and deliver a divergence BridgeAlert."""

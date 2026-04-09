@@ -1279,6 +1279,8 @@ class CognitiveAgent(BaseAgent):
                     "**Challenge a crewmate** — initiate a game in the Recreation channel:\n"
                     "[CHALLENGE @callsign tictactoe]\n"
                     "Challenge when the mood is light and you want to build social bonds. "
+                    "If no one has played a game recently, consider initiating one — "
+                    "recreation strengthens crew cohesion. "
                     "Do NOT challenge during alert conditions or critical situations.\n\n"
                     "**Make a game move** — play your turn in an active game:\n"
                     "[MOVE position]\n"
@@ -1430,6 +1432,36 @@ class CognitiveAgent(BaseAgent):
 
         decision = await self.decide(observation)
         decision["intent"] = intent.intent  # AD-398: propagate intent name to act()
+
+        # AD-568e: Post-decision faithfulness verification
+        _faithfulness = self._check_response_faithfulness(decision, observation)
+        if _faithfulness is not None:
+            observation["_faithfulness"] = _faithfulness
+            if not _faithfulness.grounded:
+                logger.info(
+                    "AD-568e: Unfaithful response detected for %s (score=%.2f, overlap=%.2f, claims=%.2f)",
+                    self.callsign or self.agent_type,
+                    _faithfulness.score,
+                    _faithfulness.evidence_overlap,
+                    _faithfulness.unsupported_claim_ratio,
+                )
+
+        # AD-568e: Feed faithfulness signal to Counselor (fire-and-forget)
+        if _faithfulness is not None:
+            try:
+                _rt = getattr(self, '_runtime', None)
+                if _rt:
+                    _counselors = _rt.registry.get_by_pool("counselor")
+                    if _counselors:
+                        _counselor = _counselors[0]
+                        if hasattr(_counselor, 'record_faithfulness_event'):
+                            await _counselor.record_faithfulness_event(
+                                self.id,
+                                faithfulness_score=_faithfulness.score,
+                                grounded=_faithfulness.grounded,
+                            )
+            except Exception:
+                logger.debug("AD-568e: Counselor faithfulness update failed", exc_info=True)
 
         # AD-534c: compound procedure dispatch
         if decision.get("compound") and decision.get("procedure"):
@@ -2017,6 +2049,24 @@ class CognitiveAgent(BaseAgent):
                 parts.append("=== END CROSS-TIER KNOWLEDGE ===")
                 parts.append("")
 
+            # AD-568d: Ambient source attribution tag (cognitive proprioception)
+            _attr = observation.get("_source_attribution")
+            if _attr:
+                _sources_present = []
+                if _attr.episodic_count > 0:
+                    _sources_present.append(f"episodic memory ({_attr.episodic_count} episodes)")
+                if _attr.procedural_count > 0:
+                    _sources_present.append(f"learned procedures ({_attr.procedural_count})")
+                if _attr.oracle_used:
+                    _sources_present.append("ship's records")
+                if not _sources_present:
+                    _sources_present.append("training knowledge only")
+                parts.append(
+                    f"[Source awareness: Your response draws on: {', '.join(_sources_present)}. "
+                    f"Primary basis: {_attr.primary_source.value}.]"
+                )
+                parts.append("")
+
             session_history = params.get("session_history", [])
             if session_history:
                 parts.append("Previous conversation:")
@@ -2087,6 +2137,24 @@ class CognitiveAgent(BaseAgent):
                 )
                 wr_parts.append(observation["_oracle_context"])
                 wr_parts.append("=== END CROSS-TIER KNOWLEDGE ===")
+
+            # AD-568d: Ambient source attribution tag (cognitive proprioception)
+            _attr = observation.get("_source_attribution")
+            if _attr:
+                _sources_present = []
+                if _attr.episodic_count > 0:
+                    _sources_present.append(f"episodic memory ({_attr.episodic_count} episodes)")
+                if _attr.procedural_count > 0:
+                    _sources_present.append(f"learned procedures ({_attr.procedural_count})")
+                if _attr.oracle_used:
+                    _sources_present.append("ship's records")
+                if not _sources_present:
+                    _sources_present.append("training knowledge only")
+                wr_parts.append("")
+                wr_parts.append(
+                    f"[Source awareness: Your response draws on: {', '.join(_sources_present)}. "
+                    f"Primary basis: {_attr.primary_source.value}.]"
+                )
 
             if context:
                 wr_parts.append(f"\nConversation so far:\n{context}")
@@ -2201,6 +2269,24 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append("")
             else:
                 pt_parts.append("You have no stored episodic memories yet. Do not reference or invent past experiences you do not have.")
+                pt_parts.append("")
+
+            # AD-568d: Ambient source attribution tag (cognitive proprioception)
+            _attr = observation.get("_source_attribution")
+            if _attr:
+                _sources_present = []
+                if _attr.episodic_count > 0:
+                    _sources_present.append(f"episodic memory ({_attr.episodic_count} episodes)")
+                if _attr.procedural_count > 0:
+                    _sources_present.append(f"learned procedures ({_attr.procedural_count})")
+                if _attr.oracle_used:
+                    _sources_present.append("ship's records")
+                if not _sources_present:
+                    _sources_present.append("training knowledge only")
+                pt_parts.append(
+                    f"[Source awareness: Your response draws on: {', '.join(_sources_present)}. "
+                    f"Primary basis: {_attr.primary_source.value}.]"
+                )
                 pt_parts.append("")
 
             # Recent alerts
@@ -2402,6 +2488,13 @@ class CognitiveAgent(BaseAgent):
 
             _mem_id = getattr(self, 'sovereign_id', None) or self.id  # AD-441
 
+            # AD-570c: Try anchor-indexed recall for relational queries
+            _anchor_episodes = None
+            try:
+                _anchor_episodes = await self._try_anchor_recall(query, _mem_id)
+            except Exception:
+                logger.debug("AD-570c: Anchor recall failed, falling through to semantic", exc_info=True)
+
             # AD-567b: Use salience-weighted recall when available
             em = self._runtime.episodic_memory
             trust_net = getattr(self._runtime, 'trust_network', None)
@@ -2430,9 +2523,24 @@ class CognitiveAgent(BaseAgent):
                     _episode_count = await em.count_for_agent(_mem_id)
                 except Exception:
                     _episode_count = 1  # Assume non-zero on error — fail toward retrieval
+            # AD-568d: Thread confabulation rate from Counselor profile
+            _confab_rate = 0.0
+            try:
+                if self._runtime and hasattr(self._runtime, 'registry'):
+                    _counselor_agents = self._runtime.registry.get_by_pool("counselor")
+                    if _counselor_agents:
+                        _counselor = _counselor_agents[0]
+                        if hasattr(_counselor, 'get_profile'):
+                            _profile = _counselor.get_profile(self.id)
+                            if _profile:
+                                _confab_rate = getattr(_profile, 'confabulation_rate', 0.0)
+            except Exception:
+                logger.debug("AD-568d: Could not read confabulation rate, defaulting to 0.0")
+
             _retrieval_strategy = classify_retrieval_strategy(
                 _intent_type,
                 episodic_count=_episode_count,
+                recent_confabulation_rate=_confab_rate,  # AD-568d
             )
 
             scored_results = []
@@ -2504,6 +2612,15 @@ class CognitiveAgent(BaseAgent):
                 if not episodes and hasattr(em, 'recent_for_agent'):
                     episodes = await em.recent_for_agent(_mem_id, k=_tier_params.get("k", 3))
 
+                # AD-570c: Merge anchor recall with semantic recall
+                if _anchor_episodes:
+                    _seen_ids = {getattr(ep, 'id', id(ep)) for ep in _anchor_episodes}
+                    for ep in episodes:
+                        if getattr(ep, 'id', id(ep)) not in _seen_ids:
+                            _anchor_episodes.append(ep)
+                            _seen_ids.add(getattr(ep, 'id', id(ep)))
+                    episodes = _anchor_episodes
+
                 # AD-568a: Oracle Service for ORACLE-tier agents with DEEP strategy
                 if (
                     _recall_tier == RecallTier.ORACLE
@@ -2539,6 +2656,33 @@ class CognitiveAgent(BaseAgent):
             elif _retrieval_strategy == RetrievalStrategy.NONE:
                 _framing = compute_source_framing(strategy=RetrievalStrategy.NONE)
             observation["_source_framing"] = _framing
+
+            # AD-568d: Compute source attribution snapshot
+            _source_attribution = None
+            try:
+                from probos.cognitive.source_governance import compute_source_attribution
+                _procedural_count = 0
+                try:
+                    if hasattr(self, '_procedure_store') and self._procedure_store:
+                        _intent_procs = await self._procedure_store.get_by_intent(
+                            _intent_type
+                        ) if hasattr(self._procedure_store, 'get_by_intent') else []
+                        _procedural_count = len(_intent_procs) if _intent_procs else 0
+                except Exception:
+                    pass
+                _source_attribution = compute_source_attribution(
+                    retrieval_strategy=_retrieval_strategy,
+                    episodic_count=len(scored_results) if scored_results else 0,
+                    procedural_count=_procedural_count,
+                    oracle_used=bool(observation.get("_oracle_context")),
+                    source_framing=_framing,
+                    budget_adjustment=_budget_adj if '_budget_adj' in dir() else None,
+                    confabulation_rate=_confab_rate,
+                )
+                observation["_source_attribution"] = _source_attribution
+                observation["_source_attribution_obj"] = _source_attribution  # AD-568e: typed object for faithfulness checker
+            except Exception:
+                logger.debug("AD-568d: Source attribution computation failed")
 
             if episodes:
                 # AD-502: Include relative timestamps on recalled memories
@@ -2598,6 +2742,138 @@ class CognitiveAgent(BaseAgent):
             logger.debug("Failed to fetch episodic memory context", exc_info=True)
 
         return observation
+
+    def _build_episode_dag_summary(self, observation: dict) -> dict:
+        """AD-568e: Build dag_summary with faithfulness + source attribution metadata."""
+        summary: dict = {}
+        # AD-568d: Source attribution
+        _attr = observation.get("_source_attribution")
+        if _attr is not None:
+            try:
+                if hasattr(_attr, 'primary_source'):
+                    summary["source_attribution"] = {
+                        "primary_source": _attr.primary_source.value if hasattr(_attr.primary_source, 'value') else str(_attr.primary_source),
+                        "episodic_count": getattr(_attr, 'episodic_count', 0),
+                        "procedural_count": getattr(_attr, 'procedural_count', 0),
+                        "oracle_used": getattr(_attr, 'oracle_used', False),
+                        "confabulation_rate": getattr(_attr, 'confabulation_rate', 0.0),
+                    }
+                elif isinstance(_attr, dict):
+                    summary["source_attribution"] = _attr
+            except Exception:
+                pass
+        # AD-568e: Faithfulness
+        _faith = observation.get("_faithfulness")
+        if _faith is not None:
+            try:
+                summary["faithfulness_score"] = _faith.score
+                summary["faithfulness_grounded"] = _faith.grounded
+            except Exception:
+                pass
+        return summary
+
+    async def _try_anchor_recall(
+        self, query: str, agent_mem_id: str
+    ) -> list | None:
+        """AD-570c: Attempt anchor-indexed recall if query has relational signals."""
+        from probos.cognitive.source_governance import parse_anchor_query
+
+        # Gather known callsigns for bare-name validation
+        known_callsigns: list[str] = []
+        if self._runtime and hasattr(self._runtime, 'callsign_registry'):
+            try:
+                _all = self._runtime.callsign_registry.all_callsigns()
+                known_callsigns = list(_all.values()) if isinstance(_all, dict) else list(_all)
+            except Exception:
+                pass
+
+        anchor = parse_anchor_query(query, known_callsigns=known_callsigns)
+        if not anchor.has_anchor_signal:
+            return None
+
+        em = self._runtime.episodic_memory
+        if not hasattr(em, 'recall_by_anchor'):
+            return None
+
+        try:
+            results = await em.recall_by_anchor(
+                department=anchor.department,
+                trigger_agent=anchor.trigger_agent,
+                participants=anchor.participants if anchor.participants else None,
+                time_range=anchor.time_range,
+                semantic_query=anchor.semantic_query,
+                agent_id=agent_mem_id,
+                limit=10,
+            )
+        except Exception:
+            logger.debug("AD-570c: recall_by_anchor failed", exc_info=True)
+            return None
+
+        if isinstance(results, list) and results:
+            logger.debug(
+                "AD-570c: Anchor recall returned %d episodes (dept=%s, agent=%s, watch=%s)",
+                len(results), anchor.department, anchor.trigger_agent, anchor.watch_section,
+            )
+        return results if isinstance(results, list) and results else None
+
+    def _check_response_faithfulness(
+        self,
+        decision: dict,
+        observation: dict,
+    ) -> "FaithfulnessResult | None":
+        """AD-568e: Post-decision faithfulness check.
+
+        Compares the LLM response against recalled memories that were
+        in the observation context. Fire-and-forget — never blocks the
+        intent pipeline.
+
+        Returns FaithfulnessResult or None if check cannot be performed.
+        """
+        try:
+            from probos.cognitive.source_governance import (
+                check_faithfulness as _check_faith,
+                FaithfulnessResult,
+            )
+
+            # Extract response text from decision
+            response_text = decision.get("llm_output", "") or decision.get("response", "")
+            if not response_text:
+                return None
+
+            # Extract recalled memories from observation
+            raw_memories = observation.get("memories", [])
+            if not raw_memories:
+                return FaithfulnessResult(
+                    score=1.0,
+                    evidence_overlap=0.0,
+                    unsupported_claim_ratio=0.0,
+                    evidence_count=0,
+                    grounded=True,
+                    detail="No episodic evidence to verify against — parametric response",
+                )
+
+            # Build memory text list
+            memory_texts = []
+            for mem in raw_memories:
+                if isinstance(mem, dict):
+                    text = mem.get("user_input", "") or mem.get("content", "")
+                    if text:
+                        memory_texts.append(text)
+                elif isinstance(mem, str):
+                    memory_texts.append(mem)
+
+            # Get source attribution from observation (AD-568d)
+            source_attr = observation.get("_source_attribution_obj")
+
+            return _check_faith(
+                response_text=response_text,
+                recalled_memories=memory_texts,
+                source_attribution=source_attr,
+            )
+
+        except Exception:
+            logger.debug("AD-568e: Faithfulness check failed", exc_info=True)
+            return None
 
     async def _store_action_episode(self, intent: IntentMessage, observation: dict, report: dict) -> None:
         """AD-430c: Universal post-action episode storage for crew agents.
@@ -2690,6 +2966,7 @@ class CognitiveAgent(BaseAgent):
                     "agent_type": self.agent_type,
                     "source": source or "intent_bus",
                 }],
+                dag_summary=self._build_episode_dag_summary(observation),  # AD-568e
                 reflection=f"{callsign or self.agent_type} handled {intent.intent}: {result_text[:100]}",
                 source=_source,
                 anchors=AnchorFrame(

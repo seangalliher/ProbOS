@@ -1208,6 +1208,25 @@ class ProbOSRuntime:
             )
             for test_cls in (FrameDiversityProbe, SynthesisDetectionProbe, CrossDeptTriggerProbe, ConvergenceCorrectnessProbe, AnchorGroundedEmergenceProbe):
                 self._qualification_harness.register_test(test_cls())
+
+            # AD-582: Register memory competency probes
+            from probos.cognitive.memory_probes import (
+                SeededRecallProbe,
+                KnowledgeUpdateProbe,
+                TemporalReasoningProbe,
+                CrossAgentSynthesisProbe,
+                MemoryAbstentionProbe,
+                RetrievalAccuracyBenchmark,
+            )
+            for test_cls in (
+                SeededRecallProbe,
+                KnowledgeUpdateProbe,
+                TemporalReasoningProbe,
+                CrossAgentSynthesisProbe,
+                MemoryAbstentionProbe,
+                RetrievalAccuracyBenchmark,
+            ):
+                self._qualification_harness.register_test(test_cls())
         except Exception as e:
             logger.warning("QualificationStore failed to start: %s — continuing without", e)
             self._qualification_store = None

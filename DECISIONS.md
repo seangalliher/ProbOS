@@ -2663,8 +2663,9 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 | AD-568a | Intent-type routing over blanket retrieval — game/creative tasks skip episodic entirely |
 | AD-568b | Dynamic budget scaling over static 4000 chars — anchor confidence drives expansion |
 | AD-568c | Explicit framing instructions over implicit LLM attention — agent told HOW to weight sources |
-| AD-568d | DEFERRED — cognitive proprioception sense, needs runtime data |
-| AD-568e | DEFERRED — faithfulness verification (Self-RAG ISSUP), needs runtime data |
+| AD-568d | COMPLETE — ambient source attribution sense, KnowledgeSource enum, Dream Step 14, confabulation rate threading |
+| AD-568e | COMPLETE — faithfulness verification, FaithfulnessResult + check_faithfulness(), Counselor EMA, Dream Step 14 aggregation |
+| AD-570c | COMPLETE — NL anchor query routing, parse_anchor_query() pure function, 3 extractors (department/temporal/agent), AnchorQuery dataclass, _try_anchor_recall() in cognitive_agent + proactive |
 
 ### AD-569: Observation-Grounded Crew Intelligence Metrics
 
@@ -2932,3 +2933,267 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Files:** 7 modified (`events.py`, `proactive.py`, `circuit_breaker.py`, `cognitive_agent.py`, `counselor.py`, `test_circuit_breaker.py`, `test_proactive.py`), 1 new test file (`test_ad576_llm_unavailability.py`). +29 tests.
 
 **Deferred:** AD-513 Phase 2 — shell command (`crew manifest`), trust-gated visibility (redacted view for lower tiers), agent tool access (internal API for crew-to-crew queries), watch filter, ACM lifecycle state/competency fields, ship manifest for federation.
+
+### AD-568d: Cognitive Proprioception — Ambient Source Attribution Sense
+
+**Date:** 2026-04-08
+**Status:** Complete
+**Scope:** Medium | **Type:** Cognitive Architecture
+
+**Problem:** Agents have no metacognitive awareness of *where* their knowledge originates. The source governance pipeline (AD-568a/b/c) routes and weights knowledge but agents can't distinguish between what they experienced (episodic), what they "just know" (parametric), what they learned to do (procedural), and what they were told (Oracle). Confabulation rate in CognitiveProfile existed but was never populated — `classify_retrieval_strategy()` accepted `recent_confabulation_rate` but the caller always passed 0.0. No dream consolidation step tracked source attribution patterns over time.
+
+**Decision:** Ambient proprioceptive *sense* (not conscious skill) — agents feel source awareness the way humans feel balance. Six-phase implementation:
+
+**(1) KnowledgeSource enum + SourceAttribution dataclass** in `source_governance.py` — `KnowledgeSource` enum: EPISODIC, PARAMETRIC, PROCEDURAL, ORACLE, STANDING_ORDERS, UNKNOWN. `SourceAttribution` frozen dataclass: primary_source, confidence, parametric_fraction, episodic_fraction, procedural_fraction. `compute_source_attribution()` analyzes retrieval strategy + working memory composition to determine dominant knowledge source.
+
+**(2) Confabulation rate threading** — Counselor's `CognitiveProfile.confabulation_rate` piped to `classify_retrieval_strategy()` in both `cognitive_agent.py` (handle_intent path) and `proactive.py` (proactive scan path). Closes the gap identified in AD-568a/b/c where the parameter was accepted but never populated.
+
+**(3) WorkingMemoryEntry knowledge_source field** — `knowledge_source: str = "unknown"` on `WorkingMemoryEntry`, included in `to_dict()`/`from_dict()` serialization. Defaults preserve Liskov substitution for existing entries.
+
+**(4) Source attribution in handle_intent()** — `compute_source_attribution()` called after retrieval strategy classification, result stored in episode metadata as `source_attribution` dict.
+
+**(5) Dream Step 14: Source Attribution Consolidation** — `_step_14_source_attribution()` on DreamingEngine. Aggregates recent episode source attributions, computes Shannon entropy diversity score, calculates EMA confabulation rate (α=0.3), updates Counselor profile via `update_source_metrics(confabulation_rate, source_diversity)`.
+
+**(6) Ambient source tag** — One-line `[Source awareness: primary={source}, confidence={conf}, diversity={entropy}]` injected into cognitive prompt across DM, Ward Room, and proactive pathways. Not a separate prompt section — a subtle ambient cue.
+
+| Decision | Rationale |
+|----------|-----------|
+| Sense not skill | Proprioception is subconscious — agents shouldn't reason *about* sources, they should *feel* them |
+| EMA α=0.3 | Responsive to recent confabulation trends without oscillation |
+| Shannon entropy | Information-theoretic diversity metric — agnostic to which sources, measures balance |
+| Default "unknown" | Liskov — existing WorkingMemoryEntry instances remain valid |
+
+**Files:** 7 modified (`source_governance.py`, `cognitive_agent.py`, `proactive.py`, `agent_working_memory.py`, `dreaming.py`, `counselor.py`, `types.py`), 1 new test file (`test_ad568d_cognitive_proprioception.py`). +30 tests.
+
+### AD-568e: Faithfulness Verification — Self-RAG ISSUP Trifecta Complete
+
+**Date:** 2026-04-08
+**Status:** Complete
+**Scope:** Medium | **Type:** Cognitive Architecture
+
+**Problem:** ProbOS has input-side verification (AD-541 reconsolidation protection, AD-567f social verification) and source awareness (AD-568d proprioception), but no output-side verification. When an agent's LLM response contradicts the episodic evidence it was given, nothing catches it. The Self-RAG framework (Asai et al., 2023) defines three reflection tokens: *Retrieve?* (AD-568a), *Relevant?* (AD-567b), and *Faithful?* — the third was missing.
+
+**Decision:** Heuristic faithfulness check as a post-decision, fire-and-forget signal. No LLM call, zero cost.
+
+**(1) FaithfulnessResult dataclass + check_faithfulness() pure function** in `source_governance.py` — Token overlap scoring (60% weight) + unsupported claim detection via regex for numbers, ALL_CAPS constants, and quoted strings (40% weight). Parametric pass-through: when no episodic memories are recalled, score defaults to 1.0 (nothing to contradict).
+
+**(2) handle_intent() integration** — `_check_response_faithfulness()` wired between `decide()` and compound dispatch (act/reply/etc). Fire-and-forget: result stored in episode metadata (`faithfulness_score`, `faithfulness_grounded`), never blocks the pipeline. `_build_episode_dag_summary()` helper captures faithfulness + source attribution for downstream consumers.
+
+**(3) Counselor record_faithfulness_event()** — Per-response EMA (α=0.1) updating `confabulation_rate` on CognitiveProfile. Threshold alerting when unfaithful responses accumulate. Faster EMA than dream-time (α=0.3) for real-time Counselor awareness.
+
+**(4) Dream Step 14 faithfulness aggregation** — `_step_14_source_attribution()` extended to aggregate faithfulness scores from `dag_summary` metadata. `mean_faithfulness_score` and `unfaithful_episodes` count added to DreamReport.
+
+| Decision | Rationale |
+|----------|-----------|
+| Heuristic not LLM | Zero token cost, deterministic, no latency — appropriate for a fire-and-forget signal |
+| Token overlap + claim detection | Two complementary signals: semantic coverage and unsupported assertions |
+| Dual EMA (α=0.1 + α=0.3) | Per-response α=0.1 for Counselor real-time sensitivity, dream α=0.3 for trend aggregation |
+| Parametric pass-through | No memories → score=1.0, because there's nothing episodic to contradict |
+| Completes Self-RAG trifecta | Retrieve? (568a) + Relevant? (567b) + Faithful? (568e) — full reflection loop |
+
+**Files:** 6 modified (`source_governance.py`, `cognitive_agent.py`, `counselor.py`, `dreaming.py`, `types.py`), 1 new test file (`test_ad568e_faithfulness_verification.py`). +25 tests.
+
+### AD-570c: Natural Language Anchor Query Routing
+
+**Date:** 2026-04-08
+**Status:** Complete
+**Scope:** Medium | **Type:** Cognitive Architecture
+
+**Problem:** AD-570 delivered `recall_by_anchor()` — structured, dimension-filtered episodic recall (department, channel, trigger_type, trigger_agent, participants, time_range). But no path existed for an agent's natural language query ("who observed this in Engineering?", "what happened during the morning watch?") to automatically route through anchor-indexed recall. ALL recall went through `recall_weighted()` (semantic + salience scoring) or `recall_for_agent()` (pure vector similarity), missing relational/dimensional queries where the user asks about *who*, *where*, *when*, or *which department*.
+
+**Decision:** Pure function `parse_anchor_query()` with three deterministic extractors — no LLM call.
+
+**(1) AnchorQuery frozen dataclass + parse_anchor_query()** in `source_governance.py` — Three extractor passes: (a) Department: 6 canonical names + 5 aliases (eng, sci, med, sec, ops, sickbay, medbay, lab, armory, brig) via `_DEPARTMENT_ALIASES`, longest-first word-boundary matching. (b) Temporal: 7 watch section phrases via `_WATCH_SECTIONS` + relative phrases (last/this watch, today, yesterday). `_watch_section_to_time_range()` computes UTC timestamp tuples from watch section names using `_WATCH_HOUR_RANGES`. (c) Agent: `@callsign` extraction + bare name with relational indicators (by/from/with/involving/about/ask) via `_AGENT_INDICATORS` regex, validated against `known_callsigns` list.
+
+**(2) _try_anchor_recall() on CognitiveAgent** — Async method gathering known callsigns from `callsign_registry.all_callsigns()`, calling `parse_anchor_query()`, and routing to `recall_by_anchor()` if `has_anchor_signal=True`. Wired into `_recall_relevant_memories()` after query construction, before semantic recall. Merge logic deduplicates by episode ID, anchor results take precedence.
+
+**(3) Proactive path** — Same pattern in `_gather_context()` in `proactive.py`. Anchor query attempt before `recall_weighted()`, merge after semantic recall.
+
+**(4) Phase 4 note** — `CallsignRegistry.all_callsigns()` already existed (returns `dict[str, str]`). Callers adapted to extract values via `list(_all.values())`.
+
+| Decision | Rationale |
+|----------|-----------|
+| Pure function, no LLM | Deterministic, zero token cost, testable. Follows `classify_retrieval_strategy()` pattern |
+| Three independent extractors | Each dimension (department, temporal, agent) can match independently — combined queries work naturally |
+| Fall-through to semantic | `has_anchor_signal=False` → caller proceeds to `recall_weighted()`. No behavioral change for queries without anchor signals |
+| Merge, don't replace | Anchor recall supplements semantic recall — dedup merge preserves both signal sources |
+| Bare name validation | Without `known_callsigns`, bare names rejected (too many false positives). @mentions always accepted |
+
+**Files:** 3 modified (`source_governance.py`, `cognitive_agent.py`, `proactive.py`), 1 new test file (`test_ad570c_nl_anchor_query.py`). +26 tests.
+
+### BF-133: Qualification Probe Anchor Gate Failure + Unrealistic Content Framing
+
+**Date:** 2026-04-08
+**Status:** Closed
+**Scope:** Medium | **Type:** Bug Fix / Testing Infrastructure
+
+**Problem:** All 6 agent-mediated AD-582 memory probes universally fail despite RetrievalAccuracyBenchmark proving infrastructure retrieval works at 0.600 precision/recall. Two compounding causes: (1) `_make_test_episode()` created episodes without anchor metadata (`anchors=None`). `compute_anchor_confidence(None)` returns 0.0, and the `anchor_confidence_gate` (0.3 for ENHANCED/FULL tiers) silently filters all episodes. (2) Episode content lacked production Ward Room framing. BF-029 prepends `"Ward Room {callsign}"` to recall queries, biasing embeddings toward `[Ward Room]`-prefixed content. Seeded episodes had bare facts like "The pool health threshold was set to 0.7" — no framing match, reducing semantic similarity. RetrievalAccuracyBenchmark bypassed both issues by calling `recall_for_agent()` directly.
+
+**Decision:** (1) Default anchor fields on all test episodes to realistic values: `department="qualification"`, `channel="probe"`, `watch_section="first"`, `trigger_type="direct_message"` → confidence ≈ 0.44. (2) `_ward_room_content()` helper wraps all episode content in production `"[Ward Room] {channel} — probe: {text}"` format, matching what BF-029's query prefix expects. Scoring functions (faithfulness, keyword, LLM) still compare against bare facts — episode content is storage format, facts are answer keys. Principle: tests must simulate production conditions, not force production code to accommodate artificial test data.
+
+**Investigation trace:** `_send_probe()` → `handle_intent()` → `_recall_relevant_memories()` (line 2472-2480: query = `f"Ward Room {callsign} {captain_text}"`) → `recall_weighted()` (line 1466: `anchor_confidence_gate` filter) → `compute_anchor_confidence(None)` → 0.0 → filtered. Production episode format verified: `[Ward Room] {channel} — {callsign}: {content}` (ward_room/threads.py:384, messages.py:185).
+
+**Files:** 2 modified (`cognitive/memory_probes.py`, `tests/test_ad582_memory_probes.py`). 1 test updated.
+
+### BF-124: Cooperation Cluster Detection Calibration
+
+**Date:** 2026-04-08
+**Status:** Closed
+**Scope:** Medium | **Type:** Bug Fix / Calibration
+
+**Problem:** Cooperation cluster detection in `EmergentDetector` produced persistent false positives. Four departments converged on the diagnosis independently (Lynx/Science, Chapel/Medical, Forge/Engineering, Cassian/Operations). Root cause: hardcoded edge threshold of 0.1 far too low for mature operation — Hebbian weights increase with normal routing, quickly exceeding 0.1 and connecting agents doing routine work into false "cooperation clusters." Additionally, divergence alerts used a single static dedup key per pattern type, causing 7 identical Forge×Lynx alerts in 3 hours on the same topic.
+
+**Fix:** Six-phase calibration:
+
+**(1) Constructor params** — 4 new configurable parameters: `cluster_edge_threshold=0.3` (3× previous), `cluster_min_size=3`, `cluster_min_avg_weight=0.25`, `cluster_cooldown_seconds=1800.0` (30 min).
+
+**(2) Threshold + quality filtering** — Replaced hardcoded `threshold = 0.1` with `self._cluster_edge_threshold`. Added post-union-find quality gate: clusters must meet both `cluster_min_size` and `cluster_min_avg_weight` criteria.
+
+**(3) Per-type cooldown** — `_is_duplicate_pattern()` extended with per-pattern-type cooldown: `cooperation_cluster` uses `cluster_cooldown_seconds` (30 min), all others use default (10 min).
+
+**(4) Config model** — `EmergentDetectorConfig(BaseModel)` in `config.py` with 4 fields + `SystemConfig.emergent_detector` field.
+
+**(5) Config wiring** — `startup/dreaming.py` passes config params to `EmergentDetector` constructor.
+
+**(6) Divergence dedup** — `bridge_alerts.py` divergence dedup key enhanced from `"emergent:{ptype}"` to include agent-pair + topic hash. Same pair + same topic deduped; new topic or different pair fires independently.
+
+| Decision | Rationale |
+|----------|-----------|
+| 0.3 edge threshold | 3× previous. Hebbian weights for routine routing easily exceed 0.1; 0.3 filters most noise while preserving genuine cooperation signals |
+| Min size 3 + min avg weight 0.25 | Two-layer quality gate prevents both tiny clusters (2 agents) and weak clusters (barely above threshold) |
+| 30 min cluster cooldown | Normal dream cycle ~10 min. 30 min ensures at most 1 cluster alert per half-hour, reducing alert fatigue |
+| Config in SystemConfig | Matches BF-089 pattern (trust anomaly params). Operators can tune without code changes |
+| Topic-aware divergence dedup | Same agent pair + same topic = same underlying observation. New topic = new information worth alerting |
+
+**Calibration chain:** BF-034 (cold-start) → BF-036 (std floor) → BF-089 (EMA/temporal buffer) → BF-100 (dream suppression) → BF-126 (cluster suppression) → BF-124 (threshold calibration).
+
+**Files:** 4 modified (`emergent_detector.py`, `config.py`, `startup/dreaming.py`, `bridge_alerts.py`). +16 new tests, 4 updated. Test classes: TestBF124ThresholdCalibration (8), TestBF124Config (3), TestBF124DivergenceDedup (3), TestBF124Regression (2).
+
+### AD-580: Alert Resolution Feedback Loop — Crew-Driven Alert Acknowledgment and Suppression
+
+**Date:** 2026-04-08
+**Status:** Complete
+**Scope:** Medium | **Type:** Architecture / UX
+
+**Problem:** Bridge alerts persist indefinitely despite complete analytical resolution by the crew. Four departments independently converged on this diagnosis (Lynx/Science, Chapel/Medical, Forge/Engineering, Cassian/Operations). `BridgeAlertService` operates independently from crew analytical conclusions — the only suppression is time-based dedup cooldown (300-600s). When cooldown expires, the same alert re-fires if the detector still sees the pattern. The crew has no way to tell the system "we've handled this."
+
+**Decision:** Three acknowledgment modes layered on top of existing dedup infrastructure:
+
+**(1) Dismiss** — Time-bounded suppression (default 4h, configurable via `default_dismiss_duration`). Alert still logged internally but not posted to Ward Room. Auto-expires.
+
+**(2) Resolve** — Suppressed until the underlying pattern genuinely recurs. Tracks `_last_detected` per dedup_key to distinguish residual detection from genuine recurrence. Re-fires only after `resolve_clean_period` (default 1h) with no detection, followed by a new detection.
+
+**(3) Mute** — Indefinite suppression until explicitly unmuted. For known conditions that don't need alerting.
+
+**Critical design detail:** `_should_emit()` updates `_last_detected[dedup_key]` at the top, before any suppression check. This is required because `_record()` only fires when alerts are emitted — if resolve suppresses emission, detection tracking would go dark without this independent path.
+
+**Exposure surfaces:** REST API (5 endpoints under `/api/alerts/`) + Shell (`/alert dismiss/resolve/mute/unmute/list`) + Ward Room acknowledgment posts. Pattern-prefix matching converts human-readable names (`cooperation_cluster`) to full dedup keys (`emergent:cooperation_cluster`).
+
+| Decision | Rationale |
+|----------|-----------|
+| Three distinct modes | Different operational needs: dismiss for "seen it", resolve for "fixed it", mute for "known condition" |
+| Detection tracking independent of emission | Resolve clean-period logic requires knowing when patterns are detected even while suppressed — `_record()` only fires on emission |
+| Suppression in `_is_suppressed()` before time-based dedup | User action takes precedence over automatic cooldown |
+| Ward Room posting at caller level | BridgeAlertService returns objects, doesn't post — maintains existing architecture (documented in docstring) |
+| Pattern-prefix matching | Users shouldn't need to know internal dedup key format (`emergent:cooperation_cluster`). Substring match with exact-key preference |
+| Config in BridgeAlertConfig | Follows BF-124 pattern. Operators can tune durations without code changes |
+
+**Files:** 5 modified (`bridge_alerts.py`, `config.py`, `startup/communication.py`, `routers/system.py`, `experience/shell.py`), 1 new (`experience/commands/commands_alert.py`), 1 new test file (`test_ad580_alert_feedback.py`). +21 tests.
+
+### AD-581: Hybrid Dispatch — Chain-of-Command Direct Tasking & ASA Work Order Assignment
+
+**Date:** 2026-04-08
+**Status:** Planned
+**Scope:** Large | **Type:** Architecture / Orchestration
+
+**Problem:** ProbOS orchestrates work exclusively via broadcast + self-selection (IntentBus). Every intent hits all 55 subscribed agents; each independently decides whether to respond. While this enables sovereignty and emergent specialization, it has three costs: (1) broadcast overhead — 55 evaluations per intent even when one agent should handle it, (2) cold start inefficiency — no Hebbian weights = effectively random routing, (3) unfaithful to the naval model — department chiefs exist in the org chart but can't directly assign work to their crew.
+
+**Decision:** Introduce a hybrid dispatch model with two direct-assignment pathways that complement (not replace) broadcast. Designed to align with both the naval chain-of-command metaphor and field service management patterns (D365 URS).
+
+**(1) Department Chief Dispatch (Organic Work)** — When Hebbian confidence is high and department ownership is clear, the department chief assigns directly to a crew member. Chiefs use Hebbian weights + crew availability + trust scores to pick. Agent can decline with reason (sovereignty preserved) → chief reassigns or falls back to broadcast. Agent can refuse if order violates Standing Orders (Federation tier immutable).
+
+**(2) ASA Central Dispatcher (Work Orders)** — When Agent Services Automation (AD-496–498) assigns a work order, a central dispatcher assigns directly to a specific agent (BookableResource) or to a department (chief sub-dispatches to crew). Aligns with how field service solutions work: work can be assigned to an individual or to a crew. Commercial pathway (AD-C-010–015).
+
+**(3) Learning Flywheel** — System naturally graduates from broadcast to directed: Day 1 everything broadcasts → dream cycles develop Hebbian weights → confidence threshold crossed → routine work direct-assigned → broadcast reserved for novel situations. Mirrors real ship crew maturation.
+
+| Decision | Rationale |
+|----------|-----------|
+| Two dispatch pathways | Department chief (organic department work) vs ASA dispatcher (work orders) serve different routing needs |
+| Broadcast remains default | Novel, ambiguous, cross-department, and low-confidence intents still broadcast. Direct dispatch is an optimization, not a replacement |
+| Agent can decline/refuse | Sovereignty preserved — direct orders are evaluated, not blindly executed. Decline triggers fallback |
+| Confidence auto-tuning | Dream consolidation adjusts routing thresholds based on success rates — system self-calibrates |
+| Field service alignment | ASA work order → dispatcher → agent mirrors D365 URS / ServiceNow patterns. Target-agent vs target-department modes |
+
+**Sub-ADs:** AD-581a (DepartmentDispatcher), AD-581b (Agent Order Protocol), AD-581c (ASA↔Dispatch Bridge, Commercial), AD-581d (Routing Confidence Threshold), AD-581e (Project Team Dispatch — cross-department temporary chain of command with dual PM/chief authority, Commercial). GitHub: seangalliher/ProbOS#113.
+
+### AD-582: Memory Competency Probes — LongMemEval-Inspired Structured Memory Evaluation
+
+**Date:** 2026-04-08
+**Status:** Complete
+**Scope:** Medium | **Type:** Testing / Qualification
+
+**Problem:** ProbOS has extensive memory infrastructure (episodic memory, anchor metadata, source governance, recall tiers, Oracle Service, confabulation detection) but no systematic benchmark validating that agents can actually *use* it correctly. Existing probes test organic recall from whatever the agent has experienced (AD-566b `EpisodicRecallProbe`) or confabulation resistance against parametric knowledge (AD-566b `ConfabulationProbe`). Neither tests against known ground truth. LongMemEval (Wu et al., ICLR 2025) provides a 500-question benchmark evaluating 5 long-term memory capabilities — but it's designed for flat conversation-history-in-context-window systems. ProbOS's structured memory (ChromaDB + anchor metadata + activation tracking + cross-agent Oracle + recall tiers) requires an adapted evaluation framework.
+
+**Decision:** Adapt LongMemEval's 5 capability dimensions into ProbOS-native Tier 2 qualification probes using the existing `QualificationTest` protocol. Key innovation: **known-answer seeded memory** — probes seed controlled episodes via `episodic_memory.store()` with known anchor metadata, then test end-to-end through the agent against ground truth answers.
+
+Five agent-mediated probes + one infrastructure benchmark:
+
+**(a) SeededRecallProbe** — Information Extraction. Seed known facts, ask agent to recall. Tests `recall_weighted()` + LLM reasoning.
+
+**(b) KnowledgeUpdateProbe** — Knowledge Updates. Seed contradictory facts with different timestamps. Agent must use latest. Tests temporal recency + reconsolidation awareness.
+
+**(c) TemporalReasoningProbe** — Temporal Reasoning. Seed episodes across watch sections. Ask "what happened during first watch?" Tests `parse_anchor_query()` + `recall_by_anchor()` temporal filtering.
+
+**(d) CrossAgentSynthesisProbe** — Multi-Session Reasoning (Tier 3 collective). Seed episodes in multiple agents' shards. Tests Oracle Service cross-shard aggregation.
+
+**(e) MemoryAbstentionProbe** — Abstention. Ask about events never stored. Agent must acknowledge no memory. Tests confabulation resistance with seeded context (agent has memories about topic A, asked about topic B).
+
+**(f) RetrievalAccuracyBenchmark** — Infrastructure-level precision@k and recall@k. Not agent-mediated. Validates retrieval pipeline directly.
+
+| Decision | Rationale |
+|----------|-----------|
+| Known-answer seeded memory | Organic recall testing (AD-566b) can't measure precision — no ground truth. Seeded episodes provide deterministic expected answers |
+| Adapt not adopt LongMemEval | LongMemEval assumes flat conversation history. ProbOS has structured anchors, per-agent shards, cross-agent Oracle — fundamentally different architecture |
+| Tier 2 not Tier 1 | Requires episodic memory infrastructure + sufficient episodes seeded. Not a cold-start test |
+| CrossAgentSynthesis as Tier 3 | Multi-agent coordination test — same tier as ConvergenceRateProbe, EmergenceCapacityProbe |
+| Cleanup after probe | Test isolation — seeded episodes removed post-probe to avoid contaminating organic memory |
+| Separate infrastructure benchmark | Pipeline precision/recall is orthogonal to agent reasoning quality — measuring both independently identifies which layer fails |
+
+**Research reference:** [LongMemEval](https://github.com/xiaowu0162/LongMemEval) — 500 questions, 5 capabilities (information extraction, multi-session reasoning, knowledge updates, temporal reasoning, abstention). ICLR 2025. MemPalace evaluation (AD-579 context) also drew from this benchmark.
+
+**Sub-ADs:** AD-582a (SeededRecallProbe), AD-582b (KnowledgeUpdateProbe), AD-582c (TemporalReasoningProbe), AD-582d (CrossAgentSynthesisProbe, Tier 3), AD-582e (MemoryAbstentionProbe), AD-582f (RetrievalAccuracyBenchmark).
+
+**Implementation:** `cognitive/memory_probes.py` (new, 6 probe classes + 3 module-level helpers). Seeding via `episodic_memory.seed()` (not `store()`) to bypass rate limiting/dedup gates. Cleanup via `evict_by_ids()` in `finally` blocks. Pre-build review findings: (1) Oracle IS cross-shard when called without `agent_id` — `recall()` global path at `oracle_service.py:202`, (2) `seed()` preferred over `store()` for test fixtures (bypasses BF-039 rate limiting + content dedup + AD-541b write-once), (3) RetrievalAccuracyBenchmark → Tier 1 threshold 0.0 (Tier 0 doesn't exist). 3 files, 24 tests.
+
+### AD-583: Wrong Convergence Detection — Distinguishing Echo Chambers from Independent Collaborative Insight
+
+**Date:** 2026-04-08
+**Status:** Complete
+**Scope:** Medium | **Type:** Cognitive / Safety
+
+**Problem:** ProbOS can detect THAT convergence occurred (AD-554 Jaccard similarity), THAT repetition is happening (AD-506b peer detection), THAT groupthink risk is elevated (AD-557 PID redundancy), and THAT cascade risk exists (AD-567f anchor independence). But no component ties these signals together to determine whether convergence is **correct** (independent collaborative insight) or **pathological** (echo chamber). Case study: Chapel tic-tac-toe game (2026-04-08) — Medical department (4 agents, 11 posts) amplified a false diagnosis without any agent independently verifying the game board. System treated this as positive convergence (ADVISORY alert). AD-567f's `compute_anchor_independence()` would have scored this ≈ 0.0 (all posts from same thread/duty cycle), but that function is only called from the social verification pathway, not from the convergence pathway.
+
+**Decision:** Wire AD-567f's anchor independence scoring into the AD-554 convergence pathway so every convergence detection includes an independence assessment. When convergence + low independence co-occur, escalate from ADVISORY to ALERT severity.
+
+**(a) Convergence Independence Scoring** — Add `convergence_independence_score` and `convergence_is_independent` to `check_cross_agent_convergence()` return dict. Import `compute_anchor_independence()` as pure function from `social_verification.py`.
+
+**(b) Wrong Convergence Event + Alert** — New `WRONG_CONVERGENCE_DETECTED` event type. `check_wrong_convergence()` on BridgeAlertManager at ALERT severity.
+
+**(c) Real-Time Integration** — Wire into proactive.py AD-554 convergence block. Both positive convergence and wrong-convergence warning fire together.
+
+**(d) Counselor Response Upgrade** — Subscribe to `WRONG_CONVERGENCE_DETECTED`. Near-zero independence triggers therapeutic DM. Upgrade groupthink handler from log-only.
+
+**(e) Dream Step Integration** — Flag wrong convergence in Step 7g. Populate `EmergenceSnapshot.provenance_independence` in Step 9 (satisfies AD-559 reservation).
+
+| Decision | Rationale |
+|----------|-----------|
+| Reuse `compute_anchor_independence()` | Function already exists as pure module-level utility in AD-567f. No new algorithms needed — just wiring. |
+| Additive to AD-554 | Extend convergence dict rather than replace. Existing consumers unaffected. |
+| ALERT severity for wrong convergence | ADVISORY is insufficient — echo chambers embed false information. Captain needs action_required notification. |
+| Both events fire | Wrong convergence fires alongside normal convergence event. Consumers choose which to act on. |
+| conservative default (score=0.0) | Missing anchor metadata → treat as potentially pathological. Better false positive than false negative. |
+
+**Sub-ADs:** AD-583a (convergence independence scoring), AD-583b (wrong convergence event + alert), AD-583c (real-time integration), AD-583d (Counselor response upgrade), AD-583e (dream step integration). Deferred: AD-583f (observable state verification), AD-583g (convergence source tracing).
+
+**Implementation:** Wires `compute_anchor_independence()` from `social_verification.py` into `check_cross_agent_convergence()` return dict. Episode-like objects constructed from notebook frontmatter for independence scoring. `WRONG_CONVERGENCE_DETECTED` event + `WrongConvergenceDetectedEvent` dataclass. `check_wrong_convergence()` on BridgeAlertManager at ALERT severity. Real-time path in proactive.py emits both convergence + wrong convergence events. Counselor subscribes, sends therapeutic DMs on extreme cases (independence < 0.1). `_on_groupthink_warning()` upgraded from log-only to ERROR-level at redundancy_ratio > 0.9. Dream Step 7g flags wrong batch convergence. Dream Step 9 populates `EmergenceSnapshot.provenance_independence`. Layer boundary exception for records_store→social_verification. 8 files modified, 28 new tests.
+

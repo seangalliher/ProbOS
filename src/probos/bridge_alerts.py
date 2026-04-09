@@ -4,6 +4,8 @@ Monitors ship systems (VitalsMonitor, EmergentDetector, BehavioralMonitor,
 TrustNetwork) and posts significant events to the Ward Room as threads.
 Crew agents respond naturally via existing AD-407d mechanics.
 
+AD-580: Alert resolution feedback loop — dismiss/resolve/mute suppression.
+
 No LLM calls — purely mechanical threshold checking with deduplication.
 """
 
@@ -54,17 +56,32 @@ class BridgeAlertService:
         cooldown_seconds: float = 300,
         trust_drop_threshold: float = 0.15,
         trust_drop_alert_threshold: float = 0.25,
+        resolve_clean_period: float = 3600.0,
+        default_dismiss_duration: float = 14400.0,
     ) -> None:
         self._cooldown = cooldown_seconds
         self._trust_drop_threshold = trust_drop_threshold
         self._trust_drop_alert = trust_drop_alert_threshold
+        self._resolve_clean_period = resolve_clean_period
+        self._default_dismiss_duration = default_dismiss_duration
         self._recent: dict[str, float] = {}     # dedup_key -> monotonic timestamp
         self._alert_log: list[BridgeAlert] = []
         self._max_log = 200
 
+        # AD-580: Suppression state
+        self._dismissed: dict[str, float] = {}   # dedup_key -> expiry monotonic timestamp
+        self._resolved: dict[str, float] = {}    # dedup_key -> resolved-at monotonic timestamp
+        self._muted: set[str] = set()            # permanently muted keys
+        self._last_detected: dict[str, float] = {}  # dedup_key -> last detection monotonic timestamp
+
     def _should_emit(self, dedup_key: str) -> bool:
         """Check dedup cache. Returns True if alert should fire."""
         now = time.monotonic()
+        # AD-580: Always track detection timestamp (independent of emission)
+        self._last_detected[dedup_key] = now
+        # AD-580: Check suppression before time-based dedup
+        if self._is_suppressed(dedup_key):
+            return False
         last = self._recent.get(dedup_key)
         if last is not None and now - last < self._cooldown:
             return False
@@ -79,6 +96,106 @@ class BridgeAlertService:
         self._alert_log.append(alert)
         if len(self._alert_log) > self._max_log:
             self._alert_log = self._alert_log[-self._max_log:]
+
+    # --- AD-580: Alert suppression ---
+
+    def _is_suppressed(self, dedup_key: str) -> bool:
+        """Check if a dedup_key is currently suppressed."""
+        now = time.monotonic()
+
+        # Muted — indefinite suppression
+        if dedup_key in self._muted:
+            return True
+
+        # Dismissed — time-limited suppression
+        expiry = self._dismissed.get(dedup_key)
+        if expiry is not None:
+            if now < expiry:
+                return True
+            # Expired — clean up
+            del self._dismissed[dedup_key]
+
+        # Resolved — suppressed unless clean period has elapsed with no detection
+        resolved_at = self._resolved.get(dedup_key)
+        if resolved_at is not None:
+            last_det = self._last_detected.get(dedup_key, resolved_at)
+            # If the pattern was detected after resolution, the clean period
+            # hasn't started yet. Clean period starts from the last detection.
+            gap = now - last_det
+            if gap < self._resolve_clean_period:
+                # Still within clean period or pattern still active → suppress
+                return True
+            # Clean period elapsed with no detection → allow re-fire
+            del self._resolved[dedup_key]
+
+        return False
+
+    def dismiss_alert(self, dedup_key: str, duration_seconds: float | None = None) -> None:
+        """Suppress an alert type for a specified duration (default 4 hours)."""
+        duration = duration_seconds if duration_seconds is not None else self._default_dismiss_duration
+        self._dismissed[dedup_key] = time.monotonic() + duration
+        logger.info("Alert dismissed: %s for %.0fs", dedup_key, duration)
+
+    def resolve_alert(self, dedup_key: str) -> None:
+        """Mark an alert as resolved. Re-fires only after a clean detection period."""
+        self._resolved[dedup_key] = time.monotonic()
+        logger.info("Alert resolved: %s", dedup_key)
+
+    def mute_alert(self, dedup_key: str) -> None:
+        """Indefinitely suppress an alert type until unmuted."""
+        self._muted.add(dedup_key)
+        logger.info("Alert muted: %s", dedup_key)
+
+    def unmute_alert(self, dedup_key: str) -> None:
+        """Remove indefinite suppression for an alert type."""
+        self._muted.discard(dedup_key)
+        logger.info("Alert unmuted: %s", dedup_key)
+
+    def list_suppressed(self) -> list[dict]:
+        """Return all currently suppressed alert keys with mode and expiry."""
+        now = time.monotonic()
+        result: list[dict] = []
+
+        for key, expiry in self._dismissed.items():
+            remaining = expiry - now
+            if remaining > 0:
+                result.append({
+                    "dedup_key": key, "mode": "dismissed",
+                    "remaining_seconds": round(remaining, 1),
+                })
+
+        for key, resolved_at in self._resolved.items():
+            last_det = self._last_detected.get(key, resolved_at)
+            gap = now - last_det
+            result.append({
+                "dedup_key": key, "mode": "resolved",
+                "clean_gap_seconds": round(gap, 1),
+                "clean_period_needed": self._resolve_clean_period,
+            })
+
+        for key in self._muted:
+            result.append({"dedup_key": key, "mode": "muted"})
+
+        return result
+
+    def find_matching_keys(self, pattern: str) -> list[str]:
+        """Find dedup keys matching a pattern (exact or substring).
+
+        Returns exact match first if found, otherwise all substring matches.
+        """
+        # Collect all known keys from recent emissions + suppression state
+        all_keys: set[str] = set()
+        all_keys.update(self._recent.keys())
+        all_keys.update(self._dismissed.keys())
+        all_keys.update(self._resolved.keys())
+        all_keys.update(self._muted)
+        all_keys.update(self._last_detected.keys())
+
+        if pattern in all_keys:
+            return [pattern]
+
+        matches = [k for k in sorted(all_keys) if pattern in k]
+        return matches
 
     # --- Signal processors ---
 
@@ -405,6 +522,40 @@ class BridgeAlertService:
             alerts.append(a)
         return alerts
 
+    def check_wrong_convergence(self, conv_result: dict) -> list[BridgeAlert]:
+        """AD-583: Escalate convergence with low anchor independence."""
+        alerts: list[BridgeAlert] = []
+        if not conv_result.get("convergence_detected"):
+            return alerts
+        if conv_result.get("convergence_is_independent", True):
+            return alerts  # Independent convergence — no escalation
+
+        topic = conv_result.get("convergence_topic", "unknown")
+        agents = conv_result.get("convergence_agents", [])
+        departments = conv_result.get("convergence_departments", [])
+        independence = conv_result.get("convergence_independence_score", 0.0)
+        key = f"wrong_convergence:{topic}"
+
+        if self._should_emit(key):
+            a = BridgeAlert(
+                id=str(uuid.uuid4()),
+                severity=AlertSeverity.ALERT,  # Escalated from ADVISORY
+                source="convergence_monitor",
+                alert_type="wrong_convergence_detected",
+                title="Possible Echo Chamber Detected",
+                detail=(
+                    f"{len(agents)} agents from {len(departments)} departments "
+                    f"converged on '{topic}' but anchor independence is only "
+                    f"{independence:.0%}. Claims may be echoing rather than "
+                    f"independently verified."
+                ),
+                department=None,
+                dedup_key=key,
+            )
+            self._record(a)
+            alerts.append(a)
+        return alerts
+
     def check_divergence(self, divergence_data: dict) -> list[BridgeAlert]:
         """AD-554: Evaluate cross-agent divergence and emit bridge alerts."""
         alerts: list[BridgeAlert] = []
@@ -415,7 +566,10 @@ class BridgeAlertService:
         agents = divergence_data.get("divergence_agents", [])
         departments = divergence_data.get("divergence_departments", [])
         similarity = divergence_data.get("divergence_similarity", 0.0)
-        key = f"divergence:{topic}"
+        # BF-124: Agent-pair-aware dedup — same pair + same topic suppressed,
+        # but new topics for the same pair or new pairs on same topic still fire
+        _pair = ":".join(sorted(agents[:2])) if len(agents) >= 2 else "unknown"
+        key = f"divergence:{_pair}:{topic}"
 
         if self._should_emit(key):
             a = BridgeAlert(
