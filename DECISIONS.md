@@ -3198,7 +3198,7 @@ Five agent-mediated probes + one infrastructure benchmark:
 ### AD-583f/583g: Observable State Verification + Convergence Source Tracing
 
 **Date:** 2026-04-09
-**Status:** Planned (build prompt ready)
+**Status:** Complete (2026-04-09)
 **Depends on:** AD-583, AD-567f, AD-506b, AD-569
 
 **Problem:** AD-583 detects wrong convergence at the notebook level but Ward Room echo chambers — where agents amplify false claims in real-time discussion posts — are invisible. Case study (2026-04-09): 4 Medical agents spiraled a stale game engagement into fabricated systemic concerns ("critical medical monitoring failure", "treatment tracking integrity") over multiple Ward Room posts. No notebook writes occurred. AD-583 saw nothing. AD-506b peer repetition fired but is post-level, not thread-level amplification analysis.
@@ -3214,7 +3214,7 @@ Five agent-mediated probes + one infrastructure benchmark:
 | New `get_thread_posts_temporal()` query | Existing `get_recent_activity()` lacks `parent_id`. `get_thread()` nests into tree. Neither provides flat temporal ordering needed for source tracing. |
 | Three initial state providers (Recreation, Trust, Health) | Cover the three observable domains that appeared in the Chapel echo chamber case study. Additional providers (Hebbian, emergence) deferred. |
 
-**Build prompt:** `prompts/ad-583fg-observable-state-source-tracing.md` — 4 phases, 4 new files, 8 modified files, ~40 tests.
+**Build prompt:** `prompts/ad-583fg-observable-state-source-tracing.md` — 4 phases, 4 new files, 10 modified files, 42 tests.
 
-**Implementation:** Wires `compute_anchor_independence()` from `social_verification.py` into `check_cross_agent_convergence()` return dict. Episode-like objects constructed from notebook frontmatter for independence scoring. `WRONG_CONVERGENCE_DETECTED` event + `WrongConvergenceDetectedEvent` dataclass. `check_wrong_convergence()` on BridgeAlertManager at ALERT severity. Real-time path in proactive.py emits both convergence + wrong convergence events. Counselor subscribes, sends therapeutic DMs on extreme cases (independence < 0.1). `_on_groupthink_warning()` upgraded from log-only to ERROR-level at redundancy_ratio > 0.9. Dream Step 7g flags wrong batch convergence. Dream Step 9 populates `EmergenceSnapshot.provenance_independence`. Layer boundary exception for records_store→social_verification. 8 files modified, 28 new tests.
+**Implementation:** AD-583g: `ThreadEchoAnalyzer` in `ward_room/thread_echo.py` with `PropagationStep`/`ThreadEchoResult` frozen dataclasses, `ThreadManagerProtocol` (ISP), flat temporal post retrieval via new `get_thread_posts_temporal()` on ThreadManager, Jaccard similarity chain detection, anchor independence scoring. AD-583f: `ObservableStateVerifier` in `cognitive/observable_state.py` with `StateProvider` runtime-checkable Protocol, `VerificationResult` frozen dataclass, three providers (RecreationStateProvider, TrustStateProvider, SystemHealthProvider). Integration: `check_and_trace_echo()` helper in `_helpers.py`, `set_echo_services()` late-binding on ThreadManager/MessageStore/WardRoomService (Law of Demeter), events (`WARD_ROOM_ECHO_DETECTED`, `OBSERVABLE_STATE_MISMATCH`) with custom `to_dict()` (not BaseEvent), bridge alerts (ADVISORY/ALERT severity), Counselor subscriptions with therapeutic DMs, behavioral metrics `_compute_convergence_correctness()` converted sync→async for verifier integration, startup wiring in `finalize.py`. 4 new files (`thread_echo.py`, `observable_state.py`, 2 test files), 10 modified files, 42 tests.
 

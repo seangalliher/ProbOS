@@ -4684,7 +4684,7 @@ Phase 3 — **Hebbian Scope Reduction** (AD-571c):
 
 **Deferred:** AD-559 (full provenance model — per-claim evidence chains). AD-583h (cross-thread echo detection), AD-583i (automated correction).
 
-### Observable State Verification + Convergence Source Tracing (AD-583f/583g) *(planned, OSS)*
+### Observable State Verification + Convergence Source Tracing (AD-583f/583g) *(complete, OSS)*
 
 **AD-583f/583g: Observable State Verification + Convergence Source Tracing** *(OSS, depends: AD-583, AD-567f, AD-506b, AD-569)* — AD-583 catches notebook-level echo chambers but Ward Room discussions — where agents amplify false claims in real-time posts — are invisible. Case study: 4 Medical agents spiraled a stale game engagement into fabricated "critical medical monitoring failure" over multiple posts in one thread, with zero notebook writes. AD-583 saw nothing. Two complementary capabilities close this gap:
 

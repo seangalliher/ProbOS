@@ -556,6 +556,65 @@ class BridgeAlertService:
             alerts.append(a)
         return alerts
 
+    def check_ward_room_echo(self, echo_result: dict) -> list[BridgeAlert]:
+        """AD-583g: Alert when Ward Room thread shows echo amplification."""
+        if not echo_result.get("echo_detected"):
+            return []
+        independence = echo_result.get("anchor_independence_score", 1.0)
+        if independence >= 0.3:
+            return []  # Independent enough — not an echo chamber
+
+        chain_length = echo_result.get("chain_length", 0)
+        source = echo_result.get("source_callsign", "unknown")
+        thread_id = echo_result.get("thread_id", "")
+        affected = echo_result.get("affected_callsigns", [])
+
+        dedup_key = f"ward_room_echo:{thread_id}"
+        if not self._should_emit(dedup_key):
+            return []
+
+        alert = BridgeAlert(
+            id=str(uuid.uuid4()),
+            severity=AlertSeverity.ALERT,
+            source="ward_room_monitor",
+            alert_type="ward_room_echo_detected",
+            title="Ward Room Echo Chamber Detected",
+            detail=(
+                f"Thread shows {chain_length}-agent amplification chain "
+                f"(independence={independence:.2f}). Source: {source}. "
+                f"Affected: {', '.join(affected)}."
+            ),
+            department=None,
+            dedup_key=dedup_key,
+        )
+        self._record(alert)
+        return [alert]
+
+    def check_observable_mismatch(self, verification_result: dict) -> list[BridgeAlert]:
+        """AD-583f: Alert when agent claims contradict observable state."""
+        claims_failed = verification_result.get("claims_failed", 0)
+        if claims_failed == 0:
+            return []
+
+        thread_id = verification_result.get("thread_id", "")
+        dedup_key = f"state_mismatch:{thread_id}"
+        if not self._should_emit(dedup_key):
+            return []
+
+        severity = AlertSeverity.ALERT if claims_failed >= 2 else AlertSeverity.ADVISORY
+        alert = BridgeAlert(
+            id=str(uuid.uuid4()),
+            severity=severity,
+            source="observable_state_monitor",
+            alert_type="observable_state_mismatch",
+            title="Agent Claims Contradict Observable State",
+            detail=verification_result.get("ground_truth_summary", ""),
+            department=None,
+            dedup_key=dedup_key,
+        )
+        self._record(alert)
+        return [alert]
+
     def check_divergence(self, divergence_data: dict) -> list[BridgeAlert]:
         """AD-554: Evaluate cross-agent divergence and emit bridge alerts."""
         alerts: list[BridgeAlert] = []

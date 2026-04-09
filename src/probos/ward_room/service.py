@@ -131,6 +131,29 @@ class WardRoomService(EventEmitterMixin):
         if self._messages:
             self._messages.set_social_verification(svc)
 
+    def set_echo_services(
+        self,
+        thread_echo_analyzer: Any = None,
+        observable_state_verifier: Any = None,
+        bridge_alerts: Any = None,
+        ward_room_router: Any = None,
+    ) -> None:
+        """AD-583f/583g: Delegate echo detection wiring to sub-services."""
+        if self._threads:
+            self._threads.set_echo_services(
+                thread_echo_analyzer=thread_echo_analyzer,
+                observable_state_verifier=observable_state_verifier,
+                bridge_alerts=bridge_alerts,
+                ward_room_router=ward_room_router,
+            )
+        if self._messages:
+            self._messages.set_echo_services(
+                thread_echo_analyzer=thread_echo_analyzer,
+                observable_state_verifier=observable_state_verifier,
+                bridge_alerts=bridge_alerts,
+                ward_room_router=ward_room_router,
+            )
+
     # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------

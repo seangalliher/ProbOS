@@ -41,6 +41,19 @@ class MessageStore:
         """AD-567f: Late-bind social verification service."""
         self._social_verification = svc
 
+    def set_echo_services(
+        self,
+        thread_echo_analyzer: Any = None,
+        observable_state_verifier: Any = None,
+        bridge_alerts: Any = None,
+        ward_room_router: Any = None,
+    ) -> None:
+        """AD-583f/583g: Late-bind echo detection and state verification services."""
+        self._thread_echo_analyzer = thread_echo_analyzer
+        self._observable_state_verifier = observable_state_verifier
+        self._bridge_alerts = bridge_alerts
+        self._ward_room_router = ward_room_router
+
     async def _check_cascade_risk(
         self, peer_matches: list[dict], author_id: str,
         author_callsign: str, post_body: str, channel_id: str,
@@ -51,6 +64,22 @@ class MessageStore:
             self._social_verification, self._emit,
             author_id=author_id, author_callsign=author_callsign,
             post_body=post_body, channel_id=channel_id,
+            peer_matches=peer_matches,
+        )
+
+    async def _check_echo_trace(
+        self, peer_matches: list[dict], thread_id: str, channel_id: str,
+    ) -> None:
+        """AD-583f/583g: Delegate to helper for echo tracing."""
+        from probos.ward_room._helpers import check_and_trace_echo
+        await check_and_trace_echo(
+            getattr(self, '_thread_echo_analyzer', None),
+            getattr(self, '_observable_state_verifier', None),
+            self._emit,
+            getattr(self, '_bridge_alerts', None),
+            getattr(self, '_ward_room_router', None),
+            thread_id=thread_id,
+            channel_id=channel_id,
             peer_matches=peer_matches,
         )
 
@@ -161,6 +190,9 @@ class MessageStore:
 
         # AD-567f: Check cascade risk when peer similarity is detected
         await self._check_cascade_risk(peer_matches, author_id, author_callsign, body, thread_channel_id)
+
+        # AD-583f/583g: Echo chain tracing when peer similarity detected
+        await self._check_echo_trace(peer_matches, thread_id, thread_channel_id)
 
         # AD-430a: Store reply as authoring agent's episodic memory
         if self._episodic_memory and author_id:

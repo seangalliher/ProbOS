@@ -514,6 +514,21 @@ class SocialVerificationConfig(BaseModel):
     expose_episode_content: bool = False  # MUST stay False — privacy boundary
 
 
+class SourceTracingConfig(BaseModel):
+    """AD-583g: Ward Room echo detection and source tracing."""
+
+    echo_min_chain_length: int = 3
+    echo_similarity_threshold: float = 0.4
+    echo_analysis_enabled: bool = True
+
+
+class ObservableStateConfig(BaseModel):
+    """AD-583f: Observable state verification."""
+
+    verification_enabled: bool = True
+    max_claims_per_thread: int = 10
+
+
 class WorkingMemoryConfig(BaseModel):
     """AD-573: Unified agent working memory configuration."""
 
@@ -869,6 +884,8 @@ class SystemConfig(BaseModel):
     orientation: OrientationConfig = OrientationConfig()
     social_verification: SocialVerificationConfig = SocialVerificationConfig()
     working_memory: WorkingMemoryConfig = WorkingMemoryConfig()
+    source_tracing: SourceTracingConfig = SourceTracingConfig()
+    observable_state: ObservableStateConfig = ObservableStateConfig()
 
 
 def load_config(path: str | Path) -> SystemConfig:

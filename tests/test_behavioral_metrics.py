@@ -16,6 +16,7 @@ Tests across 11 test classes covering:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import deque
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -496,7 +497,9 @@ class TestConvergenceCorrectness:
 
         with patch("probos.cognitive.behavioral_metrics.embed_text", return_value=[0.5] * 10), \
              patch("probos.cognitive.behavioral_metrics._cosine_similarity", return_value=0.9):
-            result = engine._compute_convergence_correctness(threads)
+            result = asyncio.get_event_loop().run_until_complete(
+                engine._compute_convergence_correctness(threads)
+            )
             assert result["total"] > 0
             assert result["unverified"] == result["total"]
 
@@ -518,7 +521,9 @@ class TestConvergenceCorrectness:
 
         with patch("probos.cognitive.behavioral_metrics.embed_text", return_value=[0.5] * 10), \
              patch("probos.cognitive.behavioral_metrics._cosine_similarity", return_value=0.9):
-            result = engine._compute_convergence_correctness(threads)
+            result = asyncio.get_event_loop().run_until_complete(
+                engine._compute_convergence_correctness(threads)
+            )
             assert result["correctness_rate"] is None
             assert result["correct"] == 0
             assert result["incorrect"] == 0
@@ -541,7 +546,9 @@ class TestConvergenceCorrectness:
 
         with patch("probos.cognitive.behavioral_metrics.embed_text", return_value=[0.5] * 10), \
              patch("probos.cognitive.behavioral_metrics._cosine_similarity", return_value=0.2):
-            result = engine._compute_convergence_correctness(threads)
+            result = asyncio.get_event_loop().run_until_complete(
+                engine._compute_convergence_correctness(threads)
+            )
             assert result["total"] == 0
 
 

@@ -146,6 +146,8 @@ class EventType(str, Enum):
     CASCADE_CONFABULATION_DETECTED = "cascade_confabulation_detected"  # AD-567f
     CORROBORATION_VERIFIED = "corroboration_verified"  # AD-567f
     WRONG_CONVERGENCE_DETECTED = "wrong_convergence_detected"  # AD-583
+    WARD_ROOM_ECHO_DETECTED = "ward_room_echo_detected"  # AD-583g
+    OBSERVABLE_STATE_MISMATCH = "observable_state_mismatch"  # AD-583f
 
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
@@ -574,6 +576,50 @@ class WrongConvergenceDetectedEvent(BaseEvent):
     coherence: float = 0.0
     independence_score: float = 0.0
     source: str = ""  # "realtime" or "dream_consolidation"
+
+
+@dataclass
+class WardRoomEchoDetectedEvent:
+    """AD-583g: Echo amplification chain detected in Ward Room thread."""
+    thread_id: str = ""
+    channel_id: str = ""
+    source_callsign: str = ""
+    chain_length: int = 0
+    independence_score: float = 1.0
+    affected_callsigns: list[str] = field(default_factory=list)
+    source: str = "ward_room_echo"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "thread_id": self.thread_id,
+            "channel_id": self.channel_id,
+            "source_callsign": self.source_callsign,
+            "chain_length": self.chain_length,
+            "independence_score": self.independence_score,
+            "affected_callsigns": self.affected_callsigns,
+            "source": self.source,
+        }
+
+
+@dataclass
+class ObservableStateMismatchEvent:
+    """AD-583f: Agent claims contradicted by observable system state."""
+    thread_id: str = ""
+    claims_checked: int = 0
+    claims_failed: int = 0
+    ground_truth_summary: str = ""
+    agents_involved: list[str] = field(default_factory=list)
+    source: str = "observable_state"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "thread_id": self.thread_id,
+            "claims_checked": self.claims_checked,
+            "claims_failed": self.claims_failed,
+            "ground_truth_summary": self.ground_truth_summary,
+            "agents_involved": self.agents_involved,
+            "source": self.source,
+        }
 
 
 @dataclass

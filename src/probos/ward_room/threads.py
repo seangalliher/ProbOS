@@ -110,6 +110,19 @@ class ThreadManager:
         """AD-567f: Late-bind social verification service."""
         self._social_verification = svc
 
+    def set_echo_services(
+        self,
+        thread_echo_analyzer: Any = None,
+        observable_state_verifier: Any = None,
+        bridge_alerts: Any = None,
+        ward_room_router: Any = None,
+    ) -> None:
+        """AD-583f/583g: Late-bind echo detection and state verification services."""
+        self._thread_echo_analyzer = thread_echo_analyzer
+        self._observable_state_verifier = observable_state_verifier
+        self._bridge_alerts = bridge_alerts
+        self._ward_room_router = ward_room_router
+
     async def _check_cascade_risk(
         self, peer_matches: list[dict], author_id: str,
         author_callsign: str, post_body: str, channel_id: str,
@@ -120,6 +133,22 @@ class ThreadManager:
             self._social_verification, self._emit,
             author_id=author_id, author_callsign=author_callsign,
             post_body=post_body, channel_id=channel_id,
+            peer_matches=peer_matches,
+        )
+
+    async def _check_echo_trace(
+        self, peer_matches: list[dict], thread_id: str, channel_id: str,
+    ) -> None:
+        """AD-583f/583g: Delegate to helper for echo tracing."""
+        from probos.ward_room._helpers import check_and_trace_echo
+        await check_and_trace_echo(
+            getattr(self, '_thread_echo_analyzer', None),
+            getattr(self, '_observable_state_verifier', None),
+            self._emit,
+            getattr(self, '_bridge_alerts', None),
+            getattr(self, '_ward_room_router', None),
+            thread_id=thread_id,
+            channel_id=channel_id,
             peer_matches=peer_matches,
         )
 
@@ -369,6 +398,9 @@ class ThreadManager:
         # AD-567f: Check cascade risk when peer similarity is detected
         await self._check_cascade_risk(peer_matches, author_id, author_callsign, body, channel_id)
 
+        # AD-583f/583g: Echo chain tracing when peer similarity detected
+        await self._check_echo_trace(peer_matches, thread.id, channel_id)
+
         # AD-430a: Store thread creation as authoring agent's episodic memory
         if self._episodic_memory and author_id:
             try:
@@ -546,6 +578,57 @@ class ThreadManager:
                 roots.append(post)
 
         return {"thread": thread_dict, "posts": roots}
+
+    async def get_thread_posts_temporal(self, thread_id: str) -> list[dict[str, Any]]:
+        """Return all posts in a thread, flat and ordered by created_at.
+
+        Unlike get_thread() which nests into a tree, this returns a flat list
+        suitable for temporal flow analysis. Includes parent_id for reply-chain
+        reconstruction. The thread's own body is included as the first entry.
+
+        AD-583g: Foundation for source tracing — trace how content propagates
+        through a thread over time.
+        """
+        if not self._db:
+            return []
+
+        # Include the thread body as the first entry
+        result: list[dict[str, Any]] = []
+        async with self._db.execute(
+            "SELECT id, channel_id, author_id, body, created_at, "
+            "author_callsign FROM threads WHERE id = ?", (thread_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return []
+            result.append({
+                "id": row[0],
+                "thread_id": row[0],
+                "parent_id": None,
+                "author_id": row[2],
+                "author_callsign": row[5] or "",
+                "body": row[3] or "",
+                "created_at": row[4],
+            })
+
+        # Flat list of all posts ordered by time
+        async with self._db.execute(
+            "SELECT id, thread_id, parent_id, author_id, body, created_at, "
+            "author_callsign FROM posts WHERE thread_id = ? ORDER BY created_at",
+            (thread_id,)
+        ) as cursor:
+            async for row in cursor:
+                result.append({
+                    "id": row[0],
+                    "thread_id": row[1],
+                    "parent_id": row[2],
+                    "author_id": row[3],
+                    "author_callsign": row[6] or "",
+                    "body": row[4] or "",
+                    "created_at": row[5],
+                })
+
+        return result
 
     # ------------------------------------------------------------------
     # DM archival

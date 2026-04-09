@@ -596,6 +596,8 @@ class CounselorAgent(CognitiveAgent):
                     EventType.QUALIFICATION_DRIFT_DETECTED, # AD-566c
                     EventType.CASCADE_CONFABULATION_DETECTED, # AD-567f
                     EventType.WRONG_CONVERGENCE_DETECTED,    # AD-583
+                    EventType.WARD_ROOM_ECHO_DETECTED,       # AD-583g
+                    EventType.OBSERVABLE_STATE_MISMATCH,      # AD-583f
                 ],
             )
 
@@ -811,6 +813,10 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_cascade_confabulation(data)
             elif event_type == EventType.WRONG_CONVERGENCE_DETECTED.value:
                 await self._on_wrong_convergence_detected(data)
+            elif event_type == EventType.WARD_ROOM_ECHO_DETECTED.value:
+                await self._on_ward_room_echo(data)
+            elif event_type == EventType.OBSERVABLE_STATE_MISMATCH.value:
+                await self._on_observable_mismatch(data)
         except Exception:
             logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
 
@@ -1374,6 +1380,78 @@ class CounselorAgent(CognitiveAgent):
                     await self._send_therapeutic_dm(agent_id, callsign, message)
                 except Exception:
                     logger.debug("AD-583: Failed to DM %s", callsign, exc_info=True)
+
+    async def _on_ward_room_echo(self, data: dict[str, Any]) -> None:
+        """AD-583g: Counsel agents involved in Ward Room echo chain."""
+        source = data.get("source_callsign", "")
+        affected = data.get("affected_callsigns", [])
+        chain_length = data.get("chain_length", 0)
+        independence = data.get("independence_score", 1.0)
+
+        if independence >= 0.3:
+            return  # Independent enough
+
+        logger.warning(
+            "AD-583g: Ward Room echo detected — source=%s, chain=%d, "
+            "independence=%.3f",
+            source, chain_length, independence,
+        )
+
+        for callsign in affected:
+            if callsign == source:
+                continue  # Don't counsel the source — they made the original observation
+            # Resolve agent_id from callsign
+            agent_id = callsign
+            if self._registry:
+                for aid, agent in self._registry.items():
+                    if getattr(agent, 'callsign', '') == callsign:
+                        agent_id = aid
+                        break
+            if agent_id == self.id:
+                continue
+            try:
+                await self._send_therapeutic_dm(
+                    agent_id, callsign,
+                    f"I noticed you reinforced {source}'s conclusion along with "
+                    f"{chain_length - 1} others. Consider whether you independently "
+                    f"verified the claim before agreeing, or if you were responding "
+                    f"to social signal rather than evidence.",
+                )
+            except Exception:
+                logger.debug("AD-583g: Failed to DM %s", callsign, exc_info=True)
+
+    async def _on_observable_mismatch(self, data: dict[str, Any]) -> None:
+        """AD-583f: Counsel agents whose claims contradict observable state."""
+        agents = data.get("agents_involved", [])
+        summary = data.get("ground_truth_summary", "")
+        claims_failed = data.get("claims_failed", 0)
+
+        if claims_failed == 0:
+            return
+
+        logger.warning(
+            "AD-583f: Observable state mismatch — %d claims failed, agents=%s",
+            claims_failed, agents,
+        )
+
+        for callsign in agents[:3]:  # Limit DMs
+            agent_id = callsign
+            if self._registry:
+                for aid, agent in self._registry.items():
+                    if getattr(agent, 'callsign', '') == callsign:
+                        agent_id = aid
+                        break
+            if agent_id == self.id:
+                continue
+            try:
+                await self._send_therapeutic_dm(
+                    agent_id, callsign,
+                    f"A recent discussion contained claims that don't match "
+                    f"observable system state. {summary} Consider verifying "
+                    f"claims against actual system state before amplifying.",
+                )
+            except Exception:
+                logger.debug("AD-583f: Failed to DM %s", callsign, exc_info=True)
 
     async def _on_fragmentation_warning(self, data: dict[str, Any]) -> None:
         """AD-557: Respond to fragmentation risk — synergy near zero."""

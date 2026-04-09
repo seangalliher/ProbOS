@@ -85,9 +85,18 @@ class BehavioralMetricsEngine:
     - Read-only consumer of Ward Room and episodic memory data
     """
 
-    def __init__(self, config: BehavioralMetricsConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: BehavioralMetricsConfig | None = None,
+        observable_state_verifier: Any = None,  # AD-583f
+    ) -> None:
         self._config = config or BehavioralMetricsConfig()
         self._snapshots: deque[BehavioralSnapshot] = deque(maxlen=self._config.max_snapshots)
+        self._verifier = observable_state_verifier
+
+    def set_observable_verifier(self, verifier: Any) -> None:
+        """AD-583f: Late-bind observable state verifier."""
+        self._verifier = verifier
 
     @property
     def latest_snapshot(self) -> BehavioralSnapshot | None:
@@ -184,7 +193,7 @@ class BehavioralMetricsEngine:
         frame_result = self._compute_frame_diversity(qualifying_threads, get_department)
         synthesis_result = self._compute_synthesis_detection(qualifying_threads)
         trigger_result = self._compute_cross_dept_triggers(qualifying_threads, get_department)
-        convergence_result = self._compute_convergence_correctness(qualifying_threads)
+        convergence_result = await self._compute_convergence_correctness(qualifying_threads)
         anchor_result = await self._compute_anchor_grounded_emergence(
             qualifying_threads, episodic_memory
         )
@@ -457,15 +466,15 @@ class BehavioralMetricsEngine:
     # Metric 4: Convergence Correctness
     # ------------------------------------------------------------------
 
-    def _compute_convergence_correctness(
+    async def _compute_convergence_correctness(
         self,
         threads: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Metric 4: Convergence Correctness.
 
         Detect convergence (multiple agents saying similar things) and track
-        whether converged conclusions have verifiable outcomes. Ground truth
-        integration deferred to AD-569d.
+        whether converged conclusions have verifiable outcomes. AD-583f
+        populates correctness via ObservableStateVerifier (satisfies AD-569d).
         """
         cfg = self._config
         convergence_events = 0
@@ -503,6 +512,30 @@ class BehavioralMetricsEngine:
 
             if total_pairs > 0 and agreeing_pairs / total_pairs >= 0.5:
                 convergence_events += 1
+
+        # AD-583f: Verify converging claims against observable state
+        if self._verifier and convergence_events > 0:
+            all_claims: list[str] = []
+            for thread in threads:
+                for post in thread["posts"]:
+                    body = post.get("body", "")
+                    if body:
+                        all_claims.append(body[:500])
+
+            try:
+                results = await self._verifier.verify_claims(all_claims[:10])
+                correct = sum(1 for r in results if r.verified is True)
+                incorrect = sum(1 for r in results if r.verified is False)
+                total_verified = correct + incorrect
+                return {
+                    "total": convergence_events,
+                    "correct": correct,
+                    "incorrect": incorrect,
+                    "unverified": convergence_events - total_verified,
+                    "correctness_rate": correct / total_verified if total_verified > 0 else None,
+                }
+            except Exception:
+                logger.debug("AD-583f: Verification in convergence correctness failed", exc_info=True)
 
         return {
             "total": convergence_events,

@@ -152,6 +152,62 @@ async def finalize_startup(
         emit_event_fn=runtime._emit_event,
     )
 
+    # --- AD-583f/583g: Observable State Verification + Source Tracing ---
+    try:
+        from probos.ward_room.thread_echo import ThreadEchoAnalyzer
+        from probos.cognitive.observable_state import (
+            ObservableStateVerifier,
+            RecreationStateProvider,
+            TrustStateProvider,
+            SystemHealthProvider,
+        )
+
+        src_cfg = config.source_tracing
+        obs_cfg = config.observable_state
+
+        # Build state providers from available services
+        providers = []
+        if runtime.recreation_service:
+            providers.append(RecreationStateProvider(runtime.recreation_service))
+        if runtime.trust_network:
+            providers.append(TrustStateProvider(runtime.trust_network))
+
+        observable_verifier = (
+            ObservableStateVerifier(providers, max_claims=obs_cfg.max_claims_per_thread)
+            if providers and obs_cfg.verification_enabled else None
+        )
+
+        # Thread echo analyzer
+        thread_echo = None
+        if src_cfg.echo_analysis_enabled and runtime.ward_room:
+            thread_echo = ThreadEchoAnalyzer(
+                thread_manager=runtime.ward_room._threads,
+                min_chain_length=src_cfg.echo_min_chain_length,
+                similarity_threshold=src_cfg.echo_similarity_threshold,
+            )
+
+        # Late-bind to Ward Room via public set_echo_services (Law of Demeter)
+        if runtime.ward_room and (thread_echo or observable_verifier):
+            runtime.ward_room.set_echo_services(
+                thread_echo_analyzer=thread_echo,
+                observable_state_verifier=observable_verifier,
+                bridge_alerts=getattr(runtime, 'bridge_alerts', None),
+                ward_room_router=ward_room_router,
+            )
+
+        # Store verifier on runtime for behavioral metrics access
+        runtime._observable_state_verifier = observable_verifier
+
+        # Wire verifier into behavioral metrics engine
+        bme = getattr(runtime, 'behavioral_metrics_engine', None)
+        if bme and observable_verifier:
+            bme.set_observable_verifier(observable_verifier)
+
+        logger.info("AD-583f/583g: Echo detection + observable state verification wired")
+    except Exception as e:
+        logger.warning("AD-583f/583g: Setup failed: %s — continuing without", e)
+        runtime._observable_state_verifier = None
+
     # BF-125: Subscribe to GAME_COMPLETED to clean both players' working memory
     from probos.events import EventType
     from probos.crew_utils import is_crew_agent  # BF-127
