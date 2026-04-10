@@ -2801,6 +2801,7 @@ class CognitiveAgent(BaseAgent):
                 trigger_agent=anchor.trigger_agent,
                 participants=anchor.participants if anchor.participants else None,
                 time_range=anchor.time_range,
+                watch_section=anchor.watch_section,  # BF-134
                 semantic_query=anchor.semantic_query,
                 agent_id=agent_mem_id,
                 limit=10,

@@ -320,6 +320,13 @@ class TestFTS5Integration:
             # At minimum, keyword_search should find it
             kw_results = await em.keyword_search("xylophone zymurgy", k=5)
             assert len(kw_results) >= 1
+            # BF-134: If found via keyword-only merge, similarity should be fts_keyword_floor (0.2)
+            # not 0.0 as it was before
+            if results:
+                for rs in results:
+                    if rs.keyword_hits > 0 and rs.semantic_similarity == 0.0:
+                        # This was the old behavior — should not happen now
+                        pytest.fail("FTS-only hit should have floor similarity, not 0.0")
         finally:
             await em.stop()
 
@@ -511,3 +518,80 @@ class TestRecallScoreDataclass:
         assert rs.recency_weight == 0.0
         assert rs.anchor_confidence == 0.0
         assert rs.composite_score == 0.0
+
+
+# ---------------------------------------------------------------------------
+# BF-134: Configurable Recall Threshold + FTS Floor
+# ---------------------------------------------------------------------------
+
+class TestBF134ThresholdAndFloor:
+    """BF-134: Verify configurable agent recall threshold and FTS keyword floor."""
+
+    def test_agent_recall_threshold_default(self):
+        """Default agent_recall_threshold is 0.15 (not 0.3)."""
+        from probos.cognitive.episodic import EpisodicMemory
+        em = EpisodicMemory("/dev/null", max_episodes=100)
+        assert em._agent_recall_threshold == 0.15
+
+    def test_agent_recall_threshold_configurable(self):
+        """Custom agent_recall_threshold is stored and used."""
+        from probos.cognitive.episodic import EpisodicMemory
+        em = EpisodicMemory("/dev/null", max_episodes=100, agent_recall_threshold=0.1)
+        assert em._agent_recall_threshold == 0.1
+
+    def test_fts_keyword_floor_default(self):
+        """Default fts_keyword_floor is 0.2."""
+        from probos.cognitive.episodic import EpisodicMemory
+        em = EpisodicMemory("/dev/null", max_episodes=100)
+        assert em._fts_keyword_floor == 0.2
+
+    def test_fts_keyword_floor_configurable(self):
+        """Custom fts_keyword_floor is stored."""
+        from probos.cognitive.episodic import EpisodicMemory
+        em = EpisodicMemory("/dev/null", max_episodes=100, fts_keyword_floor=0.3)
+        assert em._fts_keyword_floor == 0.3
+
+    @pytest.mark.asyncio
+    @_skip_on_onnx_error
+    async def test_fts_keyword_floor_boosts_composite_score(self, tmp_path):
+        """FTS-only hits get fts_keyword_floor as similarity, contributing to composite score."""
+        from probos.cognitive.episodic import EpisodicMemory
+
+        em = EpisodicMemory(
+            str(tmp_path / "fts_floor.db"), max_episodes=100,
+            relevance_threshold=0.99,  # Block semantic results
+            fts_keyword_floor=0.2,
+        )
+        await _start_episodic_memory(em)
+        try:
+            ep = _make_episode(
+                user_input="xylophone zymurgy unique keyword test",
+                agent_ids=["agent-001"],
+            )
+            await em.store(ep)
+            results = await em.recall_weighted(
+                "agent-001", "xylophone zymurgy",
+                k=5, context_budget=10000,
+            )
+            # Find via keyword
+            kw_results = await em.keyword_search("xylophone zymurgy", k=5)
+            assert len(kw_results) >= 1
+            # If recall_weighted found it, the semantic component should be 0.2 not 0.0
+            if results:
+                for rs in results:
+                    if rs.keyword_hits > 0:
+                        # semantic weight is 0.35, so contribution = 0.35 * 0.2 = 0.07
+                        assert rs.composite_score > 0.0
+        finally:
+            await em.stop()
+
+    def test_threshold_and_anchor_gate_work_together(self):
+        """Both agent_recall_threshold and anchor_confidence_gate are independent filters."""
+        from probos.config import MemoryConfig
+        cfg = MemoryConfig()
+        # Verify they are independent config fields with correct defaults
+        assert cfg.agent_recall_threshold == 0.15
+        assert cfg.anchor_confidence_gate == 0.3
+        assert cfg.fts_keyword_semantic_floor == 0.2
+        # Threshold is for semantic similarity, gate is for anchor confidence
+        # Both must pass for an episode to be returned

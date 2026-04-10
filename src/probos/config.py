@@ -258,6 +258,16 @@ class MemoryConfig(BaseModel):
     collection_name: str = "probos_episodes"
     max_episodes: int = 100000
     relevance_threshold: float = 0.7
+    # BF-134: Agent-scoped recall threshold (replaces hardcoded 0.3 from BF-027).
+    # MiniLM question-vs-statement cosine similarity is typically 0.15-0.35.
+    # Anchor confidence gate provides quality filtering, allowing semantic
+    # threshold to be relaxed.
+    agent_recall_threshold: float = 0.15
+    # BF-134: Minimum semantic similarity floor for FTS5 keyword-only hits.
+    # Episodes found by keyword search but not semantic search get this
+    # floor instead of 0.0, preventing keyword-relevant episodes from
+    # being buried by the composite score formula.
+    fts_keyword_semantic_floor: float = 0.2
     similarity_threshold: float = 0.6  # Semantic similarity threshold for recall/fuzzy lookup
     verify_content_hash: bool = True    # AD-541e: Verify episode hashes on recall
     eviction_audit_enabled: bool = True  # AD-541f: Append-only eviction audit trail

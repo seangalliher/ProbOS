@@ -286,6 +286,8 @@ async def _boot_runtime(
         relevance_threshold=config.memory.relevance_threshold,
         verify_content_hash=config.memory.verify_content_hash,
         eviction_audit=eviction_audit,
+        agent_recall_threshold=config.memory.agent_recall_threshold,
+        fts_keyword_floor=config.memory.fts_keyword_semantic_floor,
     )
 
     runtime = ProbOSRuntime(

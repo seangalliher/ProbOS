@@ -78,6 +78,11 @@ async def migrate_episode_agent_ids(
         metadatas = result.get("metadatas", [])
         documents = result.get("documents", [])
 
+        # Collect batch for single upsert (BF-134: avoid per-episode round-trips)
+        batch_ids: list[str] = []
+        batch_metas: list[dict] = []
+        batch_docs: list[str] = []
+
         for i, ep_id in enumerate(ids_list):
             meta = metadatas[i] if i < len(metadatas) else {}
             agent_ids_json = meta.get("agent_ids_json", "[]")
@@ -100,12 +105,18 @@ async def migrate_episode_agent_ids(
                 # Recompute content hash after agent ID migration (AD-541e)
                 ep = EpisodicMemory._metadata_to_episode(ep_id, doc or "", meta)
                 meta["content_hash"] = compute_episode_hash(ep)
-                episodic_memory._collection.upsert(
-                    ids=[ep_id],
-                    metadatas=[meta],
-                    documents=[doc or ""],
-                )
-                migrated += 1
+                batch_ids.append(ep_id)
+                batch_metas.append(meta)
+                batch_docs.append(doc or "")
+
+        # Single batched upsert instead of N individual calls
+        if batch_ids:
+            episodic_memory._collection.upsert(
+                ids=batch_ids,
+                metadatas=batch_metas,
+                documents=batch_docs,
+            )
+        migrated = len(batch_ids)
 
         elapsed = time.time() - t0
         if migrated > 0:
@@ -145,17 +156,24 @@ async def migrate_anchor_metadata(episodic_memory: "EpisodicMemory") -> int:
         metadatas = result.get("metadatas", [])
         documents = result.get("documents", [])
 
+        # Collect batch for single upsert (BF-134: avoid per-episode round-trips)
+        batch_ids: list[str] = []
+        batch_metas: list[dict] = []
+        batch_docs: list[str] = []
+
         for i, ep_id in enumerate(ids_list):
             meta = metadatas[i] if i < len(metadatas) else {}
-            # Migration guard: if anchor_department already present, skip
-            if "anchor_department" in meta:
-                continue
+            # BF-134: Check for the newest promoted field, not just any promoted field.
+            # Episodes migrated by AD-570 have anchor_department but lack anchor_watch_section.
+            if "anchor_watch_section" in meta:
+                continue  # Already has all promoted fields
 
             anchors_json = meta.get("anchors_json", "")
             anchor_department = ""
             anchor_channel = ""
             anchor_trigger_type = ""
             anchor_trigger_agent = ""
+            anchor_watch_section = ""
 
             if anchors_json:
                 try:
@@ -164,6 +182,7 @@ async def migrate_anchor_metadata(episodic_memory: "EpisodicMemory") -> int:
                     anchor_channel = anchors_data.get("channel", "") or ""
                     anchor_trigger_type = anchors_data.get("trigger_type", "") or ""
                     anchor_trigger_agent = anchors_data.get("trigger_agent", "") or ""
+                    anchor_watch_section = anchors_data.get("watch_section", "") or ""
                 except (json.JSONDecodeError, TypeError):
                     pass
 
@@ -171,14 +190,20 @@ async def migrate_anchor_metadata(episodic_memory: "EpisodicMemory") -> int:
             meta["anchor_channel"] = anchor_channel
             meta["anchor_trigger_type"] = anchor_trigger_type
             meta["anchor_trigger_agent"] = anchor_trigger_agent
+            meta["anchor_watch_section"] = anchor_watch_section
 
-            doc = documents[i] if i < len(documents) else ""
+            batch_ids.append(ep_id)
+            batch_metas.append(meta)
+            batch_docs.append(documents[i] if i < len(documents) else "")
+
+        # Single batched upsert instead of N individual calls
+        if batch_ids:
             episodic_memory._collection.upsert(
-                ids=[ep_id],
-                metadatas=[meta],
-                documents=[doc or ""],
+                ids=batch_ids,
+                metadatas=batch_metas,
+                documents=[d or "" for d in batch_docs],
             )
-            migrated += 1
+        migrated = len(batch_ids)
 
         elapsed = time.time() - t0
         if migrated > 0:
@@ -358,12 +383,16 @@ class EpisodicMemory:
         relevance_threshold: float = 0.7,
         verify_content_hash: bool = True,
         eviction_audit: Any = None,
+        agent_recall_threshold: float = 0.15,
+        fts_keyword_floor: float = 0.2,
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
         self.relevance_threshold = relevance_threshold
         self._verify_on_recall = verify_content_hash
         self._eviction_audit = eviction_audit
+        self._agent_recall_threshold = agent_recall_threshold  # BF-134
+        self._fts_keyword_floor = fts_keyword_floor  # BF-134
         self._client: Any = None
         self._collection: Any = None
         self._fts_db: Any = None  # AD-567b: FTS5 sidecar
@@ -938,7 +967,7 @@ class EpisodicMemory:
             # The sovereign shard filter (agent_ids) already constrains results.
             # Conversational queries from the Captain ("what did you post?") are
             # semantically distant from stored episode text — 0.7 filters too aggressively.
-            agent_recall_threshold = min(self.relevance_threshold, 0.3)
+            agent_recall_threshold = min(self.relevance_threshold, self._agent_recall_threshold)
             if similarity < agent_recall_threshold:
                 continue
             metadata = result["metadatas"][0][i] if result["metadatas"] else {}
@@ -1219,11 +1248,13 @@ class EpisodicMemory:
             metadata["anchor_channel"] = ep.anchors.channel or ""
             metadata["anchor_trigger_type"] = ep.anchors.trigger_type or ""
             metadata["anchor_trigger_agent"] = ep.anchors.trigger_agent or ""
+            metadata["anchor_watch_section"] = ep.anchors.watch_section or ""
         else:
             metadata["anchor_department"] = ""
             metadata["anchor_channel"] = ""
             metadata["anchor_trigger_type"] = ""
             metadata["anchor_trigger_agent"] = ""
+            metadata["anchor_watch_section"] = ""
         return metadata
 
     @staticmethod
@@ -1292,7 +1323,7 @@ class EpisodicMemory:
             return []
 
         scored: list[tuple[Episode, float]] = []
-        agent_recall_threshold = min(self.relevance_threshold, 0.3)
+        agent_recall_threshold = min(self.relevance_threshold, self._agent_recall_threshold)
         for i, doc_id in enumerate(result["ids"][0]):
             distance = result["distances"][0][i] if result["distances"] else 0.0
             similarity = 1.0 - distance
@@ -1421,7 +1452,7 @@ class EpisodicMemory:
                         if agent_id in agent_ids:
                             document = result["documents"][0] if result["documents"] else ""
                             ep = self._metadata_to_episode(ep_id, document, metadata)
-                            ep_map[ep_id] = (ep, 0.0)  # No semantic score for keyword-only hits
+                            ep_map[ep_id] = (ep, self._fts_keyword_floor)  # BF-134: keyword presence implies baseline relevance
                 except Exception:
                     pass
 
@@ -1499,6 +1530,7 @@ class EpisodicMemory:
         channel: str = "",
         trigger_type: str = "",
         trigger_agent: str = "",
+        watch_section: str = "",
         agent_id: str = "",
         participants: list[str] | None = None,
         time_range: tuple[float, float] | None = None,
@@ -1559,6 +1591,8 @@ class EpisodicMemory:
             conditions.append({"anchor_trigger_type": trigger_type})
         if trigger_agent:
             conditions.append({"anchor_trigger_agent": trigger_agent})
+        if watch_section:
+            conditions.append({"anchor_watch_section": watch_section})
         if time_range:
             conditions.append({"timestamp": {"$gte": time_range[0]}})
             conditions.append({"timestamp": {"$lte": time_range[1]}})

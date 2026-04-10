@@ -73,6 +73,19 @@ class TestMetadataPromotion:
         assert meta["anchor_channel"] == "ward_room"
         assert meta["anchor_trigger_type"] == "proactive_think"
         assert meta["anchor_trigger_agent"] == "echo"
+        assert meta["anchor_watch_section"] == ""  # BF-134: present but empty
+
+    def test_episode_to_metadata_promotes_watch_section(self):
+        """BF-134: watch_section is promoted to top-level metadata."""
+        ep = _make_episode(
+            anchors=AnchorFrame(
+                department="medical",
+                watch_section="first_watch",
+            ),
+        )
+        meta = EpisodicMemory._episode_to_metadata(ep)
+        assert meta["anchor_watch_section"] == "first_watch"
+        assert meta["anchor_department"] == "medical"
 
     def test_episode_to_metadata_empty_anchors(self):
         ep = _make_episode(anchors=None)
@@ -81,6 +94,7 @@ class TestMetadataPromotion:
         assert meta["anchor_channel"] == ""
         assert meta["anchor_trigger_type"] == ""
         assert meta["anchor_trigger_agent"] == ""
+        assert meta["anchor_watch_section"] == ""  # BF-134
 
     def test_episode_to_metadata_partial_anchors(self):
         ep = _make_episode(anchors=_anchor(department="engineering"))
@@ -151,7 +165,8 @@ class TestMigration:
         try:
             # Manually insert episode WITHOUT promoted fields
             anchors_data = {"department": "medical", "channel": "ward_room",
-                            "trigger_type": "dm", "trigger_agent": "bones"}
+                            "trigger_type": "dm", "trigger_agent": "bones",
+                            "watch_section": "first_watch"}
             mem._collection.add(
                 ids=["ep-001"],
                 documents=["test doc"],
@@ -179,6 +194,7 @@ class TestMigration:
             assert meta["anchor_channel"] == "ward_room"
             assert meta["anchor_trigger_type"] == "dm"
             assert meta["anchor_trigger_agent"] == "bones"
+            assert meta["anchor_watch_section"] == "first_watch"  # BF-134
         finally:
             await mem.stop()
 
@@ -485,5 +501,112 @@ class TestRecallByAnchorEdgeCases:
             call_args = tracker.record_batch_access.call_args
             assert results[0].id in call_args[0][0]
             assert call_args[1]["access_type"] == "recall"
+        finally:
+            await mem.stop()
+
+
+# ---------------------------------------------------------------------------
+# BF-134: Watch Section Recall Tests
+# ---------------------------------------------------------------------------
+
+class TestWatchSectionRecall:
+    """BF-134: Verify recall_by_anchor() watch_section filtering."""
+
+    @pytest.mark.asyncio
+    async def test_recall_by_anchor_watch_section_filter(self, tmp_path):
+        """Filter by watch_section returns only matching episodes."""
+        mem = EpisodicMemory(
+            db_path=tmp_path / "ws1.db", max_episodes=100, relevance_threshold=0.0
+        )
+        await mem.start()
+        try:
+            for i in range(2):
+                await mem.store(_make_episode(
+                    user_input=f"first watch event {i}",
+                    anchors=AnchorFrame(watch_section="first_watch", department="medical"),
+                ))
+            for i in range(2):
+                await mem.store(_make_episode(
+                    user_input=f"second watch event {i}",
+                    anchors=AnchorFrame(watch_section="second_watch", department="medical"),
+                ))
+            results = await mem.recall_by_anchor(watch_section="first_watch")
+            assert len(results) == 2
+            for ep in results:
+                assert ep.anchors.watch_section == "first_watch"
+        finally:
+            await mem.stop()
+
+    @pytest.mark.asyncio
+    async def test_recall_by_anchor_watch_section_combined_with_department(self, tmp_path):
+        """Combined department + watch_section filter returns correct intersection."""
+        mem = EpisodicMemory(
+            db_path=tmp_path / "ws2.db", max_episodes=100, relevance_threshold=0.0
+        )
+        await mem.start()
+        try:
+            await mem.store(_make_episode(
+                user_input="medical first",
+                anchors=AnchorFrame(department="medical", watch_section="first_watch"),
+            ))
+            await mem.store(_make_episode(
+                user_input="medical second",
+                anchors=AnchorFrame(department="medical", watch_section="second_watch"),
+            ))
+            await mem.store(_make_episode(
+                user_input="engineering first",
+                anchors=AnchorFrame(department="engineering", watch_section="first_watch"),
+            ))
+            results = await mem.recall_by_anchor(
+                department="medical", watch_section="first_watch")
+            assert len(results) == 1
+            assert results[0].user_input == "medical first"
+        finally:
+            await mem.stop()
+
+    @pytest.mark.asyncio
+    async def test_migrate_backfills_watch_section_on_already_migrated(self, tmp_path):
+        """BF-134: Episodes with anchor_department but no anchor_watch_section get backfilled."""
+        mem = EpisodicMemory(
+            db_path=tmp_path / "ws_mig.db", max_episodes=100, relevance_threshold=0.3
+        )
+        await mem.start()
+        try:
+            # Simulate AD-570-migrated episode: has anchor_department but NOT anchor_watch_section
+            anchors_data = {"department": "science", "channel": "ward_room",
+                            "trigger_type": "proactive_think", "trigger_agent": "atlas",
+                            "watch_section": "second_watch"}
+            mem._collection.add(
+                ids=["ep-already-migrated"],
+                documents=["partially migrated doc"],
+                metadatas=[{
+                    "timestamp": time.time(),
+                    "intent_type": "",
+                    "dag_summary_json": "{}",
+                    "outcomes_json": "[]",
+                    "reflection": "",
+                    "agent_ids_json": '["agent-001"]',
+                    "duration_ms": 10.0,
+                    "shapley_values_json": "{}",
+                    "trust_deltas_json": "[]",
+                    "source": "direct",
+                    "anchors_json": json.dumps(anchors_data),
+                    "content_hash": "",
+                    "_hash_v": 2,
+                    # Has the 4 AD-570 fields but NOT anchor_watch_section
+                    "anchor_department": "science",
+                    "anchor_channel": "ward_room",
+                    "anchor_trigger_type": "proactive_think",
+                    "anchor_trigger_agent": "atlas",
+                }],
+            )
+            migrated = await migrate_anchor_metadata(mem)
+            assert migrated == 1  # Should re-migrate to add anchor_watch_section
+            result = mem._collection.get(ids=["ep-already-migrated"], include=["metadatas"])
+            meta = result["metadatas"][0]
+            assert meta["anchor_watch_section"] == "second_watch"
+            # Existing fields preserved
+            assert meta["anchor_department"] == "science"
+            assert meta["anchor_trigger_agent"] == "atlas"
         finally:
             await mem.stop()

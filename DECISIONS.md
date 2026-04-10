@@ -3218,3 +3218,59 @@ Five agent-mediated probes + one infrastructure benchmark:
 
 **Implementation:** AD-583g: `ThreadEchoAnalyzer` in `ward_room/thread_echo.py` with `PropagationStep`/`ThreadEchoResult` frozen dataclasses, `ThreadManagerProtocol` (ISP), flat temporal post retrieval via new `get_thread_posts_temporal()` on ThreadManager, Jaccard similarity chain detection, anchor independence scoring. AD-583f: `ObservableStateVerifier` in `cognitive/observable_state.py` with `StateProvider` runtime-checkable Protocol, `VerificationResult` frozen dataclass, three providers (RecreationStateProvider, TrustStateProvider, SystemHealthProvider). Integration: `check_and_trace_echo()` helper in `_helpers.py`, `set_echo_services()` late-binding on ThreadManager/MessageStore/WardRoomService (Law of Demeter), events (`WARD_ROOM_ECHO_DETECTED`, `OBSERVABLE_STATE_MISMATCH`) with custom `to_dict()` (not BaseEvent), bridge alerts (ADVISORY/ALERT severity), Counselor subscriptions with therapeutic DMs, behavioral metrics `_compute_convergence_correctness()` converted sync→async for verifier integration, startup wiring in `finalize.py`. 4 new files (`thread_echo.py`, `observable_state.py`, 2 test files), 10 modified files, 42 tests.
 
+### BF-063: Naming Ceremony Conditional Logging
+
+**Date:** 2026-04-09
+**Status:** Closed (2026-04-09)
+
+**Problem:** When LLM returns empty/oversized response during agent naming ceremony, fallback silently logs at INFO level ("Default callsign accepted") — indistinguishable from valid self-naming. All 11 agents defaulting after a proxy blip looked like normal operation.
+
+**Decision:**
+
+| Decision | Rationale |
+|---|---|
+| Three-way conditional logging (warning/warning/info) | Distinguish LLM failure from valid choice. Empty/oversized → warning, invalid name (contains newline or >30 chars) → warning, valid choice → info. |
+| Track `_llm_empty` flag in method body | Minimal change — flag set at fallback point, read at log point. No API changes. |
+
+**Implementation:** `run_naming_ceremony()` in `agent_onboarding.py` — `_llm_empty` flag tracks fallback. Conditional log: `logger.warning` for empty/oversized ("LLM returned empty/oversized response") and invalid name ("LLM suggested invalid name"), `logger.info` for valid choice ("chose callsign"). 3 new tests + 2 updated in `test_onboarding.py`.
+
+### BF-080: DM Channel Conversation Viewer
+
+**Date:** 2026-04-09
+**Status:** Closed (2026-04-09)
+**Satisfies:** AD-523a (DM Channel Viewer)
+
+**Problem:** Ward Room DM Log showed DM channels but clicking only toggled expand/collapse — Captain could see agents were DMing but couldn't read conversations. "Open in Ward Room" link was a dead end because `WardRoomChannelList.tsx` filters out DM channels.
+
+**Decision:**
+
+| Decision | Rationale |
+|---|---|
+| New `'dm-detail'` view state on `wardRoomView` | Clean routing — channels/dms/dm-detail are three distinct panel states. No conditional rendering buried in existing views. |
+| `selectDmChannel` store action (reuses `selectWardRoomChannel` + sets view) | DRY — leverages existing channel selection/thread loading. Only adds view transition. |
+| Click-to-navigate from DmActivityLog entries | Direct navigation replaces expand/collapse pattern. Preview + "View conversation →" affordance. |
+| Reuse `WardRoomThreadList` + `WardRoomThreadDetail` | Full conversation rendering already built. DM detail just needs a back header + the existing components. |
+| Remove dead expand/collapse + inline reply code | Reply functionality available through thread detail's existing reply support. Dead code removed (useState, replyingTo, replyText, sending, handleReply, selectChannel, setView refs). |
+
+**Implementation:** `useStore.ts` — `wardRoomView` type expanded to `'dm-detail'`, `selectDmChannel` action added (async, calls `selectWardRoomChannel` then sets view). `WardRoomPanel.tsx` — DmActivityLog simplified (removed expand/collapse, click navigates via `selectDm`), WardRoomPanel adds dm-detail case with back header + `WardRoomThreadList`. WebSocket handlers for `ward_room_thread_created`/`ward_room_post_created` trigger `refreshWardRoomDmChannels()`. 3 new tests in `WardRoomPanel.test.tsx`.
+
+### BF-134: Recall Pipeline Semantic Threshold + FTS Scoring + Watch Section Filtering
+
+**Date:** 2026-04-09
+**Status:** Closed (2026-04-09)
+**Depends on:** BF-027, BF-133, AD-570, AD-567b, AD-582
+
+**Problem:** 14/14 agents fail three qualification probes (`seeded_recall_probe`, `temporal_reasoning_probe`, `knowledge_update_probe`) while `episodic_recall_probe` and `confabulation_probe` pass at 1.000. Root cause: recall pipeline drops valid episodes before agents see them — three interrelated defects.
+
+**Decision:**
+
+| Decision | Rationale |
+|---|---|
+| Configurable `agent_recall_threshold` (default 0.15) replacing hardcoded 0.3 | MiniLM question-vs-statement cosine similarity is 0.15–0.35. `anchor_confidence_gate` (0.3) provides quality filtering, allowing semantic threshold to relax safely. Two-tier filtering preserved. |
+| `fts_keyword_floor` (default 0.2) for keyword-only FTS5 hits | Episodes found by keyword but not vector got `similarity=0.0`, losing 35% of composite score. Keyword presence implies baseline relevance. |
+| Promote `anchor_watch_section` to ChromaDB metadata | Follows exact AD-570 pattern (4 existing promoted fields). Enables `recall_by_anchor(watch_section=...)` filtering needed by AD-582c TemporalReasoningProbe. |
+| Migration guard changed from `anchor_department` to `anchor_watch_section` | Already-migrated episodes have 4 AD-570 fields but not the new 5th. Check newest field to trigger re-migration. Idempotent — all 5 fields written regardless. |
+| Config fields on `MemoryConfig`, wired through `__main__.py` | OCP: extend config without changing existing defaults. Constructor injection. |
+
+**Implementation:** `config.py` — 2 new `MemoryConfig` fields (`agent_recall_threshold=0.15`, `fts_keyword_semantic_floor=0.2`). `episodic.py` — `__init__` new params, `min(self.relevance_threshold, self._agent_recall_threshold)` at 2 recall sites, `self._fts_keyword_floor` at FTS merge, `_episode_to_metadata()` promotes `anchor_watch_section`, `migrate_anchor_metadata()` guard changed + `watch_section` extraction, `recall_by_anchor()` gains `watch_section` param + where-clause. `cognitive_agent.py` — `_try_anchor_recall()` passes `watch_section=anchor.watch_section`. `__main__.py` — wires config to constructor. 10 new tests + 3 updated across `test_anchor_indexed_recall.py` and `test_ad567b_anchor_recall.py`.
+
