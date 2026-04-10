@@ -219,6 +219,87 @@ async def migrate_anchor_metadata(episodic_memory: "EpisodicMemory") -> int:
     return migrated
 
 
+async def migrate_embedding_model(
+    episodic_memory: "EpisodicMemory",
+    model_name: str,
+) -> int:
+    """AD-584: Re-embed all episodes when the embedding model changes.
+
+    Checks collection metadata for stored model name. If missing or different
+    from the active model, deletes and recreates the collection with the new
+    embedding function, re-adding all existing documents in batches.
+
+    Must run AFTER collection creation, BEFORE any queries.
+    Returns count of re-embedded episodes (0 if no migration needed).
+    """
+    if not episodic_memory or not episodic_memory._collection:
+        return 0
+    if not episodic_memory._client:
+        return 0
+
+    collection = episodic_memory._collection
+    stored_model = ""
+    try:
+        meta = collection.metadata or {}
+        stored_model = meta.get("embedding_model", "")
+    except Exception:
+        pass
+
+    if stored_model == model_name:
+        logger.debug("AD-584: Embedding model unchanged (%s), skipping migration", model_name)
+        return 0
+
+    t0 = time.time()
+    migrated = 0
+
+    try:
+        # Read all existing documents
+        existing = collection.get(include=["documents", "metadatas"])
+        ids = existing.get("ids") or []
+        documents = existing.get("documents") or []
+        metadatas = existing.get("metadatas") or []
+
+        if not ids:
+            # No episodes to re-embed — just update metadata
+            collection.modify(metadata={"embedding_model": model_name})
+            logger.info("AD-584: No episodes to re-embed, updated collection metadata to %s", model_name)
+            return 0
+
+        # Delete and recreate collection with new embedding function
+        from probos.knowledge.embeddings import get_embedding_function
+        episodic_memory._client.delete_collection("episodes")
+        ef = get_embedding_function()
+        episodic_memory._collection = episodic_memory._client.get_or_create_collection(
+            name="episodes",
+            embedding_function=ef,
+            metadata={"hnsw:space": "cosine", "embedding_model": model_name},
+        )
+
+        # Re-add in batches of 100
+        batch_size = 100
+        for start in range(0, len(ids), batch_size):
+            end = min(start + batch_size, len(ids))
+            batch_ids = ids[start:end]
+            batch_docs = [d or "" for d in documents[start:end]]
+            batch_metas = metadatas[start:end]
+            episodic_memory._collection.add(
+                ids=batch_ids,
+                documents=batch_docs,
+                metadatas=batch_metas,
+            )
+
+        migrated = len(ids)
+        elapsed = time.time() - t0
+        logger.info(
+            "AD-584: Re-embedded %d episodes with %s (%.1fs)",
+            migrated, model_name, elapsed,
+        )
+    except Exception:
+        logger.warning("AD-584: Embedding model migration failed (non-fatal)", exc_info=True)
+
+    return migrated
+
+
 async def migrate_participant_index(
     episodic_memory: "EpisodicMemory",
 ) -> int:
@@ -385,6 +466,7 @@ class EpisodicMemory:
         eviction_audit: Any = None,
         agent_recall_threshold: float = 0.15,
         fts_keyword_floor: float = 0.2,
+        query_reformulation_enabled: bool = True,
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
@@ -393,6 +475,7 @@ class EpisodicMemory:
         self._eviction_audit = eviction_audit
         self._agent_recall_threshold = agent_recall_threshold  # BF-134
         self._fts_keyword_floor = fts_keyword_floor  # BF-134
+        self._query_reformulation_enabled = query_reformulation_enabled  # AD-584
         self._client: Any = None
         self._collection: Any = None
         self._fts_db: Any = None  # AD-567b: FTS5 sidecar
@@ -421,6 +504,18 @@ class EpisodicMemory:
             embedding_function=ef,
             metadata={"hnsw:space": "cosine"},
         )
+
+        # AD-584: Ensure collection metadata includes embedding model name
+        from probos.knowledge.embeddings import get_embedding_model_name
+        try:
+            col_meta = self._collection.metadata or {}
+            if "embedding_model" not in col_meta:
+                self._collection.modify(metadata={
+                    **col_meta,
+                    "embedding_model": get_embedding_model_name(),
+                })
+        except Exception:
+            logger.debug("AD-584: Could not set embedding_model metadata", exc_info=True)
 
         # AD-567b: FTS5 keyword search sidecar
         try:
@@ -1306,6 +1401,8 @@ class EpisodicMemory:
         """Like recall_for_agent but returns (episode, similarity) tuples.
 
         AD-567b: Exposes cosine similarity scores for composite re-ranking.
+        AD-584: Embeds query variants (original + reformulated) and takes
+        the best (lowest distance) per episode for Q->A bridging.
         """
         if not self._collection:
             return []
@@ -1313,23 +1410,42 @@ class EpisodicMemory:
         if count == 0:
             return []
 
+        # AD-584: Query reformulation — embed original + declarative template
+        from probos.knowledge.embeddings import reformulate_query
+        query_variants = reformulate_query(query) if self._query_reformulation_enabled else [query]
+
         n_results = min(k * 5, count)
         result = self._collection.query(
-            query_texts=[query],
+            query_texts=query_variants,
             n_results=n_results,
             include=["metadatas", "documents", "distances"],
         )
-        if not result or not result["ids"] or not result["ids"][0]:
+        if not result or not result["ids"]:
             return []
+
+        # AD-584: Merge results across query variants — keep best (lowest) distance per episode
+        best_distance: dict[str, float] = {}
+        best_meta: dict[str, dict] = {}
+        best_doc: dict[str, str] = {}
+        for q_idx in range(len(result["ids"])):
+            if not result["ids"][q_idx]:
+                continue
+            for i, doc_id in enumerate(result["ids"][q_idx]):
+                distance = result["distances"][q_idx][i] if result["distances"] else 0.0
+                if doc_id not in best_distance or distance < best_distance[doc_id]:
+                    best_distance[doc_id] = distance
+                    best_meta[doc_id] = result["metadatas"][q_idx][i] if result["metadatas"] else {}
+                    best_doc[doc_id] = result["documents"][q_idx][i] if result["documents"] else ""
 
         scored: list[tuple[Episode, float]] = []
         agent_recall_threshold = min(self.relevance_threshold, self._agent_recall_threshold)
-        for i, doc_id in enumerate(result["ids"][0]):
-            distance = result["distances"][0][i] if result["distances"] else 0.0
+
+        # Sort by distance ascending (best matches first)
+        for doc_id, distance in sorted(best_distance.items(), key=lambda x: x[1]):
             similarity = 1.0 - distance
             if similarity < agent_recall_threshold:
                 continue
-            metadata = result["metadatas"][0][i] if result["metadatas"] else {}
+            metadata = best_meta[doc_id]
             agent_ids_json = metadata.get("agent_ids_json", "[]")
             try:
                 agent_ids = json.loads(agent_ids_json)
@@ -1337,7 +1453,7 @@ class EpisodicMemory:
                 agent_ids = []
             if agent_id not in agent_ids:
                 continue
-            document = result["documents"][0][i] if result["documents"] else ""
+            document = best_doc[doc_id]
             ep = self._metadata_to_episode(doc_id, document, metadata)
             if self._verify_on_recall:
                 stored_hash = metadata.get("content_hash", "")

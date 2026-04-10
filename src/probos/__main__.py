@@ -288,6 +288,7 @@ async def _boot_runtime(
         eviction_audit=eviction_audit,
         agent_recall_threshold=config.memory.agent_recall_threshold,
         fts_keyword_floor=config.memory.fts_keyword_semantic_floor,
+        query_reformulation_enabled=config.memory.query_reformulation_enabled,  # AD-584
     )
 
     runtime = ProbOSRuntime(

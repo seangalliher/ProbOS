@@ -52,18 +52,49 @@ class SemanticKnowledgeLayer:
     async def start(self) -> None:
         """Initialize ChromaDB client and create/get all collections."""
         import chromadb
-        from probos.knowledge.embeddings import get_embedding_function
+        from probos.knowledge.embeddings import get_embedding_function, get_embedding_model_name
 
         self._db_path.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(self._db_path))
         ef = get_embedding_function()
+        model_name = get_embedding_model_name()
+
         for name, collection_name in self.COLLECTIONS.items():
             self._collections[name] = self._client.get_or_create_collection(
                 name=collection_name,
                 embedding_function=ef,
                 metadata={"hnsw:space": "cosine"},
             )
+
+        # AD-584: Check for embedding model migration
+        self._migrate_collections_if_needed(model_name, ef)
+
         logger.info("SemanticKnowledgeLayer started: %d collections", len(self._collections))
+
+    def _migrate_collections_if_needed(self, model_name: str, ef: Any) -> None:
+        """AD-584: Re-create collections if embedding model has changed.
+
+        Semantic collections can be repopulated via reindex_from_store(),
+        so delete+recreate is safe. Events are lost on migration (accepted
+        tradeoff — events are transient operational data).
+        """
+        for name, collection_name in self.COLLECTIONS.items():
+            try:
+                col = self._collections[name]
+                col_meta = col.metadata or {}
+                stored_model = col_meta.get("embedding_model", "")
+                if stored_model == model_name:
+                    continue
+                # Model mismatch — delete and recreate
+                self._client.delete_collection(collection_name)
+                self._collections[name] = self._client.get_or_create_collection(
+                    name=collection_name,
+                    embedding_function=ef,
+                    metadata={"hnsw:space": "cosine", "embedding_model": model_name},
+                )
+                logger.info("AD-584: Recreated semantic collection '%s' for model %s", collection_name, model_name)
+            except Exception:
+                logger.debug("AD-584: Collection migration check failed for '%s'", collection_name, exc_info=True)
 
     async def stop(self) -> None:
         """Clean up ChromaDB client."""

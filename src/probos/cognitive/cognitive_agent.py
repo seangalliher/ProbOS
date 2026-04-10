@@ -2470,14 +2470,11 @@ class CognitiveAgent(BaseAgent):
             # Build a semantic query from the intent content
             params = observation.get("params", {})
             if intent.intent == "direct_message":
-                # BF-029: Prepend agent context so the embedding is biased
-                # toward the agent's own experiences (Ward Room posts, proactive
-                # thoughts, etc.) rather than just matching the Captain's phrasing.
-                callsign = ""
-                if self._runtime and hasattr(self._runtime, 'callsign_registry'):
-                    callsign = self._runtime.callsign_registry.get_callsign(self.agent_type) or ""
-                captain_text = params.get("text", "")[:150]
-                query = f"Ward Room {callsign} {captain_text}".strip()[:200]
+                # AD-584b: Removed BF-029 "Ward Room {callsign}" query prefix.
+                # With multi-qa-MiniLM-L6-cos-v1, the QA-trained model bridges
+                # question->answer gaps without prefix workarounds.
+                captain_text = params.get("text", "")[:200]
+                query = captain_text.strip()
             elif intent.intent == "ward_room_notification":
                 query = f"{params.get('title', '')} {params.get('text', '')}".strip()[:200]
             else:

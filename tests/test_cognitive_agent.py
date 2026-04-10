@@ -905,7 +905,7 @@ class TestMemoryRecallFallback:
 
 
 class TestRecallQueryEnrichment:
-    """BF-029: Tests 1-2 — recall query enrichment with Ward Room + callsign."""
+    """AD-584b: Tests 1-2 — recall query uses captain text directly (BF-029 prefix removed)."""
 
     def _make_crew_runtime(self, *, callsign=None, has_registry=True, recall_result=None, recent_result=None):
         rt = MagicMock(spec=ProbOSRuntime)
@@ -927,8 +927,8 @@ class TestRecallQueryEnrichment:
         return rt
 
     @pytest.mark.asyncio
-    async def test_recall_query_includes_ward_room_and_callsign(self):
-        """Test 1: direct_message recall query starts with 'Ward Room Counselor'."""
+    async def test_recall_query_uses_captain_text_directly(self):
+        """Test 1: direct_message recall query uses captain text without Ward Room prefix."""
         rt = self._make_crew_runtime(callsign="Counselor")
         llm = MockLLMClient()
         agent = SampleCogAgent(llm_client=llm, runtime=rt)
@@ -944,12 +944,13 @@ class TestRecallQueryEnrichment:
         # Verify the query passed to recall_weighted (primary path)
         call_args = rt.episodic_memory.recall_weighted.call_args
         query = call_args[0][1]  # second positional arg
-        assert query.startswith("Ward Room Counselor")
-        assert "What did you post?" in query
+        # AD-584b: No more "Ward Room Counselor" prefix
+        assert query == "What did you post?"
+        assert not query.startswith("Ward Room")
 
     @pytest.mark.asyncio
     async def test_recall_query_works_without_callsign_registry(self):
-        """Test 2: recall works without callsign_registry (no crash)."""
+        """Test 2: recall works without callsign_registry (no crash, no prefix)."""
         rt = self._make_crew_runtime(has_registry=False)
         llm = MockLLMClient()
         agent = SampleCogAgent(llm_client=llm, runtime=rt)
@@ -965,7 +966,9 @@ class TestRecallQueryEnrichment:
         rt.episodic_memory.recall_weighted.assert_called_once()
         call_args = rt.episodic_memory.recall_weighted.call_args
         query = call_args[0][1]
-        assert query.startswith("Ward Room")
+        # AD-584b: Query is just the captain's text, no prefix
+        assert query == "Any updates?"
+        assert not query.startswith("Ward Room")
 
 
 class TestMemoryPresentationPreference:

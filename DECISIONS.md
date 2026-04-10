@@ -3274,3 +3274,24 @@ Five agent-mediated probes + one infrastructure benchmark:
 
 **Implementation:** `config.py` — 2 new `MemoryConfig` fields (`agent_recall_threshold=0.15`, `fts_keyword_semantic_floor=0.2`). `episodic.py` — `__init__` new params, `min(self.relevance_threshold, self._agent_recall_threshold)` at 2 recall sites, `self._fts_keyword_floor` at FTS merge, `_episode_to_metadata()` promotes `anchor_watch_section`, `migrate_anchor_metadata()` guard changed + `watch_section` extraction, `recall_by_anchor()` gains `watch_section` param + where-clause. `cognitive_agent.py` — `_try_anchor_recall()` passes `watch_section=anchor.watch_section`. `__main__.py` — wires config to constructor. 10 new tests + 3 updated across `test_anchor_indexed_recall.py` and `test_ad567b_anchor_recall.py`.
 
+## AD-584a/b: Recall Pipeline Q→A Fix — Embedding Model Swap + Query Reformulation
+
+**Date:** 2026-04-09
+**Status:** Complete
+**Depends:** BF-134, AD-567b, AD-582
+
+**Problem:** `all-MiniLM-L6-v2` (sentence-similarity/STS-trained) produces 0.10–0.35 cosine similarity for question-answer pairs. Qualification probes (`SeededRecallProbe`, `TemporalReasoningProbe`, `KnowledgeUpdateProbe`) fail because they ask questions about stored facts. BF-134 threshold relaxation was necessary but insufficient — the embedding model itself cannot bridge the Q→A subspace gap. Additionally, the BF-029 "Ward Room {callsign}" prefix prepended to DM recall queries actively pollutes embeddings.
+
+**Decision:**
+
+| Decision | Rationale |
+|---|---|
+| Swap to `multi-qa-MiniLM-L6-cos-v1` via `SentenceTransformerEmbeddingFunction` | Same architecture (MiniLM-L6, 384 dims) but trained on 215M Q→A pairs. Expected Q→A cosine: 0.50–0.75. `sentence-transformers` added as dependency. Two-tier fallback: DefaultEmbeddingFunction → keyword overlap. |
+| Template-based query reformulation (`reformulate_query()`) | Regex-based question→declarative templates (10 patterns). Zero LLM cost. Dual-query: embed original + reformulated, take best distance per episode. Non-questions pass through unchanged. |
+| Dual-query merge in `recall_for_agent_scored()` | ChromaDB `query()` accepts multiple `query_texts`. Merge across variants: dedup by episode ID, keep min distance. `recall_weighted()` inherits via transitive call. |
+| Remove BF-029 "Ward Room {callsign}" query prefix | Was a workaround for STS model's QA blindness. With QA-trained model, question text alone bridges to Ward Room content. Stored episode `[Ward Room]` prefixes retained. |
+| Collection metadata tracks `embedding_model` for migration | On startup, compare stored model vs active model. Mismatch triggers delete→recreate→re-add. Episodic: batch re-embed all episodes. Semantic: delete→recreate (repopulated via `reindex_from_store()`). Procedure: delete→recreate (backed by SQLite). |
+| Config fields `embedding_model` and `query_reformulation_enabled` | OCP: extend without changing defaults. `query_reformulation_enabled=True` allows disabling for debugging. |
+
+**Implementation:** `embeddings.py` — `_MODEL_NAME` constant, `get_embedding_model_name()`, 2-tier embedding function fallback chain, `reformulate_query()` with 10 regex patterns. `config.py` — 2 new `MemoryConfig` fields. `episodic.py` — `query_reformulation_enabled` constructor param, `migrate_embedding_model()` migration function, dual-query merge in `recall_for_agent_scored()`, collection metadata in `start()`. `cognitive_agent.py` — BF-029 prefix removed from `_recall_relevant_memories()`. `semantic.py` — `_migrate_collections_if_needed()` for 5 collections. `procedure_store.py` — model migration in `_init_chroma()`. `__main__.py` — wires `query_reformulation_enabled`. `cognitive_services.py` — AD-584 migration step after AD-570b. `pyproject.toml` — `sentence-transformers>=3.0` added. 10 files modified, 37 new tests + 2 updated in `test_cognitive_agent.py`.
+

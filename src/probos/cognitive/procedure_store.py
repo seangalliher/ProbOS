@@ -275,17 +275,32 @@ class ProcedureStore:
         """Initialize ChromaDB collection for semantic procedure search."""
         try:
             import chromadb
-            from probos.knowledge.embeddings import get_embedding_function
+            from probos.knowledge.embeddings import get_embedding_function, get_embedding_model_name
 
             client = chromadb.PersistentClient(
                 path=str(self._data_dir / "chroma")
             )
             ef = get_embedding_function()
+            model_name = get_embedding_model_name()
             self._chroma_collection = client.get_or_create_collection(
                 name="procedures",
                 embedding_function=ef,
                 metadata={"hnsw:space": "cosine"},
             )
+
+            # AD-584: Check for embedding model migration
+            col_meta = self._chroma_collection.metadata or {}
+            stored_model = col_meta.get("embedding_model", "")
+            if stored_model != model_name:
+                # Delete and recreate — data is backed by SQLite, will be re-indexed
+                client.delete_collection("procedures")
+                self._chroma_collection = client.get_or_create_collection(
+                    name="procedures",
+                    embedding_function=ef,
+                    metadata={"hnsw:space": "cosine", "embedding_model": model_name},
+                )
+                logger.info("AD-584: Recreated procedure ChromaDB collection for model %s", model_name)
+                self._chroma_client = client  # Keep ref for reindex
         except Exception as e:
             logger.warning(
                 "ChromaDB unavailable for procedure semantic index: %s", e

@@ -4697,6 +4697,25 @@ Phase 3 — **Hebbian Scope Reduction** (AD-571c):
 
 ---
 
+### Recall Pipeline Q→A Fix (AD-584) *(in progress, OSS)*
+
+**AD-584: Recall Pipeline Q→A Fix** *(in progress, OSS, depends: BF-134 threshold fix, AD-567b salience-weighted recall, AD-582 memory probes)* — Resolves the fundamental Q→A retrieval gap identified during post-mortem of BF-134. Root cause: `all-MiniLM-L6-v2` is a sentence-similarity (STS/NLI) model, not QA-trained. Questions and answers occupy different embedding subspaces — cosine similarity for valid pairs: 0.10–0.35, regardless of threshold tuning. This is why `SeededRecallProbe`, `TemporalReasoningProbe`, and `KnowledgeUpdateProbe` consistently fail. Research synthesis in `docs/research/recall-pipeline-research-synthesis.md` (cognitive science + RAG engineering + architecture analysis).
+
+**Sub-ADs (phased decomposition, ordered by impact/effort ratio):**
+
+> - **AD-584a: Embedding Model Swap** *(complete, OSS)* — Replaced `all-MiniLM-L6-v2` with `multi-qa-MiniLM-L6-cos-v1` via `SentenceTransformerEmbeddingFunction` (2-tier fallback to DefaultEmbeddingFunction). Collection migration on model mismatch: delete→recreate→re-add in batches. `get_embedding_model_name()` + `get_embedding_function()` in `embeddings.py`. Startup migration in `cognitive_services.py`. All 3 ChromaDB clients (EpisodicMemory, SemanticKnowledgeLayer, ProcedureStore) handle model mismatch independently. `sentence-transformers>=3.0` added to dependencies. 37 tests.
+> - **AD-584b: Query Reformulation + BF-029 Prefix Removal** *(complete, OSS)* — Template-based pseudo-HyDE via `reformulate_query()`: 10 regex patterns reformulate questions to declarative expected-answer templates, dual-query embedding (original + reformulated, take best distance per episode). Zero LLM cost. BF-029 "Ward Room {callsign}" prefix removed from `cognitive_agent.py`. Dual-query propagates transitively through `recall_for_agent_scored()` → `recall_weighted()`. Config toggle: `query_reformulation_enabled`.
+> - **AD-584c: Scoring Rebalance** *(planned, OSS)* — Adjust composite scoring weights: keyword 0.10→0.20, anchor 0.10→0.15, trust 0.15→0.10, hebbian 0.10→0.05, recency 0.20→0.15. Add convergence bonus (+0.10 when episode found by ≥2 channels). Rationale: with QA-trained model, semantic signal is more reliable; keyword can compensate more; multi-pathway evidence accumulation (spreading activation).
+> - **AD-584d: Enriched Embedding Document** *(planned, OSS)* — Embed `user_input + reflection` instead of `user_input` only (align with FTS5 which already indexes both). Question seeding at store time: generate 2-3 questions the episode could answer via heuristics, append to FTS5 index. Bridges Q→A gap at write time (elaborative encoding, Craik & Tulving 1975).
+
+AD-584a+b are interdependent and shipped as a single build prompt. AD-584c and AD-584d are separate follow-up prompts.
+
+**Build prompt:** `prompts/ad-584-recall-qa-fix.md` — AD-584a+b combined, 37 tests. Issue #138.
+
+**Research:** `docs/research/recall-pipeline-research-synthesis.md` (4-tier fix design), `docs/research/memory-retrieval-research.md` (cognitive science, 48 citations).
+
+---
+
 ### Memory Architecture: Tiered Loading & Temporal Validity (AD-579) *(planned, OSS)*
 
 **AD-579: Memory Architecture — Tiered Context Loading & Temporal Knowledge Validity** *(planned, OSS, depends: AD-570 Anchor-Indexed Recall, AD-567a Anchor System, AD-541c Spaced Retrieval)* — Two complementary enhancements to ProbOS's episodic memory system, informed by MemPalace project evaluation (github.com/milla-jovovich/mempalace, 2026-04-08). MemPalace achieves 96.6% LongMemEval R@5 and +34% retrieval improvement through structured metadata filtering (already absorbed into AD-570) and a tiered memory loading stack. ProbOS's current recall pipeline loads nothing into agent context until semantic search at `handle_intent()` time — there is no "always-loaded" layer of high-signal knowledge. Additionally, knowledge entries (notebook entries, episodic metadata) have no temporal validity tracking — an entry is either present or archived, with no mechanism to express "this fact was valid from X to Y."

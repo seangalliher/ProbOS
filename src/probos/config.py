@@ -268,6 +268,9 @@ class MemoryConfig(BaseModel):
     # floor instead of 0.0, preventing keyword-relevant episodes from
     # being buried by the composite score formula.
     fts_keyword_semantic_floor: float = 0.2
+    # AD-584: Embedding model and query reformulation
+    embedding_model: str = "multi-qa-MiniLM-L6-cos-v1"
+    query_reformulation_enabled: bool = True
     similarity_threshold: float = 0.6  # Semantic similarity threshold for recall/fuzzy lookup
     verify_content_hash: bool = True    # AD-541e: Verify episode hashes on recall
     eviction_audit_enabled: bool = True  # AD-541f: Append-only eviction audit trail

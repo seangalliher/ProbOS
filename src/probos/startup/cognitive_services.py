@@ -208,6 +208,17 @@ async def init_cognitive_services(
         except Exception:
             logger.warning("AD-570b: Participant index start failed (non-fatal)", exc_info=True)
 
+    # AD-584: Embedding model migration (re-embed if model changed)
+    if episodic_memory:
+        try:
+            from probos.cognitive.episodic import migrate_embedding_model
+            from probos.knowledge.embeddings import get_embedding_model_name
+            migrated = await migrate_embedding_model(episodic_memory, get_embedding_model_name())
+            if migrated > 0:
+                logger.info("AD-584: Re-embedded %d episodes with new model", migrated)
+        except Exception:
+            logger.warning("AD-584: Embedding model migration failed (non-fatal)", exc_info=True)
+
     # Create FeedbackEngine (AD-219)
     from probos.cognitive.feedback import FeedbackEngine
 

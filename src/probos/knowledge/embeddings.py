@@ -1,8 +1,12 @@
-"""Shared embedding utility — wraps ChromaDB's default ONNX embedding function.
+"""Shared embedding utility — wraps ChromaDB embedding functions.
 
 Provides semantic similarity computation for EpisodicMemory, WorkflowCache,
 CapabilityRegistry, and StrategyRecommender.  Falls back to keyword-overlap
 bag-of-words when ChromaDB embeddings are unavailable.
+
+AD-584: Swapped from `all-MiniLM-L6-v2` (sentence-similarity) to
+`multi-qa-MiniLM-L6-cos-v1` (QA-trained on 215M pairs). Same architecture,
+same 384 dimensions, dramatically better Q->A cosine similarity.
 """
 
 from __future__ import annotations
@@ -14,6 +18,9 @@ from collections import Counter
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+# AD-584: Active embedding model name (used for migration detection)
+_MODEL_NAME = "multi-qa-MiniLM-L6-cos-v1"
 
 # ------------------------------------------------------------------
 # Keyword-overlap fallback (moved from episodic.py)
@@ -81,26 +88,44 @@ _embedding_fn: Any | None = None
 _embedding_available: bool | None = None
 
 
-def get_embedding_function() -> Any | None:
-    """Return ChromaDB's default ONNX embedding function (lazy singleton).
+def get_embedding_model_name() -> str:
+    """Return the active embedding model name for migration detection."""
+    return _MODEL_NAME
 
-    Returns None if ChromaDB embedding is unavailable.
+
+def get_embedding_function() -> Any | None:
+    """Return ChromaDB embedding function for multi-qa-MiniLM-L6-cos-v1 (lazy singleton).
+
+    AD-584: Uses SentenceTransformerEmbeddingFunction with QA-trained model.
+    Falls back to DefaultEmbeddingFunction (all-MiniLM-L6-v2) if
+    sentence-transformers is unavailable, then to keyword overlap.
     """
     global _embedding_fn, _embedding_available
     if _embedding_available is not None:
         return _embedding_fn
 
+    # Try 1: SentenceTransformerEmbeddingFunction with QA-trained model
+    try:
+        from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+        _embedding_fn = SentenceTransformerEmbeddingFunction(model_name=_MODEL_NAME)
+        _embedding_fn(["test"])
+        _embedding_available = True
+        logger.info("AD-584: %s embedding function initialized", _MODEL_NAME)
+        return _embedding_fn
+    except Exception as e:
+        logger.info("AD-584: SentenceTransformerEmbeddingFunction unavailable: %s — trying DefaultEmbeddingFunction", e)
+
+    # Try 2: DefaultEmbeddingFunction (falls back to all-MiniLM-L6-v2)
     try:
         from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
         _embedding_fn = DefaultEmbeddingFunction()
-        # Warm up with a test call to verify ONNX runtime works
         _embedding_fn(["test"])
         _embedding_available = True
-        logger.info("ChromaDB ONNX embedding function initialized")
+        logger.warning("AD-584: Using DefaultEmbeddingFunction (all-MiniLM-L6-v2) — QA model unavailable")
         return _embedding_fn
     except Exception as e:
         logger.warning(
-            "ChromaDB embedding function unavailable: %s — falling back to keyword overlap", e
+            "ChromaDB embedding functions unavailable: %s — falling back to keyword overlap", e
         )
         _embedding_fn = None
         _embedding_available = False
@@ -157,3 +182,47 @@ def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     if mag_a == 0 or mag_b == 0:
         return 0.0
     return max(0.0, min(1.0, dot / (mag_a * mag_b)))
+
+
+# ------------------------------------------------------------------
+# AD-584b: Query reformulation (template-based, zero LLM cost)
+# ------------------------------------------------------------------
+
+# Pattern: (regex, replacement template)
+# Regex captures the "X" portion; template fills in the declarative form.
+_REFORMULATION_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"^what (?:is|are) (.+)", re.IGNORECASE), r"\1 is"),
+    (re.compile(r"^what (?:was|were) (.+)", re.IGNORECASE), r"\1 was"),
+    (re.compile(r"^how does (.+?) work\b", re.IGNORECASE), r"\1 works by"),
+    (re.compile(r"^how did (.+?) happen\b", re.IGNORECASE), r"\1 happened by"),
+    (re.compile(r"^how (?:many|much) (.+)", re.IGNORECASE), r"the number of \1 is"),
+    (re.compile(r"^who (?:did|does|is|was) (.+)", re.IGNORECASE), r"\1"),
+    (re.compile(r"^when did (.+)", re.IGNORECASE), r"\1 happened"),
+    (re.compile(r"^why (?:did|does|do|is|was) (.+)", re.IGNORECASE), r"\1 because"),
+    (re.compile(r"^(?:did|does|do|is|are|was|were|has|have|had|can|could|will|would|should) (.+)", re.IGNORECASE), r"\1"),
+]
+
+
+def reformulate_query(text: str) -> list[str]:
+    """Return query variants: [original_stripped, reformulated] for embedding.
+
+    AD-584b: Template-based query reformulation. Detects question patterns
+    and produces a declarative expected-answer template. Original query
+    is always included (stripped of trailing ?). Non-question text passes
+    through unchanged as [text].
+
+    Caller embeds ALL variants and takes the max similarity per episode.
+    """
+    stripped = text.rstrip("? ").strip()
+    if not stripped:
+        return [text] if text else []
+
+    for pattern, template in _REFORMULATION_PATTERNS:
+        match = pattern.match(stripped)
+        if match:
+            reformulated = match.expand(template).strip().rstrip(".")
+            if reformulated and reformulated.lower() != stripped.lower():
+                return [stripped, reformulated]
+            return [stripped]
+
+    return [stripped]
