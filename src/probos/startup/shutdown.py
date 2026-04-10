@@ -22,16 +22,14 @@ logger = logging.getLogger(__name__)
 
 async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     """Graceful shutdown of all pools, mesh services, and persistence."""
-    if not runtime._started:
-        return
-
-    logger.info("ProbOS shutting down...")
-
     # BF-135: Persist session record FIRST — synchronous file write, microseconds.
     # Must happen before any async operations (Ward Room, event log) because
     # __main__.py enforces a 5s timeout on stop(). If Ward Room create_thread()
     # or event log writes are slow, the timeout cancels stop() and the session
     # record is never written — causing stale stasis duration on next boot.
+    # BF-137: Write session record even on partial boots (before _started guard)
+    # so that failed startups don't leave a stale timestamp that inflates
+    # stasis duration on the next successful boot.
     # BF-065: Write to runtime._data_dir directly (not knowledge_store).
     try:
         session_record = {
@@ -46,6 +44,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         session_path.write_text(json.dumps(session_record, indent=2))
     except Exception as e:
         logger.debug("AD-502: Session record persistence failed: %s", e)
+
+    if not runtime._started:
+        return
+
+    logger.info("ProbOS shutting down...")
 
     try:
         await runtime.event_log.log(category="system", event="stopping")
