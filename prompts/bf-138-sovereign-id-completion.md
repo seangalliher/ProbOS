@@ -50,26 +50,20 @@ For the exception swallowing: narrow the catch radius and elevate logging.
 
 ## Deliverables
 
-### D1: Fix Drift Detector ID Resolution (`src/probos/cognitive/drift_detector.py`)
+### D1: Drift Detector — Keep Slot IDs (`src/probos/cognitive/drift_detector.py`)
 
 **File:** `src/probos/cognitive/drift_detector.py`
-**Change:** `_get_crew_agent_ids()` at line 442
+**Change:** `_get_crew_agent_ids()` — **NO CHANGE to ID type returned**.
 
-Replace:
-```python
-ids.append(agent.id)
-```
-With:
-```python
-from probos.cognitive.episodic import resolve_sovereign_id
-ids.append(resolve_sovereign_id(agent))
-```
+**IMPORTANT:** `_get_crew_agent_ids()` MUST continue returning **slot IDs** (`agent.id`), NOT sovereign IDs. The returned IDs are used by probes to call `runtime.registry.get(agent_id)`, and the registry is keyed by slot IDs. Converting to sovereign_id here breaks every downstream registry lookup.
 
-Place the import at the top of the method (inside the existing try block) or at module level. This is the single point that poisons the entire qualification probe chain — fixing it here fixes all probes downstream.
+Sovereign ID resolution happens at D2 — inside each probe, via `_resolve_probe_agent_id()`, which takes the slot ID, looks up the agent object in the registry, then calls `resolve_sovereign_id(agent)` for episode seeding only.
+
+**Post-build correction:** The initial BF-138 build over-corrected D1 by resolving to `resolve_sovereign_id(agent)` here. This caused all qualification probes to return 0.000 immediately because `registry.get(sovereign_uuid)` returned None. Fixed by reverting to `agent.id`.
 
 ### D2: Fix Memory Probes — Episode Seeding (`src/probos/cognitive/memory_probes.py`)
 
-Even though D1 fixes the ID coming *into* probes, the probes should also resolve IDs defensively (Defense in Depth). Fix all probe classes to resolve the `agent_id` parameter to sovereign_id before seeding episodes.
+The probes resolve IDs defensively (Defense in Depth). Each probe resolves the `agent_id` parameter (slot ID from drift detector) to sovereign_id before seeding episodes, using the registry to look up the agent object first.
 
 **D2a: Add sovereign ID resolution at probe entry** (near line 224–228)
 

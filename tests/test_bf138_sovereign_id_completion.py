@@ -83,16 +83,22 @@ def _make_episode(
 # ===========================================================================
 
 
-class TestDriftDetectorSovereignIds:
-    """D1: _get_crew_agent_ids() returns sovereign IDs."""
+class TestDriftDetectorSlotIds:
+    """D1: _get_crew_agent_ids() returns slot IDs for registry dispatch.
 
-    def test_drift_detector_returns_sovereign_ids(self):
-        """_get_crew_agent_ids() returns sovereign IDs when agents have sovereign_id."""
+    The drift detector enumerates agents by slot ID so probes can look them
+    up in the registry. Sovereign ID resolution happens inside each probe
+    (D2) via _resolve_probe_agent_id(). The initial BF-138 build
+    over-corrected by resolving to sovereign_id here, breaking registry
+    lookups downstream.
+    """
+
+    def test_drift_detector_returns_slot_ids(self):
+        """_get_crew_agent_ids() returns slot IDs (agent.id), not sovereign IDs."""
         from probos.cognitive.drift_detector import DriftScheduler
 
         agent = _make_agent(sovereign_id=SOVEREIGN_ID)
 
-        # Build minimal runtime with pools and registry
         pool = MagicMock()
         pool.healthy_agents = [SLOT_ID]
         runtime = MagicMock()
@@ -105,11 +111,11 @@ class TestDriftDetectorSovereignIds:
         with patch("probos.crew_utils.is_crew_agent", return_value=True):
             ids = scheduler._get_crew_agent_ids()
 
-        assert ids == [SOVEREIGN_ID]
-        assert SLOT_ID not in ids
+        assert ids == [SLOT_ID]
+        assert SOVEREIGN_ID not in ids
 
-    def test_drift_detector_falls_back_to_slot_id(self):
-        """When sovereign_id is missing, returns agent.id (fallback)."""
+    def test_drift_detector_returns_slot_id_always(self):
+        """Returns agent.id regardless of sovereign_id presence."""
         from probos.cognitive.drift_detector import DriftScheduler
 
         agent = _make_agent(sovereign_id=None)

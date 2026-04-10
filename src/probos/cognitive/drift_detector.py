@@ -428,10 +428,14 @@ class DriftScheduler:
         return dict(self._latest_reports)
 
     def _get_crew_agent_ids(self) -> list[str]:
-        """Enumerate active crew agent IDs from runtime."""
+        """Enumerate active crew agent slot IDs from runtime.
+
+        Returns slot IDs (agent.id), NOT sovereign IDs. The qualification
+        probes need slot IDs to look up agents in the registry. Each probe
+        resolves to sovereign_id internally for episode seeding (BF-138 D2).
+        """
         try:
             from probos.crew_utils import is_crew_agent
-            from probos.cognitive.episodic import resolve_sovereign_id
 
             ids = []
             pools = getattr(self._runtime, "pools", {})
@@ -440,7 +444,7 @@ class DriftScheduler:
                 for aid in getattr(pool, "healthy_agents", []):
                     agent = registry.get(aid) if registry else None
                     if agent and is_crew_agent(agent):
-                        ids.append(resolve_sovereign_id(agent))
+                        ids.append(agent.id)
             return ids
         except Exception:
             logger.debug("Failed to enumerate crew agents", exc_info=True)
