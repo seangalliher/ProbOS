@@ -3295,3 +3295,51 @@ Five agent-mediated probes + one infrastructure benchmark:
 
 **Implementation:** `embeddings.py` — `_MODEL_NAME` constant, `get_embedding_model_name()`, 2-tier embedding function fallback chain, `reformulate_query()` with 10 regex patterns. `config.py` — 2 new `MemoryConfig` fields. `episodic.py` — `query_reformulation_enabled` constructor param, `migrate_embedding_model()` migration function, dual-query merge in `recall_for_agent_scored()`, collection metadata in `start()`. `cognitive_agent.py` — BF-029 prefix removed from `_recall_relevant_memories()`. `semantic.py` — `_migrate_collections_if_needed()` for 5 collections. `procedure_store.py` — model migration in `_init_chroma()`. `__main__.py` — wires `query_reformulation_enabled`. `cognitive_services.py` — AD-584 migration step after AD-570b. `pyproject.toml` — `sentence-transformers>=3.0` added. 10 files modified, 37 new tests + 2 updated in `test_cognitive_agent.py`.
 
+---
+
+### AD-584c: Recall Scoring Rebalance *(2026-04-10)*
+
+**Problem:** Composite scoring formula in `score_recall()` was tuned for `all-MiniLM-L6-v2` (STS model). Post-AD-584a/b qualification run showed systemic probe failure: `seeded_recall` 0.000–0.147, `temporal_reasoning` 0.000–0.013, `knowledge_update` 0.000–0.500. Root cause in scoring pipeline, not raw retrieval — `retrieval_accuracy_benchmark` (bypasses scoring) passes. Three issues: (1) weights over-weight trust/hebbian for newly seeded episodes, (2) no multi-channel convergence bonus, (3) config defaults stale.
+
+| Decision | Rationale |
+|----------|-----------|
+| keyword 0.10 → 0.20 | QA tasks benefit from exact term matching. Orthogonal to semantic similarity — high-precision complementary signal. |
+| trust 0.15 → 0.10 | Source-quality signal, not content-relevance. Should influence but not dominate retrieval ranking. |
+| hebbian 0.10 → 0.05 | Routing frequency, not episode relevance. Default 0.5 for new episodes injects noise. |
+| recency 0.20 → 0.15 | Exponential decay `exp(-age/168)` already privileges recent episodes. 20% over-weights temporal proximity. |
+| anchor 0.10 → 0.15 | Per encoding specificity research (Tulving & Thomson 1973), retrieval cues matching encoding context are primary cues. |
+| semantic stays 0.35 | Already largest weight. QA model improvement = better scores, not higher weight. |
+| Convergence bonus +0.10 | Spreading activation: episodes found by BOTH semantic AND keyword have stronger relevance evidence. Configurable via `recall_convergence_bonus`. |
+| Negative bonus clamping | `max(0.0, convergence_bonus)` prevents config typos from penalizing multi-channel hits. Defense in depth. |
+
+**Implementation:** `episodic.py` — `score_recall()` default weights updated, `convergence_bonus` parameter added with `max(0.0, bonus)` clamping, wired through `recall_weighted()`. `config.py` — `recall_weights` defaults updated, `recall_convergence_bonus: float = 0.10` added. `cognitive_agent.py` — passes `convergence_bonus` from `mem_cfg.recall_convergence_bonus` to `recall_weighted()`. 3 files modified, 20 new tests in `test_ad584c_scoring_rebalance.py`.
+
+**Post-mortem:** AD-584c had zero measurable impact on qualification results. Investigation revealed the true root cause: BF-138 sovereign_id mismatch. Scoring weights were correct but episodes were filtered out by agent_id before scoring ever ran. AD-584c is still valid engineering for when recall actually works.
+
+### BF-137: Stale Stasis Duration After Partial Boot *(2026-04-10)*
+
+**Problem:** After a partial boot (crash before `finalize_startup()` sets `runtime._started = True`), `session_last.json` was never updated. `shutdown()` had `if not runtime._started: return` before the session record write, so partial boots left stale timestamps. Crew perceived multi-day stasis when actual downtime was minutes.
+
+| Decision | Rationale |
+|----------|-----------|
+| Move session record write before `_started` guard | Session metadata (shutdown timestamp, uptime) is needed for stasis calculations regardless of whether startup completed. The rest of shutdown (Ward Room, service teardown) still gates on `_started`. |
+
+**Implementation:** `startup/shutdown.py` — session record write (session_id, timestamps, agent_count, reason) moved before the `if not runtime._started: return` guard. 1 file modified.
+
+### BF-138: Sovereign ID Completion — Remaining Slot ID Leaks *(2026-04-10)*
+
+**Problem:** BF-103 fixed sovereign ID normalization for production write paths (Ward Room, dreams, proactive, runtime) but missed the qualification probe chain, HXI/CLI interaction paths, and feedback engine. These paths use `agent.id` (slot ID like `analyst_crew_0_a1b2c3d4`) for episode tagging. Recall always queries by `sovereign_id` (UUID4 like `f47ac10b-58cc-...`). Episodes tagged with slot IDs are invisible to sovereign-ID recall. This is the root cause of all memory probe failures — AD-584a/b/c had zero impact because episodes were filtered by agent_id before scoring.
+
+**Secondary:** Entire 270-line recall pipeline in `cognitive_agent.py:2469–2740` wrapped in `try/except Exception: logger.debug(...)`. Any exception silently drops all memory context from the LLM prompt. Elevated to `warning`.
+
+| Decision | Rationale |
+|----------|-----------|
+| Reuse existing BF-103 `resolve_sovereign_id()` helpers | DRY — same pattern, applied to missed sites. The canonical function already exists at `episodic.py:29`. |
+| Fix at both drift detector (upstream) AND probes (downstream) | Defense in Depth — if one is bypassed, the other catches it. |
+| Add `_resolve_probe_agent_id()` helper in memory_probes.py | DRY — 6 probe classes need the same resolution pattern. |
+| Wire `identity_registry` into FeedbackEngine | Interface Segregation — minimal new dependency for sovereign ID resolution in `_extract_agent_ids()`. |
+| Elevate recall exception from `debug` to `warning` | Fail Fast — silent failures mask root causes. The debug level meant BF-138 was invisible in logs for weeks. |
+| sovereign_id is the primary identity key for episodic memory | Architectural: slot ID is deployment topology, sovereign_id is identity. Episodic memory serves identity, not infrastructure. |
+
+**Implementation:** 8 files modified. `drift_detector.py` — `resolve_sovereign_id(agent)` in `_get_crew_agent_ids()`. `memory_probes.py` — `_resolve_probe_agent_id()` helper + all 6 probe classes. `routers/agents.py` — HXI episode + chat history. `session.py` — CLI session episode + recall. `feedback.py` — `identity_registry` param + `_extract_agent_ids()` resolution. `cognitive_services.py` — pass `identity_registry` to FeedbackEngine. `cognitive_agent.py` — `logger.debug` → `logger.warning`. 15 new tests.
+

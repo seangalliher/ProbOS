@@ -1499,18 +1499,21 @@ class EpisodicMemory:
         hebbian_weight: float = 0.5,
         recency_weight: float = 0.0,
         weights: dict[str, float] | None = None,
+        convergence_bonus: float = 0.10,
     ) -> RecallScore:
-        """Compute composite salience score for a recalled episode (AD-567b/c).
+        """Compute composite salience score for a recalled episode (AD-567b/c, AD-584c).
 
-        Weights default to the AD-567b formula:
-          0.35*semantic + 0.10*keyword + 0.15*trust + 0.10*hebbian + 0.20*recency + 0.10*anchor
+        Weights default to the AD-584c rebalanced formula:
+          0.35*semantic + 0.20*keyword + 0.10*trust + 0.05*hebbian + 0.15*recency + 0.15*anchor
         AD-567c: anchor_confidence uses Johnson-weighted dimension scoring.
+        AD-584c: convergence bonus (+0.10 default) for episodes found by both
+        semantic AND keyword channels (spreading activation).
         """
         from probos.cognitive.anchor_quality import compute_anchor_confidence
 
         w = weights or {
-            "semantic": 0.35, "keyword": 0.10, "trust": 0.15,
-            "hebbian": 0.10, "recency": 0.20, "anchor": 0.10,
+            "semantic": 0.35, "keyword": 0.20, "trust": 0.10,
+            "hebbian": 0.05, "recency": 0.15, "anchor": 0.15,
         }
 
         # AD-567c: Johnson-weighted anchor confidence (replaces simple field count)
@@ -1520,12 +1523,17 @@ class EpisodicMemory:
 
         composite = (
             w.get("semantic", 0.35) * semantic_similarity
-            + w.get("keyword", 0.10) * keyword_norm
-            + w.get("trust", 0.15) * trust_weight
-            + w.get("hebbian", 0.10) * hebbian_weight
-            + w.get("recency", 0.20) * recency_weight
-            + w.get("anchor", 0.10) * anchor_confidence
+            + w.get("keyword", 0.20) * keyword_norm
+            + w.get("trust", 0.10) * trust_weight
+            + w.get("hebbian", 0.05) * hebbian_weight
+            + w.get("recency", 0.15) * recency_weight
+            + w.get("anchor", 0.15) * anchor_confidence
         )
+
+        # AD-584c: Convergence bonus — multi-pathway evidence accumulation.
+        # Episodes found by BOTH semantic AND keyword channels get a bonus.
+        if semantic_similarity > 0.0 and keyword_hits > 0:
+            composite += max(0.0, convergence_bonus)
 
         return RecallScore(
             episode=episode,
@@ -1550,6 +1558,7 @@ class EpisodicMemory:
         context_budget: int = 4000,
         weights: dict[str, float] | None = None,
         anchor_confidence_gate: float = 0.0,
+        convergence_bonus: float = 0.10,
     ) -> list[RecallScore]:
         """Salience-weighted recall combining semantic + keyword + trust + Hebbian + recency + anchor (AD-567b/c).
 
@@ -1623,6 +1632,7 @@ class EpisodicMemory:
                 hebbian_weight=hw,
                 recency_weight=rw,
                 weights=weights,
+                convergence_bonus=convergence_bonus,
             )
             results.append(rs)
 

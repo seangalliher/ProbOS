@@ -47,6 +47,7 @@ class FeedbackEngine:
         event_log: EventLog | None = None,
         feedback_hebbian_reward: float = 0.10,
         feedback_trust_weight: float = 1.5,
+        identity_registry: Any = None,
     ) -> None:
         self._trust = trust_network
         self._hebbian = hebbian_router
@@ -54,6 +55,7 @@ class FeedbackEngine:
         self._event_log = event_log
         self._feedback_hebbian_reward = feedback_hebbian_reward
         self._feedback_trust_weight = feedback_trust_weight
+        self._identity_registry = identity_registry
 
     async def _safe_log_event(self, event_log, *args, **kwargs) -> None:
         """Best-effort event logging — never blocks feedback processing."""
@@ -310,6 +312,10 @@ class FeedbackEngine:
             agent_id = self._get_agent_id_from_node(node)
             if agent_id and agent_id not in agent_ids:
                 agent_ids.append(agent_id)
+        # BF-138: Resolve slot IDs to sovereign IDs
+        if self._identity_registry:
+            from probos.cognitive.episodic import resolve_sovereign_id_from_slot
+            return [resolve_sovereign_id_from_slot(aid, self._identity_registry) for aid in agent_ids]
         return agent_ids
 
     def _get_agent_id_from_node(self, node: TaskNode) -> str | None:

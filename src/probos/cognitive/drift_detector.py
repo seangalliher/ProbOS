@@ -431,6 +431,7 @@ class DriftScheduler:
         """Enumerate active crew agent IDs from runtime."""
         try:
             from probos.crew_utils import is_crew_agent
+            from probos.cognitive.episodic import resolve_sovereign_id
 
             ids = []
             pools = getattr(self._runtime, "pools", {})
@@ -439,7 +440,7 @@ class DriftScheduler:
                 for aid in getattr(pool, "healthy_agents", []):
                     agent = registry.get(aid) if registry else None
                     if agent and is_crew_agent(agent):
-                        ids.append(agent.id)
+                        ids.append(resolve_sovereign_id(agent))
             return ids
         except Exception:
             logger.debug("Failed to enumerate crew agents", exc_info=True)

@@ -274,15 +274,16 @@ class MemoryConfig(BaseModel):
     similarity_threshold: float = 0.6  # Semantic similarity threshold for recall/fuzzy lookup
     verify_content_hash: bool = True    # AD-541e: Verify episode hashes on recall
     eviction_audit_enabled: bool = True  # AD-541f: Append-only eviction audit trail
-    # AD-567b: Salience-weighted recall
+    # AD-567b/AD-584c: Salience-weighted recall (rebalanced for QA-trained embeddings)
     recall_weights: dict[str, float] = {
         "semantic": 0.35,
-        "keyword": 0.10,
-        "trust": 0.15,
-        "hebbian": 0.10,
-        "recency": 0.20,
-        "anchor": 0.10,
+        "keyword": 0.20,
+        "trust": 0.10,
+        "hebbian": 0.05,
+        "recency": 0.15,
+        "anchor": 0.15,
     }
+    recall_convergence_bonus: float = 0.10  # AD-584c: bonus for multi-channel hits
     recall_context_budget_chars: int = 4000  # ~4K char memory budget
     # AD-567c: Anchor confidence scoring
     anchor_dimension_weights: dict[str, float] = {

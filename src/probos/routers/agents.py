@@ -305,11 +305,13 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
         try:
             import time as _time
+            from probos.cognitive.episodic import resolve_sovereign_id
             from probos.types import AnchorFrame, Episode
+            sovereign_id = resolve_sovereign_id(agent)
             episode = Episode(
                 user_input=f"[1:1 with {callsign or agent_id}] Captain: {req.message}",
                 timestamp=_time.time(),
-                agent_ids=[agent_id],
+                agent_ids=[sovereign_id],
                 outcomes=[{
                     "intent": "direct_message",
                     "success": True,
@@ -362,12 +364,15 @@ async def agent_chat_history(agent_id: str, runtime: Any = Depends(get_runtime))
     memories: list[dict[str, str]] = []
     if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
         try:
+            from probos.cognitive.episodic import resolve_sovereign_id
+            agent = runtime.registry.get(agent_id)
+            sovereign_id = resolve_sovereign_id(agent) if agent else agent_id
             episodes = await runtime.episodic_memory.recall_for_agent(
-                agent_id, "1:1 conversation with Captain", k=3
+                sovereign_id, "1:1 conversation with Captain", k=3
             )
             if not episodes and hasattr(runtime.episodic_memory, 'recent_for_agent'):
                 episodes = await runtime.episodic_memory.recent_for_agent(
-                    agent_id, k=3
+                    sovereign_id, k=3
                 )
             for ep in episodes:
                 memories.append({

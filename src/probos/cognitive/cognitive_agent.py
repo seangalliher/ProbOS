@@ -2565,6 +2565,7 @@ class CognitiveAgent(BaseAgent):
                         context_budget=_tier_params.get("context_budget", 4000),
                         weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
                         anchor_confidence_gate=_tier_params.get("anchor_confidence_gate", 0.3),
+                        convergence_bonus=getattr(mem_cfg, 'recall_convergence_bonus', 0.10) if mem_cfg else 0.10,
                     )
                 elif hasattr(em, 'recall_for_agent'):
                     # BASIC tier: vector similarity only, no salience weighting
@@ -2736,7 +2737,7 @@ class CognitiveAgent(BaseAgent):
 
                 observation["recent_memories"] = memory_list
         except Exception:
-            logger.debug("Failed to fetch episodic memory context", exc_info=True)
+            logger.warning("BF-138: Failed to fetch episodic memory context — agent will respond without memory", exc_info=True)
 
         return observation
 

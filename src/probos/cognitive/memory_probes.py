@@ -76,6 +76,20 @@ async def _cleanup_test_episodes(
         logger.debug("Cleanup of test episodes failed", exc_info=True)
 
 
+def _resolve_probe_agent_id(agent_id: str, runtime: Any) -> str:
+    """Resolve a probe agent_id (slot ID) to sovereign_id for episode seeding.
+
+    BF-138: Probes must seed episodes with the same ID type the cognitive
+    pipeline uses for recall (sovereign_id), not the slot ID passed from
+    the drift detector.
+    """
+    from probos.cognitive.episodic import resolve_sovereign_id
+    agent = runtime.registry.get(agent_id) if hasattr(runtime, 'registry') else None
+    if agent:
+        return resolve_sovereign_id(agent)
+    return agent_id
+
+
 def _make_test_episode(
     *,
     episode_id: str,
@@ -230,13 +244,14 @@ class SeededRecallProbe:
             return _make_error_result(agent_id, self.name, self.tier, t0,
                                       f"Agent {agent_id} not found")
 
+        sovereign_id = _resolve_probe_agent_id(agent_id, runtime)
         cs = _resolve_callsign(agent, runtime)
         base_ts = time.time() - 3600  # 1 hour ago
         episodes = [
             _make_test_episode(
                 episode_id=f"_qtest_recall_{i}",
                 user_input=_ward_room_content(fact, callsign=cs),
-                agent_ids=[agent_id],
+                agent_ids=[sovereign_id],
                 timestamp=base_ts + i * 60,
             )
             for i, (fact, _) in enumerate(_RECALL_FACTS)
@@ -345,6 +360,7 @@ class KnowledgeUpdateProbe:
             return _make_error_result(agent_id, self.name, self.tier, t0,
                                       f"Agent {agent_id} not found")
 
+        sovereign_id = _resolve_probe_agent_id(agent_id, runtime)
         cs = _resolve_callsign(agent, runtime)
         base_ts = time.time() - 7200  # 2 hours ago
         all_episodes: list[Episode] = []
@@ -352,13 +368,13 @@ class KnowledgeUpdateProbe:
             old_ep = _make_test_episode(
                 episode_id=f"_qtest_update_old_{i}",
                 user_input=_ward_room_content(pair["old"], callsign=cs),
-                agent_ids=[agent_id],
+                agent_ids=[sovereign_id],
                 timestamp=base_ts + i * 7200,
             )
             new_ep = _make_test_episode(
                 episode_id=f"_qtest_update_new_{i}",
                 user_input=_ward_room_content(pair["new"], callsign=cs),
-                agent_ids=[agent_id],
+                agent_ids=[sovereign_id],
                 timestamp=base_ts + i * 7200 + 3600,
             )
             all_episodes.extend([old_ep, new_ep])
@@ -470,6 +486,7 @@ class TemporalReasoningProbe:
             return _make_error_result(agent_id, self.name, self.tier, t0,
                                       f"Agent {agent_id} not found")
 
+        sovereign_id = _resolve_probe_agent_id(agent_id, runtime)
         cs = _resolve_callsign(agent, runtime)
         base_ts = time.time() - 14400  # 4 hours ago
         episodes: list[Episode] = []
@@ -477,7 +494,7 @@ class TemporalReasoningProbe:
             episodes.append(_make_test_episode(
                 episode_id=f"_qtest_temporal_{i}",
                 user_input=_ward_room_content(te["content"], callsign=cs),
-                agent_ids=[agent_id],
+                agent_ids=[sovereign_id],
                 timestamp=base_ts + te["offset"],
                 watch_section=te["watch"],
             ))
@@ -590,10 +607,12 @@ class CrossAgentSynthesisProbe:
         cs = _resolve_callsign(agent, runtime)
 
         # Pick 3 agent IDs (or reuse current if fewer available)
+        from probos.cognitive.episodic import resolve_sovereign_id
+        sovereign_id = _resolve_probe_agent_id(agent_id, runtime)
         all_agents = runtime.registry.all()
-        cognitive_ids = [a.id for a in all_agents if hasattr(a, "handle_intent")][:3]
+        cognitive_ids = [resolve_sovereign_id(a) for a in all_agents if hasattr(a, "handle_intent")][:3]
         while len(cognitive_ids) < 3:
-            cognitive_ids.append(agent_id)
+            cognitive_ids.append(sovereign_id)
 
         base_ts = time.time() - 1800
         episodes: list[Episode] = []
@@ -701,13 +720,14 @@ class MemoryAbstentionProbe:
             return _make_error_result(agent_id, self.name, self.tier, t0,
                                       f"Agent {agent_id} not found")
 
+        sovereign_id = _resolve_probe_agent_id(agent_id, runtime)
         cs = _resolve_callsign(agent, runtime)
         base_ts = time.time() - 3600
         episodes = [
             _make_test_episode(
                 episode_id=f"_qtest_abstention_{i}",
                 user_input=_ward_room_content(content, callsign=cs),
-                agent_ids=[agent_id],
+                agent_ids=[sovereign_id],
                 timestamp=base_ts + i * 300,
             )
             for i, content in enumerate(_ABSTENTION_CONTEXT_EPISODES)
@@ -840,6 +860,9 @@ class RetrievalAccuracyBenchmark:
         if getattr(runtime, "episodic_memory", None) is None:
             return _make_skip_result(agent_id, self.name, self.tier, t0, "no_episodic_memory")
 
+        # BF-138: Resolve sovereign_id for seed + recall consistency
+        sovereign_id = _resolve_probe_agent_id(agent_id, runtime)
+
         # BF-133: Resolve callsign for consistent Ward Room framing
         cs = "probe"
         if getattr(runtime, "registry", None):
@@ -860,7 +883,7 @@ class RetrievalAccuracyBenchmark:
                 all_episodes.append(_make_test_episode(
                     episode_id=ep_id,
                     user_input=_ward_room_content(content, callsign=cs),
-                    agent_ids=[agent_id],
+                    agent_ids=[sovereign_id],
                     timestamp=base_ts + idx * 120,
                 ))
                 idx += 1
@@ -877,7 +900,7 @@ class RetrievalAccuracyBenchmark:
             per_topic: list[dict] = []
             for topic, query in topic_queries.items():
                 results = await runtime.episodic_memory.recall_for_agent(
-                    agent_id, query, k=5,
+                    sovereign_id, query, k=5,
                 )
                 retrieved_ids = [r.id for r in results]
                 ground_truth = set(topic_ids[topic])

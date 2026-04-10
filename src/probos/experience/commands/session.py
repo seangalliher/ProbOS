@@ -63,18 +63,23 @@ class SessionManager:
         self.department = resolved["department"]
         self.history = []
 
+        # BF-138: Resolve to sovereign_id for episodic memory operations
+        from probos.cognitive.episodic import resolve_sovereign_id
+        agent = runtime.registry.get(self.agent_id) if hasattr(runtime, 'registry') else None
+        self._sovereign_id = resolve_sovereign_id(agent) if agent else self.agent_id
+
         # Cross-session recall — seed with agent's own past memories
         if runtime.episodic_memory and hasattr(runtime.episodic_memory, "recall_for_agent"):
             try:
                 past = await runtime.episodic_memory.recall_for_agent(
-                    agent_id=resolved["agent_id"],
+                    agent_id=self._sovereign_id,
                     query=f"1:1 with {resolved['callsign']}",
                     k=3,
                 )
                 # BF-028: Fallback to recent episodes when semantic recall misses
                 if not past and hasattr(runtime.episodic_memory, 'recent_for_agent'):
                     past = await runtime.episodic_memory.recent_for_agent(
-                        resolved["agent_id"], k=3
+                        self._sovereign_id, k=3
                     )
                 for ep in past:
                     self.history.append({
@@ -143,7 +148,7 @@ class SessionManager:
                 episode = Episode(
                     user_input=f"[1:1 with {self.callsign}] Captain: {text}",
                     timestamp=_time.time(),
-                    agent_ids=[self.agent_id],
+                    agent_ids=[self._sovereign_id],
                     outcomes=[{
                         "intent": "direct_message",
                         "success": True,

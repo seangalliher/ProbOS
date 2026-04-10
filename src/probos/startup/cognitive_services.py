@@ -227,6 +227,7 @@ async def init_cognitive_services(
         hebbian_router=hebbian_router,
         episodic_memory=episodic_memory,
         event_log=event_log,
+        identity_registry=identity_registry,
     )
 
     # Create CorrectionDetector + AgentPatcher (AD-229, AD-230)
