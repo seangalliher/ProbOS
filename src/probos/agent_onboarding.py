@@ -377,6 +377,9 @@ class AgentOnboardingService:
                 if not chosen or len(chosen) > 30:
                     chosen = seed_callsign
                     reason = "Default callsign accepted."
+                    _llm_empty = True
+                else:
+                    _llm_empty = False
 
                 # AD-485: Callsign safety validation
                 def _is_valid_callsign(name: str) -> bool:
@@ -413,7 +416,23 @@ class AgentOnboardingService:
                     chosen = seed_callsign
                     reason = f"Chosen name '{chosen}' was already taken."
 
-                logger.info("Naming ceremony: %s chose callsign '%s' (reason: %s)", agent.agent_type, chosen, reason)
+                if _llm_empty:
+                    logger.warning(
+                        "Naming ceremony: LLM returned empty/oversized response for %s, "
+                        "falling back to seed callsign '%s'",
+                        agent.agent_type, chosen
+                    )
+                elif "not a valid callsign" in reason:
+                    logger.warning(
+                        "Naming ceremony: LLM suggested invalid name for %s, "
+                        "falling back to seed callsign '%s' (reason: %s)",
+                        agent.agent_type, chosen, reason
+                    )
+                else:
+                    logger.info(
+                        "Naming ceremony: %s chose callsign '%s' (reason: %s)",
+                        agent.agent_type, chosen, reason
+                    )
                 return chosen
             else:
                 logger.warning("No LLM client for %s, using seed callsign", agent.agent_type)

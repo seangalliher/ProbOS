@@ -244,7 +244,7 @@ export interface HXIState {
   wardRoomActiveThread: string | null;
   wardRoomThreadDetail: { thread: WardRoomThread; posts: WardRoomPost[] } | null;
   wardRoomUnread: Record<string, number>;
-  wardRoomView: 'channels' | 'dms';
+  wardRoomView: 'channels' | 'dms' | 'dm-detail';
   wardRoomDmChannels: { channel: { id: string; name: string; description: string; created_at: number }; latest_thread: any; thread_count: number }[];
   // Crew Manifest (AD-513)
   crewManifestOpen: boolean;
@@ -300,7 +300,8 @@ export interface HXIState {
   closeWardRoomThread: () => void;
   refreshWardRoomThreads: () => void;
   refreshWardRoomUnread: () => void;
-  setWardRoomView: (view: 'channels' | 'dms') => void;
+  setWardRoomView: (view: 'channels' | 'dms' | 'dm-detail') => void;
+  selectDmChannel: (channelId: string) => void;
   refreshWardRoomDmChannels: () => void;
   // Communications settings (AD-485)
   communicationsSettings: { dm_min_rank: string; recreation_min_rank: string };
@@ -604,7 +605,11 @@ export const useStore = create<HXIState>((set, get) => ({
       }
     } catch { /* swallow */ }
   },
-  setWardRoomView: (view: 'channels' | 'dms') => set({ wardRoomView: view }),
+  setWardRoomView: (view: 'channels' | 'dms' | 'dm-detail') => set({ wardRoomView: view }),
+  selectDmChannel: async (channelId: string) => {
+    await get().selectWardRoomChannel(channelId);
+    set({ wardRoomView: 'dm-detail' as const });
+  },
   refreshWardRoomDmChannels: async () => {
     try {
       const resp = await fetch('/api/wardroom/dms');
@@ -1606,6 +1611,7 @@ export const useStore = create<HXIState>((set, get) => ({
         // BF-015: always refresh thread list and unread when a new thread arrives
         get().refreshWardRoomThreads();
         get().refreshWardRoomUnread();
+        get().refreshWardRoomDmChannels();
         break;
       }
       case 'ward_room_post_created': {
@@ -1616,6 +1622,7 @@ export const useStore = create<HXIState>((set, get) => ({
         // BF-015: always refresh thread list (updates reply counts, last_activity)
         get().refreshWardRoomThreads();
         get().refreshWardRoomUnread();
+        get().refreshWardRoomDmChannels();
         break;
       }
       case 'ward_room_endorsement':

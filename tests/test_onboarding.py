@@ -101,7 +101,7 @@ class TestNamingCeremony:
 
     @pytest.mark.asyncio
     async def test_naming_ceremony_fallback_on_empty(self):
-        """Empty LLM response → seed callsign returned."""
+        """Empty LLM response → seed callsign returned + warning logged."""
         from probos.runtime import ProbOSRuntime
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
@@ -115,12 +115,16 @@ class TestNamingCeremony:
         agent = _make_agent(callsign="Bones")
         agent._llm_client.complete = AsyncMock(return_value=LLMResponse(content=""))
 
-        result = await rt.onboarding.run_naming_ceremony(agent)
-        assert result == "Bones"
+        with patch("probos.agent_onboarding.logger") as mock_logger:
+            result = await rt.onboarding.run_naming_ceremony(agent)
+            assert result == "Bones"
+            mock_logger.warning.assert_called_once()
+            assert "empty/oversized" in mock_logger.warning.call_args[0][0]
+            mock_logger.info.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_naming_ceremony_fallback_on_error(self):
-        """LLM raises exception → seed callsign returned."""
+        """LLM raises exception → seed callsign returned + warning logged."""
         from probos.runtime import ProbOSRuntime
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
@@ -134,8 +138,11 @@ class TestNamingCeremony:
         agent = _make_agent(callsign="Bones")
         agent._llm_client.complete = AsyncMock(side_effect=RuntimeError("LLM down"))
 
-        result = await rt.onboarding.run_naming_ceremony(agent)
-        assert result == "Bones"
+        with patch("probos.agent_onboarding.logger") as mock_logger:
+            result = await rt.onboarding.run_naming_ceremony(agent)
+            assert result == "Bones"
+            mock_logger.warning.assert_called_once()
+            assert "Naming ceremony failed" in mock_logger.warning.call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_naming_ceremony_rejects_duplicate(self):
@@ -197,6 +204,81 @@ class TestNamingCeremony:
 
         result = await rt.onboarding.run_naming_ceremony(agent)
         assert result == "Scotty"
+
+    @pytest.mark.asyncio
+    async def test_naming_ceremony_invalid_name_logs_warning(self):
+        """LLM returns blocked name → seed callsign + warning logged."""
+        from probos.runtime import ProbOSRuntime
+
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        rt.config = SystemConfig()
+        rt.ontology = None
+        rt.identity_registry = None
+        rt.registry = MagicMock(spec=AgentRegistry)
+        rt.registry.all.return_value = []
+        _attach_onboarding(rt)
+
+        agent = _make_agent(callsign="Bones")
+        agent._llm_client.complete = AsyncMock(
+            return_value=LLMResponse(content="Captain\nI choose Captain.")
+        )
+
+        with patch("probos.agent_onboarding.logger") as mock_logger:
+            result = await rt.onboarding.run_naming_ceremony(agent)
+            assert result == "Bones"
+            # Two warnings: one from _is_valid_callsign rejection, one from final log
+            warning_msgs = [c[0][0] for c in mock_logger.warning.call_args_list]
+            assert any("invalid" in m.lower() for m in warning_msgs)
+
+    @pytest.mark.asyncio
+    async def test_naming_ceremony_oversized_name_logs_warning(self):
+        """50-char name → seed callsign + warning for empty/oversized."""
+        from probos.runtime import ProbOSRuntime
+
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        rt.config = SystemConfig()
+        rt.ontology = None
+        rt.identity_registry = None
+        rt.registry = MagicMock(spec=AgentRegistry)
+        rt.registry.all.return_value = []
+        _attach_onboarding(rt)
+
+        agent = _make_agent(callsign="Bones")
+        long_name = "A" * 50
+        agent._llm_client.complete = AsyncMock(
+            return_value=LLMResponse(content=f"{long_name}\nToo long.")
+        )
+
+        with patch("probos.agent_onboarding.logger") as mock_logger:
+            result = await rt.onboarding.run_naming_ceremony(agent)
+            assert result == "Bones"
+            mock_logger.warning.assert_called_once()
+            assert "empty/oversized" in mock_logger.warning.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_naming_ceremony_valid_name_logs_info(self):
+        """Valid LLM name → logger.info, no warnings."""
+        from probos.runtime import ProbOSRuntime
+
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        rt.config = SystemConfig()
+        rt.ontology = None
+        rt.identity_registry = None
+        rt.registry = MagicMock(spec=AgentRegistry)
+        rt.registry.all.return_value = []
+        _attach_onboarding(rt)
+
+        agent = _make_agent(callsign="Bones")
+        agent._llm_client.complete = AsyncMock(
+            return_value=LLMResponse(content="Kira\nI choose Kira.")
+        )
+
+        with patch("probos.agent_onboarding.logger") as mock_logger:
+            result = await rt.onboarding.run_naming_ceremony(agent)
+            assert result == "Kira"
+            mock_logger.info.assert_called_once()
+            assert "chose callsign" in mock_logger.info.call_args[0][0]
+            mock_logger.warning.assert_not_called()
 
 
 # ── Wire Agent Integration Tests ───────────────────────────────────

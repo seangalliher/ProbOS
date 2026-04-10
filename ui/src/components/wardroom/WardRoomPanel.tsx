@@ -2,18 +2,13 @@ import { useStore } from '../../store/useStore';
 import { WardRoomChannelList } from './WardRoomChannelList';
 import { WardRoomThreadList } from './WardRoomThreadList';
 import { WardRoomThreadDetail } from './WardRoomThreadDetail';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 
-/** AD-485/BF-054/BF-055: DM Activity Log — chronological feed with reply */
+/** AD-485/BF-054/BF-080: DM Activity Log — chronological feed with navigation */
 function DmActivityLog() {
   const dmChannels = useStore(s => s.wardRoomDmChannels);
   const refresh = useStore(s => s.refreshWardRoomDmChannels);
-  const selectChannel = useStore(s => s.selectWardRoomChannel);
-  const setView = useStore(s => s.setWardRoomView);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [replyingTo, setReplyingTo] = useState<string | null>(null);
-  const [replyText, setReplyText] = useState('');
-  const [sending, setSending] = useState(false);
+  const selectDm = useStore(s => s.selectDmChannel);
 
   // BF-054: auto-refresh every 15s
   useEffect(() => {
@@ -21,28 +16,6 @@ function DmActivityLog() {
     const interval = setInterval(refresh, 15000);
     return () => clearInterval(interval);
   }, [refresh]);
-
-  // BF-055: Captain reply handler
-  const handleReply = async (channelId: string) => {
-    if (!replyText.trim() || sending) return;
-    setSending(true);
-    try {
-      await fetch(`/api/wardroom/channels/${channelId}/threads`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          author_id: 'captain',
-          title: 'Captain reply',
-          body: replyText.trim(),
-          author_callsign: 'Captain',
-        }),
-      });
-      setReplyText('');
-      setReplyingTo(null);
-      refresh();
-    } catch { /* swallow */ }
-    setSending(false);
-  };
 
   if (dmChannels.length === 0) {
     return (
@@ -75,7 +48,6 @@ function DmActivityLog() {
         const ts = t.created_at ? new Date(t.created_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
         const preview = (t.body || '').slice(0, 120) + ((t.body || '').length > 120 ? '…' : '');
         const entryId = t.id || `${i}`;
-        const isExpanded = expanded === entryId;
         const captainBadge = isCaptainDm(ch.name);
 
         return (
@@ -87,7 +59,7 @@ function DmActivityLog() {
               fontSize: 12,
               cursor: 'pointer',
             }}
-            onClick={() => setExpanded(isExpanded ? null : entryId)}
+            onClick={() => selectDm(ch.id)}
             onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(240,176,96,0.06)'; }}
             onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
           >
@@ -106,95 +78,17 @@ function DmActivityLog() {
               )}
             </div>
 
-            {/* Body — preview when collapsed, full when expanded */}
+            {/* Body — preview */}
             <div style={{ color: '#8888a0', fontSize: 11, lineHeight: 1.4 }}>
-              {isExpanded ? (t.body || '') : preview}
+              {preview}
             </div>
 
-            {/* BF-054: "View full thread" when COLLAPSED */}
-            {!isExpanded && (
-              <div style={{ marginTop: 4 }}>
-                <span style={{ fontSize: 10, color: '#6a6a7a' }}>
-                  View full thread →
-                </span>
-              </div>
-            )}
-
-            {/* Expanded: "Open in Ward Room" + Reply (BF-054/BF-055) */}
-            {isExpanded && (
-              <div style={{ marginTop: 6 }}>
-                <span
-                  onClick={e => { e.stopPropagation(); selectChannel(ch.id); setView('channels'); }}
-                  style={{
-                    fontSize: 10, color: '#f0b060', cursor: 'pointer',
-                    textDecoration: 'underline',
-                  }}
-                >
-                  Open in Ward Room →
-                </span>
-
-                {/* BF-055: Reply controls */}
-                {replyingTo === entryId ? (
-                  <div style={{ marginTop: 6 }} onClick={e => e.stopPropagation()}>
-                    <textarea
-                      value={replyText}
-                      onChange={e => setReplyText(e.target.value)}
-                      placeholder="Reply as Captain..."
-                      rows={2}
-                      style={{
-                        width: '100%', background: 'rgba(255,255,255,0.06)',
-                        border: '1px solid rgba(240,176,96,0.2)', borderRadius: 4,
-                        padding: '6px 8px', color: '#e0dcd4', fontSize: 11,
-                        fontFamily: "'JetBrains Mono', monospace", resize: 'vertical',
-                      }}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          handleReply(ch.id);
-                        }
-                      }}
-                      autoFocus
-                    />
-                    <div style={{ display: 'flex', gap: 6, marginTop: 4, justifyContent: 'flex-end' }}>
-                      <button
-                        onClick={e => { e.stopPropagation(); setReplyingTo(null); setReplyText(''); }}
-                        style={{
-                          background: 'none', border: '1px solid rgba(255,255,255,0.1)',
-                          borderRadius: 4, padding: '3px 8px', color: '#6a6a7a',
-                          fontSize: 10, cursor: 'pointer',
-                          fontFamily: "'JetBrains Mono', monospace",
-                        }}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={e => { e.stopPropagation(); handleReply(ch.id); }}
-                        disabled={sending || !replyText.trim()}
-                        style={{
-                          background: 'rgba(240,176,96,0.15)',
-                          border: '1px solid rgba(240,176,96,0.3)',
-                          borderRadius: 4, padding: '3px 10px', color: '#f0b060',
-                          fontSize: 10, cursor: sending ? 'wait' : 'pointer',
-                          fontFamily: "'JetBrains Mono', monospace",
-                        }}
-                      >
-                        {sending ? '...' : 'Send'}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <span
-                    onClick={e => { e.stopPropagation(); setReplyingTo(entryId); }}
-                    style={{
-                      display: 'inline-block', marginLeft: 12,
-                      fontSize: 10, color: '#b080d0', cursor: 'pointer',
-                    }}
-                  >
-                    Reply
-                  </span>
-                )}
-              </div>
-            )}
+            {/* BF-080: click entry to view full conversation */}
+            <div style={{ marginTop: 4 }}>
+              <span style={{ fontSize: 10, color: '#6a6a7a' }}>
+                View conversation →
+              </span>
+            </div>
           </div>
         );
       })}
@@ -212,10 +106,12 @@ export function WardRoomPanel() {
   const closeThread = useStore(s => s.closeWardRoomThread);
   const activeChannel = useStore(s => s.wardRoomActiveChannel);
   const channels = useStore(s => s.wardRoomChannels);
+  const dmChannels = useStore(s => s.wardRoomDmChannels);
   const view = useStore(s => s.wardRoomView);
   const setView = useStore(s => s.setWardRoomView);
 
   const channelName = channels.find(c => c.id === activeChannel)?.name || '';
+  const dmChannelInfo = dmChannels.find(d => d.channel.id === activeChannel)?.channel;
 
   const tabStyle = (active: boolean) => ({
     padding: '4px 12px',
@@ -270,8 +166,8 @@ export function WardRoomPanel() {
         }}>✕</span>
       </div>
 
-      {/* View tabs (only when not in a thread) */}
-      {!activeThread && (
+      {/* View tabs (only when not in a thread or dm-detail) */}
+      {!activeThread && view !== 'dm-detail' && (
         <div style={{
           display: 'flex', gap: 8, padding: '4px 16px',
           borderBottom: '1px solid rgba(255,255,255,0.04)',
@@ -288,6 +184,24 @@ export function WardRoomPanel() {
       {/* Body */}
       {activeThread ? (
         <WardRoomThreadDetail />
+      ) : view === 'dm-detail' ? (
+        <>
+          {/* BF-080: DM detail header with back navigation */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '8px 16px',
+            borderBottom: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            <span
+              onClick={() => setView('dms')}
+              style={{ cursor: 'pointer', color: '#8888a0', fontSize: 14 }}
+            >←</span>
+            <span style={{ fontSize: 11, color: '#c0bab0', fontWeight: 600 }}>
+              {dmChannelInfo?.description || dmChannelInfo?.name || 'DM Conversation'}
+            </span>
+          </div>
+          <WardRoomThreadList />
+        </>
       ) : view === 'dms' ? (
         <DmActivityLog />
       ) : (

@@ -88,3 +88,39 @@ describe('WardRoomPanel store (AD-407c)', () => {
     // No crash means the event case matched
   });
 });
+
+// BF-080: DM Channel Viewer tests
+describe('BF-080: DM Channel Viewer', () => {
+  it('selectDmChannel sets view to dm-detail and active channel', async () => {
+    // Pre-set state
+    useStore.setState({ wardRoomView: 'dms' });
+    await useStore.getState().selectDmChannel('dm-ch1');
+    expect(useStore.getState().wardRoomActiveChannel).toBe('dm-ch1');
+    expect(useStore.getState().wardRoomView).toBe('dm-detail');
+  });
+
+  it('dm-detail back returns to dms view', () => {
+    useStore.setState({ wardRoomView: 'dm-detail' as any });
+    useStore.getState().setWardRoomView('dms');
+    expect(useStore.getState().wardRoomView).toBe('dms');
+  });
+
+  it('ward_room_post_created event refreshes DM channels', () => {
+    // Spy on refreshWardRoomDmChannels
+    const calls: string[] = [];
+    const original = useStore.getState().refreshWardRoomDmChannels;
+    useStore.setState({
+      refreshWardRoomDmChannels: async () => { calls.push('refreshed'); },
+    });
+
+    useStore.getState().handleEvent({
+      type: 'ward_room_post_created',
+      data: { thread_id: 't1', channel_id: 'ch1' },
+      timestamp: Date.now() / 1000,
+    });
+
+    expect(calls).toContain('refreshed');
+    // Restore
+    useStore.setState({ refreshWardRoomDmChannels: original });
+  });
+});
