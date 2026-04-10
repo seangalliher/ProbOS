@@ -11,6 +11,9 @@ Usage::
 
 from __future__ import annotations
 
+import os
+os.environ["TQDM_DISABLE"] = "1"  # Suppress sentence-transformers progress bars
+
 import argparse
 import asyncio
 import logging

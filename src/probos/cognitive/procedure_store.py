@@ -282,11 +282,26 @@ class ProcedureStore:
             )
             ef = get_embedding_function()
             model_name = get_embedding_model_name()
-            self._chroma_collection = client.get_or_create_collection(
-                name="procedures",
-                embedding_function=ef,
-                metadata={"hnsw:space": "cosine"},
-            )
+            try:
+                self._chroma_collection = client.get_or_create_collection(
+                    name="procedures",
+                    embedding_function=ef,
+                    metadata={"hnsw:space": "cosine"},
+                )
+            except ValueError as exc:
+                if "Embedding function conflict" in str(exc):
+                    logger.warning("AD-584: Embedding function conflict for 'procedures' — opening without EF for migration")
+                    self._chroma_collection = client.get_or_create_collection(
+                        name="procedures",
+                        metadata={"hnsw:space": "cosine"},
+                    )
+                    # Clear stale metadata so migration detects the mismatch
+                    try:
+                        self._chroma_collection.modify(metadata={"embedding_model": "__ef_conflict__"})
+                    except Exception:
+                        pass
+                else:
+                    raise
 
             # AD-584: Check for embedding model migration
             col_meta = self._chroma_collection.metadata or {}

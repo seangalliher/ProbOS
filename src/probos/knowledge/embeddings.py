@@ -108,6 +108,15 @@ def get_embedding_function() -> Any | None:
     try:
         from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
         _embedding_fn = SentenceTransformerEmbeddingFunction(model_name=_MODEL_NAME)
+        # Monkey-patch the model's encode to always suppress progress bars.
+        # ChromaDB's wrapper doesn't pass show_progress_bar=False, and
+        # TQDM_DISABLE env var is unreliable with this tqdm version.
+        _model = _embedding_fn._model
+        _orig_encode = _model.encode
+        def _silent_encode(*args: Any, **kwargs: Any) -> Any:
+            kwargs.setdefault("show_progress_bar", False)
+            return _orig_encode(*args, **kwargs)
+        _model.encode = _silent_encode
         _embedding_fn(["test"])
         _embedding_available = True
         logger.info("AD-584: %s embedding function initialized", _MODEL_NAME)

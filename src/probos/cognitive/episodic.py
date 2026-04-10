@@ -499,11 +499,28 @@ class EpisodicMemory:
 
         self._client = chromadb.PersistentClient(path=str(db_dir))
         ef = get_embedding_function()
-        self._collection = self._client.get_or_create_collection(
-            name="episodes",
-            embedding_function=ef,
-            metadata={"hnsw:space": "cosine"},
-        )
+        try:
+            self._collection = self._client.get_or_create_collection(
+                name="episodes",
+                embedding_function=ef,
+                metadata={"hnsw:space": "cosine"},
+            )
+        except ValueError as exc:
+            if "Embedding function conflict" in str(exc):
+                # AD-584: Embedding function type changed (e.g. default → sentence_transformer).
+                # Open WITHOUT embedding function so migration can read and re-embed.
+                logger.warning("AD-584: Embedding function conflict detected — opening collection without EF for migration")
+                self._collection = self._client.get_or_create_collection(
+                    name="episodes",
+                    metadata={"hnsw:space": "cosine"},
+                )
+                # Clear stale embedding_model metadata so migration detects the mismatch
+                try:
+                    self._collection.modify(metadata={"embedding_model": "__ef_conflict__"})
+                except Exception:
+                    pass
+            else:
+                raise
 
         # AD-584: Ensure collection metadata includes embedding model name
         from probos.knowledge.embeddings import get_embedding_model_name

@@ -60,11 +60,26 @@ class SemanticKnowledgeLayer:
         model_name = get_embedding_model_name()
 
         for name, collection_name in self.COLLECTIONS.items():
-            self._collections[name] = self._client.get_or_create_collection(
-                name=collection_name,
-                embedding_function=ef,
-                metadata={"hnsw:space": "cosine"},
-            )
+            try:
+                self._collections[name] = self._client.get_or_create_collection(
+                    name=collection_name,
+                    embedding_function=ef,
+                    metadata={"hnsw:space": "cosine"},
+                )
+            except ValueError as exc:
+                if "Embedding function conflict" in str(exc):
+                    logger.warning("AD-584: Embedding function conflict for '%s' — opening without EF for migration", collection_name)
+                    self._collections[name] = self._client.get_or_create_collection(
+                        name=collection_name,
+                        metadata={"hnsw:space": "cosine"},
+                    )
+                    # Clear stale metadata so migration detects the mismatch
+                    try:
+                        self._collections[name].modify(metadata={"embedding_model": "__ef_conflict__"})
+                    except Exception:
+                        pass
+                else:
+                    raise
 
         # AD-584: Check for embedding model migration
         self._migrate_collections_if_needed(model_name, ef)
