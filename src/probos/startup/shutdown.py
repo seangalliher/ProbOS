@@ -26,6 +26,27 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         return
 
     logger.info("ProbOS shutting down...")
+
+    # BF-135: Persist session record FIRST — synchronous file write, microseconds.
+    # Must happen before any async operations (Ward Room, event log) because
+    # __main__.py enforces a 5s timeout on stop(). If Ward Room create_thread()
+    # or event log writes are slow, the timeout cancels stop() and the session
+    # record is never written — causing stale stasis duration on next boot.
+    # BF-065: Write to runtime._data_dir directly (not knowledge_store).
+    try:
+        session_record = {
+            "session_id": runtime._session_id,
+            "start_time_utc": runtime._start_time_wall,
+            "shutdown_time_utc": time.time(),
+            "uptime_seconds": time.monotonic() - runtime._start_time,
+            "agent_count": len([a for a in runtime.registry.all() if is_crew_agent(a, runtime.ontology)]),
+            "reason": reason,
+        }
+        session_path = runtime._data_dir / "session_last.json"
+        session_path.write_text(json.dumps(session_record, indent=2))
+    except Exception as e:
+        logger.debug("AD-502: Session record persistence failed: %s", e)
+
     try:
         await runtime.event_log.log(category="system", event="stopping")
     except (asyncio.CancelledError, Exception):
@@ -55,23 +76,6 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                     )
         except Exception:
             pass  # Shutdown cleanup — don't block shutdown
-
-    # AD-502: Persist session record immediately after stasis announcement
-    # BF-065: Write to runtime._data_dir directly (not knowledge_store) so it
-    # persists even if knowledge store is torn down or never initialized.
-    try:
-        session_record = {
-            "session_id": runtime._session_id,
-            "start_time_utc": runtime._start_time_wall,
-            "shutdown_time_utc": time.time(),
-            "uptime_seconds": time.monotonic() - runtime._start_time,
-            "agent_count": len([a for a in runtime.registry.all() if is_crew_agent(a, runtime.ontology)]),
-            "reason": reason,
-        }
-        session_path = runtime._data_dir / "session_last.json"
-        session_path.write_text(json.dumps(session_record, indent=2))
-    except Exception as e:
-        logger.debug("AD-502: Session record persistence failed: %s", e)
 
     # AD-435: Grace period for in-flight DB writes to complete
     logger.info("Shutdown grace period (1s)...")
