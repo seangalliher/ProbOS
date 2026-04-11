@@ -771,3 +771,113 @@ The OSS capability profile is the **input**. ASA is the **consumer**.
 | Fallback cascade (skill→LLM→escalate) | Part of AD-534b+ | AD-534 (done), AD-423 | Graceful degradation when tools unavailable |
 
 All deferred items now have AD assignments.
+
+---
+
+## 15. Canonical Validation Scenario: Social Media Marketing Agent
+
+This is the end-to-end test case that proves the Crew Capability Architecture works. Every layer must execute for this flow to complete. If this scenario passes, the system is wired correctly.
+
+### The Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  VALIDATION SCENARIO: LinkedIn Post Creation                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Step 1: CREATE AGENT                                           │
+│  ├─ New crew agent instantiated                                 │
+│  ├─ Gets DID, birth certificate, sovereign identity             │
+│  ├─ wire_agent() in agent_onboarding.py                         │
+│  └─ Systems: Identity (AD-441), Onboarding (Core)               │
+│                                                                 │
+│  Step 2: ASSIGN ROLE                                            │
+│  ├─ Post: "social_media_marketer" (from ontology)               │
+│  ├─ Department: Communications (or Operations)                  │
+│  ├─ Role template loaded from skills.yaml                       │
+│  ├─ Standing Orders composed: Federation → Ship → Dept → Agent  │
+│  └─ Systems: Ontology (AD-429), Standing Orders (AD-339)        │
+│                                                                 │
+│  Step 3: ASSIGN SKILLS FROM ROLE TEMPLATE                       │
+│  ├─ Role template defines required skills:                      │
+│  │   - content_creation (PCC: communication)                    │
+│  │   - social_media_post_writing (ROLE skill)                   │
+│  │   - audience_analysis (ROLE skill)                           │
+│  │   - brand_voice_adherence (ROLE skill)                       │
+│  ├─ commission_agent() assigns skills at FOLLOW proficiency     │
+│  ├─ Prerequisite DAG enforced (post_writing requires            │
+│  │   content_creation)                                          │
+│  └─ Systems: Skill Framework (AD-428), Ontology (AD-429)        │
+│                                                                 │
+│  Step 4: SKILL → INTENT MAPPING                                 │
+│  ├─ social_media_post_writing skill handles intent:             │
+│  │   "create_linkedin_post"                                     │
+│  ├─ IntentDescriptor registered for this intent                 │
+│  ├─ Intent bus routes "create_linkedin_post" → this agent       │
+│  ├─ Could be executable skill (Cognitive JIT L4+) or            │
+│  │   LLM-mediated (cognitive lifecycle)                         │
+│  └─ Systems: Intent Bus (Core), Cognitive JIT (AD-531-539)      │
+│                                                                 │
+│  Step 5: TOOL REQUIRED — LINKEDIN API                           │
+│  ├─ Skill execution needs tool: "linkedin_post_api"             │
+│  ├─ ToolContext.has_tool("linkedin_post_api") → checked         │
+│  ├─ Permission check: agent rank allows W (write) on this tool  │
+│  ├─ Tool type: Remote API (or MCP Server)                       │
+│  ├─ ToolContext.invoke("linkedin_post_api", {                   │
+│  │     content: "...", audience: "...", hashtags: [...]          │
+│  │   }) → ToolResult                                            │
+│  └─ Systems: Tool Registry (AD-423a), Permissions (AD-423b),    │
+│     ToolContext (AD-423c)                                        │
+│                                                                 │
+│  Step 6: EXECUTION + AUDIT                                      │
+│  ├─ Tool adapter invokes LinkedIn API                           │
+│  ├─ Result flows back through intent bus                        │
+│  ├─ Episode recorded in EpisodicMemory                          │
+│  ├─ Skill exercise recorded (AgentSkillService.record_exercise) │
+│  ├─ Tool usage audited in Tool Registry                         │
+│  ├─ Trust updated based on outcome                              │
+│  └─ Systems: EpisodicMemory, Skill Framework (AD-428),          │
+│     TrustNetwork, Tool Registry audit                            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### What Each Step Validates
+
+| Step | Validates | Currently |
+|---|---|---|
+| 1. Create Agent | Identity + onboarding pipeline | ✅ Works |
+| 2. Assign Role | Ontology role templates → Standing Orders composition | 🔧 Ontology schema exists, not wired at onboarding |
+| 3. Assign Skills | Role template → skill commissioning from config (not hardcoded Python) | 🔧 Commissioning works, but templates are Python dict, not YAML |
+| 4. Skill → Intent | Skill maps to intent, intent bus routes correctly | ✅ Works (executable skills dispatch in handle_intent) |
+| 5. Tool Access | ToolContext permission check + tool invocation | ❌ AD-423a/b/c not built |
+| 6. Audit Trail | Exercise recorded, trust updated, episode stored | 🔧 Partial (episode + trust work, skill exercise not wired) |
+
+### Gap: Role Templates Must Come From Config
+
+Currently `ROLE_SKILL_TEMPLATES` is a Python dict in `skill_framework.py` — hardcoded for 7 agent types (security_officer, engineering_officer, etc.). For this scenario to work with dynamic roles like "social_media_marketer", role templates must be loaded from `config/ontology/skills.yaml` at commission time. The Python dict becomes the **default fallback** for built-in agent types; custom roles are defined in YAML.
+
+This is critical for Nooplex commercial use cases where customers define their own agent roles. A consulting firm needs "data_analyst", "project_manager", "client_liaison" — roles that don't exist in the OSS built-in types.
+
+### Success Criteria
+
+The validation scenario passes when:
+
+1. A new agent with type `social_media_marketer` can be created with no code changes (config only)
+2. The agent receives skills from a YAML role template, not hardcoded Python
+3. The agent can handle a `create_linkedin_post` intent
+4. The intent execution invokes a LinkedIn tool through ToolContext with permission checks
+5. The skill exercise is recorded, trust is updated, and the episode is stored
+6. The full chain is queryable via Crew Manifest (`/api/ontology/crew-manifest`): agent → role → skills → tools → recent activity
+
+### Nooplex Commercial Extension
+
+This scenario is the foundation for Nooplex's "crew-for-hire" model:
+
+- **Customer defines role** → YAML role template (skills, tools, standing orders)
+- **Nooplex assigns agent** → DID-portable agent, Clean Room memory policy
+- **Agent works** → uses customer's tools (LinkedIn, Salesforce, HubSpot via MCP)
+- **ACM tracks** → billable hours, skill utilization, tool costs
+- **ASA schedules** → work items, capacity planning, auto-escalation
+
+The OSS capability architecture makes all of this possible. The commercial layer adds billing, scheduling, and multi-tenant management.

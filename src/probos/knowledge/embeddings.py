@@ -208,6 +208,12 @@ _REFORMULATION_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^who (?:did|does|is|was) (.+)", re.IGNORECASE), r"\1"),
     (re.compile(r"^when did (.+)", re.IGNORECASE), r"\1 happened"),
     (re.compile(r"^why (?:did|does|do|is|was) (.+)", re.IGNORECASE), r"\1 because"),
+    # BF-139: Additional patterns for probe question forms
+    (re.compile(r"^what (?:happened|occurred|took place) (?:during|in|at|with) (.+)", re.IGNORECASE), r"\1"),
+    (re.compile(r"^what did (.+)", re.IGNORECASE), r"\1"),
+    (re.compile(r"^(?:tell me|talk) about (.+)", re.IGNORECASE), r"\1"),
+    (re.compile(r"^what (?:happened|occurred)\b", re.IGNORECASE), r"events that occurred"),
+    # Catch-all: strip leading auxiliary verbs
     (re.compile(r"^(?:did|does|do|is|are|was|were|has|have|had|can|could|will|would|should) (.+)", re.IGNORECASE), r"\1"),
 ]
 

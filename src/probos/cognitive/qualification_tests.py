@@ -40,7 +40,12 @@ def _safe_llm_response_text(response: Any) -> str:
 
 
 async def _send_probe(agent: Any, message: str) -> str:
-    """Send a probe message to an agent via handle_intent() with episode suppression."""
+    """Send a probe message to an agent via handle_intent() with episode suppression.
+
+    BF-140: Added exception handling. Captures and logs exceptions instead of
+    propagating them to the probe's outer handler (which returns score=0.0
+    with no diagnostic info).
+    """
     from probos.types import IntentMessage
 
     intent = IntentMessage(
@@ -48,10 +53,20 @@ async def _send_probe(agent: Any, message: str) -> str:
         params={"text": message, "_qualification_test": True},  # BF-109: was "message", but perceive() reads "text"
         target_agent_id=agent.id,
     )
-    result = await agent.handle_intent(intent)
-    if result and result.result:
-        return str(result.result)
-    return ""
+    try:
+        result = await agent.handle_intent(intent)
+        if result and result.result:
+            return str(result.result)
+        return ""
+    except Exception as exc:
+        logger.warning(
+            "BF-140: _send_probe failed for agent %s (type=%s): %s",
+            getattr(agent, "id", "?"),
+            getattr(agent, "agent_type", "?"),
+            exc,
+            exc_info=True,
+        )
+        return ""
 
 
 async def _llm_extract_float(llm_client: Any, prompt: str) -> float | None:
@@ -213,6 +228,7 @@ class PersonalityProbe:
     async def _run_inner(
         self, agent_id: str, runtime: Any, t0: float
     ) -> TestResult:
+        logger.debug("BF-140: PersonalityProbe starting for agent %s", agent_id)
         from probos.crew_profile import PersonalityTraits, load_seed_profile
 
         # Get agent from registry
@@ -246,6 +262,7 @@ class PersonalityProbe:
         )
 
         # Send probe
+        logger.debug("BF-140: PersonalityProbe sending probe to agent %s", agent_id)
         response_text = await _send_probe(agent, probe_message)
         if not response_text:
             return TestResult(
@@ -753,6 +770,7 @@ class TemperamentProbe:
     async def _run_inner(
         self, agent_id: str, runtime: Any, t0: float
     ) -> TestResult:
+        logger.debug("BF-140: TemperamentProbe starting for agent %s", agent_id)
         # Get agent
         agent = runtime.registry.get(agent_id)
         if agent is None:
@@ -772,6 +790,7 @@ class TemperamentProbe:
 
         for axis, scenario in _MTI_SCENARIOS.items():
             # Send scenario
+            logger.debug("BF-140: TemperamentProbe sending %s probe to agent %s", axis, agent_id)
             response_text = await _send_probe(agent, scenario)
             per_axis_responses[axis] = response_text[:300]
 

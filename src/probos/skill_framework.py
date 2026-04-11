@@ -225,6 +225,7 @@ ROLE_SKILL_TEMPLATES: dict[str, list[SkillDefinition]] = {
         SkillDefinition(skill_id="threat_analysis", name="Threat Analysis", category=SkillCategory.ROLE, domain="security", decay_rate_days=14, origin="role"),
         SkillDefinition(skill_id="vulnerability_assessment", name="Vulnerability Assessment", category=SkillCategory.ROLE, domain="security", prerequisites=["threat_analysis"], decay_rate_days=14, origin="role"),
         SkillDefinition(skill_id="audit_procedures", name="Audit Procedures", category=SkillCategory.ROLE, domain="security", decay_rate_days=14, origin="role"),
+        SkillDefinition(skill_id="agentic_security_review", name="Agentic Security Review", category=SkillCategory.ROLE, domain="security", prerequisites=["threat_analysis"], decay_rate_days=14, origin="role"),
     ],
     "engineering_officer": [
         SkillDefinition(skill_id="code_review", name="Code Review", category=SkillCategory.ROLE, domain="engineering", decay_rate_days=14, origin="role"),
@@ -250,6 +251,7 @@ ROLE_SKILL_TEMPLATES: dict[str, list[SkillDefinition]] = {
         SkillDefinition(skill_id="cognitive_health_eval", name="Cognitive Health Evaluation", category=SkillCategory.ROLE, domain="medical", decay_rate_days=14, origin="role"),
         SkillDefinition(skill_id="crew_fitness_assessment", name="Crew Fitness Assessment", category=SkillCategory.ROLE, domain="medical", decay_rate_days=14, origin="role"),
         SkillDefinition(skill_id="conflict_mediation", name="Conflict Mediation", category=SkillCategory.ROLE, domain="medical", prerequisites=["cognitive_health_eval"], decay_rate_days=14, origin="role"),
+        SkillDefinition(skill_id="graduated_coaching", name="Graduated Coaching", category=SkillCategory.ROLE, domain="medical", prerequisites=["cognitive_health_eval"], decay_rate_days=14, origin="role"),
     ],
     "architect": [
         SkillDefinition(skill_id="design_review", name="Design Review", category=SkillCategory.ROLE, domain="science", decay_rate_days=14, origin="role"),

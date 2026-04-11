@@ -539,3 +539,160 @@ class TestProbeRegistration:
         assert "cross_agent_synthesis_probe" in registered_names
         assert "memory_abstention_probe" in registered_names
         assert "retrieval_accuracy_benchmark" in registered_names
+
+
+class TestTemporalProbeScoringBF139:
+    """BF-139: Temporal probe scoring hardening."""
+
+    def test_distinctive_keywords_filters_stopwords(self):
+        from probos.cognitive.memory_probes import _distinctive_keywords
+        kws = _distinctive_keywords("Pool health dropped to 45%")
+        assert "to" not in kws
+        assert "pool" in kws
+        assert "health" in kws
+        assert "dropped" in kws
+
+    def test_distinctive_keywords_filters_short_words(self):
+        from probos.cognitive.memory_probes import _distinctive_keywords
+        kws = _distinctive_keywords("A to B is on")
+        assert len(kws) == 0  # all filtered
+
+    def test_distinctive_keywords_captures_all_words(self):
+        """BF-139: Uses all distinctive words, not just first 4."""
+        from probos.cognitive.memory_probes import _distinctive_keywords
+        text = "Trust anomaly detected between analyst and researcher agents"
+        kws = _distinctive_keywords(text)
+        assert "trust" in kws
+        assert "anomaly" in kws
+        assert "detected" in kws
+        assert "analyst" in kws
+        assert "researcher" in kws
+        assert "agents" in kws
+        # Stopwords filtered
+        assert "and" not in kws
+
+    def test_temporal_episodes_no_keyword_collision(self):
+        """BF-139: First-watch keywords must not appear in second-watch episodes."""
+        from probos.cognitive.memory_probes import _distinctive_keywords, _TEMPORAL_EPISODES
+
+        first_kws = set()
+        second_kws = set()
+        for ep in _TEMPORAL_EPISODES:
+            kws = set(_distinctive_keywords(ep["content"]))
+            if ep["watch"] == "first_watch":
+                first_kws |= kws
+            else:
+                second_kws |= kws
+
+        collision = first_kws & second_kws
+        assert not collision, (
+            f"Keyword collision between watch sections: {collision}. "
+            "This causes false-positive wrong-watch penalties."
+        )
+
+
+class TestTemporalEpisodeDistinctivenessBF142:
+    """BF-142: Temporal episode content must not share vocabulary."""
+
+    def test_no_cross_watch_keyword_collision(self):
+        """Episode keywords from different watches must not overlap."""
+        from probos.cognitive.memory_probes import _distinctive_keywords, _TEMPORAL_EPISODES
+
+        first_kws = set()
+        second_kws = set()
+        for ep in _TEMPORAL_EPISODES:
+            kws = set(_distinctive_keywords(ep["content"]))
+            if ep["watch"] == "first_watch":
+                first_kws |= kws
+            else:
+                second_kws |= kws
+
+        collision = first_kws & second_kws
+        assert not collision, (
+            f"Keyword collision between watches: {collision}. "
+            "This causes false-positive wrong-watch penalties."
+        )
+
+    def test_second_watch_avoids_common_agent_vocabulary(self):
+        """Second-watch content must not contain words agents commonly use."""
+        from probos.cognitive.memory_probes import _distinctive_keywords, _TEMPORAL_EPISODES
+
+        # Words agents frequently use in responses regardless of topic
+        common_agent_vocab = {"agent", "agents", "trust", "system", "department",
+                              "counselor", "therapeutic", "intervention"}
+
+        second_kws = set()
+        for ep in _TEMPORAL_EPISODES:
+            if ep["watch"] == "second_watch":
+                second_kws |= set(_distinctive_keywords(ep["content"]))
+
+        overlap = second_kws & common_agent_vocab
+        assert not overlap, (
+            f"Second-watch keywords overlap with common agent vocabulary: {overlap}. "
+            "This causes incorrect_found false positives when agents use these words naturally."
+        )
+
+    def test_first_watch_avoids_common_agent_vocabulary(self):
+        """First-watch content must not contain common agent vocabulary words."""
+        from probos.cognitive.memory_probes import _distinctive_keywords, _TEMPORAL_EPISODES
+
+        common_agent_vocab = {"agent", "agents", "trust", "system", "department",
+                              "counselor", "therapeutic", "intervention"}
+
+        first_kws = set()
+        for ep in _TEMPORAL_EPISODES:
+            if ep["watch"] == "first_watch":
+                first_kws |= set(_distinctive_keywords(ep["content"]))
+
+        overlap = first_kws & common_agent_vocab
+        assert not overlap, (
+            f"First-watch keywords overlap with common agent vocabulary: {overlap}."
+        )
+
+
+class TestTemporalEpisodeContentBF143:
+    """BF-143: Temporal markers in episode content for semantic retrieval."""
+
+    def test_temporal_prefix_words_excluded_from_distinctive_keywords(self):
+        """Temporal prefix words must not appear in distinctive keywords."""
+        from probos.cognitive.memory_probes import _distinctive_keywords, _TEMPORAL_EPISODES
+
+        temporal_structure_words = {"during", "first", "second", "watch"}
+
+        for ep in _TEMPORAL_EPISODES:
+            kws = set(_distinctive_keywords(ep["content"]))
+            collision = kws & temporal_structure_words
+            assert not collision, (
+                f"Temporal structure words in keywords for '{ep['content'][:50]}...': {collision}. "
+                "These words appear across watches and cause cross-watch false positives."
+            )
+
+    def test_cross_watch_keywords_still_distinct_with_prefix(self):
+        """BF-142 cross-watch keyword test must still pass with temporal prefixes."""
+        from probos.cognitive.memory_probes import _distinctive_keywords, _TEMPORAL_EPISODES
+
+        first_kws = set()
+        second_kws = set()
+        for ep in _TEMPORAL_EPISODES:
+            kws = set(_distinctive_keywords(ep["content"]))
+            if ep["watch"] == "first_watch":
+                first_kws |= kws
+            else:
+                second_kws |= kws
+
+        collision = first_kws & second_kws
+        assert not collision, (
+            f"Keyword collision between watches: {collision}. "
+            "BF-142 distinctiveness requirement still applies with BF-143 prefixes."
+        )
+
+    def test_ward_room_framed_content_contains_temporal_marker(self):
+        """The actual embedded text (Ward Room framed) must contain the temporal marker."""
+        from probos.cognitive.memory_probes import _ward_room_content, _TEMPORAL_EPISODES
+
+        for ep in _TEMPORAL_EPISODES:
+            framed = _ward_room_content(ep["content"], callsign="TestAgent")
+            watch_label = ep["watch"].replace("_", " ")  # "first_watch" → "first watch"
+            assert watch_label in framed.lower(), (
+                f"Ward Room framed content missing '{watch_label}': {framed!r}"
+            )

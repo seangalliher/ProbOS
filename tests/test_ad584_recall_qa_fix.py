@@ -498,3 +498,41 @@ class TestConfigIntegration:
         from probos.config import MemoryConfig
         mc = MemoryConfig(query_reformulation_enabled=False)
         assert mc.query_reformulation_enabled is False
+
+
+class TestReformulationCoverage:
+    """BF-139: Reformulation coverage for probe question forms."""
+
+    @pytest.mark.parametrize("question,expected_variant_count", [
+        ("What happened during first watch?", 2),
+        ("What was discussed most recently?", 2),
+        ("What was the pool health threshold?", 2),
+        ("What did the Science department identify?", 2),
+        ("Tell me about the trust anomaly", 2),
+        ("What happened?", 2),
+        # Existing patterns still work (regression)
+        ("What is the current pool health?", 2),
+        ("How does the routing system work?", 2),
+        ("When did the anomaly occur?", 2),
+        ("Why did the agent fail?", 2),
+    ])
+    def test_probe_questions_reformulate(self, question, expected_variant_count):
+        from probos.knowledge.embeddings import reformulate_query
+        variants = reformulate_query(question)
+        assert len(variants) == expected_variant_count, (
+            f"Question '{question}' produced {len(variants)} variants "
+            f"(expected {expected_variant_count}): {variants}"
+        )
+
+    @pytest.mark.parametrize("non_question", [
+        "Pool health dropped to 45%",
+        "Trust anomaly in the network",
+        "engineering routing update",
+    ])
+    def test_non_question_produces_single_variant(self, non_question):
+        """Non-question text should produce 1 variant only."""
+        from probos.knowledge.embeddings import reformulate_query
+        variants = reformulate_query(non_question)
+        assert len(variants) == 1, (
+            f"Non-question '{non_question}' should produce 1 variant, got {variants}"
+        )

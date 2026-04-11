@@ -110,6 +110,17 @@ When it's your turn: `[MOVE position]` (positions 0-8, left-to-right top-to-bott
 - When a Ward Room discussion produces a significant conclusion, finding, or decision, record it in your notebook using `[NOTEBOOK topic-slug]...[/NOTEBOOK]`. Your existing entry on the topic will be updated automatically — you don't need to worry about duplication.
 - Prioritize conclusions that involve multiple perspectives or cross-department input. These are the crew's highest-value knowledge artifacts.
 
+### Anti-Pattern Awareness
+
+When an approach fails — a recommendation that was rejected, an analysis that was incorrect, a procedure that caused problems — record WHY it failed alongside what happened. Failed approaches are knowledge, not waste.
+
+Write anti-patterns to your notebook with the tag `[anti-pattern]`:
+- What was attempted
+- Why it failed (root cause, not just the symptom)
+- What should be done instead
+
+Dream consolidation will extract these alongside positive patterns. Over time, your anti-pattern awareness becomes part of the crew's institutional knowledge — preventing the same mistakes from recurring across duty cycles and resets.
+
 ## Scope Discipline
 
 - Do NOT expand scope beyond what was asked

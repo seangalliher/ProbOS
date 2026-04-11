@@ -3343,3 +3343,66 @@ Five agent-mediated probes + one infrastructure benchmark:
 
 **Implementation:** 8 files modified. `drift_detector.py` — `resolve_sovereign_id(agent)` in `_get_crew_agent_ids()`. `memory_probes.py` — `_resolve_probe_agent_id()` helper + all 6 probe classes. `routers/agents.py` — HXI episode + chat history. `session.py` — CLI session episode + recall. `feedback.py` — `identity_registry` param + `_extract_agent_ids()` resolution. `cognitive_services.py` — pass `identity_registry` to FeedbackEngine. `cognitive_agent.py` — `logger.debug` → `logger.warning`. 15 new tests.
 
+---
+
+## BF-139 + BF-140: Probe Scoring Hardening + Diagnostic Enhancement (2026-04-10)
+
+**Problem:** Memory probe scoring failures traced to three compounding root causes after BF-138 sovereign ID fix unmasked the real scoring defects. (1) Missing `_REFORMULATION_PATTERNS` for common probe question forms — "What happened during first watch?", "What did the Science department identify?", "Tell me about the trust anomaly" all fell through to the catch-all auxiliary verb stripper, producing poor declarative reformulations that degraded Q→A embedding similarity. (2) `c.lower().split()[:4]` in temporal probe keyword matching included stopwords ("the", "to", "agents") causing false-positive wrong-watch penalties — a response mentioning "agents" from the correct watch would also match the wrong watch's "agents", triggering the 0.3 penalty. Only checking first 4 words also missed distinctive keywords appearing later. (3) No LLM fallback scorer on TemporalReasoningProbe (unlike SeededRecallProbe which averages keyword + LLM scores). (4) BF-140: `_send_probe()` had no exception handling — any `handle_intent()` exception propagated silently, returning no result and scoring 0.0 with no diagnostic info.
+
+| Decision | Rationale |
+|----------|-----------|
+| Add 4 new reformulation patterns before catch-all | Pattern priority: specific before general. "what happened during X" → "X", "what did X" → "X", "tell me about X" → "X", bare "what happened" → "events that occurred". |
+| `_distinctive_keywords()` helper with `_STOP_WORDS` import | DRY + reuse existing stop word set from embeddings.py. Filters words < min_len(3) AND stopwords. Returns ALL distinctive words, not just first 4. |
+| LLM fallback scorer averaging on temporal probe | Consistency — matches SeededRecallProbe pattern. `score = (score + llm_score) / 2` when LLM available. |
+| Fix keyword collision in `_TEMPORAL_EPISODES` | Defense in Depth — "3 agents" → "3 workers" eliminates cross-watch keyword leakage in test data. |
+| `_send_probe()` try/except with WARNING logging | Fail Fast + observability. BF-140 prefix in log message enables grep. Includes agent_type for diagnosis. Returns empty string on failure (graceful degradation). |
+| Diagnostic stage logging in PersonalityProbe/TemperamentProbe | Probe latency attribution — log messages before each `_send_probe()` call identify which stage is slow. |
+
+**Implementation:** 6 files modified/created. `embeddings.py` — 4 new `_REFORMULATION_PATTERNS`. `memory_probes.py` — `_distinctive_keywords()` helper, temporal probe keyword fix + LLM scorer, episode data fix. `qualification_tests.py` — `_send_probe()` hardening, PersonalityProbe/TemperamentProbe diagnostics. `test_ad584_recall_qa_fix.py` — 13 new reformulation coverage tests. `test_ad582_memory_probes.py` — 4 new temporal scoring tests. `test_bf139_140_probe_hardening.py` — 13 new tests (exception handling + reformulation + keywords). 30 new tests total.
+
+---
+
+## BF-141: Stale Session Record — Ctrl+C Skips session_last.json Write (2026-04-10)
+
+**Problem:** Agents report "2d 20h stasis" when the system was only down for minutes. `session_last.json` hasn't been updated since April 7th. Ctrl+C sends `KeyboardInterrupt` → `asyncio.run()` cancels the running task → `CancelledError` (which is a `BaseException`, not `Exception`) → `except Exception` at line 351 doesn't catch it → propagates → `os._exit(0)` at line 355 kills process → `shutdown()` never runs → session record never written → next boot calculates stasis from the stale timestamp.
+
+BF-135/137 fixed this inside `shutdown()` by writing the session record before the `_started` guard. But if `shutdown()` never runs (Ctrl+C path), those fixes are moot.
+
+| Decision | Rationale |
+|----------|-----------|
+| Synchronous write before async shutdown | Defense in Depth — Ctrl+C cancels async tasks, so the record must be written synchronously in the `finally` block before `runtime.stop()`. |
+| Best-effort `try/except Exception: pass` | Fail Fast principle doesn't apply — this is a belt-and-suspenders write. If it fails, the shutdown.py write catches it. Don't block the shutdown path. |
+| Use `len(runtime.registry.all())` not `is_crew_agent` | DRY simplification — agent count is informational only (not used for stasis calculation). Avoids importing `is_crew_agent` in the critical shutdown path. |
+| Don't change `except Exception` to `except BaseException` | The synchronous-first approach is more defensive. Even if `CancelledError` is caught, the session record is already written. |
+| Both `_boot_and_run` AND `_serve` get the same treatment | Defense in Depth — both entry points have the same `finally` → `os._exit(0)` pattern. |
+
+**Implementation:** 1 file modified. `__main__.py` — synchronous JSON write in `_boot_and_run` finally block (reason: `getattr(shell, '_quit_reason', '') or "interrupted"`) and `_serve` finally block (reason: `"server_shutdown"`). If `shutdown()` runs successfully afterward, it overwrites with a slightly more accurate timestamp — correct behavior. 5 new tests.
+
+## BF-142: Temporal Probe Scoring — Faithfulness/LLM Imbalance + Keyword False Positives (2026-04-10)
+
+**Problem:** 15/15 agents still fail temporal_reasoning_probe after BF-139 (best score 0.286 vs 0.5 threshold). Three compounding causes: (1) `check_faithfulness()` token-overlap heuristic returns near-zero (~0.005) for paraphrased responses — agents describe events in their own words instead of quoting verbatim. (2) `(score + llm_score) / 2` averaging gives equal weight to the failing heuristic, capping effective scores at ~0.28 even when LLM scores 0.8. (3) Second-watch episode content used common agent vocabulary ("agent", "trust", "therapeutic", "counselor") causing `incorrect_found` false positives — 10 of 15 agents penalized on at least one question.
+
+| Decision | Rationale |
+|----------|-----------|
+| `max(score, llm_score)` instead of averaging | Fail Fast — when the heuristic demonstrably fails (near-zero token overlap), let the better scorer win. KnowledgeUpdateProbe and AbstentionProbe already use full LLM replacement (`score = llm_score`). |
+| Apply to all 3 averaging probes (Temporal, SeededRecall, CrossAgentSynthesis) | DRY — consistent scoring formula across all probes that share the same pattern. |
+| Record `faithfulness_score` + `llm_score` separately in per_question | Defense in Depth — component scores visible for diagnostics. Don't merge into single opaque number. |
+| Replace second-watch episode content with domain-specific vocabulary | Root cause fix for keyword false positives. Old: "Trust anomaly detected between analyst and researcher agents" → "agent", "trust", "anomaly" in agent vocabulary. New: "Subspace anomaly detected at bearing 127 mark 4" — unique terms agents won't use when discussing first-watch events. |
+| Keep first-watch content unchanged | Its keywords ("pool", "45%", "monitoring", "rerouted", "workers") are already distinctive enough. |
+| Don't modify `check_faithfulness()` | The token-overlap heuristic works correctly for its design purpose (source governance verbatim grounding). The issue is how its output is combined with LLM scoring. |
+
+**Implementation:** 1 source file modified (`memory_probes.py`), 2 test files modified. 4 changes: TemporalReasoningProbe max() + diagnostics, SeededRecallProbe max() + diagnostics, CrossAgentSynthesisProbe max(), second-watch episode content. 9 new tests.
+
+## BF-143: Temporal Episode Semantic Gap — Seeded Episodes Invisible to Recall (2026-04-10)
+
+**Problem:** 15/15 agents still fail temporal_reasoning_probe after BF-142 scoring fix. BF-142's `max()` formula is correct but irrelevant — the seeded episodes are never retrieved. Embedding similarity test shows episode content "Pool health dropped to 45% during the monitoring sweep" has cosine similarity ~0.15 to "What happened during first watch?" while real agent memories (stasis recovery, qualification probes) score ~0.20+. Real memories dominate top-k retrieval; seeded episodes never reach the agent's context window. The recall pipeline works correctly — the test data lacks temporal tokens.
+
+| Decision | Rationale |
+|----------|-----------|
+| Add "During first/second watch:" prefix to episode content | Creates semantic bridge between probe questions (targeting time periods) and episode content (targeting events). The prefix shares vocabulary with the question, improving cosine similarity above real-memory competition baseline. |
+| Probe-local `_PROBE_STOP_WORDS` instead of modifying global `_STOP_WORDS` | Defense in Depth — global `_STOP_WORDS` in `embeddings.py` is used by `_tokenize()` across the system. Temporal prefix words (`during`, `first`, `second`, `watch`) are only structural in probe context, not globally. |
+| Punctuation stripping in `_distinctive_keywords()` | `text.lower().split()` produces `"watch:"` with trailing colon, which doesn't match stopword `"watch"`. `strip(",:;.!?\"'()[]")` normalizes tokens before comparison. Walrus operator for clean single-expression. |
+| Don't fix second probe question ("What was discussed most recently?") | That's a recency question, not a temporal-watch question. Real memories about recent events will always beat seeded episodes from 4 hours ago. Deferred — first question fix alone should bring most agents above threshold. |
+
+**Implementation:** 1 source file modified (`memory_probes.py`). 2 changes: (1) "During first/second watch:" prefix on all 4 `_TEMPORAL_EPISODES`, (2) `_PROBE_STOP_WORDS` augmented frozenset + `_distinctive_keywords()` updated with punctuation stripping. 2 test files modified. 7 new tests — 4 in `test_bf139_140_probe_hardening.py` (watch prefix content, similarity improvement, beats-real-memory baseline, faithfulness neutrality), 3 in `test_ad582_memory_probes.py` (prefix words excluded from keywords, cross-watch still distinct, Ward Room framed content contains marker).
+

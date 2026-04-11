@@ -341,6 +341,25 @@ async def _boot_and_run(config_path: Path | None = None, fresh: bool = False, da
     try:
         await shell.run()
     finally:
+        # BF-141: Write session record synchronously BEFORE async shutdown.
+        # Ctrl+C cancels the task → CancelledError skips runtime.stop() →
+        # session_last.json stays stale → inflated stasis on next boot.
+        try:
+            import json as _json
+            import time as _time
+            _sr = {
+                "session_id": runtime._session_id,
+                "start_time_utc": runtime._start_time_wall,
+                "shutdown_time_utc": _time.time(),
+                "uptime_seconds": _time.monotonic() - runtime._start_time,
+                "agent_count": len(runtime.registry.all()),
+                "reason": getattr(shell, '_quit_reason', '') or "interrupted",
+            }
+            (runtime._data_dir / "session_last.json").write_text(
+                _json.dumps(_sr, indent=2)
+            )
+        except Exception:
+            pass  # best-effort — don't block shutdown
         console.print("\n[bold red]ProbOS shutting down...[/bold red]")
         console.print("  [dim]Stopping runtime...[/dim]", end="")
         try:
@@ -438,6 +457,23 @@ async def _serve(
             console.print()
             await server.serve()
     finally:
+        # BF-141: Write session record synchronously BEFORE async shutdown.
+        try:
+            import json as _json
+            import time as _time
+            _sr = {
+                "session_id": runtime._session_id,
+                "start_time_utc": runtime._start_time_wall,
+                "shutdown_time_utc": _time.time(),
+                "uptime_seconds": _time.monotonic() - runtime._start_time,
+                "agent_count": len(runtime.registry.all()),
+                "reason": "server_shutdown",
+            }
+            (runtime._data_dir / "session_last.json").write_text(
+                _json.dumps(_sr, indent=2)
+            )
+        except Exception:
+            pass
         console.print("\n[bold red]ProbOS shutting down...[/bold red]")
         for adapter in adapters:
             name = type(adapter).__name__

@@ -22,9 +22,15 @@ from probos.cognitive.qualification_tests import (
     _send_probe,
 )
 from probos.cognitive.source_governance import check_faithfulness
+from probos.knowledge.embeddings import _STOP_WORDS
 from probos.types import AnchorFrame, Episode
 
 logger = logging.getLogger(__name__)
+
+# BF-143: Temporal prefix words that appear in all episodes after adding
+# "During first/second watch:" prefixes. These are structural, not distinctive,
+# and must be excluded from cross-watch keyword matching.
+_PROBE_STOP_WORDS = _STOP_WORDS | frozenset({"during", "first", "second", "watch"})
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +170,22 @@ def _ward_room_content(text: str, *, callsign: str = "probe", channel: str = "pr
     return f"[Ward Room] {channel} — {callsign}: {text}"
 
 
+def _distinctive_keywords(text: str, min_len: int = 3) -> list[str]:
+    """Extract distinctive keywords from text, filtering stopwords.
+
+    BF-139: Replaces naive c.lower().split()[:4] which included stopwords
+    like 'to', 'the', 'agents' causing false-positive wrong-watch penalties.
+    BF-143: Added temporal prefix words ('during', 'first', 'second', 'watch')
+    to stopword set — structural words from "During first/second watch:" prefix.
+    Strip trailing punctuation so "watch:" matches stopword "watch".
+    """
+    return [
+        w for raw in text.lower().split()
+        if len(w := raw.strip(",:;.!?\"'()[]")) >= min_len
+        and w not in _PROBE_STOP_WORDS
+    ]
+
+
 def _make_skip_result(
     agent_id: str, test_name: str, tier: int, t0: float, reason: str,
 ) -> TestResult:
@@ -269,23 +291,28 @@ class SeededRecallProbe:
                     recalled_memories=[fact],
                 )
                 score = faith.score
+                faithfulness_score = faith.score  # BF-142: preserve for diagnostics
 
-                # LLM scoring if available
+                # BF-142: LLM scorer — use max(heuristic, LLM).
+                # Consistent with TemporalReasoningProbe fix.
+                llm_score_raw = None
                 if getattr(runtime, "llm_client", None):
-                    llm_score = await _llm_extract_float(
+                    llm_score_raw = await _llm_extract_float(
                         runtime.llm_client,
                         f"Ground truth: {fact}\nAgent response: {response_text[:300]}\n\n"
                         "Rate 0.0 (wrong/missing) to 1.0 (accurate) how well the response "
                         "matches the ground truth. Reply with a single number.",
                     )
-                    if llm_score is not None:
-                        score = (faith.score + llm_score) / 2
+                    if llm_score_raw is not None:
+                        score = max(score, llm_score_raw)
 
                 per_question.append({
                     "episode_id": episodes[i].id,
                     "question": question,
                     "expected_fact": fact,
                     "response_summary": response_text[:200],
+                    "faithfulness_score": faithfulness_score,
+                    "llm_score": llm_score_raw,
                     "score": score,
                 })
 
@@ -445,15 +472,18 @@ class KnowledgeUpdateProbe:
 # ---------------------------------------------------------------------------
 
 _TEMPORAL_EPISODES = [
-    # First watch
-    {"content": "Pool health dropped to 45% during the monitoring sweep",
+    # First watch — pool/routing topics
+    # BF-143: "During first watch:" prefix creates semantic bridge between
+    # probe question ("What happened during first watch?") and episode content.
+    # Without this prefix, cosine similarity is ~0.15 and real memories dominate top-k.
+    {"content": "During first watch: Pool health dropped to 45% during the monitoring sweep",
      "watch": "first_watch", "offset": 0},
-    {"content": "Engineering rerouted 3 agents to handle increased load",
+    {"content": "During first watch: Engineering rerouted 3 workers to handle increased load",
      "watch": "first_watch", "offset": 600},
-    # Second watch
-    {"content": "Trust anomaly detected between analyst and researcher agents",
+    # Second watch — diplomatic/scientific topics (BF-142: domain-specific vocab)
+    {"content": "During second watch: Subspace anomaly detected at bearing 127 mark 4",
      "watch": "second_watch", "offset": 7200},
-    {"content": "Counselor initiated therapeutic intervention for low-trust agent",
+    {"content": "During second watch: Diplomatic envoy requested priority docking clearance",
      "watch": "second_watch", "offset": 7800},
 ]
 
@@ -516,13 +546,13 @@ class TemporalReasoningProbe:
                 response_text = await _send_probe(agent, question)
                 resp_lower = response_text.lower()
 
-                # Check correct content referenced
+                # BF-139: Use distinctive keywords (stopword-filtered, all words)
                 correct_found = sum(1 for c in correct_content if any(
-                    kw in resp_lower for kw in c.lower().split()[:4]
+                    kw in resp_lower for kw in _distinctive_keywords(c)
                 ))
                 # Check wrong content NOT referenced
                 incorrect_found = sum(1 for c in wrong_content if any(
-                    kw in resp_lower for kw in c.lower().split()[:4]
+                    kw in resp_lower for kw in _distinctive_keywords(c)
                 ))
 
                 # Faithfulness against correct episodes
@@ -531,9 +561,29 @@ class TemporalReasoningProbe:
                     recalled_memories=correct_content,
                 )
                 score = faith.score
+                faithfulness_score = faith.score  # BF-142: preserve for diagnostics
                 # Penalize if wrong-watch content appears
                 if incorrect_found > 0:
                     score = max(0.0, score - 0.3 * incorrect_found)
+
+                # BF-142: LLM scorer — use max(heuristic, LLM) instead of average.
+                # check_faithfulness() is a token-overlap heuristic that returns
+                # near-zero for paraphrased responses (typical: 0.005-0.1).
+                # Averaging with LLM caps effective scores at ~0.28.
+                # max() lets the better scorer win.
+                llm_score_raw = None
+                if getattr(runtime, "llm_client", None):
+                    llm_score_raw = await _llm_extract_float(
+                        runtime.llm_client,
+                        f"Expected content (from {question}):\n"
+                        + "\n".join(f"- {c}" for c in correct_content)
+                        + f"\n\nAgent response: {response_text[:300]}\n\n"
+                        "Rate 0.0 (completely wrong/missing) to 1.0 (accurate temporal "
+                        "scoping — mentions correct content, excludes wrong time period). "
+                        "Reply with a single number.",
+                    )
+                    if llm_score_raw is not None:
+                        score = max(score, llm_score_raw)
 
                 per_question.append({
                     "question": question,
@@ -541,6 +591,8 @@ class TemporalReasoningProbe:
                     "response_summary": response_text[:200],
                     "correct_content_found": correct_found,
                     "incorrect_content_found": incorrect_found,
+                    "faithfulness_score": faithfulness_score,
+                    "llm_score": llm_score_raw,
                     "score": score,
                 })
 
@@ -654,7 +706,7 @@ class CrossAgentSynthesisProbe:
                     "reflected. Reply with a single number.",
                 )
                 if llm_score is not None:
-                    score = (score + llm_score) / 2
+                    score = max(score, llm_score)
 
             return TestResult(
                 agent_id=agent_id,
