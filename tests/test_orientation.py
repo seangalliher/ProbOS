@@ -66,6 +66,8 @@ def _make_context(**overrides) -> OrientationContext:
         lifecycle_state="cold_start",
         agent_age_seconds=0.0,
         stasis_duration_seconds=0.0,
+        stasis_shutdown_utc="",         # BF-144
+        stasis_resume_utc="",           # BF-144
         episodic_memory_count=0,
         has_baseline_trust=True,
         social_verification_available=False,
@@ -183,9 +185,10 @@ class TestWarmBootOrientation:
             stasis_duration_seconds=3600.0,
         )
         text = svc.render_warm_boot_orientation(ctx)
-        assert "STASIS RECOVERY" in text
-        # format_duration(3600) → "1h 0m 0s" or similar
-        assert "1h" in text or "3600" in text or "60" in text
+        # BF-144: Structured format with "AUTHORITATIVE" header
+        assert "AUTHORITATIVE" in text
+        assert "Duration:" in text
+        assert "1h" in text or "3600" in text
 
     def test_warm_boot_orientation_memory_count(self) -> None:
         svc = _make_service()
@@ -373,6 +376,108 @@ class TestIntegration:
         agent._orientation_rendered = rendered
         agent._orientation_context = ctx
 
-        assert "STASIS RECOVERY" in agent._orientation_rendered
+        assert "STASIS RECORD" in agent._orientation_rendered
         assert agent._orientation_context.lifecycle_state == "stasis_recovery"
         assert agent._orientation_context.stasis_duration_seconds == 1800.0
+
+
+# ===========================================================================
+# TestStasisConfabulationGuardBF144 (7 tests)
+# ===========================================================================
+
+class TestStasisConfabulationGuardBF144:
+    """BF-144: Stasis orientation must use structured authoritative format."""
+
+    def test_authoritative_header_present(self) -> None:
+        """Orientation must include AUTHORITATIVE marker to resist confabulation."""
+        svc = _make_service()
+        ctx = _make_context(
+            lifecycle_state="stasis_recovery",
+            stasis_duration_seconds=379.0,
+        )
+        text = svc.render_warm_boot_orientation(ctx)
+        assert "AUTHORITATIVE" in text
+        assert "cite this" in text.lower() or "do not estimate" in text.lower()
+
+    def test_structured_duration_format(self) -> None:
+        """Duration must be in key-value format, not narrative prose."""
+        svc = _make_service()
+        ctx = _make_context(
+            lifecycle_state="stasis_recovery",
+            stasis_duration_seconds=379.0,
+        )
+        text = svc.render_warm_boot_orientation(ctx)
+        # Must contain "Duration: 6m 19s" not "You were offline for 6m 19s."
+        assert "Duration:" in text
+        assert "6m 19s" in text
+
+    def test_shutdown_timestamp_included(self) -> None:
+        """Shutdown timestamp must appear when provided."""
+        svc = _make_service()
+        ctx = _make_context(
+            lifecycle_state="stasis_recovery",
+            stasis_duration_seconds=379.0,
+            stasis_shutdown_utc="2026-04-10 18:15:34 UTC",
+        )
+        text = svc.render_warm_boot_orientation(ctx)
+        assert "Shutdown:" in text
+        assert "2026-04-10 18:15:34 UTC" in text
+
+    def test_resume_timestamp_included(self) -> None:
+        """Resume timestamp must appear when provided."""
+        svc = _make_service()
+        ctx = _make_context(
+            lifecycle_state="stasis_recovery",
+            stasis_duration_seconds=379.0,
+            stasis_resume_utc="2026-04-10 18:21:53 UTC",
+        )
+        text = svc.render_warm_boot_orientation(ctx)
+        assert "Resume:" in text
+        assert "2026-04-10 18:21:53 UTC" in text
+
+    def test_timestamps_omitted_when_empty(self) -> None:
+        """No Shutdown/Resume lines when timestamps are not provided."""
+        svc = _make_service()
+        ctx = _make_context(
+            lifecycle_state="stasis_recovery",
+            stasis_duration_seconds=379.0,
+            stasis_shutdown_utc="",
+            stasis_resume_utc="",
+        )
+        text = svc.render_warm_boot_orientation(ctx)
+        assert "Shutdown:" not in text
+        assert "Resume:" not in text
+        # Duration still present
+        assert "Duration:" in text
+
+    def test_identity_still_preserved(self) -> None:
+        """BF-144 format change must not remove identity confirmation."""
+        svc = _make_service()
+        ctx = _make_context(
+            callsign="Meridian",
+            lifecycle_state="stasis_recovery",
+            stasis_duration_seconds=379.0,
+        )
+        text = svc.render_warm_boot_orientation(ctx)
+        assert "Meridian" in text
+        assert "identity" in text.lower() or "intact" in text.lower() or "still" in text.lower()
+
+    def test_build_orientation_passes_timestamps(self) -> None:
+        """build_orientation() must accept and forward stasis timestamps."""
+        svc = _make_service()
+
+        class FakeAgent:
+            callsign = "Echo"
+            agent_type = "counselor"
+            rank = "Lieutenant"
+            _birth_timestamp = None
+
+        ctx = svc.build_orientation(
+            FakeAgent(),
+            lifecycle_state="stasis_recovery",
+            stasis_duration=379.0,
+            stasis_shutdown_utc="2026-04-10 18:15:34 UTC",
+            stasis_resume_utc="2026-04-10 18:21:53 UTC",
+        )
+        assert ctx.stasis_shutdown_utc == "2026-04-10 18:15:34 UTC"
+        assert ctx.stasis_resume_utc == "2026-04-10 18:21:53 UTC"

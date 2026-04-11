@@ -3406,3 +3406,76 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 
 **Implementation:** 1 source file modified (`memory_probes.py`). 2 changes: (1) "During first/second watch:" prefix on all 4 `_TEMPORAL_EPISODES`, (2) `_PROBE_STOP_WORDS` augmented frozenset + `_distinctive_keywords()` updated with punctuation stripping. 2 test files modified. 7 new tests — 4 in `test_bf139_140_probe_hardening.py` (watch prefix content, similarity improvement, beats-real-memory baseline, faithfulness neutrality), 3 in `test_ad582_memory_probes.py` (prefix words excluded from keywords, cross-watch still distinct, Ward Room framed content contains marker).
 
+
+## BF-144: Stasis Duration Confabulation — Agents Fabricate Offline Duration (2026-04-10)
+
+**Problem:** After stasis recovery, agents confabulate the offline duration instead of citing the authoritative value in their orientation. Meridian (First Officer) posted "2d 22h offline period" — actual stasis was 6 minutes. When corrected by Captain, responded with "3 minutes" — still wrong. Echo (Counselor) correctly flagged this as temporal disorientation. The system provides the correct duration in two places (warm boot orientation and Ward Room All Hands announcement), but the agent ignores them and generates its own estimate.
+
+| Decision | Rationale |
+|----------|-----------|
+| Restructure from narrative prose to structured key-value format | LLMs treat narrative prose ("You were offline for 6m 19s.") as background context and generate their own plausible-sounding numbers. Key-value format (`Duration: 6m 19s`) is more resistant to LLM reinterpretation. |
+| Add `AUTHORITATIVE — cite this, do not estimate` header | Explicit instruction anchors the data as authoritative, not suggestive. Defense against LLM tendency to treat system prompt content as context rather than directive. |
+| Add `stasis_shutdown_utc` + `stasis_resume_utc` timestamps | Provides full temporal grounding — not just "how long" but "from when to when." Enables agent to verify duration arithmetic independently. |
+| Compute timestamps once before agent loop in finalize.py | All agents share the same stasis event — computing per-agent would be redundant and risks inconsistency if system clock advances between iterations. |
+
+## AD-590/591/592/593: Confabulation Scaling Mitigation — Recall Pipeline Noise Amplification (2026-04-10)
+
+**Problem:** Confabulation frequency and severity increases as agents accumulate episodic memories. Root cause: recall pipeline noise amplification loop. More episodes → more marginal candidates pass low similarity floor (0.15) → all fit in generous budget (4000 chars) → LLM receives ~5 relevant + ~20 noise fragments → fabricates specifics from noise. Observed: Atlas fabricated "240+ false alerts/hour" (pattern cooldowns cap at 2-6/hour), Meridian fabricated stasis duration of "2d 22h" (actual: 6 minutes). At 3,905 active episodes, system already showing degradation. Six contributing factors identified across `episodic.py`, `dreaming.py`, `cognitive_agent.py`, `source_governance.py`, and `config.py`.
+
+| Decision | Rationale |
+|----------|-----------|
+| 4-AD decomposition (AD-590 through AD-593) | Six independent factors require different types of fixes: instruction (AD-592), scoring (AD-590), budgeting (AD-591), pruning/threshold (AD-593). Each ships independently, ordered by risk. |
+| Ship before AD-587 (Cognitive Manifest) | Manifest orientation text won't help if recall noise drowns it out. Must fix the noise floor first. |
+| AD-592 first (Confabulation Guard Instructions) | Cheapest fix with potentially highest immediate impact. Instruction-only change to `_format_memory_section()` — "Do NOT fabricate specific numbers, durations, measurements, or statistics from these fragments." Zero algorithmic risk. |
+| AD-590: Composite score floor at 0.35 | Numerical analysis shows marginal episodes score ~0.30, relevant episodes score ~0.50+. Floor at 0.35 removes bottom ~60% of noise while preserving all genuinely relevant memories. |
+| AD-591: Quality-aware budget over character-count budget | Current budget enforcement only counts characters. 25 candidates × 120 chars = 3000 chars, all fit in 4000-char enhanced budget. Quality-limited enforcement stops adding episodes when mean composite drops below threshold, regardless of remaining budget space. |
+| AD-593: Aggressive pruning tiers + similarity floor 0.15→0.25 | Episode pool growth (~50-100/cycle) outpaces pruning (net -19/cycle). Need tiered pruning: 20% fraction for >48h episodes, 30% for >7d. Similarity floor of 0.15 admits nearly random matches — 0.25 is still generous for the QA model but eliminates the noise tail. |
+
+**Research:** `docs/research/confabulation-scaling-research.md`
+
+
+## AD-592: Confabulation Guard Instructions — Anti-Fabrication Framing in Memory Section (2026-04-10)
+
+**Problem:** Agents fabricate specific numbers, durations, measurements, and statistics from memory fragments instead of citing authoritative data or acknowledging uncertainty. The memory section framing tells agents "Do NOT confuse with training knowledge" but says nothing about not fabricating specifics from fragments, orientation data priority, or uncertainty acknowledgment. The AD-568c source authority system calibrates overall trust level but none of the three levels warn against fabricating specifics.
+
+| Decision | Rationale |
+|----------|-----------|
+| Authority-calibrated guard tiers (not one-size-fits-all) | AUTHORITATIVE memories are high quality — heavy-handed warnings would reduce agent confidence unnecessarily. PERIPHERAL memories need the strongest guard. Calibration via existing `source_framing.authority` field — no new scoring logic needed. |
+| Guard text between instruction and Markers, not at end | LLMs attend more to text near the top of a section. Placing guard after header/instruction but before memory content maximizes attention weight. |
+| `_confabulation_guard()` as static method on CognitiveAgent | Single definition point for all three call sites (DM, WR, proactive) via `_format_memory_section()`. Import `SourceAuthority` inside method to avoid circular dependency at module level. |
+| Orientation priority only for SUPPLEMENTARY/PERIPHERAL | AUTHORITATIVE memories are well-anchored and unlikely to conflict with orientation. Only lower-quality memories need the explicit "orientation data is authoritative" directive. |
+
+**Implementation:** 1 source file modified (`cognitive_agent.py`): `_confabulation_guard()` static method with three tiers, both branches of `_format_memory_section()` updated. 2 test files modified: 7 new tests in `TestConfabulationGuardAD592` (`test_source_governance.py`), 1 updated test (`test_structure_order` in `test_provenance_boundary.py` — line indices shifted by inserted guard line).
+
+## AD-590: Composite Score Floor — Recall Quality Gate (2026-04-10)
+
+**Problem:** `recall_weighted()` has no minimum composite score threshold. All candidates that survive `anchor_confidence_gate` and fit within the character budget are included in agent context. A marginal episode (semantic sim 0.18, no keywords, 3 days old) scores ~0.30 composite — passes anchor gate if it has a reasonable anchor frame but contributes noise not signal. At 3,905+ active episodes, ~20 marginal candidates fill the budget alongside ~5 relevant ones.
+
+| Decision | Rationale |
+|----------|-----------|
+| Configurable `composite_score_floor` parameter (default 0.0 = disabled) | Backward-compatible — callers that don't pass the parameter see zero behavior change. Opt-in per recall tier via config, same pattern as `anchor_confidence_gate`. |
+| Per-tier values: basic=0.0, enhanced=0.35, full=0.35, oracle=0.0 | Basic tier uses vector-only recall (no salience scoring) — floor meaningless. Enhanced/full are quality-sensitive contexts where noise hurts. Oracle performs exhaustive search — floor would defeat its purpose. |
+| Floor at 0.35 threshold | Numerical analysis: marginal episodes score ~0.296, relevant episodes score 0.50+. Floor at 0.35 removes bottom ~60% of noise while preserving all genuinely relevant memories. |
+| DEEP strategy relaxes floor by −0.10 (clamped to 0.0) | DEEP casts a wider net on complex queries. Same relaxation pattern as existing anchor_confidence_gate (−0.1) and k (×1.5), context_budget (×1.5). |
+| Filter at step 3c (after anchor gate, before sort) | Anchor gate filters by anchor quality, composite floor filters by overall relevance. Both operate independently as defense-in-depth layers. Sort only sees quality candidates. |
+| Oracle service unchanged (no `composite_score_floor` kwarg) | Oracle inherits default 0.0 — floor is disabled. Oracle's purpose is broad retrieval with `context_budget=999999`. |
+
+**Implementation:** 4 source files modified (`episodic.py`: param + docstring + 3-line filter; `config.py`: field + per-tier values; `cognitive_agent.py`: kwarg wiring + DEEP relaxation; `proactive.py`: kwarg wiring). 1 new test file (`test_ad590_composite_score_floor.py`): 17 tests across 5 groups — floor filter behavior (6), config integration (4), call site wiring (3), DEEP relaxation (2), regression (2).
+
+## AD-591: Quality-Aware Budget Enforcement (2026-04-10)
+
+**Problem:** After AD-590's composite score floor, remaining candidates all exceed the quality threshold, but the budget loop accumulates all that fit character-wise. Result: 8-10 episodes enter context when only top 5 are relevant. Character budget is a capacity limit, not a quality limit — it can't distinguish between 5 high-signal episodes and 10 mixed-quality ones that happen to fit.
+
+| Decision | Rationale |
+|----------|-----------|
+| Three stop conditions: char budget + max episodes + quality degradation | Character budget (existing) prevents context overflow. Max episodes prevents accumulation even with tiny episodes. Quality floor prevents mean dilution. Each addresses a distinct failure mode. |
+| `max_recall_episodes` default 0 → k*2 | k*2 is a reasonable cap: k is the semantic retrieval count, merged results may be up to 2k. Explicit 0 = use default, non-zero = hard override. Same disabled-by-default pattern as other recall params. |
+| `recall_quality_floor` default 0.40 | Running mean composite should stay above "supplementary" quality. 0.40 allows borderline-useful episodes but rejects noise that would drag context quality down. Per-tier: enhanced/full=0.40, basic/oracle=0.0 (disabled). |
+| Running mean, not individual score | Individual score check would reject any single below-threshold episode even when surrounded by excellent ones. Running mean allows occasional lower episodes if the overall set remains strong. |
+| First episode always included | Prevents degenerate case where a single low-scoring episode (the only relevant memory) gets rejected by a high floor. At least one result is always returned. |
+| DEEP relaxes max×1.5, floor−0.10 | Same relaxation pattern as existing DEEP params (k×1.5, budget×1.5, anchor gate−0.1, composite floor−0.10). max×1.5 only if >0, otherwise stays at k*2 default. |
+
+**Implementation:** 4 source files modified (`episodic.py`: 2 params + docstring + quality-aware budget loop replacing simple accumulator; `config.py`: 2 fields + per-tier values; `cognitive_agent.py`: 2 kwargs + DEEP relaxation; `proactive.py`: 2 kwargs). 1 new test file (`test_ad591_quality_aware_budget.py`): 22 tests across 6 groups — max episodes cap (5), quality floor stop (5), config integration (5), call site wiring (3), DEEP relaxation (2), regression (2).
+
+
+**Implementation:** 2 source files modified (`orientation.py`, `finalize.py`). `OrientationContext` dataclass: 2 new fields (`stasis_shutdown_utc`, `stasis_resume_utc`). `build_orientation()`: signature + return block updated. `render_warm_boot_orientation()`: stasis section reformatted from narrative to structured authoritative format with Duration/Shutdown/Resume key-value fields. `finalize.py`: shutdown/resume timestamp computation from `runtime._previous_session["shutdown_time_utc"]` before agent loop, passed to `build_orientation()`. 1 test file modified. 7 new tests in `TestStasisConfabulationGuardBF144` (authoritative header, structured duration, shutdown/resume timestamps included/omitted, identity preserved, build_orientation passthrough).

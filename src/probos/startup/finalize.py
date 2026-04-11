@@ -446,6 +446,15 @@ async def finalize_startup(
             if hasattr(runtime, 'callsign_registry') and runtime.callsign_registry:
                 _all_crew_names = runtime.callsign_registry.all_callsigns()
 
+            # BF-144: Compute authoritative stasis timestamps (once, before agent loop)
+            _shutdown_str = ""
+            _resume_str = ""
+            if runtime._previous_session and "shutdown_time_utc" in runtime._previous_session:
+                _shutdown_str = datetime.fromtimestamp(
+                    runtime._previous_session["shutdown_time_utc"], tz=timezone.utc
+                ).strftime("%Y-%m-%d %H:%M:%S UTC")
+                _resume_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
             for agent in runtime.registry.all():
                 if is_crew_agent(agent, runtime.ontology):
                     _ep_count = 0
@@ -471,6 +480,8 @@ async def finalize_startup(
                         agent,
                         lifecycle_state="stasis_recovery",
                         stasis_duration=runtime._stasis_duration,
+                        stasis_shutdown_utc=_shutdown_str,       # BF-144
+                        stasis_resume_utc=_resume_str,           # BF-144
                         episodic_memory_count=_ep_count,
                         trust_score=_trust,
                         crew_names=_crew_names,

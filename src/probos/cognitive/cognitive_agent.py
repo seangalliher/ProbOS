@@ -1961,6 +1961,37 @@ class CognitiveAgent(BaseAgent):
         )
         return "\n".join(lines)
 
+    @staticmethod
+    def _confabulation_guard(authority: str | None) -> str:
+        """Return AD-592 confabulation guard instruction calibrated by source authority.
+
+        Three tiers of guard strength:
+        - AUTHORITATIVE: light touch — memories are high quality, still warn about numbers
+        - SUPPLEMENTARY/None: standard guard — warn about numbers + orientation priority
+        - PERIPHERAL: strong guard — warn about numbers + orientation priority + uncertainty
+        """
+        # Import here to avoid circular dependency at module level
+        from probos.cognitive.source_governance import SourceAuthority
+
+        base = (
+            "IMPORTANT: Do NOT fabricate specific numbers, durations, measurements, or statistics "
+            "from these fragments. If an exact value is not in your memories, say you do not have that data."
+        )
+        orientation_priority = (
+            " When orientation or system data conflicts with your memories, "
+            "orientation data is authoritative — cite it, do not estimate."
+        )
+
+        if authority == SourceAuthority.AUTHORITATIVE:
+            # High-quality memories — still guard against number fabrication
+            return base
+        elif authority == SourceAuthority.PERIPHERAL:
+            # Low-quality memories — full guard + uncertainty mandate
+            return base + orientation_priority + " State uncertainty explicitly."
+        else:
+            # SUPPLEMENTARY or no framing (fallback) — standard guard
+            return base + orientation_priority
+
     def _format_memory_section(self, memories: list[dict], source_framing: Any = None) -> list[str]:
         """Format recalled episodes with anchor context headers (AD-567b/568c)."""
         # AD-568c: Use source-authority-calibrated framing if available
@@ -1968,14 +1999,19 @@ class CognitiveAgent(BaseAgent):
             lines = [
                 source_framing.header,
                 source_framing.instruction,
+            ]
+            # AD-592: Authority-calibrated confabulation guard
+            lines.append(self._confabulation_guard(source_framing.authority))
+            lines.extend([
                 "Markers: [direct] = you experienced it, [secondhand] = you heard about it.",
                 "[verified] = corroborated by ship's log, [unverified] = not yet corroborated.",
                 "",
-            ]
+            ])
         else:
             lines = [
                 "=== SHIP MEMORY (your experiences aboard this vessel) ===",
                 "These are YOUR experiences. Do NOT confuse with training knowledge.",
+                self._confabulation_guard(None),
                 "Markers: [direct] = you experienced it, [secondhand] = you heard about it.",
                 "[verified] = corroborated by ship's log, [unverified] = not yet corroborated.",
                 "",
@@ -2554,6 +2590,17 @@ class CognitiveAgent(BaseAgent):
                     _tier_params["anchor_confidence_gate"] = max(
                         0.0, _tier_params.get("anchor_confidence_gate", 0.3) - 0.1
                     )
+                    # AD-590: Relax composite floor for DEEP — wider net, quality still sorts
+                    _tier_params["composite_score_floor"] = max(
+                        0.0, _tier_params.get("composite_score_floor", 0.0) - 0.10
+                    )
+                    # AD-591: Relax quality budget for DEEP — allow more episodes and lower quality floor
+                    _tier_params["max_recall_episodes"] = int(
+                        _tier_params.get("max_recall_episodes", 0) * 1.5
+                    ) if _tier_params.get("max_recall_episodes", 0) > 0 else 0
+                    _tier_params["recall_quality_floor"] = max(
+                        0.0, _tier_params.get("recall_quality_floor", 0.0) - 0.10
+                    )
 
                 if hasattr(em, 'recall_weighted') and _tier_params.get("use_salience_weights", True):
                     scored_results = await em.recall_weighted(
@@ -2565,6 +2612,9 @@ class CognitiveAgent(BaseAgent):
                         context_budget=_tier_params.get("context_budget", 4000),
                         weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
                         anchor_confidence_gate=_tier_params.get("anchor_confidence_gate", 0.3),
+                        composite_score_floor=_tier_params.get("composite_score_floor", 0.0),
+                        max_recall_episodes=_tier_params.get("max_recall_episodes", 0),
+                        recall_quality_floor=_tier_params.get("recall_quality_floor", 0.0),
                         convergence_bonus=getattr(mem_cfg, 'recall_convergence_bonus', 0.10) if mem_cfg else 0.10,
                     )
                 elif hasattr(em, 'recall_for_agent'):

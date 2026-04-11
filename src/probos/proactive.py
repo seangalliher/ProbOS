@@ -915,6 +915,9 @@ class ProactiveCognitiveLoop:
                             context_budget=_tier_params.get("context_budget", 4000),
                             weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
                             anchor_confidence_gate=_tier_params.get("anchor_confidence_gate", 0.3),
+                            composite_score_floor=_tier_params.get("composite_score_floor", 0.0),
+                            max_recall_episodes=_tier_params.get("max_recall_episodes", 0),
+                            recall_quality_floor=_tier_params.get("recall_quality_floor", 0.0),
                         )
                         episodes = [rs.episode for rs in scored_results]
                     else:

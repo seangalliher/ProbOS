@@ -99,21 +99,22 @@ class TestFormatMemorySection:
         lines = self.agent._format_memory_section(SAMPLE_MEMORIES)
         # Opening marker is first
         assert "SHIP MEMORY" in lines[0]
-        # Instruction lines (AD-541: 3 instruction lines + blank = 4 header lines)
+        # Instruction lines (AD-541: 3 instruction lines + AD-592 guard + blank = 5 header lines)
         assert "YOUR experiences" in lines[1]
-        assert "[direct]" in lines[2]
-        assert "[verified]" in lines[3]
+        assert "Do NOT fabricate" in lines[2]  # AD-592 confabulation guard
+        assert "[direct]" in lines[3]
+        assert "[verified]" in lines[4]
         # Blank line separator
-        assert lines[4] == ""
+        assert lines[5] == ""
         # AD-567b: Memory entries now have header + content lines
-        assert "[direct | unverified]" in lines[5]
-        assert "Captain asked about trust scores" in lines[6]
-        assert "[direct | verified]" in lines[7]
-        assert "Ward Room thread about routing" in lines[8]
+        assert "[direct | unverified]" in lines[6]
+        assert "Captain asked about trust scores" in lines[7]
+        assert "[direct | verified]" in lines[8]
+        assert "Ward Room thread about routing" in lines[9]
         # Blank line before closing
-        assert lines[9] == ""
+        assert lines[10] == ""
         # Closing marker is last
-        assert "END SHIP MEMORY" in lines[10]
+        assert "END SHIP MEMORY" in lines[11]
 
     def test_empty_memories(self):
         lines = self.agent._format_memory_section([])

@@ -1558,6 +1558,9 @@ class EpisodicMemory:
         context_budget: int = 4000,
         weights: dict[str, float] | None = None,
         anchor_confidence_gate: float = 0.0,
+        composite_score_floor: float = 0.0,
+        max_recall_episodes: int = 0,
+        recall_quality_floor: float = 0.0,
         convergence_bonus: float = 0.10,
     ) -> list[RecallScore]:
         """Salience-weighted recall combining semantic + keyword + trust + Hebbian + recency + anchor (AD-567b/c).
@@ -1566,6 +1569,11 @@ class EpisodicMemory:
         candidate with ``score_recall()``, and enforces context budget.
         AD-567c: applies RPMS confidence gating — episodes below anchor_confidence_gate
         are filtered from results (still accessible via recall_for_agent).
+        AD-590: applies composite score floor — episodes below composite_score_floor
+        are filtered from results after scoring, reducing noise from marginal candidates.
+        AD-591: quality-aware budget enforcement — stops adding episodes when the
+        next one would drop mean composite below recall_quality_floor, and enforces
+        max_recall_episodes hard cap. 0 = disabled (backward compatible).
         """
         # 1. Semantic retrieval — over-fetch for re-ranking headroom
         scored_eps = await self.recall_for_agent_scored(agent_id, query, k=k * 3)
@@ -1640,18 +1648,39 @@ class EpisodicMemory:
         if anchor_confidence_gate > 0.0:
             results = [rs for rs in results if rs.anchor_confidence >= anchor_confidence_gate]
 
+        # 3c. AD-590: Composite score floor — filter marginal episodes
+        if composite_score_floor > 0.0:
+            results = [rs for rs in results if rs.composite_score >= composite_score_floor]
+
         # 4. Sort by composite score descending
         results.sort(key=lambda r: r.composite_score, reverse=True)
 
-        # 5. Budget enforcement — accumulate until context budget exceeded
+        # 5. Budget enforcement — quality-aware (AD-591)
+        # Three stop conditions: (a) character budget, (b) max episodes, (c) quality degradation
+        _effective_max = max_recall_episodes if max_recall_episodes > 0 else k * 2
         budgeted: list[RecallScore] = []
         total_chars = 0
+        _running_score_sum = 0.0
         for rs in results:
             char_len = len(rs.episode.user_input) if rs.episode.user_input else 0
+
+            # (a) Character budget
             if total_chars + char_len > context_budget and budgeted:
-                break  # Over budget, stop (always include at least 1)
+                break
+
+            # (b) AD-591: Max episodes cap
+            if len(budgeted) >= _effective_max:
+                break
+
+            # (c) AD-591: Quality degradation stop
+            if recall_quality_floor > 0.0 and budgeted:
+                _new_mean = (_running_score_sum + rs.composite_score) / (len(budgeted) + 1)
+                if _new_mean < recall_quality_floor:
+                    break
+
             budgeted.append(rs)
             total_chars += char_len
+            _running_score_sum += rs.composite_score
 
         # AD-567d: Record deliberate recall access for activation tracking
         if budgeted and self._activation_tracker:

@@ -91,7 +91,7 @@ def _half_anchor() -> AnchorFrame:
 
 class TestRecallScoreComputation:
     def test_composite_score_formula(self):
-        """Verify composite score matches AD-567b formula with known inputs."""
+        """Verify composite score matches AD-584c rebalanced formula with known inputs."""
         from probos.cognitive.episodic import EpisodicMemory
 
         ep = _make_episode(anchors=_full_anchor())
@@ -103,9 +103,10 @@ class TestRecallScoreComputation:
             hebbian_weight=0.7,
             recency_weight=0.6,
         )
-        # Formula: 0.35*0.8 + 0.10*min(3/3,1.0) + 0.15*0.9 + 0.10*0.7 + 0.20*0.6 + 0.10*1.0
-        # = 0.28 + 0.10 + 0.135 + 0.07 + 0.12 + 0.10 = 0.805
-        expected = 0.35 * 0.8 + 0.10 * 1.0 + 0.15 * 0.9 + 0.10 * 0.7 + 0.20 * 0.6 + 0.10 * 1.0
+        # AD-584c weights: 0.35*sem + 0.20*kw + 0.10*trust + 0.05*hebb + 0.15*rec + 0.15*anchor
+        # + 0.10 convergence bonus (semantic > 0 AND keyword_hits > 0)
+        # = 0.35*0.8 + 0.20*1.0 + 0.10*0.9 + 0.05*0.7 + 0.15*0.6 + 0.15*1.0 + 0.10
+        expected = 0.35 * 0.8 + 0.20 * 1.0 + 0.10 * 0.9 + 0.05 * 0.7 + 0.15 * 0.6 + 0.15 * 1.0 + 0.10
         assert abs(rs.composite_score - expected) < 1e-9
         assert rs.anchor_confidence == 1.0
 

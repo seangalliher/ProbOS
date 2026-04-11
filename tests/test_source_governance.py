@@ -245,3 +245,103 @@ class TestSourceFraming:
         assert hasattr(framing, 'header')
         assert hasattr(framing, 'instruction')
         assert hasattr(framing, 'authority')
+
+
+# ===========================================================================
+# TestConfabulationGuardAD592 (7 tests)
+# ===========================================================================
+
+class TestConfabulationGuardAD592:
+    """AD-592: Confabulation guard instructions in memory section framing."""
+
+    def _make_agent(self):
+        """Create a minimal CognitiveAgent for testing _format_memory_section."""
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+        agent = CognitiveAgent.__new__(CognitiveAgent)
+        return agent
+
+    def _sample_memories(self):
+        """Return minimal memory list for format testing."""
+        return [{"input": "Pool health at 45%", "source": "direct"}]
+
+    def test_static_fallback_contains_fabrication_guard(self):
+        """Memory section without source framing includes confabulation guard."""
+        agent = self._make_agent()
+        lines = agent._format_memory_section(self._sample_memories())
+        text = "\n".join(lines)
+        assert "Do NOT fabricate specific numbers" in text
+
+    def test_static_fallback_contains_orientation_priority(self):
+        """Static fallback includes orientation authority instruction."""
+        agent = self._make_agent()
+        lines = agent._format_memory_section(self._sample_memories())
+        text = "\n".join(lines)
+        assert "orientation data is authoritative" in text
+
+    def test_authoritative_framing_guard_no_orientation_priority(self):
+        """AUTHORITATIVE framing includes fabrication guard but not orientation priority."""
+        from probos.cognitive.source_governance import SourceAuthority, SourceFraming
+        agent = self._make_agent()
+        framing = SourceFraming(
+            authority=SourceAuthority.AUTHORITATIVE,
+            header="=== SHIP MEMORY (verified operational experience) ===",
+            instruction="These memories are well-anchored.",
+        )
+        lines = agent._format_memory_section(self._sample_memories(), source_framing=framing)
+        text = "\n".join(lines)
+        assert "Do NOT fabricate specific numbers" in text
+        assert "orientation data is authoritative" not in text
+
+    def test_supplementary_framing_guard_includes_orientation_priority(self):
+        """SUPPLEMENTARY framing includes both fabrication guard and orientation priority."""
+        from probos.cognitive.source_governance import SourceAuthority, SourceFraming
+        agent = self._make_agent()
+        framing = SourceFraming(
+            authority=SourceAuthority.SUPPLEMENTARY,
+            header="=== SHIP MEMORY (your experiences aboard this vessel) ===",
+            instruction="Consider alongside training knowledge.",
+        )
+        lines = agent._format_memory_section(self._sample_memories(), source_framing=framing)
+        text = "\n".join(lines)
+        assert "Do NOT fabricate specific numbers" in text
+        assert "orientation data is authoritative" in text
+
+    def test_peripheral_framing_guard_includes_uncertainty_mandate(self):
+        """PERIPHERAL framing includes full guard with uncertainty mandate."""
+        from probos.cognitive.source_governance import SourceAuthority, SourceFraming
+        agent = self._make_agent()
+        framing = SourceFraming(
+            authority=SourceAuthority.PERIPHERAL,
+            header="=== SHIP MEMORY (limited recollections) ===",
+            instruction="Do not rely heavily on them.",
+        )
+        lines = agent._format_memory_section(self._sample_memories(), source_framing=framing)
+        text = "\n".join(lines)
+        assert "Do NOT fabricate specific numbers" in text
+        assert "orientation data is authoritative" in text
+        assert "State uncertainty explicitly" in text
+
+    def test_guard_precedes_markers(self):
+        """Confabulation guard appears before the source/verification markers."""
+        agent = self._make_agent()
+        lines = agent._format_memory_section(self._sample_memories())
+        text = "\n".join(lines)
+        guard_pos = text.index("Do NOT fabricate")
+        markers_pos = text.index("Markers:")
+        assert guard_pos < markers_pos
+
+    def test_guard_after_header_and_instruction(self):
+        """Confabulation guard appears after the header/instruction, before markers."""
+        from probos.cognitive.source_governance import SourceAuthority, SourceFraming
+        agent = self._make_agent()
+        framing = SourceFraming(
+            authority=SourceAuthority.SUPPLEMENTARY,
+            header="=== SHIP MEMORY (your experiences aboard this vessel) ===",
+            instruction="Consider alongside training knowledge.",
+        )
+        lines = agent._format_memory_section(self._sample_memories(), source_framing=framing)
+        text = "\n".join(lines)
+        header_pos = text.index("SHIP MEMORY")
+        guard_pos = text.index("Do NOT fabricate")
+        markers_pos = text.index("Markers:")
+        assert header_pos < guard_pos < markers_pos

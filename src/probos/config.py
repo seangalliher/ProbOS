@@ -294,12 +294,25 @@ class MemoryConfig(BaseModel):
         "evidential": 0.10,
     }
     anchor_confidence_gate: float = 0.3  # RPMS: suppress below this from default recall
+    # AD-590: Composite score floor — filter marginal episodes from recall results.
+    # Episodes with composite_score below this threshold are excluded regardless
+    # of remaining budget. 0.0 = disabled (backward compatible).
+    composite_score_floor: float = 0.35
+    # AD-591: Quality-aware budget enforcement.
+    # max_recall_episodes: hard cap on episodes returned per recall. 0 = use k*2 default.
+    max_recall_episodes: int = 0
+    # recall_quality_floor: stop adding episodes if mean composite would drop below this.
+    # 0.0 = disabled (character budget only).
+    recall_quality_floor: float = 0.40
     # AD-462c: Variable Recall Tiers
     recall_tiers: dict[str, dict[str, Any]] = {
         "basic": {
             "k": 3,
             "context_budget": 1500,
             "anchor_confidence_gate": 0.0,
+            "composite_score_floor": 0.0,
+            "max_recall_episodes": 0,
+            "recall_quality_floor": 0.0,
             "use_salience_weights": False,
             "cross_department_anchors": False,
         },
@@ -307,6 +320,9 @@ class MemoryConfig(BaseModel):
             "k": 5,
             "context_budget": 4000,
             "anchor_confidence_gate": 0.3,
+            "composite_score_floor": 0.35,
+            "max_recall_episodes": 0,
+            "recall_quality_floor": 0.40,
             "use_salience_weights": True,
             "cross_department_anchors": False,
         },
@@ -314,6 +330,9 @@ class MemoryConfig(BaseModel):
             "k": 8,
             "context_budget": 6000,
             "anchor_confidence_gate": 0.3,
+            "composite_score_floor": 0.35,
+            "max_recall_episodes": 0,
+            "recall_quality_floor": 0.40,
             "use_salience_weights": True,
             "cross_department_anchors": True,
         },
@@ -321,6 +340,9 @@ class MemoryConfig(BaseModel):
             "k": 10,
             "context_budget": 8000,
             "anchor_confidence_gate": 0.2,
+            "composite_score_floor": 0.0,
+            "max_recall_episodes": 0,
+            "recall_quality_floor": 0.0,
             "use_salience_weights": True,
             "cross_department_anchors": True,
         },

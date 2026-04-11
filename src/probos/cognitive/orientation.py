@@ -41,6 +41,9 @@ class OrientationContext:
     lifecycle_state: str = ""  # "first_boot", "cold_start", "stasis_recovery", "restart"
     agent_age_seconds: float = 0.0
     stasis_duration_seconds: float = 0.0  # 0.0 if not stasis recovery
+    # BF-144: Authoritative timestamps for stasis recovery
+    stasis_shutdown_utc: str = ""   # ISO format, e.g. "2026-04-10 18:15:34 UTC"
+    stasis_resume_utc: str = ""     # ISO format, e.g. "2026-04-10 18:21:53 UTC"
     # Cognitive grounding
     episodic_memory_count: int = 0  # how many episodes this agent has
     has_baseline_trust: bool = True  # trust == prior (0.5)?
@@ -93,6 +96,8 @@ class OrientationService:
         *,
         lifecycle_state: str = "",
         stasis_duration: float = 0.0,
+        stasis_shutdown_utc: str = "",    # BF-144
+        stasis_resume_utc: str = "",      # BF-144
         crew_count: int = 0,
         departments: list[str] | None = None,
         episodic_memory_count: int = 0,
@@ -161,6 +166,8 @@ class OrientationService:
             lifecycle_state=lifecycle_state,
             agent_age_seconds=age,
             stasis_duration_seconds=stasis_duration,
+            stasis_shutdown_utc=stasis_shutdown_utc,
+            stasis_resume_utc=stasis_resume_utc,
             episodic_memory_count=episodic_memory_count,
             has_baseline_trust=abs(trust_score - 0.5) < 0.01,
             social_verification_available=getattr(
@@ -259,14 +266,21 @@ class OrientationService:
         """Render lighter orientation for warm boot (restart, stasis recovery)."""
         parts: list[str] = []
 
-        # Section 1: Stasis Summary
+        # Section 1: Stasis Record (BF-144: structured authoritative data)
         dur_str = format_duration(ctx.stasis_duration_seconds) if ctx.stasis_duration_seconds > 0 else "a brief period"
         stasis_lines = [
-            "STASIS RECOVERY:",
-            f"You were offline for {dur_str}.",
+            "STASIS RECORD (AUTHORITATIVE — cite this, do not estimate):",
+            f"  Duration: {dur_str}",
+        ]
+        if ctx.stasis_shutdown_utc:
+            stasis_lines.append(f"  Shutdown: {ctx.stasis_shutdown_utc}")
+        if ctx.stasis_resume_utc:
+            stasis_lines.append(f"  Resume: {ctx.stasis_resume_utc}")
+        stasis_lines.extend([
+            "",
             f"Your identity and memories are intact — you are still {ctx.callsign or 'yourself'}"
             f"{', ' + ctx.post + ' in ' + ctx.department if ctx.post and ctx.department else ''}.",
-        ]
+        ])
         if ctx.episodic_memory_count > 0:
             stasis_lines.append(
                 f"You have {ctx.episodic_memory_count} episodic memories from before stasis."
