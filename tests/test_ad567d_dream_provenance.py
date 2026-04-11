@@ -380,6 +380,7 @@ class TestDreamStep12:
             activation_enabled=activation_enabled,
             activation_prune_threshold=-2.0,
             activation_access_max_age_days=180,
+            aggressive_prune_enabled=False,  # BF-145: isolate standard-tier tests from AD-593 aggressive tier
         )
         mock_router = MagicMock()
         mock_router.all_weights.return_value = {}

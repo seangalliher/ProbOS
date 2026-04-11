@@ -71,6 +71,7 @@ def _make_context(**overrides) -> OrientationContext:
         episodic_memory_count=0,
         has_baseline_trust=True,
         social_verification_available=False,
+        manifest=None,  # AD-587
     )
     defaults.update(overrides)
     return OrientationContext(**defaults)
@@ -481,3 +482,203 @@ class TestStasisConfabulationGuardBF144:
         )
         assert ctx.stasis_shutdown_utc == "2026-04-10 18:15:34 UTC"
         assert ctx.stasis_resume_utc == "2026-04-10 18:21:53 UTC"
+
+
+# ===========================================================================
+# TestCognitiveArchitectureManifestAD587 (23 tests)
+# ===========================================================================
+
+class TestCognitiveArchitectureManifestAD587:
+    """AD-587: Cognitive Architecture Manifest — mechanistic self-model."""
+
+    # --- Manifest dataclass ---
+
+    def test_manifest_defaults(self):
+        """Default manifest has correct architecture facts."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        m = CognitiveArchitectureManifest()
+        assert m.memory_system == "chromadb_episodic"
+        assert m.memory_retrieval == "cosine_similarity"
+        assert m.memory_offline_processing is False
+        assert m.stasis_processing is False
+        assert m.stasis_dream_consolidation is False
+        assert m.cognition_continuous is False
+        assert m.cognition_emotional_processing is False
+        assert m.trust_initial == 0.5
+        assert m.trust_model == "bayesian_beta"
+        assert m.regulation_model == "graduated_zones"
+
+    def test_manifest_is_frozen(self):
+        """Manifest is immutable — architecture facts don't change at runtime."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        m = CognitiveArchitectureManifest()
+        with pytest.raises(AttributeError):
+            m.memory_system = "something_else"  # type: ignore[misc]
+
+    def test_manifest_stasis_facts_are_false(self):
+        """All stasis-related processing claims must be False."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        m = CognitiveArchitectureManifest()
+        assert m.stasis_processing is False
+        assert m.stasis_dream_consolidation is False
+        assert m.stasis_memory_evolution is False
+
+    def test_manifest_no_emotional_processing(self):
+        """Architecture does not include emotional processing."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        m = CognitiveArchitectureManifest()
+        assert m.cognition_emotional_processing is False
+
+    # --- build_manifest() ---
+
+    def test_build_manifest_returns_manifest(self):
+        """OrientationService.build_manifest() returns a CognitiveArchitectureManifest."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        svc = _make_service()
+        m = svc.build_manifest()
+        assert isinstance(m, CognitiveArchitectureManifest)
+
+    def test_build_manifest_reads_trust_floor_from_config(self):
+        """Manifest trust range reflects config hard_trust_floor."""
+        cfg = SystemConfig()
+        if hasattr(cfg, 'trust_dampening') and hasattr(cfg.trust_dampening, 'hard_trust_floor'):
+            svc = _make_service(cfg)
+            m = svc.build_manifest()
+            assert m.trust_range[0] == cfg.trust_dampening.hard_trust_floor
+
+    def test_build_manifest_default_trust_range(self):
+        """Default trust range is (0.05, 0.95)."""
+        svc = _make_service()
+        m = svc.build_manifest()
+        assert m.trust_range[0] == 0.05
+        assert m.trust_range[1] == 0.95
+
+    # --- Manifest in OrientationContext ---
+
+    def test_orientation_context_includes_manifest(self):
+        """OrientationContext has a manifest field."""
+        ctx = _make_context()
+        assert hasattr(ctx, 'manifest')
+
+    def test_build_orientation_populates_manifest(self):
+        """build_orientation() populates manifest on the returned context."""
+        svc = _make_service()
+        agent = _make_agent()
+        ctx = svc.build_orientation(agent)
+        assert ctx.manifest is not None
+
+    def test_build_orientation_manifest_survives_failure(self):
+        """If manifest construction fails, orientation still succeeds (manifest=None)."""
+        svc = _make_service()
+        agent = _make_agent()
+        with patch.object(svc, 'build_manifest', side_effect=RuntimeError("boom")):
+            ctx = svc.build_orientation(agent)
+            assert ctx.manifest is None  # Graceful degradation
+
+    # --- Rendering ---
+
+    def test_cold_start_includes_manifest_section(self):
+        """Cold start orientation includes architecture manifest text."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        ctx = _make_context(manifest=CognitiveArchitectureManifest())
+        svc = _make_service()
+        text = svc.render_cold_start_orientation(ctx)
+        assert "HOW YOUR COGNITIVE ARCHITECTURE WORKS" in text
+
+    def test_cold_start_manifest_contains_key_facts(self):
+        """Manifest section mentions cosine similarity, stasis, Bayesian, inference cycles."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        ctx = _make_context(manifest=CognitiveArchitectureManifest())
+        svc = _make_service()
+        text = svc.render_cold_start_orientation(ctx)
+        assert "cosine_similarity" in text
+        assert "stasis" in text.lower()
+        assert "Bayesian" in text
+        assert "inference cycles" in text
+
+    def test_cold_start_manifest_stasis_no_processing(self):
+        """Manifest explicitly states nothing processes during stasis."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        ctx = _make_context(manifest=CognitiveArchitectureManifest())
+        svc = _make_service()
+        text = svc.render_cold_start_orientation(ctx)
+        assert "ALL processing stops" in text or "Nothing happens to your memories while you are offline" in text
+
+    def test_cold_start_manifest_no_emotional_subsystem(self):
+        """Manifest explicitly states no emotional processing subsystem."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        ctx = _make_context(manifest=CognitiveArchitectureManifest())
+        svc = _make_service()
+        text = svc.render_cold_start_orientation(ctx)
+        assert "emotional processing subsystem" in text
+
+    def test_cold_start_without_manifest_still_works(self):
+        """Cold start renders fine when manifest is None."""
+        ctx = _make_context(manifest=None)
+        svc = _make_service()
+        text = svc.render_cold_start_orientation(ctx)
+        assert "HOW YOUR COGNITIVE ARCHITECTURE WORKS" not in text
+        assert "You are" in text  # Identity section still present
+
+    def test_warm_boot_includes_architecture_reminder(self):
+        """Warm boot includes abbreviated architecture reminder."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        ctx = _make_context(
+            manifest=CognitiveArchitectureManifest(),
+            stasis_duration_seconds=3600,
+        )
+        svc = _make_service()
+        text = svc.render_warm_boot_orientation(ctx)
+        assert "ARCHITECTURE REMINDER" in text
+        assert "cosine similarity" in text
+        assert "stasis" in text.lower()
+
+    def test_warm_boot_without_manifest_no_reminder(self):
+        """Warm boot without manifest omits architecture reminder."""
+        ctx = _make_context(manifest=None, stasis_duration_seconds=3600)
+        svc = _make_service()
+        text = svc.render_warm_boot_orientation(ctx)
+        assert "ARCHITECTURE REMINDER" not in text
+
+    def test_proactive_full_supplement_includes_manifest(self):
+        """Full proactive supplement includes architecture note when manifest present."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        ctx = _make_context(
+            manifest=CognitiveArchitectureManifest(),
+            agent_age_seconds=10,
+        )
+        svc = _make_service()
+        text = svc._full_proactive_supplement(ctx)
+        assert "cosine similarity" in text
+        assert "stasis" in text.lower()
+
+    def test_proactive_full_supplement_no_manifest(self):
+        """Proactive supplement works without manifest."""
+        ctx = _make_context(manifest=None, agent_age_seconds=10)
+        svc = _make_service()
+        text = svc._full_proactive_supplement(ctx)
+        assert "ORIENTATION ACTIVE" in text
+        assert "cosine similarity" not in text
+
+    def test_render_manifest_section_empty_when_none(self):
+        """render_manifest_section returns empty string for None manifest."""
+        svc = _make_service()
+        assert svc.render_manifest_section(None) == ""
+
+    def test_render_manifest_section_covers_five_domains(self):
+        """Manifest section covers Memory, Trust, Stasis, Cognition, Self-Regulation."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        svc = _make_service()
+        text = svc.render_manifest_section(CognitiveArchitectureManifest())
+        assert "Memory:" in text
+        assert "Trust:" in text
+        assert "Stasis" in text
+        assert "Cognition:" in text
+        assert "Self-Regulation:" in text
+
+    def test_manifest_confabulation_warning(self):
+        """Manifest text warns about stasis confabulation specifically."""
+        from probos.cognitive.orientation import CognitiveArchitectureManifest
+        svc = _make_service()
+        text = svc.render_manifest_section(CognitiveArchitectureManifest())
+        assert "confabulation" in text.lower()

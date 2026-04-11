@@ -3477,5 +3477,47 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 
 **Implementation:** 4 source files modified (`episodic.py`: 2 params + docstring + quality-aware budget loop replacing simple accumulator; `config.py`: 2 fields + per-tier values; `cognitive_agent.py`: 2 kwargs + DEEP relaxation; `proactive.py`: 2 kwargs). 1 new test file (`test_ad591_quality_aware_budget.py`): 22 tests across 6 groups — max episodes cap (5), quality floor stop (5), config integration (5), call site wiring (3), DEEP relaxation (2), regression (2).
 
+## AD-593: Pruning Acceleration + Similarity Floor Tightening (2026-04-10)
 
-**Implementation:** 2 source files modified (`orientation.py`, `finalize.py`). `OrientationContext` dataclass: 2 new fields (`stasis_shutdown_utc`, `stasis_resume_utc`). `build_orientation()`: signature + return block updated. `render_warm_boot_orientation()`: stasis section reformatted from narrative to structured authoritative format with Duration/Shutdown/Resume key-value fields. `finalize.py`: shutdown/resume timestamp computation from `runtime._previous_session["shutdown_time_utc"]` before agent loop, passed to `build_orientation()`. 1 test file modified. 7 new tests in `TestStasisConfabulationGuardBF144` (authoritative header, structured duration, shutdown/resume timestamps included/omitted, identity preserved, build_orientation passthrough).
+**Problem:** The episode pool grows faster than dream pruning can clear it (~50-100 new per cycle vs ~19 pruned). Single-tier pruning (10% max, >24h, activation < -2.0) is too conservative — episodes >7 days with near-zero activation persist as noise. Additionally, `agent_recall_threshold` of 0.15 admits near-random associations with the QA-trained embedding model (AD-584a), inflating candidate count.
+
+| Decision | Rationale |
+|----------|-----------|
+| Two-tier pruning: standard + aggressive | Standard tier preserves existing behavior (>24h, threshold -2.0, 10%). Aggressive tier targets long-stale episodes (>7d, threshold 0.0, 25%) that standard misses. Independent tiers with separate thresholds and caps. |
+| All hardcoded values promoted to DreamingConfig | 8 new config fields replace magic numbers. Backward-compatible defaults match pre-AD-593 behavior for standard tier. |
+| Episode pool pressure multiplier (1.5x above 5000 episodes) | Proportional acceleration — larger pool = more aggressive pruning. Both tiers' max_prune_fraction multiplied. Prevents unbounded growth. |
+| 50% hard cap on prune fraction even under pressure | Safety guardrail. Even at maximum pressure (0.25 × 2.0 = 0.50), never prune more than half the candidates in a single cycle. |
+| Distinct eviction reason `activation_decay_aggressive` | Audit trail (AD-541f) distinguishes aggressive-tier from standard-tier evictions. Enables rollback analysis. |
+| `agent_recall_threshold` raised from 0.15 to 0.25 | QA-trained model cosine 0.15 = near-random. 0.25 eliminates noise while remaining generous for legitimate cross-topic recall. Anchor gate + composite floor (AD-590) provide additional quality filtering. |
+
+**Implementation:** 3 source files modified (`config.py`: 8 new DreamingConfig fields + threshold raise + comment update; `dreaming.py`: Step 12 replaced with two-tier block + pool pressure detection; `episodic.py`: constructor default updated). 1 new test file (`test_ad593_pruning_acceleration.py`): 24 tests across 6 groups — config fields (6), similarity floor (3), standard tier (4), aggressive tier (4), pool pressure (4), regression (3).
+
+
+## BF-145: Align Pre-Existing Tests with AD-593 Changes (2026-04-10)
+
+**Problem:** AD-593 introduced two changes that broke 6 pre-existing tests: (1) Similarity floor raised (`agent_recall_threshold` 0.15 → 0.25) broke 2 tests in `test_ad567b_anchor_recall.py` asserting the old default. (2) Two-tier dream pruning (aggressive tier enabled by default) broke 4 tests in `test_ad567d_dream_provenance.py` that expected single-tier behavior (single `find_low_activation_episodes()` call, single `evict_by_ids()` call with `activation_decay` reason).
+
+| Decision | Rationale |
+|----------|-----------|
+| Update threshold assertions from 0.15 to 0.25 | Tests verify default values. AD-593 raised the default. No behavioral change needed — just update expectations. |
+| Add `aggressive_prune_enabled=False` to dreaming engine test fixture | These tests document standard-tier behavior. Adding aggressive-tier awareness would duplicate AD-593's 24 dedicated tests. One config field in the fixture isolates standard-tier tests from the new tier. |
+| No source code changes | Pure test alignment. Zero production risk. |
+
+**Implementation:** 2 test files modified. `test_ad567b_anchor_recall.py`: 2 assertion values (0.15 → 0.25) + 1 docstring update. `test_ad567d_dream_provenance.py`: 1 fixture change (`aggressive_prune_enabled=False` in `_make_dreaming_engine()` DreamingConfig). 0 new tests — existing 6 tests now pass with updated expectations.
+
+
+## AD-587: Cognitive Architecture Manifest — Mechanistic Self-Model for Agents (2026-04-10)
+
+**Problem:** Agents confabulate about their own internal states while being well-calibrated about external facts. Echo DM test revealed fabrications: "selective clarity," "emotional anchors," "processing during stasis," "memory architecture feels different." Root cause (Nisbett & Wilson 1977): agents lack introspective access to their cognitive architecture. The LLM fills the void with plausible narrative. Orientation (AD-567g) tells agents "you are an AI" but never explains *how* their memory, trust, stasis, or cognitive systems mechanistically work.
+
+| Decision | Rationale |
+|----------|-----------|
+| Frozen dataclass (same pattern as OrientationContext) | Architecture facts are immutable at runtime. Frozen prevents accidental mutation. Consumers depend on fields, not the full orientation system. |
+| 5 domains: Memory, Trust, Stasis, Cognition, Self-Regulation | These are the categories where confabulation was observed. Each domain has verifiable, falsifiable facts that can be checked against the code. |
+| Integrated into existing rendering paths, not new prompts | Cold start, warm boot, and proactive supplements already flow through OrientationService. Additive change — no existing paths modified. |
+| Graceful degradation (manifest=None on failure) | Manifest is valuable but not critical. Agent gets orientation without manifest if construction fails. Log-and-degrade, not crash. |
+| Static architecture facts only (live telemetry is AD-588) | Separates static self-knowledge from dynamic self-monitoring. Manifest explains *how* systems work; AD-588 will surface *current state*. |
+| Warm boot gets abbreviated reminder, not full manifest | Warm boot agents already have orientation from commissioning. Brief 5-line reminder is sufficient — full manifest would be noise. |
+| No changes to cognitive_agent.py, config.py, or startup/ | Manifest flows through existing caller chains. build_orientation() calls build_manifest() internally. No new wiring needed. |
+
+**Implementation:** 1 source file modified (`orientation.py`): `CognitiveArchitectureManifest` frozen dataclass (15 fields), `manifest` field on `OrientationContext`, `build_manifest()` method (reads trust_floor from TrustDampeningConfig, regulation from ProactiveCognitiveConfig), `render_manifest_section()` (5-domain structured text), cold_start manifest section, warm_boot abbreviated reminder, proactive_full architecture note. 1 test file modified (`test_orientation.py`): `_make_context` helper updated, 22 new tests in `TestCognitiveArchitectureManifestAD587` — dataclass (4), build_manifest (3), context integration (3), rendering (12).

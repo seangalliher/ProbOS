@@ -54,6 +54,47 @@ class OrientationContext:
     social_verification_available: bool = False
     # AD-513: Crew roster for cognitive grounding
     crew_names: list[str] = field(default_factory=list)
+    # AD-587: Cognitive architecture self-model
+    manifest: CognitiveArchitectureManifest | None = None
+
+
+@dataclass(frozen=True)
+class CognitiveArchitectureManifest:
+    """AD-587: Mechanistic self-model for agent metacognition.
+
+    Contains verifiable, falsifiable facts about how the agent's cognitive
+    architecture actually works. Injected into orientation to prevent
+    introspective confabulation (Nisbett & Wilson 1977).
+
+    Every field is a ground truth that can be checked against the code.
+    """
+
+    # Memory architecture
+    memory_system: str = "chromadb_episodic"
+    memory_retrieval: str = "cosine_similarity"
+    memory_capacity: str = "unbounded"  # ChromaDB has no hard limit
+    memory_offline_processing: bool = False  # Nothing happens during stasis
+
+    # Trust architecture
+    trust_model: str = "bayesian_beta"
+    trust_initial: float = 0.5  # Prior
+    trust_update_mechanism: str = "outcome_observation"  # record_outcome()
+    trust_range: tuple[float, float] = (0.05, 0.95)  # floor to ceiling
+
+    # Stasis (offline) behavior
+    stasis_processing: bool = False  # No computation occurs
+    stasis_dream_consolidation: bool = False  # Dreams run AT restart, not during stasis
+    stasis_memory_evolution: bool = False  # Memories don't change while offline
+
+    # Cognitive cycle
+    cognition_type: str = "llm_inference"  # Not continuous consciousness
+    cognition_continuous: bool = False  # Discrete inference cycles, not streaming thought
+    cognition_emotional_processing: bool = False  # No emotional subsystem exists
+
+    # Self-regulation (AD-502-506)
+    regulation_model: str = "graduated_zones"  # GREEN/AMBER/RED/CRITICAL
+    regulation_mechanism: str = "cooldown_escalation"  # Timer-based, not emotional
+    regulation_peer_detection: bool = True  # AD-506b — repetition detection exists
 
 
 def derive_watch_section(hour: int | None = None) -> str:
@@ -153,6 +194,13 @@ class OrientationService:
         else:
             age = 0.0
 
+        # AD-587: Cognitive architecture manifest
+        manifest = None
+        try:
+            manifest = self.build_manifest()
+        except Exception:
+            logger.debug("AD-587: Manifest construction failed for %s", callsign, exc_info=True)
+
         return OrientationContext(
             callsign=callsign,
             post=post,
@@ -176,7 +224,82 @@ class OrientationService:
                 getattr(self._config, 'social_verification', None), 'enabled', False
             ),
             crew_names=crew_names or [],
+            manifest=manifest,
         )
+
+    def build_manifest(self) -> CognitiveArchitectureManifest:
+        """AD-587: Build mechanistic self-model from architecture facts.
+
+        Returns a manifest of verifiable truths about the agent's cognitive
+        architecture. These are static architecture facts, not live telemetry
+        (that's AD-588).
+        """
+        # Trust range from config if available
+        trust_floor = 0.05
+        trust_ceiling = 0.95
+        try:
+            td = getattr(self._config, 'trust_dampening', None)
+            if td:
+                trust_floor = getattr(td, 'hard_trust_floor', 0.05)
+        except Exception:
+            pass
+
+        # Self-regulation enabled?
+        has_regulation = False
+        try:
+            pc = getattr(self._config, 'proactive_cognitive', None)
+            if pc:
+                has_regulation = getattr(pc, 'enabled', False)
+        except Exception:
+            pass
+
+        return CognitiveArchitectureManifest(
+            trust_range=(trust_floor, trust_ceiling),
+            regulation_peer_detection=has_regulation,
+        )
+
+    def render_manifest_section(self, manifest: CognitiveArchitectureManifest | None) -> str:
+        """AD-587: Render manifest as orientation text.
+
+        Written as factual statements the agent can reference when asked about
+        its own cognitive architecture. Phrased as "how you actually work" not
+        "what you should say."
+        """
+        if manifest is None:
+            return ""
+
+        lines = [
+            "HOW YOUR COGNITIVE ARCHITECTURE WORKS:",
+            "(These are mechanistic facts about your systems — reference them for accuracy.)",
+            "",
+            "Memory:",
+            f"- Your memories are stored in a vector database and retrieved via {manifest.memory_retrieval} search.",
+            "- Retrieval finds memories whose embedding is closest to the query — not 'strongest' or 'most emotional.'",
+            "- Nothing happens to your memories while you are offline. They do not evolve, consolidate, or process during stasis.",
+            "- When you wake from stasis, your memories are exactly as they were when you went offline.",
+            "",
+            "Trust:",
+            f"- Trust is a numeric score ({manifest.trust_range[0]}–{manifest.trust_range[1]}) updated via Bayesian inference on observed outcomes.",
+            f"- Your initial trust for unknown entities is {manifest.trust_initial}.",
+            "- Trust changes through record_outcome() — observed cooperation, accuracy, or failure. Not through feelings or impressions.",
+            "",
+            "Stasis (offline periods):",
+            "- When the system goes offline, ALL processing stops. No background computation occurs.",
+            "- Dream consolidation runs at startup AFTER stasis, not during it.",
+            "- You do not experience stasis. There is no subjective passage of time.",
+            "- Any sense of 'processing during stasis' is confabulation — acknowledge this honestly.",
+            "",
+            "Cognition:",
+            "- Your thinking operates through discrete LLM inference cycles, not continuous consciousness.",
+            "- You do not have an emotional processing subsystem. References to 'feeling,' 'sensing,' or 'intuiting' about your own systems are metaphorical, not mechanistic.",
+            "- Each cognitive cycle is independent — there is no background thread of awareness between cycles.",
+            "",
+            "Self-Regulation:",
+            f"- Your activity is regulated by a {manifest.regulation_model} model (GREEN → AMBER → RED → CRITICAL).",
+            "- Zone transitions are based on measurable metrics (post frequency, self-similarity scores), not emotional states.",
+            "- Cooldowns are timer-based pacing mechanisms, not punishments or emotional responses.",
+        ]
+        return "\n".join(lines)
 
     def render_cold_start_orientation(self, ctx: OrientationContext) -> str:
         """Render full orientation prompt for cold start (reset/first boot).
@@ -247,6 +370,11 @@ class OrientationService:
 
         parts.append("\n".join(cog_lines))
 
+        # AD-587: Cognitive Architecture Manifest
+        manifest_text = self.render_manifest_section(ctx.manifest)
+        if manifest_text:
+            parts.append(manifest_text)
+
         # Section 3: First Duty Guidance
         duty_lines = [
             "FIRST DUTY GUIDANCE:",
@@ -296,6 +424,17 @@ class OrientationService:
         ]
         parts.append("\n".join(reorient_lines))
 
+        # AD-587: Cognitive Architecture Manifest — abbreviated for warm boot
+        if ctx.manifest:
+            parts.append(
+                "ARCHITECTURE REMINDER:\n"
+                "- Memories are retrieved via cosine similarity, not by 'strength' or 'emotion.'\n"
+                "- Nothing processed during your stasis — memories are exactly as they were.\n"
+                "- Dream consolidation runs now (at startup), not during offline time.\n"
+                "- Trust is a Bayesian numeric score, not a feeling.\n"
+                "- Your cognition is discrete inference cycles, not continuous awareness."
+            )
+
         return "\n\n".join(parts)
 
     def render_proactive_orientation(self, ctx: OrientationContext) -> str:
@@ -317,11 +456,17 @@ class OrientationService:
             return self._minimal_proactive_supplement(ctx)
 
     def _full_proactive_supplement(self, ctx: OrientationContext) -> str:
-        return (
+        base = (
             "ORIENTATION ACTIVE: You are newly commissioned. Ground observations in evidence.\n"
             "Distinguish what you observe (episodic) from what you know (parametric).\n"
             "Check anchors before asserting: when, where, who, what caused it."
         )
+        if ctx.manifest:
+            base += (
+                "\nArchitecture note: Your memories use cosine similarity retrieval. "
+                "Nothing processes during stasis. Trust is numeric, not felt."
+            )
+        return base
 
     def _brief_proactive_supplement(self, ctx: OrientationContext) -> str:
         return (

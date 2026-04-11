@@ -258,11 +258,11 @@ class MemoryConfig(BaseModel):
     collection_name: str = "probos_episodes"
     max_episodes: int = 100000
     relevance_threshold: float = 0.7
-    # BF-134: Agent-scoped recall threshold (replaces hardcoded 0.3 from BF-027).
-    # MiniLM question-vs-statement cosine similarity is typically 0.15-0.35.
-    # Anchor confidence gate provides quality filtering, allowing semantic
-    # threshold to be relaxed.
-    agent_recall_threshold: float = 0.15
+    # BF-134 / AD-593: Agent-scoped recall threshold.
+    # MiniLM QA-trained model cosine similarity for question-vs-statement is typically 0.20-0.45.
+    # 0.25 eliminates near-random associations while remaining generous for cross-topic recall.
+    # Anchor confidence gate and composite score floor (AD-590) provide additional quality filtering.
+    agent_recall_threshold: float = 0.25
     # BF-134: Minimum semantic similarity floor for FTS5 keyword-only hits.
     # Episodes found by keyword search but not semantic search get this
     # floor instead of 0.0, preventing keyword-relevant episodes from
@@ -387,6 +387,17 @@ class DreamingConfig(BaseModel):
     activation_decay_d: float = 0.5
     activation_prune_threshold: float = -2.0
     activation_access_max_age_days: int = 180
+    # AD-593: Pruning acceleration — configurable parameters (previously hardcoded)
+    prune_min_age_hours: int = 24  # Standard tier: only prune episodes older than this
+    prune_max_fraction: float = 0.10  # Standard tier: max fraction of candidates per cycle
+    # AD-593: Aggressive pruning tier — targets old, low-activation episodes
+    aggressive_prune_enabled: bool = True
+    aggressive_prune_min_age_hours: int = 168  # 7 days
+    aggressive_prune_threshold: float = 0.0  # Higher threshold than standard (-2.0)
+    aggressive_prune_max_fraction: float = 0.25  # Up to 25% of old candidates
+    # AD-593: Episode pool pressure — accelerate pruning when pool is large
+    episode_pressure_threshold: int = 5000  # Above this count, increase pruning aggressiveness
+    episode_pressure_multiplier: float = 1.5  # Multiply prune fraction by this when above pressure threshold
 
 
 class ScalingConfig(BaseModel):

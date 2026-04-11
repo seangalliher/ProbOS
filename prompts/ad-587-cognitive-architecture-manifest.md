@@ -26,6 +26,8 @@ Agents demonstrate a systematic asymmetry: well-calibrated about external facts 
 - AD-318 (SystemSelfModel): System-level self-knowledge (pool/agent counts). NOT agent-level metacognition.
 - AD-513 (Crew Manifest): Anti-confabulation via crew roster grounding. Same principle — ground in facts, don't leave voids for fabrication.
 - AD-502–506 (Cognitive Self-Regulation): Metacognitive *regulation* (zones, monitoring, peer detection). Missing metacognitive *knowledge* — agents regulate but don't understand their own regulation mechanisms.
+- AD-590–593 (Confabulation Scaling Mitigation): Recall pipeline noise reduction. AD-587's manifest adds a complementary layer — even with clean recall, agents still confabulate about *architecture* because they lack self-knowledge. AD-592's confabulation guard instructions in `_format_memory_section()` target *memory-sourced* confabulation; AD-587's manifest targets *self-referential* confabulation.
+- BF-144 (Stasis Duration Confabulation): Authoritative stasis record format with structured key-value fields. Demonstrates the pattern: structured authoritative facts in context → LLM cites them instead of confabulating. AD-587 extends this same pattern from stasis facts to architectural facts.
 
 ## Engineering Principles
 
@@ -114,7 +116,7 @@ class CognitiveArchitectureManifest:
 
 **Change 2 — Add `manifest` field to `OrientationContext`.**
 
-Add to the `OrientationContext` dataclass, after `crew_names` (line 53):
+Add to the `OrientationContext` dataclass, after `crew_names` (line 56):
 
 ```python
     # AD-587: Cognitive architecture self-model
@@ -137,9 +139,9 @@ Add after `build_orientation()` (after line 172):
         trust_floor = 0.05
         trust_ceiling = 0.95
         try:
-            tc = getattr(self._config, 'trust_cascade', None)
-            if tc:
-                trust_floor = getattr(tc, 'trust_floor', 0.05)
+            td = getattr(self._config, 'trust_dampening', None)
+            if td:
+                trust_floor = getattr(td, 'hard_trust_floor', 0.05)
         except Exception:
             pass
 
@@ -148,7 +150,7 @@ Add after `build_orientation()` (after line 172):
         try:
             pc = getattr(self._config, 'proactive_cognitive', None)
             if pc:
-                has_regulation = getattr(pc, 'self_monitoring_enabled', False)
+                has_regulation = getattr(pc, 'enabled', False)
         except Exception:
             pass
 
@@ -160,7 +162,7 @@ Add after `build_orientation()` (after line 172):
 
 **Change 4 — Wire manifest into `build_orientation()`.**
 
-In `build_orientation()`, before the `return OrientationContext(...)` statement (line 151), build the manifest and include it:
+In `build_orientation()`, before the `return OrientationContext(...)` statement (line 156), build the manifest and include it:
 
 ```python
         # AD-587: Cognitive architecture manifest
@@ -228,7 +230,7 @@ Add after `build_manifest()`:
 
 **Change 6 — Integrate manifest into `render_cold_start_orientation()`.**
 
-In `render_cold_start_orientation()`, after the Cognitive Grounding section (after `parts.append("\n".join(cog_lines))`  around line 241) and before First Duty Guidance, add:
+In `render_cold_start_orientation()`, after the Cognitive Grounding section (after `parts.append("\n".join(cog_lines))`  around line 248) and before First Duty Guidance, add:
 
 ```python
         # AD-587: Cognitive Architecture Manifest
@@ -239,7 +241,7 @@ In `render_cold_start_orientation()`, after the Cognitive Grounding section (aft
 
 **Change 7 — Integrate manifest into `render_warm_boot_orientation()`.**
 
-In `render_warm_boot_orientation()`, after the Re-Orientation section (after `parts.append("\n".join(reorient_lines))` around line 283), add:
+In `render_warm_boot_orientation()`, after the Re-Orientation section (after `parts.append("\n".join(reorient_lines))` around line 297), add:
 
 ```python
         # AD-587: Cognitive Architecture Manifest — abbreviated for warm boot
@@ -298,6 +300,19 @@ Manifest facts come from existing config fields (`trust_cascade.trust_floor`, `p
 
 ### File: `tests/test_orientation.py` (modify existing)
 
+**Prerequisite — Update `_make_context` helper (line 55):** The helper must accept the new `manifest` field. Since it uses `**overrides` into `OrientationContext(**defaults)`, add `manifest=None` to the `defaults` dict:
+
+```python
+def _make_context(**overrides) -> OrientationContext:
+    defaults = dict(
+        ...existing fields...
+        crew_names=[],
+        manifest=None,  # AD-587
+    )
+    defaults.update(overrides)
+    return OrientationContext(**defaults)
+```
+
 Add test class `TestCognitiveArchitectureManifestAD587`:
 
 ```python
@@ -352,13 +367,13 @@ class TestCognitiveArchitectureManifestAD587:
         assert isinstance(m, CognitiveArchitectureManifest)
 
     def test_build_manifest_reads_trust_floor_from_config(self):
-        """Manifest trust range reflects config trust_floor."""
+        """Manifest trust range reflects config hard_trust_floor."""
         cfg = SystemConfig()
-        # Trust cascade config has trust_floor
-        if hasattr(cfg, 'trust_cascade') and hasattr(cfg.trust_cascade, 'trust_floor'):
+        # TrustDampeningConfig has hard_trust_floor
+        if hasattr(cfg, 'trust_dampening') and hasattr(cfg.trust_dampening, 'hard_trust_floor'):
             svc = _make_service(cfg)
             m = svc.build_manifest()
-            assert m.trust_range[0] == cfg.trust_cascade.trust_floor
+            assert m.trust_range[0] == cfg.trust_dampening.hard_trust_floor
 
     def test_build_manifest_default_trust_range(self):
         """Default trust range is (0.05, 0.95)."""

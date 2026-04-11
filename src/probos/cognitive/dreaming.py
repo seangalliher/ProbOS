@@ -935,7 +935,7 @@ class DreamingEngine:
             except Exception:
                 logger.debug("AD-541c Step 11: Retrieval practice failed", exc_info=True)
 
-        # Step 12: Activation-Based Memory Pruning (AD-567d / AD-462b)
+        # Step 12: Activation-Based Memory Pruning (AD-567d / AD-462b / AD-593)
         activation_pruned = 0
         activation_reinforced = 0
         if (
@@ -952,26 +952,70 @@ class DreamingEngine:
                     )
                     activation_reinforced = len(replayed_ids)
 
-                # Pruning: find low-activation episodes older than 24 hours
-                cutoff = time.time() - 86400  # 24 hours
-                candidate_ids = await self.episodic_memory.get_episode_ids_older_than(cutoff)
+                # AD-593: Episode pool pressure detection
+                _pool_pressure = 1.0
+                try:
+                    _total_episodes = self.episodic_memory._collection.count() if self.episodic_memory._collection else 0
+                    if _total_episodes > self.config.episode_pressure_threshold:
+                        _pool_pressure = self.config.episode_pressure_multiplier
+                        logger.info(
+                            "AD-593: Episode pool pressure active (%d episodes > %d threshold, multiplier=%.1f)",
+                            _total_episodes, self.config.episode_pressure_threshold, _pool_pressure,
+                        )
+                except Exception:
+                    _total_episodes = 0
 
-                if candidate_ids:
+                # --- Standard tier: episodes older than prune_min_age_hours ---
+                _standard_cutoff = time.time() - (self.config.prune_min_age_hours * 3600)
+                _standard_candidates = await self.episodic_memory.get_episode_ids_older_than(_standard_cutoff)
+
+                if _standard_candidates:
+                    _standard_fraction = min(
+                        self.config.prune_max_fraction * _pool_pressure, 0.50
+                    )  # Cap at 50% even under pressure
                     low_activation = await self._activation_tracker.find_low_activation_episodes(
-                        all_episode_ids=candidate_ids,
+                        all_episode_ids=_standard_candidates,
                         threshold=self.config.activation_prune_threshold,
-                        max_prune_fraction=0.10,
+                        max_prune_fraction=_standard_fraction,
                     )
                     if low_activation:
                         await self.episodic_memory.evict_by_ids(
                             low_activation, reason="activation_decay"
                         )
-                        activation_pruned = len(low_activation)
+                        activation_pruned += len(low_activation)
                         logger.info(
-                            "AD-567d Step 12: Pruned %d low-activation episodes (threshold=%.1f)",
-                            activation_pruned,
+                            "AD-567d Step 12: Standard pruned %d episodes (threshold=%.1f, fraction=%.2f)",
+                            len(low_activation),
                             self.config.activation_prune_threshold,
+                            _standard_fraction,
                         )
+
+                # --- AD-593 Aggressive tier: episodes older than aggressive_prune_min_age_hours ---
+                if self.config.aggressive_prune_enabled:
+                    _aggressive_cutoff = time.time() - (self.config.aggressive_prune_min_age_hours * 3600)
+                    _aggressive_candidates = await self.episodic_memory.get_episode_ids_older_than(_aggressive_cutoff)
+
+                    if _aggressive_candidates:
+                        _aggressive_fraction = min(
+                            self.config.aggressive_prune_max_fraction * _pool_pressure, 0.50
+                        )
+                        aggressive_pruned = await self._activation_tracker.find_low_activation_episodes(
+                            all_episode_ids=_aggressive_candidates,
+                            threshold=self.config.aggressive_prune_threshold,
+                            max_prune_fraction=_aggressive_fraction,
+                        )
+                        if aggressive_pruned:
+                            await self.episodic_memory.evict_by_ids(
+                                aggressive_pruned, reason="activation_decay_aggressive"
+                            )
+                            activation_pruned += len(aggressive_pruned)
+                            logger.info(
+                                "AD-593 Step 12: Aggressive pruned %d episodes (threshold=%.1f, age>%dh, fraction=%.2f)",
+                                len(aggressive_pruned),
+                                self.config.aggressive_prune_threshold,
+                                self.config.aggressive_prune_min_age_hours,
+                                _aggressive_fraction,
+                            )
 
                 # Cleanup old access records
                 await self._activation_tracker.cleanup_old_accesses()

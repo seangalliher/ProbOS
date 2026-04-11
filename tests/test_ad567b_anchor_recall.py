@@ -529,10 +529,10 @@ class TestBF134ThresholdAndFloor:
     """BF-134: Verify configurable agent recall threshold and FTS keyword floor."""
 
     def test_agent_recall_threshold_default(self):
-        """Default agent_recall_threshold is 0.15 (not 0.3)."""
+        """Default agent_recall_threshold is 0.25 (AD-593 raised from 0.15)."""
         from probos.cognitive.episodic import EpisodicMemory
         em = EpisodicMemory("/dev/null", max_episodes=100)
-        assert em._agent_recall_threshold == 0.15
+        assert em._agent_recall_threshold == 0.25
 
     def test_agent_recall_threshold_configurable(self):
         """Custom agent_recall_threshold is stored and used."""
@@ -591,7 +591,7 @@ class TestBF134ThresholdAndFloor:
         from probos.config import MemoryConfig
         cfg = MemoryConfig()
         # Verify they are independent config fields with correct defaults
-        assert cfg.agent_recall_threshold == 0.15
+        assert cfg.agent_recall_threshold == 0.25
         assert cfg.anchor_confidence_gate == 0.3
         assert cfg.fts_keyword_semantic_floor == 0.2
         # Threshold is for semantic similarity, gate is for anchor confidence

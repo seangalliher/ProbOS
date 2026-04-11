@@ -464,7 +464,7 @@ class EpisodicMemory:
         relevance_threshold: float = 0.7,
         verify_content_hash: bool = True,
         eviction_audit: Any = None,
-        agent_recall_threshold: float = 0.15,
+        agent_recall_threshold: float = 0.25,
         fts_keyword_floor: float = 0.2,
         query_reformulation_enabled: bool = True,
     ) -> None:
