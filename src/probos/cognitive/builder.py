@@ -2129,12 +2129,12 @@ Rules for MODIFY blocks:
             return result
         return await super().decide(observation)
 
-    def _build_user_message(self, observation: dict) -> str:
+    async def _build_user_message(self, observation: dict) -> str:
         """Format the build spec and reference files into an LLM prompt."""
         # Delegate to parent for conversational intents
         intent_name = observation.get("intent", "unknown")
         if intent_name in ("direct_message", "ward_room_notification", "proactive_think"):
-            return super()._build_user_message(observation)
+            return await super()._build_user_message(observation)
 
         params = observation.get("params", {})
         title = params.get("title", "Untitled")

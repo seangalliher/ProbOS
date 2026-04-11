@@ -99,7 +99,8 @@ class TestCommissioningAwareness:
 class TestColdStartNoteInWardRoom:
     """BF-102: Ward Room notification includes cold-start system note."""
 
-    def test_cold_start_note_present(self):
+    @pytest.mark.asyncio
+    async def test_cold_start_note_present(self):
         """When runtime.is_cold_start is True, ward_room message includes system note."""
         rt = SimpleNamespace(is_cold_start=True)
         agent = _make_agent(_runtime=rt)
@@ -112,12 +113,13 @@ class TestColdStartNoteInWardRoom:
                 "author_id": "captain",
             },
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "SYSTEM NOTE" in msg
         assert "fresh start" in msg
         assert "Do not reference or invent past experiences" in msg
 
-    def test_cold_start_note_absent(self):
+    @pytest.mark.asyncio
+    async def test_cold_start_note_absent(self):
         """When runtime.is_cold_start is False, no system note in ward_room message."""
         rt = SimpleNamespace(is_cold_start=False)
         agent = _make_agent(_runtime=rt)
@@ -130,10 +132,11 @@ class TestColdStartNoteInWardRoom:
                 "author_id": "captain",
             },
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "SYSTEM NOTE" not in msg
 
-    def test_cold_start_note_absent_no_runtime(self):
+    @pytest.mark.asyncio
+    async def test_cold_start_note_absent_no_runtime(self):
         """When _runtime is None, no system note in ward_room message (no crash)."""
         agent = _make_agent(_runtime=None)
         obs = {
@@ -145,7 +148,7 @@ class TestColdStartNoteInWardRoom:
                 "author_id": "captain",
             },
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "SYSTEM NOTE" not in msg
 
 
@@ -157,7 +160,8 @@ class TestColdStartNoteInWardRoom:
 class TestNewAgentWardRoomContext:
     """Integration: new agent with commissioning context in ward room notification."""
 
-    def test_new_agent_gets_both_contexts(self):
+    @pytest.mark.asyncio
+    async def test_new_agent_gets_both_contexts(self):
         """New agent (birth < 300s, cold start) gets commissioning + system note."""
         rt = SimpleNamespace(is_cold_start=True)
         agent = _make_agent(
@@ -173,7 +177,7 @@ class TestNewAgentWardRoomContext:
                 "author_id": "captain",
             },
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         # Should have commissioning awareness (from temporal context)
         assert "You were commissioned" in msg
         assert "respond as yourself" in msg

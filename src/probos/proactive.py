@@ -1270,6 +1270,18 @@ class ProactiveCognitiveLoop:
         except Exception:
             logger.debug("Self-monitoring context failed for %s", agent.id, exc_info=True)
 
+        # AD-588: Introspective telemetry for proactive path
+        try:
+            _telemetry_svc = getattr(rt, '_introspective_telemetry', None)
+            if _telemetry_svc:
+                _agent_id = getattr(agent, 'sovereign_id', None) or agent.id
+                _snapshot = await _telemetry_svc.get_full_snapshot(_agent_id)
+                _rendered = _telemetry_svc.render_telemetry_context(_snapshot)
+                if _rendered:
+                    context["introspective_telemetry"] = _rendered
+        except Exception:
+            logger.debug("AD-588: telemetry context assembly failed", exc_info=True)
+
         # AD-576: Infrastructure awareness context
         if self._llm_status != "operational":
             context["infrastructure_status"] = {

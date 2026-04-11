@@ -250,20 +250,22 @@ class TestCognitiveAgentLifecycle:
 class TestCognitiveAgentFormatting:
     """Test helper methods."""
 
-    def test_build_user_message(self):
+    @pytest.mark.asyncio
+    async def test_build_user_message(self):
         """_build_user_message() formats observation correctly."""
         agent = SampleCogAgent()
         obs = {"intent": "test", "params": {"x": 1}, "context": "some context"}
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "Intent: test" in msg
         assert "Parameters:" in msg
         assert "Context: some context" in msg
 
-    def test_build_user_message_no_params(self):
+    @pytest.mark.asyncio
+    async def test_build_user_message_no_params(self):
         """_build_user_message() omits params when empty."""
         agent = SampleCogAgent()
         obs = {"intent": "test", "params": {}, "context": ""}
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "Intent: test" in msg
         assert "Parameters" not in msg
         assert "Context" not in msg
@@ -719,7 +721,8 @@ class TestActStoreHook:
 class TestBuildUserMessageMemories:
     """AD-430c: _build_user_message renders memory context."""
 
-    def test_direct_message_includes_memories(self):
+    @pytest.mark.asyncio
+    async def test_direct_message_includes_memories(self):
         """Direct message _build_user_message includes memory context."""
         agent = SampleCogAgent()
         obs = {
@@ -730,14 +733,15 @@ class TestBuildUserMessageMemories:
                 {"input": "Reviewed EPS", "reflection": "EPS conduits nominal."},
             ],
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "=== SHIP MEMORY" in msg
         # BF-029: input is now preferred over reflection
         assert "Asked about power grid" in msg
         assert "Reviewed EPS" in msg
         assert "Captain says: Status report" in msg
 
-    def test_ward_room_notification_includes_memories(self):
+    @pytest.mark.asyncio
+    async def test_ward_room_notification_includes_memories(self):
         """Ward room notification _build_user_message includes memory context."""
         agent = SampleCogAgent()
         obs = {
@@ -753,7 +757,7 @@ class TestBuildUserMessageMemories:
                 {"input": "Prior EPS review", "reflection": "Reviewed EPS conduits last shift."},
             ],
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "=== SHIP MEMORY" in msg
         # BF-029: input is now preferred over reflection
         assert "Prior EPS review" in msg
@@ -974,7 +978,8 @@ class TestRecallQueryEnrichment:
 class TestMemoryPresentationPreference:
     """BF-029: Tests 3-5 — input preferred over reflection in prompt."""
 
-    def test_dm_prefers_input_over_reflection(self):
+    @pytest.mark.asyncio
+    async def test_dm_prefers_input_over_reflection(self):
         """Test 3: direct_message prompt shows input, not reflection."""
         agent = SampleCogAgent()
         obs = {
@@ -987,11 +992,12 @@ class TestMemoryPresentationPreference:
                 },
             ],
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "[Ward Room reply] Counselor: Trust variance noted" in msg
         assert "replied in thread" not in msg
 
-    def test_dm_falls_back_to_reflection_when_input_empty(self):
+    @pytest.mark.asyncio
+    async def test_dm_falls_back_to_reflection_when_input_empty(self):
         """Test 4: Falls back to reflection when input is empty."""
         agent = SampleCogAgent()
         obs = {
@@ -1001,10 +1007,11 @@ class TestMemoryPresentationPreference:
                 {"input": "", "reflection": "Counselor observed something."},
             ],
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "Counselor observed something." in msg
 
-    def test_wr_notification_also_prefers_input(self):
+    @pytest.mark.asyncio
+    async def test_wr_notification_also_prefers_input(self):
         """Test 5: ward_room_notification prompt also prefers input."""
         agent = SampleCogAgent()
         obs = {
@@ -1023,7 +1030,7 @@ class TestMemoryPresentationPreference:
                 },
             ],
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "previous EPS insight" in msg
         assert "replied in thread" not in msg
 

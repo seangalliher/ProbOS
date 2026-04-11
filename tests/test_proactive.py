@@ -1747,7 +1747,8 @@ class TestSimilarPostSuppression:
 class TestMetaObservationPrompt:
     """BF-032: Meta-observation instruction in proactive prompt."""
 
-    def test_meta_observation_instruction_present(self):
+    @pytest.mark.asyncio
+    async def test_meta_observation_instruction_present(self):
         """Free-form think prompt includes instruction not to self-reference."""
         from probos.cognitive.cognitive_agent import CognitiveAgent
 
@@ -1765,7 +1766,7 @@ class TestMetaObservationPrompt:
                 "duty": None,
             },
         }
-        msg = agent._build_user_message(observation)
+        msg = await agent._build_user_message(observation)
         assert "Do not comment on your own posting patterns" in msg
 
 

@@ -3506,6 +3506,63 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Implementation:** 2 test files modified. `test_ad567b_anchor_recall.py`: 2 assertion values (0.15 → 0.25) + 1 docstring update. `test_ad567d_dream_provenance.py`: 1 fixture change (`aggressive_prune_enabled=False` in `_make_dreaming_engine()` DreamingConfig). 0 new tests — existing 6 tests now pass with updated expectations.
 
 
+## BF-146: Standing Orders Hardcode Callsigns — Agents Contradict Each Other About Crew Identity (2026-04-11)
+
+**Problem:** Standing order `.md` files reference crew by hardcoded callsigns (e.g., "LaForge", "O'Brien", "Dax") instead of billet/role titles. `compose_instructions()` appends these files verbatim, while `_build_personality_block()` dynamically resolves callsigns (including naming ceremony overrides). Result: agents contradict each other about who holds a role — one agent says "O'Brien" from its standing orders while the actual operations agent chose a different name during naming ceremony.
+
+| Decision | Rationale |
+|----------|-----------|
+| Remove all self-identity lines ("Your callsign is X") from agent-tier standing orders | Already handled dynamically by `_build_personality_block()` (line 121-190 of standing_orders.py) which resolves naming ceremony overrides. Hardcoded lines create conflicts. |
+| Replace all cross-reference callsigns with role titles | Real Navy standing orders reference the billet ("the Operations Chief"), never the person by name. Billets are permanent; personnel rotate. Same principle applies: standing orders outlive any agent's chosen callsign. |
+| Documentation-only fix — no code changes | The problem is in the `.md` content, not in the code that renders it. `compose_instructions()` and `_build_personality_block()` work correctly — they just receive bad input. |
+| Scope AD-595 (Watch Bill / Billet Registry) as the programmatic resolution path | Standing orders now reference roles, but agents still can't programmatically resolve "who is the Chief Engineer?" at runtime. That requires a billet registry — scoped as AD-595. |
+
+**Implementation:** 15 files modified (13 agent-tier standing orders + science.md department + federation.md constitution). No source code changes.
+
+**Issue:** #164 (BF-146). **Related:** #165 (AD-595 — Watch Bill / Billet Registry).
+
+
+## Design Principle: Natural Language as Code — Instruction Validation in LLM Systems (2026-04-11)
+
+**Observation (from BF-146):** Standing orders are natural language documents appended verbatim into the system prompt by `compose_instructions()`. A hardcoded callsign in a `.md` file caused the same class of behavioral defect as a hardcoded variable in Python — agents produced incorrect output because their input was wrong. But Python has compilers, linters, and tests that catch stale references. Standing orders have none.
+
+**Principle:** In LLM-based systems, natural language instructions have the same defect surface as code. An unresolved reference in Python throws an ImportError. An unresolved reference in standing orders produces silent confabulation. Same class of bug — different detection capability.
+
+| Decision | Rationale |
+|----------|-----------|
+| Recognize all natural language inputs to LLMs as "code" requiring validation | BF-146 demonstrated that a "documentation-only" bug caused real behavioral failures (agent identity contradictions, confabulation). Standing orders, orientation text, memory section framing — all are executable instructions interpreted by the LLM. |
+| Distinguish instruction validation from output evaluation | Evals (AD-566 qualification probes, AD-568e/589 faithfulness checks) validate the *result* of prompt interpretation. They don't validate the *prompt itself*. A prompt with contradictory references can produce correct output some of the time — evals catch failures stochastically, not structurally. |
+| Three capability types have different validation needs | Per crew-capability-architecture.md Section 3: (1) **Assigned Tools** — validated by Tool Registry + permissions (code). (2) **Learned Skills (Executable Skills)** — validated by Cognitive JIT replay + procedure store (code). (3) **Cognitive Capabilities** — defined entirely by natural language instructions (standing orders, orientation, system prompt composition). Type 3 has zero structural validation today. |
+| Scope future instruction validation work | Standing orders linting (cross-reference resolution, consistency checks), system prompt composition validation (assembled prompt internally consistent), orientation text format validation (BF-144 demonstrated format matters). AD-595c (standing orders templating) is the first step — template substitution makes references fail visibly instead of silently. |
+
+**Implications for Nooplex:** Commercial customers will define custom agent roles via YAML role templates + natural language standing orders. If those instructions have bugs, the agent confabulates silently. An instruction linter — validating that role references resolve, that capability claims match ontology, that cross-references are consistent — becomes a product quality differentiator. "Your agent instructions compile cleanly" is the LLM equivalent of "your code passes CI."
+
+**Connects to:** BF-146 (concrete example), AD-595c (templating as first validation step), AD-566 (evals validate output, not input), AD-592 (confabulation guard instructions — instruction-level mitigation), crew-capability-architecture.md Section 3 (Type 3 cognitive capabilities defined by instructions).
+
+
+## AD-596: Cognitive Skill Registry — AgentSkills.io-Compatible Skill Library (2026-04-11)
+
+**Problem:** ProbOS agents have three capability types defined in the crew-capability-architecture: standing orders (identity), executable skills (Cognitive JIT), and assigned tools. Missing: a structured format for instruction-defined cognitive capabilities — tasks an agent can perform via LLM reasoning when prompted with the right instructions. Standing orders serve identity (always loaded), but task-specific cognitive skills (e.g., "how to conduct a root cause analysis") have no standard format, no on-demand loading, and no interop with the broader agent ecosystem.
+
+| Decision | Rationale |
+|----------|-----------|
+| Adopt AgentSkills.io `SKILL.md` format as the T2 cognitive skill standard | Industry convergence — adopted by 30+ tools (Claude Code, Cursor, GitHub Copilot, Gemini CLI, OpenHands, Hermes Agent, OpenAI Codex, JetBrains Junie). YAML frontmatter + markdown body. ProbOS agents can use skills written for any of these tools without modification. |
+| Four-tier capability model: T1 Standing Orders, T2 Cognitive Skills, T3 Executable Skills, T4 Tool Skills | Separates identity (T1, always loaded, defines who you are) from task capabilities (T2, on-demand, defines what you can do). T1→T2 boundary was previously blurred — standing orders carried both identity and task instructions. T3 (Cognitive JIT zero-token procedures) and T4 (CapabilityDescriptor + tool binding) already exist. |
+| ProbOS metadata extensions as additive optional fields in standard `metadata` block | `probos-department`, `probos-skill-id`, `probos-min-proficiency`, `probos-min-rank`, `probos-intents` — all optional. External skills work without them (ungoverned mode). ProbOS-authored skills include them for ontology integration. Extends standard without forking it. |
+| Progressive disclosure for context efficiency | Description (~100 tokens) always in context for intent discovery. Full SKILL.md instructions (<5000 tokens) loaded only when intent matches. Supporting files loaded only when referenced. Prevents context bloat from large skill libraries. |
+| T2→T3 self-improvement pathway via Cognitive JIT pipeline | Agent uses T2 cognitive skill (LLM-mediated) → Cognitive JIT observes (AD-531) → procedure extracted (AD-532) → graduated compilation (AD-535) → at L4+ becomes T3 executable (zero-token) → if T3 fails, fallback to T2 (AD-534b). This is the "self-improving skills" pattern observed in Hermes Agent, already implemented in ProbOS via the complete Cognitive JIT pipeline. |
+| Absorb `skills-ref` library (Apache 2.0) for validation instead of building from scratch | `skills-ref` provides `validate()`, `read_properties()`, and `to_prompt()` — Python, pip-installable, covers the AgentSkills.io spec. AD-596e extends with ProbOS-specific checks: ontology cross-references, callsign detection (BF-146 lesson), instruction staleness detection, standing order/skill boundary enforcement. |
+| Bridge to existing SkillRegistry (AD-428) via AD-596c | SkillRegistry already has SQLite-backed catalog, 7 PCCs, role templates, Dreyfus proficiency scale, AgentSkillService per-agent records. AD-596c maps T2 SKILL.md files to SkillDefinition objects, enabling ACM integration via existing `get_consolidated_profile()` pipeline. No parallel registry — one registry, new input format. |
+
+**Prior art:** AgentSkills.io (open standard), Claude Code Skills (Anthropic reference), Microsoft Business Skills in Dataverse (natural-language process instructions with RBAC governance), Hermes Agent Skills Hub (644 skills, 4 registries, self-improving through use — maps to T2→T3 pathway).
+
+**Sub-ADs:** AD-596a (Skill File Format + Loader), AD-596b (Intent Discovery + compose_instructions() Integration), AD-596c (Skill-Registry Bridge), AD-596d (External Skill Import), AD-596e (Skill Validation + Instruction Linting).
+
+**Issue:** #166 (AD-596).
+
+**Connects to:** AD-428 (SkillRegistry), AD-531–539 (Cognitive JIT pipeline — T3), AD-423 (Tool Registry — T4), AD-595 (Watch Bill — billet resolution), BF-146 (callsign validation lesson), crew-capability-architecture.md (unified design document).
+
+
 ## AD-587: Cognitive Architecture Manifest — Mechanistic Self-Model for Agents (2026-04-10)
 
 **Problem:** Agents confabulate about their own internal states while being well-calibrated about external facts. Echo DM test revealed fabrications: "selective clarity," "emotional anchors," "processing during stasis," "memory architecture feels different." Root cause (Nisbett & Wilson 1977): agents lack introspective access to their cognitive architecture. The LLM fills the void with plausible narrative. Orientation (AD-567g) tells agents "you are an AI" but never explains *how* their memory, trust, stasis, or cognitive systems mechanistically work.
@@ -3521,3 +3578,45 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 | No changes to cognitive_agent.py, config.py, or startup/ | Manifest flows through existing caller chains. build_orientation() calls build_manifest() internally. No new wiring needed. |
 
 **Implementation:** 1 source file modified (`orientation.py`): `CognitiveArchitectureManifest` frozen dataclass (15 fields), `manifest` field on `OrientationContext`, `build_manifest()` method (reads trust_floor from TrustDampeningConfig, regulation from ProactiveCognitiveConfig), `render_manifest_section()` (5-domain structured text), cold_start manifest section, warm_boot abbreviated reminder, proactive_full architecture note. 1 test file modified (`test_orientation.py`): `_make_context` helper updated, 22 new tests in `TestCognitiveArchitectureManifestAD587` — dataclass (4), build_manifest (3), context integration (3), rendering (12).
+
+
+## AD-588: Telemetry-Grounded Introspection — Dynamic Self-Monitoring for Agents (2026-04-11)
+
+**Problem:** AD-587 gives agents a static self-model (how systems work), but agents still confabulate about their *current state* ("my trust is remarkably positive," "I have vivid recent memories") because they lack access to live telemetry. Nisbett & Wilson (1977): people confabulate about cognitive processes they can't introspect. Fix is to provide actual data, not suppress confabulation. Layer 2 of the Metacognitive Architecture wave (AD-587 static → AD-588 dynamic → AD-589 faithfulness).
+
+| Decision | Rationale |
+|----------|-----------|
+| Stateless service querying existing runtime services | No new state to maintain, no new storage. `IntrospectiveTelemetryService` assembles snapshots on demand from EpisodicMemory, TrustNetwork, HebbianRouter, AgentWorkingMemory. |
+| Self-query detection via compiled regex, not LLM | Zero-token, deterministic, no latency. 6 patterns catch memory, trust, state, architecture, stasis, and identity questions. False positives are benign (extra context never hurts). |
+| Inject telemetry in prompt, not system instructions | Telemetry is observation-specific (changes per query). System instructions are static. Injection in `_build_user_message()` keeps telemetry in the user message alongside other context. |
+| `_build_user_message` converted `def` → `async def` | Telemetry service queries are async (EpisodicMemory, TrustNetwork). Breaking change affecting 1 call site, 2 subclass overrides, 48 test call sites — but mechanical migration, not behavioral change. |
+| Three injection paths (DM, WR, proactive) | DM and WR paths gate on `_is_introspective_query()` — only inject when the question warrants it. Proactive always injects (agents need self-awareness during autonomous reflection). |
+| All methods best-effort (never raise) | Partially degraded telemetry is still useful. An agent seeing memory count but not trust score is better than seeing nothing because trust query failed. |
+| Cognitive zone awareness in DM/WR paths | Non-GREEN zones (AMBER/RED/CRITICAL) shown via `get_cognitive_zone()` public accessor on AgentWorkingMemory. GREEN omitted to reduce noise. |
+| Trust trend detection (rising/falling/stable) | 5 most recent trust events with ±0.02 threshold. Simple heuristic, not ML. Tells agents "your trust is rising" vs confabulating "remarkably positive patterns." |
+
+**Build prompt:** `prompts/ad-588-telemetry-grounded-introspection.md` — 7 phases.
+
+**Implementation:** 1 new source file (`cognitive/introspective_telemetry.py`): `IntrospectiveTelemetryService` with `__init__(runtime)`, `_resolve_agent()` helper, 5 async telemetry methods + `get_full_snapshot()` aggregator, `render_telemetry_context()` static formatter. 4 source files modified (`cognitive_agent.py`: `_INTROSPECTIVE_PATTERNS` 6 compiled regexes + `_is_introspective_query()` static method + `def→async def _build_user_message` + DM/WR telemetry injection + cognitive zone awareness; `runtime.py`: wired after oracle_service with graceful degradation; `proactive.py`: telemetry snapshot injection after self-monitoring assembly; `agent_working_memory.py`: `get_cognitive_zone()` public accessor). 2 subclass files updated (`architect.py`, `builder.py`: async override). 1 new test file (`test_ad588_telemetry_introspection.py`): 37 tests across 5 classes — TestIntrospectiveTelemetryService (12), TestSelfQueryDetection (10), TestTelemetryInjection (8), TestRenderTelemetryContext (4), TestGetCognitiveZone (3). 13 existing test files updated for async `_build_user_message` (48 call sites).
+
+
+## AD-589: Introspective Faithfulness — Self-Referential Claim Verification (2026-04-11)
+
+**Problem:** AD-587 gave agents a static self-model and AD-588 gave them dynamic telemetry, but neither *verifies* that agents use this data faithfully. An agent can receive telemetry showing "42 episodes, cosine similarity retrieval, no offline processing" and still respond with "I experience selective clarity in my memories" or "processing during stasis enhanced my pattern recognition." Nisbett & Wilson (1977) introspection illusion — the LLM generates plausible-sounding introspective narrative that directly contradicts the architectural facts in its context. Johnson et al. (1993) source monitoring extended to self-referential domain. Layer 3 of Metacognitive Architecture wave (AD-587→588→589), wave COMPLETE.
+
+| Decision | Rationale |
+|----------|-----------|
+| Extend source_governance.py, not a new file | Adjacent to existing `check_faithfulness()` (AD-568e). Same module, same pattern. DRY — reuses `_re` import, `@dataclass(frozen=True)` pattern. |
+| 6 self-referential claim patterns | Detect "I feel/experience", "my memory/cognition", "selective clarity/subconscious/intuition", "during stasis … I/my", "I processed during stasis", and bare "processing during stasis." Broadened pattern 2 to allow intervening adjectives ("my emotional processing"). |
+| 8 manifest contradiction rules | Derived from CognitiveArchitectureManifest's 5 domains. Each rule is a (regex, explanation) tuple. New rules added without code changes (Open/Closed). |
+| Pure function, no LLM call | Zero-token, deterministic, runs on every cognitive cycle. Claims detected → contradiction checked → score computed. No I/O, no async needed. |
+| Score = 1.0 − (contradictions / claims) | Proportional — one wrong claim out of ten is different from ten wrong claims out of ten. Threshold default 0.5 matches AD-568e pattern. |
+| Graceful degradation on missing manifest/telemetry | manifest=None → skip manifest checks. telemetry=None → skip telemetry checks. Both=None → assume good faith (score=1.0). Never crashes, never blocks. |
+| Fire-and-forget pipeline integration | Same pattern as AD-568e: `_check_introspective_faithfulness()` sync method on CognitiveAgent, wraps pure function with try/except, returns result or None. Post-decision: log → SELF_MODEL_DRIFT event → Counselor → episode metadata. |
+| Telemetry snapshot caching on AgentWorkingMemory | DM/WR paths already fetch telemetry snapshots for AD-588 rendering. Cache `_snapshot` via `set_telemetry_snapshot()` for the sync post-decision check to access without async call. |
+| Re-use `record_faithfulness_event()` on Counselor | Existing method handles EMA updates and threshold alerts. No new Counselor method needed. AD-568e and AD-589 share the same Counselor pathway. |
+| Not censorship — epistemic hygiene | Agents keep full expressive warmth and personality. Only mechanistic falsehoods (claims contradicting architecture) are flagged. "I appreciate your question" passes. "I feel selective clarity" fails. |
+
+**Build prompt:** `prompts/ad-589-introspective-faithfulness.md` — 3 components.
+
+**Implementation:** 3 source files modified (`source_governance.py`: `_SELF_REFERENTIAL_PATTERNS` 6 compiled regexes, `_MANIFEST_CONTRADICTIONS` 8 contradiction rules, `extract_self_referential_claims()` sentence-level claim extraction, `IntrospectiveFaithfulnessResult` frozen dataclass, `check_introspective_faithfulness()` pure verification function; `cognitive_agent.py`: `_check_introspective_faithfulness()` fire-and-forget method, post-decision pipeline block (check+log+event+Counselor+episode metadata), DM/WR `set_telemetry_snapshot()` caching in AD-588 injection paths; `agent_working_memory.py`: `_last_telemetry_snapshot` attribute + `set_telemetry_snapshot()` method). 1 event file modified (`events.py`: `SELF_MODEL_DRIFT` event type). 1 new test file (`test_ad589_introspective_faithfulness.py`): 38 tests across 6 classes — TestSelfReferentialClaimDetection (7), TestManifestContradictions (10), TestTelemetryCrossCheck (6), TestCognitiveAgentIntegration (8), TestTelemetrySnapshotCaching (5), TestEventType (2).

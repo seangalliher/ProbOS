@@ -562,7 +562,7 @@ class TestEarnedAgencyScaling:
 class TestPromptFormatting:
     """Tests for self-monitoring prompt section in cognitive_agent."""
 
-    def _build_proactive_prompt(self, context_parts: dict) -> str:
+    async def _build_proactive_prompt(self, context_parts: dict) -> str:
         """Build a proactive_think prompt via CognitiveAgent._build_user_message."""
         from probos.cognitive.cognitive_agent import CognitiveAgent
         agent = CognitiveAgent.__new__(CognitiveAgent)
@@ -582,10 +582,11 @@ class TestPromptFormatting:
                 "duty": None,
             },
         }
-        return agent._build_user_message(observation)
+        return await agent._build_user_message(observation)
 
-    def test_self_monitoring_section_in_prompt(self) -> None:
-        prompt = self._build_proactive_prompt({
+    @pytest.mark.asyncio
+    async def test_self_monitoring_section_in_prompt(self) -> None:
+        prompt = await self._build_proactive_prompt({
             "self_monitoring": {
                 "recent_posts": [{"body": "observation here", "age": "5m"}],
             },
@@ -593,8 +594,9 @@ class TestPromptFormatting:
         assert "Your Recent Activity (self-monitoring)" in prompt
         assert "observation here" in prompt
 
-    def test_high_similarity_warning_in_prompt(self) -> None:
-        prompt = self._build_proactive_prompt({
+    @pytest.mark.asyncio
+    async def test_high_similarity_warning_in_prompt(self) -> None:
+        prompt = await self._build_proactive_prompt({
             "self_monitoring": {
                 "self_similarity": 0.7,
             },
@@ -602,8 +604,9 @@ class TestPromptFormatting:
         assert "WARNING:" in prompt
         assert "GENUINELY NEW" in prompt
 
-    def test_moderate_similarity_note_in_prompt(self) -> None:
-        prompt = self._build_proactive_prompt({
+    @pytest.mark.asyncio
+    async def test_moderate_similarity_note_in_prompt(self) -> None:
+        prompt = await self._build_proactive_prompt({
             "self_monitoring": {
                 "self_similarity": 0.35,
             },
@@ -611,12 +614,14 @@ class TestPromptFormatting:
         assert "Note:" in prompt
         assert "new insight" in prompt
 
-    def test_no_self_monitoring_when_empty(self) -> None:
-        prompt = self._build_proactive_prompt({})
+    @pytest.mark.asyncio
+    async def test_no_self_monitoring_when_empty(self) -> None:
+        prompt = await self._build_proactive_prompt({})
         assert "Your Recent Activity" not in prompt
 
-    def test_notebook_index_formatted(self) -> None:
-        prompt = self._build_proactive_prompt({
+    @pytest.mark.asyncio
+    async def test_notebook_index_formatted(self) -> None:
+        prompt = await self._build_proactive_prompt({
             "self_monitoring": {
                 "notebook_index": [
                     {"topic": "analysis-topic", "updated": "2026-03-30"},
@@ -626,8 +631,9 @@ class TestPromptFormatting:
         assert "analysis-topic" in prompt
         assert "READ_NOTEBOOK" in prompt
 
-    def test_memory_state_calibration_note(self) -> None:
-        prompt = self._build_proactive_prompt({
+    @pytest.mark.asyncio
+    async def test_memory_state_calibration_note(self) -> None:
+        prompt = await self._build_proactive_prompt({
             "self_monitoring": {
                 "memory_state": {
                     "episode_count": 2,

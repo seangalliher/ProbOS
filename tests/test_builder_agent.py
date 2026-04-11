@@ -1545,7 +1545,8 @@ class TestParseFileBlocks:
 
 
 class TestBuildUserMessage:
-    def test_formats_spec(self):
+    @pytest.mark.asyncio
+    async def test_formats_spec(self):
         """_build_user_message formats build spec fields."""
         agent = BuilderAgent(
             agent_id="builder-0",
@@ -1563,7 +1564,7 @@ class TestBuildUserMessage:
             },
             "file_context": "=== src/existing.py ===\nclass Existing: pass\n",
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "Add VectorStore" in msg
         assert "AD-400" in msg
         assert "src/vec.py" in msg
@@ -1571,7 +1572,8 @@ class TestBuildUserMessage:
         assert "No new deps" in msg
         assert "Reference Code" in msg
 
-    def test_handles_missing_fields(self):
+    @pytest.mark.asyncio
+    async def test_handles_missing_fields(self):
         """_build_user_message handles missing/empty fields gracefully."""
         agent = BuilderAgent(
             agent_id="builder-0",
@@ -1579,7 +1581,7 @@ class TestBuildUserMessage:
             runtime=MagicMock(spec=ProbOSRuntime),
         )
         obs = {"params": {"title": "Minimal"}}
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "Minimal" in msg
 
 

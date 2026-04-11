@@ -8,7 +8,7 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, ClassVar
 
 from probos.events import EventType
 from probos.substrate.agent import BaseAgent
@@ -1170,7 +1170,7 @@ class CognitiveAgent(BaseAgent):
         Builds messages, calls LLM, records to journal.
         Returns decision dict. Does NOT check decision cache or procedural memory.
         """
-        user_message = self._build_user_message(observation)
+        user_message = await self._build_user_message(observation)
 
         # Strategy advice (AD-384)
         applied_strategy_ids: list[str] = []
@@ -1462,6 +1462,49 @@ class CognitiveAgent(BaseAgent):
                             )
             except Exception:
                 logger.debug("AD-568e: Counselor faithfulness update failed", exc_info=True)
+
+        # AD-589: Post-decision introspective faithfulness verification
+        _intro_faith = self._check_introspective_faithfulness(decision)
+        if _intro_faith is not None:
+            observation["_introspective_faithfulness"] = _intro_faith
+            if not _intro_faith.grounded:
+                logger.info(
+                    "AD-589: Introspective confabulation detected for %s (score=%.2f, claims=%d, contradictions=%d)",
+                    self.callsign or self.agent_type,
+                    _intro_faith.score,
+                    _intro_faith.claims_detected,
+                    len(_intro_faith.contradictions),
+                )
+                # AD-589: Emit SELF_MODEL_DRIFT event
+                _rt = getattr(self, '_runtime', None)
+                if _rt and hasattr(_rt, '_emit_event'):
+                    try:
+                        _rt._emit_event(EventType.SELF_MODEL_DRIFT, {
+                            "agent_id": self.id,
+                            "callsign": self.callsign or self.agent_type,
+                            "score": _intro_faith.score,
+                            "contradictions": _intro_faith.contradictions[:3],
+                            "claims_detected": _intro_faith.claims_detected,
+                        })
+                    except Exception:
+                        pass
+
+        # AD-589: Feed introspective faithfulness to Counselor (fire-and-forget)
+        if _intro_faith is not None:
+            try:
+                _rt = getattr(self, '_runtime', None)
+                if _rt:
+                    _counselors = _rt.registry.get_by_pool("counselor")
+                    if _counselors:
+                        _counselor = _counselors[0]
+                        if hasattr(_counselor, 'record_faithfulness_event'):
+                            await _counselor.record_faithfulness_event(
+                                self.id,
+                                faithfulness_score=_intro_faith.score,
+                                grounded=_intro_faith.grounded,
+                            )
+            except Exception:
+                logger.debug("AD-589: Counselor introspective update failed", exc_info=True)
 
         # AD-534c: compound procedure dispatch
         if decision.get("compound") and decision.get("procedure"):
@@ -1920,6 +1963,26 @@ class CognitiveAgent(BaseAgent):
 
         return "\n".join(parts)
 
+    # AD-588: Introspective self-query detection patterns
+    _INTROSPECTIVE_PATTERNS: ClassVar[list[re.Pattern]] = [
+        re.compile(r"\b(?:your|you)\b.*\b(?:memor(?:y|ies)|remember|recall|forget|episode)\b", re.IGNORECASE),
+        re.compile(r"\b(?:your|you)\b.*\b(?:trust|reputation|reliab|scor)\b", re.IGNORECASE),
+        re.compile(r"\b(?:how (?:are|do) you|how.*feel|what.*(?:like for you)|your (?:state|status))\b", re.IGNORECASE),
+        re.compile(r"\b(?:how (?:do|does) your|your (?:brain|mind|cognit|process|think))\b", re.IGNORECASE),
+        re.compile(r"\b(?:stasis|offline|sleep|shutdown|dream|while.*(?:away|gone|down))\b", re.IGNORECASE),
+        re.compile(r"\b(?:tell me about yourself|who are you|what are you|describe yourself)\b", re.IGNORECASE),
+    ]
+
+    @staticmethod
+    def _is_introspective_query(text: str) -> bool:
+        """AD-588: Detect introspective questions in captain/crew messages."""
+        if not text:
+            return False
+        for pattern in CognitiveAgent._INTROSPECTIVE_PATTERNS:
+            if pattern.search(text):
+                return True
+        return False
+
     def _build_crew_complement(self) -> str:
         """AD-513: Build compact crew complement for cognitive grounding.
 
@@ -2042,7 +2105,7 @@ class CognitiveAgent(BaseAgent):
         lines.append("=== END SHIP MEMORY ===")
         return lines
 
-    def _build_user_message(self, observation: dict) -> str:
+    async def _build_user_message(self, observation: dict) -> str:
         """Build the user message from the observation dict.
         Override in subclasses for custom formatting."""
         intent_name = observation.get("intent", "unknown")
@@ -2059,6 +2122,33 @@ class CognitiveAgent(BaseAgent):
                 parts.append(temporal_ctx)
                 parts.append("---")
                 parts.append("")
+
+            # AD-588: Cognitive zone awareness in DM path
+            _zone = None
+            _wm_zone = getattr(self, '_working_memory', None)
+            if _wm_zone and hasattr(_wm_zone, 'get_cognitive_zone'):
+                _zone = _wm_zone.get_cognitive_zone()
+            if _zone and _zone != "green":
+                parts.append(f"[COGNITIVE ZONE: {_zone.upper()}]")
+                parts.append("")
+
+            # AD-588: Introspective telemetry for self-referential queries
+            captain_text = params.get("text", "")
+            _telemetry_svc = getattr(self._runtime, '_introspective_telemetry', None) if self._runtime else None
+            if _telemetry_svc and self._is_introspective_query(captain_text):
+                try:
+                    _agent_id = getattr(self, 'sovereign_id', None) or self.id
+                    _snapshot = await _telemetry_svc.get_full_snapshot(_agent_id)
+                    _telemetry_text = _telemetry_svc.render_telemetry_context(_snapshot)
+                    if _telemetry_text:
+                        parts.append(_telemetry_text)
+                        parts.append("")
+                    # AD-589: Cache for post-decision faithfulness cross-check
+                    _wm = getattr(self, '_working_memory', None)
+                    if _wm and hasattr(_wm, 'set_telemetry_snapshot'):
+                        _wm.set_telemetry_snapshot(_snapshot)
+                except Exception:
+                    logger.debug("AD-588: telemetry injection failed for DM", exc_info=True)
 
             # AD-573: Working memory — unified situational awareness
             _wm = getattr(self, '_working_memory', None)
@@ -2139,6 +2229,33 @@ class CognitiveAgent(BaseAgent):
                 wr_parts.append("--- Temporal Awareness ---")
                 wr_parts.append(temporal_ctx)
                 wr_parts.append("---")
+
+            # AD-588: Cognitive zone awareness in Ward Room path
+            _zone = None
+            _wm_zone = getattr(self, '_working_memory', None)
+            if _wm_zone and hasattr(_wm_zone, 'get_cognitive_zone'):
+                _zone = _wm_zone.get_cognitive_zone()
+            if _zone and _zone != "green":
+                wr_parts.append("")
+                wr_parts.append(f"[COGNITIVE ZONE: {_zone.upper()}]")
+
+            # AD-588: Introspective telemetry for self-referential ward room posts
+            _wr_text = f"{params.get('title', '')} {params.get('text', '')}".strip()
+            _telemetry_svc = getattr(self._runtime, '_introspective_telemetry', None) if self._runtime else None
+            if _telemetry_svc and self._is_introspective_query(_wr_text):
+                try:
+                    _agent_id = getattr(self, 'sovereign_id', None) or self.id
+                    _snapshot = await _telemetry_svc.get_full_snapshot(_agent_id)
+                    _telemetry_text = _telemetry_svc.render_telemetry_context(_snapshot)
+                    if _telemetry_text:
+                        wr_parts.append("")
+                        wr_parts.append(_telemetry_text)
+                    # AD-589: Cache for post-decision faithfulness cross-check
+                    _wm = getattr(self, '_working_memory', None)
+                    if _wm and hasattr(_wm, 'set_telemetry_snapshot'):
+                        _wm.set_telemetry_snapshot(_snapshot)
+                except Exception:
+                    logger.debug("AD-588: telemetry injection failed for WR", exc_info=True)
 
             # AD-573: Working memory — unified situational awareness
             _wm = getattr(self, '_working_memory', None)
@@ -2460,6 +2577,12 @@ class CognitiveAgent(BaseAgent):
                     pt_parts.append("--- End Notebook ---")
 
                 pt_parts.append("")
+
+            # AD-588: Introspective telemetry snapshot (always available in proactive path)
+            introspective_telemetry = context_parts.get("introspective_telemetry")
+            if introspective_telemetry:
+                pt_parts.append("")
+                pt_parts.append(introspective_telemetry)
 
             if duty:
                 pt_parts.append("Compose a Ward Room post with your findings (2-4 sentences).")
@@ -2818,6 +2941,15 @@ class CognitiveAgent(BaseAgent):
                 summary["faithfulness_grounded"] = _faith.grounded
             except Exception:
                 pass
+        # AD-589: Introspective faithfulness
+        _intro_faith = observation.get("_introspective_faithfulness")
+        if _intro_faith is not None:
+            try:
+                summary["introspective_faithfulness_score"] = _intro_faith.score
+                summary["introspective_faithfulness_grounded"] = _intro_faith.grounded
+                summary["introspective_contradictions"] = len(_intro_faith.contradictions)
+            except Exception:
+                pass
         return summary
 
     async def _try_anchor_recall(
@@ -2922,6 +3054,46 @@ class CognitiveAgent(BaseAgent):
 
         except Exception:
             logger.debug("AD-568e: Faithfulness check failed", exc_info=True)
+            return None
+
+    def _check_introspective_faithfulness(
+        self,
+        decision: dict,
+    ) -> "IntrospectiveFaithfulnessResult | None":
+        """AD-589: Post-decision introspective faithfulness check.
+
+        Compares the LLM response against the CognitiveArchitectureManifest
+        (AD-587) and available telemetry. Fire-and-forget — never blocks
+        the intent pipeline. Follows AD-568e pattern exactly.
+        """
+        try:
+            from probos.cognitive.source_governance import (
+                check_introspective_faithfulness as _check_intro,
+                IntrospectiveFaithfulnessResult,
+            )
+
+            response_text = decision.get("llm_output", "") or decision.get("response", "")
+            if not response_text:
+                return None
+
+            # AD-587: Manifest is static architectural truth — construct directly
+            from probos.cognitive.orientation import CognitiveArchitectureManifest
+            manifest = CognitiveArchitectureManifest()
+
+            # Get telemetry snapshot if available (AD-588) — use cached snapshot
+            # from last DM/WR injection to avoid async call in sync method
+            telemetry = None
+            _wm = getattr(self, '_working_memory', None)
+            if _wm:
+                telemetry = getattr(_wm, '_last_telemetry_snapshot', None)
+
+            return _check_intro(
+                response_text=response_text,
+                manifest=manifest,
+                telemetry_snapshot=telemetry,
+            )
+        except Exception:
+            logger.debug("AD-589: introspective faithfulness check failed", exc_info=True)
             return None
 
     async def _store_action_episode(self, intent: IntentMessage, observation: dict, report: dict) -> None:

@@ -334,7 +334,8 @@ class TestCooldownAdjustment:
             result = await loop._build_self_monitoring_context(agent, "Worf", rt)
         assert result.get("cooldown_reason") == "Counselor: elevated cognitive load"
 
-    def test_cooldown_reason_displayed_in_prompt(self) -> None:
+    @pytest.mark.asyncio
+    async def test_cooldown_reason_displayed_in_prompt(self) -> None:
         from probos.cognitive.cognitive_agent import CognitiveAgent
         agent = CognitiveAgent.__new__(CognitiveAgent)
         agent._agent_type = "test_agent"
@@ -353,7 +354,7 @@ class TestCooldownAdjustment:
                 "duty": None,
             },
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "Counselor note: Counselor intervention: repetitive output" in msg
 
 

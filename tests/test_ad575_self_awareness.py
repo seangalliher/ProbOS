@@ -121,7 +121,8 @@ class TestWardRoomSelfCueIntegration:
             "context": context_text,
         }
 
-    def test_ward_room_message_includes_self_cue(self):
+    @pytest.mark.asyncio
+    async def test_ward_room_message_includes_self_cue(self):
         agent = _make_agent(callsign="Echo")
         # Stub temporal context and memory formatting
         agent._build_temporal_context = lambda: ""
@@ -131,11 +132,12 @@ class TestWardRoomSelfCueIntegration:
         obs = self._build_wr_observation(
             "Lynx: Great game! Echo is really thinking strategically."
         )
-        result = agent._build_user_message(obs)
+        result = await agent._build_user_message(obs)
         assert "Your callsign is Echo" in result
         assert "participant" in result
 
-    def test_ward_room_message_excludes_self_cue_when_not_mentioned(self):
+    @pytest.mark.asyncio
+    async def test_ward_room_message_excludes_self_cue_when_not_mentioned(self):
         agent = _make_agent(callsign="Echo")
         agent._build_temporal_context = lambda: ""
         agent._format_memory_section = lambda x: []
@@ -144,5 +146,5 @@ class TestWardRoomSelfCueIntegration:
         obs = self._build_wr_observation(
             "Lynx: The Captain just made a bold move!"
         )
-        result = agent._build_user_message(obs)
+        result = await agent._build_user_message(obs)
         assert "Your callsign is" not in result

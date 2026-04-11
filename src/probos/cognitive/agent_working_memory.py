@@ -98,6 +98,9 @@ class AgentWorkingMemory:
         # Cognitive state (cognitive zone, cooldown, alert condition)
         self._cognitive_state: dict[str, Any] = {}
 
+        # AD-589: Last telemetry snapshot for introspective faithfulness verification
+        self._last_telemetry_snapshot: dict[str, Any] | None = None
+
     # ── Write API (called by all cognitive pathways) ──────────────
 
     def record_action(
@@ -178,6 +181,14 @@ class AgentWorkingMemory:
     def update_cognitive_state(self, **kwargs: Any) -> None:
         """Update cognitive state fields (zone, cooldown, alert condition)."""
         self._cognitive_state.update(kwargs)
+
+    def get_cognitive_zone(self) -> str | None:
+        """AD-588: Return cognitive zone if set via AD-573 sync."""
+        return self._cognitive_state.get("zone")
+
+    def set_telemetry_snapshot(self, snapshot: dict[str, Any] | None) -> None:
+        """AD-589: Cache telemetry snapshot for faithfulness cross-check."""
+        self._last_telemetry_snapshot = snapshot
 
     # ── Read API (called during context construction) ─────────────
 

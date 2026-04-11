@@ -130,37 +130,72 @@ The "everything is an agent" model provides genuine architectural advantages at 
 
 These advantages are **real and worth preserving**. The solution is not to replace agents-as-tools, but to add a **tool binding layer** on top that gives crew agents composable capabilities while infrastructure agents continue doing the actual work.
 
-### Three Capability Types for Crew Agents
+### Four Capability Tiers for Crew Agents
+
+The original three-type model (Tools, Learned Skills, Cognitive Capabilities) is refined into four tiers that separate agent identity from task-specific cognitive skills. This distinction was driven by BF-146 (standing orders conflating identity and capabilities caused confabulation) and research into the AgentSkills.io ecosystem (AD-596).
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  CREW MEMBER CAPABILITY PROFILE                             │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  1. ASSIGNED TOOLS (ship's equipment)                       │
+│  T1. STANDING ORDERS (identity + behavioral standards)      │
+│  ├─ Defined by: 4-tier .md hierarchy (federation/ship/      │
+│  │   dept/agent) — WHO the agent IS                         │
+│  ├─ Always loaded: full content in system prompt every cycle│
+│  ├─ Not task-specific — defines role, personality, values,  │
+│  │   chain of command, communication protocols              │
+│  └─ Examples: federation.md, science.md, architect.md       │
+│                                                             │
+│  T2. COGNITIVE SKILLS (task-specific instruction-defined)    │
+│  ├─ Defined by: SKILL.md files (AgentSkills.io standard)   │
+│  ├─ Discovered by: description matching at intent time      │
+│  ├─ Loaded on-demand: descriptions in context, full         │
+│  │   instructions injected when skill activates             │
+│  ├─ Gated by: department, rank, proficiency (optional)     │
+│  ├─ Interoperable: standard format shared with 30+ tools   │
+│  ├─ Self-improving: usage feeds Cognitive JIT (T2→T3)      │
+│  └─ Examples: architecture-review, trust-analysis,          │
+│     threat-assessment — things requiring LLM judgment       │
+│                                                             │
+│  T3. EXECUTABLE SKILLS (deterministic procedures)           │
+│  ├─ Acquired through: Cognitive JIT (experience, AD-531+)  │
+│  ├─ Proficiency tracked: Skill Framework (Dreyfus levels)  │
+│  ├─ Execute: directly on agent (no bus, no LLM at L4+)     │
+│  ├─ Trust-gated: compilation level by rank                 │
+│  └─ Examples: agent-specific procedures, optimized flows   │
+│                                                             │
+│  T4. ASSIGNED TOOLS (ship's equipment)                      │
 │  ├─ Defined by: Role Template (ontology) + Rank            │
 │  ├─ Gated by: Trust tier (Earned Agency) + Qualification   │
 │  ├─ Execute via: Infrastructure Agents (intent bus)         │
 │  ├─ Registered in: Tool Registry (AD-423)                  │
 │  └─ Examples: read_file, search_codebase, ward_room_post   │
 │                                                             │
-│  2. LEARNED SKILLS (Executable Skills)                      │
-│  ├─ Acquired through: Cognitive JIT (experience)           │
-│  ├─ Proficiency tracked: Skill Framework (Dreyfus levels)  │
-│  ├─ Execute: directly on agent (no bus, no LLM at L4+)     │
-│  ├─ Trust-gated: compilation level by rank                 │
-│  └─ Examples: agent-specific procedures, optimized flows   │
-│                                                             │
-│  3. COGNITIVE CAPABILITIES (LLM-powered reasoning)          │
-│  ├─ Defined by: Standing Orders + Instructions (system     │
-│  │   prompt) — what the agent KNOWS HOW TO REASON ABOUT    │
-│  ├─ Not mechanically gated — shaped by prompt engineering   │
-│  ├─ Execute via: LLM call in decide()                      │
-│  └─ Examples: design_feature, diagnose_system,             │
-│     security_assess — things requiring judgment             │
-│                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### T2→T3 Self-Improvement Pathway
+
+Cognitive skills (T2) feed into executable skills (T3) through the Cognitive JIT pipeline:
+
+```
+Agent uses T2 cognitive skill (LLM-mediated, SKILL.md instructions)
+        │
+        │ Cognitive JIT observes execution (AD-531)
+        ▼
+Procedure extracted (AD-532) → stored (AD-533)
+        │
+        │ Graduated compilation through Dreyfus levels (AD-535)
+        ▼
+At L4+ (Autonomous): becomes T3 executable skill (zero tokens)
+        │
+        │ If T3 replay fails (AD-534b):
+        ▼
+Fallback to T2 cognitive skill (LLM re-engagement)
+```
+
+This is the "skills that self-improve through use" pattern observed in Hermes Agent. ProbOS already has the pipeline (AD-531-539); AD-596 provides the T2 file format to feed it.
 
 ### How They Interact
 
@@ -169,18 +204,26 @@ Intent arrives at agent
         │
         ▼
    ┌─────────┐
-   │ Skill?  │──yes──► Executable Skill handler (no LLM, no bus)
-   └────┬────┘         Learned through Cognitive JIT
+   │  T3     │──yes──► Executable Skill handler (no LLM, no bus)
+   │ Skill?  │         Learned through Cognitive JIT
+   └────┬────┘
         │ no
         ▼
    ┌─────────┐
-   │  Tool?  │──yes──► Tool binding → Infrastructure Agent (via bus)
-   └────┬────┘         Assigned by role, gated by rank
+   │  T2     │──yes──► Load SKILL.md instructions → LLM decide()
+   │ Skill?  │         Discovered by description, loaded on-demand
+   └────┬────┘
+        │ no
+        ▼
+   ┌─────────┐
+   │  T4     │──yes──► Tool binding → Infrastructure Agent (via bus)
+   │  Tool?  │         Assigned by role, gated by rank
+   └────┬────┘
         │ no
         ▼
    ┌─────────┐
    │ Handled │──yes──► Full cognitive lifecycle (perceive/decide/act)
-   │ Intent? │         LLM-powered reasoning per Standing Orders
+   │ Intent? │         LLM-powered reasoning per Standing Orders (T1)
    └────┬────┘
         │ no
         ▼
@@ -222,6 +265,45 @@ These are both **skills** (tracked in Skill Framework for proficiency) and **too
 - **As a tool:** Can it be invoked right now? Does this agent have permission? What inputs/outputs?
 
 This dual registration is how the capability profile stays unified — one system tracks competency, another tracks access.
+
+### Cognitive Skills (AgentSkills.io Format — AD-596)
+
+Cognitive skills are the T2 capability tier: task-specific, instruction-defined capabilities stored as `SKILL.md` files following the AgentSkills.io open standard. They fill the gap between standing orders (T1, always-loaded identity) and executable skills (T3, deterministic procedures).
+
+**AgentSkills.io standard format:**
+
+```
+skill-name/
+  SKILL.md          # Required: YAML frontmatter + markdown instructions
+  scripts/          # Optional: executable code
+  references/       # Optional: documentation
+  assets/           # Optional: templates, resources
+```
+
+**Progressive disclosure model:**
+1. **Discovery** (~100 tokens per skill): Name + description loaded at startup into `CognitiveSkillCatalog`
+2. **Activation** (<5000 tokens): Full SKILL.md instructions loaded when intent matches description
+3. **Resources** (as needed): Supporting files loaded only when referenced
+
+**ProbOS metadata extensions** (via standard `metadata` field — external skills work without these):
+- `probos-department` — department scoping for discovery
+- `probos-skill-id` — bridge to `SkillRegistry` (AD-428) proficiency tracking
+- `probos-min-proficiency` — Dreyfus-level activation gate
+- `probos-min-rank` — Earned Agency activation gate
+- `probos-intents` — declares handled intents (replaces hardcoded `_handled_intents`)
+
+**Interoperability:** AgentSkills.io is adopted by 30+ tools including Claude Code, Cursor, GitHub Copilot, VS Code, Gemini CLI, OpenHands, Hermes Agent, Roo Code, OpenAI Codex, and JetBrains Junie. Skills authored for any of these tools can be consumed by ProbOS agents, and ProbOS-authored skills can be consumed by other platforms. The ProbOS `metadata` extensions are ignored by other platforms (they use the standard `metadata` field, which is explicitly extensible).
+
+**Validation:** The AgentSkills.io ecosystem provides `skills-ref` — a Python library (Apache 2.0) with `validate()`, `read_properties()`, and `to_prompt()`. ProbOS extends this with domain-specific linting: ontology cross-references, callsign detection (BF-146 pattern), instruction staleness detection. This addresses the "Natural Language as Code" design principle — instruction-defined capabilities need structural validation, not just output evaluation.
+
+**Prior art comparison:**
+
+| System | Format | Discovery | Governance | Self-Improvement |
+|--------|--------|-----------|------------|-----------------|
+| **AgentSkills.io** | `SKILL.md` (YAML + markdown) | Description matching | File-based (git) | None natively |
+| **Microsoft Business Skills** | Dataverse entity | Metadata query | Dataverse RBAC | None |
+| **Hermes Agent** | AgentSkills.io | Skills Hub (644 skills) | 4 registries | Procedural memory evolution |
+| **ProbOS (AD-596)** | AgentSkills.io + `metadata` | Description + ontology | Department/rank/proficiency | Cognitive JIT (T2→T3) |
 
 ---
 
@@ -574,16 +656,31 @@ personality:
   neuroticism: 0.2
   drift_from_seed: 0.08  # Euclidean distance
 
-# Standing Orders (Behavioral Guidance)
+# Standing Orders — T1 (Identity + Behavioral Guidance)
 standing_orders:
   federation: "config/standing_orders/federation.md"
   ship: "config/standing_orders/ship.md"
   department: "config/standing_orders/science.md"
   personal: "config/standing_orders/architect.md"
 
-# Cognitive Capabilities (LLM-powered, from _handled_intents)
+# Cognitive Skills — T2 (AgentSkills.io, from CognitiveSkillCatalog)
+cognitive_skills:
+  - name: architecture-review
+    origin: internal
+    description: "Analyze proposed system designs against ProbOS architectural principles"
+    department: science
+    min_rank: lieutenant
+    skill_id: architecture_review  # bridge to SkillRegistry
+    proficiency: 5  # Advise
+  - name: code-review
+    origin: external  # imported from AgentSkills.io ecosystem
+    description: "Review code changes for correctness, style, and security"
+    # no ProbOS metadata — ungoverned external skill
+
+# Handled Intents (derived from T2 cognitive skills + T3 executable skills)
 handled_intents:
   - name: design_feature
+    source: cognitive_skill  # from architecture-review SKILL.md
     tier: deep
     description: "Analyze codebase and produce architectural proposals"
 
@@ -749,6 +846,13 @@ The OSS capability profile is the **input**. ASA is the **consumer**.
 | AD-422 tool-taxonomy.md (8 categories) | Tool type diversity — 8 categories from utility agents to federation services |
 | AD-543 unified-tool-layer.md | `AgenticToolAdapter` protocol, ToolContext concept, adapter uniformity |
 | AD-543 ToolCall protocol spec (roadmap) | `ToolCallRequest`/`ToolCallResult`/`ContentBlock` wire format, `ToolExecutor`, agentic loop |
+| AgentSkills.io (Anthropic, open standard) | `SKILL.md` format, progressive disclosure (description→instructions→resources), `skills-ref` validation library |
+| Claude Code Skills | Description-based auto-discovery, on-demand loading, `$ARGUMENTS` substitution, three storage scopes, `context: fork` subagent execution |
+| Microsoft Business Skills (Dataverse) | "Natural-language instructions that capture how your organization gets work done." Metadata-for-discovery / instructions-for-execution pattern. RBAC governance. |
+| Hermes Agent Skills Hub (NousResearch) | 644 skills across 4 registries, category taxonomy (16 categories), AgentSkills.io adoption, skills as procedural memory that self-improve through use |
+| Anthropic `anthropics/skills` repository | Reference skill implementations (document skills, development skills), template structure for skill authoring |
+| BF-146 (standing order confabulation) | Concrete demonstration that instruction-defined capabilities have same defect surface as code — stale references cause confabulation |
+| Design Principle: "Natural Language as Code" | Instruction validation (structural, pre-execution) distinct from output evaluation (stochastic, post-execution evals). Three capability types need different validation. |
 
 ---
 
@@ -769,6 +873,9 @@ The OSS capability profile is the **input**. ASA is the **consumer**.
 | ToolContext scoped view construction | Part of AD-423c | AD-423a/b | Permission-filtered tool view per agent, wired at onboarding |
 | ProcedureStep.required_tools field | Part of AD-423c or AD-539+ | AD-423a, AD-531-539 | Declares which tools each procedure step needs |
 | Fallback cascade (skill→LLM→escalate) | Part of AD-534b+ | AD-534 (done), AD-423 | Graceful degradation when tools unavailable |
+| Cognitive Skill Registry (AgentSkills.io) | AD-596a-e | AD-428, AD-429, AD-339 | T2 cognitive skills as `SKILL.md` files, progressive disclosure, external skill import, validation |
+| External skill interop | Part of AD-596d | AD-596a | Consume AgentSkills.io skills from Claude Code, Hermes, etc. |
+| Instruction linting | Part of AD-596e | AD-596a | Structural validation for instruction-defined capabilities (BF-146 class of defects) |
 
 All deferred items now have AD assignments.
 

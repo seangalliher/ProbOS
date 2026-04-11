@@ -276,27 +276,30 @@ class TestTemporalInjectionPoints:
             setattr(agent, k, v)
         return agent
 
-    def test_direct_message_includes_temporal_header(self):
+    @pytest.mark.asyncio
+    async def test_direct_message_includes_temporal_header(self):
         agent = self._make_agent()
         obs = {
             "intent": "direct_message",
             "params": {"text": "Hello", "session_history": []},
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "--- Temporal Awareness ---" in msg
         assert "Current time:" in msg
 
-    def test_ward_room_notification_includes_temporal_header(self):
+    @pytest.mark.asyncio
+    async def test_ward_room_notification_includes_temporal_header(self):
         agent = self._make_agent()
         obs = {
             "intent": "ward_room_notification",
             "params": {"channel_name": "test", "author_callsign": "Worf", "title": "Alert", "author_id": "agent-1"},
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "--- Temporal Awareness ---" in msg
         assert "Current time:" in msg
 
-    def test_proactive_think_includes_temporal_header(self):
+    @pytest.mark.asyncio
+    async def test_proactive_think_includes_temporal_header(self):
         agent = self._make_agent()
         obs = {
             "intent": "proactive_think",
@@ -309,18 +312,19 @@ class TestTemporalInjectionPoints:
                 "duty": None,
             },
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "--- Temporal Awareness ---" in msg
         assert "Current time:" in msg
 
-    def test_temporal_header_position_in_prompt(self):
+    @pytest.mark.asyncio
+    async def test_temporal_header_position_in_prompt(self):
         """Temporal header appears before main content."""
         agent = self._make_agent()
         obs = {
             "intent": "direct_message",
             "params": {"text": "Hello Captain", "session_history": []},
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         temporal_idx = msg.index("--- Temporal Awareness ---")
         captain_idx = msg.index("Captain says:")
         assert temporal_idx < captain_idx

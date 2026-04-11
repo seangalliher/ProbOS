@@ -243,7 +243,7 @@ class TestInfrastructureContext:
             "timestamp": time.time(),
         }
 
-        result = agent._build_user_message(observation)
+        result = await agent._build_user_message(observation)
         assert "INFRASTRUCTURE NOTE" in result
         assert "communications array" in result.lower()
 
@@ -265,7 +265,7 @@ class TestInfrastructureContext:
             "timestamp": time.time(),
         }
 
-        result = agent._build_user_message(observation)
+        result = await agent._build_user_message(observation)
         assert "INFRASTRUCTURE NOTE" not in result
 
 
@@ -468,7 +468,7 @@ class TestBF116AndAD567g:
             },
             "timestamp": time.time(),
         }
-        result = agent._build_user_message(observation)
+        result = await agent._build_user_message(observation)
         assert "ORIENTATION: Ground claims in evidence." in result
 
     @pytest.mark.asyncio
@@ -488,7 +488,7 @@ class TestBF116AndAD567g:
             },
             "timestamp": time.time(),
         }
-        result = agent._build_user_message(observation)
+        result = await agent._build_user_message(observation)
         assert "ORIENTATION:" not in result
 
 

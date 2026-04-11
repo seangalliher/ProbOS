@@ -118,14 +118,15 @@ class TestColdStartContext:
 class TestColdStartPromptRendering:
     """System note should appear in the proactive think prompt when present."""
 
-    def test_system_note_rendered_in_prompt(self):
+    @pytest.mark.asyncio
+    async def test_system_note_rendered_in_prompt(self):
         from probos.cognitive.cognitive_agent import CognitiveAgent
 
         agent = CognitiveAgent.__new__(CognitiveAgent)
         # Minimal setup for _build_user_message
         agent._agent_type = "test_agent"
 
-        msg = agent._build_user_message({
+        msg = await agent._build_user_message({
             "intent": "proactive_think",
             "params": {
                 "context_parts": {
@@ -140,13 +141,14 @@ class TestColdStartPromptRendering:
         assert "SYSTEM NOTE" in msg
         assert "cold start" in msg.lower()
 
-    def test_no_system_note_when_absent(self):
+    @pytest.mark.asyncio
+    async def test_no_system_note_when_absent(self):
         from probos.cognitive.cognitive_agent import CognitiveAgent
 
         agent = CognitiveAgent.__new__(CognitiveAgent)
         agent._agent_type = "test_agent"
 
-        msg = agent._build_user_message({
+        msg = await agent._build_user_message({
             "intent": "proactive_think",
             "params": {
                 "context_parts": {},

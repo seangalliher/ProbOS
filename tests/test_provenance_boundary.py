@@ -133,33 +133,37 @@ class TestDirectMessagePath:
 
     def setup_method(self):
         self.agent = ProvenanceTestAgent.__new__(ProvenanceTestAgent)
+        self.agent._runtime = None
 
-    def test_markers_present_with_memories(self):
+    @pytest.mark.asyncio
+    async def test_markers_present_with_memories(self):
         observation = {
             "intent": "direct_message",
             "params": {"text": "What do you know?"},
             "recent_memories": SAMPLE_MEMORIES,
         }
-        result = self.agent._build_user_message(observation)
+        result = await self.agent._build_user_message(observation)
         assert "=== SHIP MEMORY" in result
         assert "=== END SHIP MEMORY ===" in result
         assert "Do NOT confuse" in result
 
-    def test_no_markers_without_memories(self):
+    @pytest.mark.asyncio
+    async def test_no_markers_without_memories(self):
         observation = {
             "intent": "direct_message",
             "params": {"text": "Hello"},
         }
-        result = self.agent._build_user_message(observation)
+        result = await self.agent._build_user_message(observation)
         assert "SHIP MEMORY" not in result
 
-    def test_no_markers_with_empty_memories(self):
+    @pytest.mark.asyncio
+    async def test_no_markers_with_empty_memories(self):
         observation = {
             "intent": "direct_message",
             "params": {"text": "Hello"},
             "recent_memories": [],
         }
-        result = self.agent._build_user_message(observation)
+        result = await self.agent._build_user_message(observation)
         assert "SHIP MEMORY" not in result
 
 
@@ -168,8 +172,11 @@ class TestWardRoomPath:
 
     def setup_method(self):
         self.agent = ProvenanceTestAgent.__new__(ProvenanceTestAgent)
+        self.agent._runtime = None
+        self.agent.callsign = "TestAgent"
 
-    def test_markers_present_with_memories(self):
+    @pytest.mark.asyncio
+    async def test_markers_present_with_memories(self):
         observation = {
             "intent": "ward_room_notification",
             "params": {
@@ -181,12 +188,13 @@ class TestWardRoomPath:
             "recent_memories": SAMPLE_MEMORIES,
             "context": "",
         }
-        result = self.agent._build_user_message(observation)
+        result = await self.agent._build_user_message(observation)
         assert "=== SHIP MEMORY" in result
         assert "=== END SHIP MEMORY ===" in result
         assert "Do NOT confuse" in result
 
-    def test_no_markers_without_memories(self):
+    @pytest.mark.asyncio
+    async def test_no_markers_without_memories(self):
         observation = {
             "intent": "ward_room_notification",
             "params": {
@@ -197,7 +205,7 @@ class TestWardRoomPath:
             },
             "context": "",
         }
-        result = self.agent._build_user_message(observation)
+        result = await self.agent._build_user_message(observation)
         assert "SHIP MEMORY" not in result
 
 
@@ -206,8 +214,10 @@ class TestProactiveThinkPath:
 
     def setup_method(self):
         self.agent = ProvenanceTestAgent.__new__(ProvenanceTestAgent)
+        self.agent._runtime = None
 
-    def test_markers_present_with_memories(self):
+    @pytest.mark.asyncio
+    async def test_markers_present_with_memories(self):
         observation = {
             "intent": "proactive_think",
             "params": {
@@ -217,12 +227,13 @@ class TestProactiveThinkPath:
                 "context_parts": {"recent_memories": SAMPLE_MEMORIES},
             },
         }
-        result = self.agent._build_user_message(observation)
+        result = await self.agent._build_user_message(observation)
         assert "=== SHIP MEMORY" in result
         assert "=== END SHIP MEMORY ===" in result
         assert "Do NOT confuse" in result
 
-    def test_no_memories_fallback(self):
+    @pytest.mark.asyncio
+    async def test_no_memories_fallback(self):
         observation = {
             "intent": "proactive_think",
             "params": {
@@ -232,7 +243,7 @@ class TestProactiveThinkPath:
                 "context_parts": {},
             },
         }
-        result = self.agent._build_user_message(observation)
+        result = await self.agent._build_user_message(observation)
         assert "no stored episodic memories" in result
         assert "SHIP MEMORY" not in result
 
@@ -246,17 +257,21 @@ class TestOldHeadersRemoved:
 
     def setup_method(self):
         self.agent = ProvenanceTestAgent.__new__(ProvenanceTestAgent)
+        self.agent._runtime = None
+        self.agent.callsign = "TestAgent"
 
-    def test_dm_no_old_header(self):
+    @pytest.mark.asyncio
+    async def test_dm_no_old_header(self):
         observation = {
             "intent": "direct_message",
             "params": {"text": "test"},
             "recent_memories": SAMPLE_MEMORIES,
         }
-        result = self.agent._build_user_message(observation)
+        result = await self.agent._build_user_message(observation)
         assert "Your recent memories" not in result
 
-    def test_wr_no_old_header(self):
+    @pytest.mark.asyncio
+    async def test_wr_no_old_header(self):
         observation = {
             "intent": "ward_room_notification",
             "params": {
@@ -268,10 +283,11 @@ class TestOldHeadersRemoved:
             "recent_memories": SAMPLE_MEMORIES,
             "context": "",
         }
-        result = self.agent._build_user_message(observation)
+        result = await self.agent._build_user_message(observation)
         assert "Your relevant memories" not in result
 
-    def test_proactive_no_old_header(self):
+    @pytest.mark.asyncio
+    async def test_proactive_no_old_header(self):
         observation = {
             "intent": "proactive_think",
             "params": {
@@ -281,7 +297,7 @@ class TestOldHeadersRemoved:
                 "context_parts": {"recent_memories": SAMPLE_MEMORIES},
             },
         }
-        result = self.agent._build_user_message(observation)
+        result = await self.agent._build_user_message(observation)
         assert "Recent memories (your experiences)" not in result
 
 

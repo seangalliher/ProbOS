@@ -148,6 +148,7 @@ class EventType(str, Enum):
     WRONG_CONVERGENCE_DETECTED = "wrong_convergence_detected"  # AD-583
     WARD_ROOM_ECHO_DETECTED = "ward_room_echo_detected"  # AD-583g
     OBSERVABLE_STATE_MISMATCH = "observable_state_mismatch"  # AD-583f
+    SELF_MODEL_DRIFT = "self_model_drift"  # AD-589: introspective confabulation detected
 
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"

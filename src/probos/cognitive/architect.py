@@ -547,12 +547,12 @@ Recipe: NEW API ENDPOINT
         obs["codebase_context"] = "\n\n".join(context_parts)
         return obs
 
-    def _build_user_message(self, observation: dict) -> str:
+    async def _build_user_message(self, observation: dict) -> str:
         """Format the feature request and codebase context into an LLM prompt."""
         # Delegate to parent for conversational intents
         intent_name = observation.get("intent", "unknown")
         if intent_name in ("direct_message", "ward_room_notification", "proactive_think"):
-            return super()._build_user_message(observation)
+            return await super()._build_user_message(observation)
 
         params = observation.get("params", {})
         feature = params.get("feature", "Unknown feature")

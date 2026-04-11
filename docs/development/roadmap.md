@@ -1717,6 +1717,8 @@ Self-originated goals emerge from: dream consolidation ("I keep seeing pattern X
 > - **AD-423b: Tool Permissions & Scoping** *(planned, OSS, depends: AD-423a)* — CRUD+O permission model (Observe/Read/Write/Execute/Delegate), department tool scoping, Earned Agency rank-based access gates, Captain overrides (grant/revoke), LOTO exclusive access for dangerous tools. Deny-by-default. Issue #145.
 > - **AD-423c: Role-Based Tool Assignment + ToolContext** *(planned, OSS, depends: AD-423a, AD-423b, AD-429, AD-428, AD-566)* — Onboarding wiring (`wire_agent()` assigns tools from role template), `ToolContext` (permission-filtered view per agent), qualification-gated tool authorization, `ProcedureStep.required_tools` field, fallback cascade (skill → LLM → chain-of-command escalation). Adds `DutyDefinition.required_skills: list[str]` field — closes the Duty→Skill link in the hierarchy. Config-driven role templates (YAML instead of Python dict). Closes connections C1 (Role → Tool Assignment), C3 (Qualification → Tool Authorization), C5 (Tool Registry → Onboarding). Issue #146.
 
+**MCP ecosystem compatibility:** ProbOS's Tool Registry maps directly to Claude Cowork's plugin model — both are MCP servers under the hood (open protocol). AD-423a can consume the existing MCP plugin ecosystem (Jira, Asana, Google Workspace, Salesforce, GitHub, etc.) as first-class tools. ProbOS differentiator: governance layer on top — trust-gated access (AD-423b), Standing Orders approval for sensitive tools, tool agents (utility tier with identity) vs stateless function calls, consultation-aware tool usage (AD-594), and full audit trail. Commercial extension: curated MCP server marketplace + ProbOS-native extensions with deeper crew integration.
+
 Build order: AD-423a → AD-423b → AD-423c. *Connects to: AD-357 (Earned Agency), AD-398 (three-tier classification), AD-421 (Scotty), AD-422 (taxonomy), AD-428 (Skill Framework), AD-483 (absorbed), AD-543-549 (Native SWE Harness builds on ToolContext), Phase 30, ModelRegistry.*
 
 **AD-424: Ward Room Thread Classification & Lifecycle** — **COMPLETE**. Bridge alerts post to All Hands as threads authored by "Ship's Computer" (with Captain-level routing), but Earned Agency gating blocks Lieutenants from responding to ship-wide ambient posts (`can_respond_ambient(LIEUTENANT, is_captain_post=True, same_department=False) → False`). Post-reset, all crew are Lieutenants (trust 0.5) — **no one can respond to advisories**. Beyond this bug, the Ward Room lacks message classification, reply controls, and thread lifecycle management. The corporate email "reply-all storm" problem applies: 7 agents responding to an All Hands thread creates noise. **Design:**
@@ -4750,7 +4752,7 @@ AD-584a+b are interdependent and shipped as a single build prompt. AD-584c and A
 
 ---
 
-### Metacognitive Architecture Awareness (AD-587 / AD-588 / AD-589) *(in progress, OSS)*
+### Metacognitive Architecture Awareness (AD-587 / AD-588 / AD-589) *(COMPLETE, OSS)*
 
 **Problem:** Agents demonstrate a systematic asymmetry in epistemic honesty — well-calibrated about the external world (properly abstain when asked about fabricated events) but confabulate about their own internal states (invent "selective clarity," "emotional anchors," "processing during stasis" — mechanisms that don't exist in ProbOS's architecture). Observed and documented via Echo (Counselor) DM test battery, 2026-04-10. Root cause: agents have extensive proprioceptive data (AD-504 self-monitoring, AD-568d source attribution) but no **accurate model of their own cognitive architecture** to consult when reasoning about themselves. The LLM fills the void with plausible-sounding introspective narrative that has no basis in architectural reality.
 
@@ -4762,13 +4764,13 @@ AD-584a+b are interdependent and shipped as a single build prompt. AD-584c and A
 
 > **AD-587: Cognitive Architecture Manifest** *(COMPLETE, OSS, extends: AD-567g Orientation, Westworld Principle)* — `CognitiveArchitectureManifest` frozen dataclass in `orientation.py` containing verifiable mechanistic facts about the agent's cognitive architecture. Five domains: memory (ChromaDB, cosine similarity, no offline processing), trust (Bayesian beta, 0.05–0.95, outcome-based), stasis (all processing stops, dreams run at startup not during), cognition (discrete LLM inference, no emotional subsystem), self-regulation (graduated zones, metric-based not emotional). Integrated into `OrientationService`: full manifest in cold_start, abbreviated reminder in warm_boot, one-line note in proactive supplement. Graceful degradation (manifest=None on failure). 1 source file, 1 test file modified, 22 new tests. Build prompt: `prompts/ad-587-cognitive-architecture-manifest.md`. Issue #151.
 >
-> **AD-588: Telemetry-Grounded Introspection** *(planned, OSS, depends: AD-587, extends: AD-504, AD-568d)* — When agents are asked about their own state, they consult actual system metrics rather than generating narratives. Three components: (1) `IntrospectiveTelemetryService` — queryable interface for agents to get `get_memory_state()`, `get_trust_state()`, `get_cognitive_state()`, `get_temporal_state()`, `get_social_state()`. (2) Self-query detection in prompt construction — detect introspective questions and inject telemetry context with explicit grounding instructions: "Ground self-referential claims in these metrics. Do not invent subjective experiences not reflected in your telemetry." (3) Extend AD-504 self-monitoring data to ALL response paths (currently only `proactive_think`; needs coverage in DMs, Ward Room, direct questions). Key design decision: does NOT restrict personality or warmth — constrains only *architectural claims*. Echo can still be "warm, perceptive, genuinely curious" per standing orders. Issue #152.
+> **AD-588: Telemetry-Grounded Introspection** *(COMPLETE, OSS, depends: AD-587, extends: AD-504, AD-568d)* — `IntrospectiveTelemetryService` in `cognitive/introspective_telemetry.py` provides 5 queryable telemetry methods + full snapshot aggregator for agents to consult actual system metrics instead of confabulating. Self-query detection via 6 compiled regex patterns on `CognitiveAgent._INTROSPECTIVE_PATTERNS`. Three injection paths: DM (introspective queries inject telemetry + grounding instructions), Ward Room (same), proactive (telemetry snapshot in context_parts). Cognitive zone awareness: non-GREEN zones displayed in DM/WR paths via `AgentWorkingMemory.get_cognitive_zone()`. Trust trend detection (rising/falling/stable from 5 recent events). Breaking change: `_build_user_message` converted `def` → `async def` — 1 call site, 2 subclass overrides, 48 test call sites across 13 test files updated. All methods best-effort (never raise). 4 source files modified, 1 new source file, 2 subclass files updated, 1 new test file (37 tests), 13 existing test files updated for async. Build prompt: `prompts/ad-588-telemetry-grounded-introspection.md`. Issue #152.
 >
-> **AD-589: Introspective Faithfulness** *(planned, OSS, depends: AD-587, AD-588, extends: AD-568e)* — Extend faithfulness verification to detect self-referential confabulation. Three components: (1) Self-referential claim detection — identify sentences making claims about the agent's own cognitive processes ("I feel selective clarity," "processing during stasis enhanced my pattern recognition"). (2) `check_introspective_faithfulness()` — compare self-referential claims against the Cognitive Architecture Manifest. Flag contradictions. (3) Graduated response: soft flag (logged) → inline correction (system note) → `SELF_MODEL_DRIFT` event to Counselor. Not censorship — epistemic hygiene. "I don't have direct access to how my retrieval works, but here's what my telemetry shows" is valid. "I experience selective clarity" is not. Source monitoring (Johnson et al. 1993) applied to self-referential domain. Issue #153.
+> **AD-589: Introspective Faithfulness** *(COMPLETE, OSS, depends: AD-587, AD-588, extends: AD-568e)* — Extends AD-568e faithfulness verification to the self-referential domain. 6 self-referential claim patterns detect introspective claims (feelings, memory/cognition ownership, stasis processing). 8 manifest contradiction rules derived from CognitiveArchitectureManifest (AD-587). `extract_self_referential_claims()` + `check_introspective_faithfulness()` pure functions — no LLM, no I/O. Score = 1.0 − (contradictions/claims). Graceful degradation: manifest=None or telemetry=None → partial check; both=None → assume good faith. `_check_introspective_faithfulness()` on CognitiveAgent follows AD-568e fire-and-forget pattern. Post-decision pipeline: check → log → `SELF_MODEL_DRIFT` event → Counselor feed → episode metadata. Telemetry snapshot caching: DM/WR AD-588 injection paths cache snapshot on AgentWorkingMemory for post-decision cross-check. 3 source files modified, 1 event file modified, 1 new test file (38 tests), 0 existing tests changed. Build prompt: `prompts/ad-589-introspective-faithfulness.md`. Issue #153.
 
 **Novel contribution:** No prior work combines sovereign AI agents with persistent identity + explicit architectural self-model + introspective faithfulness verification + source monitoring for self-referential claims + Westworld Principle as design constraint. Closest comparisons: ACT-R metacognitive monitoring (retrieval latency awareness, but no sovereign identity), SOAR reflective meta-reasoning (problem-solving strategy, not architectural self-knowledge). ProbOS's contribution: the first implementation of **architecturally-grounded introspective honesty** in sovereign AI agents.
 
-**Implementation order:** AD-587 → AD-588 → AD-589. Estimated ~3-4 build prompts, ~40-60 tests total.
+**Implementation order:** AD-587 → AD-588 → AD-589. 3 build prompts, ~97 tests total (22 + 37 + 38).
 
 **Success criteria:** Re-run Echo DM test battery post-implementation. Expected: "No processing occurs during stasis" (not "processing enhanced my pattern recognition"), trust assessments cite numeric scores (not "remarkably positive patterns"), memory queries report episode counts and retrieval confidence (not "selective clarity with emotional anchors"). Agents more honest about themselves while remaining equally warm and collaborative.
 
@@ -4792,6 +4794,209 @@ AD-584a+b are interdependent and shipped as a single build prompt. AD-584c and A
 **Success criteria:** Marginal episode ratio (<0.35 composite) drops from ~80% to <20% of recalled set. Mean composite of recalled episodes rises from ~0.35 to >0.45. Active episode pool growth rate ≤ 0. Qualification probe confabulation rate measurably decreases.
 
 **Research:** `docs/research/confabulation-scaling-research.md`. Issues #154, #155, #156, #157.
+
+---
+
+### Crew Consultation Protocol (AD-594) *(planned, OSS + Commercial)*
+
+**AD-594: Crew Consultation Protocol — Multi-Agent Advisory Planning & Parallel Execution** *(planned, OSS + Commercial)* — ProbOS has no general-purpose pattern for structured multi-agent collaboration on complex tasks. The Architect→Builder pipeline is hardcoded in routers, not reusable. IntentBus provides messaging primitives but no structured delegation envelope. Compound step replay (AD-534c) is zero-token sequential playback, not live collaboration. Agents cannot consult other agents mid-decision and receive a response before continuing.
+
+**The pattern:** An executor agent consults advisor agents iteratively to build a plan, then multiple executors work the plan in parallel. Managed workspace for artifact exchange. Managed I/O for captain-provided inputs and deliverable outputs. Models the **Military Staff Planning Process (MDMP)** natively in ProbOS's naval architecture.
+
+**Three lifecycle phases:**
+1. **Intake** — Captain provides task brief + input artifacts (documents, images, data). Inputs staged in consultation workspace, processed into agent-readable representations via Transporter Pattern (Northstar II).
+2. **Processing** — Advisors consulted iteratively (Delphi-style convergence or synchronous War Room deliberation). Plan built through advisor contributions, synthesized by initiating agent or First Officer. Plan reviewed and approved (Captain or delegated authority).
+3. **Delivery** — Executors work the plan in parallel via WorkItems. Outputs staged for approval. Delivery pipeline routes to internal or external destinations (file system, email, OneDrive, Teams, etc.).
+
+**Advisor selection model — designated + emergent:** Department Chiefs are structural defaults (military S-staff model). HebbianRouter + Trust scores provide emergent override when a non-default agent demonstrates superior advisory capability. Standing Orders lock advisory assignments for critical domains (security, safety). Qualification Programs gate advisory authority. The system learns who gives good advice about what topics over time.
+
+**Research foundations:** Military Staff Planning Process (MDMP, FM 5-0 / JP 5-0), Delphi Method (RAND), Crew Resource Management (CRM, aviation), Nominal Group Technique, consulting engagement models (McKinsey/BCG). OSS references: CrewAI (roles/tasks), Microsoft AutoGen (GroupChat/nested chats), Magentic-One (task ledger + Orchestrator), MetaGPT (SOPs + structured handoffs), LangGraph (fan-out/fan-in).
+
+**Sub-ADs (phased decomposition):**
+
+> - **AD-594a: Consultation Workspace** *(planned, OSS, depends: AD-434 Ship's Records)* — Session-scoped shared workspace in Ship's Records (Git-backed). Directory structure: `inputs/` (captain-provided materials + `_processed/` agent-readable representations), `advisory/` (per-advisor contribution artifacts), `plan/` (versioned plan iterations), `artifacts/` (working files), `outputs/` (staged deliverables), `workitems/` (decomposed execution tasks). `manifest.yaml` (participants, status, lifecycle). `journal.md` (chronological activity log). `delivery.yaml` (output destination + format configuration). Workspace lifecycle: INITIATED → CONSULTING → PLAN_REVIEW → APPROVED → EXECUTING → COMPLETED → ARCHIVED. Standardized artifact types: Advisory Report, Plan Document, Work Item Spec, Supporting Data, Decision Record. Consultation templates for common types (Security Review, Technical Design, Incident Response). `ConsultationWorkspace` API abstracts file operations. Input processing via Transporter Pattern (Northstar II) for PDF→text, image→description, etc. Artifact references in Ward Room messages via `[workspace:path]` syntax.
+> - **AD-594b: Crew Consultation Primitive** *(planned, OSS, depends: AD-594a)* — Lightweight `consult(question, context)` method on CognitiveAgent — focused LLM call with advisor's system prompt but without full cognitive ceremony (no memory persistence, no Ward Room side effects, no proactive loop interaction). Advisor selection: designated (department structure) + emergent (HebbianRouter + Trust). Multi-advisor iteration: serial 1:1 consultation or synchronous War Room session (temporary channel, all advisors deliberate simultaneously). Plan synthesis: designated synthesizer (initiating agent or First Officer) integrates advisor contributions into coherent plan. Conflict resolution: present disagreements with trust-weighted confidence, escalate to Captain, or advisors deliberate directly. Governance: Standing Orders-gated authority, trust-based advisor selection, consultation depth limit (max 1 level of sub-consultation), rate limiting (max consultations per decision cycle), audit trail (who asked whom, what was advised, what was incorporated).
+> - **AD-594c: Parallel Execution Dispatch** *(planned, OSS, depends: AD-594a, AD-594b, AD-496–498 WorkItemStore)* — Plan decomposition into independent WorkItems with dependency/conflict detection (no two executors editing the same file). Multi-executor assignment via WorkItemStore + IntentBus. Executor coordination: task boundaries ensure no conflicts (military "boundaries and control measures"). Progress tracking: work item status updates, completion verification, blocker escalation. Connects to AD-581 (Hybrid Dispatch) for assignment routing.
+> - **AD-594d: Delivery Pipeline** *(planned, OSS)* — Format transformation engine (markdown → PDF, structured data → reports). `DeliveryAdapter` interface (OSS) with `LocalFileAdapter` and `GitHubAdapter` built-in. Captain approval gate before external delivery (configurable per consultation). Delivery confirmation + audit trail. Partial vs. atomic delivery (configurable). Revision cycle support: COMPLETED → back to CONSULTING/EXECUTING on captain feedback.
+> - **AD-C-0XX: External Workspace & Delivery Adapters** *(planned, Commercial)* — Microsoft Loop workspace sync (live collaborative components), OneDrive/SharePoint delivery, Teams channel notifications, Email delivery via Microsoft Graph API, Slack adapter. Yeoman (AD-359) as engagement manager: receives captain briefs in Teams → stages inputs → initiates consultation → delivers outputs to captain's preferred channels. "Agents as coworkers in M365" — ProbOS agents appear on the captain's existing collaboration surface, not in a separate tool.
+
+**Implementation order:** AD-594a → AD-594b → AD-594c → AD-594d → AD-C-0XX. Workspace is foundational; protocol depends on workspace; execution depends on protocol; delivery is independent but depends on workspace for output staging.
+
+**Dependencies:** AD-434 (Ship's Records), Northstar II (Transporter Pattern), AD-496–498 (WorkItemStore), AD-581 (Hybrid Dispatch), AD-359 (Yeoman, commercial). Per-agent model tier assignment (not yet scoped — advisory agents should use deep model, executors fast model).
+
+**Connects to:** AD-531–539 (Cognitive JIT — successful consultation patterns compile into procedures), AD-557 (Emergence Metrics — consultation quality as collaborative intelligence signal), AD-581 (Hybrid Dispatch — executor assignment routing), AD-496–498 (WorkItemStore — execution task management), AD-359 (Yeoman — engagement management, commercial).
+
+**Success criteria:** Two agents can conduct a structured consultation (advisor provides analysis artifact, executor incorporates into plan). Captain can provide input artifacts and receive output deliverables. Multiple executors can work a decomposed plan in parallel without conflicts. Consultation records provide complete audit trail. Advisor effectiveness feeds back into Hebbian weights and trust scores.
+
+**Issues:** #160 (AD-594a), #161 (AD-594b), #162 (AD-594c), #163 (AD-594d).
+
+---
+
+### Watch Bill / Billet Registry (AD-595) *(planned, OSS)*
+
+**AD-595: Watch Bill / Billet Registry — Authoritative Billet-to-Agent Resolution** *(planned, OSS, depends: AD-441 Agent Identity, AD-398 Crew Identity Alignment)* — Single authoritative registry mapping billets (roles/positions) to current crew members. Follows real Navy Watch Bill conventions: standing orders, protocols, and inter-agent references always use the billet ("Chief Engineer", "Operations Chief"), never a personal name. The registry resolves "who holds this billet right now?" at runtime.
+
+**Problem statement:**
+1. **No billet registry** — ProbOS has scattered pieces: `CallsignRegistry` (callsign ↔ agent_type), `AgentRegistry` (pool-based lookup), `OrientationContext.department_chief` (single field per department), Watch Rotation (duty scheduling). None provides a clean "who is the Chief Engineer?" API.
+2. **Standing orders reference roles but can't resolve them** — After BF-146, standing orders correctly use role titles ("the Operations Chief") but agents have no programmatic way to resolve that to a specific crew member. DMs, consultations, and cross-department coordination require knowing WHO holds a billet.
+3. **Naming ceremony disconnection** — Agents self-name at boot (`run_naming_ceremony()`), updating `CallsignRegistry`, but there's no corresponding update to a billet registry. The billet assignment is implicit in pool membership, not explicit.
+4. **ACM/ASA gap** — Agent Capital Management and Agent Services Automation need billet-aware assignment. "Assign the best available Security-qualified agent" requires knowing what billets exist and who fills them.
+
+**Design (Navy Watch Bill model):**
+
+A Navy Watch Bill is the authoritative document mapping billets to personnel. Key properties:
+- **Billets are permanent, personnel rotate.** The billet "Officer of the Deck" exists whether anyone fills it or not.
+- **One person per billet** (at a time). A billet can be vacant.
+- **One source of truth.** When someone asks "who has the conn?", the Watch Bill answers authoritatively.
+- **Qualification-gated.** Only qualified personnel can fill certain billets (OOD requires SWO qualification).
+
+ProbOS `BilletRegistry`:
+- `Billet` dataclass: `billet_id`, `title` ("Chief Engineer"), `department`, `required_qualifications` (connects to AD-539 Qualification Programs), `current_holder: AgentDID | None`, `assigned_at: datetime | None`.
+- Predefined billets from ship manifest (department chiefs, bridge officers, crew positions).
+- `assign(billet_id, agent_did)` / `vacate(billet_id)` / `resolve(billet_title) → Agent | None`.
+- `get_roster() → dict[str, Agent | None]` — full Watch Bill snapshot.
+- `get_department_roster(dept) → dict[str, Agent | None]` — department-scoped.
+- Naming ceremony integration: `run_naming_ceremony()` → `billet_registry.assign()`.
+- Event emission: `BILLET_ASSIGNED`, `BILLET_VACATED` — consumed by Counselor, ACM, standing orders renderer.
+- Standing orders `compose_instructions()` can template `{Operations Chief}` → resolved callsign for context-specific references.
+
+**Sub-ADs (phased decomposition):**
+
+> - **AD-595a: Billet Foundation** *(planned, OSS)* — `BilletRegistry` class with `Billet` dataclass, predefined ship manifest, `assign()`/`vacate()`/`resolve()`/`get_roster()`. SQLite-backed persistence. Wired to runtime as `runtime._billet_registry`. Event emission for `BILLET_ASSIGNED`/`BILLET_VACATED`.
+> - **AD-595b: Naming Ceremony Integration** *(planned, OSS, depends: AD-595a)* — `run_naming_ceremony()` updates `BilletRegistry` after callsign assignment. Agent orientation includes billet title. `OrientationContext` gains `billet: str | None` field.
+> - **AD-595c: Standing Orders Templating** *(planned, OSS, depends: AD-595a)* — `compose_instructions()` gains template substitution: `{Chief Engineer}` → resolved callsign. Standing order `.md` files can reference billets dynamically. Fallback: role title if billet vacant.
+> - **AD-595d: Qualification Gating** *(planned, OSS, depends: AD-595a, AD-539)* — Billet assignment checks agent qualifications from AD-539 Qualification Programs. Prevents unqualified agents from filling gated billets. Connects to promotion mechanics.
+
+**Implementation order:** AD-595a → AD-595b → AD-595c → AD-595d. Foundation first, then integration points.
+
+**Dependencies:** AD-441 (Agent Identity — DIDs for billet holders), AD-398 (Crew Identity Alignment — three-tier agent classification), AD-539 (Qualification Programs — qualification gating for AD-595d), BF-146 (standing orders use role titles).
+
+**Connects to:** AD-594 (Crew Consultation — advisor selection by billet), AD-423 (Tool Registry — role-based tool assignment), ACM (workforce management — billet-aware assignment), CallsignRegistry (existing, becomes subordinate to BilletRegistry for role resolution), Watch Rotation (duty scheduling — billet-aware watch sections).
+
+**Issues:** #165 (AD-595).
+
+---
+
+### Cognitive Skill Registry — AgentSkills.io Integration (AD-596) *(planned, OSS)*
+
+**AD-596: Cognitive Skill Registry — AgentSkills.io-Compatible Skill Library** *(planned, OSS, depends: AD-428 Skill Framework, AD-429 Vessel Ontology, AD-339 Standing Orders)* — Unified skill registry adopting the AgentSkills.io open standard (`SKILL.md` format) as ProbOS's cognitive skill definition format. Separates task-specific cognitive capabilities from monolithic standing orders into discrete, composable, discoverable skill files. Enables consumption of external skills from the AgentSkills.io ecosystem (Claude Code, Cursor, GitHub Copilot, Gemini CLI, OpenHands, Hermes Agent, 30+ tools) and authoring of ProbOS skills consumable by other platforms.
+
+**Problem statement:**
+1. **Cognitive capabilities embedded in standing orders** — Standing orders define both agent identity ("who you are") and task capabilities ("what you can do"). These are architecturally distinct concerns. Standing orders should be identity; cognitive skills should be composable, discoverable, and independently versionable.
+2. **No progressive disclosure** — Standing orders load fully into every cognitive cycle. There is no mechanism to load skill instructions on-demand when a matching intent arrives. This wastes context budget on capabilities irrelevant to the current task.
+3. **Hardcoded intent routing** — `_handled_intents` is a class-level `set` in Python code (e.g., `{"design_feature"}` on Architect). Adding new cognitive capabilities requires code changes, not configuration. No description-based discovery.
+4. **No interoperability** — ProbOS cannot consume skills defined for other platforms (Claude Code, Hermes, Cursor) or expose its skills for external consumption. The broader ecosystem has converged on AgentSkills.io as the standard.
+5. **No skill validation** — Standing orders are natural-language instructions with the same defect surface as code (BF-146 demonstrated this: stale callsign references caused confabulation). No structural validation exists for instruction-defined capabilities. Design Principle: "Natural Language as Code" (DECISIONS.md).
+
+**Design (four-tier skill model):**
+
+ProbOS distinguishes four capability tiers, each with its own definition mechanism and lifecycle:
+
+| Tier | What | How Defined | Discovery | Loading |
+|------|------|-------------|-----------|---------|
+| T1: Standing Orders | Role identity + behavioral standards | `.md` (4-tier hierarchy) | Always loaded | Full content every cycle |
+| T2: Cognitive Skills | Task-specific instruction-defined capabilities | `SKILL.md` (AgentSkills.io) | Description matching | On-demand by intent |
+| T3: Executable Skills | Deterministic procedures from Cognitive JIT | `Skill` dataclass, Python source | `add_skill()` + intent dispatch | Direct handler invocation |
+| T4: Tool Skills | Code/tool execution wrappers | `CapabilityDescriptor` + tool binding | Capability mesh routing | Via ToolContext |
+
+AD-596 addresses T2 — the gap between standing orders (T1) and executable skills (T3).
+
+**Skill file format (AgentSkills.io + ProbOS extensions):**
+
+```
+config/skills/
+  architecture-review/
+    SKILL.md                           # AgentSkills.io standard format
+    references/PATTERNS.md             # Supporting documentation
+  trust-analysis/
+    SKILL.md
+    scripts/trend_calculator.py        # Supporting scripts
+  threat-assessment/
+    SKILL.md
+```
+
+Each `SKILL.md` uses standard AgentSkills.io frontmatter with optional ProbOS metadata:
+
+```yaml
+---
+name: architecture-review
+description: >
+  Analyze proposed system designs against ProbOS architectural principles.
+  Use when reviewing design proposals, enhancement requests, or refactoring plans.
+license: Apache-2.0
+compatibility: Requires CodebaseIndex access
+metadata:
+  probos-department: science
+  probos-skill-id: architecture_review
+  probos-min-proficiency: 3
+  probos-min-rank: lieutenant
+  probos-intents: "design_feature review_architecture"
+---
+
+# Architecture Review
+## When to use
+...instructions...
+```
+
+ProbOS `metadata` extensions (all optional — external skills work without them):
+- `probos-department` — Scopes which agents can discover the skill
+- `probos-skill-id` — Links to `SkillDefinition` in `SkillRegistry` (AD-428) for proficiency tracking
+- `probos-min-proficiency` — Gates activation via Skill Framework proficiency level
+- `probos-min-rank` — Gates activation via Earned Agency rank
+- `probos-intents` — Declares handled intents (replaces hardcoded `_handled_intents`)
+
+External AgentSkills.io skills (from Claude Code, Hermes, etc.) are consumed as ungoverned cognitive capabilities — no ProbOS metadata required. The governance layer is additive, not a barrier to interop.
+
+**Self-improvement pathway (connects to Cognitive JIT):**
+
+1. Agent performs task using T2 cognitive skill (LLM-mediated)
+2. Cognitive JIT (AD-531-539) observes execution, extracts procedure
+3. Procedure graduates through Dreyfus levels (AD-535)
+4. At L4+ (ENABLE), skill becomes T3 executable — zero-token replay
+5. If T3 replay fails, fallback to T2 cognitive skill (AD-534b)
+
+This is the "skills that self-improve through use" pattern observed in Hermes Agent and OpenSpace — ProbOS already has the pipeline (Cognitive JIT), it just needs the T2 file format to feed it.
+
+**Validation (absorbs `skills-ref` reference library):**
+
+The AgentSkills.io ecosystem includes `skills-ref` — a Python library (Apache 2.0, pip-installable) providing:
+- `validate(path)` → list of structural validation errors
+- `read_properties(path)` → name + description extraction
+- `to_prompt(paths)` → `<available_skills>` XML for system prompt injection
+
+ProbOS extends this with domain-specific validation:
+- ProbOS `metadata` field validation (department exists in ontology, skill_id exists in SkillRegistry, rank is valid)
+- Instruction linting (detect unresolved callsign references, stale file paths, undefined methods — the BF-146 class of defects)
+- Standing order / skill boundary enforcement (identity content in skills → warning, task content in standing orders → advisory)
+
+**Prior art absorbed:**
+
+| Source | What Was Absorbed |
+|--------|-------------------|
+| AgentSkills.io (Anthropic) | `SKILL.md` format, progressive disclosure model, `skills-ref` validator |
+| Claude Code Skills | Description-based auto-discovery, on-demand loading, `$ARGUMENTS` substitution, `context: fork` for subagent execution, three storage scopes |
+| Microsoft Business Skills (Dataverse) | "Natural-language instructions that capture how your organization gets work done." Governance model (RBAC, solution-aware). Reusability across agents. Metadata layer for discovery, instructions for execution. |
+| Hermes Agent Skills Hub | 644 skills across 4 registries, category taxonomy (16 categories), skills as procedural memory that self-improve through use, `agentskills.io` standard adoption |
+| Anthropic `anthropics/skills` | Reference skill implementations (document skills, development skills), template structure |
+| ProbOS crew-capability-architecture.md | Four capability types, three-way interaction flow, fallback cascade |
+| BF-146 (concrete demonstration) | Standing orders as instruction-defined capabilities have same defect surface as code — stale references cause confabulation |
+| Design Principle: "Natural Language as Code" | Instruction validation (structural, pre-execution) distinct from output evaluation (stochastic, post-execution evals) |
+
+**Sub-ADs (phased decomposition):**
+
+> - **AD-596a: Skill File Format + Loader** *(planned, OSS)* — Adopt AgentSkills.io `SKILL.md` format. `SkillFileLoader` discovers and parses `config/skills/` directory. YAML frontmatter extraction (standard fields + `metadata` ProbOS extensions). Progressive disclosure: names + descriptions loaded at startup into `CognitiveSkillCatalog`, full instructions loaded on-demand. `CognitiveSkillCatalog` class with `register()`, `discover(description_query)`, `get_instructions(skill_name)`, `list_skills(department, min_rank)`. SQLite persistence for catalog metadata (not instructions — those stay in files). REST API: `/api/skills/catalog`, `/api/skills/catalog/{name}`.
+> - **AD-596b: Intent Discovery + compose_instructions() Integration** *(planned, OSS, depends: AD-596a)* — Replace hardcoded `_handled_intents` with declarative `probos-intents` from SKILL.md metadata. `compose_instructions()` gains skills discovery summary: appends available skill names + descriptions to system prompt (progressive disclosure — descriptions only, not full instructions). `_handled_intents` becomes dynamic: populated from `CognitiveSkillCatalog` at agent onboarding + updated when skills are added/removed. On intent match, full SKILL.md instructions injected into the cognitive cycle's context.
+> - **AD-596c: Skill-Registry Bridge** *(planned, OSS, depends: AD-596a, AD-428)* — Connect SKILL.md `probos-skill-id` to existing `SkillRegistry` (AD-428) for proficiency tracking. Skill activation gated by proficiency level + rank from metadata. `record_exercise()` called when cognitive skill is activated. Proficiency feedback loop: cognitive skill usage → Skill Framework proficiency update → qualification progress.
+> - **AD-596d: External Skill Import** *(planned, OSS, depends: AD-596a)* — Consume standard AgentSkills.io skills without ProbOS metadata. `import_external_skill(source_path)` copies into `config/skills/`. Ungoverned mode: no department scoping, no rank gating, no proficiency tracking — skill available to all crew. Optional: `probos-enrich` command adds ProbOS metadata to imported skills. Catalog distinguishes `origin: internal` vs `origin: external` skills.
+> - **AD-596e: Skill Validation + Instruction Linting** *(planned, OSS, depends: AD-596a)* — Absorb `skills-ref` Python library (`from skills_ref import validate, read_properties, to_prompt`). Extend with ProbOS-specific validation: ontology cross-references (department, skill_id, rank), instruction linting (callsign detection per BF-146, file path verification, method name verification), standing order / skill boundary enforcement. CLI: `probos skill validate config/skills/` runs full validation suite. Pre-commit hook option for CI integration.
+
+**Implementation order:** AD-596a → AD-596b → AD-596c → AD-596d → AD-596e. Format and loader first, then intent integration, then registry bridge, then external import, then validation.
+
+**Dependencies:** AD-428 (Skill Framework — proficiency tracking bridge for AD-596c), AD-429 (Vessel Ontology — department/rank validation for AD-596e), AD-339 (Standing Orders — `compose_instructions()` integration for AD-596b), BF-146 (callsign validation patterns for AD-596e).
+
+**Connects to:** AD-595 (Watch Bill / Billet Registry — skill assignment by billet), AD-423 (Tool Registry — skills may declare required tools), AD-531-539 (Cognitive JIT — T2→T3 graduation pathway), AD-513 (Crew Manifest — skill catalog in unified query), AD-543 (Native SWE Harness — skill-initiated tool calls), AD-438 (Ontology-Based Task Routing — skill-aware routing), crew-capability-architecture.md Section 3 (Type 3 cognitive capabilities). Commercial: ACM (skill-based billing rates), ASA (skill-based agent matching), Agent Sharing Ecosystem (skill portability across instances), Nooplex Cloud (fleet-wide skill catalog management).
+
+**Issues:** #166 (AD-596).
 
 ---
 
@@ -5992,6 +6197,7 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-143 | **Temporal episode semantic gap — seeded episodes invisible to recall.** 15/15 agents still fail temporal_reasoning_probe after BF-142 scoring fix. Root cause: seeded episode content has no temporal vocabulary — "Pool health dropped to 45%" has cosine similarity ~0.15 to "What happened during first watch?" while real memories score ~0.20+. Episodes are never retrieved; scoring never runs. Fix: add "During first/second watch:" prefix to `_TEMPORAL_EPISODES` content, creating semantic bridge to probe questions. Also adds temporal prefix words (`during`, `first`, `second`, `watch`) to probe-local `_PROBE_STOP_WORDS` to prevent cross-watch keyword false positives. Punctuation stripping added to `_distinctive_keywords()` so "watch:" matches stopword "watch". 1 source file, 2 test files modified, 7 tests. Build prompt: bf-143-temporal-episode-semantic-gap.md. | High | **Closed** |
 | BF-144 | **Stasis duration confabulation — agents fabricate offline duration.** Meridian posted "2d 22h offline" when actual stasis was 6 minutes. Corrected to "3 minutes" — still wrong. Agent ignores orientation text and generates own estimate. Root cause: stasis duration presented as narrative prose (`"You were offline for 6m 19s."`) — LLM treats as background and confabulates. Fix: restructure to `STASIS RECORD (AUTHORITATIVE — cite this, do not estimate):` with key-value `Duration:`, `Shutdown:`, `Resume:` fields. Add `stasis_shutdown_utc` + `stasis_resume_utc` to `OrientationContext`. Pass timestamps from `runtime._previous_session` through `finalize.py`. 2 source files, 1 test file modified, 7 tests. Build prompt: bf-144-stasis-duration-confabulation.md. | High | **Closed** |
 | BF-145 | **Align pre-existing tests with AD-593 changes.** AD-593 broke 6 tests: 2 in `test_ad567b_anchor_recall.py` (threshold default 0.15→0.25) and 4 in `test_ad567d_dream_provenance.py` (two-tier pruning calls `find_low_activation_episodes()` and `evict_by_ids()` twice). Fix: update 2 assertions + 1 docstring for new threshold, add `aggressive_prune_enabled=False` to dreaming engine test fixture to isolate standard-tier tests. Test-only, no source changes. 2 test files modified. Build prompt: bf-145-ad593-test-alignment.md. | High | **Closed** |
+| BF-146 | **Standing orders hardcode callsigns — agents contradict each other about crew identity.** Standing order `.md` files reference crew by hardcoded callsigns (e.g., "LaForge", "O'Brien", "Dax") instead of billet/role titles. When agents self-name during naming ceremony, cross-references become stale — one agent refers to "O'Brien" from its standing orders while another agent holds that callsign slot but chose a different name. Real Navy standing orders reference the billet ("the Operations Chief"), never the person. Fix: replaced all hardcoded callsigns with role titles across 15 standing order files (13 agent-tier + science.md department + federation.md constitution). Self-identity lines removed (handled dynamically by `_build_personality_block()`). Cross-references converted to role titles. No code changes — documentation-only. | Medium | **Closed** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 

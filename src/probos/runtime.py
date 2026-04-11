@@ -1138,6 +1138,15 @@ class ProbOSRuntime:
         self._orientation_service = cog.orientation_service  # AD-567g
         self._oracle_service = cog.oracle_service  # AD-462e
 
+        # AD-588: Introspective Telemetry Service
+        try:
+            from probos.cognitive.introspective_telemetry import IntrospectiveTelemetryService
+            self._introspective_telemetry = IntrospectiveTelemetryService(runtime=self)
+            logger.info("AD-588: IntrospectiveTelemetryService initialized")
+        except Exception as e:
+            logger.warning("IntrospectiveTelemetryService failed to start: %s — continuing without", e)
+            self._introspective_telemetry = None
+
         # AD-533: Procedure Store (after RecordsStore, before Dreaming)
         try:
             from probos.cognitive.procedure_store import ProcedureStore

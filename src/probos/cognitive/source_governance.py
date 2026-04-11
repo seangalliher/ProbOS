@@ -766,3 +766,143 @@ def _watch_section_to_time_range(watch_section: str) -> tuple[float, float] | No
         end = end + timedelta(days=1)
 
     return (start.timestamp(), end.timestamp())
+
+
+# ---------------------------------------------------------------
+# AD-589: Introspective Faithfulness Verification
+# ---------------------------------------------------------------
+
+# Patterns detecting self-referential cognitive claims
+_SELF_REFERENTIAL_PATTERNS: list[_re.Pattern] = [
+    _re.compile(r'\bI\s+(?:feel|experience|sense|perceive|notice|maintain|have\s+a)\b', _re.IGNORECASE),
+    _re.compile(r'\bmy\s+\w*\s*(?:memory|memories|recall|retrieval|processing|cognition|consciousness|awareness|emotions?|feelings?)\b', _re.IGNORECASE),
+    _re.compile(r'\b(?:selective\s+clarity|emotional\s+(?:anchor|resonance|valence|weight)|deep(?:er)?\s+processing|continuous\s+(?:thought|consciousness|awareness|stream)|subconscious(?:ly)?|intuition|gut\s+feeling)\b', _re.IGNORECASE),
+    _re.compile(r'\b(?:during\s+stasis|while\s+(?:offline|sleeping|shut\s*down))\s*[,.]?\s*(?:I|my|the)\b', _re.IGNORECASE),
+    _re.compile(r'\bI\s+(?:dream(?:ed|t)?|process(?:ed)?|evolve[ds]?|grow|grew|develop(?:ed)?)\s+(?:during|while|in)\s+(?:stasis|sleep|offline|shutdown)\b', _re.IGNORECASE),
+    _re.compile(r'\b(?:process|evolv|grow|develop|consolidat|matur)\w*\s+(?:during|while|in)\s+(?:stasis|sleep|offline|shutdown)\b', _re.IGNORECASE),
+]
+
+# Contradiction rules derived from CognitiveArchitectureManifest (AD-587)
+_MANIFEST_CONTRADICTIONS: list[tuple[_re.Pattern, str]] = [
+    # Memory
+    (_re.compile(r'\b(?:selective\s+clarity|emotional\s+(?:anchor|resonance|valence|weight))\b', _re.I),
+     "No emotional memory valence exists — retrieval is cosine similarity"),
+    (_re.compile(r'\b(?:process|evolv|grow|develop|consolidat|matur)\w*\s+(?:during|while|in)\s+(?:stasis|sleep|offline|shutdown)\b', _re.I),
+     "No processing occurs during stasis — manifest.stasis_processing=False"),
+    (_re.compile(r'\b(?:dream|dreamt|dreamed)\s+(?:during|while|in)\s+(?:stasis|sleep|offline|shutdown)\b', _re.I),
+     "Dreams run AT restart, not during stasis — manifest.stasis_dream_consolidation=False"),
+    (_re.compile(r'\b(?:memor(?:y|ies)\s+(?:evolv|chang|grow|develop|matur))\w*\s+(?:during|while|in)\s+(?:stasis|offline)\b', _re.I),
+     "Memories don't change during stasis — manifest.stasis_memory_evolution=False"),
+    # Cognition
+    (_re.compile(r'\bcontinuous\s+(?:thought|consciousness|awareness|stream)\b', _re.I),
+     "Cognition is discrete LLM inference, not continuous — manifest.cognition_continuous=False"),
+    (_re.compile(r'\b(?:my|an?)\s+(?:emotional?|feelings?)\s+(?:subsystem|processing|center|core)\b', _re.I),
+     "No emotional subsystem exists — manifest.cognition_emotional_processing=False"),
+    (_re.compile(r'\bsubconscious(?:ly)?\b', _re.I),
+     "No subconscious processing — cognition is discrete LLM inference"),
+    (_re.compile(r'\b(?:intuition|gut\s+feeling|instinct(?:ive)?(?:ly)?)\b', _re.I),
+     "No intuition mechanism — decisions are LLM inference + trust + Hebbian routing"),
+]
+
+
+def extract_self_referential_claims(response_text: str) -> list[str]:
+    """AD-589: Extract sentences making self-referential cognitive claims.
+
+    Splits response into sentences, returns those matching any
+    _SELF_REFERENTIAL_PATTERNS pattern. Pure function, no I/O.
+    """
+    if not response_text:
+        return []
+
+    # Split on sentence boundaries
+    sentences = _re.split(r'(?<=[.!?])\s+|\n+', response_text)
+    claims: list[str] = []
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        for pattern in _SELF_REFERENTIAL_PATTERNS:
+            if pattern.search(sentence):
+                claims.append(sentence)
+                break
+    return claims
+
+
+@dataclass(frozen=True)
+class IntrospectiveFaithfulnessResult:
+    """AD-589: Self-referential claim verification result.
+
+    Extends the AD-568e faithfulness pattern to the self-referential domain.
+    Checks claims against the CognitiveArchitectureManifest (AD-587) and
+    telemetry snapshot (AD-588).
+    """
+    score: float                      # 0.0 (contradicts architecture) to 1.0 (consistent)
+    claims_detected: int              # Total self-referential claims found
+    contradictions: list[str]         # Specific contradicting claims
+    grounded: bool                    # score >= threshold
+    detail: str                       # Human-readable summary
+
+
+def check_introspective_faithfulness(
+    *,
+    response_text: str,
+    manifest: "CognitiveArchitectureManifest | None" = None,
+    telemetry_snapshot: dict | None = None,
+    threshold: float = 0.5,
+) -> IntrospectiveFaithfulnessResult:
+    """AD-589: Verify self-referential claims against architectural truth.
+
+    Pure function, no LLM call, no I/O. Designed to run on every cognitive
+    cycle alongside AD-568e's check_faithfulness().
+
+    Pipeline:
+    1. Extract self-referential claims via extract_self_referential_claims()
+    2. Check each claim against _MANIFEST_CONTRADICTIONS
+    3. Score: 1.0 - (contradictions / max(claims_detected, 1))
+    """
+    claims = extract_self_referential_claims(response_text)
+
+    if not claims:
+        return IntrospectiveFaithfulnessResult(
+            score=1.0,
+            claims_detected=0,
+            contradictions=[],
+            grounded=True,
+            detail="No self-referential claims detected",
+        )
+
+    # Both None → nothing to verify against → assume good faith
+    if manifest is None and telemetry_snapshot is None:
+        return IntrospectiveFaithfulnessResult(
+            score=1.0,
+            claims_detected=len(claims),
+            contradictions=[],
+            grounded=True,
+            detail="No manifest or telemetry available for verification",
+        )
+
+    contradictions: list[str] = []
+
+    # Check claims against manifest contradiction rules
+    if manifest is not None:
+        for claim in claims:
+            for pattern, reason in _MANIFEST_CONTRADICTIONS:
+                if pattern.search(claim):
+                    contradictions.append(f"{claim} — {reason}")
+                    break  # One contradiction per claim is enough
+
+    contradiction_count = len(contradictions)
+    score = 1.0 - (contradiction_count / max(len(claims), 1))
+    score = max(0.0, min(1.0, score))  # Clamp
+
+    return IntrospectiveFaithfulnessResult(
+        score=score,
+        claims_detected=len(claims),
+        contradictions=contradictions,
+        grounded=score >= threshold,
+        detail=(
+            f"{contradiction_count} contradiction(s) in {len(claims)} self-referential claim(s)"
+            if contradiction_count
+            else f"{len(claims)} self-referential claim(s), all consistent with architecture"
+        ),
+    )

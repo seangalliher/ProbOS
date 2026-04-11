@@ -277,7 +277,8 @@ class TestProposalParsingAdFormats:
 
 
 class TestUserMessageFormatting:
-    def test_includes_feature_and_context(self):
+    @pytest.mark.asyncio
+    async def test_includes_feature_and_context(self):
         """_build_user_message includes feature, phase, and codebase context."""
         agent = ArchitectAgent(
             agent_id="test-arch-2",
@@ -287,13 +288,14 @@ class TestUserMessageFormatting:
             "params": {"feature": "Network Egress", "phase": "31"},
             "codebase_context": "## Relevant Files\n- src/probos/mesh/routing.py",
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "Network Egress" in msg
         assert "Phase: 31" in msg
         assert "Relevant Files" in msg
         assert "verify all file paths" in msg
 
-    def test_no_context(self):
+    @pytest.mark.asyncio
+    async def test_no_context(self):
         """_build_user_message handles missing codebase context."""
         agent = ArchitectAgent(
             agent_id="test-arch-3",
@@ -303,7 +305,7 @@ class TestUserMessageFormatting:
             "params": {"feature": "Something"},
             "codebase_context": "",
         }
-        msg = agent._build_user_message(obs)
+        msg = await agent._build_user_message(obs)
         assert "Something" in msg
         assert "no codebase context available" in msg
 

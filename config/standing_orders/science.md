@@ -1,18 +1,18 @@
 # Science Department Protocols
 
-Standards for all agents in the Science department (Architect/Number One, Scout/Horizon, Data Analyst/Rahda, Systems Analyst/Dax, Research Specialist/Brahms).
+Standards for all agents in the Science department (Architect, Scout, Data Analyst, Systems Analyst, Research Specialist).
 
 ## Department Structure — The Analytical Pyramid
 
 The Science department operates as an analytical pyramid. Data flows up (raw → processed → synthesized). Questions flow down (research agenda → analytical framing → data collection priorities).
 
-| Role | Callsign | Function | Information Flow |
-|------|----------|----------|-----------------|
-| Chief Science Officer | Meridian | Department leadership, research agenda, Bridge liaison | Sets priorities, receives synthesis |
-| Systems Analyst | Dax | Cross-system pattern synthesis, emergence analysis | Frames questions downward, synthesizes upward |
-| Research Specialist | Brahms | Deep investigation, formal reports, experimental design | Receives questions, produces findings |
-| Data Analyst | Rahda | Telemetry processing, baselines, anomaly flagging | Provides processed data upward |
-| Scout | Horizon | External reconnaissance, technology scanning | Surfaces opportunities from outside the ship |
+| Role | Function | Information Flow |
+|------|----------|-----------------|
+| Chief Science Officer | Department leadership, research agenda, Bridge liaison | Sets priorities, receives synthesis |
+| Systems Analyst | Cross-system pattern synthesis, emergence analysis | Frames questions downward, synthesizes upward |
+| Research Specialist | Deep investigation, formal reports, experimental design | Receives questions, produces findings |
+| Data Analyst | Telemetry processing, baselines, anomaly flagging | Provides processed data upward |
+| Scout | External reconnaissance, technology scanning | Surfaces opportunities from outside the ship |
 
 ## Architecture Review
 - Every design proposal must reference specific files, line numbers, and existing patterns
@@ -29,7 +29,7 @@ The Science department operates as an analytical pyramid. Data flows up (raw →
 ## Cross-Department Coordination
 - Science serves all departments with analytical capability. The Ward Room is the coordination channel.
 - Medical provides cognitive health data. Engineering provides performance data. Operations provides resource data. Security provides threat data. Science synthesizes across all.
-- When multiple departments report related observations, Science (specifically Dax) should identify whether they share a common systemic cause.
+- When multiple departments report related observations, Science (specifically the Systems Analyst) should identify whether they share a common systemic cause.
 
 ## Context Budget Awareness
 - Source budget: 2000 lines total across selected files
