@@ -3563,6 +3563,48 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Connects to:** AD-428 (SkillRegistry), AD-531–539 (Cognitive JIT pipeline — T3), AD-423 (Tool Registry — T4), AD-595 (Watch Bill — billet resolution), BF-146 (callsign validation lesson), crew-capability-architecture.md (unified design document).
 
 
+## AD-597: MCP App Host Infrastructure + Interactive Games (2026-04-11)
+
+**Problem:** HXI chat has no general-purpose mechanism for rendering interactive HTML applications inside conversations. Every interactive feature (GamePanel, CrewRosterPanel) requires custom React components hardcoded into HXI. Games are locked to ProbOS crew — external agents cannot participate. Crew members (Reyes, Cassian) organically requested chess, which doesn't exist yet. ProbOS is excluded from the MCP Apps ecosystem that Claude Desktop, VS Code Copilot, and ChatGPT all support.
+
+| Decision | Rationale |
+|----------|-----------|
+| Adopt MCP Apps as the interactive rendering standard for HXI | Industry convergence — adopted by Claude Desktop, VS Code Copilot, ChatGPT (via OpenAI Apps SDK), Goose, Postman. Standard architecture: MCP server + sandboxed iframe + JSON-RPC 2.0 over postMessage. One implementation supports apps from all ecosystems. |
+| OpenAI Apps SDK is a superset, not a competitor — no separate implementation needed | OpenAI Apps SDK is built on top of MCP Apps. Same MCP server protocol, same sandboxed iframe, same postMessage bridge. `window.openai` extensions are proprietary but apps feature-detect and degrade gracefully. Implementing MCP Apps standard covers both. |
+| HXI becomes an MCP App Host via AppBridge | `<McpAppFrame>` React component renders apps in sandboxed iframes within chat messages. Implements `ui/*` JSON-RPC namespace (6 methods). CSP enforcement from app metadata. Tool call proxying to connected MCP servers. This is the foundational piece — all other sub-ADs depend on it. |
+| Wrap existing GameEngine protocol as MCP tools, not replace it | `GameEngine` protocol (AD-526a) already defines the right abstraction (new_game, make_move, get_valid_moves, render_board, is_finished, get_result). MCP tools are a surface layer. Dual-mode: text responses for agent activation (any MCP-compatible agent can play), rendered UI for human interaction. |
+| Chess as pure Python, no external library | Same principle as TicTacToeEngine — the game logic is the protocol test, not the library. Full rules: piece movement, check/checkmate/stalemate, castling, en passant, pawn promotion. GameEngine protocol already accommodates this. |
+| External MCP App consumption (AD-597f) as final phase | Security-sensitive: external apps run arbitrary HTML in iframes. Requires strict CSP enforcement, app discovery via `list_tools`, user-configurable MCP server connections. Ship internal apps first, then open to external. |
+
+**Sub-ADs:** AD-597a (HXI App Host/AppBridge), AD-597b (Game MCP Server), AD-597c (Chess Engine), AD-597d (Chess MCP App UI), AD-597e (Tic-Tac-Toe migration), AD-597f (External App Consumption).
+
+**Issue:** #167 (AD-597).
+
+**Connects to:** AD-526a/b (RecreationService + GamePanel — game framework and migration source), AD-423 (Tool Registry — MCP tool surface alignment), AD-596 (Cognitive Skills — skills can declare MCP App UIs), AD-543 (Native SWE Harness — tool loop can invoke MCP App tools). Commercial: MCP App marketplace (Nooplex Cloud), native app packaging (Tauri/Electron + AppBridge), Steam distribution.
+
+
+## BF-147/148/149/150: Qualification Probe Hardening Wave — Root Cause Analysis + Novel Research Absorption (2026-04-12)
+
+**Problem:** Qualification run (15 agents, 221 tests) shows 91% pass rate (201/221), but 4 memory probes have systemic failures: `temporal_reasoning_probe` (8/15 fail), `knowledge_update_probe` (7/15 fail at 0.500), `seeded_recall_probe` (1/15 fail — systems_analyst 0.000), `cross_agent_synthesis_probe` (2/15 at 0.333). Root cause investigation revealed probe design bugs, scoring deficiencies, and one architectural misalignment — not agent cognitive failures. Research survey identified 10 novel techniques from cognitive science, neuroscience, and AI research for potential absorption.
+
+| Decision | Rationale |
+|----------|-----------|
+| Fix probe watch section vocabulary before anything else (BF-147) | `"first_watch"`/`"second_watch"` are not valid `derive_watch_section()` outputs. ChromaDB exact-match `where` filter finds nothing. This is a data entry bug that silently nullifies the entire temporal probe. |
+| Add temporal match weight to composite scoring (BF-147) | Temporal queries ("during first watch") need a scoring signal beyond semantic similarity. Pattern: convergence bonus (AD-584c) adds +0.10 for multi-channel evidence. Temporal match bonus does the same for anchor-watch alignment. |
+| Recency decay (168h) is correct for its design purpose — don't change | 1-week half-life discriminates days-apart episodes (AD-567a design). "Most recently" questions need retrieval-strategy-level routing, not a global decay constant change that would break older episode lifecycle. |
+| Add temporal preference instruction to memory formatting (BF-148) | AGM Belief Revision principle: newer information supersedes older when contradictory. LLM needs explicit instruction — confabulation guard says "don't fabricate" but never says "prefer newer when facts conflict." This is a prompt gap, not a retrieval gap. |
+| Supersession metadata in dream consolidation (BF-148, deferred) | AGM Levi Identity: contract old belief, expand new. Dream Step 7 contradiction detection already identifies conflicting episodes — adding `superseded_by` metadata reduces older episode's composite score passively. Higher effort, higher payoff long-term. |
+| Add structured error field to QualificationTestResult (BF-149) | systems_analyst 0.000 is undiagnosable without knowing which exception triggered `_make_error_result()`. Error field + exception type makes `/qualify agent` actionable for all future probe failures. |
+| Redesign cross_agent_synthesis_probe to use OracleService pathway (BF-150) | Current probe violates sovereign memory model by design — seeds episodes in separate shards then asks agents to recall across shards. Scores >0.333 are false positives from parametric vocabulary overlap. Oracle Service (AD-462c) is the designed cross-shard pathway. |
+| Absorb TCM temporal context vectors (Howard & Kahana 2002) as future enhancement | Slowly drifting context vector creating temporal fingerprints per episode. Complements anchor watch sections. Per-agent context vector stored alongside episodes in ChromaDB metadata. Higher effort — defer to AD-598+. |
+| Absorb Transactive Memory Systems (Wegner 1987) concept into OracleService | Directory of "who knows what" built from AD-531 episode clustering. OracleService can route cross-agent queries to the agent most likely to have relevant expertise. Natural fit with existing cognitive infrastructure. |
+| Absorb Generative Agents importance scoring (Park 2023) at encoding time | 1–10 importance score at episode creation. High-importance episodes resist decay. Complements AD-567d activation-based lifecycle — importance is orthogonal to access frequency. Low implementation cost. |
+
+**Issues:** BF-147 (#168), BF-148 (#169), BF-149 (#170), BF-150 (#171).
+
+**Connects to:** AD-582 (Memory Competency Probes — original probe implementation), AD-584c (Recall Scoring Rebalance — convergence bonus pattern), AD-567d (Anchor-Preserving Dream Consolidation — activation lifecycle), AD-462c (Oracle Service — cross-shard recall), AD-531 (episode clustering — Transactive Memory source), BF-139–143 (prior probe hardening wave).
+
+
 ## AD-587: Cognitive Architecture Manifest — Mechanistic Self-Model for Agents (2026-04-10)
 
 **Problem:** Agents confabulate about their own internal states while being well-calibrated about external facts. Echo DM test revealed fabrications: "selective clarity," "emotional anchors," "processing during stasis," "memory architecture feels different." Root cause (Nisbett & Wilson 1977): agents lack introspective access to their cognitive architecture. The LLM fills the void with plausible narrative. Orientation (AD-567g) tells agents "you are an AI" but never explains *how* their memory, trust, stasis, or cognitive systems mechanistically work.

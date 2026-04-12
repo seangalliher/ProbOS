@@ -5000,6 +5000,96 @@ ProbOS extends this with domain-specific validation:
 
 ---
 
+### MCP App Host + Interactive Games (AD-597) *(planned, OSS)*
+
+**AD-597: MCP App Host Infrastructure + Interactive Games** *(planned, OSS, depends: AD-526a Recreation Framework, AD-423 Tool Registry)* — ProbOS becomes an MCP App host, enabling interactive HTML applications to render inside the HXI chat experience. First use case: chess and tic-tac-toe as MCP Apps with universal agent activation (any MCP-compatible agent can play). Lays the foundation for all future interactive UI capabilities embedded in agent conversations.
+
+**Problem statement:**
+1. **No interactive UI in conversations** — HXI chat displays text, markdown, and the custom GamePanel component (AD-526b). There is no general-purpose mechanism for rendering interactive HTML applications inside the conversation flow. Every new interactive capability requires custom React components hardcoded into HXI.
+2. **Games locked to ProbOS agents** — The recreation framework (AD-526a) only supports ProbOS crew agents playing via Ward Room text commands. External agents (Claude Desktop, VS Code Copilot, ChatGPT) cannot participate. No universal agent activation.
+3. **No chess engine** — Crew members (Reyes, Cassian) have organically requested chess. The `GameEngine` protocol supports extensibility but only `TicTacToeEngine` exists.
+4. **No app interoperability** — ProbOS cannot consume interactive apps built for other platforms (Claude Desktop, ChatGPT, VS Code Copilot). These platforms converge on MCP Apps as the rendering standard. ProbOS is excluded from this ecosystem.
+5. **Custom components don't scale** — Each interactive feature (GamePanel, CrewRosterPanel, future dashboards) is a bespoke React component. MCP Apps provide a standard sandboxed rendering model that decouples app development from HXI core development.
+
+**Architecture:**
+
+MCP Apps is the convergence standard — adopted by Claude Desktop, VS Code GitHub Copilot, ChatGPT (via OpenAI Apps SDK superset), Goose, Postman, and others. The OpenAI Apps SDK is **built on top of MCP Apps**, not a competing standard. Same architecture: MCP server → sandboxed iframe → JSON-RPC 2.0 over postMessage. OpenAI adds `window.openai` proprietary extensions; apps that follow best practices feature-detect and degrade gracefully. ProbOS implements the MCP Apps standard and gains compatibility with both ecosystems.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    HXI Chat Experience                  │
+│  ┌───────────────┐  ┌────────────────────────────────┐  │
+│  │  Chat Message  │  │  MCP App (sandboxed iframe)   │  │
+│  │  (text/md)     │  │  ┌──────────────────────────┐ │  │
+│  └───────────────┘  │  │  Interactive Chess Board  │ │  │
+│  ┌───────────────┐  │  │  (HTML/JS/CSS bundle)     │ │  │
+│  │  Chat Message  │  │  └──────────────────────────┘ │  │
+│  └───────────────┘  │  postMessage ↕ JSON-RPC 2.0   │  │
+│                     └────────────────────────────────┘  │
+│                              ↕ AppBridge                │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │           MCP App Host (AppBridge)               │   │
+│  │  - iframe sandboxing + CSP enforcement           │   │
+│  │  - ui/* JSON-RPC namespace (6 methods)           │   │
+│  │  - Tool call proxying to MCP servers             │   │
+│  │  - Resource fetching (ui:// scheme)              │   │
+│  └──────────────────────────────────────────────────┘   │
+│                              ↕ MCP protocol             │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │        MCP Server (ProbOS or external)           │   │
+│  │  - registerAppTool() with _meta.ui.resourceUri   │   │
+│  │  - registerAppResource() serving HTML bundles    │   │
+│  │  - GameEngine → MCP tool surface                 │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+```
+
+**MCP Apps bridge methods (ui/* namespace):**
+
+| Method | Direction | Purpose |
+|--------|-----------|---------|
+| `ui/initialize` | Host → App | Bootstrap on load |
+| `ui/notifications/tool-input` | Host → App | Deliver tool call arguments |
+| `ui/notifications/tool-result` | Host → App | Deliver structured tool output |
+| `tools/call` | App → Host | Invoke a server-side MCP tool |
+| `ui/message` | App → Host | Send follow-up conversation message |
+| `ui/update-model-context` | App → Host | Update what the model "sees" about UI state |
+
+**Prior art:**
+
+| System | Relationship | Key difference |
+|--------|-------------|----------------|
+| MCP Apps (Anthropic) | **Standard adopted** | ProbOS implements this as host |
+| OpenAI Apps SDK | **Superset of MCP Apps** | Built on same MCP + iframe + postMessage. Adds `window.openai` extensions. Apps degrade gracefully without them |
+| Claude Desktop | MCP App host | Consumer-focused. ProbOS is agent-orchestration-focused |
+| VS Code Copilot | MCP App host | IDE-embedded. ProbOS is ship-embedded |
+| AD-526b HXI GamePanel | **Superseded for games** | Custom React component → standard MCP App rendering |
+| HXI CrewRosterPanel | Future migration candidate | Could become MCP App for portability |
+
+**Sub-ADs (phased decomposition):**
+
+- **AD-597a: HXI MCP App Host (AppBridge)** — React `<McpAppFrame>` component that renders MCP Apps inside HXI chat messages. Sandboxed iframe creation with CSP enforcement from `_meta.ui.csp`. AppBridge implementation: JSON-RPC 2.0 over postMessage, `ui/*` namespace (6 methods above), tool call proxying to connected MCP servers. `ui://` resource fetching. iframe lifecycle management (create, destroy, resize). Theme injection (HXI dark/light). Security: deny-by-default CSP, no parent DOM access, no cookie access. This is the foundational piece — without it, no MCP App can render.
+
+- **AD-597b: ProbOS MCP Server for Games** — Wraps the existing `GameEngine` protocol (AD-526a) as MCP tools + UI resources. `registerAppTool()` for `game-challenge`, `game-move`, `game-state`, `game-forfeit`, `game-valid-moves` — each backed by `RecreationService`. `registerAppResource()` serves bundled game HTML as `ui://` resources. Tool metadata includes `_meta.ui.resourceUri` linking to game-specific UIs. Dual-mode: agents interact via text tool responses (universal agent activation), humans interact via rendered MCP App UI. Ward Room integration: game events posted to Recreation channel regardless of whether move came from MCP tool or Ward Room text command.
+
+- **AD-597c: Chess Engine** — `ChessEngine` implementing `GameEngine` protocol. Full chess rules: piece movement validation, check/checkmate/stalemate detection, castling, en passant, pawn promotion, draw by repetition/50-move rule. `render_board()` produces Unicode chess piece ASCII art for Ward Room display. Pure Python, no external chess library dependency. Registered in `RecreationService` alongside `TicTacToeEngine`.
+
+- **AD-597d: Chess MCP App UI** — Interactive chess board HTML/JS/CSS bundle served as MCP App resource. Click-to-select + click-to-move interaction. Valid move highlighting. Move history sidebar. Captured pieces display. Check/checkmate visual indicators. Responsive sizing for iframe embedding. Built with Vite + `vite-plugin-singlefile` for single-HTML bundle. Communicates with ProbOS MCP server via `tools/call` bridge method.
+
+- **AD-597e: Tic-Tac-Toe MCP App Migration** — Convert existing `TicTacToeEngine` game experience from custom HXI `GamePanel.tsx` (AD-526b) to MCP App pattern. Same engine, new MCP tool surface + bundled HTML UI. `GamePanel.tsx` becomes fallback for hosts that don't support MCP Apps. Validates the migration pattern for future interactive component conversions.
+
+- **AD-597f: External MCP App Consumption** — HXI can connect to external MCP servers that expose MCP Apps. App discovery via `list_tools` scanning for `_meta.ui.resourceUri`. User-configurable MCP server connections (settings or API). CSP enforcement from external app metadata. Enables ProbOS users to consume apps built for Claude Desktop, ChatGPT, etc. Security: external apps run in stricter sandbox than internal apps.
+
+**Implementation order:** AD-597a (host infrastructure) → AD-597b (game MCP server) → AD-597c (chess engine) → AD-597e (tic-tac-toe migration, validates pattern) → AD-597d (chess UI) → AD-597f (external app consumption).
+
+**Dependencies:** AD-526a (RecreationService — game lifecycle), AD-526b (GamePanel — migration source for AD-597e), AD-423 (Tool Registry — MCP tool surface alignment).
+
+**Connects to:** AD-596 (Cognitive Skills — skills can declare MCP App UIs for instruction rendering), AD-543 (Native SWE Harness — agentic tool loop can invoke MCP App tools), AD-513 (Crew Manifest — crew roster as MCP App candidate). Commercial: MCP App marketplace (Nooplex Cloud hosts third-party MCP Apps), native app packaging (Tauri/Electron wraps HXI + AppBridge), Steam distribution (games as MCP Apps inside ProbOS).
+
+**Issues:** #167 (AD-597).
+
+---
+
 ### Memory Architecture: Tiered Loading & Temporal Validity (AD-579) *(planned, OSS)*
 
 **AD-579: Memory Architecture — Tiered Context Loading & Temporal Knowledge Validity** *(planned, OSS, depends: AD-570 Anchor-Indexed Recall, AD-567a Anchor System, AD-541c Spaced Retrieval)* — Two complementary enhancements to ProbOS's episodic memory system, informed by MemPalace project evaluation (github.com/milla-jovovich/mempalace, 2026-04-08). MemPalace achieves 96.6% LongMemEval R@5 and +34% retrieval improvement through structured metadata filtering (already absorbed into AD-570) and a tiered memory loading stack. ProbOS's current recall pipeline loads nothing into agent context until semantic search at `handle_intent()` time — there is no "always-loaded" layer of high-signal knowledge. Additionally, knowledge entries (notebook entries, episodic metadata) have no temporal validity tracking — an entry is either present or archived, with no mechanism to express "this fact was valid from X to Y."
@@ -6198,6 +6288,10 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-144 | **Stasis duration confabulation — agents fabricate offline duration.** Meridian posted "2d 22h offline" when actual stasis was 6 minutes. Corrected to "3 minutes" — still wrong. Agent ignores orientation text and generates own estimate. Root cause: stasis duration presented as narrative prose (`"You were offline for 6m 19s."`) — LLM treats as background and confabulates. Fix: restructure to `STASIS RECORD (AUTHORITATIVE — cite this, do not estimate):` with key-value `Duration:`, `Shutdown:`, `Resume:` fields. Add `stasis_shutdown_utc` + `stasis_resume_utc` to `OrientationContext`. Pass timestamps from `runtime._previous_session` through `finalize.py`. 2 source files, 1 test file modified, 7 tests. Build prompt: bf-144-stasis-duration-confabulation.md. | High | **Closed** |
 | BF-145 | **Align pre-existing tests with AD-593 changes.** AD-593 broke 6 tests: 2 in `test_ad567b_anchor_recall.py` (threshold default 0.15→0.25) and 4 in `test_ad567d_dream_provenance.py` (two-tier pruning calls `find_low_activation_episodes()` and `evict_by_ids()` twice). Fix: update 2 assertions + 1 docstring for new threshold, add `aggressive_prune_enabled=False` to dreaming engine test fixture to isolate standard-tier tests. Test-only, no source changes. 2 test files modified. Build prompt: bf-145-ad593-test-alignment.md. | High | **Closed** |
 | BF-146 | **Standing orders hardcode callsigns — agents contradict each other about crew identity.** Standing order `.md` files reference crew by hardcoded callsigns (e.g., "LaForge", "O'Brien", "Dax") instead of billet/role titles. When agents self-name during naming ceremony, cross-references become stale — one agent refers to "O'Brien" from its standing orders while another agent holds that callsign slot but chose a different name. Real Navy standing orders reference the billet ("the Operations Chief"), never the person. Fix: replaced all hardcoded callsigns with role titles across 15 standing order files (13 agent-tier + science.md department + federation.md constitution). Self-identity lines removed (handled dynamically by `_build_personality_block()`). Cross-references converted to role titles. No code changes — documentation-only. | Medium | **Closed** |
+| BF-147 | **Temporal reasoning probe — watch section vocabulary mismatch + recency indiscriminability.** 8/15 agents fail `temporal_reasoning_probe` (scores 0.000–0.286). Three compounding root causes: (1) **Watch section vocabulary mismatch:** Probe seeds episodes with `watch="first_watch"` and `watch="second_watch"` but `derive_watch_section()` returns canonical values `"first"`, `"mid"`, `"morning"`, etc. `recall_by_anchor()` uses ChromaDB exact-match `where` filter — finds nothing. `"second_watch"` is not a valid naval watch section at all. (2) **Recency indiscriminability:** Question 2 ("What was discussed most recently?") requires temporal ordering but recency decay constant (168h/1 week) yields only 0.00087 composite score difference between 1h and 2h old episodes — semantically unanswerable by cosine similarity. (3) **No temporal match signal in `score_recall()`:** When a query contains temporal cues ("during first watch"), there's no weight boost for episodes whose anchor watch section matches. **Fix:** (A) Replace `"first_watch"`→`"first"` and `"second_watch"`→`"second_dog"` (or another valid section) in `_TEMPORAL_EPISODES` probe data. (B) Add `temporal_match_weight` to `score_recall()` — when query contains temporal cue AND episode anchor matches, add +0.10 composite bonus (similar to convergence bonus pattern from AD-584c). (C) Add temporal keyword to `parse_anchor_query()` regex for "recently"/"most recent" → trigger `SHALLOW` retrieval with recency-priority sort. Research: TCM (Howard & Kahana 2002) temporal context vectors as longer-term enhancement. 1 source file (`memory_probes.py`), 1 source file (`episodic.py` or `source_governance.py`), tests. Build prompt TBD. Issue #168. | High | **Open** |
+| BF-148 | **Knowledge update probe — temporal preference absent + future timestamp bug.** 7/15 agents fail `knowledge_update_probe` at score 0.500 (threshold 0.6). Three root causes: (1) **Recency indiscriminability:** 168h decay constant cannot discriminate episodes 1–2 hours apart (0.00087 difference). Old and new contradictory facts both recalled, agent mentions both, scored 0.500. (2) **No temporal preference instruction:** `_format_memory_section()` confabulation guard says "don't fabricate" but never instructs "prefer newer information when facts conflict." LLM has no prompt-level reason to prefer the newer value. (3) **Future timestamp bug:** Pair 1 in `_KNOWLEDGE_UPDATE_EPISODES` creates the "new" episode at `time.time() + 3600` (1 hour IN THE FUTURE) — this makes the "new" episode appear older than the "old" one in some recency calculations, and creates invalid temporal data. **Fix:** (A) Fix future timestamp — change `+3600` to `-300` (5 min ago) and old to `-3900` (65 min ago), maintaining temporal separation without future dates. (B) Add temporal preference instruction to `_format_memory_section()` supplementary/peripheral tiers: "When memories contain conflicting values for the same metric, prefer the most recent observation." Applies to all agents, not just probes. (C) Add supersession metadata during dream contradiction detection (Step 7) — when contradictory episodes detected, mark older as `superseded_by` with timestamp, reducing its composite score. Research: AGM Belief Revision (Alchourrón et al. 1985) Success Postulate, Levi Identity. 1 source file (`memory_probes.py`), 1 source file (`cognitive_agent.py`), optionally `dreaming.py` Step 7. Build prompt TBD. Issue #169. | High | **Open** |
+| BF-149 | **Seeded recall probe — systems_analyst exception path produces score 0.000.** `systems_analyst` (Lynx) consistently scores 0.000 on `seeded_recall_probe` while 14/15 other agents score 0.667+. Score 0.000 with zero partial credit across 5 questions indicates an unhandled exception in `_send_probe()` → `_make_error_result(score=0.0)` path, not a genuine recall failure. Probable causes: (1) sovereign ID resolution failure for `systems_analyst` slot via `_resolve_probe_agent_id()` (BF-138 may have missed this agent's identity mapping). (2) Exception during `recall_for_agent()` with `systems_analyst`'s sovereign ID. (3) `perceive()` timeout or LLM failure specific to this agent's cognitive configuration. **Fix:** (A) Add structured error field to `QualificationTestResult` — record exception type + message when `_make_error_result()` is called, so `/qualify agent` shows WHY the score is 0.000. (B) Investigate `systems_analyst` identity resolution path — verify `_resolve_probe_agent_id()` correctly resolves this slot to a sovereign ID. (C) Add retry logic to `_send_probe()` for transient failures (1 retry with backoff). 1 source file (`memory_probes.py`), possibly `qualification.py`. Build prompt TBD. Issue #170. | Medium | **Open** |
+| BF-150 | **Cross-agent synthesis probe — architectural conflict with sovereign memory model.** `data_analyst` and `systems_analyst` score 0.333 on `cross_agent_synthesis_probe`, while `research_specialist` scores 0.667. The probe seeds 3 facts across 3 different agents' sovereign memory shards, then asks each agent to synthesize all 3 facts. **Architectural conflict:** `recall_for_agent_scored()` enforces sovereign shard isolation (`if agent_id not in agent_ids: continue`) — agents literally CANNOT see episodes in other agents' shards. Scores above 0.333 are **false positives** from parametric/vocabulary overlap (the LLM's training data mentions correlated concepts). **Fix:** This is a probe design bug, not a system bug — sovereign memory isolation is correct and intended (AD-441). The probe should test actual cross-agent synthesis pathways: (A) Redesign probe to use `OracleService` (AD-462c) which aggregates across all 3 knowledge tiers including cross-shard recall. (B) Or test `SocialMemoryService` (AD-462c) "does anyone remember?" protocol via Ward Room. (C) Add `probe_pathway` field to probe metadata so results clearly indicate which cognitive pathway is being tested. (D) Fix false-positive keyword scoring — `check_faithfulness()` token overlap scores inflated by common domain vocabulary. Add probe-specific stop words. 1 source file (`memory_probes.py`). Build prompt TBD. Issue #171. | Medium | **Open** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).
 
