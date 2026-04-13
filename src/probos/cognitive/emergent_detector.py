@@ -125,6 +125,7 @@ class EmergentDetector:
         cluster_min_avg_weight: float = 0.25,
         cluster_cooldown_seconds: float = 1800.0,
         cluster_activity_window: float = 900.0,  # BF-165: 15 minutes
+        dream_min_history: int = 5,  # BF-166
     ) -> None:
         self._router = hebbian_router
         self._trust = trust_network
@@ -172,7 +173,9 @@ class EmergentDetector:
         self._prev_intent_agent_map: dict[str, set[str]] = {}
 
         # Dream report history for consolidation anomaly baselines
-        self._dream_history: list[dict] = []
+        # BF-166: Bounded ring buffer (matches _history pattern)
+        self._dream_history: collections.deque[dict] = collections.deque(maxlen=max_history)
+        self._dream_min_history = dream_min_history
 
         # Pattern deduplication (AD-411): suppress duplicate patterns within cooldown
         self._pattern_cooldown_seconds: float = 600.0  # 10 minutes default
@@ -184,6 +187,9 @@ class EmergentDetector:
         # BF-126: Post-stasis cooperation cluster suppression — synchronized agent
         # startup creates false positive cooperation clusters
         self._suppress_clusters_until: float = 0.0
+
+        # BF-166: Post-stasis suppression for consolidation anomaly detection
+        self._suppress_dreams_until: float = 0.0
 
         # BF-165: Cognitive activity gate — suppress cluster detection when
         # no Hebbian interactions have occurred within the activity window.
@@ -203,15 +209,19 @@ class EmergentDetector:
         self._pattern_cooldown_seconds = max(0, seconds)
 
     def set_cold_start_suppression(self, duration_seconds: float) -> None:
-        """Suppress trust anomaly and cooperation cluster detection after a cold start.
+        """Suppress trust anomaly, cooperation cluster, and dream consolidation
+        anomaly detection after a cold start.
 
         BF-034: Trust anomalies suppressed since baseline trust (0.5) is expected.
         BF-126: Cooperation clusters suppressed since synchronized agent startup
         creates correlated Hebbian activity that looks like cooperation but is
         just simultaneous initialization. Routing shifts still fire.
+        BF-166: Dream consolidation anomalies suppressed since first post-stasis
+        dream cycles consolidate stale state with no meaningful baseline.
         """
         self._suppress_trust_until = time.monotonic() + duration_seconds
         self._suppress_clusters_until = time.monotonic() + duration_seconds
+        self._suppress_dreams_until = time.monotonic() + duration_seconds
 
     def record_activity(self) -> None:
         """Record that cognitive activity occurred (Hebbian interaction).
@@ -798,6 +808,11 @@ class EmergentDetector:
         now = time.monotonic()
         patterns: list[EmergentPattern] = []
 
+        # BF-166: Suppress during post-stasis window — first dream cycles
+        # consolidate stale state with no meaningful baseline
+        if time.monotonic() < self._suppress_dreams_until:
+            return patterns
+
         if dream_report is None:
             return patterns
 
@@ -818,12 +833,13 @@ class EmergentDetector:
             }
         self._dream_history.append(report_data)
 
-        # Need at least 2 dream reports for baseline
-        if len(self._dream_history) < 2:
+        # BF-166: Require enough dream reports for a meaningful baseline.
+        # With only 1-2 reports, any variance triggers a false 2x anomaly.
+        if len(self._dream_history) < self._dream_min_history:
             return patterns
 
         # Compute historical averages (excluding current)
-        history = self._dream_history[:-1]
+        history = list(self._dream_history)[:-1]
         avg_strengthened = sum(d["weights_strengthened"] for d in history) / len(history)
         avg_pruned = sum(d["weights_pruned"] for d in history) / len(history)
         avg_trust_adj = sum(d["trust_adjustments"] for d in history) / len(history)

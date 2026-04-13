@@ -647,6 +647,7 @@ class EmergentDetectorConfig(BaseModel):
     cluster_min_avg_weight: float = 0.25
     cluster_cooldown_seconds: float = 1800.0
     cluster_activity_window: float = 900.0  # BF-165: seconds without Hebbian interaction before suppressing cluster detection (0 = disabled)
+    dream_min_history: int = 5  # BF-166: minimum dream reports before anomaly detection fires
 
 
 class EarnedAgencyConfig(BaseModel):

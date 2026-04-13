@@ -4089,6 +4089,19 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Prior work:** AD-568a (Oracle gate), AD-462c/e (RecallTier + Oracle Service), AD-425 (Ward Room subscriptions).
 **Issue:** #205.
 
+## BF-166: Consolidation Anomaly False Positives After Stasis (2026-04-13)
+
+**Problem:** `detect_consolidation_anomalies()` fires false positives after stasis recovery. Three defects: (1) minimum history gate of 2 means any variance after 1 report looks like a 2x anomaly, (2) `set_cold_start_suppression()` suppresses trust and clusters but not dream anomalies, (3) `_dream_history` is an unbounded list growing for the process lifetime.
+
+| Decision | Rationale |
+|----------|-----------|
+| Raise min history gate from 2 to configurable `dream_min_history` (default 5) | 5 reports = 4 data points in the historical average, enough to identify genuine 2x deviations vs normal variance. Matches `compute_trends()` philosophy (20+ snapshots) |
+| Add `_suppress_dreams_until` to `set_cold_start_suppression()` | First post-stasis dream cycles consolidate stale state with no meaningful baseline. Same pattern as BF-034 (trust) and BF-126 (clusters) |
+| Replace `list` with `deque(maxlen=max_history)` | Bounded ring buffer matches `_history` pattern. Prevents unbounded memory growth over long uptimes |
+| Slice `list(self._dream_history)[:-1]` for historical average | `deque` doesn't support slicing — explicit `list()` conversion is the minimal fix |
+
+**Prior work:** BF-034 (cold-start trust suppression), BF-126 (post-stasis cluster suppression), BF-165 (cognitive activity gate).
+
 ### BF-164 REJECTED: Oracle Cross-Agent Episodic Recall (2026-04-12)
 
 **Proposed fix:** Pass empty `agent_id` to Oracle for ship-wide authority agents, triggering global `recall()` instead of agent-scoped `recall_weighted()`. Would let the Counselor search ALL agents' episodic shards.

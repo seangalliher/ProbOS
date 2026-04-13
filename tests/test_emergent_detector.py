@@ -419,6 +419,9 @@ class TestConsolidationAnomalies:
         assert patterns == []
 
     def test_normal_dream_report_no_anomalies(self) -> None:
+        # BF-166: With < 5 reports, the min history gate returns early.
+        # This test still passes (no anomaly) — but now because of the gate,
+        # not because the values are normal.
         d = _make_detector()
         report1 = DreamReport(weights_strengthened=5, weights_pruned=3)
         d.detect_consolidation_anomalies(report1)
@@ -428,8 +431,8 @@ class TestConsolidationAnomalies:
 
     def test_high_strengthened_anomaly(self) -> None:
         d = _make_detector()
-        # Build baseline
-        for _ in range(3):
+        # Build baseline — BF-166: need 5 reports for meaningful baseline
+        for _ in range(5):
             d.detect_consolidation_anomalies(
                 DreamReport(weights_strengthened=5, weights_pruned=3)
             )
@@ -442,7 +445,8 @@ class TestConsolidationAnomalies:
 
     def test_high_pruned_anomaly(self) -> None:
         d = _make_detector()
-        for _ in range(3):
+        # BF-166: need 5 reports for meaningful baseline
+        for _ in range(5):
             d.detect_consolidation_anomalies(
                 DreamReport(weights_strengthened=5, weights_pruned=3)
             )
