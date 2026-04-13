@@ -263,6 +263,18 @@ class WardRoomService(EventEmitterMixin):
             return await self._channels.get_channel_by_name(name)
         return None
 
+    async def get_channel_by_department(self, department: str) -> WardRoomChannel | None:
+        """AD-616: Get channel by department (LoD-safe public API)."""
+        if self._channels:
+            return await self._channels.get_channel_by_department(department)
+        return None
+
+    async def get_channel_by_type(self, channel_type: str) -> WardRoomChannel | None:
+        """AD-616: Get channel by type (LoD-safe public API)."""
+        if self._channels:
+            return await self._channels.get_channel_by_type(channel_type)
+        return None
+
     # ------------------------------------------------------------------
     # Thread delegation
     # ------------------------------------------------------------------

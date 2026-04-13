@@ -868,7 +868,7 @@ The OSS capability profile is the **input**. ASA is the **consumer**.
 | Ontology-Based Task Routing | AD-438 | AD-423, AD-428, AD-429 | Already planned |
 | Emergent Leadership Detection | AD-439 | AD-429, Hebbian | Already planned |
 | Chain of Command Delegation | AD-440 | AD-429 | Already planned |
-| Business Process Execution | Future (post-Phase E) | AD-423, AD-496, AD-438 | Multi-step workflows using tools + skills + procedures |
+| Business Process Execution | AD-618 (Bill System) | AD-423, AD-496, AD-438, AD-434 | Multi-agent SOPs with role-based assignment, BPMN-vocabulary decision points, Cognitive JIT bridge. Research: `docs/research/standard-operating-procedures.md` |
 | Personal Ontology (from research) | Future | AD-429 | Agent's self-model of own capabilities |
 | ToolContext scoped view construction | Part of AD-423c | AD-423a/b | Permission-filtered tool view per agent, wired at onboarding |
 | ProcedureStep.required_tools field | Part of AD-423c or AD-539+ | AD-423a, AD-531-539 | Declares which tools each procedure step needs |

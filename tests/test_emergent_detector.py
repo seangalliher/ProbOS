@@ -89,13 +89,17 @@ def _make_detector(
     router = _FakeRouter(weights)
     trust = _FakeTrustNetwork(trust_records)
     kwargs.setdefault("trust_anomaly_min_count", 1)
-    return EmergentDetector(
+    detector = EmergentDetector(
         hebbian_router=router,  # type: ignore[arg-type]
         trust_network=trust,  # type: ignore[arg-type]
         episodic_memory=episodic_memory,
         max_history=max_history,
         **kwargs,
     )
+    # BF-165: Pre-existing tests assume active state — record activity
+    # so the activity gate doesn't suppress cluster detection.
+    detector.record_activity()
+    return detector
 
 
 # ===========================================================================

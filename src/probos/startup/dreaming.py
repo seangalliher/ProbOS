@@ -132,6 +132,7 @@ async def init_dreaming(
         cluster_min_size=_edc.cluster_min_size,
         cluster_min_avg_weight=_edc.cluster_min_avg_weight,
         cluster_cooldown_seconds=_edc.cluster_cooldown_seconds,
+        cluster_activity_window=_edc.cluster_activity_window,
     )
     # Provide live agent roster so detector filters out defunct agents
     refresh_emergent_detector_roster_fn()

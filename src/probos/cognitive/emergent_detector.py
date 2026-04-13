@@ -124,6 +124,7 @@ class EmergentDetector:
         cluster_min_size: int = 3,
         cluster_min_avg_weight: float = 0.25,
         cluster_cooldown_seconds: float = 1800.0,
+        cluster_activity_window: float = 900.0,  # BF-165: 15 minutes
     ) -> None:
         self._router = hebbian_router
         self._trust = trust_network
@@ -184,6 +185,12 @@ class EmergentDetector:
         # startup creates false positive cooperation clusters
         self._suppress_clusters_until: float = 0.0
 
+        # BF-165: Cognitive activity gate — suppress cluster detection when
+        # no Hebbian interactions have occurred within the activity window.
+        # Prevents false positives from stale weights during stasis.
+        self._last_activity_time: float = 0.0
+        self._cluster_activity_window: float = cluster_activity_window
+
         # BF-100: Dream cycle suppression — suppress trust anomalies during dream consolidation
         self._dreaming: bool = False
 
@@ -205,6 +212,16 @@ class EmergentDetector:
         """
         self._suppress_trust_until = time.monotonic() + duration_seconds
         self._suppress_clusters_until = time.monotonic() + duration_seconds
+
+    def record_activity(self) -> None:
+        """Record that cognitive activity occurred (Hebbian interaction).
+
+        BF-165: Called when the Hebbian router records an interaction,
+        signaling that agents are actively processing — cooperation
+        clusters found in this window reflect current behavior, not
+        stale historical weights.
+        """
+        self._last_activity_time = time.monotonic()
 
     def set_dreaming(self, active: bool) -> None:
         """Set dream cycle state. Suppresses trust anomaly detection during dreams.
@@ -372,6 +389,14 @@ class EmergentDetector:
         # creates false positive cooperation clusters
         if time.monotonic() < self._suppress_clusters_until:
             return []
+
+        # BF-165: Skip cluster detection if no cognitive activity within window.
+        # Hebbian weights are persistent — without recent interactions, any
+        # clusters found are stale reruns of historical cooperation patterns.
+        if self._cluster_activity_window > 0:
+            since_activity = time.monotonic() - self._last_activity_time
+            if since_activity > self._cluster_activity_window:
+                return []
 
         # Don't detect cooperation clusters until we have enough data (AD-288)
         if self._episodic_memory:

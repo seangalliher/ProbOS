@@ -87,9 +87,9 @@ class TestLoopPrevention:
         """When author_id == 'captain', routing proceeds (does not return early)."""
         runtime = _make_mock_runtime()
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1"}
-        runtime.ward_room.list_channels = AsyncMock(return_value=[
-            _make_channel("ch1", "ship"),
-        ])
+        channel = _make_channel("ch1", "ship")
+        runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Test", "body": "Hello", "channel_id": "ch1"},
             "posts": [],
@@ -114,6 +114,7 @@ class TestLoopPrevention:
         # BF-156: Thread depth check now runs after channel lookup
         channel = _make_channel("ch1", "ship")
         runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Test", "body": "Hello", "channel_id": "ch1"},
             "posts": [],
@@ -136,9 +137,9 @@ class TestRateLimiting:
         runtime._ward_room_cooldowns["agent-1"] = time.time()  # Just responded
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1"}
-        runtime.ward_room.list_channels = AsyncMock(return_value=[
-            _make_channel("ch1", "ship"),
-        ])
+        channel = _make_channel("ch1", "ship")
+        runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Test", "body": "Hello", "channel_id": "ch1"},
             "posts": [],
@@ -288,6 +289,7 @@ class TestAgentToAgentRouting:
 
         channel = _make_channel("ch1", "ship")
         runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Test", "body": "Hey", "channel_id": "ch1"},
             "posts": [],
@@ -320,6 +322,7 @@ class TestAgentToAgentRouting:
 
         channel = _make_channel("ch1", "ship")
         runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Test", "body": "Hey", "channel_id": "ch1"},
             "posts": [],
@@ -348,6 +351,7 @@ class TestAgentToAgentRouting:
 
         channel = _make_channel("ch-eng", "department", department="engineering")
         runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Eng Status", "body": "Report", "channel_id": "ch-eng"},
             "posts": [],
@@ -388,6 +392,7 @@ class TestAgentToAgentRouting:
 
         channel = _make_channel("ch1", "ship")
         runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Test", "body": "Hello", "channel_id": "ch1"},
             "posts": [],
@@ -420,6 +425,7 @@ class TestThreadDepthTracking:
 
         channel = _make_channel("ch1", "ship")
         runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Test", "body": "Hey", "channel_id": "ch1"},
             "posts": [],
@@ -446,6 +452,7 @@ class TestThreadDepthTracking:
         # BF-156: Thread depth check now runs after channel lookup
         channel = _make_channel("ch1", "ship")
         runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Test", "body": "Hey", "channel_id": "ch1"},
             "posts": [],
@@ -468,6 +475,7 @@ class TestThreadDepthTracking:
 
         channel = _make_channel("ch1", "ship")
         runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Test", "body": "More", "channel_id": "ch1"},
             "posts": [],
@@ -496,6 +504,7 @@ class TestThreadDepthTracking:
 
         channel = _make_channel("ch1", "ship")
         runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Test", "body": "Hey", "channel_id": "ch1"},
             "posts": [],
@@ -533,6 +542,7 @@ class TestRoundParticipation:
 
         channel = _make_channel("ch1", "ship")
         runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Test", "body": "Hey", "channel_id": "ch1"},
             "posts": [],
@@ -564,6 +574,7 @@ class TestRoundParticipation:
 
         channel = _make_channel("ch1", "ship")
         runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Test", "body": "Hey", "channel_id": "ch1"},
             "posts": [],
@@ -681,6 +692,9 @@ def _make_mock_runtime(ward_room=None):
 
     runtime = MagicMock(spec=ProbOSRuntime)
     runtime.ward_room = ward_room or MagicMock()
+    # AD-616: route_event() now calls get_channel() instead of list_channels()
+    if not ward_room:
+        runtime.ward_room.get_channel = AsyncMock(return_value=None)
     # Config mock
     runtime.config = MagicMock()
     runtime.config.ward_room.max_agent_rounds = 3
@@ -757,9 +771,9 @@ class TestThreadModeRouting:
     async def test_inform_thread_no_agent_notification(self):
         """INFORM threads skip agent notification entirely."""
         runtime = _make_mock_runtime()
-        runtime.ward_room.list_channels = AsyncMock(return_value=[
-            _make_channel("ch1", "ship"),
-        ])
+        channel = _make_channel("ch1", "ship")
+        runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Alert", "body": "Status", "channel_id": "ch1",
                        "thread_mode": "inform", "max_responders": 0},
@@ -777,9 +791,9 @@ class TestThreadModeRouting:
     async def test_discuss_thread_notifies_agents(self):
         """DISCUSS threads DO notify agents."""
         runtime = _make_mock_runtime()
-        runtime.ward_room.list_channels = AsyncMock(return_value=[
-            _make_channel("ch1", "ship"),
-        ])
+        channel = _make_channel("ch1", "ship")
+        runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Discussion", "body": "Thoughts?", "channel_id": "ch1",
                        "thread_mode": "discuss", "max_responders": 0},
@@ -818,9 +832,9 @@ class TestThreadModeRouting:
     async def test_action_thread_only_mentions(self):
         """ACTION threads only notify @mentioned agents."""
         runtime = _make_mock_runtime()
-        runtime.ward_room.list_channels = AsyncMock(return_value=[
-            _make_channel("ch1", "ship"),
-        ])
+        channel = _make_channel("ch1", "ship")
+        runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Order", "body": "Do it", "channel_id": "ch1",
                        "thread_mode": "action", "max_responders": 0},
@@ -849,9 +863,9 @@ class TestThreadModeRouting:
     async def test_discuss_responder_cap_applied(self):
         """DISCUSS thread max_responders caps number of agents notified."""
         runtime = _make_mock_runtime()
-        runtime.ward_room.list_channels = AsyncMock(return_value=[
-            _make_channel("ch1", "ship"),
-        ])
+        channel = _make_channel("ch1", "ship")
+        runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
         runtime.ward_room.get_thread = AsyncMock(return_value={
             "thread": {"title": "Capped", "body": "body", "channel_id": "ch1",
                        "thread_mode": "discuss", "max_responders": 2},
@@ -885,9 +899,9 @@ class TestThreadModeRouting:
 
         runtime.ward_room_router.find_targets = tracking_targets
 
-        runtime.ward_room.list_channels = AsyncMock(return_value=[
-            _make_channel("ch1", "ship"),
-        ])
+        channel = _make_channel("ch1", "ship")
+        runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_channel = AsyncMock(return_value=channel)
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
                 "thread_mode": "inform"}

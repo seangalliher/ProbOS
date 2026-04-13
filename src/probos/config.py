@@ -620,6 +620,8 @@ class WardRoomConfig(BaseModel):
     prune_interval_seconds: float = 86400.0    # How often to run pruning (default: daily)
     dm_exchange_limit: int = 6          # AD-614: max posts per agent per DM thread
     dm_similarity_threshold: float = 0.6  # AD-614: Jaccard threshold for DM self-similarity suppression
+    router_concurrency_limit: int = 10     # AD-616: max concurrent route_event() tasks
+    event_coalesce_ms: int = 200           # AD-616: coalesce window for rapid-fire post events (0 = disabled)
 
 
 class AssignmentConfig(BaseModel):
@@ -644,6 +646,7 @@ class EmergentDetectorConfig(BaseModel):
     cluster_min_size: int = 3
     cluster_min_avg_weight: float = 0.25
     cluster_cooldown_seconds: float = 1800.0
+    cluster_activity_window: float = 900.0  # BF-165: seconds without Hebbian interaction before suppressing cluster detection (0 = disabled)
 
 
 class EarnedAgencyConfig(BaseModel):

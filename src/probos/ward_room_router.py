@@ -69,6 +69,8 @@ class WardRoomRouter:
         self._thread_rounds: dict[str, int] = {}  # thread_id -> current agent round count
         self._round_participants: dict[str, set[str]] = {}  # "thread_id:round" -> set of agent_ids
         self._agent_thread_responses: dict[str, int] = {}  # "thread_id:agent_id" -> count
+        self._coalesce_timers: dict[str, asyncio.TimerHandle] = {}  # AD-616: thread_id -> pending timer
+        self._coalesce_ms: int = getattr(config.ward_room, 'event_coalesce_ms', 200)
 
     # ------------------------------------------------------------------
     # Public API
@@ -77,6 +79,42 @@ class WardRoomRouter:
     def get_cooldowns(self) -> dict[str, float]:
         """Return a copy of current agent cooldowns."""
         return dict(self._cooldowns)
+
+    async def route_event_coalesced(self, event_type: str, data: dict[str, Any]) -> None:
+        """AD-616: Coalesce rapid-fire post events per thread.
+
+        Thread creation events and non-post events are routed immediately.
+        Post events are delayed by coalesce_ms — if another post arrives for the
+        same thread within the window, the timer resets and only the latest
+        event is routed.
+        """
+        # Thread creation and non-post events: route immediately
+        if event_type != "ward_room_post_created" or self._coalesce_ms <= 0:
+            await self.route_event(event_type, data)
+            return
+
+        thread_id = data.get("thread_id", "")
+        if not thread_id:
+            await self.route_event(event_type, data)
+            return
+
+        # Cancel any pending timer for this thread
+        existing = self._coalesce_timers.pop(thread_id, None)
+        if existing:
+            existing.cancel()
+
+        # Schedule routing after the coalesce window
+        loop = asyncio.get_running_loop()
+
+        async def _fire() -> None:
+            self._coalesce_timers.pop(thread_id, None)
+            await self.route_event(event_type, data)
+
+        handle = loop.call_later(
+            self._coalesce_ms / 1000.0,
+            lambda: asyncio.create_task(_fire()),
+        )
+        self._coalesce_timers[thread_id] = handle
 
     async def route_event(self, event_type: str, data: dict[str, Any]) -> None:
         """Route Ward Room events to relevant crew agents as intents.
@@ -137,8 +175,7 @@ class WardRoomRouter:
             return
 
         # Find the channel to determine routing scope
-        channels = await self._ward_room.list_channels()
-        channel = next((c for c in channels if c.id == channel_id), None)
+        channel = await self._ward_room.get_channel(channel_id)
         if not channel:
             return
 
@@ -395,8 +432,7 @@ class WardRoomRouter:
                 # Create Recreation channel thread
                 rec_ch = None
                 if self._ward_room:
-                    channels = await self._ward_room.list_channels()
-                    rec_ch = next((c for c in channels if c.name == "Recreation"), None)
+                    rec_ch = await self._ward_room.get_channel_by_name("Recreation")
                 thread_id = ""
                 if rec_ch and self._ward_room:
                     thread = await self._ward_room.create_thread(
@@ -627,12 +663,7 @@ class WardRoomRouter:
             return {"success": False, "error": "Proposal requires a rationale"}
 
         # Find #Improvement Proposals channel
-        channels = await self._ward_room.list_channels()
-        proposals_ch = None
-        for ch in channels:
-            if ch.name == "Improvement Proposals":
-                proposals_ch = ch
-                break
+        proposals_ch = await self._ward_room.get_channel_by_name("Improvement Proposals")
 
         if not proposals_ch:
             return {"success": False, "error": "Improvement Proposals channel not found"}
@@ -735,11 +766,10 @@ class WardRoomRouter:
             return
 
         # Determine target channel
-        channels = await self._ward_room.list_channels()
         if alert.severity == AlertSeverity.INFO and alert.department:
-            channel = next((c for c in channels if c.department == alert.department), None)
+            channel = await self._ward_room.get_channel_by_department(alert.department)
         else:
-            channel = next((c for c in channels if c.channel_type == "ship"), None)
+            channel = await self._ward_room.get_channel_by_type("ship")
 
         if not channel:
             logger.warning("Bridge alert: no suitable channel for %s", alert.alert_type)

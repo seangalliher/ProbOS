@@ -259,3 +259,39 @@ class ChannelManager:
                 department=row[3], created_by=row[4], created_at=row[5],
                 archived=bool(row[6]), description=row[7],
             )
+
+    async def get_channel_by_department(self, department: str) -> WardRoomChannel | None:
+        """AD-616: Get the first channel matching a department."""
+        if not self._db:
+            return None
+        async with self._db.execute(
+            "SELECT id, name, channel_type, department, created_by, created_at, archived, description "
+            "FROM channels WHERE department = ? AND (archived = 0 OR archived IS NULL) LIMIT 1",
+            (department,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            return WardRoomChannel(
+                id=row[0], name=row[1], channel_type=row[2],
+                department=row[3], created_by=row[4], created_at=row[5],
+                archived=bool(row[6]), description=row[7],
+            )
+
+    async def get_channel_by_type(self, channel_type: str) -> WardRoomChannel | None:
+        """AD-616: Get the first channel matching a channel type."""
+        if not self._db:
+            return None
+        async with self._db.execute(
+            "SELECT id, name, channel_type, department, created_by, created_at, archived, description "
+            "FROM channels WHERE channel_type = ? AND (archived = 0 OR archived IS NULL) LIMIT 1",
+            (channel_type,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            return WardRoomChannel(
+                id=row[0], name=row[1], channel_type=row[2],
+                department=row[3], created_by=row[4], created_at=row[5],
+                archived=bool(row[6]), description=row[7],
+            )

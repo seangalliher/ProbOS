@@ -106,11 +106,19 @@ async def init_communication(
         # WardRoomRouter is wired later in finalize phase, so we use getattr guard.
         _ward_room_router_ref: list[Any] = [None]  # mutable ref for closure
 
+        # AD-616: Semaphore bounds concurrent route_event() calls
+        _ward_room_semaphore = asyncio.Semaphore(
+            getattr(config.ward_room, 'router_concurrency_limit', 10)
+        )
+
         def _ward_room_emit(event_type: str, data: dict) -> None:
             emit_event_fn(event_type, data)
             router = _ward_room_router_ref[0]
             if router:
-                asyncio.create_task(router.route_event(event_type, data))
+                async def _bounded_route() -> None:
+                    async with _ward_room_semaphore:
+                        await router.route_event_coalesced(event_type, data)
+                asyncio.create_task(_bounded_route())
 
         ward_room = WardRoomService(
             db_path=str(data_dir / "ward_room.db"),

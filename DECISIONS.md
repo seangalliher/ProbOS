@@ -3613,6 +3613,19 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 | LLM client cache eviction (LRU, max 500 entries) | The `_cache` dict on `OpenAICompatibleClient` grows unbounded — entries are never evicted. Under sustained operation, this is a memory leak. LRU eviction at 500 entries bounds memory usage while preserving the error-recovery fallback. |
 | Config: `LLMRateConfig` with `rpm_fast`, `rpm_standard`, `rpm_deep`, `per_agent_hourly_token_cap` | Rate governance settings grouped in a dedicated config section. Defaults: rpm_fast=60, rpm_standard=30, rpm_deep=15, per_agent_hourly_token_cap=0 (disabled). |
 
+## AD-618: Bill System — Standard Operating Procedures (2026-04-12)
+
+| Decision | Rationale |
+|----------|-----------|
+| Declarative YAML-based multi-agent SOPs called "Bills" (Navy terminology) | ProbOS has Standing Orders (T1, policy) and Cognitive JIT (T3, learned procedures) but no middle layer for authored multi-agent business processes. Bills fill the gap between "who agents are" and "what agents learned" with "how agents work together." Navy Bills are role-based multi-person procedures — atomic, drillable, activatable. |
+| Role-based assignment, not name-based | Any qualified agent can fill any Bill role. Resilience: if Atlas is unavailable, another Science agent with the right qualifications fills the role. Learning: agents build proficiency by practicing different roles. Matches Navy WQSB pattern. |
+| Reference, not engine — agents consult Bills with judgment | Bills are reference documents, not execution scripts. Agents follow the Bill; they aren't puppeted by a state machine. This preserves agent sovereignty and enables adaptive behavior within the procedure framework. No BPEL-style process engine. |
+| BPMN vocabulary absorbed (gateways, lanes, pools) but not BPMN XML or engine | BPMN provides a mature vocabulary for multi-participant processes. ProbOS absorbs the concepts (XOR/AND/OR gateways, lanes as roles, pools as instances) but uses YAML, not XML. No process engine — agents have judgment. |
+| Procedure IS documentation — YAML file = human-readable + machine-parseable | In enterprise BPM, process models and documentation drift apart. In ProbOS, the Bill YAML file IS both. No separate diagram that gets out of sync. Mirrors Navy MRC model — the card itself is both procedure and record. |
+| Successful Bill executions feed Cognitive JIT (T3 compilation) | SOPs are immediately useful (day one) AND self-improving. Through Cognitive JIT (AD-531–539), repeated SOP role executions compile into T3 executable skills — agents get faster at following procedures through practice, graduating to zero-token replay at L4+. |
+| 5 sub-ADs: AD-618a (schema+parser), AD-618b (instance+runtime), AD-618c (built-in Bills), AD-618d (HXI dashboard), AD-618e (Cognitive JIT bridge) | Clean decomposition respecting dependencies. AD-618a/c can be built independently. AD-618b needs AD-429 (Role Ontology) and AD-566 (Qualifications) for full role assignment. AD-618e needs AD-531–539 (complete). |
+| OSS: framework, runtime, built-in Bills, HXI dashboard. Commercial: SOP marketplace, visual designer, enterprise governance, process mining, M365 integration | Standard boundary rule — "how it works" → OSS; "how it makes money" → commercial. The Bill System itself is OSS. Productized tooling around it is commercial. |
+
 ## AD-614: DM Conversation Termination (2026-04-12)
 
 | Decision | Rationale |
@@ -4019,3 +4032,35 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Prior work:** AD-453 (DM extraction), BF-066 (DM stripping from public posts), AD-523a (DM channel viewer, BF-080), BF-156/157 (DM delivery + @mention guarantee).
 
 **Issues:** #193 (AD-612).
+## AD-616: Ward Room Router Hot Path Optimization (2026-04-12)
+
+**Problem:** Three router hot path inefficiencies exposed by the 8,448-DM flood:
+1. `route_event()` calls `list_channels()` 4 times — each a full DB query — when `ChannelManager` already has an in-memory cache.
+2. `asyncio.create_task(router.route_event())` in `communication.py` is fire-and-forget with zero backpressure — under flood, creates thousands of concurrent tasks.
+3. Backend fires events synchronously on every post; AD-613 added 300ms frontend debouncing but no backend coalescing.
+
+| Decision | Rationale |
+|----------|-----------|
+| Replace all `list_channels()` calls with targeted lookups (`get_channel()`, `get_channel_by_name()`, `get_channel_by_department()`, `get_channel_by_type()`) | Single-row indexed queries vs full-table scan + linear search. Added `get_channel_by_department()` and `get_channel_by_type()` to ChannelManager and WardRoomService |
+| `asyncio.Semaphore` wrapping `route_event()` dispatch (default 10) | Cooperative backpressure — excess events queue in semaphore rather than stampeding as unbounded concurrent tasks |
+| Per-thread event coalescing with 200ms window for `ward_room_post_created` events | Timer-reset pattern — subsequent posts in same thread cancel pending timer, only last event routes. `ward_room_thread_created` events bypass coalescing (immediate delivery) |
+| Config fields `router_concurrency_limit` and `event_coalesce_ms` in `WardRoomConfig` | Tunable without code changes; defaults match observed good behavior |
+
+**Prior work:** AD-613 (frontend debouncing — complementary), AD-614 (DM conversation termination — the incident), AD-615 (WAL mode — complementary infrastructure).
+
+**Issues:** #200 (AD-616).
+
+## BF-165: Cooperation Cluster False Positives During Stasis (2026-04-12)
+
+**Problem:** `detect_cooperation_clusters()` reads persistent Hebbian weights and fires alerts every cooldown expiry (1800s) during zero cognitive activity (stasis). BF-126's time-bounded post-stasis suppression (300s) expires while stasis continues — after 5 minutes, detection resumes against stale weights. Chapel's 14-day forensic investigation documented mechanically-timed false positive alerts.
+
+**Root cause:** Detector conflates "what cooperated historically" (persistent weights) with "what is cooperating now" (active behavior). No mechanism checks whether any cognitive activity has occurred since last detection pass.
+
+| Decision | Rationale |
+|----------|-----------|
+| Cognitive activity gate: `record_activity()` called from runtime on `record_interaction()`, cluster detection checks window | Duration-independent — unlike BF-126's time-bounded approach, activity gating works regardless of stasis length |
+| Signal from `runtime.py` call site, not HebbianRouter internals | HebbianRouter is a core consensus module — adding timestamp state there is invasive. The activity signal flows outward from the call site |
+| `cluster_activity_window` config (default 900s, 0 = disabled) | Tunable; backward compatible (0 disables gate, preserving pre-BF-165 behavior) |
+| Global activity gate, not per-agent tracking | Simple global gate is sufficient — if any agent is active, detection is valid. Per-agent adds computational overhead during normal operations for marginal benefit |
+
+**Prior work:** BF-126 (post-stasis cluster suppression — time-bounded), BF-124 (cluster calibration thresholds), AD-411 (pattern deduplication).

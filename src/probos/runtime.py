@@ -1529,6 +1529,10 @@ class ProbOSRuntime:
                 "rel_type": "intent",
             })
 
+        # BF-165: Signal cognitive activity to emergent detector
+        if self._emergent_detector:
+            self._emergent_detector.record_activity()
+
         await self.event_log.log(
             category="mesh",
             event="intent_resolved",
@@ -1588,6 +1592,10 @@ class ProbOSRuntime:
                 "weight": format_trust(self.hebbian_router.get_weight(intent, result.agent_id)),
                 "rel_type": "intent",
             })
+
+        # BF-165: Signal cognitive activity to emergent detector
+        if self._emergent_detector:
+            self._emergent_detector.record_activity()
 
         # Step 2: Evaluate quorum
         consensus = self.quorum_engine.evaluate(results, policy=policy)
