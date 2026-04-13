@@ -4137,3 +4137,22 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Design document:** `docs/research/clearance-system-design.md`
 **Build order:** AD-620 (foundation) → AD-621 (channel visibility) + AD-622 (grants) in parallel.
 
+## AD-617: LLM Rate Governance (2026-04-13)
+
+**Problem:** BF-163 DM flood incident (8,448 DMs in 90 minutes) exposed zero LLM call governance. Agent-to-agent feedback loops generated up to 101K LLM proxy requests. HTTP 500 errors were literally the only rate limiter. `_cache` dict grew unbounded (memory leak). No 429 backoff, no RPM limits, no concurrency caps on the `.complete()` path.
+
+**Decision:** Four-part rate governance at the LLM client level (defense in depth with AD-616 event dispatch semaphore and BF-163 DM send cooldown):
+
+| Decision | Rationale |
+|----------|-----------|
+| Part A: Token bucket rate limiter per tier | Sliding window RPM counting via `deque[float]` per tier (fast=60, standard=30, deep=15 RPM). Backpressure: sleep until slot opens (up to `max_wait_seconds`). Budget exhausted returns cached response or error |
+| Part B: HTTP 429 exponential backoff | Inner retry loop (max 5 retries per tier) with `Retry-After` header respect. Without header: `min(2^n, 8.0)` backoff. 429 not counted as tier failure — temporary backpressure, not endpoint down |
+| Part C: LRU cache eviction | `OrderedDict` with `move_to_end()` + `popitem(last=False)`. Default 500 entries. Fixes unbounded `dict` memory leak |
+| Part D: LLMRateConfig | Pydantic model in SystemConfig. Configurable RPM per tier + max wait + cache max entries. Constructor injection via `rate_config` parameter |
+| Inner retry loop for 429 (not `continue` on outer `for`) | Build prompt used `continue` on `for attempt_tier in fallback_tiers:` which advances to next tier. Fixed: inner `for _429_attempt in range(5)` loop, `continue` retries same tier, `break` falls through to next tier |
+| Per-agent token budget deferred to AD-617b | Enforcement requires intercepting 30+ `.complete()` call sites or adding `agent_id` to `LLMRequest`. Requires schema change + Cognitive Journal completeness work |
+
+**Files modified:** `llm_client.py` (token bucket, 429 backoff, LRU cache, rate_config), `config.py` (LLMRateConfig + SystemConfig.llm_rate), `__main__.py` (wire rate_config to constructor).
+**Files created:** `tests/test_ad617_llm_rate_governance.py` (13 tests across 4 classes).
+**Issues:** #201 (AD-617).
+

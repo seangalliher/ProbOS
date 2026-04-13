@@ -183,7 +183,7 @@ async def _ensure_ollama(config, console: Console) -> None:
 async def _create_llm_client(config, console: Console):
     """Create an LLM client from config, falling back to MockLLMClient."""
     cog = config.cognitive
-    client = OpenAICompatibleClient(config=cog)
+    client = OpenAICompatibleClient(config=cog, rate_config=config.llm_rate)
 
     console.print("  Checking LLM endpoints...")
     connectivity = await client.check_connectivity()

@@ -252,6 +252,21 @@ class CognitiveConfig(BaseModel):
         }
 
 
+class LLMRateConfig(BaseModel):
+    """AD-617: LLM call rate governance configuration."""
+
+    # Per-tier requests per minute (0 = disabled)
+    rpm_fast: int = 60
+    rpm_standard: int = 30
+    rpm_deep: int = 15
+
+    # Max seconds to wait for a rate limit slot before returning error
+    max_wait_seconds: float = 30.0
+
+    # Max LLM response cache entries (LRU eviction)
+    cache_max_entries: int = 500
+
+
 class MemoryConfig(BaseModel):
     """Episodic memory configuration."""
 
@@ -941,6 +956,7 @@ class SystemConfig(BaseModel):
     working_memory: WorkingMemoryConfig = WorkingMemoryConfig()
     source_tracing: SourceTracingConfig = SourceTracingConfig()
     observable_state: ObservableStateConfig = ObservableStateConfig()
+    llm_rate: LLMRateConfig = LLMRateConfig()  # AD-617
 
 
 def load_config(path: str | Path) -> SystemConfig:

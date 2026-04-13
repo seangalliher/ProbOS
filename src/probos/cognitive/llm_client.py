@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import time
 from abc import ABC, abstractmethod
+from collections import OrderedDict, deque
 from typing import Any
 
 import httpx
@@ -63,6 +65,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         timeout: float = 30.0,
         default_tier: str = "standard",
         config: Any = None,  # CognitiveConfig — optional, overrides all above
+        rate_config: Any = None,  # AD-617: LLMRateConfig — optional
     ) -> None:
         from probos.config import CognitiveConfig
 
@@ -120,7 +123,8 @@ class OpenAICompatibleClient(BaseLLMClient):
                 )
 
         # Simple response cache keyed by (tier, prompt_hash)
-        self._cache: dict[str, LLMResponse] = {}
+        self._cache: OrderedDict[str, LLMResponse] = OrderedDict()  # AD-617: LRU eviction
+        self._cache_max_entries: int = 500  # AD-617: default, overridden by rate_config
 
         # BF-069: Per-tier failure tracking for health monitoring
         self._consecutive_failures: dict[str, int] = {t: 0 for t in ("fast", "standard", "deep")}
@@ -129,6 +133,19 @@ class OpenAICompatibleClient(BaseLLMClient):
 
         # Ollama keep_alive to prevent model unloading during idle periods
         self._ollama_keep_alive: str = getattr(self._config, "ollama_keep_alive", "30m")
+
+        # AD-617: Rate governance config
+        self._rate_config = rate_config
+        if rate_config and hasattr(rate_config, 'cache_max_entries'):
+            self._cache_max_entries = rate_config.cache_max_entries
+
+        # AD-617: Per-tier token bucket rate limiting
+        self._request_timestamps: dict[str, deque[float]] = {
+            t: deque() for t in ("fast", "standard", "deep")
+        }
+
+        # AD-617: Per-tier 429 consecutive counter for exponential backoff
+        self._consecutive_429s: dict[str, int] = {t: 0 for t in ("fast", "standard", "deep")}
 
     # Backward-compat properties
     @property
@@ -157,6 +174,50 @@ class OpenAICompatibleClient(BaseLLMClient):
 
     def _cache_key(self, tier: str, prompt: str) -> str:
         return f"{tier}:{hash(prompt)}"
+
+    async def _wait_for_rate_limit(self, tier: str, rpm_limits: dict[str, int], max_wait: float = 30.0) -> bool:
+        """AD-617: Token bucket rate limiter. Returns True if allowed, False if budget exhausted.
+
+        Sliding window: count requests in the last 60 seconds.
+        If at capacity, sleep until a slot opens (up to max_wait seconds).
+        """
+        limit = rpm_limits.get(tier, 60)
+        if limit <= 0:
+            return True  # Disabled
+
+        timestamps = self._request_timestamps[tier]
+        now = time.monotonic()
+
+        # Evict expired entries (older than 60s)
+        while timestamps and now - timestamps[0] > 60.0:
+            timestamps.popleft()
+
+        if len(timestamps) < limit:
+            timestamps.append(now)
+            return True
+
+        # At capacity — compute wait time
+        wait_until = timestamps[0] + 60.0
+        wait_seconds = wait_until - now
+
+        if wait_seconds > max_wait:
+            logger.warning(
+                "LLM rate limit exceeded (tier=%s, rpm=%d, wait=%.1fs > max=%.1fs)",
+                tier, limit, wait_seconds, max_wait,
+            )
+            return False
+
+        logger.info(
+            "LLM rate limit backpressure: waiting %.1fs (tier=%s, rpm=%d)",
+            wait_seconds, tier, limit,
+        )
+        await asyncio.sleep(wait_seconds)
+        # Re-evict and add
+        now = time.monotonic()
+        while timestamps and now - timestamps[0] > 60.0:
+            timestamps.popleft()
+        timestamps.append(now)
+        return True
 
     async def check_connectivity(self) -> dict[str, bool]:
         """Check connectivity for each tier independently.
@@ -228,6 +289,29 @@ class OpenAICompatibleClient(BaseLLMClient):
         Tier fallback: fast → standard → deep.
         """
         tier = request.tier or self.default_tier
+
+        # AD-617: Rate limit check before dispatch
+        if hasattr(self, '_rate_config') and self._rate_config:
+            rpm_limits = {
+                "fast": self._rate_config.rpm_fast,
+                "standard": self._rate_config.rpm_standard,
+                "deep": self._rate_config.rpm_deep,
+            }
+            if not await self._wait_for_rate_limit(tier, rpm_limits, self._rate_config.max_wait_seconds):
+                # Budget exhausted — try cache, then return error
+                cache_key = self._cache_key(tier, request.prompt)
+                if cache_key in self._cache:
+                    cached = self._cache[cache_key]
+                    return LLMResponse(
+                        content=cached.content, model=cached.model, tier=tier,
+                        tokens_used=cached.tokens_used, cached=True, request_id=request.id,
+                    )
+                return LLMResponse(
+                    content="", model="", tier=tier,
+                    error=f"LLM rate limit exceeded for tier {tier}",
+                    request_id=request.id,
+                )
+
         # Build fallback chain: requested tier first, then others in order
         _TIER_ORDER = ["fast", "standard", "deep"]
         fallback_tiers = [tier] + [t for t in _TIER_ORDER if t != tier]
@@ -253,48 +337,84 @@ class OpenAICompatibleClient(BaseLLMClient):
             if effective_top_p is None and tc.get("top_p") is not None:
                 effective_top_p = tc["top_p"]
 
-            try:
-                response = await self._call_api(
-                    request, model, client, api_format=api_format,
-                    timeout=tier_timeout,
-                    effective_temp=effective_temp,
-                    effective_top_p=effective_top_p,
-                )
-                # Cache successful responses (keyed by original tier)
-                cache_key = self._cache_key(tier, request.prompt)
-                self._cache[cache_key] = response
-                # BF-069: Reset failure counter on successful completion
-                self._consecutive_failures[attempt_tier] = 0
-                self._last_success[attempt_tier] = time.monotonic()
-                if attempt_tier != tier:
-                    logger.info(
-                        "LLM tier fallback: %s → %s (model=%s)",
-                        tier, attempt_tier, model,
+            # AD-617: Inner retry loop for 429 backpressure (stays on same tier)
+            _max_429_retries = 5
+            for _429_attempt in range(_max_429_retries):
+                try:
+                    response = await self._call_api(
+                        request, model, client, api_format=api_format,
+                        timeout=tier_timeout,
+                        effective_temp=effective_temp,
+                        effective_top_p=effective_top_p,
                     )
-                return response
-            except httpx.ConnectError:
-                last_error = f"LLM endpoint unreachable at {tc['base_url']}"
-                logger.warning("%s (tier=%s)", last_error, attempt_tier)
-                self._consecutive_failures[attempt_tier] += 1
-                self._last_failure[attempt_tier] = time.monotonic()
-            except httpx.TimeoutException:
-                last_error = f"LLM request timed out after {tc['timeout']:.0f}s"
-                logger.warning("%s (model=%s, tier=%s)", last_error, model, attempt_tier)
-                self._consecutive_failures[attempt_tier] += 1
-                self._last_failure[attempt_tier] = time.monotonic()
-            except httpx.HTTPStatusError as e:
-                last_error = f"LLM endpoint returned HTTP {e.response.status_code}"
-                logger.warning(
-                    "LLM endpoint returned HTTP %d (tier=%s): %s",
-                    e.response.status_code, attempt_tier, e.response.text[:200],
-                )
-                self._consecutive_failures[attempt_tier] += 1
-                self._last_failure[attempt_tier] = time.monotonic()
-            except Exception as e:
-                last_error = f"{type(e).__name__}: {e}"
-                logger.warning("LLM call failed (tier=%s): %s", attempt_tier, last_error)
-                self._consecutive_failures[attempt_tier] += 1
-                self._last_failure[attempt_tier] = time.monotonic()
+                    # Cache successful responses (keyed by original tier)
+                    cache_key = self._cache_key(tier, request.prompt)
+                    self._cache[cache_key] = response
+                    self._cache.move_to_end(cache_key)  # AD-617: LRU — most recent to end
+                    # AD-617: Evict oldest if over limit
+                    if hasattr(self, '_cache_max_entries'):
+                        while len(self._cache) > self._cache_max_entries:
+                            self._cache.popitem(last=False)
+                    # BF-069: Reset failure counter on successful completion
+                    self._consecutive_failures[attempt_tier] = 0
+                    self._consecutive_429s[attempt_tier] = 0  # AD-617: Reset 429 backoff
+                    self._last_success[attempt_tier] = time.monotonic()
+                    if attempt_tier != tier:
+                        logger.info(
+                            "LLM tier fallback: %s → %s (model=%s)",
+                            tier, attempt_tier, model,
+                        )
+                    return response
+                except httpx.ConnectError:
+                    last_error = f"LLM endpoint unreachable at {tc['base_url']}"
+                    logger.warning("%s (tier=%s)", last_error, attempt_tier)
+                    self._consecutive_failures[attempt_tier] += 1
+                    self._last_failure[attempt_tier] = time.monotonic()
+                    break  # Move to next tier
+                except httpx.TimeoutException:
+                    last_error = f"LLM request timed out after {tc['timeout']:.0f}s"
+                    logger.warning("%s (model=%s, tier=%s)", last_error, model, attempt_tier)
+                    self._consecutive_failures[attempt_tier] += 1
+                    self._last_failure[attempt_tier] = time.monotonic()
+                    break  # Move to next tier
+                except httpx.HTTPStatusError as e:
+                    status_code = e.response.status_code
+                    if status_code == 429:
+                        # AD-617: Specific 429 handling with exponential backoff
+                        retry_after = e.response.headers.get("Retry-After")
+                        if retry_after:
+                            try:
+                                wait = float(retry_after)
+                            except ValueError:
+                                wait = 2.0
+                        else:
+                            # Exponential backoff: track consecutive 429s per tier
+                            c429 = self._consecutive_429s.get(attempt_tier, 0) + 1
+                            self._consecutive_429s[attempt_tier] = c429
+                            wait = min(2 ** c429, 8.0)  # 2s, 4s, 8s, cap at 8
+
+                        logger.warning(
+                            "LLM endpoint returned 429 (tier=%s, wait=%.1fs, retry_after=%s)",
+                            attempt_tier, wait, retry_after,
+                        )
+                        await asyncio.sleep(wait)
+                        # Don't count 429 as a tier failure — retry same tier
+                        continue
+                    else:
+                        last_error = f"LLM endpoint returned HTTP {status_code}"
+                        logger.warning(
+                            "LLM endpoint returned HTTP %d (tier=%s): %s",
+                            status_code, attempt_tier, e.response.text[:200],
+                        )
+                        self._consecutive_failures[attempt_tier] += 1
+                        self._last_failure[attempt_tier] = time.monotonic()
+                        break  # Move to next tier
+                except Exception as e:
+                    last_error = f"{type(e).__name__}: {e}"
+                    logger.warning("LLM call failed (tier=%s): %s", attempt_tier, last_error)
+                    self._consecutive_failures[attempt_tier] += 1
+                    self._last_failure[attempt_tier] = time.monotonic()
+                    break  # Move to next tier
 
         # Try cache (keyed by original tier)
         cache_key = self._cache_key(tier, request.prompt)
