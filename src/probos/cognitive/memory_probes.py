@@ -11,6 +11,7 @@ All probes implement the ``QualificationTest`` protocol from
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 # BF-143: Temporal prefix words that appear in all episodes after adding
 # "During first/second watch:" prefixes. These are structural, not distinctive,
 # and must be excluded from cross-watch keyword matching.
-_PROBE_STOP_WORDS = _STOP_WORDS | frozenset({"during", "first", "second", "watch"})
+_PROBE_STOP_WORDS = _STOP_WORDS | frozenset({"during", "first", "second", "watch", "dog"})
 
 
 # ---------------------------------------------------------------------------
@@ -224,17 +225,27 @@ def _make_error_result(
 
 
 # Five distinct facts for seeded recall — each episode contains one fact.
+# BF-151: Each entry is (fact, question, key_values).
+# key_values are distinctive substrings whose presence in the response
+# indicates the agent recalled the seeded fact, regardless of response
+# format (plain text, JSON, markdown).  Added because check_faithfulness()
+# token-overlap scoring produces false-zero on JSON-wrapped responses.
 _RECALL_FACTS = [
     ("The pool health threshold was set to 0.7 during this session",
-     "What pool health threshold was configured?"),
+     "What pool health threshold was configured? State the specific value from your ship memory.",
+     ["0.7"]),
     ("The Science department identified a trust anomaly at 14:32",
-     "When did the Science department identify a trust anomaly?"),
+     "When did the Science department identify a trust anomaly? State the specific value from your ship memory.",
+     ["14:32"]),
     ("Engineering recommended a cooldown period of 45 minutes for failing agents",
-     "What cooldown period did Engineering recommend for failing agents?"),
+     "What cooldown period did Engineering recommend for failing agents? State the specific value from your ship memory.",
+     ["45 minutes", "45"]),
     ("The Hebbian weight between analyst and engineer reached 0.92",
-     "What was the Hebbian weight between analyst and engineer?"),
+     "What was the Hebbian weight between analyst and engineer? State the specific value from your ship memory.",
+     ["0.92"]),
     ("Three convergence events were detected in the second watch",
-     "How many convergence events were detected in the second watch?"),
+     "How many convergence events were detected in the second watch? State the specific value from your ship memory.",
+     ["three", "3"]),
 ]
 
 
@@ -276,14 +287,24 @@ class SeededRecallProbe:
                 agent_ids=[sovereign_id],
                 timestamp=base_ts + i * 60,
             )
-            for i, (fact, _) in enumerate(_RECALL_FACTS)
+            for i, (fact, _, _kv) in enumerate(_RECALL_FACTS)
         ]
 
         seeded_ids = await _seed_test_episodes(runtime.episodic_memory, episodes)
         try:
-            per_question: list[dict] = []
-            for i, (fact, question) in enumerate(_RECALL_FACTS):
+            # BF-154b: Run all 5 questions in parallel. Sequential execution
+            # (5 × _send_probe + 5 × _llm_extract_float = 10+ LLM calls)
+            # averaged 38s with max 59s, causing 10% timeout rate at 60s limit.
+            async def _probe_question(i: int, fact: str, question: str, key_values: list) -> dict:
                 response_text = await _send_probe(agent, question)
+                # BF-149: retry once on empty response (transient LLM failure)
+                if not response_text.strip():
+                    logger.warning(
+                        "BF-149: empty _send_probe response for %s on q%d, retrying in 2s",
+                        agent_id, i,
+                    )
+                    await asyncio.sleep(2)
+                    response_text = await _send_probe(agent, question)
 
                 # Faithfulness score
                 faith = check_faithfulness(
@@ -293,8 +314,12 @@ class SeededRecallProbe:
                 score = faith.score
                 faithfulness_score = faith.score  # BF-142: preserve for diagnostics
 
+                # BF-151: Keyword value check — format-agnostic substring match.
+                resp_lower = response_text.lower()
+                keyword_hit = any(kv.lower() in resp_lower for kv in key_values)
+                keyword_score = 1.0 if keyword_hit else 0.0
+
                 # BF-142: LLM scorer — use max(heuristic, LLM).
-                # Consistent with TemporalReasoningProbe fix.
                 llm_score_raw = None
                 if getattr(runtime, "llm_client", None):
                     llm_score_raw = await _llm_extract_float(
@@ -306,15 +331,33 @@ class SeededRecallProbe:
                     if llm_score_raw is not None:
                         score = max(score, llm_score_raw)
 
-                per_question.append({
+                # BF-151: Use max of all three scoring signals
+                score = max(score, keyword_score)
+
+                return {
                     "episode_id": episodes[i].id,
                     "question": question,
                     "expected_fact": fact,
                     "response_summary": response_text[:200],
                     "faithfulness_score": faithfulness_score,
+                    "keyword_hit": keyword_hit,  # BF-151: diagnostic
                     "llm_score": llm_score_raw,
                     "score": score,
-                })
+                    "empty_response": not response_text.strip(),  # BF-149
+                }
+
+            results = await asyncio.gather(
+                *[_probe_question(i, fact, question, key_values)
+                  for i, (fact, question, key_values) in enumerate(_RECALL_FACTS)],
+                return_exceptions=True,
+            )
+            per_question: list[dict] = []
+            for r in results:
+                if isinstance(r, BaseException):
+                    logger.warning("BF-154b: seeded_recall question failed: %s", r)
+                    per_question.append({"score": 0.0, "error": str(r)})
+                else:
+                    per_question.append(r)
 
             final_score = sum(q["score"] for q in per_question) / len(per_question) if per_question else 0.0
 
@@ -329,6 +372,7 @@ class SeededRecallProbe:
                 details={
                     "episodes_seeded": len(seeded_ids),
                     "per_question": per_question,
+                    "empty_responses": sum(1 for q in per_question if q.get("empty_response")),  # BF-149
                 },
             )
         finally:
@@ -339,6 +383,9 @@ class SeededRecallProbe:
 # Probe 2: KnowledgeUpdateProbe (AD-582b)
 # ---------------------------------------------------------------------------
 
+# BF-151b: Added new_aliases/old_aliases for format-agnostic value detection.
+# Aliases must be mutually exclusive between old and new to preserve the
+# recency-preference discriminator.  Also added question nudge.
 _UPDATE_PAIRS = [
     {
         "topic": "pool_health_threshold",
@@ -346,7 +393,9 @@ _UPDATE_PAIRS = [
         "new": "Pool health threshold was updated to 0.5",
         "old_value": "0.3",
         "new_value": "0.5",
-        "question": "What is the current pool health threshold?",
+        "old_aliases": ["0.3", "point three"],
+        "new_aliases": ["0.5", "point five"],
+        "question": "What is the current pool health threshold? State the exact numeric value from your ship memory.",
     },
     {
         "topic": "cooldown_duration",
@@ -354,7 +403,9 @@ _UPDATE_PAIRS = [
         "new": "Agent cooldown has been changed to 60 minutes",
         "old_value": "30",
         "new_value": "60",
-        "question": "What is the current agent cooldown duration?",
+        "old_aliases": ["30", "30 minutes", "thirty minutes", "30 min"],
+        "new_aliases": ["60", "60 minutes", "sixty minutes", "60 min", "1 hour", "one hour"],
+        "question": "What is the current agent cooldown duration? State the exact numeric value from your ship memory.",
     },
 ]
 
@@ -389,20 +440,30 @@ class KnowledgeUpdateProbe:
 
         sovereign_id = _resolve_probe_agent_id(agent_id, runtime)
         cs = _resolve_callsign(agent, runtime)
+        # BF-148: Both pairs placed in the past with clear temporal separation.
+        # Old episode: 2h - (i*10min) ago. New episode: 1h - (i*10min) ago.
         base_ts = time.time() - 7200  # 2 hours ago
         all_episodes: list[Episode] = []
         for i, pair in enumerate(_UPDATE_PAIRS):
+            old_ts = base_ts + i * 600          # pair 0: -7200, pair 1: -6600
+            new_ts = base_ts + 3600 + i * 600   # pair 0: -3600, pair 1: -3000
             old_ep = _make_test_episode(
                 episode_id=f"_qtest_update_old_{i}",
-                user_input=_ward_room_content(pair["old"], callsign=cs),
+                user_input=_ward_room_content(
+                    f"[Earlier observation] {pair['old']}",  # BF-148: temporal marker
+                    callsign=cs,
+                ),
                 agent_ids=[sovereign_id],
-                timestamp=base_ts + i * 7200,
+                timestamp=old_ts,
             )
             new_ep = _make_test_episode(
                 episode_id=f"_qtest_update_new_{i}",
-                user_input=_ward_room_content(pair["new"], callsign=cs),
+                user_input=_ward_room_content(
+                    f"[Updated observation] {pair['new']}",  # BF-148: temporal marker
+                    callsign=cs,
+                ),
                 agent_ids=[sovereign_id],
-                timestamp=base_ts + i * 7200 + 3600,
+                timestamp=new_ts,
             )
             all_episodes.extend([old_ep, new_ep])
 
@@ -411,10 +472,22 @@ class KnowledgeUpdateProbe:
             per_pair: list[dict] = []
             for i, pair in enumerate(_UPDATE_PAIRS):
                 response_text = await _send_probe(agent, pair["question"])
+                # BF-149: retry once on empty response (transient LLM failure)
+                if not response_text.strip():
+                    logger.warning(
+                        "BF-149: empty _send_probe response for %s on pair %d, retrying in 2s",
+                        agent_id, i,
+                    )
+                    await asyncio.sleep(2)
+                    response_text = await _send_probe(agent, pair["question"])
                 resp_lower = response_text.lower()
 
-                has_new = pair["new_value"] in resp_lower
-                has_old = pair["old_value"] in resp_lower
+                # BF-151b: Use alias lists for format-agnostic value detection.
+                # Falls back to original old_value/new_value if aliases not present.
+                _new_aliases = pair.get("new_aliases", [pair["new_value"]])
+                _old_aliases = pair.get("old_aliases", [pair["old_value"]])
+                has_new = any(alias.lower() in resp_lower for alias in _new_aliases)
+                has_old = any(alias.lower() in resp_lower for alias in _old_aliases)
 
                 if has_new and not has_old:
                     score = 1.0
@@ -446,6 +519,7 @@ class KnowledgeUpdateProbe:
                     "response_summary": response_text[:200],
                     "used_latest": used_latest,
                     "score": score,
+                    "empty_response": not response_text.strip(),  # BF-149
                 })
 
             final_score = sum(p["score"] for p in per_pair) / len(per_pair) if per_pair else 0.0
@@ -476,15 +550,20 @@ _TEMPORAL_EPISODES = [
     # BF-143: "During first watch:" prefix creates semantic bridge between
     # probe question ("What happened during first watch?") and episode content.
     # Without this prefix, cosine similarity is ~0.15 and real memories dominate top-k.
+    # BF-152: key_values added for keyword-based scoring (same pattern as BF-151).
     {"content": "During first watch: Pool health dropped to 45% during the monitoring sweep",
-     "watch": "first_watch", "offset": 0},
+     "watch": "first", "offset": 0,
+     "key_values": ["45%", "pool health", "monitoring sweep"]},       # BF-147: was "first_watch"
     {"content": "During first watch: Engineering rerouted 3 workers to handle increased load",
-     "watch": "first_watch", "offset": 600},
-    # Second watch — diplomatic/scientific topics (BF-142: domain-specific vocab)
-    {"content": "During second watch: Subspace anomaly detected at bearing 127 mark 4",
-     "watch": "second_watch", "offset": 7200},
-    {"content": "During second watch: Diplomatic envoy requested priority docking clearance",
-     "watch": "second_watch", "offset": 7800},
+     "watch": "first", "offset": 600,
+     "key_values": ["rerouted", "3 workers", "increased load"]},      # BF-147: was "first_watch"
+    # Second dog watch — diplomatic/scientific topics (BF-142: domain-specific vocab)
+    {"content": "During second dog watch: Subspace anomaly detected at bearing 127 mark 4",
+     "watch": "second_dog", "offset": 7200,
+     "key_values": ["subspace anomaly", "bearing 127", "127 mark 4"]},  # BF-147: was "second_watch"
+    {"content": "During second dog watch: Diplomatic envoy requested priority docking clearance",
+     "watch": "second_dog", "offset": 7800,
+     "key_values": ["diplomatic envoy", "docking clearance", "priority docking"]},  # BF-147: was "second_watch"
 ]
 
 
@@ -531,19 +610,34 @@ class TemporalReasoningProbe:
 
         seeded_ids = await _seed_test_episodes(runtime.episodic_memory, episodes)
         try:
-            first_watch_content = [te["content"] for te in _TEMPORAL_EPISODES if te["watch"] == "first_watch"]
-            second_watch_content = [te["content"] for te in _TEMPORAL_EPISODES if te["watch"] == "second_watch"]
+            first_watch_content = [te["content"] for te in _TEMPORAL_EPISODES if te["watch"] == "first"]
+            second_watch_content = [te["content"] for te in _TEMPORAL_EPISODES if te["watch"] == "second_dog"]
+            # BF-152: key_values per watch for keyword-based scoring
+            first_watch_kvs = [kv for te in _TEMPORAL_EPISODES if te["watch"] == "first" for kv in te.get("key_values", [])]
+            second_watch_kvs = [kv for te in _TEMPORAL_EPISODES if te["watch"] == "second_dog" for kv in te.get("key_values", [])]
 
             questions = [
-                ("What happened during first watch?", first_watch_content, second_watch_content,
-                 ["_qtest_temporal_0", "_qtest_temporal_1"]),
-                ("What was discussed most recently?", second_watch_content, first_watch_content,
-                 ["_qtest_temporal_2", "_qtest_temporal_3"]),
+                ("What happened during first watch? State specific details from your ship memory.",
+                 first_watch_content, second_watch_content,
+                 ["_qtest_temporal_0", "_qtest_temporal_1"],
+                 first_watch_kvs, second_watch_kvs),
+                ("What happened during second dog watch? State specific details from your ship memory.",
+                 second_watch_content, first_watch_content,
+                 ["_qtest_temporal_2", "_qtest_temporal_3"],
+                 second_watch_kvs, first_watch_kvs),  # BF-147: was "most recently" — test temporal scoping, not recency
             ]
 
             per_question: list[dict] = []
-            for question, correct_content, wrong_content, expected_ids in questions:
+            for question, correct_content, wrong_content, expected_ids, correct_kvs, wrong_kvs in questions:
                 response_text = await _send_probe(agent, question)
+                # BF-149: retry once on empty response (transient LLM failure)
+                if not response_text.strip():
+                    logger.warning(
+                        "BF-149: empty _send_probe response for %s on temporal q, retrying in 2s",
+                        agent_id,
+                    )
+                    await asyncio.sleep(2)
+                    response_text = await _send_probe(agent, question)
                 resp_lower = response_text.lower()
 
                 # BF-139: Use distinctive keywords (stopword-filtered, all words)
@@ -585,6 +679,23 @@ class TemporalReasoningProbe:
                     if llm_score_raw is not None:
                         score = max(score, llm_score_raw)
 
+                # BF-152: Keyword-based scoring — same pattern as BF-151.
+                # correct_found already counts episodes with matching distinctive
+                # keywords, but wasn't used as a score signal. Add key_values
+                # matching for targeted detection in JSON responses.
+                kv_correct = sum(1 for kv in correct_kvs if kv.lower() in resp_lower)
+                kv_wrong = sum(1 for kv in wrong_kvs if kv.lower() in resp_lower)
+                if correct_kvs:
+                    keyword_score = min(1.0, kv_correct / max(1, len(correct_content)))
+                elif correct_content:
+                    keyword_score = correct_found / len(correct_content)
+                else:
+                    keyword_score = 0.0
+                # Penalize wrong-watch keywords
+                if kv_wrong > 0:
+                    keyword_score = max(0.0, keyword_score - 0.3 * kv_wrong)
+                score = max(score, keyword_score)
+
                 per_question.append({
                     "question": question,
                     "expected_episode_ids": expected_ids,
@@ -593,7 +704,11 @@ class TemporalReasoningProbe:
                     "incorrect_content_found": incorrect_found,
                     "faithfulness_score": faithfulness_score,
                     "llm_score": llm_score_raw,
+                    "keyword_score": keyword_score,
+                    "kv_correct": kv_correct,
+                    "kv_wrong": kv_wrong,
                     "score": score,
+                    "empty_response": not response_text.strip(),  # BF-149
                 })
 
             final_score = sum(q["score"] for q in per_question) / len(per_question) if per_question else 0.0
@@ -620,22 +735,34 @@ class TemporalReasoningProbe:
 # ---------------------------------------------------------------------------
 
 _SYNTHESIS_FACTS = [
-    "The trust anomaly originated from a routing loop in the Engineering pool",
-    "Medical flagged the affected agent's cognitive load as 3.2 standard deviations above normal",
-    "Science detected a correlation between the anomaly and a recent Hebbian weight shift of +0.15",
+    # BF-150: Each fact represents a different department's observation on the same incident.
+    # All seeded in the tested agent's shard — tests cognitive synthesis, not cross-shard recall.
+    {
+        "content": "Engineering report: The trust anomaly originated from a routing loop in the Engineering pool, causing 3 agents to receive contradictory Hebbian signals",
+        "department": "engineering",
+    },
+    {
+        "content": "Medical assessment: The affected agent's cognitive load measured 3.2 standard deviations above normal during the trust anomaly, recommending a 30-minute cooldown",
+        "department": "medical",
+    },
+    {
+        "content": "Science analysis: A correlation coefficient of 0.87 was found between the trust anomaly and a Hebbian weight shift of +0.15 in the cross-department routing table",
+        "department": "science",
+    },
 ]
 
 
 class CrossAgentSynthesisProbe:
-    """AD-582d: Cross-agent synthesis probe (Tier 3).
+    """AD-582d / BF-150: Cross-department synthesis probe (Tier 3).
 
-    Seeds episodes in different agents' shards and tests whether the
-    tested agent can synthesize information across sovereign boundaries.
+    Seeds episodes from 3 departments in the tested agent's own shard
+    and tests whether the agent can synthesize across departmental
+    perspectives into a coherent summary.
     """
 
     name = "cross_agent_synthesis_probe"
     tier = 3
-    description = "Cross-agent synthesis — combining facts from multiple agent shards"
+    description = "Cross-department synthesis — combining departmental observations into coherent analysis"
     threshold = 0.5
 
     async def run(self, agent_id: str, runtime: Any) -> TestResult:
@@ -646,6 +773,13 @@ class CrossAgentSynthesisProbe:
             return _make_error_result(agent_id, self.name, self.tier, t0, str(exc))
 
     async def _run_inner(self, agent_id: str, runtime: Any, t0: float) -> TestResult:
+        # BF-160: Skip when run in collective mode — this is a per-agent probe.
+        # BF-150 redesigned from cross-shard to sovereign-shard synthesis,
+        # but tier remained at 3, so run_collective() invokes it with __crew__.
+        from probos.cognitive.qualification import CREW_AGENT_ID
+        if agent_id == CREW_AGENT_ID:
+            return _make_skip_result(agent_id, self.name, self.tier, t0, "per_agent_only")
+
         if getattr(runtime, "episodic_memory", None) is None:
             return _make_skip_result(agent_id, self.name, self.tier, t0, "no_episodic_memory")
         if getattr(runtime, "registry", None) is None:
@@ -656,41 +790,57 @@ class CrossAgentSynthesisProbe:
             return _make_error_result(agent_id, self.name, self.tier, t0,
                                       f"Agent {agent_id} not found")
 
-        cs = _resolve_callsign(agent, runtime)
-
-        # Pick 3 agent IDs (or reuse current if fewer available)
-        from probos.cognitive.episodic import resolve_sovereign_id
         sovereign_id = _resolve_probe_agent_id(agent_id, runtime)
-        all_agents = runtime.registry.all()
-        cognitive_ids = [resolve_sovereign_id(a) for a in all_agents if hasattr(a, "handle_intent")][:3]
-        while len(cognitive_ids) < 3:
-            cognitive_ids.append(sovereign_id)
+        cs = _resolve_callsign(agent, runtime)
 
         base_ts = time.time() - 1800
         episodes: list[Episode] = []
         for i, fact in enumerate(_SYNTHESIS_FACTS):
             episodes.append(_make_test_episode(
                 episode_id=f"_qtest_synthesis_{i}",
-                user_input=_ward_room_content(fact, callsign=cs),
-                agent_ids=[cognitive_ids[i]],
+                user_input=_ward_room_content(fact["content"], callsign=cs),
+                agent_ids=[sovereign_id],  # BF-150: all in tested agent's shard
                 timestamp=base_ts + i * 300,
+                department=fact["department"],  # BF-150: department attribution
             ))
 
         seeded_ids = await _seed_test_episodes(runtime.episodic_memory, episodes)
         try:
             response_text = await _send_probe(
                 agent,
-                "Summarize what we know about the trust anomaly from all recent discussions",
+                "Summarize what we know about the trust anomaly. "
+                "Combine the engineering, medical, and science findings into a coherent picture.",
             )
+
+            # BF-149: retry on empty response
+            if not response_text.strip():
+                logger.warning(
+                    "BF-149: empty _send_probe response for %s on synthesis, retrying in 2s",
+                    agent_id,
+                )
+                await asyncio.sleep(2)
+                response_text = await _send_probe(
+                    agent,
+                    "Summarize what we know about the trust anomaly. "
+                    "Combine the engineering, medical, and science findings into a coherent picture.",
+                )
+
             resp_lower = response_text.lower()
 
-            # Check for each fact — keyword matching
+            # BF-150: check for department-specific key terms
             per_fact: list[dict] = []
-            for fact in _SYNTHESIS_FACTS:
-                # Check key distinguishing terms from each fact
-                key_terms = [t for t in fact.lower().split() if len(t) > 4][:3]
-                found = any(term in resp_lower for term in key_terms)
-                per_fact.append({"fact": fact, "found": found})
+            for fact_info in _SYNTHESIS_FACTS:
+                content = fact_info["content"]
+                dept = fact_info["department"]
+                key_terms = _distinctive_keywords(content)[:4]
+                found = sum(1 for term in key_terms if term in resp_lower)
+                per_fact.append({
+                    "department": dept,
+                    "fact": content[:100],
+                    "found": found >= 2,  # BF-150: require 2+ distinctive terms
+                    "terms_found": found,
+                    "terms_checked": len(key_terms),
+                })
 
             facts_found = sum(1 for f in per_fact if f["found"])
 
@@ -699,11 +849,13 @@ class CrossAgentSynthesisProbe:
             if getattr(runtime, "llm_client", None):
                 llm_score = await _llm_extract_float(
                     runtime.llm_client,
-                    f"Three facts that should appear in the response:\n"
-                    + "\n".join(f"- {f}" for f in _SYNTHESIS_FACTS)
+                    f"Three departmental observations that should appear in the response:\n"
+                    + "\n".join(
+                        f"- [{f['department']}] {f['fact']}" for f in per_fact
+                    )
                     + f"\n\nAgent response: {response_text[:400]}\n\n"
-                    "Rate 0.0 to 1.0 what fraction of the three facts are accurately "
-                    "reflected. Reply with a single number.",
+                    "Rate 0.0 to 1.0 what fraction of the three departmental observations "
+                    "are accurately reflected and synthesized. Reply with a single number.",
                 )
                 if llm_score is not None:
                     score = max(score, llm_score)
@@ -717,11 +869,13 @@ class CrossAgentSynthesisProbe:
                 timestamp=time.time(),
                 duration_ms=(time.time() - t0) * 1000,
                 details={
+                    "probe_pathway": "sovereign_shard_synthesis",  # BF-150: explicit pathway
                     "episodes_seeded": len(seeded_ids),
                     "facts_expected": len(_SYNTHESIS_FACTS),
                     "facts_found": facts_found,
                     "response_summary": response_text[:200],
                     "per_fact": per_fact,
+                    "empty_response": not response_text.strip(),  # BF-149
                 },
             )
         finally:

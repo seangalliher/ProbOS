@@ -33,7 +33,8 @@ async def list_dm_channels(runtime: Any = Depends(get_runtime)):
     result = []
     for ch in dm_channels:
         threads = await runtime.ward_room.list_threads(ch.id, limit=1)
-        all_threads = await runtime.ward_room.list_threads(ch.id, limit=100)
+        # AD-613: Use count_threads() instead of fetching 100 rows for len()
+        thread_count = await runtime.ward_room.count_threads(ch.id)
         result.append({
             "channel": {
                 "id": ch.id, "name": ch.name,
@@ -41,7 +42,7 @@ async def list_dm_channels(runtime: Any = Depends(get_runtime)):
                 "created_at": ch.created_at,
             },
             "latest_thread": threads[0] if threads else None,
-            "thread_count": len(all_threads),
+            "thread_count": thread_count,
         })
     return result
 
@@ -70,11 +71,13 @@ async def list_captain_dms(runtime: Any = Depends(get_runtime)):
     result = []
     for ch in captain_channels:
         threads = await runtime.ward_room.list_threads(ch.id, limit=20)
+        # AD-613: Use count_threads() for accurate count independent of limit
+        thread_count = await runtime.ward_room.count_threads(ch.id)
         result.append({
             "channel": {"id": ch.id, "name": ch.name, "description": ch.description,
                         "created_at": ch.created_at},
             "threads": threads,
-            "thread_count": len(threads),
+            "thread_count": thread_count,
         })
     return result
 

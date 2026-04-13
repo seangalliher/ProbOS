@@ -163,6 +163,8 @@ class ProactiveCognitiveLoop:
         self._duty_tracker: DutyScheduleTracker | None = None
         self._circuit_breaker = CognitiveCircuitBreaker()
         self._notified_dm_threads: set[str] = set()  # BF-082: dedup guard
+        self._dm_send_cooldowns: dict[str, float] = {}  # BF-163: per-agent DM send rate limit
+        self._last_dm_body: dict[str, str] = {}  # AD-614: self-similarity gate
         self._notified_dm_threads_reset: float = time.monotonic()  # hourly reset
         self._pending_notebook_reads: dict[str, str] = {}  # AD-504: agent_id -> topic_slug
         self._llm_failure_count: int = 0  # BF-069: consecutive proactive failures
@@ -292,6 +294,11 @@ class ProactiveCognitiveLoop:
             if not agent.is_alive:
                 continue
 
+            # BF-156: Unread DM check BEFORE agency gating.
+            # DM delivery is communication reliability, not proactive agency.
+            # Ensigns should still receive their DMs.
+            await self._check_unread_dms(agent, rt)
+
             # Agency gating: Ensigns don't think proactively
             trust_score = rt.trust_network.get_score(agent.id)
             rank = Rank.from_trust(trust_score)
@@ -345,9 +352,6 @@ class ProactiveCognitiveLoop:
                     exc_info=True,
                 )
 
-            # --- BF-082: Unread DM check ---
-            await self._check_unread_dms(agent, rt)
-
     async def _check_unread_dms(self, agent: Any, rt: Any) -> None:
         """Check for and route unread DMs for an agent."""
         if not rt.ward_room or not rt.ward_room_router:
@@ -359,10 +363,15 @@ class ProactiveCognitiveLoop:
             self._notified_dm_threads_reset = time.monotonic()
 
         try:
-            unread_dms = await rt.ward_room.get_unread_dms(agent.id, limit=2)
+            # BF-164: pass exchange limit so query excludes capped threads
+            dm_limit = getattr(rt.config.ward_room, 'dm_exchange_limit', 6)
+            unread_dms = await rt.ward_room.get_unread_dms(
+                agent.id, limit=2, exchange_limit=dm_limit,
+            )
             if not unread_dms:
                 return
 
+            routed = 0
             for dm in unread_dms:
                 tid = dm["thread_id"]
                 if tid in self._notified_dm_threads:
@@ -380,11 +389,13 @@ class ProactiveCognitiveLoop:
                 await rt.ward_room_router.route_event(
                     "ward_room_thread_created", event_data,
                 )
-            logger.info(
-                "BF-082: %s has %d unread DMs, notified",
-                getattr(agent, 'callsign', agent.agent_type),
-                len(unread_dms),
-            )
+                routed += 1
+            if routed:
+                logger.info(
+                    "BF-082: %s has %d unread DMs, notified",
+                    getattr(agent, 'callsign', agent.agent_type),
+                    routed,
+                )
         except Exception as exc:
             logger.warning(
                 "BF-082: Unread DM check failed for %s: %s",
@@ -1351,30 +1362,31 @@ class ProactiveCognitiveLoop:
         # --- AD-506a: Cognitive zone awareness (before tier gating) ---
         if hasattr(self, '_circuit_breaker'):
             zone = self._circuit_breaker.get_zone(agent.id)
-            if zone != "green":
-                result["cognitive_zone"] = zone
-                if zone == "amber":
-                    result["zone_note"] = (
-                        "Your recent posts show increasing similarity to each other. "
-                        "This is a natural signal to pause and consider: do you have "
-                        "genuinely new information to contribute, or are you circling "
-                        "the same ground? If unsure, try [NO_RESPONSE] or write to "
-                        "your notebook instead."
-                    )
-                elif zone == "red":
-                    result["zone_note"] = (
-                        "Your cognitive circuit breaker has activated. This is health "
-                        "protection, not punishment. The Counselor has been notified. "
-                        "Focus on a different aspect of operations or respond with "
-                        "[NO_RESPONSE] until you have a genuinely fresh perspective."
-                    )
-                elif zone == "critical":
-                    result["zone_note"] = (
-                        "Critical cognitive state — repeated pattern loops detected. "
-                        "The Captain has been notified. Extended mandatory cooldown is "
-                        "in effect. When you return, deliberately choose a completely "
-                        "different topic. Your previous train of thought needs rest."
-                    )
+            # BF-161: Always include zone (including green) so working memory
+            # stays current and telemetry doesn't show UNKNOWN.
+            result["cognitive_zone"] = zone
+            if zone == "amber":
+                result["zone_note"] = (
+                    "Your recent posts show increasing similarity to each other. "
+                    "This is a natural signal to pause and consider: do you have "
+                    "genuinely new information to contribute, or are you circling "
+                    "the same ground? If unsure, try [NO_RESPONSE] or write to "
+                    "your notebook instead."
+                )
+            elif zone == "red":
+                result["zone_note"] = (
+                    "Your cognitive circuit breaker has activated. This is health "
+                    "protection, not punishment. The Counselor has been notified. "
+                    "Focus on a different aspect of operations or respond with "
+                    "[NO_RESPONSE] until you have a genuinely fresh perspective."
+                )
+            elif zone == "critical":
+                result["zone_note"] = (
+                    "Critical cognitive state — repeated pattern loops detected. "
+                    "The Captain has been notified. Extended mandatory cooldown is "
+                    "in effect. When you return, deliberately choose a completely "
+                    "different topic. Your previous train of thought needs rest."
+                )
 
         if tier["posts"] == 0:
             return result
@@ -2611,6 +2623,40 @@ class ProactiveCognitiveLoop:
             dm_body = match.group(2).strip()
             if not dm_body:
                 continue
+
+            # BF-163: Per-agent per-target DM send cooldown (60s).
+            # Prevents DM flood loops where Agent A DMs Agent B, B responds,
+            # A gets notified, A DMs again — overwhelming the LLM proxy.
+            dm_pair_key = f"{agent.id}:{target_callsign.lower()}"
+            now = time.monotonic()
+            last_dm_send = self._dm_send_cooldowns.get(dm_pair_key, 0.0)
+            if now - last_dm_send < 60.0:
+                logger.debug(
+                    "BF-163: %s DM to @%s throttled (%.0fs remaining)",
+                    getattr(agent, 'callsign', agent.agent_type),
+                    target_callsign,
+                    60.0 - (now - last_dm_send),
+                )
+                continue
+            self._dm_send_cooldowns[dm_pair_key] = now
+
+            # AD-614: Self-similarity gate — suppress near-duplicate DMs.
+            from probos.cognitive.similarity import jaccard_similarity
+            last_body = self._last_dm_body.get(dm_pair_key, "")
+            if last_body:
+                sim = jaccard_similarity(
+                    set(dm_body.lower().split()),
+                    set(last_body.lower().split()),
+                )
+                if sim >= 0.6:
+                    logger.debug(
+                        "AD-614: %s DM to @%s suppressed (similarity %.2f)",
+                        getattr(agent, 'callsign', agent.agent_type),
+                        target_callsign,
+                        sim,
+                    )
+                    continue
+            self._last_dm_body[dm_pair_key] = dm_body
 
             # AD-485: Special case — DM to Captain
             if target_callsign.lower() == "captain":

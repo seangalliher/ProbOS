@@ -163,6 +163,25 @@ class DreamingEngine:
             "weights_weakened": 0,
         }
 
+    async def _get_importance_map(self, episode_ids: list[str]) -> dict[str, int]:
+        """AD-598: Build importance map from stored episode metadata."""
+        if not self.episodic_memory or not self.episodic_memory._collection:
+            return {}
+        try:
+            result = self.episodic_memory._collection.get(
+                ids=episode_ids,
+                include=["metadatas"],
+            )
+            importance_map: dict[str, int] = {}
+            if result and result.get("ids") and result.get("metadatas"):
+                for eid, meta in zip(result["ids"], result["metadatas"]):
+                    if meta:
+                        importance_map[eid] = int(meta.get("importance", 5))
+            return importance_map
+        except Exception:
+            logger.debug("AD-598: Failed to load importance map", exc_info=True)
+            return {}
+
     async def dream_cycle(self) -> DreamReport:
         """Execute one full dream pass.
 
@@ -973,11 +992,21 @@ class DreamingEngine:
                     _standard_fraction = min(
                         self.config.prune_max_fraction * _pool_pressure, 0.50
                     )  # Cap at 50% even under pressure
-                    low_activation = await self._activation_tracker.find_low_activation_episodes(
-                        all_episode_ids=_standard_candidates,
-                        threshold=self.config.activation_prune_threshold,
-                        max_prune_fraction=_standard_fraction,
-                    )
+                    # AD-598: Importance-aware pruning
+                    _importance_map = await self._get_importance_map(_standard_candidates)
+                    if _importance_map:
+                        low_activation = await self._activation_tracker.find_low_activation_episodes_with_importance(
+                            all_episode_ids=_standard_candidates,
+                            importance_map=_importance_map,
+                            threshold=self.config.activation_prune_threshold,
+                            max_prune_fraction=_standard_fraction,
+                        )
+                    else:
+                        low_activation = await self._activation_tracker.find_low_activation_episodes(
+                            all_episode_ids=_standard_candidates,
+                            threshold=self.config.activation_prune_threshold,
+                            max_prune_fraction=_standard_fraction,
+                        )
                     if low_activation:
                         await self.episodic_memory.evict_by_ids(
                             low_activation, reason="activation_decay"
@@ -999,11 +1028,21 @@ class DreamingEngine:
                         _aggressive_fraction = min(
                             self.config.aggressive_prune_max_fraction * _pool_pressure, 0.50
                         )
-                        aggressive_pruned = await self._activation_tracker.find_low_activation_episodes(
-                            all_episode_ids=_aggressive_candidates,
-                            threshold=self.config.aggressive_prune_threshold,
-                            max_prune_fraction=_aggressive_fraction,
-                        )
+                        # AD-598: Importance-aware pruning
+                        _agg_importance_map = await self._get_importance_map(_aggressive_candidates)
+                        if _agg_importance_map:
+                            aggressive_pruned = await self._activation_tracker.find_low_activation_episodes_with_importance(
+                                all_episode_ids=_aggressive_candidates,
+                                importance_map=_agg_importance_map,
+                                threshold=self.config.aggressive_prune_threshold,
+                                max_prune_fraction=_aggressive_fraction,
+                            )
+                        else:
+                            aggressive_pruned = await self._activation_tracker.find_low_activation_episodes(
+                                all_episode_ids=_aggressive_candidates,
+                                threshold=self.config.aggressive_prune_threshold,
+                                max_prune_fraction=_aggressive_fraction,
+                            )
                         if aggressive_pruned:
                             await self.episodic_memory.evict_by_ids(
                                 aggressive_pruned, reason="activation_decay_aggressive"

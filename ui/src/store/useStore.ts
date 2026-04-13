@@ -246,7 +246,7 @@ export interface HXIState {
   wardRoomUnread: Record<string, number>;
   wardRoomView: 'channels' | 'dms' | 'dm-detail';
   wardRoomDmChannels: { channel: { id: string; name: string; description: string; created_at: number }; latest_thread: any; thread_count: number }[];
-  // Crew Manifest (AD-513)
+  _wardRoomThreadCache: Map<string, { threads: any[]; fetchedAt: number }>;  // Crew Manifest (AD-513)
   crewManifestOpen: boolean;
   crewManifest: CrewManifestEntry[] | null;
   // Assignments (AD-408)
@@ -371,6 +371,28 @@ function buildQueueToTasks(items: BuildQueueItem[]): MissionControlTask[] {
   }));
 }
 
+// AD-613: Coalesce rapid Ward Room WebSocket events into batched refreshes
+let _wardRoomRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+const _wardRoomRefreshFlags = { threads: false, unread: false, dms: false, activeThread: null as string | null };
+
+function _scheduleWardRoomRefresh(store: any) {
+  if (_wardRoomRefreshTimer) return; // already scheduled
+  _wardRoomRefreshTimer = setTimeout(() => {
+    const flags = { ..._wardRoomRefreshFlags };
+    // Reset before executing (new events during execution will schedule another batch)
+    _wardRoomRefreshFlags.threads = false;
+    _wardRoomRefreshFlags.unread = false;
+    _wardRoomRefreshFlags.dms = false;
+    _wardRoomRefreshFlags.activeThread = null;
+    _wardRoomRefreshTimer = null;
+
+    if (flags.activeThread) store.selectWardRoomThread(flags.activeThread);
+    if (flags.threads) store.refreshWardRoomThreads();
+    if (flags.unread) store.refreshWardRoomUnread();
+    if (flags.dms) store.refreshWardRoomDmChannels();
+  }, 300); // 300ms debounce window — fast enough for UX, eliminates bursts
+}
+
 export const useStore = create<HXIState>((set, get) => ({
   agents: new Map(),
   connections: [],
@@ -428,6 +450,7 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomUnread: {},
   wardRoomView: 'channels' as const,
   wardRoomDmChannels: [],
+  _wardRoomThreadCache: new Map(),
   communicationsSettings: { dm_min_rank: 'ensign', recreation_min_rank: 'ensign' },
   // Crew Manifest (AD-513)
   crewManifestOpen: false,
@@ -566,11 +589,23 @@ export const useStore = create<HXIState>((set, get) => ({
   closeWardRoom: () => set({ wardRoomOpen: false }),
   selectWardRoomChannel: async (channelId: string) => {
     set({ wardRoomActiveChannel: channelId, wardRoomActiveThread: null, wardRoomThreadDetail: null });
+    // AD-613: Check cache first — use cached data if fresh (<30s)
+    const cached = get()._wardRoomThreadCache.get(channelId);
+    const now = Date.now();
+    if (cached && (now - cached.fetchedAt) < 30_000) {
+      set({ wardRoomThreads: cached.threads });
+      return;
+    }
     try {
       const resp = await fetch(`/api/wardroom/channels/${channelId}/threads?limit=50&sort=recent`);
       if (resp.ok) {
         const data = await resp.json();
-        set({ wardRoomThreads: data.threads || [] });
+        const threads = data.threads || [];
+        set({ wardRoomThreads: threads });
+        // AD-613: Update cache
+        const cache = new Map(get()._wardRoomThreadCache);
+        cache.set(channelId, { threads, fetchedAt: now });
+        set({ _wardRoomThreadCache: cache });
       }
     } catch { /* swallow */ }
   },
@@ -592,7 +627,12 @@ export const useStore = create<HXIState>((set, get) => ({
       const resp = await fetch(`/api/wardroom/channels/${channelId}/threads?limit=50&sort=recent`);
       if (resp.ok) {
         const data = await resp.json();
-        set({ wardRoomThreads: data.threads || [] });
+        const threads = data.threads || [];
+        set({ wardRoomThreads: threads });
+        // AD-613: Update cache for current channel
+        const cache = new Map(get()._wardRoomThreadCache);
+        cache.set(channelId, { threads, fetchedAt: Date.now() });
+        set({ _wardRoomThreadCache: cache });
       }
     } catch { /* swallow */ }
   },
@@ -1606,34 +1646,35 @@ export const useStore = create<HXIState>((set, get) => ({
         break;
       }
 
-      // Ward Room events (AD-407c)
+      // Ward Room events (AD-407c, AD-613 debounced)
       case 'ward_room_thread_created': {
-        // BF-015: always refresh thread list and unread when a new thread arrives
-        get().refreshWardRoomThreads();
-        get().refreshWardRoomUnread();
-        get().refreshWardRoomDmChannels();
+        _wardRoomRefreshFlags.threads = true;
+        _wardRoomRefreshFlags.unread = true;
+        _wardRoomRefreshFlags.dms = true;
+        _scheduleWardRoomRefresh(get());
         break;
       }
       case 'ward_room_post_created': {
         const threadId = (data as any).thread_id;
         if (get().wardRoomActiveThread === threadId) {
-          get().selectWardRoomThread(threadId);
+          _wardRoomRefreshFlags.activeThread = threadId;
         }
-        // BF-015: always refresh thread list (updates reply counts, last_activity)
-        get().refreshWardRoomThreads();
-        get().refreshWardRoomUnread();
-        get().refreshWardRoomDmChannels();
+        _wardRoomRefreshFlags.threads = true;
+        _wardRoomRefreshFlags.unread = true;
+        _wardRoomRefreshFlags.dms = true;
+        _scheduleWardRoomRefresh(get());
         break;
       }
       case 'ward_room_endorsement':
       case 'ward_room_mod_action':
       case 'ward_room_mention': {
-        get().refreshWardRoomUnread();
+        _wardRoomRefreshFlags.unread = true;
+        _scheduleWardRoomRefresh(get());
         break;
       }
       case 'ward_room_thread_updated': {
-        // AD-424: Thread was reclassified, locked, or responder cap changed
-        get().refreshWardRoomThreads();
+        _wardRoomRefreshFlags.threads = true;
+        _scheduleWardRoomRefresh(get());
         break;
       }
 

@@ -150,7 +150,7 @@ async def cmd_order(runtime: ProbOSRuntime, console: Console, args: str) -> None
                         dept_counts.setdefault(d, []).append(pool.agent_type)
             for d, agent_types in dept_counts.items():
                 chief_type = agent_types[0]
-                chief_callsign = get_callsign(chief_type)
+                chief_callsign = get_callsign(chief_type, runtime)
                 total = sum(
                     len(p.healthy_agents)
                     for p in runtime.pools.values()
@@ -168,7 +168,7 @@ async def cmd_order(runtime: ProbOSRuntime, console: Console, args: str) -> None
                 for p in runtime.pools.values()
                 if p.agent_type == target
             )
-            callsign = get_callsign(target)
+            callsign = get_callsign(target, runtime)
             if agent_count <= 1:
                 # Single crew member — personal acknowledgment
                 console.print(
@@ -252,7 +252,7 @@ async def cmd_revoke(runtime: ProbOSRuntime, console: Console, args: str) -> Non
     if result:
         from probos.cognitive.standing_orders import clear_cache
         clear_cache()
-        callsign = get_callsign(directive.target_agent_type)
+        callsign = get_callsign(directive.target_agent_type, runtime)
         console.print(f"\n[bold yellow]Order Revoked[/bold yellow]")
         console.print(f"  [yellow]Target:[/yellow]    {directive.target_agent_type}")
         console.print(f"  [yellow]Was:[/yellow]       {directive.content}")
@@ -287,7 +287,7 @@ async def cmd_amend(runtime: ProbOSRuntime, console: Console, args: str) -> None
     if amended:
         from probos.cognitive.standing_orders import clear_cache
         clear_cache()
-        callsign = get_callsign(amended.target_agent_type)
+        callsign = get_callsign(amended.target_agent_type, runtime)
         console.print(f"\n[bold green]Order Amended (FRAGO)[/bold green]")
         console.print(f"  [green]Target:[/green]    {amended.target_agent_type}")
         console.print(f"  [dim]Was:[/dim]       {old.content}")
@@ -335,8 +335,25 @@ async def cmd_imports(runtime: ProbOSRuntime, console: Console, args: str) -> No
             console.print(f"  {chunk}")
 
 
-def get_callsign(agent_type: str) -> str:
-    """Look up an agent type's callsign from seed crew profile."""
+def get_callsign(agent_type: str, runtime: Any = None) -> str:
+    """Look up an agent type's callsign, preferring runtime registry.
+
+    BF-153: Previously read only from the YAML seed profile, returning the
+    pre-naming-ceremony default (e.g., "O'Brien") even after an agent
+    self-named (e.g., "Cassian"). Now checks the runtime callsign registry
+    first — the authoritative source after naming ceremony.
+    """
+    # BF-153: Runtime callsign registry is authoritative (reflects naming ceremony)
+    if runtime is not None:
+        try:
+            reg = getattr(runtime, "callsign_registry", None)
+            if reg is not None:
+                live = reg.get_callsign(agent_type)
+                if live:
+                    return live
+        except Exception:
+            pass  # Fall through to seed profile
+    # Fallback: seed profile (pre-naming-ceremony default)
     try:
         from probos.crew_profile import load_seed_profile
         seed = load_seed_profile(agent_type)

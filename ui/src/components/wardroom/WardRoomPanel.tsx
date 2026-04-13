@@ -9,13 +9,15 @@ function DmActivityLog() {
   const dmChannels = useStore(s => s.wardRoomDmChannels);
   const refresh = useStore(s => s.refreshWardRoomDmChannels);
   const selectDm = useStore(s => s.selectDmChannel);
+  const isOpen = useStore(s => s.wardRoomOpen);
 
-  // BF-054: auto-refresh every 15s
+  // BF-054 / AD-613: auto-refresh only when DM tab is visible AND panel is open
   useEffect(() => {
+    if (!isOpen) return;
     refresh();
     const interval = setInterval(refresh, 15000);
     return () => clearInterval(interval);
-  }, [refresh]);
+  }, [refresh, isOpen]);
 
   if (dmChannels.length === 0) {
     return (

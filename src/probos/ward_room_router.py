@@ -105,18 +105,7 @@ class WardRoomRouter:
 
         thread_id = data.get("thread_id", "")
 
-        # --- Layer 1: Thread depth tracking ---
-        max_rounds = getattr(self._config.ward_room, 'max_agent_rounds', 3)
-        if is_agent_post and thread_id:
-            current_round = self._thread_rounds.get(thread_id, 0)
-            if current_round >= max_rounds:
-                logger.debug(
-                    "Ward Room: thread %s hit agent round limit (%d), silencing",
-                    thread_id[:8], max_rounds,
-                )
-                return
-
-        # Captain posts reset the round counter
+        # Captain posts reset the round counter (must happen before depth check)
         if is_captain and thread_id:
             self._thread_rounds[thread_id] = 0
             # Clear round participation tracking for this thread
@@ -152,6 +141,19 @@ class WardRoomRouter:
         channel = next((c for c in channels if c.id == channel_id), None)
         if not channel:
             return
+
+        # --- Layer 1: Thread depth tracking ---
+        # BF-156: DM channels bypass thread depth cap — private conversations
+        # should not be artificially truncated.
+        max_rounds = getattr(self._config.ward_room, 'max_agent_rounds', 3)
+        if is_agent_post and thread_id and channel.channel_type != "dm":
+            current_round = self._thread_rounds.get(thread_id, 0)
+            if current_round >= max_rounds:
+                logger.debug(
+                    "Ward Room: thread %s hit agent round limit (%d), silencing",
+                    thread_id[:8], max_rounds,
+                )
+                return
 
         # --- Layer 2: Selective targeting ---
         if is_captain:
@@ -212,26 +214,65 @@ class WardRoomRouter:
 
         responded_this_event = False
 
+        # BF-157: Track which agents were explicitly @mentioned
+        mentioned_agent_ids: set[str] = set()
+        mentions = data.get("mentions", [])
+        if mentions and self._callsign_registry:
+            for callsign in mentions:
+                resolved = self._callsign_registry.resolve(callsign)
+                if resolved and resolved.get("agent_id"):
+                    mentioned_agent_ids.add(resolved["agent_id"])
+
         for agent_id in target_agent_ids:
+            # BF-156/157: @mentioned agents and DM recipients bypass cooldown/caps.
+            # These guards prevent thread explosion in public channels, not
+            # suppress direct communication.
+            is_direct_target = (
+                agent_id in mentioned_agent_ids
+                or (channel and channel.channel_type == "dm")
+            )
+
+            # AD-614: DM thread exchange limit — prevent conversation loops.
+            # Unlike other guards, this applies even for is_direct_target because
+            # DMs bypass all existing caps. Without this, DM conversations are unbounded.
+            if channel and channel.channel_type == "dm":
+                try:
+                    dm_limit = getattr(
+                        self._config.ward_room, 'dm_exchange_limit', 6
+                    )
+                    agent_post_count = await self._ward_room.count_posts_by_author(
+                        thread_id, agent_id
+                    )
+                    if agent_post_count >= dm_limit:
+                        logger.debug(
+                            "AD-614: %s hit DM exchange limit (%d/%d) in thread %s",
+                            agent_id[:12], agent_post_count, dm_limit, thread_id[:8],
+                        )
+                        continue
+                except Exception:
+                    logger.debug("AD-614: exchange limit check failed", exc_info=True)
+
             # Layer 4: Per-agent cooldown
-            last_response = self._cooldowns.get(agent_id, 0)
-            if now - last_response < cooldown:
-                continue
+            if not is_direct_target:
+                last_response = self._cooldowns.get(agent_id, 0)
+                if now - last_response < cooldown:
+                    continue
 
             # Layer 3: Agent already responded in this round of this thread
-            if is_agent_post and agent_id in round_participants:
+            if not is_direct_target and is_agent_post and agent_id in round_participants:
                 continue
 
             # BF-016b: Per-thread agent response cap — prevent thread explosion
-            max_per_thread = getattr(self._config.ward_room, 'max_agent_responses_per_thread', 3)
-            thread_agent_key = f"{thread_id}:{agent_id}"
-            prior_responses = self._agent_thread_responses.get(thread_agent_key, 0)
-            if prior_responses >= max_per_thread:
-                logger.debug(
-                    "Ward Room: agent %s hit per-thread response cap (%d) in thread %s",
-                    agent_id[:12], max_per_thread, thread_id[:8],
-                )
-                continue
+            if not is_direct_target:
+                max_per_thread = getattr(self._config.ward_room, 'max_agent_responses_per_thread', 3)
+                thread_agent_key = f"{thread_id}:{agent_id}"
+                prior_responses = self._agent_thread_responses.get(thread_agent_key, 0)
+                if prior_responses >= max_per_thread:
+                    logger.debug(
+                        "Ward Room: agent %s hit per-thread response cap (%d) in thread %s",
+                        agent_id[:12], max_per_thread, thread_id[:8],
+                    )
+                    continue
 
             intent = IntentMessage(
                 intent="ward_room_notification",
@@ -243,6 +284,8 @@ class WardRoomRouter:
                     "title": title,
                     "author_id": author_id,
                     "author_callsign": data.get("author_callsign", ""),
+                    # BF-157: Tell the agent it was directly mentioned
+                    "was_mentioned": agent_id in mentioned_agent_ids,
                 },
                 context=thread_context,
                 target_agent_id=agent_id,
@@ -292,7 +335,8 @@ class WardRoomRouter:
                         round_participants.add(agent_id)
                         responded_this_event = True
                         # BF-016b: Increment per-thread response count
-                        self._agent_thread_responses[thread_agent_key] = prior_responses + 1
+                        if not is_direct_target:
+                            self._agent_thread_responses[thread_agent_key] = prior_responses + 1
             except Exception as e:
                 logger.warning("Ward Room agent notification failed for %s: %s", agent_id, e)
 

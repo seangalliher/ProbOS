@@ -2044,16 +2044,25 @@ class CognitiveAgent(BaseAgent):
             " When orientation or system data conflicts with your memories, "
             "orientation data is authoritative — cite it, do not estimate."
         )
+        # BF-148: temporal preference for contradictory memories (AGM Belief Revision)
+        temporal_preference = (
+            " When memories contain conflicting values for the same measurement, "
+            "prefer the most recent observation."
+        )
 
         if authority == SourceAuthority.AUTHORITATIVE:
-            # High-quality memories — still guard against number fabrication
-            return base
+            # High-quality memories — still guard against number fabrication.
+            # BF-159: Include temporal preference even for AUTHORITATIVE.
+            # Temporal contradictions (same metric, different timestamps) are
+            # valid regardless of anchor quality. AGM Belief Revision applies
+            # universally — newer observations supersede older ones.
+            return base + temporal_preference
         elif authority == SourceAuthority.PERIPHERAL:
             # Low-quality memories — full guard + uncertainty mandate
-            return base + orientation_priority + " State uncertainty explicitly."
+            return base + orientation_priority + temporal_preference + " State uncertainty explicitly."
         else:
             # SUPPLEMENTARY or no framing (fallback) — standard guard
-            return base + orientation_priority
+            return base + orientation_priority + temporal_preference
 
     def _format_memory_section(self, memories: list[dict], source_framing: Any = None) -> list[str]:
         """Format recalled episodes with anchor context headers (AD-567b/568c)."""
@@ -2319,12 +2328,23 @@ class CognitiveAgent(BaseAgent):
 
             # AD-407d: Distinguish Captain vs crew member posts
             author_id = params.get("author_id", "")
+            was_mentioned = params.get("was_mentioned", False)
+
             if author_id == "captain":
                 wr_parts.append(f"\nThe Captain posted the above.")
             else:
                 wr_parts.append(f"\n{author_callsign} posted the above.")
-            wr_parts.append("Respond naturally as yourself. Share your perspective if you have something meaningful to contribute.")
-            wr_parts.append("If this topic is outside your expertise or you have nothing to add, respond with exactly: [NO_RESPONSE]")
+
+            # BF-157: @mentioned agents must respond — they were directly addressed.
+            if was_mentioned:
+                wr_parts.append(
+                    "You were directly @mentioned in this post. A response is expected. "
+                    "Address the question or request from your area of expertise. "
+                    "Be concise and helpful."
+                )
+            else:
+                wr_parts.append("Respond naturally as yourself. Share your perspective if you have something meaningful to contribute.")
+                wr_parts.append("If this topic is outside your expertise or you have nothing to add, respond with exactly: [NO_RESPONSE]")
             return "\n".join(wr_parts)
 
         # Phase 28b: proactive_think — idle review cycle
@@ -2646,8 +2666,9 @@ class CognitiveAgent(BaseAgent):
 
             # AD-570c: Try anchor-indexed recall for relational queries
             _anchor_episodes = None
+            _query_watch_section = ""  # BF-147: propagate for temporal match scoring
             try:
-                _anchor_episodes = await self._try_anchor_recall(query, _mem_id)
+                _anchor_episodes, _query_watch_section = await self._try_anchor_recall(query, _mem_id)
             except Exception:
                 logger.debug("AD-570c: Anchor recall failed, falling through to semantic", exc_info=True)
 
@@ -2739,6 +2760,9 @@ class CognitiveAgent(BaseAgent):
                         max_recall_episodes=_tier_params.get("max_recall_episodes", 0),
                         recall_quality_floor=_tier_params.get("recall_quality_floor", 0.0),
                         convergence_bonus=getattr(mem_cfg, 'recall_convergence_bonus', 0.10) if mem_cfg else 0.10,
+                        query_watch_section=_query_watch_section,  # BF-147: temporal match
+                        temporal_match_weight=getattr(mem_cfg, 'recall_temporal_match_weight', 0.25) if mem_cfg else 0.25,
+                        temporal_mismatch_penalty=getattr(mem_cfg, 'recall_temporal_mismatch_penalty', 0.15) if mem_cfg else 0.15,  # BF-155
                     )
                 elif hasattr(em, 'recall_for_agent'):
                     # BASIC tier: vector similarity only, no salience weighting
@@ -2787,9 +2811,26 @@ class CognitiveAgent(BaseAgent):
                 if _anchor_episodes:
                     _seen_ids = {getattr(ep, 'id', id(ep)) for ep in _anchor_episodes}
                     for ep in episodes:
-                        if getattr(ep, 'id', id(ep)) not in _seen_ids:
-                            _anchor_episodes.append(ep)
-                            _seen_ids.add(getattr(ep, 'id', id(ep)))
+                        if getattr(ep, 'id', id(ep)) in _seen_ids:
+                            continue
+                        # BF-155: Exclude semantic episodes whose watch_section contradicts
+                        # the query's temporal intent. Without this filter, wrong-watch
+                        # episodes contaminate the anchor-filtered recall set.
+                        if (
+                            _query_watch_section
+                            and getattr(ep, "anchors", None)
+                            and getattr(ep.anchors, "watch_section", "")
+                            and ep.anchors.watch_section != _query_watch_section
+                        ):
+                            logger.debug(
+                                "BF-155: Excluding episode %s (watch=%s) — query watch=%s",
+                                getattr(ep, 'id', '?')[:8],
+                                ep.anchors.watch_section,
+                                _query_watch_section,
+                            )
+                            continue
+                        _anchor_episodes.append(ep)
+                        _seen_ids.add(getattr(ep, 'id', id(ep)))
                     episodes = _anchor_episodes
 
                 # AD-568a: Oracle Service for ORACLE-tier agents with DEEP strategy
@@ -2954,8 +2995,12 @@ class CognitiveAgent(BaseAgent):
 
     async def _try_anchor_recall(
         self, query: str, agent_mem_id: str
-    ) -> list | None:
-        """AD-570c: Attempt anchor-indexed recall if query has relational signals."""
+    ) -> tuple[list | None, str]:
+        """AD-570c: Attempt anchor-indexed recall if query has relational signals.
+
+        Returns (episodes, watch_section). BF-147: watch_section propagated
+        for temporal match scoring in recall_weighted().
+        """
         from probos.cognitive.source_governance import parse_anchor_query
 
         # Gather known callsigns for bare-name validation
@@ -2969,11 +3014,11 @@ class CognitiveAgent(BaseAgent):
 
         anchor = parse_anchor_query(query, known_callsigns=known_callsigns)
         if not anchor.has_anchor_signal:
-            return None
+            return None, ""
 
         em = self._runtime.episodic_memory
         if not hasattr(em, 'recall_by_anchor'):
-            return None
+            return None, anchor.watch_section or ""
 
         try:
             results = await em.recall_by_anchor(
@@ -2988,14 +3033,14 @@ class CognitiveAgent(BaseAgent):
             )
         except Exception:
             logger.debug("AD-570c: recall_by_anchor failed", exc_info=True)
-            return None
+            return None, anchor.watch_section or ""
 
         if isinstance(results, list) and results:
             logger.debug(
                 "AD-570c: Anchor recall returned %d episodes (dept=%s, agent=%s, watch=%s)",
                 len(results), anchor.department, anchor.trigger_agent, anchor.watch_section,
             )
-        return results if isinstance(results, list) and results else None
+        return (results if isinstance(results, list) and results else None), anchor.watch_section or ""
 
     def _check_response_faithfulness(
         self,

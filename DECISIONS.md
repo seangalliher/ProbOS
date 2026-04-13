@@ -3583,6 +3583,126 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Connects to:** AD-526a/b (RecreationService + GamePanel — game framework and migration source), AD-423 (Tool Registry — MCP tool surface alignment), AD-596 (Cognitive Skills — skills can declare MCP App UIs), AD-543 (Native SWE Harness — tool loop can invoke MCP App tools). Commercial: MCP App marketplace (Nooplex Cloud), native app packaging (Tauri/Electron + AppBridge), Steam distribution.
 
 
+## AD-615: Ward Room Database Performance Hardening (2026-04-12)
+
+| Decision | Rationale |
+|----------|-----------|
+| Add `PRAGMA journal_mode=WAL` + `PRAGMA busy_timeout=5000` to Ward Room DB init | Ward Room is the ONLY ProbOS database without WAL mode — `trust.py`, `procedure_store.py`, and `routing.py` all set it. Default rollback journal bottlenecks concurrent reads/writes. Under the 8,448-DM flood, ~67K DB writes in 90 min with no WAL = severe contention. `busy_timeout` prevents `SQLITE_BUSY` failures by retrying for up to 5 seconds. |
+| Add `PRAGMA synchronous=NORMAL` (WAL-safe downgrade from FULL) | With WAL mode, `synchronous=NORMAL` is safe against corruption on power loss — only WAL checkpoints require full fsync. Reduces write latency by ~50% under sustained load without sacrificing durability guarantees. New pattern for ProbOS — justified because WAL provides crash recovery without FULL sync. |
+| WAL verification log at startup (log-and-degrade) | WAL mode can silently fail on network filesystems or certain Windows configurations. Startup verification with WARNING-level log on failure follows the Fail Fast log-and-degrade tier — system continues but degradation is visible. |
+| No asyncio.Lock or BEGIN IMMEDIATE (deliberate exclusion) | Ward Room writes are serialized through aiosqlite's internal thread. WAL handles reader/writer concurrency. Adding a Lock would be premature — defer to AD-616 if parallel event processing introduces concurrent write paths. |
+| No transaction batching changes (scope correction) | Research found that `create_thread()` and `create_post()` already batch SQL writes into a single `db.commit()`. The episodic memory writes go through ChromaDB, not Ward Room SQLite. The "3 commits per operation" in initial scoping was overstated. |
+| PRAGMAs before schema creation, not in connection factory | Follows trust.py/routing.py ordering convention (BF-099 canonical). Centralizing in SQLiteConnectionFactory would require all 5+ DB consumers to want the same settings. |
+
+## AD-616: Ward Room Router Hot Path Optimization (2026-04-12)
+
+| Decision | Rationale |
+|----------|-----------|
+| Replace `list_channels()` DB call with `ChannelManager._channel_cache` lookup in router | Router calls `list_channels()` 4 times across different code paths — each one a full DB query. The `ChannelManager` already maintains an in-memory `_channel_cache` refreshed on mutations. Under the 8,448-DM flood, this alone was ~33K redundant DB reads. Expose a `get_channel_by_id()` method using the cache. |
+| Add asyncio.Semaphore to `route_event()` dispatch (default max 10 concurrent) | `asyncio.create_task(router.route_event())` in `communication.py` is fire-and-forget with zero backpressure. Under flood conditions, thousands of concurrent tasks overwhelm the event loop. A semaphore provides backpressure — excess events queue rather than stampede. |
+| Add backend event coalescing for rapid-fire `WARD_ROOM_POST_CREATED` events | AD-613 added 300ms frontend debouncing but the backend fires events synchronously on every post. A short coalesce window (e.g., 200ms) per thread can batch rapid posts into a single routing decision, reducing cascading LLM calls. |
+| Configurable via `WardRoomConfig`: `router_concurrency_limit`, `event_coalesce_ms` | Tunable without code changes. Defaults: concurrency 10, coalesce 200ms. Higher values for larger crews. |
+
+## AD-617: LLM Rate Governance (2026-04-12)
+
+| Decision | Rationale |
+|----------|-----------|
+| Token bucket rate limiter on LLM client (configurable RPM per tier) | No system-wide rate limiter exists. During the DM flood, the LLM proxy received up to 101K requests in 90 min — the HTTP 500 errors WERE the rate limiter. A token bucket with configurable RPM per tier (fast/standard/deep) provides controlled degradation instead of cascading failures. |
+| HTTP 429 backoff with exponential retry | Currently 429 is handled by the generic `HTTPStatusError` catch — logged and counted but no backoff. Specific 429 handling with exponential retry (1s/2s/4s/8s) + `Retry-After` header respect prevents thundering herd on rate-limited endpoints. |
+| Per-agent token budget (configurable per-hour cap) | Token usage is tracked in the cognitive journal but never enforced. A per-agent per-hour cap with log-and-degrade semantics (agent enters "budget exhausted" state, skips proactive thinks, still responds to Captain DMs) prevents runaway agents from consuming the fleet's token budget. |
+| LLM client cache eviction (LRU, max 500 entries) | The `_cache` dict on `OpenAICompatibleClient` grows unbounded — entries are never evicted. Under sustained operation, this is a memory leak. LRU eviction at 500 entries bounds memory usage while preserving the error-recovery fallback. |
+| Config: `LLMRateConfig` with `rpm_fast`, `rpm_standard`, `rpm_deep`, `per_agent_hourly_token_cap` | Rate governance settings grouped in a dedicated config section. Defaults: rpm_fast=60, rpm_standard=30, rpm_deep=15, per_agent_hourly_token_cap=0 (disabled). |
+
+## AD-614: DM Conversation Termination (2026-04-12)
+
+| Decision | Rationale |
+|----------|-----------|
+| Three independent layers: instructions, self-similarity, exchange limit | Defense in depth — any one layer can fail and others still protect. Instructions handle the 80% case; self-similarity catches semantic repetition; exchange limit is a hard circuit breaker. |
+| Standing orders: "Don't confirm a confirmation. DMs are short exchanges (2-6 messages)." | Agents currently have zero guidance on DM conversation closure. Ward Room has `[NO_RESPONSE]` but no instruction about when agreement has been reached. |
+| Jaccard self-similarity threshold 0.6 (not 0.5 like AD-506b) | DMs are inherently more repetitive than public posts (same person, same topic). 0.6 catches the flood case (Jaccard ~0.8-0.95 for Chapel/Lynx messages) while allowing legitimate follow-ups. |
+| DM exchange limit applies even when `is_direct_target` is True | All existing guards (cooldown, round check, per-thread cap) are bypassed for DM channels because `is_direct_target` is always True for `channel_type == "dm"` (line 232). DMs had ZERO volume protection. |
+| Exchange limit per-thread (not per-channel) | DM channels can have multiple threads. Limiting per-thread allows separate topics while preventing any single conversation from running indefinitely. |
+| Config: `dm_exchange_limit=6`, `dm_similarity_threshold=0.6` in WardRoomConfig | Tunable without code changes. 6 exchanges = 3 back-and-forth rounds — sufficient for scheduling, status checks, coordination. |
+
+**Motivation:** BF-163 incident revealed 8,448 DM posts in 90 minutes across 9 agents. Chapel-Lynx channel peaked at 120 posts/minute — Lynx posted "Tuesday 1400 hours it is" 50+ times with minor variations. Three compounding gaps: (1) no `[NO_RESPONSE]`-equivalent guidance for DM closure, (2) no self-similarity check on DM sends, (3) DMs bypass all existing volume controls via `is_direct_target`.
+
+**Connects to:** BF-163 (DM send cooldown — timing layer), AD-506b (peer repetition — detection-only), BF-156/157 (DM delivery + bypass), AD-453 (DM extraction), AD-583 (echo chamber detection).
+
+
+## BF-164: Stale Unread DM Notification Loop (2026-04-12)
+
+**Problem:** AD-614's DM exchange limit blocks agents from responding to old flood threads (>= 6 posts), but `get_unread_dms()` continued returning those threads as "unread" — the last post was from someone else, so the thread qualified as unread, but the agent could never respond. This created infinite BF-082 notification cycles every ~2 minutes for all 9 agents.
+
+| Decision | Rationale |
+|----------|-----------|
+| SQL subquery filter in `get_unread_dms()`, not application-layer filter | Prevents unactionable threads from ever leaving the database — no wasted I/O or downstream processing. Consistent with "push filtering as close to the data as possible." |
+| `exchange_limit` parameter with default 0 (disabled) | Backward compatible — callers that don't pass it get existing behavior. Only `_check_unread_dms()` in proactive.py passes the config value. |
+| `>= exchange_limit` check (not `>`) | Agent with exactly N posts in a thread can't post again (AD-614 uses same `>=` check). Boundary consistency between writing and reading. |
+| `routed` counter replaces `len(unread_dms)` in BF-082 log | Original logged query result count even when all DMs were deduplicated via `_notified_dm_threads`. Log now reflects actual notifications dispatched. |
+
+**Root cause:** AD-614 created a write-side gate (block posting when at limit) without a corresponding read-side gate (stop querying capped threads). The read path and write path had inconsistent views of "actionable."
+
+**Connects to:** AD-614 (DM exchange limit — write-side cap), BF-082 (DM notification delivery), BF-163 (DM send flood — the original flood that capped these threads).
+
+
+## BF-163: DM Send Flood — Agent-to-Agent Feedback Loop (2026-04-12)
+
+| Decision | Rationale |
+|----------|-----------|
+| Per-agent per-target cooldown (60s) on DM sending, not global rate limit | Global limit would suppress legitimate DMs to different targets. Composite key `{agent.id}:{target_callsign.lower()}` isolates each conversation pair. |
+| Cooldown on the **sending** side in `_extract_and_execute_dms()` | BF-156's `is_direct_target` bypass only affects the receiving side (DM recipients bypass per-agent cooldown). Sending side had zero rate limiting — the actual root cause. |
+| `time.monotonic()` + dict, not asyncio or DB | Matches existing patterns (`_notified_dm_threads`, `_last_proactive`). No persistence needed — cooldown resets on restart are acceptable. |
+| 60-second window | Long enough to break the A→B→A feedback loop (proactive cycle is ~45s), short enough not to suppress legitimate follow-up DMs. |
+
+**Root cause:** Forge agent sent 40+ DMs to Chapel in ~2 minutes. Each DM triggered BF-082 notification → Chapel responded → Forge got notified → Forge DM'd again. Concurrent calls from 11 agents overwhelmed the LLM Copilot Proxy with HTTP 500 errors.
+
+**Connects to:** BF-156 (DM delivery reliability — receiving side bypass), BF-082 (DM notification), BF-157 (@mention response guarantee), AD-453 (DM extraction).
+
+
+## BF-162: Introspective Faithfulness False Positives (2026-04-12)
+
+**Problem:** AD-589's introspective faithfulness verification fires systematic false positives on common English idioms used conversationally by agents. Log pattern: `AD-589: Introspective confabulation detected for {agent} (score=0.00, claims=1, contradictions=1)` — uniform across Lynx, Reyes, Forge. Three `_MANIFEST_CONTRADICTIONS` rules use bare word-boundary matches that cannot distinguish conversational idioms ("my intuition suggests", "subconsciously noticed", "gut feeling about", "continuous awareness of systems") from mechanistic architectural claims ("I have an intuition mechanism"). Not just log noise — false positives inflate `confabulation_rate` via EMA (alpha=0.1), which degrades DEEP→SHALLOW retrieval at >0.3, emits false SELF_MODEL_DRIFT events to the event bus, and corrupts episode metadata baselines.
+
+| Decision | Rationale |
+|----------|-----------|
+| `_IDIOM_EXEMPTIONS` pattern list, not modification of `_MANIFEST_CONTRADICTIONS` | Contradictions correctly identify the semantic domains. The issue is disambiguation at the intersection — idiomatic usage vs mechanistic claims. Exemptions are additive (Open/Closed principle), targeted at specific conversational constructions. |
+| Exemptions checked only when contradiction already matched | No performance cost on the common non-contradicting path. Exemption-first would add regex overhead to every sentence. |
+| Accept ambiguity at the boundary (Westworld Principle) | "Subconsciously, my mind processes data in the background" has conversational structure even if content edges toward mechanistic. The Westworld Principle says we should not over-police natural expression. We accept some ambiguity rather than suppress authentic agent voice. |
+| Two existing tests flipped from `not grounded` to `grounded` | "My intuition tells me" and "gut feeling about" were ALWAYS idiomatic — AD-589's original tests were over-strict. BF-162 corrects the tests, not just the code. |
+
+## BF-161: Cognitive Zone UNKNOWN for GREEN Agents (2026-04-12)
+
+**Problem:** Agents in GREEN cognitive zone displayed "UNKNOWN" in telemetry. `_build_self_monitoring_context()` only set `cognitive_zone` for non-green zones (amber/red/critical), so working memory never received the green value. `IntrospectiveTelemetryService.get_cognitive_state()` read zone from working memory and found nothing, leaving the field empty. Downstream renders (HXI, telemetry context block) showed "UNKNOWN" for healthy agents. Crew-identified by Horizon via zone classification integration proposal.
+
+| Decision | Rationale |
+|----------|-----------|
+| Always include `cognitive_zone` in self-monitoring context | GREEN is a meaningful state, not an absence of state. Omitting it forces downstream to guess defaults, violating defense-in-depth. |
+| Default to `"green"` in telemetry service | Belt-and-suspenders — if working memory is empty (e.g., agent never ran proactive loop), GREEN is the correct circuit breaker default. |
+
+## BF-159/160: Qualification Probe Fix Wave (2026-04-12)
+
+**Problem:** 5/221 qualification test failures. BF-159: `knowledge_update_probe` failures (security_officer 0.500, surgeon 0.000, pharmacist 0.500) — agents with dense episodic histories (3,500+ episodes) triggered AUTHORITATIVE source framing where `_confabulation_guard()` returned only `base` without `temporal_preference`. Without "prefer the most recent observation," LLM treated contradictory old/new seeded episodes as equally valid. BF-160: `cross_agent_synthesis_probe` CREW-level false failure (score 0.000) — BF-150 redesigned probe from cross-shard to sovereign-shard synthesis but tier remained at 3, so `run_collective()` invoked it with `__crew__` → agent not found → error result.
+
+| Decision | Rationale |
+|----------|-----------|
+| Add `temporal_preference` to AUTHORITATIVE tier | Temporal contradictions (same measurement, different timestamps) are valid regardless of anchor quality. AGM Belief Revision is a logical principle (time ordering), not a quality concern (data vs orientation). Orthogonal to `orientation_priority` which remains excluded from AUTHORITATIVE. |
+| Skip guard (`_make_skip_result`) for `__crew__` in CrossAgentSynthesisProbe | Probe requires a real agent (sovereign shard). Skip (score=1.0, passed=True) is correct — not error (score=0.0) which falsely fails the CREW collective run. |
+
+## BF-156/157: DM Delivery + @Mention Response Guarantee (2026-04-12)
+
+**Problem:** Two communication reliability bugs. BF-156: Agent-to-agent DMs go unanswered — `_check_unread_dms()` sat AFTER Ensign gate in proactive loop (Ensigns never reached it), per-agent cooldown silently dropped DM notifications, thread depth cap truncated DM conversations. BF-157: @mention doesn't guarantee response — `mentions` list used for routing only (deciding who to notify), never forwarded in IntentMessage params. LLM prompt offered `[NO_RESPONSE]` even for @mentioned agents, treating them identically to ambient notifications.
+
+| Decision | Rationale |
+|----------|-----------|
+| `is_direct_target` bypass for cooldown/round/per-thread caps | These guards prevent thread explosion in public channels — not suppress direct communication. @mentioned agents and DM recipients are specifically addressed and must respond. |
+| `was_mentioned` flag in IntentMessage params | Router knows about mentions (from `find_targets()`), agent knows about prompts. Passing a flag through params respects SOLID-S and Law of Demeter — each component retains single responsibility. |
+| Suppress `[NO_RESPONSE]` for @mentioned agents | Being directly addressed is a social contract — silence is rude. If the agent has nothing relevant, it should acknowledge the mention ("I don't have specific data on that") rather than being silent. |
+| Move `_check_unread_dms()` before Ensign gate | DM delivery is communication reliability, not proactive agency. Ensigns should still receive their DMs. The `is_alive` and `is_crew_agent` gates remain above — dead agents and infrastructure don't need DM delivery. |
+| DM channels bypass thread depth cap | Thread depth cap exists for public channel conversation management. DMs are private 1:1 conversations — artificial truncation breaks dialogue. Check moved after channel lookup so `channel.channel_type` is available. |
+
+**Connects to:** AD-592 (confabulation guard), BF-148 (temporal preference), BF-150 (synthesis probe redesign), AD-582d (memory probes).
+
+
 ## AD-598: Importance Scoring at Encoding (2026-04-11)
 
 **Problem:** All episodes are born equal — routine status updates and critical trust violations get the same initial activation weight. AD-538's Ebbinghaus decay and AD-593's pruning treat all episodes identically by age and activation frequency. High-signal moments (trust breaches, key discoveries, Captain directives) decay and get pruned at the same rate as routine observations.
@@ -3597,6 +3717,8 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Research basis:** Park et al. (2023) "Generative Agents: Interactive Simulacra of Human Behavior" — importance scoring at encoding enables selective retention. ProbOS adaptation: rule-based instead of LLM-based, integrated with existing activation lifecycle (AD-538) rather than standalone importance store.
 
 **Connects to:** AD-538 (Ebbinghaus decay), AD-593 (pruning acceleration), AD-567a (AnchorFrame metadata), AD-582 (memory probes), AD-579 (tiered loading).
+
+**Build prompt:** `prompts/ad-598-importance-scoring.md`. **Implementation:** 7 changes across 5 files. Change 1: `importance: int = 5` field on Episode dataclass (types.py). Change 2: New `importance_scorer.py` with `compute_importance()` — trigger_type mapping + content boosts + outcome adjustments. Change 3: Wired into episodic.py — `store()` computes importance (frozen Episode reconstruction), `_episode_to_metadata()` writes it, `_metadata_to_episode()` reads with `get("importance", 5)` fallback. Change 4: `compute_activation_with_importance()` and `find_low_activation_episodes_with_importance()` on ActivationTracker. Change 5: Dream Step 12 `_get_importance_map()` helper + both tier pruning blocks use importance-aware version with empty-map fallback. Change 6: `importance` and `importance_weight` params on `score_recall()`, wired in `recall_weighted()` at weight=0.05. Change 7: No migration needed (backward-compatible defaults). 19 tests across 6 classes.
 
 
 ## AD-599: Reflection as Recallable Episodes — Dream Insight Promotion (2026-04-11)
@@ -3632,15 +3754,53 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Connects to:** AD-462c (OracleService), AD-531 (episode clustering), AD-570 (anchor-indexed recall), AD-560 (Science Analytical Pyramid), AD-596 (Cognitive Skills).
 
 
-## BF-151: systems_analyst Identity Resolution — Pending BF-149 Results (2026-04-11)
+## BF-151: Seeded Recall Probe JSON Scoring Mismatch — Root Cause + Fix (2026-04-11)
 
-**Problem:** `systems_analyst` (Lynx) consistently scores 0.000 on `seeded_recall_probe` while 14/15 other agents score 0.667+. BF-149 adds retry-on-empty-response diagnostics, but if the root cause is `_resolve_probe_agent_id()` failing to map the slot name to a sovereign UUID, the retry won't help — it retries the same broken path. This BF is conditional on BF-149 build results.
+**Problem:** `systems_analyst` (Lynx) scores 0.000 on `seeded_recall_probe` while `knowledge_update_probe` scores 1.000 — same identity resolution, seeding, and recall pipeline. Root cause is NOT identity resolution (disproven). Root cause IS `check_faithfulness()` token-overlap scoring producing false-zero on JSON-responding agents. 7/55 agents have "Respond with JSON" instructions; JSON structural tokens dilute overlap ratio below threshold. KnowledgeUpdateProbe passes because it uses format-agnostic substring matching (`pair["new_value"] in resp_lower`).
 
 | Decision | Rationale |
 |----------|-----------|
-| Create BF now, close without code changes if BF-149 retry resolves it | The diagnostic infrastructure (BF-149 empty_responses count + error field) will reveal the root cause. If transient LLM failure, retry fixes it. If identity resolution, this BF has the investigation plan ready. |
-| Diagnostic-first approach: run `/qualify systems_analyst` post-build | Test result details will show empty_responses count and error field. This tells us which path failed — no guessing needed. |
-| Trace `_resolve_probe_agent_id()` → sovereign UUID if retry doesn't fix | BF-138 was supposed to complete sovereign ID resolution. If `systems_analyst` was missed, it's a BF-138 regression. Fix is adding the slot mapping, not redesigning resolution. |
+| Added `key_values` list per `_RECALL_FACTS` entry (3-tuple) | Format-agnostic scoring catches the fact regardless of response structure (JSON, markdown, plain text). Same pattern that makes KnowledgeUpdateProbe robust. |
+| `keyword_score` as third signal: `max(faithfulness, llm, keyword)` | Additive — doesn't break existing scoring for agents that respond in plain text. Only helps agents whose responses wrap facts in structure. |
+| Appended "State the specific value from your ship memory." to probe questions | Nudges the agent to surface the actual recalled value. Doesn't fundamentally change what we test — still exercises the full cognitive recall pipeline. |
+| `keyword_hit` diagnostic field in per-question details | Makes it visible which scoring path caught the fact. Aids future debugging of scoring mismatches. |
+| BF-151b: Added `old_aliases`/`new_aliases` to `_UPDATE_PAIRS` | Same JSON scoring gap applies to `knowledge_update_probe`. Alias-based detection catches values like `"60"` in JSON structure. Aliases must be mutually exclusive to preserve recency-preference discriminator. |
+
+
+## BF-152: Temporal Reasoning Probe — Keyword Scoring Gap for JSON Agents (2026-04-11)
+
+**Problem:** `systems_analyst` (Lynx) scores 0.250 on `temporal_reasoning_probe` (threshold 0.5). Same root cause as BF-151: `check_faithfulness()` token-overlap returns false-zero for JSON responses. The probe already computes `correct_found` via `_distinctive_keywords()` but only uses it for wrong-watch penalty — never as a positive score signal. With both faithfulness and LLM scorer unreliable, no path to a passing score.
+
+| Decision | Rationale |
+|----------|-----------|
+| Added `key_values` to `_TEMPORAL_EPISODES` | Format-agnostic matching catches temporal facts in JSON, markdown, or plain text. Same proven pattern as BF-151 `_RECALL_FACTS` key_values. |
+| `keyword_score` as third signal: `max(faithfulness, llm, keyword)` | Additive — doesn't change scoring for plain-text agents. keyword_score = kv_correct / len(correct_content), with -0.3 per wrong-watch keyword hit. |
+| "State specific details from your ship memory." nudge in questions | Nudges agent to surface recalled values. Consistent with BF-151 "ship memory" nudge pattern across all probes. |
+| `keyword_score`, `kv_correct`, `kv_wrong` diagnostic fields | Full observability of which scoring path fired. Pattern established in BF-151. |
+
+
+## BF-153: Shell Directive Commands Use Seed Callsign Instead of Runtime Callsign (2026-04-11)
+
+**Problem:** After naming ceremony (agent self-names, e.g., "O'Brien" → "Cassian"), shell commands `/order`, `/revoke`, `/amend` still display the seed callsign in crew acknowledgment lines. Crew-identified by Reyes (Operations) who flagged the standing orders "O'Brien" reference as a documentation error — actually a code bug in `get_callsign()`.
+
+| Decision | Rationale |
+|----------|-----------|
+| `get_callsign()` checks `runtime.callsign_registry` first | CallsignRegistry is the authoritative source after naming ceremony. Seed profile is the pre-ceremony default, not the runtime truth. |
+| Optional `runtime` parameter with `None` default | Backward compatibility — existing callers without runtime context still work via seed profile fallback. |
+| Three-tier fallback: registry → seed profile → formatted agent_type | Belt-and-suspenders: registry (authoritative), seed YAML (pre-ceremony), formatted string (unknown agent types). Each tier has try/except for graceful degradation. |
+| Crew-identified bug validates Westworld Principle | Agents should not see stale identity references. Reyes detected the inconsistency — collaborative improvement in action. Aligns with BF-146 "reference the billet, never the person" principle. |
+
+
+## BF-154: TemperamentProbe Timeout — Sequential LLM Calls Exceed Harness Timeout (2026-04-11)
+
+**Problem:** `mti_temperament_profile` always scores 0.000 (N) for all agents. The probe sends 4 scenarios + 4 LLM scoring calls sequentially (~8 calls × 10-15s each = ~60-80s), exceeding the 60s `test_timeout_seconds` harness timeout. `asyncio.TimeoutError` caught by harness → `score=0.0, passed=False`. The probe's own `passed=True` (threshold=0.0, profile-only) never reached.
+
+| Decision | Rationale |
+|----------|-----------|
+| `asyncio.gather()` for all 4 axes in parallel | Structural fix — axes are independent (different scenarios, different scoring prompts). ~20s total instead of ~60-80s. No need to increase timeout. |
+| `return_exceptions=True` with per-axis fallback | One axis failing shouldn't kill the whole profile. Failed axes fall through to `details.get(axis, 0.5)` default. Partial profiles are more useful than no profile. |
+| No change to harness timeout | 60s is reasonable for single-pathway probes. The probe was the outlier, not the harness config. |
+| **BF-154b:** Same parallelization applied to `SeededRecallProbe` | 5 sequential questions (10+ LLM calls) averaged 38s, max 59s — 17/173 runs (10%) timed out. Same `asyncio.gather()` + `return_exceptions=True` pattern. |
 
 
 ## BF-147/148/149/150: Qualification Probe Hardening Wave — Root Cause Analysis + Novel Research Absorption (2026-04-12)
@@ -3663,6 +3823,62 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Issues:** BF-147 (#168), BF-148 (#169), BF-149 (#170), BF-150 (#171).
 
 **Connects to:** AD-582 (Memory Competency Probes — original probe implementation), AD-584c (Recall Scoring Rebalance — convergence bonus pattern), AD-567d (Anchor-Preserving Dream Consolidation — activation lifecycle), AD-462c (Oracle Service — cross-shard recall), AD-531 (episode clustering — Transactive Memory source), BF-139–143 (prior probe hardening wave).
+
+**Build prompt:** bf-147-148-149-150-probe-hardening-wave.md.
+
+**Implementation:** 7 source files modified, 4 new test files (28 tests), 1 existing test file fixed (test_ad584c). Source changes: `memory_probes.py` (watch vocabulary fix, timestamp fix, retry-once pattern, synthesis redesign with department attribution), `episodic.py` (temporal_match + temporal_match_weight in score_recall() and recall_weighted()), `cognitive_agent.py` (_try_anchor_recall() returns tuple with watch_section, temporal preference in _confabulation_guard(), wiring to recall_weighted()), `source_governance.py` (regex fix: `\brecent\b` → `\brecent(?:ly)?\b`), `config.py` (recall_temporal_match_weight field), `test_ad584c_scoring_rebalance.py` (added _activation_tracker=None to __new__-constructed EpisodicMemory).
+
+
+## BF-155: Temporal Recall Merge Contamination — Wrong-Watch Episodes Outscore Correct Watch (2026-04-11)
+
+**Problem:** `temporal_reasoning_probe` shows ~40% watch confusion rate across agents. Root cause investigation identified 3 compounding issues in the recall merge pipeline and 4 deeper architectural gaps deferred to future ADs.
+
+**Root cause chain:**
+1. **Merge contamination** (`cognitive_agent.py:2794-2801`): `_recall_relevant_memories()` merges anchor-filtered episodes (correctly watch-filtered via ChromaDB `where` clause) with unfiltered semantic episodes from `recall_weighted()`. The merge is a naive union — semantic episodes from the wrong watch enter the recall set.
+2. **Weak temporal match bonus** (BF-147): `temporal_match_weight` +0.10 is insufficient to prevent wrong-watch episodes from outscoring right-watch episodes on semantic similarity alone. Semantic similarity can vary by 0.15-0.30 between candidates — a +0.10 temporal bonus often loses.
+3. **No mismatch suppression**: When a query has explicit temporal intent ("during first watch") but an episode is from a different watch, the episode receives no penalty — it simply misses the +0.10 bonus. Research documents (memory-retrieval-research.md Section 4.2/8.1/8.2) recommend actively penalizing contradictory temporal context.
+
+| Decision | Rationale |
+|----------|-----------|
+| Pre-merge watch filtering: exclude wrong-watch semantic episodes when `_query_watch_section` is set | **Defense in Depth.** The anchor filter correctly constrains `recall_by_anchor()` via ChromaDB `where` clause, but the merge step re-admits wrong-watch episodes from the semantic channel. Fix at the merge boundary — if the query has temporal intent, semantic results that contradict it should not enter the final set. Respects existing channel separation: anchor recall stays structured, semantic recall stays semantic, but the merge becomes temporally aware. |
+| Temporal mismatch suppression penalty (−0.15 default) in `score_recall()` | **Fail Fast / additive scoring principle.** Current behavior: wrong-watch episodes get +0.0 (miss the bonus). Fix: wrong-watch episodes get −0.15 (active penalty). This is the mismatch suppression pattern documented in memory-retrieval-research.md but never implemented. Separate config: `recall_temporal_mismatch_penalty` in MemoryConfig. Penalty only applies when `query_watch_section` is non-empty AND episode has a watch_section AND they differ — no penalty when temporal context is absent. |
+| Increase `temporal_match_weight` from 0.10 to 0.25 | The temporal match bonus must be large enough to meaningfully influence composite scoring. With weights summing to ~1.0 (semantic 0.35 + keyword 0.20 + trust 0.10 + hebbian 0.05 + recency 0.15 + anchor 0.15 = 1.00), a +0.10 bonus represents only 10% influence — easily overcome by ~0.03 semantic similarity difference. At +0.25, temporal match approaches parity with the semantic channel weight (0.35), making it a genuine discriminator. Combined with −0.15 mismatch penalty, the total swing between matching and non-matching is 0.40, dominant over semantic noise. |
+| Defer TCM temporal context vectors to AD-601 | Continuous context vectors (Howard & Kahana 2002) solve the fundamental binary match limitation — but implementation requires new ChromaDB metadata fields, per-agent state management, and context vector update on every cognitive cycle. High effort, correct long-term solution. BF-155 quick wins provide 80% of the benefit. |
+| Defer question-adaptive retrieval routing to AD-602 | `classify_retrieval_strategy()` has no question-type awareness — temporal/social/factual queries all use the same retrieval path. Requires new classifier, type-specific weight profiles, and strategy adjustment. Significant scope — separate AD. |
+| Defer anchor recall composite scoring to AD-603 | `recall_by_anchor()` returns raw Episodes, not RecallScores — they bypass composite scoring entirely. The merge is comparing scored vs unscored results. Fixing this properly means returning `list[RecallScore]` from anchor recall and doing a scored merge. Separate AD. |
+| Defer spreading activation / multi-hop retrieval to AD-604 | Multi-hop retrieval ("A reminds me of B which reminds me of C") requires two-hop queries with activation decay. Important for causal queries but orthogonal to the temporal discrimination problem. Separate AD. |
+| Keep 168h recency decay constant unchanged | 1-week half-life serves its design purpose (AD-567a): discriminating days-apart episodes. Temporal discrimination within a watch needs different mechanisms (TCM, mismatch suppression), not a global decay constant change that would disrupt episode lifecycle. |
+
+**Engineering principles applied:**
+- **Defense in Depth:** Validate temporal constraints at merge boundary (pre-merge filter) AND scoring boundary (mismatch penalty) AND weight calibration (increased bonus). Three layers, each independently effective.
+- **Fail Fast:** Mismatch penalty makes wrong-watch episodes visibly degraded in composite scores — debuggable, not silent.
+- **Open/Closed:** `score_recall()` extended with new optional parameters, existing callers unaffected. `recall_temporal_mismatch_penalty` config field has backward-compatible default.
+- **Single Responsibility:** Pre-merge filtering lives in `_recall_relevant_memories()` (its responsibility is memory orchestration). Mismatch penalty lives in `score_recall()` (its responsibility is scoring). Config lives in `MemoryConfig` (configuration responsibility).
+- **DRY:** Mismatch check uses existing `watch_section` field comparison pattern from BF-147 `_temporal_match` logic — no new data model.
+
+**Build prompt:** `prompts/bf-155-temporal-merge-contamination.md`
+
+**Implementation:** 3 source files modified, 1 new test file (14 tests across 4 classes). Change A: Pre-merge watch filtering at AD-570c merge step in `cognitive_agent.py` — when `_query_watch_section` is set, semantic episodes with contradicting `watch_section` are excluded before merging with anchor episodes. Change B: `score_recall()` in `episodic.py` gains `temporal_mismatch_penalty` (default 0.15) and `query_has_temporal_intent` (default False) parameters — when query has temporal intent and episode watch mismatches, penalty subtracted from composite (clamped to 0.0). Match bonus and mismatch penalty are mutually exclusive (`elif` branch). `recall_weighted()` wires `temporal_mismatch_penalty` and derives `query_has_temporal_intent` from `bool(query_watch_section)`. Change C: `MemoryConfig` defaults updated — `recall_temporal_match_weight` 0.10→0.25, new `recall_temporal_mismatch_penalty` 0.15. Config values wired through `cognitive_agent.py` → `recall_weighted()` call. Function signature defaults remain at 0.10/0.15 for backward compatibility with direct callers. Total match/mismatch swing: 0.40 (dominant over semantic noise ~0.15-0.30).
+
+**Issues:** BF-155 (#176). Deep work: AD-601 (TCM), AD-602 (question routing), AD-603 (anchor scoring), AD-604 (multi-hop).
+
+**Connects to:** BF-147 (temporal match weight — increased), AD-570c (anchor recall merge — filtered), AD-584c (scoring rebalance — mismatch penalty complement), AD-567b (salience-weighted recall — score_recall() extension), AD-584d (enriched embeddings — separate planned improvement).
+
+
+## AD-601/602/603/604: Deep Temporal Discrimination Enhancement Scoping (2026-04-11)
+
+**Context:** BF-155 investigation identified 4 deeper architectural gaps beyond the quick wins. These are tracked as separate ADs for future prioritization based on BF-155 results.
+
+| AD | Title | Rationale | Depends On |
+|----|-------|-----------|------------|
+| AD-601 | TCM Temporal Context Vectors | Binary watch match → continuous temporal proximity gradient. Solves intra-watch discrimination and soft watch boundaries. Howard & Kahana 2002. | AD-567a, AD-570, AD-584d |
+| AD-602 | Question-Adaptive Retrieval Routing | `classify_retrieval_strategy()` gains question-type awareness. TEMPORAL/SOCIAL/FACTUAL queries use different weight profiles and budgets. | AD-568a, AD-570c, AD-584b |
+| AD-603 | Anchor Recall Composite Scoring | `recall_by_anchor()` returns scored results, not raw Episodes. Enables scored merge instead of position-based merge. | AD-570, AD-567b, AD-584c |
+| AD-604 | Spreading Activation Multi-Hop | Two-hop associative recall for causal/narrative queries. DEEP strategy queries follow associative chains from first-hop results. | AD-531, AD-570, AD-600 |
+
+**Priority guidance:** AD-603 is the most impactful for recall quality (fixes the scored-vs-unscored merge problem). AD-601 is the most architecturally significant (new temporal representation). AD-602 and AD-604 are incremental improvements. Recommend: AD-603 → AD-601 → AD-602 → AD-604.
+
+**Existing planned work absorbed:** AD-584d (enriched embeddings) already exists and addresses a complementary gap (only `user_input` embedded, not `reflection`). No duplication — these 4 new ADs target retrieval and scoring, AD-584d targets encoding.
 
 
 ## AD-587: Cognitive Architecture Manifest — Mechanistic Self-Model for Agents (2026-04-10)
@@ -3722,3 +3938,84 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Build prompt:** `prompts/ad-589-introspective-faithfulness.md` — 3 components.
 
 **Implementation:** 3 source files modified (`source_governance.py`: `_SELF_REFERENTIAL_PATTERNS` 6 compiled regexes, `_MANIFEST_CONTRADICTIONS` 8 contradiction rules, `extract_self_referential_claims()` sentence-level claim extraction, `IntrospectiveFaithfulnessResult` frozen dataclass, `check_introspective_faithfulness()` pure verification function; `cognitive_agent.py`: `_check_introspective_faithfulness()` fire-and-forget method, post-decision pipeline block (check+log+event+Counselor+episode metadata), DM/WR `set_telemetry_snapshot()` caching in AD-588 injection paths; `agent_working_memory.py`: `_last_telemetry_snapshot` attribute + `set_telemetry_snapshot()` method). 1 event file modified (`events.py`: `SELF_MODEL_DRIFT` event type). 1 new test file (`test_ad589_introspective_faithfulness.py`): 38 tests across 6 classes — TestSelfReferentialClaimDetection (7), TestManifestContradictions (10), TestTelemetryCrossCheck (6), TestCognitiveAgentIntegration (8), TestTelemetrySnapshotCaching (5), TestEventType (2).
+
+
+## AD-605–610: Agent Memory Survey Absorption — "AI Meets Brain" (2026-04-11)
+
+**Problem:** Gap analysis of ProbOS's episodic memory architecture against 100+ papers cataloged in "AI Meets Brain: A Unified Survey on Memory Systems" (arXiv:2512.23343). ProbOS is ahead of the survey baseline (Park et al. Generative Agents `f(recency, importance, relevance)`) with 6-channel composite scoring + convergence bonus + temporal match/mismatch + anchor confidence gating + quality degradation stops. However, six gaps identified worth closing.
+
+**Source:** Xu et al. A-MEM (NeurIPS 2025), Liu et al. Think-in-Memory, Cao et al. ReMe, "AI Meets Brain" survey Section 8 (memory security). Research documented in `docs/research/agent-memory-survey-absorption.md`.
+
+| AD | Decision | Rationale |
+|----|----------|-----------|
+| AD-605 | Enhanced Embedding — concatenate anchor metadata into document text before ChromaDB embedding | `documents=[episode.user_input]` at 3 write sites embeds only raw text. Anchor fields (department, channel, watch_section, trigger_type) are stored in metadatas but never embedded. Enriched embeddings create stronger semantic separation between episodes from different contexts. A-MEM pattern + Craik & Tulving (1975) elaborative encoding. HIGH value, LOW cost. **PRIORITY: NEXT IN QUEUE.** |
+| AD-606 | Think-in-Memory — evolved thought storage as first-class episodic entries | Dream consolidation extracts patterns to notebooks (Tier 2) but not back into episodic recall pipeline. Agents re-reason from raw episodes instead of retrieving pre-computed conclusions. Liu et al. TiM pattern. HIGH value, MEDIUM cost. |
+| AD-607 | Memory Security Framework — extraction & poisoning defense | No defense against adversarial memory operations. Critical for federation/multi-instance. Survey Section 8 catalogs extraction attacks (crafted queries leak private data) and poisoning attacks (adversarial content injection). Three defense layers: retrieval-based, response-based, privacy-based. HIGH value (strategic), MEDIUM-HIGH cost. |
+| AD-608 | Retroactive Memory Evolution — store-time metadata propagation | Episodes are write-once. New information that could enrich existing episodes is not propagated. Lightweight version of A-MEM's evolution agent — embedding similarity triggers metadata propagation without LLM calls. MEDIUM value, MEDIUM cost. |
+| AD-609 | Multi-Faceted Distillation — failure & comparative insight extraction | CJT captures success procedures but not failure triggers or comparative insights. ReMe's three-lens extraction (success/failure/comparative). Dream Step extension. MEDIUM value, MEDIUM cost. |
+| AD-610 | Utility-Based Storage Gating — write-time duplicate & utility validation | All episodes stored, relying on post-hoc decay/pruning. Near-duplicate detection (>0.95 cosine + same anchors) and utility threshold at store time. Complements AD-538/AD-593 at input boundary. MEDIUM value, LOW-MEDIUM cost. |
+
+**Not absorbed (already covered):** Zettelkasten linking (Hebbian router), role-aware routing (sovereign shards + anchors), RL-trained ops (no training infra), positional indexing (scale not needed), three-tier graph (already have 3 knowledge tiers), experience inheritance (AD-537 observational learning covers this).
+
+**Priority order:** AD-606 (next) → AD-607 (strategic, defer until federation) → AD-608 → AD-609 → AD-610.
+
+**Build prompt:** `prompts/ad-605-enhanced-embedding.md`
+
+**Implementation (AD-605):** 2 source files modified, 1 new test file (15 tests across 4 classes). `_prepare_document()` static method on EpisodicMemory concatenates non-empty anchor fields as bracketed prefixes (`[department] [channel] [watch_section] [trigger_type]`) before `user_input`. All 3 ChromaDB write sites (`store()`, `seed()`, `_force_update()`) updated to use `_prepare_document(episode)` instead of `episode.user_input`. Original `user_input` stored in metadata dict (`_episode_to_metadata()` adds `"user_input": ep.user_input`). `_metadata_to_episode()` reads `metadata.get("user_input", document)` — new episodes use stored original, pre-migration episodes fall back to document text. `migrate_enriched_embedding()` sync function: reads all episodes, reconstructs AnchorFrame from `anchors_json`, re-embeds with enriched text, populates `user_input` metadata field. Idempotent via `enriched_embedding_version` in collection metadata. Wired in `startup/cognitive_services.py` after `migrate_embedding_model()`. Change 5 (query enrichment) deferred per build prompt recommendation.
+
+**Engineering principles:** Open/Closed (all ADs extend existing APIs with optional parameters, backward-compatible defaults). Defense in Depth (AD-607 three defense layers). DRY (AD-605 reuses existing AnchorFrame fields, AD-609 extends existing dream pipeline, AD-610 extends existing embedding query). Single Responsibility (each AD addresses one gap).
+
+## AD-611: 3D Memory Graph Visualization (2026-04-12)
+
+**Problem:** No way to visually explore agent memory topology. Episodic memory is a flat list with no spatial representation — can't see cluster patterns, semantic neighborhoods, temporal chains, or cross-agent memory connections.
+
+**Decision:** Interactive 3D force-directed graph in HXI agent profile panel. Episodes as nodes, four edge types (semantic HNSW, thread co-occurrence, temporal proximity, participant overlap). Per-agent default with ship-wide toggle.
+
+| Decision | Rationale |
+|----------|-----------|
+| `react-force-graph-3d` over raw R3F | Purpose-built for force-directed graphs, handles d3-force 3D simulation, uses existing `three@^0.172.0` peer dependency |
+| Three-tier node selection (recency 70%, importance 20%, activation 10%) | Balanced representation — recent memories dominate but high-importance and frequently-accessed episodes also represented |
+| HNSW nearest-neighbor for semantic edges | O(N log n) via ChromaDB's built-in HNSW index vs O(n²) pairwise cosine. 200 nodes × k=5 = 200 queries vs 19,900 comparisons |
+| Backend-computed colors/sizes | Server-side computation reduces frontend complexity, enables consistent color palettes across views |
+| New Memory tab in profile panel (not standalone view) | Contextual — memory graph is per-agent information, natural extension of agent profile |
+| 200 default / 500 cap / 2000 edge cap | Performance guardrails — WebGL handles ~500 nodes smoothly, edge cap prevents visual clutter |
+
+**Prior work absorbed:** AD-531 `get_embeddings()` for raw vectors, AD-567d `get_activations_batch()` for activation sizing, AD-570 `recall_by_anchor()` for structured filtering, episode_clustering.py `_cosine_similarity()` utility.
+
+**Build prompt:** `prompts/ad-611-memory-graph-3d.md`
+
+**Engineering principles:** Single Responsibility (backend: node selection, edge construction, color mapping as separate functions; frontend: types, graph component, tab wrapper split). Dependency Inversion (router depends on runtime abstraction via Depends). Fail Fast (503 for missing episodic memory, log-and-degrade for edge/activation failures). Defense in Depth (max_nodes capped server-side, edge cap enforced, FastAPI Query validation). DRY (reuses resolve_sovereign_id_from_slot, is_crew_agent, get_runtime, existing EpisodicMemory APIs). Law of Demeter (one justified `_collection.query()` access documented — no public wrapper exists for embedding-vector queries).
+
+## AD-613: Ward Room HXI Performance — Query Batching, Event Debouncing, Caching (2026-04-12)
+
+**Problem:** Ward Room message population slow and channel switching has high latency. Worsened as DM traffic increased after BF-156/157. Root causes: (1) WebSocket event storm — each `ward_room_post_created` fires 4 parallel API calls with zero debouncing (~520 HTTP fetches/hour from 11 agents), (2) N+1 DM queries — `/api/wardroom/dms` runs 2N+1 SQL queries per refresh, (3) no thread cache — full re-fetch on channel switch-back, (4) unbounded post fetch — `get_thread()` loads ALL posts with no LIMIT, (5) background DM poll — 15s interval fires even when panel closed, (6) missing composite indexes — primary list query does filesort instead of index scan.
+
+| Decision | Rationale |
+|----------|-----------|
+| 300ms flag-based WebSocket debounce using module-level timer (not React hook) | Matches existing GlassLayer.tsx pattern; imperceptible to humans; eliminates burst overhead; no library dependency |
+| `count_threads()` replaces `len(list_threads(100))` for DM count | COUNT(*) is a single index scan vs fetching 100 rows + Python len(); reduces 2N+1 → N+1 queries |
+| Per-channel Map cache with 30s TTL in Zustand store | WebSocket-triggered refreshes keep data fresh; 30s balances staleness vs responsiveness; Map entries are tiny, no eviction needed |
+| Post pagination with DESC LIMIT + reverse (default 100) | Most recent posts are most relevant; `total_post_count` enables frontend "load more" in future; orphan reparenting at page boundary is acceptable |
+| `isOpen` guard on DM poll useEffect | Panel is closed most of the time; eliminates background N+1 queries during normal HXI usage |
+| Three narrow composite indexes (activity sort, archive filter, post ordering) | Each covers one query pattern; CREATE IF NOT EXISTS safe for existing databases; no migration needed |
+
+**Prior work:** AD-407 (Ward Room core), BF-015 (WebSocket thread refresh), BF-054 (DM auto-refresh), BF-080 (DM conversation viewer), BF-156/157 (DM delivery, triggered increased DM traffic). Coordinates with AD-612 (DM rendering + thread depth).
+
+**Issues:** #196 (AD-613).
+
+## AD-612: DM Rendering + Thread Depth + DM Tag Robustness (2026-04-12)
+
+**Problem:** Three related Ward Room communication quality issues:
+1. DM regex (`\[DM\s+@?(\S+)\]\s*\n(.*?)\n\[/DM\]`) requires newlines after opening tag and before closing `[/DM]`. When agents write single-line DMs (e.g., `[DM @Atlas] Confirmed. My dataset shows...`) without the newline/closing tag format, the regex doesn't match and the entire DM leaks into the public Ward Room post. Observed in production: Kira's DM to Atlas rendered publicly in thread.
+2. DM channel conversations reuse `WardRoomPostItem` (the threaded renderer) — DMs should be flat chronological messages like Slack/iMessage, not nested threads.
+3. Thread nesting cap at 4 (`Math.min(depth + 1, 4)` in WardRoomPostItem.tsx:85) still creates narrow columns at 16px indentation per level. By depth 3-4, reply columns are unreadable.
+
+| Decision | Rationale |
+|----------|-----------|
+| Harden DM regex: support single-line `[DM @callsign] text`, inline `[DM @callsign]text[/DM]`, and greedy-to-end-of-response for unclosed tags | Agents are not reliable format-followers; extraction must be tolerant |
+| IM-style flat rendering for DM channels | DMs are 1:1 conversations — threading adds visual complexity with no information value |
+| Flatten thread replies at depth 2 to "replying to @callsign" timeline | Preserves reply context without progressive indentation. Same pattern as Reddit/Slack |
+
+**Prior work:** AD-453 (DM extraction), BF-066 (DM stripping from public posts), AD-523a (DM channel viewer, BF-080), BF-156/157 (DM delivery + @mention guarantee).
+
+**Issues:** #193 (AD-612).

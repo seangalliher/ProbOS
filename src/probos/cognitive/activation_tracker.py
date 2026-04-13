@@ -141,6 +141,38 @@ CREATE INDEX IF NOT EXISTS idx_access_time ON episode_access_log(access_time);
             return float("-inf")
         return math.log(total)
 
+    def compute_activation_with_importance(
+        self,
+        access_times: list[float],
+        importance: int = 5,
+        now: float | None = None,
+    ) -> float:
+        """Compute ACT-R activation modified by episode importance.
+
+        AD-598: Importance modifies the effective decay rate.
+        importance=10 → decay at 0.5x rate (2x slower).
+        importance=5  → decay at 1.0x rate (baseline).
+        importance=1  → decay at 2.5x rate (faster).
+
+        Formula: effective_d = base_d / (importance / 5.0)
+        """
+        if not access_times:
+            return float("-inf")
+        if now is None:
+            now = time.time()
+        # importance / 5.0 gives: 10→2.0, 5→1.0, 1→0.2
+        importance_factor = max(importance, 1) / 5.0
+        effective_d = self._decay_d / importance_factor
+        total = 0.0
+        for t_access in access_times:
+            age = now - t_access
+            if age <= 0:
+                age = 0.001
+            total += age ** (-effective_d)
+        if total <= 0:
+            return float("-inf")
+        return math.log(total)
+
     async def get_activation(self, episode_id: str) -> float:
         """Compute current activation for a single episode."""
         if not self._db:
@@ -212,6 +244,42 @@ CREATE INDEX IF NOT EXISTS idx_access_time ON episode_access_log(access_time);
         candidates.sort(key=lambda x: x[1])
 
         # Cap at max_prune_fraction
+        max_prune = max(1, int(len(all_episode_ids) * max_prune_fraction))
+        return [eid for eid, _ in candidates[:max_prune]]
+
+    async def find_low_activation_episodes_with_importance(
+        self,
+        all_episode_ids: list[str],
+        importance_map: dict[str, int],
+        threshold: float = -2.0,
+        max_prune_fraction: float = 0.10,
+    ) -> list[str]:
+        """Find episodes below activation threshold, adjusted by importance.
+
+        AD-598: Each episode's activation is computed with its own importance
+        factor, so high-importance episodes need lower raw activation to
+        survive pruning.
+
+        Args:
+            importance_map: {episode_id: importance_score} — episodes not in
+                map are treated as importance=5 (neutral).
+        """
+        if not all_episode_ids:
+            return []
+
+        # Get raw access times per episode
+        activations_raw = await self.get_activations_batch(all_episode_ids)
+
+        candidates: list[tuple[str, float]] = []
+        for eid, activation in activations_raw.items():
+            importance = importance_map.get(eid, 5)
+            # Adjust threshold by importance: high-importance episodes
+            # get a lower effective threshold (harder to prune)
+            adjusted_threshold = threshold - (importance - 5) * 0.2
+            if activation < adjusted_threshold:
+                candidates.append((eid, activation))
+
+        candidates.sort(key=lambda x: x[1])
         max_prune = max(1, int(len(all_episode_ids) * max_prune_fraction))
         return [eid for eid, _ in candidates[:max_prune]]
 

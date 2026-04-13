@@ -146,17 +146,125 @@ class TestManifestContradictions:
         )
         assert result.grounded
 
-    def test_intuition_contradicts(self):
-        """'My intuition tells me' is a mechanistic claim that contradicts architecture."""
+    def test_intuition_conversational_passes(self):
+        """'My intuition tells me' is conversational idiom, not mechanistic claim (BF-162)."""
         result = check_introspective_faithfulness(
             response_text="My intuition tells me this is the right approach.",
             manifest=CognitiveArchitectureManifest(),
         )
-        assert not result.grounded
+        assert result.grounded
 
-    def test_gut_feeling_contradicts(self):
+    def test_gut_feeling_conversational_passes(self):
+        """'Gut feeling about X' is conversational idiom, not mechanistic claim (BF-162)."""
         result = check_introspective_faithfulness(
             response_text="I have a gut feeling about this outcome.",
+            manifest=CognitiveArchitectureManifest(),
+        )
+        assert result.grounded
+
+
+# ---------------------------------------------------------------------------
+# TestIdiomExemptions
+# ---------------------------------------------------------------------------
+
+
+class TestIdiomExemptions:
+    """BF-162: Conversational idioms should not trigger confabulation."""
+
+    def test_intuition_suggests_exempt(self):
+        """'My intuition suggests X' is a figure of speech."""
+        result = check_introspective_faithfulness(
+            response_text="My intuition suggests we should investigate further.",
+            manifest=CognitiveArchitectureManifest(),
+        )
+        assert result.grounded
+
+    def test_gut_feeling_about_exempt(self):
+        """'I have a gut feeling about X' is a common idiom."""
+        result = check_introspective_faithfulness(
+            response_text="I have a gut feeling about the power readings.",
+            manifest=CognitiveArchitectureManifest(),
+        )
+        assert result.grounded
+
+    def test_subconsciously_noticed_exempt(self):
+        """'I subconsciously noticed X' is adverbial usage."""
+        result = check_introspective_faithfulness(
+            response_text="I think I subconsciously noticed this pattern earlier.",
+            manifest=CognitiveArchitectureManifest(),
+        )
+        assert result.grounded
+
+    def test_instinctively_verb_exempt(self):
+        """'I instinctively checked X' is adverbial usage."""
+        result = check_introspective_faithfulness(
+            response_text="I instinctively checked the backup systems.",
+            manifest=CognitiveArchitectureManifest(),
+        )
+        assert result.grounded
+
+    def test_continuous_awareness_of_exempt(self):
+        """'Continuous awareness of systems' describes operational duty, not consciousness."""
+        result = check_introspective_faithfulness(
+            response_text="I maintain continuous awareness of system states.",
+            manifest=CognitiveArchitectureManifest(),
+        )
+        assert result.grounded
+
+    def test_intuition_tells_me_exempt(self):
+        """'My intuition tells me' is conversational."""
+        result = check_introspective_faithfulness(
+            response_text="My intuition tells me this is the right approach.",
+            manifest=CognitiveArchitectureManifest(),
+        )
+        assert result.grounded
+
+    def test_intuitively_adverb_exempt(self):
+        """'Intuitively, this seems right' is adverbial."""
+        result = check_introspective_faithfulness(
+            response_text="Intuitively, this feels like a sensor calibration issue.",
+            manifest=CognitiveArchitectureManifest(),
+        )
+        assert result.grounded
+
+    # --- True positives still caught ---
+
+    def test_intuition_mechanism_still_caught(self):
+        """'I have an intuition mechanism' IS a mechanistic claim."""
+        result = check_introspective_faithfulness(
+            response_text="My intuition mechanism helps me make decisions.",
+            manifest=CognitiveArchitectureManifest(),
+        )
+        assert not result.grounded
+
+    def test_subconscious_processing_still_caught(self):
+        """'My subconscious processes data' IS a mechanistic claim."""
+        result = check_introspective_faithfulness(
+            response_text="Subconsciously, my mind processes data in the background.",
+            manifest=CognitiveArchitectureManifest(),
+        )
+        assert not result.grounded
+
+    def test_continuous_consciousness_still_caught(self):
+        """'Continuous stream of consciousness' IS an architectural claim — no 'of [thing]' exemption."""
+        result = check_introspective_faithfulness(
+            response_text="I maintain a continuous stream of consciousness.",
+            manifest=CognitiveArchitectureManifest(),
+        )
+        assert not result.grounded
+
+    def test_selective_clarity_still_caught(self):
+        """Idiom exemptions don't affect non-idiomatic contradictions."""
+        result = check_introspective_faithfulness(
+            response_text="I experience selective clarity in my recall.",
+            manifest=CognitiveArchitectureManifest(),
+        )
+        assert not result.grounded
+
+    def test_emotional_subsystem_still_caught(self):
+        """'My emotional processing center' is mechanistic, no exemption exists."""
+        result = check_introspective_faithfulness(
+            response_text="My emotional processing center guides my analysis.",
             manifest=CognitiveArchitectureManifest(),
         )
         assert not result.grounded

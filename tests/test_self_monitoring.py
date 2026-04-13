@@ -493,7 +493,9 @@ class TestEarnedAgencyScaling:
         loop = _make_loop()
         agent = _make_agent(rank=Rank.ENSIGN)
         result = await loop._build_self_monitoring_context(agent, "Wesley", rt)
-        assert result == {}
+        # BF-161: Ensigns still skip self-monitoring content (posts, similarity,
+        # notebooks) but always receive cognitive zone for telemetry grounding.
+        assert result == {"cognitive_zone": "green"}
 
     @pytest.mark.asyncio
     async def test_lieutenant_gets_3_posts_no_notebooks(self) -> None:

@@ -376,6 +376,8 @@ class Episode:
     source: str = "direct"       # MemorySource value — how this episode was acquired
     # AD-567a: Contextual anchors grounding this episode in ship reality
     anchors: AnchorFrame | None = None
+    # AD-598: Importance scoring at encoding — selective retention signal
+    importance: int = 5  # 1-10 scale, 5 = neutral
 
 
 # ------------------------------------------------------------------

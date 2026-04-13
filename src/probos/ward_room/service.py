@@ -65,6 +65,26 @@ class WardRoomService(EventEmitterMixin):
         """Open DB, run schema, create default channels, wire sub-services."""
         if self.db_path:
             self._db = await self._connection_factory.connect(self.db_path)
+            # AD-615: WAL mode for concurrent read/write performance.
+            # Matches trust.py:161, routing.py:74 pattern (BF-099 canonical).
+            await self._db.execute("PRAGMA journal_mode=WAL")
+            await self._db.execute("PRAGMA busy_timeout=5000")
+            # AD-615: WAL-safe synchronous downgrade — only WAL checkpoints
+            # require full fsync. Reduces write latency ~50% under sustained
+            # load without sacrificing durability.
+            await self._db.execute("PRAGMA synchronous=NORMAL")
+            # AD-615: Verify WAL mode was accepted (can fail on network filesystems)
+            async with self._db.execute("PRAGMA journal_mode") as cursor:
+                row = await cursor.fetchone()
+                actual_mode = row[0] if row else "unknown"
+                if actual_mode != "wal":
+                    logger.warning(
+                        "Ward Room DB: WAL mode not accepted (got %s) — "
+                        "concurrent performance may be degraded",
+                        actual_mode,
+                    )
+                else:
+                    logger.debug("Ward Room DB: WAL mode enabled")
             await self._db.execute("PRAGMA foreign_keys = ON")
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
@@ -83,6 +103,12 @@ class WardRoomService(EventEmitterMixin):
                 await self._db.execute("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+            await self._db.commit()
+            # AD-613: Index on archived column (must be after ALTER TABLE above)
+            await self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_threads_channel_archived "
+                "ON threads(channel_id, archived)"
+            )
             await self._db.commit()
 
         # Wire sub-services (share DB connection)
@@ -247,6 +273,14 @@ class WardRoomService(EventEmitterMixin):
     ) -> list[WardRoomThread]:
         return await self._threads.list_threads(channel_id, limit, offset, sort, include_archived)
 
+    async def count_threads(self, channel_id: str) -> int:
+        """AD-613: Return thread count for a channel without fetching rows."""
+        return await self._threads.count_threads(channel_id)
+
+    async def count_posts_by_author(self, thread_id: str, author_id: str) -> int:
+        """AD-614: Count posts by a specific author in a thread."""
+        return await self._threads.count_posts_by_author(thread_id, author_id)
+
     async def browse_threads(
         self, agent_id: str, channels: list[str] | None = None,
         thread_mode: str | None = None, limit: int = 10,
@@ -279,8 +313,8 @@ class WardRoomService(EventEmitterMixin):
     async def update_thread(self, thread_id: str, **updates: Any) -> WardRoomThread | None:
         return await self._threads.update_thread(thread_id, **updates)
 
-    async def get_thread(self, thread_id: str) -> dict[str, Any] | None:
-        return await self._threads.get_thread(thread_id)
+    async def get_thread(self, thread_id: str, **kwargs: Any) -> dict[str, Any] | None:
+        return await self._threads.get_thread(thread_id, **kwargs)
 
     async def archive_dm_messages(self, max_age_hours: int = 24) -> int:
         return await self._threads.archive_dm_messages(max_age_hours)
@@ -343,5 +377,5 @@ class WardRoomService(EventEmitterMixin):
     async def get_unread_counts(self, agent_id: str) -> dict[str, int]:
         return await self._messages.get_unread_counts(agent_id)
 
-    async def get_unread_dms(self, agent_id: str, limit: int = 3) -> list[dict]:
-        return await self._messages.get_unread_dms(agent_id, limit)
+    async def get_unread_dms(self, agent_id: str, limit: int = 3, exchange_limit: int = 0) -> list[dict]:
+        return await self._messages.get_unread_dms(agent_id, limit, exchange_limit=exchange_limit)

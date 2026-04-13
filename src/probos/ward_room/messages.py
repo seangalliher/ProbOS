@@ -607,16 +607,31 @@ class MessageStore:
                 counts[row[0]] = row[1]
         return counts
 
-    async def get_unread_dms(self, agent_id: str, limit: int = 3) -> list[dict]:
+    async def get_unread_dms(self, agent_id: str, limit: int = 3, exchange_limit: int = 0) -> list[dict]:
         """Return DM threads with unread activity for an agent.
 
         AD-574: A thread is 'unread' if the most recent activity (thread
         creation or latest post) is from someone other than this agent.
         This catches Captain replies in agent-initiated threads.
+
+        BF-164: When exchange_limit > 0, exclude threads where this agent
+        already has >= exchange_limit posts — those threads are capped by
+        AD-614 and the agent can never respond, so they aren't actionable.
         """
         if not self._db:
             return []
         prefix = agent_id[:8]
+        # BF-164: optional exchange-limit filter
+        exchange_filter = ""
+        params: list[object] = [f"%{prefix}%", agent_id]
+        if exchange_limit > 0:
+            exchange_filter = (
+                "  AND (SELECT COUNT(*) FROM posts p2 "
+                "       WHERE p2.thread_id = t.id AND p2.author_id = ? "
+                "       AND p2.deleted = 0) < ? "
+            )
+            params.extend([agent_id, exchange_limit])
+        params.append(limit)
         async with self._db.execute(
             "SELECT t.id, t.channel_id, t.author_id, t.author_callsign, "
             "       t.title, t.body, t.created_at "
@@ -632,9 +647,10 @@ class MessageStore:
             "  AND c.name LIKE ? "
             "  AND (t.archived = 0 OR t.archived IS NULL) "
             "  AND COALESCE(lp.last_author, t.author_id) != ? "
+            + exchange_filter +
             "ORDER BY COALESCE(lp.last_post_time, t.created_at) DESC "
             "LIMIT ?",
-            (f"%{prefix}%", agent_id, limit),
+            tuple(params),
         ) as cursor:
             results = []
             async for row in cursor:

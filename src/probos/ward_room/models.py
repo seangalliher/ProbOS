@@ -182,6 +182,9 @@ CREATE INDEX IF NOT EXISTS idx_threads_channel ON threads(channel_id);
 CREATE INDEX IF NOT EXISTS idx_posts_thread ON posts(thread_id);
 CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_id);
 CREATE INDEX IF NOT EXISTS idx_mod_actions_channel ON mod_actions(channel_id);
+-- AD-613: Composite indexes for Ward Room query patterns
+CREATE INDEX IF NOT EXISTS idx_threads_channel_activity ON threads(channel_id, pinned, last_activity);
+CREATE INDEX IF NOT EXISTS idx_posts_thread_created ON posts(thread_id, created_at);
 """
 
 

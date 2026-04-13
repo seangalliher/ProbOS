@@ -193,6 +193,28 @@ class ThreadManager:
                 ))
         return threads
 
+    async def count_threads(self, channel_id: str) -> int:
+        """AD-613: Return thread count for a channel without fetching rows."""
+        if not self._db:
+            return 0
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM threads WHERE channel_id = ? AND NOT archived",
+            (channel_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def count_posts_by_author(self, thread_id: str, author_id: str) -> int:
+        """AD-614: Count posts by a specific author in a thread."""
+        if not self._db:
+            return 0
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM posts WHERE thread_id = ? AND author_id = ? AND deleted = 0",
+            (thread_id, author_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
     async def browse_threads(
         self,
         agent_id: str,
@@ -529,7 +551,7 @@ class ThreadManager:
         })
         return thread
 
-    async def get_thread(self, thread_id: str) -> dict[str, Any] | None:
+    async def get_thread(self, thread_id: str, *, post_limit: int = 100) -> dict[str, Any] | None:
         """Thread with all posts as nested children tree."""
         if not self._db:
             return None
@@ -553,10 +575,19 @@ class ThreadManager:
             }
 
         posts: list[dict[str, Any]] = []
+        # AD-613: Count total posts for pagination metadata
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM posts WHERE thread_id = ?", (thread_id,)
+        ) as cursor:
+            total_row = await cursor.fetchone()
+            total_post_count = total_row[0] if total_row else 0
+
+        # AD-613: Paginate posts — fetch most recent N by default
         async with self._db.execute(
             "SELECT id, thread_id, parent_id, author_id, body, created_at, edited_at, "
             "deleted, delete_reason, deleted_by, net_score, author_callsign "
-            "FROM posts WHERE thread_id = ? ORDER BY created_at", (thread_id,)
+            "FROM posts WHERE thread_id = ? ORDER BY created_at DESC LIMIT ?",
+            (thread_id, post_limit),
         ) as cursor:
             async for row in cursor:
                 posts.append({
@@ -568,6 +599,9 @@ class ThreadManager:
                     "children": [],
                 })
 
+        # Reverse to chronological order after DESC LIMIT fetch
+        posts.reverse()
+
         by_id: dict[str, dict] = {p["id"]: p for p in posts}
         roots: list[dict] = []
         for post in posts:
@@ -577,7 +611,7 @@ class ThreadManager:
             else:
                 roots.append(post)
 
-        return {"thread": thread_dict, "posts": roots}
+        return {"thread": thread_dict, "posts": roots, "total_post_count": total_post_count}
 
     async def get_thread_posts_temporal(self, thread_id: str) -> list[dict[str, Any]]:
         """Return all posts in a thread, flat and ordered by created_at.

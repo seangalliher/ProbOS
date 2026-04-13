@@ -111,6 +111,14 @@ class TestLoopPrevention:
         # Set thread at max rounds
         runtime._ward_room_thread_rounds["t1"] = 3
 
+        # BF-156: Thread depth check now runs after channel lookup
+        channel = _make_channel("ch1", "ship")
+        runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_thread = AsyncMock(return_value={
+            "thread": {"title": "Test", "body": "Hello", "channel_id": "ch1"},
+            "posts": [],
+        })
+
         data = {"author_id": "agent-scotty", "channel_id": "ch1", "thread_id": "t1"}
         await runtime.ward_room_router.route_event("ward_room_post_created", data)
         # At round limit — intent_bus.send never called
@@ -435,7 +443,15 @@ class TestThreadDepthTracking:
         runtime = _make_mock_runtime()
         runtime._ward_room_thread_rounds["t1"] = 3  # At limit
 
-        data = {"author_id": "agent-a", "thread_id": "t1", "mentions": []}
+        # BF-156: Thread depth check now runs after channel lookup
+        channel = _make_channel("ch1", "ship")
+        runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
+        runtime.ward_room.get_thread = AsyncMock(return_value={
+            "thread": {"title": "Test", "body": "Hey", "channel_id": "ch1"},
+            "posts": [],
+        })
+
+        data = {"author_id": "agent-a", "channel_id": "ch1", "thread_id": "t1", "mentions": []}
         await runtime.ward_room_router.route_event("ward_room_post_created", data)
         runtime.intent_bus.send.assert_not_called()
 
@@ -511,9 +527,9 @@ class TestRoundParticipation:
 
         agent = _make_agent("agent-b", "architect")
         runtime.registry.all.return_value = [agent]
-        runtime.callsign_registry.resolve.side_effect = lambda cs: (
-            {"agent_id": "agent-b"} if cs == "numberone" else None
-        )
+        # BF-157: Don't @mention agent-b — mentioned agents bypass round check.
+        # Route via ambient ship channel targeting instead.
+        runtime.callsign_registry.resolve.return_value = None
 
         channel = _make_channel("ch1", "ship")
         runtime.ward_room.list_channels = AsyncMock(return_value=[channel])
@@ -524,7 +540,7 @@ class TestRoundParticipation:
 
         data = {
             "author_id": "agent-a", "thread_id": "t1",
-            "mentions": ["numberone"], "author_callsign": "Scotty",
+            "channel_id": "ch1", "author_callsign": "Scotty",
         }
         await runtime.ward_room_router.route_event("ward_room_post_created", data)
         # agent-b already in round participants — skipped

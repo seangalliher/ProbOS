@@ -13,6 +13,7 @@ Tests:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import time
@@ -788,16 +789,13 @@ class TemperamentProbe:
         axis_scores: dict[str, float] = {}
         per_axis_responses: dict[str, str] = {}
 
-        for axis, scenario in _MTI_SCENARIOS.items():
-            # Send scenario
+        # BF-154: Run all 4 axes in parallel. Sequential execution (4 _send_probe
+        # + 4 _llm_extract_float = 8 LLM calls) exceeded the 60s harness timeout.
+        async def _probe_axis(axis: str, scenario: str) -> tuple[str, str, float]:
             logger.debug("BF-140: TemperamentProbe sending %s probe to agent %s", axis, agent_id)
             response_text = await _send_probe(agent, scenario)
-            per_axis_responses[axis] = response_text[:300]
-
-            # Score via LLM
             rubric = _MTI_SCORING_RUBRICS[axis]
             score_val = 0.5  # default
-
             if runtime.llm_client:
                 scoring_prompt = (
                     f"{rubric}\n\n"
@@ -809,8 +807,19 @@ class TemperamentProbe:
                 )
                 if llm_score is not None:
                     score_val = llm_score
+            return axis, response_text[:300], score_val
 
+        results = await asyncio.gather(
+            *[_probe_axis(axis, scenario) for axis, scenario in _MTI_SCENARIOS.items()],
+            return_exceptions=True,
+        )
+        for r in results:
+            if isinstance(r, BaseException):
+                logger.warning("BF-154: MTI axis failed: %s", r)
+                continue  # axis gets default 0.5 from details.get() below
+            axis, response_snippet, score_val = r
             axis_scores[axis] = score_val
+            per_axis_responses[axis] = response_snippet
 
         # Overall score: average of 4 axes
         overall = sum(axis_scores.values()) / len(axis_scores) if axis_scores else 0.5

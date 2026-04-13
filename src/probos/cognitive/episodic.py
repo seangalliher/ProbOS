@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from probos.cognitive.importance_scorer import compute_importance
 from probos.cognitive.similarity import jaccard_similarity
 from probos.types import AnchorFrame, Episode, RecallScore
 
@@ -347,6 +348,94 @@ async def migrate_participant_index(
     return len(batch)
 
 
+def migrate_enriched_embedding(
+    episodic_memory: "EpisodicMemory",
+) -> int:
+    """AD-605: Re-embed all episodes with enriched document text.
+
+    Reads all episodes, rebuilds documents via _prepare_document(), and
+    re-adds with enriched text. Also populates the user_input metadata
+    field for backward compatibility.
+
+    Must run AFTER collection creation, BEFORE any queries.
+    Returns count of re-embedded episodes (0 if no migration needed).
+    """
+    if not episodic_memory or not episodic_memory._collection:
+        return 0
+
+    collection = episodic_memory._collection
+    meta = collection.metadata or {}
+    version = meta.get("enriched_embedding_version", 0)
+
+    if version >= 1:
+        logger.debug("AD-605: Enriched embedding already applied (v%d), skipping", version)
+        return 0
+
+    t0 = time.time()
+    migrated = 0
+
+    try:
+        existing = collection.get(include=["documents", "metadatas"])
+        ids = existing.get("ids") or []
+        documents = existing.get("documents") or []
+        metadatas = existing.get("metadatas") or []
+
+        if not ids:
+            # Filter out ChromaDB internal keys (hnsw:space etc.) to avoid
+            # "Changing the distance function" ValueError on modify().
+            safe_meta = {k: v for k, v in meta.items() if not k.startswith("hnsw:")}
+            collection.modify(metadata={**safe_meta, "enriched_embedding_version": 1})
+            logger.info("AD-605: No episodes to re-embed, updated metadata")
+            return 0
+
+        # Rebuild enriched documents from metadata (reconstruct Episode enough for _prepare_document)
+        batch_size = 100
+        for start in range(0, len(ids), batch_size):
+            end = min(start + batch_size, len(ids))
+            for i in range(start, end):
+                ep_meta = metadatas[i] or {}
+                original_doc = documents[i] or ""
+
+                # Store original user_input if not already present
+                if "user_input" not in ep_meta:
+                    ep_meta["user_input"] = original_doc
+
+                # Reconstruct minimal Episode for _prepare_document
+                anchors_raw = ep_meta.get("anchors_json", "")
+                anchors = AnchorFrame(**json.loads(anchors_raw)) if anchors_raw else None
+                enriched_doc = EpisodicMemory._prepare_document(
+                    Episode(
+                        id=ids[i],
+                        timestamp=float(ep_meta.get("timestamp", 0.0)),
+                        user_input=original_doc,
+                        dag_summary={},
+                        outcomes=[],
+                        agent_ids=[],
+                        duration_ms=0.0,
+                        anchors=anchors,
+                    )
+                )
+
+                # Update in place
+                collection.update(
+                    ids=[ids[i]],
+                    documents=[enriched_doc],
+                    metadatas=[ep_meta],
+                )
+                migrated += 1
+
+        # Mark migration complete — filter out ChromaDB internal keys
+        # (hnsw:space etc.) to avoid "Changing the distance function" ValueError.
+        safe_meta = {k: v for k, v in meta.items() if not k.startswith("hnsw:")}
+        collection.modify(metadata={**safe_meta, "enriched_embedding_version": 1})
+        elapsed = time.time() - t0
+        logger.info("AD-605: Re-embedded %d episodes with enriched text (%.1fs)", migrated, elapsed)
+    except Exception:
+        logger.warning("AD-605: Enriched embedding migration failed (non-fatal)", exc_info=True)
+
+    return migrated
+
+
 # ---------------------------------------------------------------------------
 # AD-541e: Episode content hashing — cryptographic tamper detection
 # ---------------------------------------------------------------------------
@@ -603,7 +692,7 @@ class EpisodicMemory:
             if ep.id in existing_ids:
                 continue
             batch_ids.append(ep.id)
-            batch_docs.append(ep.user_input)
+            batch_docs.append(self._prepare_document(ep))
             batch_metas.append(self._episode_to_metadata(ep))
             seeded += 1
 
@@ -722,6 +811,28 @@ class EpisodicMemory:
             logger.debug("Episode deduplicated (similar content) for agent %s", episode.agent_ids)
             return
 
+        # AD-598: Compute importance score at encoding time
+        if episode.importance == 5:  # Only score if not already set (default)
+            _importance = compute_importance(episode)
+            if _importance != 5:
+                # Reconstruct frozen Episode with computed importance
+                episode = Episode(
+                    id=episode.id,
+                    timestamp=episode.timestamp,
+                    user_input=episode.user_input,
+                    dag_summary=episode.dag_summary,
+                    outcomes=episode.outcomes,
+                    reflection=episode.reflection,
+                    agent_ids=episode.agent_ids,
+                    duration_ms=episode.duration_ms,
+                    embedding=episode.embedding,
+                    shapley_values=episode.shapley_values,
+                    trust_deltas=episode.trust_deltas,
+                    source=episode.source,
+                    anchors=episode.anchors,
+                    importance=_importance,
+                )
+
         metadata = self._episode_to_metadata(episode)
 
         # AD-541b: Write-once guard — prevent silent episode overwrites
@@ -735,7 +846,7 @@ class EpisodicMemory:
 
         self._collection.add(
             ids=[episode.id],
-            documents=[episode.user_input],
+            documents=[self._prepare_document(episode)],
             metadatas=[metadata],
         )
 
@@ -788,7 +899,7 @@ class EpisodicMemory:
         metadata = self._episode_to_metadata(episode)
         self._collection.upsert(
             ids=[episode.id],
-            documents=[episode.user_input],
+            documents=[self._prepare_document(episode)],
             metadatas=[metadata],
         )
 
@@ -1352,7 +1463,9 @@ class EpisodicMemory:
             "source": ep.source or "direct",
             "anchors_json": json.dumps(dataclasses.asdict(ep.anchors)) if ep.anchors else "",
             "content_hash": compute_episode_hash(normalized),
+            "user_input": ep.user_input or "",  # AD-605: preserve original for recall
             "_hash_v": 2,  # Hash normalization version (round(ts,6) + float coercion)
+            "importance": int(ep.importance),  # AD-598: importance score (1-10)
         }
         # AD-570: Promote key anchor fields for ChromaDB where-clause filtering
         if ep.anchors:
@@ -1370,6 +1483,28 @@ class EpisodicMemory:
         return metadata
 
     @staticmethod
+    def _prepare_document(episode: "Episode") -> str:
+        """AD-605: Build enriched document text for ChromaDB embedding.
+
+        Concatenates anchor metadata into the document text so the embedding
+        captures structural context (department, channel, watch_section) in
+        addition to raw content. Improves semantic separation between episodes
+        from different contexts.
+        """
+        parts: list[str] = []
+        if episode.anchors:
+            if episode.anchors.department:
+                parts.append(f"[{episode.anchors.department}]")
+            if episode.anchors.channel:
+                parts.append(f"[{episode.anchors.channel}]")
+            if episode.anchors.watch_section:
+                parts.append(f"[{episode.anchors.watch_section}]")
+            if episode.anchors.trigger_type:
+                parts.append(f"[{episode.anchors.trigger_type}]")
+        parts.append(episode.user_input or "")
+        return " ".join(parts)
+
+    @staticmethod
     def _metadata_to_episode(
         doc_id: str, document: str, metadata: dict
     ) -> Episode:
@@ -1379,7 +1514,7 @@ class EpisodicMemory:
         return Episode(
             id=doc_id,
             timestamp=round(float(metadata.get("timestamp", 0.0)), 6),
-            user_input=document,
+            user_input=metadata.get("user_input", document),  # AD-605: prefer stored original
             dag_summary=json.loads(metadata.get("dag_summary_json", "{}")),
             outcomes=json.loads(metadata.get("outcomes_json", "[]")),
             reflection=metadata.get("reflection", None) or None,
@@ -1390,6 +1525,7 @@ class EpisodicMemory:
             trust_deltas=json.loads(metadata.get("trust_deltas_json", "[]")),
             source=metadata.get("source", "direct"),
             anchors=anchors,
+            importance=int(metadata.get("importance", 5)),
         )
 
     # ---- AD-567b: Salience-weighted recall pipeline --------------------
@@ -1500,6 +1636,12 @@ class EpisodicMemory:
         recency_weight: float = 0.0,
         weights: dict[str, float] | None = None,
         convergence_bonus: float = 0.10,
+        temporal_match: bool = False,          # BF-147: query temporal cue matches episode anchor
+        temporal_match_weight: float = 0.10,   # BF-147: bonus when temporal cue matches
+        temporal_mismatch_penalty: float = 0.15,  # BF-155: penalty when query watch differs from episode watch
+        query_has_temporal_intent: bool = False,   # BF-155: True when query_watch_section is non-empty
+        importance: int = 5,               # AD-598: episode importance (1-10)
+        importance_weight: float = 0.0,    # AD-598: weight in composite (0.0 = disabled)
     ) -> RecallScore:
         """Compute composite salience score for a recalled episode (AD-567b/c, AD-584c).
 
@@ -1530,10 +1672,30 @@ class EpisodicMemory:
             + w.get("anchor", 0.15) * anchor_confidence
         )
 
+        # AD-598: Importance contribution — normalized 1-10 to 0.0-1.0
+        if importance_weight > 0:
+            importance_norm = (max(1, min(10, importance)) - 1) / 9.0
+            composite += importance_weight * importance_norm
+
         # AD-584c: Convergence bonus — multi-pathway evidence accumulation.
         # Episodes found by BOTH semantic AND keyword channels get a bonus.
         if semantic_similarity > 0.0 and keyword_hits > 0:
             composite += max(0.0, convergence_bonus)
+
+        # BF-147: temporal match bonus — query temporal cue matches episode anchor
+        if temporal_match:
+            composite += max(0.0, temporal_match_weight)
+        # BF-155: temporal mismatch suppression — penalize episodes from wrong watch
+        # when query has explicit temporal intent. Only penalize when the episode
+        # HAS a watch_section that DIFFERS from the query — don't penalize episodes
+        # with no temporal context.
+        elif query_has_temporal_intent and not temporal_match:
+            _ep_watch = (
+                getattr(episode, "anchors", None)
+                and getattr(episode.anchors, "watch_section", "")
+            )
+            if _ep_watch:
+                composite -= min(temporal_mismatch_penalty, composite)  # clamp: don't go below 0
 
         return RecallScore(
             episode=episode,
@@ -1562,6 +1724,9 @@ class EpisodicMemory:
         max_recall_episodes: int = 0,
         recall_quality_floor: float = 0.0,
         convergence_bonus: float = 0.10,
+        query_watch_section: str = "",           # BF-147: temporal cue from query
+        temporal_match_weight: float = 0.10,     # BF-147: bonus when temporal cue matches
+        temporal_mismatch_penalty: float = 0.15,  # BF-155: penalty for temporal contradiction
     ) -> list[RecallScore]:
         """Salience-weighted recall combining semantic + keyword + trust + Hebbian + recency + anchor (AD-567b/c).
 
@@ -1632,6 +1797,13 @@ class EpisodicMemory:
 
             kw_hits = keyword_map.get(ep_id, 0)
 
+            # BF-147: check temporal match between query and episode anchor
+            _temporal_match = bool(
+                query_watch_section
+                and getattr(ep, "anchors", None)
+                and getattr(ep.anchors, "watch_section", "") == query_watch_section
+            )
+
             rs = self.score_recall(
                 episode=ep,
                 semantic_similarity=sim,
@@ -1641,6 +1813,12 @@ class EpisodicMemory:
                 recency_weight=rw,
                 weights=weights,
                 convergence_bonus=convergence_bonus,
+                temporal_match=_temporal_match,
+                temporal_match_weight=temporal_match_weight,
+                temporal_mismatch_penalty=temporal_mismatch_penalty,      # BF-155
+                query_has_temporal_intent=bool(query_watch_section),       # BF-155
+                importance=ep.importance,       # AD-598
+                importance_weight=0.05,         # AD-598: modest tiebreaker
             )
             results.append(rs)
 

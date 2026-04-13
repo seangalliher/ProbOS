@@ -284,6 +284,8 @@ class MemoryConfig(BaseModel):
         "anchor": 0.15,
     }
     recall_convergence_bonus: float = 0.10  # AD-584c: bonus for multi-channel hits
+    recall_temporal_match_weight: float = 0.25       # BF-147→BF-155: bonus for temporal cue match in score_recall()
+    recall_temporal_mismatch_penalty: float = 0.15   # BF-155: penalty when query watch differs from episode watch
     recall_context_budget_chars: int = 4000  # ~4K char memory budget
     # AD-567c: Anchor confidence scoring
     anchor_dimension_weights: dict[str, float] = {
@@ -616,6 +618,8 @@ class WardRoomConfig(BaseModel):
     retention_days_captain: int = 0            # 0 = indefinite retention for Captain posts
     archive_enabled: bool = True               # Write pruned posts to JSONL archive before deletion
     prune_interval_seconds: float = 86400.0    # How often to run pruning (default: daily)
+    dm_exchange_limit: int = 6          # AD-614: max posts per agent per DM thread
+    dm_similarity_threshold: float = 0.6  # AD-614: Jaccard threshold for DM self-similarity suppression
 
 
 class AssignmentConfig(BaseModel):

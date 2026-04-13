@@ -219,6 +219,16 @@ async def init_cognitive_services(
         except Exception:
             logger.warning("AD-584: Embedding model migration failed (non-fatal)", exc_info=True)
 
+    # AD-605: Re-embed with enriched anchor metadata
+    if episodic_memory:
+        try:
+            from probos.cognitive.episodic import migrate_enriched_embedding
+            migrated = migrate_enriched_embedding(episodic_memory)
+            if migrated > 0:
+                logger.info("AD-605: Re-embedded %d episodes with enriched anchor text", migrated)
+        except Exception:
+            logger.warning("AD-605: Enriched embedding migration failed (non-fatal)", exc_info=True)
+
     # Create FeedbackEngine (AD-219)
     from probos.cognitive.feedback import FeedbackEngine
 

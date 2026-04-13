@@ -279,6 +279,7 @@ class TestConfigWiring:
 
         em = EpisodicMemory.__new__(EpisodicMemory)
         em._query_reformulation_enabled = False
+        em._activation_tracker = None
 
         # Mock recall_for_agent_scored to return one episode
         ep = _make_episode()
@@ -302,6 +303,7 @@ class TestConfigWiring:
 
         em = EpisodicMemory.__new__(EpisodicMemory)
         em._query_reformulation_enabled = False
+        em._activation_tracker = None
 
         ep = _make_episode()
         em.recall_for_agent_scored = AsyncMock(return_value=[(ep, 0.8)])

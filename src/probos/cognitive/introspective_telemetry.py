@@ -88,6 +88,10 @@ class IntrospectiveTelemetryService:
                 zone = wm.get_cognitive_zone()
                 if zone:
                     result["zone"] = zone
+        # BF-161: Default to green (circuit breaker default) instead of leaving
+        # empty, which caused downstream renders to show "UNKNOWN".
+        if "zone" not in result:
+            result["zone"] = "green"
         result["regulation_model"] = "graduated_zones"
         return result
 

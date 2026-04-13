@@ -503,7 +503,7 @@ class ProbOSShell:
         return commands_status.format_uptime(seconds)
 
     def _get_callsign(self, agent_type: str) -> str:
-        return commands_directives.get_callsign(agent_type)
+        return commands_directives.get_callsign(agent_type, getattr(self, 'runtime', None))
 
     async def _user_escalation_callback(
         self, description: str, context: dict

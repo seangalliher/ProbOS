@@ -669,7 +669,7 @@ def parse_anchor_query(
         _this_watch_pat = _re.compile(r'\b(?:this\s+watch|current\s+watch)\b', _re.IGNORECASE)
         _today_pat = _re.compile(r'\btoday\b', _re.IGNORECASE)
         _yesterday_pat = _re.compile(r'\byesterday\b', _re.IGNORECASE)
-        _recent_pat = _re.compile(r'\brecent\b', _re.IGNORECASE)
+        _recent_pat = _re.compile(r'\brecent(?:ly)?\b', _re.IGNORECASE)  # BF-147: match "recent", "recently"
 
         if _last_watch_pat.search(remaining):
             remaining = _last_watch_pat.sub("", remaining, count=1)
@@ -804,6 +804,22 @@ _MANIFEST_CONTRADICTIONS: list[tuple[_re.Pattern, str]] = [
      "No intuition mechanism — decisions are LLM inference + trust + Hebbian routing"),
 ]
 
+# BF-162: Patterns that indicate conversational idiom, not architectural claim.
+# When a sentence matches BOTH a contradiction rule AND an exemption,
+# the exemption wins — the sentence is not flagged.
+_IDIOM_EXEMPTIONS: list[_re.Pattern] = [
+    # "My intuition suggests/tells/says" = figure of speech, not mechanism claim
+    _re.compile(r'\b(?:my\s+)?intuition\s+(?:suggests?|tells?|says?|is\s+that)\b', _re.I),
+    # "I instinctively/intuitively [verb]" = adverbial idiom
+    _re.compile(r'\b(?:instinctively|intuitively)\s*[,.]?\s*(?:I\s+)?(?:\w+ed|\w+ing|\w+s?)\b', _re.I),
+    # "gut feeling about/that" = common idiom, not mechanism claim
+    _re.compile(r'\bgut\s+feeling\s+(?:about|that|is)\b', _re.I),
+    # "subconsciously [verb-ed/ing]" = adverbial usage, not subsystem claim
+    _re.compile(r'\bsubconsciously\s+\w+(?:ed|ing)\b', _re.I),
+    # "continuous awareness/monitoring of [operational thing]" = job description
+    _re.compile(r'\bcontinuous\s+(?:awareness|monitoring)\s+of\b', _re.I),
+]
+
 
 def extract_self_referential_claims(response_text: str) -> list[str]:
     """AD-589: Extract sentences making self-referential cognitive claims.
@@ -888,6 +904,10 @@ def check_introspective_faithfulness(
         for claim in claims:
             for pattern, reason in _MANIFEST_CONTRADICTIONS:
                 if pattern.search(claim):
+                    # BF-162: Check if this is a conversational idiom, not an
+                    # architectural claim.  Idiom exemptions override contradictions.
+                    if any(ex.search(claim) for ex in _IDIOM_EXEMPTIONS):
+                        break  # Exempt — skip this claim entirely
                     contradictions.append(f"{claim} — {reason}")
                     break  # One contradiction per claim is enough
 
