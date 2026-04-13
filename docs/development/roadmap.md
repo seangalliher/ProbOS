@@ -5382,6 +5382,81 @@ MCP Apps is the convergence standard — adopted by Claude Desktop, VS Code GitH
 
 ---
 
+### Counselor Cross-Department Awareness (AD-619) *(complete, OSS)*
+
+**AD-619: Counselor Cross-Department Awareness** *(complete, OSS)* — Ship-wide authority agents get full cross-department visibility. (1) **`has_ship_wide_authority()` helper** in `crew_utils.py` — DRY/Open-Closed pattern with `_SHIP_WIDE_AUTHORITY_TYPES` set, extensible to First Officer without conditional changes. (2) **Channel subscriptions:** Ship-wide authority agents auto-subscribed to ALL department channels at startup (Medical, Engineering, Science, Security, Operations), not just their own. (3) **Oracle access:** Ship-wide authority agents get `RecallTier.ORACLE` regardless of rank + Oracle triggers on any retrieval strategy (SHALLOW or DEEP), not just DEEP. Enables cross-shard episodic recall when Captain asks about specific crew members. Standing orders updated (`config/standing_orders/counselor.md`) with Cross-Department Awareness section. 3 source files modified, 1 new test file (11 tests).
+
+**Connects to:** AD-462c/e (RecallTier + Oracle Service), AD-568a (Retrieval Strategy classification), AD-425 (Ward Room auto-subscription), AD-339 (Standing Orders).
+
+**Issues:** #205 (AD-619).
+
+> **Note:** AD-619's ship-wide authority bypass (`has_ship_wide_authority()`,
+> `_SHIP_WIDE_AUTHORITY_TYPES`, Oracle tier override, strategy gate relaxation)
+> will be replaced by the principled clearance system in AD-620/621/622.
+> Channel subscriptions preserved and improved. BF-164 (cross-agent episodic
+> recall) was **rejected** — violates sovereign memory principle.
+
+---
+
+### Clearance System — Separation of Rank and Access (AD-620/621/622) *(scoped, OSS)*
+
+**Design document:** `docs/research/clearance-system-design.md`
+
+**Reference model:** US Navy security clearance — rank, clearance, and access
+(need-to-know) are three independent concepts. ProbOS currently conflates rank
+and clearance via `recall_tier_from_rank()`. AD-619 exposed this conflation
+when the Counselor needed ORACLE access at LIEUTENANT rank — requiring a
+special bypass hack instead of principled role-based clearance.
+
+**AD-620: Clearance Model Foundation** *(scoped, OSS, depends: AD-619 cleanup)* —
+Separates rank (behavioral maturity) from clearance (access eligibility).
+(1) Add `clearance` field to `Post` dataclass in `ontology/models.py` — each
+billet defines its required `RecallTier`. (2) Add explicit clearance values
+to all posts in `config/ontology/organization.yaml` — Bridge officers (ORACLE),
+department chiefs (FULL), officers (ENHANCED), default (BASIC). (3) New
+`effective_recall_tier(rank, billet_tier, grants)` function in `earned_agency.py`
+— returns max of rank-based tier, billet-based tier, and active grant tiers.
+(4) `resolve_billet_clearance()` in `ontology/service.py` — looks up post's
+clearance for a given agent_type. (5) Replace `recall_tier_from_rank()` with
+`effective_recall_tier()` in `cognitive_agent.py` perceive() and `proactive.py`.
+(6) Simplify Oracle gate — remove strategy requirement, clearance IS the gate.
+(7) Remove AD-619 ship-wide authority bypass (`_SHIP_WIDE_AUTHORITY_TYPES`,
+`has_ship_wide_authority()`, `_has_swa` hack in Oracle condition). 5 source
+files modified, 1 config file modified.
+
+**AD-621: Billet-Driven Channel Visibility** *(scoped, OSS, depends: AD-620)* —
+Replace hardcoded `has_ship_wide_authority()` channel subscription with
+ontology-driven logic. (1) `reports_to: captain` → subscribe to ALL department
+channels. (2) All crew → own department + ship-wide channels (unchanged).
+(3) Remove `has_ship_wide_authority` from `startup/communication.py`.
+(4) Handle ontology timing — resolve billet data from static YAML or move
+subscription after ontology init. Channel visibility is about being in the
+room (observation), not capability access. 2 source files modified.
+
+**AD-622: Special Access Grants (ClearanceGrant)** *(scoped, OSS, depends: AD-620)* —
+SAP analog for project/duty-based elevated access. (1) `ClearanceGrant`
+dataclass — target agent, recall tier, scope, reason, issuer, expiration,
+revocable. (2) Grant store — SQLite-backed for audit trail, persists across
+restarts. (3) Captain command to issue/revoke grants. (4) Integration with
+`effective_recall_tier()` — active grants are one input source.
+(5) Audit logging. Use cases: temporary elevated recall for security
+investigations, cross-department projects, emergency access during incidents.
+Only Captain/First Officer can issue. 4 source files modified, 1 new file.
+
+**Build order:** AD-620 → AD-621 + AD-622 (parallel after foundation).
+
+**Key design decisions:**
+- No new enum — reuse `RecallTier` as the unit of clearance
+- Explicit clearance per post (not auto-derived from reports_to) — allows exceptions
+- Oracle gate simplified: clearance alone, no strategy requirement
+- Channel visibility is separate from clearance — ontology-driven, not clearance-driven
+- Sovereign memory principle preserved — clearance gates system capabilities, NOT cross-agent memory access
+- `recall_tier_from_rank()` preserved internally, called by `effective_recall_tier()` as one input
+
+**Connects to:** AD-619 (supersedes ship-wide authority bypass), AD-462c/e (RecallTier + Oracle), AD-568a (strategy gate — simplified), AD-357 (Earned Agency), AD-339 (Standing Orders).
+
+---
+
 ### DM Rendering + Thread Depth + DM Tag Robustness (AD-612) *(scoped, OSS)*
 
 **AD-612: DM Rendering, Thread Depth Flattening, and DM Tag Robustness** *(scoped, OSS, depends: AD-453 DM Extraction, AD-523a DM Viewer, BF-156/157 DM Delivery)* — Three related Ward Room communication fixes. (A) **DM regex robustness**: current regex `\[DM\s+@?(\S+)\]\s*\n(.*?)\n\[/DM\]` requires newlines and closing tags — single-line DMs and missing `[/DM]` leak into public posts. Harden to tolerate inline, single-line, and unclosed DM formats. (B) **IM-style DM rendering**: DM channel detail view reuses threaded `WardRoomPostItem` — replace with flat chronological message stream for 1:1 conversations. (C) **Thread depth flattening**: visual nesting at 16px/level × depth 4 creates unreadable narrow columns. Flatten at depth 2 to timeline-style with "replying to @callsign" back-reference.

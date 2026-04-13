@@ -134,7 +134,7 @@ async def init_communication(
 
         # AD-425: Auto-subscribe crew agents to department + All Hands channels
         from probos.cognitive.standing_orders import get_department
-        from probos.crew_utils import is_crew_agent
+        from probos.crew_utils import is_crew_agent, has_ship_wide_authority
 
         wr_channels = await ward_room.list_channels()
         all_hands_id = None
@@ -160,6 +160,10 @@ async def init_communication(
             dept = get_department(agent.agent_type)
             if dept and dept in dept_channel_map:
                 await ward_room.subscribe(agent.id, dept_channel_map[dept])
+            # AD-619: Ship-wide authority agents get all department channels
+            if has_ship_wide_authority(agent):
+                for dept_ch_id in dept_channel_map.values():
+                    await ward_room.subscribe(agent.id, dept_ch_id)
             if all_hands_id:
                 await ward_room.subscribe(agent.id, all_hands_id)
             if proposals_ch_id:

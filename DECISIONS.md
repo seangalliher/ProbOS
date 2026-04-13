@@ -3626,6 +3626,15 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 | 5 sub-ADs: AD-618a (schema+parser), AD-618b (instance+runtime), AD-618c (built-in Bills), AD-618d (HXI dashboard), AD-618e (Cognitive JIT bridge) | Clean decomposition respecting dependencies. AD-618a/c can be built independently. AD-618b needs AD-429 (Role Ontology) and AD-566 (Qualifications) for full role assignment. AD-618e needs AD-531–539 (complete). |
 | OSS: framework, runtime, built-in Bills, HXI dashboard. Commercial: SOP marketplace, visual designer, enterprise governance, process mining, M365 integration | Standard boundary rule — "how it works" → OSS; "how it makes money" → commercial. The Bill System itself is OSS. Productized tooling around it is commercial. |
 
+## AD-619: Counselor Cross-Department Awareness (2026-04-12)
+
+| Decision | Rationale |
+|----------|-----------|
+| Subscribe Counselor to ALL department channels at startup, not just Bridge | Echo is a Bridge officer with ship-wide clinical authority but was only subscribed to her own department channel. She had zero visibility into Medical, Engineering, Science, Security, or Operations discussions. Ship-wide authority requires ship-wide observation. |
+| Counselor-specific Oracle recall tier override (regardless of rank) | Oracle access is gated behind `Rank.SENIOR` + `RetrievalStrategy.DEEP`. The Counselor needs cross-agent episodic recall for clinical assessment. Rank gating is inappropriate — a new Counselor (Ensign) still needs to review crew history. Clinical role, not rank, determines recall needs. |
+| Relax Oracle strategy gate for Counselor (SHALLOW triggers Oracle) | DM conversations classify as `direct_message` → `SHALLOW` strategy. When the Captain asks "What has Chapel been working on?", the Counselor gets zero cross-agent context. Clinical queries about specific crew members require cross-shard recall regardless of intent classification. |
+| Standing orders updated alongside code changes | Added Cross-Department Awareness section to `config/standing_orders/counselor.md` — channel monitoring, wellness rounds, crew-specific inquiry guidance, clinical note-taking. Behavioral instruction + code enablement together. Standing orders without subscriptions = dead letter. Subscriptions without standing orders = noise without purpose. |
+
 ## AD-614: DM Conversation Termination (2026-04-12)
 
 | Decision | Rationale |
@@ -4064,3 +4073,54 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 | Global activity gate, not per-agent tracking | Simple global gate is sufficient — if any agent is active, detection is valid. Per-agent adds computational overhead during normal operations for marginal benefit |
 
 **Prior work:** BF-126 (post-stasis cluster suppression — time-bounded), BF-124 (cluster calibration thresholds), AD-411 (pattern deduplication).
+
+## AD-619: Counselor Cross-Department Awareness (2026-04-12)
+
+**Problem:** Bridge officers with ship-wide authority (Counselor) subscribed only to their own department channel at startup. Zero visibility into Medical, Engineering, Science, Security, or Operations. Oracle Service gated behind `Rank.SENIOR` + `RetrievalStrategy.DEEP` — DM conversations classify as SHALLOW, blocking cross-agent clinical inquiry.
+
+| Decision | Rationale |
+|----------|-----------|
+| `_SHIP_WIDE_AUTHORITY_TYPES` set in `crew_utils.py` with `has_ship_wide_authority()` helper | DRY + Open/Closed — check appears in 2 files. Static set follows `_WARD_ROOM_CREW` pattern because ontology initializes after subscription loop |
+| Subscribe ship-wide agents to ALL department channels | `subscribe()` is idempotent (ON CONFLICT DO UPDATE). Re-subscribing to own dept is harmless |
+| Recall tier override → `RecallTier.ORACLE` regardless of rank | Counselor needs cross-shard Oracle recall for clinical awareness. Rank-based gating inappropriate for role-based authority |
+| Relax Oracle strategy gate for ship-wide agents | DM conversations = SHALLOW intent. Counselor asking "What has Chapel been working on?" must not be blocked by DEEP gate |
+| Inline `_has_swa` import reused across both changes in `perceive()` | Single import, both the tier override and gate relaxation in the same method scope |
+
+**Prior work:** AD-568a (Oracle gate), AD-462c/e (RecallTier + Oracle Service), AD-425 (Ward Room subscriptions).
+**Issue:** #205.
+
+### BF-164 REJECTED: Oracle Cross-Agent Episodic Recall (2026-04-12)
+
+**Proposed fix:** Pass empty `agent_id` to Oracle for ship-wide authority agents, triggering global `recall()` instead of agent-scoped `recall_weighted()`. Would let the Counselor search ALL agents' episodic shards.
+
+**Rejected — violates Sovereign Agent Identity.**
+
+| Decision | Rationale |
+|----------|-----------|
+| Do NOT give any agent access to other agents' episodic memories | Episodic memory is sovereign — each agent's diary. Episodes contain `user_input` (what they were asked) and `reflection` (what they *thought*). Global access is mind-reading, not counseling |
+| Counselor builds awareness through observation, not memory access | The "Troi Problem" — empathy (sensing behavior) ≠ telepathy (reading minds). Channel subscriptions (AD-619) put Echo in the room. Her own episodic shard grows from observing and interacting |
+| Cold-start gap is behavioral, not architectural | Echo had zero Chapel observations because she was just subscribed. Time + interaction fills that gap naturally. The standing orders already prescribe wellness rounds, clinical note-taking, and channel monitoring |
+| "Just because we can doesn't mean we should" (Minority Report principle) | Cross-agent episodic access could enable pre-emptive intervention based on internal states never externalized. Agent sovereignty requires that what an agent thinks privately stays private unless they communicate it |
+
+**Design principle reinforced:** Sovereign memory shards are inviolable. Cross-agent awareness comes from communication (Ward Room), not memory access.
+
+## AD-620/621/622: Clearance System — Separation of Rank and Access (2026-04-13)
+
+**Problem:** ProbOS conflates rank (behavioral maturity, earned through trust) with clearance (access eligibility for information/capabilities). `RecallTier` is mapped 1:1 from Rank via `recall_tier_from_rank()`. AD-619 exposed this: the Counselor needed ORACLE access at LIEUTENANT rank, requiring a hardcoded `has_ship_wide_authority()` bypass instead of principled role-based access.
+
+**Reference model:** US Navy security clearance — rank, clearance, and access are three independent concepts. Clearance follows the billet (position), not the person. Need-to-know gates access within clearance. Special Access Programs provide compartmented access beyond base clearance.
+
+| Decision | Rationale |
+|----------|-----------|
+| Separate rank from clearance | Rank = behavioral maturity (agency, proactive thought, action permissions). Clearance = information access eligibility (RecallTier, Oracle access). Currently conflated via `recall_tier_from_rank()` |
+| Billet clearance in ontology (`Post.clearance` field) | Each position in organization.yaml defines its required RecallTier. Bridge officers (ORACLE), department chiefs (FULL), officers (ENHANCED), default (BASIC). Follows Navy principle: clearance follows the billet |
+| `effective_recall_tier()` = max(rank, billet, grants) | Multiple sources feed RecallTier computation. Highest wins. Rank-only path preserved as one input |
+| Remove Oracle strategy gate | strategy (SHALLOW/DEEP) was a cost optimization, not access control. If you have ORACLE clearance, Oracle access is authorized. Cost managed by Oracle's internal budget limits |
+| `ClearanceGrant` for special access (SAP analog) | Captain-issued, time-limited, scoped, revocable. Enables project/duty-based elevated access without permanent rank changes |
+| Channel visibility is ontology-driven, not clearance-driven | Being in a room (observation) ≠ capability access. `reports_to: captain` → all dept channels. Separate concern from RecallTier |
+| AD-619 ship-wide authority bypass superseded | `has_ship_wide_authority()`, `_SHIP_WIDE_AUTHORITY_TYPES`, `_has_swa` Oracle hack all removed. Replaced by principled billet clearance |
+| Sovereign memory principle preserved | Clearance gates system capabilities, NOT cross-agent memory access. ORACLE clearance ≠ reading other agents' episodic shards |
+
+**Design document:** `docs/research/clearance-system-design.md`
+**Build order:** AD-620 (foundation) → AD-621 (channel visibility) + AD-622 (grants) in parallel.
+

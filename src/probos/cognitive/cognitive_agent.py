@@ -2688,6 +2688,13 @@ class CognitiveAgent(BaseAgent):
             _tier_cfg = getattr(mem_cfg, 'recall_tiers', None) if mem_cfg else None
             _tier_params = resolve_recall_tier_params(_recall_tier.value, _tier_cfg)
 
+            # AD-619: Ship-wide authority agents get Oracle tier regardless of rank
+            from probos.crew_utils import has_ship_wide_authority as _has_swa
+            if _has_swa(self):
+                _recall_tier = RecallTier.ORACLE
+                _tier_params = resolve_recall_tier_params(_recall_tier.value, _tier_cfg)
+                logger.debug("AD-619: %s recall tier override -> ORACLE", self.agent_type)
+
             # AD-568a: Classify retrieval strategy based on intent type
             from probos.cognitive.source_governance import (
                 classify_retrieval_strategy, RetrievalStrategy,
@@ -2833,10 +2840,13 @@ class CognitiveAgent(BaseAgent):
                         _seen_ids.add(getattr(ep, 'id', id(ep)))
                     episodes = _anchor_episodes
 
-                # AD-568a: Oracle Service for ORACLE-tier agents with DEEP strategy
+                # AD-568a / AD-619: Oracle Service for ORACLE-tier agents
+                # DEEP strategy required for rank-based ORACLE agents.
+                # Ship-wide authority agents (AD-619) get Oracle on any strategy.
+                _swa = _has_swa(self)  # reuse import from 3a above
                 if (
                     _recall_tier == RecallTier.ORACLE
-                    and _retrieval_strategy == RetrievalStrategy.DEEP
+                    and (_retrieval_strategy == RetrievalStrategy.DEEP or _swa)
                     and hasattr(self, '_runtime')
                     and hasattr(self._runtime, '_oracle_service')
                     and self._runtime._oracle_service
