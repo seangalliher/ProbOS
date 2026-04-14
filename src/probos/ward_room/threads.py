@@ -80,6 +80,60 @@ async def check_peer_similarity(
         return []
 
 
+async def check_dm_convergence(
+    db: Any, thread_id: str, window: int = 3, threshold: float = 0.55,
+) -> dict[str, Any] | None:
+    """AD-623: Detect mutual agreement in DM threads.
+
+    Looks at the last ``window`` consecutive exchange pairs (A->B, B->A) in a
+    DM thread. If the average Jaccard similarity across pairs >= threshold,
+    the conversation has converged — both sides are restating the same position.
+
+    Returns {"converged": True, "similarity": float, "exchange_count": int}
+    if convergence detected, None otherwise.
+    """
+    try:
+        async with db.execute(
+            "SELECT author_id, body FROM posts "
+            "WHERE thread_id = ? ORDER BY created_at DESC LIMIT ?",
+            (thread_id, window * 2 + 2),
+        ) as cursor:
+            posts = [(row[0], row[1] or "") async for row in cursor]
+
+        if len(posts) < 4:
+            return None  # Need at least 2 exchange pairs
+
+        # Reverse to chronological order
+        posts.reverse()
+
+        # Find consecutive exchange pairs (different authors)
+        pairs: list[float] = []
+        i = 0
+        while i < len(posts) - 1 and len(pairs) < window:
+            a_author, a_body = posts[i]
+            b_author, b_body = posts[i + 1]
+            if a_author != b_author:  # Different authors = exchange pair
+                sim = jaccard_similarity(text_to_words(a_body), text_to_words(b_body))
+                pairs.append(sim)
+            i += 1
+
+        if len(pairs) < 2:
+            return None  # Need at least 2 exchange pairs to detect convergence
+
+        avg_sim = sum(pairs) / len(pairs)
+        if avg_sim >= threshold:
+            return {
+                "converged": True,
+                "similarity": round(avg_sim, 3),
+                "exchange_count": len(pairs),
+            }
+
+        return None
+    except Exception:
+        logger.debug("AD-623: DM convergence check failed", exc_info=True)
+        return None
+
+
 class ThreadManager:
     """Thread lifecycle: create, list, browse, prune, archive."""
 
@@ -905,6 +959,7 @@ class ThreadManager:
         author_callsign: str,
         limit: int = 5,
         since: float | None = None,
+        thread_id: str | None = None,
     ) -> list[dict]:
         """Get recent posts by a specific author across all channels.
 
@@ -916,27 +971,52 @@ class ThreadManager:
         since_ts = since or 0.0
         try:
             posts: list[dict] = []
-            async with self._db.execute(
-                """
-                SELECT p.id, p.thread_id, p.body, p.created_at, p.parent_id,
-                       t.channel_id
-                FROM posts p
-                JOIN threads t ON p.thread_id = t.id
-                WHERE p.author_callsign = ? AND p.created_at > ?
-                ORDER BY p.created_at DESC
-                LIMIT ?
-                """,
-                (author_callsign, since_ts, limit),
-            ) as cursor:
-                async for row in cursor:
-                    posts.append({
-                        "post_id": row[0],
-                        "thread_id": row[1],
-                        "body": row[2],
-                        "created_at": row[3],
-                        "parent_id": row[4],
-                        "channel_id": row[5],
-                    })
+            if thread_id:
+                # AD-623: Filter by specific thread
+                async with self._db.execute(
+                    """
+                    SELECT p.id, p.thread_id, p.body, p.created_at, p.parent_id,
+                           t.channel_id
+                    FROM posts p
+                    JOIN threads t ON p.thread_id = t.id
+                    WHERE p.author_callsign = ? AND p.created_at > ?
+                          AND p.thread_id = ?
+                    ORDER BY p.created_at DESC
+                    LIMIT ?
+                    """,
+                    (author_callsign, since_ts, thread_id, limit),
+                ) as cursor:
+                    async for row in cursor:
+                        posts.append({
+                            "post_id": row[0],
+                            "thread_id": row[1],
+                            "body": row[2],
+                            "created_at": row[3],
+                            "parent_id": row[4],
+                            "channel_id": row[5],
+                        })
+            else:
+                async with self._db.execute(
+                    """
+                    SELECT p.id, p.thread_id, p.body, p.created_at, p.parent_id,
+                           t.channel_id
+                    FROM posts p
+                    JOIN threads t ON p.thread_id = t.id
+                    WHERE p.author_callsign = ? AND p.created_at > ?
+                    ORDER BY p.created_at DESC
+                    LIMIT ?
+                    """,
+                    (author_callsign, since_ts, limit),
+                ) as cursor:
+                    async for row in cursor:
+                        posts.append({
+                            "post_id": row[0],
+                            "thread_id": row[1],
+                            "body": row[2],
+                            "created_at": row[3],
+                            "parent_id": row[4],
+                            "channel_id": row[5],
+                        })
             return posts
         except Exception:
             logger.debug("Failed to query posts by author %s", author_callsign, exc_info=True)

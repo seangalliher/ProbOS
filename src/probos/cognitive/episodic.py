@@ -1350,13 +1350,13 @@ class EpisodicMemory:
                 ids=episode_ids,
                 include=["embeddings"],
             )
-            if not result or not result["ids"] or not result["embeddings"]:
+            if not result or not result["ids"] or result["embeddings"] is None:
                 return {}
 
             embeddings: dict[str, list[float]] = {}
             for i, doc_id in enumerate(result["ids"]):
                 emb = result["embeddings"][i]
-                if emb and len(emb) > 0:
+                if emb is not None and len(emb) > 0:
                     embeddings[doc_id] = list(emb)
             return embeddings
 

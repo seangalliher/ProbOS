@@ -98,14 +98,33 @@ class ChannelManager:
         await self._db.commit()
 
     async def list_channels(self, agent_id: str | None = None) -> list[WardRoomChannel]:
-        """All channels."""
+        """List channels, optionally filtered by agent membership.
+
+        AD-621: When agent_id is provided, return only channels the agent
+        is subscribed to. When None, return all channels (admin view).
+        """
         if not self._db:
             return []
         channels: list[WardRoomChannel] = []
-        async with self._db.execute(
-            "SELECT id, name, channel_type, department, created_by, created_at, archived, description "
-            "FROM channels ORDER BY created_at"
-        ) as cursor:
+
+        if agent_id:
+            sql = (
+                "SELECT c.id, c.name, c.channel_type, c.department, c.created_by, "
+                "c.created_at, c.archived, c.description "
+                "FROM channels c "
+                "INNER JOIN memberships m ON m.channel_id = c.id "
+                "WHERE m.agent_id = ? "
+                "ORDER BY c.created_at"
+            )
+            params: tuple = (agent_id,)
+        else:
+            sql = (
+                "SELECT id, name, channel_type, department, created_by, created_at, "
+                "archived, description FROM channels ORDER BY created_at"
+            )
+            params = ()
+
+        async with self._db.execute(sql, params) as cursor:
             async for row in cursor:
                 channels.append(WardRoomChannel(
                     id=row[0], name=row[1], channel_type=row[2],

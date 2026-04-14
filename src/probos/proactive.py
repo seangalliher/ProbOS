@@ -162,6 +162,7 @@ class ProactiveCognitiveLoop:
         self._config: ProactiveCognitiveConfig | None = None   # Set via set_config()
         self._duty_tracker: DutyScheduleTracker | None = None
         self._circuit_breaker = CognitiveCircuitBreaker()
+        self._budget_exhausted: dict[str, float] = {}  # AD-617b: agent_id -> exhaustion timestamp
         self._notified_dm_threads: set[str] = set()  # BF-082: dedup guard
         self._dm_send_cooldowns: dict[str, float] = {}  # BF-163: per-agent DM send rate limit
         self._last_dm_body: dict[str, str] = {}  # AD-614: self-similarity gate
@@ -191,6 +192,67 @@ class ProactiveCognitiveLoop:
     def circuit_breaker(self) -> CognitiveCircuitBreaker:
         """Expose circuit breaker for runtime wiring and API access."""
         return self._circuit_breaker
+
+    async def _is_over_token_budget(self, agent_id: str) -> bool:
+        """AD-617b: Check if agent has exceeded hourly token budget.
+
+        Returns True if over budget, False otherwise.
+        Fail-closed: if the journal query fails, returns False (allow the think).
+        Uses a 60-second cache per agent to avoid hammering the journal DB.
+        """
+        rt = self._runtime
+        if not rt:
+            return False
+
+        # Check config
+        rate_config = getattr(getattr(rt, 'config', None), 'llm_rate', None)
+        if not rate_config:
+            return False
+        hourly_cap = getattr(rate_config, 'per_agent_hourly_token_cap', 0)
+        if hourly_cap <= 0:
+            return False  # Disabled
+
+        # Cache check: don't query journal every proactive cycle
+        last_exhaustion = self._budget_exhausted.get(agent_id, 0.0)
+        if last_exhaustion > 0 and time.monotonic() - last_exhaustion < 60.0:
+            return True  # Still in exhaustion window
+
+        # Query journal for hourly usage
+        journal = getattr(rt, 'cognitive_journal', None)
+        if not journal:
+            return False
+
+        since = time.time() - 3600.0  # 1 hour sliding window
+        tokens_used = await journal.get_token_usage_since(agent_id, since)
+
+        if tokens_used >= hourly_cap:
+            self._budget_exhausted[agent_id] = time.monotonic()
+            logger.info(
+                "AD-617b: %s over token budget (%d/%d tokens in last hour)",
+                agent_id[:8], tokens_used, hourly_cap,
+            )
+            # Emit event for Counselor awareness (fire-and-forget)
+            if self._on_event:
+                try:
+                    await self._on_event({
+                        "type": "token_budget_exhausted",
+                        "agent_id": agent_id,
+                        "tokens_used": tokens_used,
+                        "hourly_cap": hourly_cap,
+                        "data": {
+                            "agent_id": agent_id,
+                            "tokens_used": tokens_used,
+                            "hourly_cap": hourly_cap,
+                        },
+                    })
+                except Exception:
+                    logger.debug("Budget exhaustion event emission failed", exc_info=True)
+            return True
+
+        # Clear exhaustion if recovered (new hour, tokens aged out)
+        if agent_id in self._budget_exhausted:
+            del self._budget_exhausted[agent_id]
+        return False
 
     @property
     def _default_cooldown(self) -> float:
@@ -322,6 +384,14 @@ class ProactiveCognitiveLoop:
                     getattr(agent, 'callsign', agent.agent_type),
                     breaker_status['trip_count'],
                     breaker_status['cooldown_seconds'] - (time.monotonic() - breaker_status['tripped_at']),
+                )
+                continue
+
+            # AD-617b: Per-agent token budget gate — skip proactive if over budget
+            if await self._is_over_token_budget(agent.id):
+                logger.debug(
+                    "AD-617b: %s proactive think skipped (token budget exhausted)",
+                    getattr(agent, 'callsign', agent.agent_type),
                 )
                 continue
 
@@ -824,11 +894,20 @@ class ProactiveCognitiveLoop:
                 em = rt.episodic_memory
                 episodes = []
 
-                # AD-462c: Resolve recall tier from agent rank
-                from probos.earned_agency import recall_tier_from_rank, RecallTier
+                # AD-620: Resolve recall tier from rank + billet clearance
+                from probos.earned_agency import effective_recall_tier, resolve_billet_clearance, resolve_active_grants, RecallTier
                 from probos.cognitive.episodic import resolve_recall_tier_params
                 _rank = getattr(agent, 'rank', None)
-                _recall_tier = recall_tier_from_rank(_rank) if _rank else RecallTier.ENHANCED
+                _billet_clearance = resolve_billet_clearance(
+                    getattr(agent, 'agent_type', ''),
+                    getattr(rt, 'ontology', None),
+                )
+                # AD-622: Include active grants in tier resolution
+                _active_grants = resolve_active_grants(
+                    getattr(agent, 'sovereign_id', None) or agent.id,
+                    getattr(rt, 'clearance_grant_store', None),
+                )
+                _recall_tier = effective_recall_tier(_rank, _billet_clearance, _active_grants)
                 mem_cfg = None
                 if hasattr(rt, 'config') and hasattr(rt.config, 'memory'):
                     mem_cfg = rt.config.memory
@@ -2613,14 +2692,36 @@ class ProactiveCognitiveLoop:
         rt = self._runtime
         actions: list[dict] = []
 
+        # AD-612: Two-tier DM extraction — tolerant of format variations.
+        # Tier 1+2 (unified): Closed DMs with any whitespace (multiline or single-line)
         pattern = re.compile(
-            r'\[DM\s+@?(\S+)\]\s*\n(.*?)\n\[/DM\]',
+            r'\[DM\s+@?(\S+)\]'        # Opening tag, capture callsign
+            r'\s*'                      # Optional whitespace (including newlines)
+            r'((?:(?!\[DM\s).)*?)'      # Body (non-greedy, can't cross [DM boundary)
+            r'\[/DM\]'                  # Closing tag
+            ,
             re.DOTALL | re.IGNORECASE,
         )
 
+        # Tier 3: Unclosed DMs — match [DM @callsign] text to next [DM or end
+        unclosed_pattern = re.compile(
+            r'\[DM\s+@?(\S+)\]'        # Opening tag, capture callsign
+            r'\s*'                      # Optional whitespace
+            r'(.+?)'                    # Body (non-greedy, at least 1 char)
+            r'(?=\[DM\s|\Z)'           # Lookahead: next [DM tag or end of string
+            ,
+            re.DOTALL | re.IGNORECASE,
+        )
+
+        # Collect all DM matches (closed first, then unclosed from remaining text)
+        all_dm_matches: list[tuple[str, str]] = []  # (callsign, body)
         for match in pattern.finditer(text):
-            target_callsign = match.group(1)
-            dm_body = match.group(2).strip()
+            all_dm_matches.append((match.group(1), match.group(2).strip()))
+        remaining_after_closed = pattern.sub('', text)
+        for match in unclosed_pattern.finditer(remaining_after_closed):
+            all_dm_matches.append((match.group(1), match.group(2).strip()))
+
+        for target_callsign, dm_body in all_dm_matches:
             if not dm_body:
                 continue
 
@@ -2758,7 +2859,9 @@ class ProactiveCognitiveLoop:
             except Exception as e:
                 logger.warning("AD-453: DM to @%s failed: %s", target_callsign, e)
 
+        # AD-612: Strip all matched DM blocks from public text
         cleaned = pattern.sub('', text).strip()
+        cleaned = unclosed_pattern.sub('', cleaned).strip()
         return cleaned, actions
 
     # ------------------------------------------------------------------

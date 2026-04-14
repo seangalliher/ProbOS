@@ -266,6 +266,30 @@ class CognitiveJournal:
             logger.debug("Journal token query failed", exc_info=True)
             return {"total_tokens": 0, "total_calls": 0}
 
+    async def get_token_usage_since(
+        self, agent_id: str, since_timestamp: float
+    ) -> int:
+        """AD-617b: Get total tokens used by an agent since a given timestamp.
+
+        Returns total_tokens (int). Used for hourly budget enforcement.
+        Returns 0 on error (fail-open for queries, fail-closed for enforcement
+        happens at the caller).
+        """
+        if not self._db:
+            return 0
+        try:
+            cursor = await self._db.execute(
+                """SELECT COALESCE(SUM(total_tokens), 0) as tokens
+                   FROM journal
+                   WHERE agent_id = ? AND timestamp >= ? AND cached = 0""",
+                (agent_id, since_timestamp),
+            )
+            row = await cursor.fetchone()
+            return int(row["tokens"]) if row else 0
+        except Exception:
+            logger.debug("Journal hourly query failed", exc_info=True)
+            return 0
+
     async def get_token_usage_by(
         self, group_by: str = "model", agent_id: str | None = None,
     ) -> list[dict[str, Any]]:

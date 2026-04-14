@@ -1902,6 +1902,50 @@ class CognitiveAgent(BaseAgent):
             return f"Proactive observation: '{output[:150]}'"
         return f"Handled {intent_type}: '{output[:100]}'"
 
+    async def _build_dm_self_monitoring(self, thread_id: str) -> str | None:
+        """AD-623: Lightweight self-monitoring for DM/WR response path.
+
+        Check this agent's own recent posts in the thread for self-repetition.
+        Returns a warning string if similarity is high, None otherwise.
+        """
+        rt = getattr(self, '_runtime', None)
+        if not rt or not hasattr(rt, 'ward_room') or not rt.ward_room:
+            return None
+
+        try:
+            callsign = getattr(self, 'callsign', None) or getattr(self, 'agent_type', '')
+            posts = await rt.ward_room.get_posts_by_author(
+                callsign, limit=3, thread_id=thread_id,
+            )
+            if not posts or len(posts) < 2:
+                return None
+
+            from probos.cognitive.similarity import jaccard_similarity, text_to_words
+            word_sets = [text_to_words(p["body"]) for p in posts]
+            total_sim = 0.0
+            pair_count = 0
+            for j in range(len(word_sets)):
+                for k in range(j + 1, len(word_sets)):
+                    total_sim += jaccard_similarity(word_sets[j], word_sets[k])
+                    pair_count += 1
+
+            if pair_count > 0:
+                avg_sim = total_sim / pair_count
+                if avg_sim >= 0.4:
+                    return (
+                        "--- Self-monitoring (AD-623) ---\n"
+                        f"WARNING: Your last {len(posts)} messages in this thread "
+                        f"show {avg_sim:.0%} self-similarity. You may be repeating "
+                        "yourself. If you and the other person agree, conclude the "
+                        "conversation naturally. Do NOT restate conclusions you've "
+                        "already communicated. If there's nothing new to add, "
+                        "respond with exactly: [NO_RESPONSE]"
+                    )
+        except Exception:
+            logger.debug("AD-623: DM self-monitoring failed", exc_info=True)
+
+        return None
+
     def _build_temporal_context(self) -> str:
         """AD-502: Build temporal awareness header for agent prompts."""
         # Respect config if available
@@ -2247,6 +2291,16 @@ class CognitiveAgent(BaseAgent):
             if _zone and _zone != "green":
                 wr_parts.append("")
                 wr_parts.append(f"[COGNITIVE ZONE: {_zone.upper()}]")
+
+            # AD-623: DM self-monitoring — agents responding to DM threads
+            # see their own repetition in real time
+            if channel_name.startswith("dm-"):
+                _dm_self_mon = await self._build_dm_self_monitoring(
+                    params.get("thread_id", ""),
+                )
+                if _dm_self_mon:
+                    wr_parts.append("")
+                    wr_parts.append(_dm_self_mon)
 
             # AD-588: Introspective telemetry for self-referential ward room posts
             _wr_text = f"{params.get('title', '')} {params.get('text', '')}".strip()
@@ -2680,20 +2734,22 @@ class CognitiveAgent(BaseAgent):
             if hasattr(self._runtime, 'config') and hasattr(self._runtime.config, 'memory'):
                 mem_cfg = self._runtime.config.memory
 
-            # AD-462c: Resolve recall tier from agent rank
-            from probos.earned_agency import recall_tier_from_rank, RecallTier
+            # AD-620: Resolve recall tier from rank + billet clearance
+            from probos.earned_agency import effective_recall_tier, resolve_billet_clearance, resolve_active_grants, RecallTier
             from probos.cognitive.episodic import resolve_recall_tier_params
             _rank = getattr(self, 'rank', None)
-            _recall_tier = recall_tier_from_rank(_rank) if _rank else RecallTier.ENHANCED
+            _billet_clearance = resolve_billet_clearance(
+                getattr(self, 'agent_type', ''),
+                getattr(self._runtime, 'ontology', None),
+            )
+            # AD-622: Include active grants in tier resolution
+            _active_grants = resolve_active_grants(
+                getattr(self, 'sovereign_id', None) or self.id,
+                getattr(self._runtime, 'clearance_grant_store', None),
+            )
+            _recall_tier = effective_recall_tier(_rank, _billet_clearance, _active_grants)
             _tier_cfg = getattr(mem_cfg, 'recall_tiers', None) if mem_cfg else None
             _tier_params = resolve_recall_tier_params(_recall_tier.value, _tier_cfg)
-
-            # AD-619: Ship-wide authority agents get Oracle tier regardless of rank
-            from probos.crew_utils import has_ship_wide_authority as _has_swa
-            if _has_swa(self):
-                _recall_tier = RecallTier.ORACLE
-                _tier_params = resolve_recall_tier_params(_recall_tier.value, _tier_cfg)
-                logger.debug("AD-619: %s recall tier override -> ORACLE", self.agent_type)
 
             # AD-568a: Classify retrieval strategy based on intent type
             from probos.cognitive.source_governance import (
@@ -2840,13 +2896,10 @@ class CognitiveAgent(BaseAgent):
                         _seen_ids.add(getattr(ep, 'id', id(ep)))
                     episodes = _anchor_episodes
 
-                # AD-568a / AD-619: Oracle Service for ORACLE-tier agents
-                # DEEP strategy required for rank-based ORACLE agents.
-                # Ship-wide authority agents (AD-619) get Oracle on any strategy.
-                _swa = _has_swa(self)  # reuse import from 3a above
+                # AD-620: Oracle Service — clearance-based access
+                # Agents with ORACLE tier (via rank or billet clearance) get Oracle on any strategy.
                 if (
                     _recall_tier == RecallTier.ORACLE
-                    and (_retrieval_strategy == RetrievalStrategy.DEEP or _swa)
                     and hasattr(self, '_runtime')
                     and hasattr(self._runtime, '_oracle_service')
                     and self._runtime._oracle_service

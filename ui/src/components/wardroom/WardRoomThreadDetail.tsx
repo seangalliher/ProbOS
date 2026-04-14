@@ -1,18 +1,36 @@
 import { useState } from 'react';
 import Markdown from 'react-markdown';
 import { useStore } from '../../store/useStore';
+import type { WardRoomPost } from '../../store/types';
 import { EndorsementButtons } from './WardRoomEndorsement';
 import { WardRoomPostItem } from './WardRoomPostItem';
 import { timeAgo } from './timeAgo';
 
+/** AD-612: Recursively flatten a post tree into chronological order. */
+function flattenPosts(posts: WardRoomPost[]): WardRoomPost[] {
+  const result: WardRoomPost[] = [];
+  function collect(list: WardRoomPost[]) {
+    for (const p of list) {
+      result.push(p);
+      if (p.children?.length) collect(p.children);
+    }
+  }
+  collect(posts);
+  result.sort((a, b) => a.created_at - b.created_at);
+  return result;
+}
+
 export function WardRoomThreadDetail() {
   const detail = useStore(s => s.wardRoomThreadDetail);
   const activeThread = useStore(s => s.wardRoomActiveThread);
+  const view = useStore(s => s.wardRoomView);
   const [replyText, setReplyText] = useState('');
 
   if (!detail || !activeThread) return null;
 
   const { thread, posts } = detail;
+  const isDm = view === 'dm-detail';
+  const flatPosts = isDm ? flattenPosts(posts) : null;
 
   const submitReply = async () => {
     if (!replyText.trim()) return;
@@ -58,9 +76,14 @@ export function WardRoomThreadDetail() {
             No replies yet
           </div>
         )}
-        {posts.map(post => (
-          <WardRoomPostItem key={post.id} post={post} threadId={activeThread} depth={0} />
-        ))}
+        {isDm && flatPosts
+          ? flatPosts.map(post => (
+              <WardRoomPostItem key={post.id} post={post} threadId={activeThread} flat allPosts={flatPosts} />
+            ))
+          : posts.map(post => (
+              <WardRoomPostItem key={post.id} post={post} threadId={activeThread} depth={0} />
+            ))
+        }
       </div>
 
       {/* Reply input */}

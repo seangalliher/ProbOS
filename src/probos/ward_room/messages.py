@@ -590,6 +590,31 @@ class MessageStore:
         )
         await self._db.commit()
 
+    async def get_channel_subscriber_ids(self, channel_id: str) -> set[str]:
+        """AD-621: Return agent IDs subscribed to a channel."""
+        if not self._db:
+            return set()
+        result: set[str] = set()
+        async with self._db.execute(
+            "SELECT agent_id FROM memberships WHERE channel_id = ?",
+            (channel_id,),
+        ) as cursor:
+            async for row in cursor:
+                result.add(row[0])
+        return result
+
+    async def get_all_channel_members(self) -> dict[str, set[str]]:
+        """AD-621: Return {channel_id: {agent_ids}} for all channels."""
+        if not self._db:
+            return {}
+        result: dict[str, set[str]] = {}
+        async with self._db.execute(
+            "SELECT channel_id, agent_id FROM memberships",
+        ) as cursor:
+            async for row in cursor:
+                result.setdefault(row[0], set()).add(row[1])
+        return result
+
     async def get_unread_counts(self, agent_id: str) -> dict[str, int]:
         """For each subscribed channel, count threads with last_activity > last_seen."""
         if not self._db:

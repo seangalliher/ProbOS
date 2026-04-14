@@ -266,6 +266,9 @@ class LLMRateConfig(BaseModel):
     # Max LLM response cache entries (LRU eviction)
     cache_max_entries: int = 500
 
+    # AD-617b: Per-agent hourly token cap (0 = disabled)
+    per_agent_hourly_token_cap: int = 0
+
 
 class MemoryConfig(BaseModel):
     """Episodic memory configuration."""
@@ -633,7 +636,7 @@ class WardRoomConfig(BaseModel):
     retention_days_captain: int = 0            # 0 = indefinite retention for Captain posts
     archive_enabled: bool = True               # Write pruned posts to JSONL archive before deletion
     prune_interval_seconds: float = 86400.0    # How often to run pruning (default: daily)
-    dm_exchange_limit: int = 6          # AD-614: max posts per agent per DM thread
+    dm_exchange_limit: int = 3          # AD-614/BF-168: max posts per agent per DM thread (lowered from 6)
     dm_similarity_threshold: float = 0.6  # AD-614: Jaccard threshold for DM self-similarity suppression
     router_concurrency_limit: int = 10     # AD-616: max concurrent route_event() tasks
     event_coalesce_ms: int = 200           # AD-616: coalesce window for rapid-fire post events (0 = disabled)

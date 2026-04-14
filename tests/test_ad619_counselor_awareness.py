@@ -1,7 +1,9 @@
-"""AD-619: Counselor Cross-Department Awareness.
+"""AD-619 → AD-620: Counselor Cross-Department Awareness.
 
-Tests for ship-wide authority helper, channel subscriptions,
-recall tier override, and Oracle strategy gate relaxation.
+Tests migrated from AD-619 SWA-based approach to AD-620 clearance model.
+Validates that billet clearance provides the same guarantees:
+- ORACLE-tier agents get Oracle access on any strategy
+- FULL+ clearance agents get all department channel subscriptions
 """
 
 import logging
@@ -9,33 +11,39 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from probos.crew_utils import has_ship_wide_authority
-from probos.earned_agency import RecallTier, recall_tier_from_rank
+from probos.earned_agency import (
+    RecallTier, effective_recall_tier, resolve_billet_clearance, _TIER_ORDER,
+)
 from probos.cognitive.source_governance import RetrievalStrategy
 from probos.crew_profile import Rank
 
 
 # ---------------------------------------------------------------------------
-# TestShipWideAuthority
+# TestBilletClearance (replaces TestShipWideAuthority)
 # ---------------------------------------------------------------------------
 
-class TestShipWideAuthority:
-    def test_has_ship_wide_authority_counselor(self) -> None:
-        """Agent with agent_type='counselor' returns True."""
-        agent = MagicMock()
-        agent.agent_type = "counselor"
-        assert has_ship_wide_authority(agent) is True
+class TestBilletClearance:
+    def test_counselor_gets_oracle_clearance(self) -> None:
+        """Counselor post has ORACLE billet clearance."""
+        ontology = MagicMock()
+        post = MagicMock()
+        post.clearance = "ORACLE"
+        ontology.get_post_for_agent.return_value = post
 
-    def test_has_ship_wide_authority_non_counselor(self) -> None:
-        """Agent with agent_type='data_analyst' returns False."""
-        agent = MagicMock()
-        agent.agent_type = "data_analyst"
-        assert has_ship_wide_authority(agent) is False
+        assert resolve_billet_clearance("counselor", ontology) == "ORACLE"
 
-    def test_has_ship_wide_authority_no_agent_type(self) -> None:
-        """Object without agent_type attribute returns False (defensive)."""
-        obj = object()
-        assert has_ship_wide_authority(obj) is False
+    def test_non_oracle_agent_gets_lower_clearance(self) -> None:
+        """Data analyst has ENHANCED billet clearance."""
+        ontology = MagicMock()
+        post = MagicMock()
+        post.clearance = "ENHANCED"
+        ontology.get_post_for_agent.return_value = post
+
+        assert resolve_billet_clearance("data_analyst", ontology) == "ENHANCED"
+
+    def test_no_ontology_returns_empty(self) -> None:
+        """No ontology available returns empty clearance."""
+        assert resolve_billet_clearance("counselor", None) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -44,8 +52,8 @@ class TestShipWideAuthority:
 
 class TestChannelSubscriptions:
     @pytest.mark.asyncio
-    async def test_ship_wide_agent_subscribed_to_all_department_channels(self) -> None:
-        """Counselor gets subscribed to ALL department channels."""
+    async def test_oracle_clearance_agent_subscribed_to_all_dept_channels(self) -> None:
+        """Agent with FULL+ billet clearance gets subscribed to ALL department channels."""
         from probos.cognitive.standing_orders import get_department
 
         # Create mock channels
@@ -90,6 +98,11 @@ class TestChannelSubscriptions:
             elif ch.channel_type == "department" and ch.department:
                 dept_channel_map[ch.department] = ch.id
 
+        # Mock ontology for clearance lookup
+        def _mock_clearance(agent_type, ontology):
+            clearances = {"counselor": "ORACLE", "data_analyst": "ENHANCED"}
+            return clearances.get(agent_type, "")
+
         # Run the subscription logic (extracted from communication.py)
         from probos.crew_utils import is_crew_agent
         for agent in [counselor, science_agent]:
@@ -98,10 +111,16 @@ class TestChannelSubscriptions:
             dept = get_department(agent.agent_type)
             if dept and dept in dept_channel_map:
                 await ward_room.subscribe(agent.id, dept_channel_map[dept])
-            # AD-619: Ship-wide authority agents get all department channels
-            if has_ship_wide_authority(agent):
-                for dept_ch_id in dept_channel_map.values():
-                    await ward_room.subscribe(agent.id, dept_ch_id)
+            # AD-620: Agents with FULL+ billet clearance get all department channels
+            _billet_cl = _mock_clearance(agent.agent_type, None)
+            if _billet_cl:
+                try:
+                    _cl_tier = RecallTier(_billet_cl.lower())
+                    if _TIER_ORDER.get(_cl_tier, 0) >= _TIER_ORDER.get(RecallTier.FULL, 0):
+                        for dept_ch_id in dept_channel_map.values():
+                            await ward_room.subscribe(agent.id, dept_ch_id)
+                except ValueError:
+                    pass
             if all_hands_id:
                 await ward_room.subscribe(agent.id, all_hands_id)
 
@@ -129,60 +148,27 @@ class TestChannelSubscriptions:
 
 
 # ---------------------------------------------------------------------------
-# TestRecallTierOverride
+# TestRecallTierOverride (now via effective_recall_tier)
 # ---------------------------------------------------------------------------
 
 class TestRecallTierOverride:
-    def test_ship_wide_agent_gets_oracle_tier_at_any_rank(self) -> None:
-        """Counselor gets ORACLE tier regardless of rank."""
-        from probos.cognitive.episodic import resolve_recall_tier_params
-
+    def test_counselor_gets_oracle_tier_at_any_rank(self) -> None:
+        """Counselor gets ORACLE tier regardless of rank via billet clearance."""
         for rank in [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]:
-            agent = MagicMock()
-            agent.agent_type = "counselor"
-
-            _recall_tier = recall_tier_from_rank(rank)
-            _tier_cfg = None
-            _tier_params = resolve_recall_tier_params(_recall_tier.value, _tier_cfg)
-
-            # AD-619 override
-            if has_ship_wide_authority(agent):
-                _recall_tier = RecallTier.ORACLE
-                _tier_params = resolve_recall_tier_params(_recall_tier.value, _tier_cfg)
-
+            _recall_tier = effective_recall_tier(rank, "ORACLE")
             assert _recall_tier == RecallTier.ORACLE, (
                 f"Expected ORACLE for rank {rank}, got {_recall_tier}"
             )
 
-    def test_non_ship_wide_agent_uses_rank_based_tier(self) -> None:
-        """Non-ship-wide agent uses rank-based tier (no override)."""
-        agent = MagicMock()
-        agent.agent_type = "data_analyst"
+    def test_non_oracle_agent_uses_rank_based_tier(self) -> None:
+        """Agent with ENHANCED clearance at ENSIGN rank uses ENHANCED (higher than BASIC)."""
+        _recall_tier = effective_recall_tier(Rank.ENSIGN, "ENHANCED")
+        assert _recall_tier == RecallTier.ENHANCED
 
-        _recall_tier = recall_tier_from_rank(Rank.ENSIGN)
-
-        if has_ship_wide_authority(agent):
-            _recall_tier = RecallTier.ORACLE
-
-        assert _recall_tier == RecallTier.BASIC
-
-    def test_recall_tier_override_re_resolves_tier_params(self) -> None:
-        """Override re-resolves _tier_params to match ORACLE config."""
-        from probos.cognitive.episodic import resolve_recall_tier_params
-
-        agent = MagicMock()
-        agent.agent_type = "counselor"
-
-        _recall_tier = recall_tier_from_rank(Rank.ENSIGN)
-        _tier_cfg = None
-        _tier_params_basic = resolve_recall_tier_params(_recall_tier.value, _tier_cfg)
-
-        # AD-619 override
-        _recall_tier = RecallTier.ORACLE
-        _tier_params_oracle = resolve_recall_tier_params(_recall_tier.value, _tier_cfg)
-
-        # ORACLE params should differ from BASIC
-        assert _tier_params_oracle != _tier_params_basic
+    def test_rank_higher_than_clearance_uses_rank(self) -> None:
+        """Commander rank (FULL) with ENHANCED clearance → FULL."""
+        _recall_tier = effective_recall_tier(Rank.COMMANDER, "ENHANCED")
+        assert _recall_tier == RecallTier.FULL
 
 
 # ---------------------------------------------------------------------------
@@ -190,59 +176,35 @@ class TestRecallTierOverride:
 # ---------------------------------------------------------------------------
 
 class TestOracleStrategyGate:
-    def _make_oracle_condition(self, agent_type: str, recall_tier: RecallTier,
+    def _make_oracle_condition(self, recall_tier: RecallTier,
                                 strategy: RetrievalStrategy) -> bool:
-        """Evaluate the Oracle gate condition from cognitive_agent.py."""
+        """Evaluate the AD-620 Oracle gate condition (strategy no longer matters)."""
         agent = MagicMock()
-        agent.agent_type = agent_type
         agent._runtime = MagicMock()
         agent._runtime._oracle_service = MagicMock()
 
-        _swa = has_ship_wide_authority(agent)
+        # AD-620: clearance-based access — strategy gate removed
         return bool(
             recall_tier == RecallTier.ORACLE
-            and (strategy == RetrievalStrategy.DEEP or _swa)
             and hasattr(agent, '_runtime')
             and hasattr(agent._runtime, '_oracle_service')
             and agent._runtime._oracle_service
         )
 
-    def test_ship_wide_agent_oracle_on_shallow_strategy(self) -> None:
-        """Ship-wide agent with SHALLOW strategy passes Oracle gate."""
+    def test_oracle_agent_on_shallow_strategy(self) -> None:
+        """ORACLE-tier agent with SHALLOW strategy passes Oracle gate (AD-620: no strategy gate)."""
         assert self._make_oracle_condition(
-            "counselor", RecallTier.ORACLE, RetrievalStrategy.SHALLOW
+            RecallTier.ORACLE, RetrievalStrategy.SHALLOW
         ) is True
 
-    def test_non_ship_wide_agent_no_oracle_on_shallow(self) -> None:
-        """Non-ship-wide agent with SHALLOW strategy does NOT pass Oracle gate."""
+    def test_oracle_agent_on_deep_strategy(self) -> None:
+        """ORACLE-tier agent with DEEP strategy still works (no regression)."""
         assert self._make_oracle_condition(
-            "systems_analyst", RecallTier.ORACLE, RetrievalStrategy.SHALLOW
+            RecallTier.ORACLE, RetrievalStrategy.DEEP
+        ) is True
+
+    def test_non_oracle_tier_no_oracle_access(self) -> None:
+        """FULL-tier agent does NOT pass Oracle gate regardless of strategy."""
+        assert self._make_oracle_condition(
+            RecallTier.FULL, RetrievalStrategy.DEEP
         ) is False
-
-    def test_ship_wide_agent_oracle_on_deep_strategy(self) -> None:
-        """Ship-wide agent with DEEP strategy still works (no regression)."""
-        assert self._make_oracle_condition(
-            "counselor", RecallTier.ORACLE, RetrievalStrategy.DEEP
-        ) is True
-
-    def test_override_logged(self, caplog) -> None:
-        """Verify logger.debug is called with 'AD-619' when override fires."""
-        from probos.cognitive.episodic import resolve_recall_tier_params
-
-        agent = MagicMock()
-        agent.agent_type = "counselor"
-
-        _rank = Rank.ENSIGN
-        _recall_tier = recall_tier_from_rank(_rank)
-        _tier_cfg = None
-        _tier_params = resolve_recall_tier_params(_recall_tier.value, _tier_cfg)
-
-        _logger = logging.getLogger("probos.cognitive.cognitive_agent")
-        with caplog.at_level(logging.DEBUG, logger="probos.cognitive.cognitive_agent"):
-            if has_ship_wide_authority(agent):
-                _recall_tier = RecallTier.ORACLE
-                _tier_params = resolve_recall_tier_params(_recall_tier.value, _tier_cfg)
-                _logger.debug("AD-619: %s recall tier override -> ORACLE", agent.agent_type)
-
-        assert _recall_tier == RecallTier.ORACLE
-        assert any("AD-619" in r.message for r in caplog.records)

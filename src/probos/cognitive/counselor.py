@@ -598,6 +598,7 @@ class CounselorAgent(CognitiveAgent):
                     EventType.WRONG_CONVERGENCE_DETECTED,    # AD-583
                     EventType.WARD_ROOM_ECHO_DETECTED,       # AD-583g
                     EventType.OBSERVABLE_STATE_MISMATCH,      # AD-583f
+                    EventType.DM_CONVERGENCE_DETECTED,        # AD-623
                 ],
             )
 
@@ -817,6 +818,8 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_ward_room_echo(data)
             elif event_type == EventType.OBSERVABLE_STATE_MISMATCH.value:
                 await self._on_observable_mismatch(data)
+            elif event_type == EventType.DM_CONVERGENCE_DETECTED.value:
+                await self._on_dm_convergence_detected(data)
         except Exception:
             logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
 
@@ -1063,6 +1066,19 @@ class CounselorAgent(CognitiveAgent):
         )
         assessment.tier_credit = "peer_catch"
         await self._save_profile_and_assessment(author_id, assessment)
+
+    async def _on_dm_convergence_detected(self, data: dict[str, Any]) -> None:
+        """AD-623: Log DM convergence for crew assessment.
+
+        Convergence in DMs can indicate either healthy closure or stuck
+        communication patterns. Record for clinical assessment context.
+        """
+        thread_id = data.get("thread_id", "")
+        similarity = data.get("similarity", 0.0)
+        logger.info(
+            "AD-623: Counselor noting DM convergence in %s (sim=%.3f)",
+            thread_id[:8], similarity,
+        )
 
     async def _on_notebook_self_repetition(self, data: dict[str, Any]) -> None:
         """AD-552: Track notebook self-repetition for Counselor monitoring."""

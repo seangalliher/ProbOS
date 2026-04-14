@@ -71,10 +71,26 @@ class WardRoomRouter:
         self._agent_thread_responses: dict[str, int] = {}  # "thread_id:agent_id" -> count
         self._coalesce_timers: dict[str, asyncio.TimerHandle] = {}  # AD-616: thread_id -> pending timer
         self._coalesce_ms: int = getattr(config.ward_room, 'event_coalesce_ms', 200)
+        self._channel_members: dict[str, set[str]] = {}  # AD-621: channel_id -> {agent_ids}
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    async def populate_membership_cache(self) -> None:
+        """AD-621: Build channel→agents membership cache from DB.
+
+        Called once from finalize.py after startup subscriptions are set.
+        Provides O(1) lookup for find_targets() without async DB queries.
+        """
+        try:
+            self._channel_members = await self._ward_room.get_all_channel_members()
+        except Exception:
+            self._channel_members = {}
+
+    def _get_channel_subscribers(self, channel_id: str) -> set[str]:
+        """AD-621: Get agent IDs subscribed to a channel from cache."""
+        return self._channel_members.get(channel_id, set())
 
     def get_cooldowns(self) -> dict[str, float]:
         """Return a copy of current agent cooldowns."""
@@ -216,6 +232,30 @@ class WardRoomRouter:
             thread_max_responders = thread_detail["thread"].get("max_responders", 0)
         if thread_mode == "discuss" and thread_max_responders > 0:
             target_agent_ids = target_agent_ids[:thread_max_responders]
+
+        # AD-623: DM convergence gate — thread-level check (before per-agent loop)
+        if channel and channel.channel_type == "dm" and thread_id:
+            try:
+                convergence = await self._ward_room.check_dm_convergence(thread_id)
+                if convergence and convergence.get("converged"):
+                    logger.info(
+                        "AD-623: DM thread %s converged (sim=%.3f, exchanges=%d)",
+                        thread_id[:8],
+                        convergence["similarity"],
+                        convergence["exchange_count"],
+                    )
+                    self._event_emitter(
+                        "dm_convergence_detected",
+                        {
+                            "thread_id": thread_id,
+                            "channel_id": channel.id if channel else "",
+                            "similarity": convergence["similarity"],
+                            "exchange_count": convergence["exchange_count"],
+                        },
+                    )
+                    return  # Thread is done — no more routing
+            except Exception:
+                logger.debug("AD-623: convergence gate check failed", exc_info=True)
 
         # --- Build thread context ---
         title = data.get("title", "")
@@ -553,22 +593,30 @@ class WardRoomRouter:
                     target_ids.append(agent.id)
 
         elif channel.channel_type == "department" and channel.department:
-            # Department channel: notify agents in that department
+            # AD-621: Department channel — notify all subscribed agents.
+            # Subscription is the gate (set at startup by communication.py).
+            # Home-department agents AND cross-department subscribers both receive.
             from probos.cognitive.standing_orders import get_department
+            _subscribed_ids = self._get_channel_subscribers(channel.id)
             for agent in self._registry.all():
                 if (agent.is_alive
                         and agent.id != author_id
                         and agent.id not in target_ids
                         and hasattr(agent, 'handle_intent')
                         and is_crew_agent(agent, self._ontology)
-                        and ((self._ontology.get_agent_department(agent.agent_type) if self._ontology else None) or get_department(agent.agent_type)) == channel.department):
+                        and agent.id in _subscribed_ids):
                     # AD-357: Earned Agency trust-tier gating
+                    # Cross-department subscribers get same_department=False
+                    # (higher response threshold — observe more, respond selectively).
+                    _home_dept = ((self._ontology.get_agent_department(agent.agent_type) if self._ontology else None)
+                                  or get_department(agent.agent_type))
+                    _same_dept = (_home_dept == channel.department)
                     if self._config.earned_agency.enabled:
                         from probos.earned_agency import can_respond_ambient
                         from probos.crew_profile import Rank
                         _agent_rank = Rank.from_trust(self._trust_network.get_score(agent.id))
                         if not can_respond_ambient(_agent_rank, is_captain_post=True,
-                                                   same_department=True):
+                                                   same_department=_same_dept):
                             continue
                     target_ids.append(agent.id)
 
@@ -623,23 +671,27 @@ class WardRoomRouter:
                         break
             return target_ids
 
-        # 3. Department channel: notify department peers
+        # 3. Department channel: notify subscribed peers
         if channel.channel_type == "department" and channel.department:
             from probos.cognitive.standing_orders import get_department
+            _subscribed_ids = self._get_channel_subscribers(channel.id)
             for agent in self._registry.all():
                 if (agent.is_alive
                         and agent.id != author_id
                         and agent.id not in target_ids
                         and hasattr(agent, 'handle_intent')
                         and is_crew_agent(agent, self._ontology)
-                        and ((self._ontology.get_agent_department(agent.agent_type) if self._ontology else None) or get_department(agent.agent_type)) == channel.department):
+                        and agent.id in _subscribed_ids):
                     # AD-357: Earned Agency trust-tier gating
+                    _home_dept = ((self._ontology.get_agent_department(agent.agent_type) if self._ontology else None)
+                                  or get_department(agent.agent_type))
+                    _same_dept = (_home_dept == channel.department)
                     if self._config.earned_agency.enabled:
                         from probos.earned_agency import can_respond_ambient
                         from probos.crew_profile import Rank
                         _agent_rank = Rank.from_trust(self._trust_network.get_score(agent.id))
                         if not can_respond_ambient(_agent_rank, is_captain_post=False,
-                                                   same_department=True):
+                                                   same_department=_same_dept):
                             continue
                     target_ids.append(agent.id)
 

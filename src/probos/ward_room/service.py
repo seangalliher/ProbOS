@@ -293,6 +293,13 @@ class WardRoomService(EventEmitterMixin):
         """AD-614: Count posts by a specific author in a thread."""
         return await self._threads.count_posts_by_author(thread_id, author_id)
 
+    async def check_dm_convergence(self, thread_id: str) -> dict | None:
+        """AD-623: Check if a DM thread has converged."""
+        from probos.ward_room.threads import check_dm_convergence
+        if not self._db:
+            return None
+        return await check_dm_convergence(self._db, thread_id)
+
     async def browse_threads(
         self, agent_id: str, channels: list[str] | None = None,
         thread_mode: str | None = None, limit: int = 10,
@@ -310,9 +317,10 @@ class WardRoomService(EventEmitterMixin):
         author_callsign: str,
         limit: int = 5,
         since: float | None = None,
+        thread_id: str | None = None,
     ) -> list[dict]:
         """Get recent posts by a specific author."""
-        return await self._threads.get_posts_by_author(author_callsign, limit, since)
+        return await self._threads.get_posts_by_author(author_callsign, limit, since, thread_id)
 
     async def create_thread(
         self, channel_id: str, author_id: str, title: str, body: str,
@@ -388,6 +396,14 @@ class WardRoomService(EventEmitterMixin):
 
     async def get_unread_counts(self, agent_id: str) -> dict[str, int]:
         return await self._messages.get_unread_counts(agent_id)
+
+    async def get_channel_subscriber_ids(self, channel_id: str) -> set[str]:
+        """AD-621: Agent IDs subscribed to a channel."""
+        return await self._messages.get_channel_subscriber_ids(channel_id)
+
+    async def get_all_channel_members(self) -> dict[str, set[str]]:
+        """AD-621: {channel_id: {agent_ids}} for membership cache."""
+        return await self._messages.get_all_channel_members()
 
     async def get_unread_dms(self, agent_id: str, limit: int = 3, exchange_limit: int = 0) -> list[dict]:
         return await self._messages.get_unread_dms(agent_id, limit, exchange_limit=exchange_limit)

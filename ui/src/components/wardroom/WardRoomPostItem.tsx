@@ -4,6 +4,8 @@ import type { WardRoomPost } from '../../store/types';
 import { EndorsementButtons } from './WardRoomEndorsement';
 import { timeAgo } from './timeAgo';
 
+const MAX_THREAD_DEPTH = 2;
+
 function ReplyInput({ threadId, parentId, onDone }: {
   threadId: string;
   parentId: string;
@@ -52,21 +54,41 @@ function ReplyInput({ threadId, parentId, onDone }: {
   );
 }
 
-export function WardRoomPostItem({ post, threadId, depth = 0 }: {
+export function WardRoomPostItem({ post, threadId, depth = 0, flat = false, allPosts, parentCallsign }: {
   post: WardRoomPost;
   threadId: string;
   depth?: number;
+  flat?: boolean;
+  allPosts?: WardRoomPost[];
+  parentCallsign?: string;
 }) {
   const [replying, setReplying] = useState(false);
 
+  // AD-612: In flat mode, find parent callsign from allPosts array
+  const replyToCallsign = flat && post.parent_id && allPosts
+    ? allPosts.find(p => p.id === post.parent_id)?.author_callsign
+    : undefined;
+
   return (
     <div style={{
-      marginLeft: depth * 16,
-      borderLeft: depth > 0 ? '1px solid rgba(255,255,255,0.08)' : 'none',
-      paddingLeft: depth > 0 ? 12 : 0,
+      marginLeft: flat ? 0 : depth * 16,
+      borderLeft: flat ? 'none' : (depth > 0 ? '1px solid rgba(255,255,255,0.08)' : 'none'),
+      paddingLeft: flat ? 0 : (depth > 0 ? 12 : 0),
       paddingTop: 8,
       paddingBottom: 4,
     }}>
+      {/* AD-612: Back-reference for flat DM replies */}
+      {flat && replyToCallsign && (
+        <div style={{ fontSize: 10, color: '#6a6a7a', marginBottom: 2 }}>
+          ↩ replying to @{replyToCallsign}
+        </div>
+      )}
+      {/* AD-612: Back-reference for deep thread replies */}
+      {!flat && depth >= MAX_THREAD_DEPTH && parentCallsign && (
+        <div style={{ fontSize: 10, color: '#6a6a7a', marginBottom: 2 }}>
+          ↩ replying to @{parentCallsign}
+        </div>
+      )}
       <div style={{ fontSize: 12, color: '#f0b060' }}>
         {post.author_callsign || 'unknown'}
         <span style={{ color: '#666680', marginLeft: 8 }}>{timeAgo(post.created_at)}</span>
@@ -81,8 +103,14 @@ export function WardRoomPostItem({ post, threadId, depth = 0 }: {
       {replying && (
         <ReplyInput threadId={threadId} parentId={post.id} onDone={() => setReplying(false)} />
       )}
-      {post.children?.map(child => (
-        <WardRoomPostItem key={child.id} post={child} threadId={threadId} depth={Math.min(depth + 1, 4)} />
+      {!flat && post.children?.map(child => (
+        <WardRoomPostItem
+          key={child.id}
+          post={child}
+          threadId={threadId}
+          depth={Math.min(depth + 1, MAX_THREAD_DEPTH)}
+          parentCallsign={post.author_callsign}
+        />
       ))}
     </div>
   );
