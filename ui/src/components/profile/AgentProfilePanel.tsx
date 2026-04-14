@@ -4,13 +4,15 @@ import { ProfileChatTab } from './ProfileChatTab';
 import { ProfileWorkTab } from './ProfileWorkTab';
 import { ProfileInfoTab } from './ProfileInfoTab';
 import { ProfileHealthTab } from './ProfileHealthTab';
+import { ProfileMemoryTab } from './ProfileMemoryTab';
 import type { AgentProfileData } from '../../store/types';
 
-type ProfileTab = 'chat' | 'work' | 'profile' | 'health';
+type ProfileTab = 'chat' | 'work' | 'profile' | 'health' | 'memory';
 
 const TAB_LABELS: { key: ProfileTab; label: string }[] = [
   { key: 'chat', label: 'Chat' },
   { key: 'work', label: 'Work' },
+  { key: 'memory', label: 'Memory' },
   { key: 'profile', label: 'Profile' },
   { key: 'health', label: 'Health' },
 ];
@@ -92,7 +94,7 @@ export function AgentProfilePanel() {
   // BF-017: Filter tabs — non-crew agents don't get Chat tab
   const visibleTabs = isCrew
     ? TAB_LABELS
-    : TAB_LABELS.filter(t => t.key !== 'chat');
+    : TAB_LABELS.filter(t => t.key !== 'chat' && t.key !== 'memory');
 
   // If current tab is hidden for non-crew, switch to profile
   const effectiveTab = visibleTabs.some(t => t.key === activeTab) ? activeTab : 'profile';
@@ -205,6 +207,7 @@ export function AgentProfilePanel() {
         {effectiveTab === 'work' && <ProfileWorkTab agentId={agentId} />}
         {effectiveTab === 'profile' && <ProfileInfoTab profileData={profileData} agent={agent} />}
         {effectiveTab === 'health' && <ProfileHealthTab profileData={profileData} agent={agent} />}
+        {effectiveTab === 'memory' && <ProfileMemoryTab agentId={agentId} />}
       </div>
     </div>
   );
