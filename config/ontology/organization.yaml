@@ -173,7 +173,7 @@ assignments:
     watches: [alpha, beta, gamma]
   - agent_type: builder
     post_id: builder_officer
-    callsign: "Scotty"
+    callsign: "Forge"
     watches: [alpha]
   - agent_type: scout
     post_id: scout_officer

@@ -420,6 +420,7 @@ def _intent_to_skill_id(
 async def map_gap_to_skill(
     gap: GapReport,
     skill_service: Any,
+    skill_bridge: Any = None,  # AD-596c: Optional SkillBridge for enhanced mapping
 ) -> GapReport:
     """Map a gap's intent types to a Skill Framework skill and check proficiency."""
     from probos.config import GAP_PROFICIENCY_TARGET
@@ -428,15 +429,20 @@ async def map_gap_to_skill(
         return gap
 
     try:
-        # Get registered skills from the registry
-        registry = getattr(skill_service, "registry", None)
-        registered = None
-        if registry:
-            registered = list(getattr(registry, "_skills", {}).values())
-
-        gap.mapped_skill_id = _intent_to_skill_id(
-            gap.affected_intent_types, registered
-        )
+        # AD-596c: Use SkillBridge for enhanced intent→skill mapping if available
+        if skill_bridge:
+            gap.mapped_skill_id = skill_bridge.resolve_skill_for_gap(
+                gap.affected_intent_types
+            )
+        else:
+            # Legacy fallback: exact match via _intent_to_skill_id
+            registry = getattr(skill_service, "registry", None)
+            registered = None
+            if registry:
+                registered = list(getattr(registry, "_skills", {}).values())
+            gap.mapped_skill_id = _intent_to_skill_id(
+                gap.affected_intent_types, registered
+            )
 
         # Check current proficiency
         profile = await skill_service.get_profile(gap.agent_id)

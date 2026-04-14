@@ -137,6 +137,7 @@ if TYPE_CHECKING:
     from probos.ontology import VesselOntologyService
     from probos.persistent_tasks import PersistentTaskStore
     from probos.proactive import ProactiveCognitiveLoop
+    from probos.cognitive.skill_catalog import CognitiveSkillCatalog
     from probos.skill_framework import AgentSkillService, SkillRegistry
     from probos.tools.permissions import ToolPermissionStore
     from probos.tools.registry import ToolRegistry
@@ -208,6 +209,7 @@ class ProbOSRuntime:
     cognitive_journal: CognitiveJournal | None
     skill_registry: SkillRegistry | None
     skill_service: AgentSkillService | None
+    cognitive_skill_catalog: CognitiveSkillCatalog | None
     acm: AgentCapitalService | None
     ontology: VesselOntologyService | None
     identity_registry: AgentIdentityRegistry | None
@@ -428,6 +430,9 @@ class ProbOSRuntime:
         # --- Skill Framework (AD-428) ---
         self.skill_registry: SkillRegistry | None = None
         self.skill_service: AgentSkillService | None = None
+
+        # --- Cognitive Skill Catalog (AD-596a) ---
+        self.cognitive_skill_catalog: CognitiveSkillCatalog | None = None
 
         # --- Recreation Service (AD-526a) ---
         self.recreation_service: Any = None
@@ -1392,8 +1397,30 @@ class ProbOSRuntime:
         self.cognitive_journal = comm.cognitive_journal
         self.skill_registry = comm.skill_registry
         self.skill_service = comm.skill_service
+        self.cognitive_skill_catalog = comm.cognitive_skill_catalog
         self.acm = comm.acm
         self.ontology = comm.ontology
+
+        # AD-596c (BF-596b fix): Wire cognitive skill catalog into standing orders
+        # Must be AFTER Phase 7 assigns self.cognitive_skill_catalog from comm result
+        if self.cognitive_skill_catalog:
+            from probos.cognitive.standing_orders import set_skill_catalog
+            set_skill_catalog(self.cognitive_skill_catalog)
+
+        # AD-596c: Create SkillBridge to coordinate T2 catalog and T3 registry
+        self.skill_bridge = None
+        if self.cognitive_skill_catalog and self.skill_registry and self.skill_service:
+            from probos.cognitive.skill_bridge import SkillBridge
+            self.skill_bridge = SkillBridge(
+                catalog=self.cognitive_skill_catalog,
+                skill_registry=self.skill_registry,
+                skill_service=self.skill_service,
+            )
+            try:
+                sync_result = await self.skill_bridge.validate_and_sync()
+                logger.info("AD-596c: Skill bridge synced — %s", sync_result)
+            except Exception:
+                logger.warning("AD-596c: Skill bridge sync failed", exc_info=True)
 
         # PATCH(AD-517): Wire ontology into WardRoom (constructed before ontology init)
         if self.ontology and self.ward_room:
@@ -2714,12 +2741,8 @@ class ProbOSRuntime:
     # ------------------------------------------------------------------
 
     def _collect_intent_descriptors(self) -> list[IntentDescriptor]:
-        """Collect unique intent descriptors from all registered agent templates.
-
-        Includes all agents with non-empty intent_descriptors regardless of tier.
-        Agents with empty descriptors (heartbeat, red_team, etc.) are naturally
-        excluded because they have nothing to contribute.
-        """
+        """Collect unique intent descriptors from all registered agent templates
+        and cognitive skill catalog (AD-596b)."""
         seen: set[str] = set()
         descriptors: list[IntentDescriptor] = []
         for type_name, agent_class in self.spawner._templates.items():
@@ -2727,6 +2750,19 @@ class ProbOSRuntime:
                 if desc.name not in seen:
                     seen.add(desc.name)
                     descriptors.append(desc)
+
+        # AD-596b: collect from cognitive skill catalog
+        if self.cognitive_skill_catalog:
+            for entry in self.cognitive_skill_catalog.list_entries():
+                for intent_name in entry.intents:
+                    if intent_name not in seen:
+                        seen.add(intent_name)
+                        descriptors.append(IntentDescriptor(
+                            name=intent_name,
+                            description=f"[Cognitive Skill: {entry.name}] {entry.description}",
+                            tier="domain",
+                        ))
+
         return descriptors
 
     def _build_pool_intent_map(self) -> dict[str, list[str]]:

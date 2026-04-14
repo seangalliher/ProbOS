@@ -4411,3 +4411,166 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Files modified:** `src/probos/tools/protocol.py`, `src/probos/agent_onboarding.py`, `src/probos/startup/finalize.py`, `src/probos/cognitive/procedures.py`, `src/probos/config.py`, `src/probos/cognitive/cognitive_agent.py`, `src/probos/events.py`. 1 new file: `src/probos/tools/context.py`. 2 new test files: `tests/test_ad423c_tool_context.py` (22 tests across 5 classes), `tests/test_ad423c_onboarding.py` (5 tests across 2 classes). 27 total tests.
 
 **Build prompt:** `prompts/ad-423c-toolcontext-onboarding.md`. **Issue:** #146.
+
+---
+
+### AD-596a: Cognitive Skill File Format + Loader (2026-04-14)
+
+**Decision:** Adopt AgentSkills.io `SKILL.md` open standard for T2 cognitive skills with ProbOS metadata extensions. Ship's Computer infrastructure service (no agent identity).
+
+**Context:** Four-tier capability model gap — T1 Standing Orders (built), T3 Executable Skills/Cognitive JIT (built), T4 Tool Skills (built), but T2 Cognitive Skills had no delivery mechanism. AgentSkills.io provides interoperable format across 30+ tools. ProbOS extends with additive optional metadata fields, not a fork.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| Skill file format | AgentSkills.io `SKILL.md` with YAML frontmatter | Open standard, interoperability with 30+ tools |
+| ProbOS extensions | `metadata.probos-*` prefix fields | Additive, optional — standard skills work without them |
+| Catalog type | Ship's Computer infra service | No identity needed — infrastructure, not crew |
+| Progressive disclosure | Names + descriptions at startup, instructions on-demand | ~100 tokens vs ~5000 tokens per skill |
+| Storage | SQLite metadata + file-based instructions | Catalog indexed, content stays in version-controlled files |
+| Department scoping | `"*"` wildcard = all departments | Default permissive, explicit scoping opt-in |
+| Rank filtering | `_RANK_ORDER` dict (ensign=0 through senior_officer=3) | Skills visible to agents at or above skill's min_rank |
+| Connection pattern | ConnectionFactory (constructor injection) | Matches SkillRegistry, enables commercial overlay |
+| Origin tracking | `internal` vs `external` | Distinguishes ProbOS-authored from imported skills |
+
+**Implementation:**
+- `parse_skill_file()` and `get_skill_body()` parse SKILL.md frontmatter and body
+- `CognitiveSkillEntry` dataclass with all standard + ProbOS metadata fields
+- `CognitiveSkillCatalog` class: `start()`/`stop()`, `scan_and_register()`, `register()`, `get_entry()`, `list_entries()`, `get_descriptions()`, `get_instructions()`, `get_intents()`, `find_by_intent()`
+- REST API: `GET /catalog`, `GET /catalog/{name}`, `POST /catalog/rescan`
+- Startup: `communication.py` creates catalog, scans `config/skills/`
+- Shutdown: `shutdown.py` stops catalog before Skill Framework
+- Example skill: `config/skills/communication-discipline/SKILL.md` (placeholder for AD-625)
+
+**Files modified:** `src/probos/startup/results.py`, `src/probos/startup/communication.py`, `src/probos/startup/shutdown.py`, `src/probos/runtime.py`, `src/probos/routers/skills.py`. 1 new file: `src/probos/cognitive/skill_catalog.py`. 1 new skill: `config/skills/communication-discipline/SKILL.md`. 1 new test file: `tests/test_cognitive_skill_catalog.py` (27 tests across 5 classes).
+
+**Build prompt:** `prompts/ad-596a-cognitive-skill-loader.md`. **Issue:** #166.
+
+---
+
+### AD-596b: Intent Discovery + compose_instructions() Integration (2026-04-14)
+
+**Decision:** Wire cognitive skill catalog into all four cognitive pathways — system prompt, intent handling, LLM decisions, and proactive context — using progressive disclosure and on-demand instruction loading.
+
+**Context:** AD-596a delivered the catalog infrastructure but skills were invisible to agents. Four integration points needed: (1) agent system prompts need skill awareness, (2) unmatched intents should fall back to cognitive skills, (3) LLM decision-making should know about available skills, (4) proactive context should include skill summaries.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| System prompt integration | Tier 7 in `compose_instructions()` via `get_descriptions()` | Progressive disclosure — names + descriptions (~100 tokens), not full instructions (~5000 tokens) |
+| Intent fallback | `find_by_intent()` in `handle_intent()` after built-in intent check | On-demand instruction loading only when intent matches a registered skill |
+| LLM injection | Skill catalog summary in `_decide_via_llm()` | LLM-aware of available cognitive skills during reasoning |
+| Proactive context | Section 7 "Cognitive Skills" in `_gather_context()` | Agents see skill summaries during proactive thinking |
+| Module-level state | `_skill_catalog` / `set_skill_catalog()` in `standing_orders.py` | Matches existing `_directive_store` / `set_directive_store()` pattern |
+| Onboarding wiring | `wire_agent()` sets `_cognitive_skill_catalog` + IntentBus subscription | Agents get catalog reference at onboarding, updates propagate via bus |
+| Startup wiring location | `runtime.py` after structural services return | `init_structural_services()` doesn't have `self` — wiring must happen in runtime |
+
+**Implementation:**
+- `standing_orders.py`: `set_skill_catalog()`, `_skill_catalog` module global, Tier 7 block in `compose_instructions()`
+- `cognitive_agent.py`: `handle_intent()` cognitive skill fallback, `_decide_via_llm()` skill injection
+- `proactive.py`: `_gather_context()` Section 7 cognitive skills
+- `agent_onboarding.py`: `wire_agent()` catalog wiring + IntentBus subscription
+- `startup/finalize.py`: onboarding catalog wiring at startup
+- `runtime.py`: `set_skill_catalog()` wiring after structural services
+- `shutdown.py`: `set_skill_catalog(None)` cleanup
+
+**Bug found during testing:** `structural_services.py` originally had `set_skill_catalog()` wiring using undefined `runtime` variable — `init_structural_services()` receives individual named parameters, not a runtime object. Relocated to `runtime.py` where `self` is available.
+
+**Files modified:** `src/probos/cognitive/standing_orders.py`, `src/probos/cognitive/cognitive_agent.py`, `src/probos/proactive.py`, `src/probos/agent_onboarding.py`, `src/probos/startup/finalize.py`, `src/probos/startup/structural_services.py`, `src/probos/runtime.py`, `src/probos/startup/shutdown.py`. 1 new test file: `tests/test_cognitive_skill_596b.py` (21 tests across 6 classes).
+
+**Build prompt:** `prompts/ad-596b-intent-discovery-integration.md`. **Issue:** #166.
+
+---
+
+### BF-175: Consolidation Anomaly False Positives — Absolute Floor Thresholds (2026-04-14)
+
+**Problem:** 604 false positive `consolidation_anomaly` events over 8 days (563 "unusual trust adjustments" + 41 "unusual pruning"). Crew investigation (Cortez, Reyes, Atlas) confirmed all were false positives. Vega flagged 4 consecutive events prompting Meridian to escalate.
+
+**Root cause:** BF-166's 2x historical average threshold has no absolute floor. When the running average for trust adjustments is 4, a count of 9 triggers anomaly (>2×4=8) — but 9 trust adjustments across a 55-agent crew is normal consolidation volume.
+
+**Decision:** Add configurable minimum absolute floor thresholds as AND conditions alongside existing 2x multiplier. Anomaly fires only when BOTH conditions are true: count > 2× average AND count >= absolute floor.
+
+| Parameter | Default | Rationale |
+|-----------|---------|-----------|
+| `dream_anomaly_min_strengthened` | 10 | Below 10 strengthened weights is normal for any dream cycle |
+| `dream_anomaly_min_pruned` | 5 | Below 5 pruned weights is routine cleanup |
+| `dream_anomaly_min_trust_adj` | 10 | Below 10 trust adjustments is expected for a full crew |
+
+**Files modified:** `src/probos/config.py`, `src/probos/cognitive/emergent_detector.py`, `src/probos/startup/dreaming.py`, `tests/test_emergent_detector.py` (5 new tests). Direct fix — no build prompt.
+
+---
+
+### AD-596c: Skill-Registry Bridge (2026-04-14)
+
+**Decision:** Create a stateless `SkillBridge` coordinator connecting CognitiveSkillCatalog (T2 instruction-defined skills) and SkillRegistry/AgentSkillService (T3 proficiency-tracked skills). No database, no lifecycle.
+
+**Context:** AD-596a/b delivered cognitive skill discovery and intent routing, but T2 skills were completely disconnected from T3 proficiency tracking. CognitiveSkillEntry has `skill_id` and `min_proficiency` fields that were declared but never used programmatically. No code existed to gate cognitive skill activation by proficiency, record skill exercises, or provide T2→T3 provenance for Cognitive JIT procedures.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| Architecture | Stateless coordinator, no database | Bridge pattern — both T2 and T3 already have persistence. Bridge just coordinates |
+| Proficiency gate | `check_proficiency_gate()` in `handle_intent()` before instruction loading | Silent self-deselect if agent lacks proficiency — same pattern as existing self-deselect |
+| Exercise recording | Fire-and-forget `asyncio.create_task()` after successful `decide()` | Matches AD-568e faithfulness pattern — never block response path for tracking |
+| Auto-acquire | If agent lacks skill record on first activation, acquire at FOLLOW (1) | Bootstrap without manual commissioning — skill record created on first use |
+| Gap predictor | Optional `skill_bridge` parameter on `map_gap_to_skill()` | Backward-compatible. When bridge available, uses `resolve_skill_for_gap()` instead of private `_skills` access |
+| Profile caching | Cache `SkillProfile` on agent during `wire_agent()` onboarding | Avoid async DB calls on every intent dispatch — profiles change infrequently |
+| Procedure provenance | `source_skill_id` field on Procedure + `required_tools` serialization fix | Enables T2→T3 provenance chain through Cognitive JIT pipeline |
+| Startup sync | `validate_and_sync()` logs matched/unmatched/ungoverned skill mappings | Deployment verification — warns if SKILL.md references nonexistent T3 skill_id |
+
+**Absorbed bugs:**
+- **BF-596b** (ordering): `set_skill_catalog()` at runtime.py:1355 ran before Phase 7 created the catalog — always no-op. Relocated after Phase 7 assignments.
+- **ProcedureStep.required_tools**: AD-423c declared the field but `to_dict()` omitted it — couldn't survive serialization.
+- **Law of Demeter** in gap_predictor.py:435: `getattr(registry, "_skills", {})` accessed private dict — replaced with `resolve_skill_for_gap()` through public APIs.
+
+**Files modified:** `src/probos/cognitive/procedures.py`, `src/probos/runtime.py`, `src/probos/cognitive/cognitive_agent.py`, `src/probos/cognitive/gap_predictor.py`, `src/probos/agent_onboarding.py`, `src/probos/startup/finalize.py`, `src/probos/startup/shutdown.py`. 1 new file: `src/probos/cognitive/skill_bridge.py`. 1 new test file: `tests/test_ad596c_skill_bridge.py` (24 tests).
+
+---
+
+### AD-596d: External Skill Import (2026-04-14)
+
+**Decision:** Enable ProbOS to consume external skills from the AgentSkills.io ecosystem — skills authored for Claude Code, Cursor, VS Code, and 30+ other tools.
+
+**Context:** AD-596a/b/c delivered the internal cognitive skill catalog, intent routing, and skill-registry bridge. All skills were hand-authored internal `config/skills/*/SKILL.md` files with ProbOS metadata extensions. Real external skills (e.g., FastAPI's `.agents/skills/fastapi/SKILL.md` in pip packages) contain only `name` and `description` in frontmatter — no `metadata`, no governance fields. The `origin` SQLite column existed but `parse_skill_file()` hardcoded `origin="internal"` with no code path to set `"external"`.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| Import strategy | Copy into `config/skills/` not symlink/reference | Skills become part of ship's config — portable, version-controlled, survive dependency updates |
+| Origin fix (D2) | `import_skill()` overrides `entry.origin` after `parse_skill_file()` | parse_skill_file() internal default is correct for scan_and_register() |
+| Duplicate guard | Reject if skill name already in catalog | No silent overwrite — explicit action required |
+| Discovery | `discover_package_skills()` returns data, does not auto-import | Captain's authority — discovery surfaces what's available, import is the deliberate act |
+| Enrichment | `enrich_skill()` updates fields + rewrites SKILL.md frontmatter | Low-risk because external skills are copies, not originals |
+| Removal guard | Only `origin == "external"` skills can be removed | Internal skills protected — require manual deletion by architect |
+| Shell command | Module-level `cmd_skill()` pattern (not `ShellCommandHandler` class) | Matches existing codebase pattern (commands_alert, commands_clearance, etc.) |
+
+**Files modified:** `src/probos/cognitive/skill_catalog.py` (4 new methods), `src/probos/routers/skills.py` (3 new endpoints), `src/probos/experience/shell.py`. 1 new file: `src/probos/experience/commands/commands_skill.py`. 1 new test file: `tests/test_ad596d_external_skill_import.py` (23 tests).
+
+**Build prompt:** `prompts/ad-596c-skill-registry-bridge-build.md`. **Issue:** #166.
+
+---
+
+### AD-596e: Skill Validation + Instruction Linting (2026-04-14)
+
+**Decision:** Add semantic validation layer for cognitive skills — AgentSkills.io spec compliance, ProbOS metadata cross-references, and instruction callsign linting.
+
+**Context:** AD-596a through 596d delivered parsing, discovery, intent routing, bridge, import, and enrichment. `parse_skill_file()` only checked YAML structure and required fields. No validation that skills conform to the AgentSkills.io spec, that ProbOS metadata values reference real entities, or that instruction bodies contain stale hardcoded callsigns (BF-146 class defect). A skill could be loadable but produce interoperability issues or behavioral failures.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| Native spec validation | 5 checks in `_validate_spec()`, no `skills-ref` library | Spec rules are 15 lines. Library adds 2 transitive deps (`strictyaml`, `click`), second YAML parser, uncontrolled breaking-change risk |
+| Parser vs Validator separation | `parse_skill_file()` permissive, `validate_skill()` strict | Postel's Law: liberal in what you accept (system works), conservative in what you produce (interoperability) |
+| validation_context injection | Dict param with known sets, built by caller | Catalog never imports runtime, CallsignRegistry, SkillRegistry — Law of Demeter, dependency inversion |
+| skill_id validation | Warning, not error | Ungoverned skills (empty skill_id) are valid. Missing registry entry may be timing/ordering issue |
+| Callsign linting | Warning with word-boundary regex | May be intentional (role references). Start as warnings; upgrade to errors if warranted |
+| Post-enrichment validation | Advisory (log warnings, don't block) | Enrichment always succeeds. Validation is feedback, not a gate |
+
+**Files modified:** `src/probos/cognitive/skill_catalog.py` (SkillValidationResult + `_validate_spec()` + `validate_skill()` + `validate_all()` + `enrich_skill()` context param), `src/probos/routers/skills.py` (2 new validation endpoints + `_build_validation_context()`), `src/probos/experience/commands/commands_skill.py` (`validate` subcommand). 1 new test file: `tests/test_ad596e_skill_validation.py` (35 tests).
+
+**Build prompt:** `prompts/ad-596e-skill-validation-linting.md`. **Issue:** #166.

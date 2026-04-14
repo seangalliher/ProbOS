@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from probos.self_mod_manager import SelfModManager
     from probos.service_profile import ServiceProfileStore
     from probos.sif import StructuralIntegrityField
+    from probos.cognitive.skill_catalog import CognitiveSkillCatalog
     from probos.skill_framework import AgentSkillService, SkillRegistry
     from probos.substrate.scaler import PoolScaler
     from probos.task_tracker import TaskTracker
@@ -154,6 +155,7 @@ class CommunicationResult:
     clearance_grant_store: "ClearanceGrantStore | None"
     tool_registry: "ToolRegistry | None"
     tool_permission_store: "ToolPermissionStore | None"
+    cognitive_skill_catalog: "CognitiveSkillCatalog | None"
 
 
 @dataclass

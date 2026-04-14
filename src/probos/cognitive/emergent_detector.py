@@ -25,7 +25,7 @@ from enum import Enum
 from typing import Any
 
 from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — reads trust for emergent pattern detection
-from probos.mesh.routing import HebbianRouter, REL_INTENT
+from probos.mesh.routing import HebbianRouter, REL_INTENT, REL_SOCIAL
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +126,10 @@ class EmergentDetector:
         cluster_cooldown_seconds: float = 1800.0,
         cluster_activity_window: float = 900.0,  # BF-165: 15 minutes
         dream_min_history: int = 5,  # BF-166
+        # BF-175: Minimum absolute floors to prevent false positives at low baselines
+        dream_anomaly_min_strengthened: int = 10,
+        dream_anomaly_min_pruned: int = 5,
+        dream_anomaly_min_trust_adj: int = 10,
     ) -> None:
         self._router = hebbian_router
         self._trust = trust_network
@@ -176,6 +180,10 @@ class EmergentDetector:
         # BF-166: Bounded ring buffer (matches _history pattern)
         self._dream_history: collections.deque[dict] = collections.deque(maxlen=max_history)
         self._dream_min_history = dream_min_history
+        # BF-175: Absolute floors — suppress anomalies below these counts
+        self._dream_anomaly_min_strengthened = dream_anomaly_min_strengthened
+        self._dream_anomaly_min_pruned = dream_anomaly_min_pruned
+        self._dream_anomaly_min_trust_adj = dream_anomaly_min_trust_adj
 
         # Pattern deduplication (AD-411): suppress duplicate patterns within cooldown
         self._pattern_cooldown_seconds: float = 600.0  # 10 minutes default
@@ -353,25 +361,23 @@ class EmergentDetector:
     def compute_tc_n(self) -> float:
         """Adapted TC_N for single-mesh ProbOS.
 
-        Computes the fraction of successful DAGs that required multi-pool
-        cooperation (2+ distinct pools contributing to the same DAG).
-        This is a proxy for system integration.
+        Measures system integration as the fraction of active relationships
+        that span multiple pools. Two signal sources:
+
+        1. **Intent routing** (REL_INTENT): intents that route to 2+ pools
+        2. **Social interaction** (REL_SOCIAL): agents that communicate with
+           agents from pools other than their own (Ward Room collaboration)
+
+        Social interactions are unprompted agent-to-agent collaboration —
+        emergent cross-department cooperation that TC_N should capture.
         """
         if not self._episodic_memory:
             return 0.0
 
-        # We read from the episodic memory's recent episodes synchronously
-        # via any cached data. Since episodic memory requires async access,
-        # we compute tc_n from Hebbian weights as a synchronous proxy.
-        # Multi-pool cooperation is indicated by intent weights spanning
-        # multiple pools.
         weights = self._router.all_weights_typed()
+
+        # --- Intent signal: intents routing to 2+ pools ---
         intent_weights = {k: v for k, v in weights.items() if k[2] == REL_INTENT}
-
-        if not intent_weights:
-            return 0.0
-
-        # Group by source (intent) to find which pools each intent routes to
         intent_pools: dict[str, set[str]] = {}
         for (source, target, _), weight in intent_weights.items():
             if weight < 0.01:
@@ -380,13 +386,35 @@ class EmergentDetector:
             if pool:
                 intent_pools.setdefault(source, set()).add(pool)
 
-        if not intent_pools:
+        intent_multi = sum(1 for pools in intent_pools.values() if len(pools) >= 2)
+        intent_total = len(intent_pools)
+
+        # --- Social signal: agents communicating cross-pool ---
+        social_weights = {k: v for k, v in weights.items() if k[2] == REL_SOCIAL}
+        agent_cross_pool: dict[str, set[str]] = {}
+        for (source, target, _), weight in social_weights.items():
+            if weight < 0.01:
+                continue
+            source_pool = self._extract_pool(source)
+            target_pool = self._extract_pool(target)
+            if source_pool and target_pool:
+                agent_cross_pool.setdefault(source, set()).add(target_pool)
+
+        social_multi = 0
+        social_total = 0
+        for agent, target_pools in agent_cross_pool.items():
+            source_pool = self._extract_pool(agent)
+            if source_pool:
+                social_total += 1
+                if target_pools - {source_pool}:
+                    social_multi += 1
+
+        # Combined: fraction of all signals showing multi-pool cooperation
+        total = intent_total + social_total
+        if total == 0:
             return 0.0
 
-        multi_pool_count = sum(1 for pools in intent_pools.values() if len(pools) >= 2)
-        total = len(intent_pools)
-
-        return multi_pool_count / total if total > 0 else 0.0
+        return (intent_multi + social_multi) / total
 
     def detect_cooperation_clusters(self, live_agent_ids: set[str] | None = None) -> list[dict]:
         """Analyze Hebbian weight graph for agent cooperation clusters.
@@ -844,9 +872,9 @@ class EmergentDetector:
         avg_pruned = sum(d["weights_pruned"] for d in history) / len(history)
         avg_trust_adj = sum(d["trust_adjustments"] for d in history) / len(history)
 
-        # Flag anomalies: > 2x historical average
+        # Flag anomalies: > 2x historical average AND above absolute floor (BF-175)
         strengthened = report_data["weights_strengthened"]
-        if avg_strengthened > 0 and strengthened > 2 * avg_strengthened:
+        if avg_strengthened > 0 and strengthened > 2 * avg_strengthened and strengthened >= self._dream_anomaly_min_strengthened:
             patterns.append(EmergentPattern(
                 pattern_type="consolidation_anomaly",
                 description=f"Unusual strengthening: {strengthened} weights (avg: {avg_strengthened:.0f})",
@@ -861,7 +889,7 @@ class EmergentDetector:
             ))
 
         pruned = report_data["weights_pruned"]
-        if avg_pruned > 0 and pruned > 2 * avg_pruned:
+        if avg_pruned > 0 and pruned > 2 * avg_pruned and pruned >= self._dream_anomaly_min_pruned:
             patterns.append(EmergentPattern(
                 pattern_type="consolidation_anomaly",
                 description=f"Unusual pruning: {pruned} connections (avg: {avg_pruned:.0f})",
@@ -876,7 +904,7 @@ class EmergentDetector:
             ))
 
         trust_adj = report_data["trust_adjustments"]
-        if avg_trust_adj > 0 and trust_adj > 2 * avg_trust_adj:
+        if avg_trust_adj > 0 and trust_adj > 2 * avg_trust_adj and trust_adj >= self._dream_anomaly_min_trust_adj:
             patterns.append(EmergentPattern(
                 pattern_type="consolidation_anomaly",
                 description=f"Unusual trust adjustments: {trust_adj} (avg: {avg_trust_adj:.0f})",

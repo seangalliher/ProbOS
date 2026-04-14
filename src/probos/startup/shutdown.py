@@ -164,6 +164,13 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         runtime.directive_store.close()
         runtime.directive_store = None
 
+    # AD-596b: Disconnect cognitive skill catalog from standing orders
+    from probos.cognitive.standing_orders import set_skill_catalog
+    set_skill_catalog(None)
+
+    # AD-596c: Clear skill bridge reference (stateless, no teardown needed)
+    runtime.skill_bridge = None
+
     # Stop Ward Room (AD-407)
     if runtime.ward_room:
         await runtime.ward_room.stop_prune_loop()
@@ -218,6 +225,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     if _activation_tracker is not None:
         await _activation_tracker.stop()
         runtime._activation_tracker = None
+
+    # Stop Cognitive Skill Catalog (AD-596a)
+    if runtime.cognitive_skill_catalog:
+        await runtime.cognitive_skill_catalog.stop()
+        runtime.cognitive_skill_catalog = None
 
     # Stop Skill Framework (AD-428)
     if runtime.skill_service:

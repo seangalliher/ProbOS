@@ -286,6 +286,17 @@ async def init_communication(
     await skill_service.start()
     logger.info("skill-framework started")
 
+    # --- Cognitive Skill Catalog (AD-596a) ---
+    from probos.cognitive.skill_catalog import CognitiveSkillCatalog
+
+    skills_dir = Path(__file__).resolve().parent.parent.parent.parent / "config" / "skills"
+    cognitive_catalog = CognitiveSkillCatalog(
+        skills_dir=skills_dir,
+        db_path=str(data_dir / "cognitive_skills.db"),
+    )
+    await cognitive_catalog.start()
+    logger.info("cognitive-skill-catalog started")
+
     # --- Agent Capital Management (AD-427) ---
     from probos.acm import AgentCapitalService
 
@@ -405,4 +416,5 @@ async def init_communication(
         clearance_grant_store=clearance_grant_store,
         tool_registry=tool_registry,
         tool_permission_store=tool_permission_store,
+        cognitive_skill_catalog=cognitive_catalog,
     )

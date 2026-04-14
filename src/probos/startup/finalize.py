@@ -150,6 +150,14 @@ async def finalize_startup(
     if runtime.tool_registry:
         runtime.onboarding.set_tool_registry(runtime.tool_registry)
 
+    # AD-596b: Wire cognitive skill catalog into onboarding service
+    if runtime.cognitive_skill_catalog:
+        runtime.onboarding.set_cognitive_skill_catalog(runtime.cognitive_skill_catalog)
+
+    # AD-596c: Wire skill bridge into onboarding service
+    if hasattr(runtime, 'skill_bridge') and runtime.skill_bridge:
+        runtime.onboarding.set_skill_bridge(runtime.skill_bridge)
+
     # AD-526a: Wire RecreationService with late-init dependencies
     from probos.recreation.service import RecreationService
     runtime.recreation_service = RecreationService(

@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 # Directive store reference, set by runtime at startup (AD-386)
 _directive_store: Any = None
 
+# Cognitive skill catalog reference, set by runtime at startup (AD-596b)
+_skill_catalog: Any = None
+
 # Default location for standing orders
 _DEFAULT_ORDERS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "config" / "standing_orders"
 
@@ -77,6 +80,12 @@ def set_directive_store(store: Any) -> None:
     """Wire the DirectiveStore for tier 6 composition (AD-386)."""
     global _directive_store
     _directive_store = store
+
+
+def set_skill_catalog(catalog: Any) -> None:
+    """Wire the CognitiveSkillCatalog for tier 7 composition (AD-596b)."""
+    global _skill_catalog
+    _skill_catalog = catalog
 
 
 @lru_cache(maxsize=32)
@@ -203,6 +212,7 @@ def compose_instructions(
     orders_dir: Path | None = None,
     department: str | None = None,
     callsign: str | None = None,
+    agent_rank: str | None = None,
 ) -> str:
     """Compose an agent's complete instructions from all tiers.
 
@@ -263,5 +273,23 @@ def compose_instructions(
                 prefix = directive.directive_type.value.replace("_", " ").title()
                 directive_lines.append(f"- [{prefix}] {directive.content}")
             parts.append("## Active Directives\n\n" + "\n".join(directive_lines))
+
+    # 7. Available cognitive skills (AD-596b) — progressive disclosure
+    if _skill_catalog is not None:
+        skill_descs = _skill_catalog.get_descriptions(
+            department=dept,
+            agent_rank=agent_rank,
+        )
+        if skill_descs:
+            skill_lines = []
+            for sname, sdesc in skill_descs:
+                skill_lines.append(f"- **{sname}**: {sdesc}")
+            parts.append(
+                "## Available Cognitive Skills\n\n"
+                "You have access to the following skills. When a task matches "
+                "a skill description, the skill's detailed instructions will be "
+                "provided automatically.\n\n"
+                + "\n".join(skill_lines)
+            )
 
     return "\n\n---\n\n".join(parts)

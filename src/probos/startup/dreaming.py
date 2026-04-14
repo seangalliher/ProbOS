@@ -134,6 +134,9 @@ async def init_dreaming(
         cluster_cooldown_seconds=_edc.cluster_cooldown_seconds,
         cluster_activity_window=_edc.cluster_activity_window,
         dream_min_history=_edc.dream_min_history,
+        dream_anomaly_min_strengthened=_edc.dream_anomaly_min_strengthened,
+        dream_anomaly_min_pruned=_edc.dream_anomaly_min_pruned,
+        dream_anomaly_min_trust_adj=_edc.dream_anomaly_min_trust_adj,
     )
     # Provide live agent roster so detector filters out defunct agents
     refresh_emergent_detector_roster_fn()

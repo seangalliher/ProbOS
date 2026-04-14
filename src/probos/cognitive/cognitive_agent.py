@@ -1204,6 +1204,7 @@ class CognitiveAgent(BaseAgent):
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
                 hardcoded_instructions="",
                 callsign=self._resolve_callsign(),
+                agent_rank=getattr(self, "rank", None),  # AD-596b
             )
             if observation.get("intent") == "ward_room_notification":
                 composed += (
@@ -1325,7 +1326,13 @@ class CognitiveAgent(BaseAgent):
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
                 hardcoded_instructions=self.instructions or "",
                 callsign=self._resolve_callsign(),
+                agent_rank=getattr(self, "rank", None),  # AD-596b
             )
+
+        # AD-596b: Append cognitive skill instructions when activated
+        _skill_instr = observation.get("cognitive_skill_instructions")
+        if _skill_instr:
+            composed += f"\n\n---\n\n## Active Skill: {observation.get('cognitive_skill_name', 'Unknown')}\n\n{_skill_instr}"
 
         request = LLMRequest(
             prompt=user_message,
@@ -1415,8 +1422,32 @@ class CognitiveAgent(BaseAgent):
         )
 
         # Fast path: self-deselect for unrecognized intents before any LLM call
+        # AD-596b: Check cognitive skill catalog before self-deselecting
+        _cognitive_skill_instructions = None
         if not is_direct and intent.intent not in self._handled_intents:
-            return None
+            _catalog = getattr(self, '_cognitive_skill_catalog', None)
+            if _catalog:
+                _skill_entries = _catalog.find_by_intent(intent.intent)
+                if _skill_entries:
+                    _entry = _skill_entries[0]
+                    # AD-596c: Proficiency gate — check before loading instructions
+                    _bridge = getattr(self, '_skill_bridge', None)
+                    if _bridge:
+                        _profile = getattr(self, '_skill_profile', None)
+                        if not _bridge.check_proficiency_gate(self.id, _entry, _profile):
+                            return None  # Silent self-deselect — agent lacks proficiency
+                    _cognitive_skill_instructions = _catalog.get_instructions(_entry.name)
+                    if _cognitive_skill_instructions:
+                        logger.info(
+                            "AD-596b: Loaded cognitive skill '%s' for intent '%s' on %s",
+                            _entry.name, intent.intent, self.agent_type,
+                        )
+                    else:
+                        return None
+                else:
+                    return None
+            else:
+                return None
 
         # AD-534c: compound step replay — zero-token, bypass full cognitive lifecycle
         if intent.intent == "compound_step_replay" and intent.target_agent_id == self.id:
@@ -1432,6 +1463,11 @@ class CognitiveAgent(BaseAgent):
 
         # AD-430c (Pillar 4): Enrich observation with relevant episodic memories
         observation = await self._recall_relevant_memories(intent, observation)
+
+        # AD-596b: Inject cognitive skill instructions into observation context
+        if _cognitive_skill_instructions:
+            observation["cognitive_skill_instructions"] = _cognitive_skill_instructions
+            observation["cognitive_skill_name"] = _skill_entries[0].name
 
         decision = await self.decide(observation)
         decision["intent"] = intent.intent  # AD-398: propagate intent name to act()
@@ -1508,6 +1544,18 @@ class CognitiveAgent(BaseAgent):
                             )
             except Exception:
                 logger.debug("AD-589: Counselor introspective update failed", exc_info=True)
+
+        # AD-596c: Record cognitive skill exercise (fire-and-forget)
+        if _cognitive_skill_instructions and _skill_entries:
+            _bridge = getattr(self, '_skill_bridge', None)
+            if _bridge:
+                try:
+                    import asyncio
+                    asyncio.create_task(
+                        _bridge.record_skill_exercise(self.id, _skill_entries[0])
+                    )
+                except Exception:
+                    logger.debug("AD-596c: Exercise recording task creation failed", exc_info=True)
 
         # AD-534c: compound procedure dispatch
         if decision.get("compound") and decision.get("procedure"):

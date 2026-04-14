@@ -23,6 +23,7 @@ from probos.experience.commands import (
     commands_alert,
     commands_clearance,
     commands_tool_access,
+    commands_skill,
 )
 from probos.experience.commands.approval_callbacks import (
     user_escalation_callback,
@@ -96,6 +97,7 @@ class ProbOSShell:
         "/alert":     "Manage bridge alert suppression (dismiss/resolve/mute/unmute/list)",
         "/grant":     "Manage clearance grants (issue/revoke/list)",
         "/tool-access": "Manage tool permissions (grant/restrict/revoke/break-lock/list/check)",
+        "/skill":     "Manage cognitive skills (list/discover/import/info/enrich/remove)",
         "/debug":     "Toggle debug mode (/debug on|off)",
         "/help":      "Show this help message",
         "/quit":      "Exit ProbOS",
@@ -279,6 +281,7 @@ class ProbOSShell:
             "/alert":      lambda: commands_alert.cmd_alert(rt, con, arg),
             "/grant":      lambda: commands_clearance.cmd_grant(rt, con, arg),
             "/tool-access": lambda: commands_tool_access.cmd_tool_access(rt, con, arg),
+            "/skill":      lambda: commands_skill.cmd_skill(rt, con, arg),
 
             "/explain":    lambda: self._handle_nl("what just happened?"),
             "/bridge":     lambda: self._cmd_bridge(),

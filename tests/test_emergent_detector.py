@@ -21,7 +21,7 @@ from probos.cognitive.llm_client import MockLLMClient
 from probos.consensus.trust import TrustNetwork
 from probos.experience.panels import render_anomalies_panel
 from probos.experience.shell import ProbOSShell
-from probos.mesh.routing import HebbianRouter, REL_INTENT
+from probos.mesh.routing import HebbianRouter, REL_INTENT, REL_SOCIAL
 from probos.runtime import ProbOSRuntime
 from probos.types import DreamReport, IntentMessage, LLMRequest
 
@@ -206,6 +206,39 @@ class TestComputeTcN:
     def test_malformed_agent_id_graceful(self) -> None:
         pool = EmergentDetector._extract_pool("x")
         assert pool == ""
+
+    def test_social_cross_pool_contributes_to_tc_n(self) -> None:
+        """REL_SOCIAL weights between agents in different pools increase TC_N."""
+        weights = {
+            # Social: agent in pool_a talks to agent in pool_b → cross-pool
+            ("agent_a_pool_a_0_abc", "agent_b_pool_b_0_def", REL_SOCIAL): 0.5,
+        }
+        d = _make_detector(weights=weights, episodic_memory=object())
+        tc = d.compute_tc_n()
+        assert tc > 0.0
+
+    def test_social_same_pool_does_not_contribute(self) -> None:
+        """REL_SOCIAL weights between agents in the same pool → TC_N = 0."""
+        weights = {
+            # Both agents share pool prefix "mypool" (fallback: parts[:-2])
+            ("mypool_0_abc", "mypool_1_def", REL_SOCIAL): 0.5,
+        }
+        d = _make_detector(weights=weights, episodic_memory=object())
+        tc = d.compute_tc_n()
+        assert tc == 0.0
+
+    def test_social_and_intent_combined(self) -> None:
+        """Both REL_INTENT and REL_SOCIAL signals combine in TC_N."""
+        weights = {
+            # Intent: single pool → no multi-pool (contributes 0/1)
+            ("read_file", "reader_filesystem_0_abc", REL_INTENT): 0.5,
+            # Social: cross-pool → contributes 1/1
+            ("agent_a_eng_0_abc", "agent_b_sci_0_def", REL_SOCIAL): 0.5,
+        }
+        d = _make_detector(weights=weights, episodic_memory=object())
+        tc = d.compute_tc_n()
+        # 1 intent (single-pool) + 1 social (cross-pool) → 1/2 = 0.5
+        assert tc == 0.5
 
 
 # ===========================================================================
@@ -467,6 +500,63 @@ class TestConsolidationAnomalies:
         )
         # No anomaly — just baseline
         assert len(patterns) == 0
+
+    def test_bf175_trust_adj_below_floor_no_anomaly(self) -> None:
+        """BF-175: Trust adjustments >2x average but below absolute floor are NOT anomalies."""
+        d = _make_detector()
+        # Build baseline with avg trust_adjustments = 4
+        for _ in range(5):
+            d.detect_consolidation_anomalies(
+                DreamReport(weights_strengthened=5, weights_pruned=3, trust_adjustments=4)
+            )
+        # Spike to 9 — >2x average (4) but below floor (10)
+        patterns = d.detect_consolidation_anomalies(
+            DreamReport(weights_strengthened=5, weights_pruned=3, trust_adjustments=9)
+        )
+        trust = [p for p in patterns if "trust" in p.description]
+        assert len(trust) == 0
+
+    def test_bf175_trust_adj_above_floor_fires(self) -> None:
+        """BF-175: Trust adjustments >2x average AND above absolute floor ARE anomalies."""
+        d = _make_detector()
+        for _ in range(5):
+            d.detect_consolidation_anomalies(
+                DreamReport(weights_strengthened=5, weights_pruned=3, trust_adjustments=4)
+            )
+        # Spike to 12 — >2x average (4) AND above floor (10)
+        patterns = d.detect_consolidation_anomalies(
+            DreamReport(weights_strengthened=5, weights_pruned=3, trust_adjustments=12)
+        )
+        trust = [p for p in patterns if "trust" in p.description]
+        assert len(trust) == 1
+
+    def test_bf175_pruned_below_floor_no_anomaly(self) -> None:
+        """BF-175: Pruned >2x average but below absolute floor (5) suppressed."""
+        d = _make_detector()
+        for _ in range(5):
+            d.detect_consolidation_anomalies(
+                DreamReport(weights_strengthened=5, weights_pruned=1)
+            )
+        # Spike to 3 — >2x average (1) but below floor (5)
+        patterns = d.detect_consolidation_anomalies(
+            DreamReport(weights_strengthened=5, weights_pruned=3)
+        )
+        pruned = [p for p in patterns if "pruning" in p.description]
+        assert len(pruned) == 0
+
+    def test_bf175_strengthened_below_floor_no_anomaly(self) -> None:
+        """BF-175: Strengthened >2x average but below absolute floor (10) suppressed."""
+        d = _make_detector()
+        for _ in range(5):
+            d.detect_consolidation_anomalies(
+                DreamReport(weights_strengthened=3, weights_pruned=1)
+            )
+        # Spike to 8 — >2x average (3) but below floor (10)
+        patterns = d.detect_consolidation_anomalies(
+            DreamReport(weights_strengthened=8, weights_pruned=1)
+        )
+        strengthened = [p for p in patterns if "strengthening" in p.description]
+        assert len(strengthened) == 0
 
 
 # ===========================================================================

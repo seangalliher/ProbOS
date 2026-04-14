@@ -1437,6 +1437,32 @@ class ProactiveCognitiveLoop:
                     }
                 context["conn_authority"] = night_ctx
 
+        # 7. Cognitive skill catalog (AD-596b) — available skills for this agent
+        if hasattr(rt, 'cognitive_skill_catalog') and rt.cognitive_skill_catalog:
+            try:
+                _dept = None
+                if hasattr(rt, 'ontology') and rt.ontology:
+                    _dept = rt.ontology.get_agent_department(agent.agent_type)
+                _rank_str = None
+                if hasattr(rt, 'trust_network') and rt.trust_network:
+                    try:
+                        from probos.crew_profile import Rank
+                        _trust = rt.trust_network.get_score(agent.id)
+                        _rank_str = Rank.from_trust(_trust).value
+                    except Exception:
+                        pass
+                skill_descs = rt.cognitive_skill_catalog.get_descriptions(
+                    department=_dept,
+                    agent_rank=_rank_str,
+                )
+                if skill_descs:
+                    context["cognitive_skills"] = [
+                        {"name": name, "description": desc}
+                        for name, desc in skill_descs
+                    ]
+            except Exception:
+                logger.debug("AD-596b: Cognitive skill context failed for %s", agent.id, exc_info=True)
+
         return context
 
     async def _build_self_monitoring_context(

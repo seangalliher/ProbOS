@@ -74,6 +74,8 @@ class AgentOnboardingService:
         self._tool_registry: ToolRegistry | None = tool_registry
         self._start_time_wall: float = 0.0  # Set by runtime after creation
         self._orientation_service: Any = None  # AD-567g: Late-bound
+        self._cognitive_skill_catalog: Any = None  # AD-596b: Late-bound
+        self._skill_bridge: Any = None  # AD-596c: Late-bound
 
     def set_orientation_service(self, svc: Any) -> None:
         """AD-567g / BF-113: Set orientation service (public setter for LoD)."""
@@ -82,6 +84,14 @@ class AgentOnboardingService:
     def set_tool_registry(self, registry: "ToolRegistry") -> None:
         """AD-423c: Set tool registry (public setter for LoD)."""
         self._tool_registry = registry
+
+    def set_cognitive_skill_catalog(self, catalog: Any) -> None:
+        """AD-596b: Set cognitive skill catalog (public setter for LoD)."""
+        self._cognitive_skill_catalog = catalog
+
+    def set_skill_bridge(self, bridge: Any) -> None:
+        """AD-596c: Set skill bridge (public setter for LoD)."""
+        self._skill_bridge = bridge
 
     async def wire_agent(self, agent: Any) -> None:
         """Connect an agent to the mesh infrastructure."""
@@ -110,8 +120,37 @@ class AgentOnboardingService:
 
         # If agent has handle_intent, subscribe to intent bus
         if hasattr(agent, "handle_intent"):
-            intent_names = [d.name for d in getattr(agent, "intent_descriptors", [])] or None
-            self._intent_bus.subscribe(agent.id, agent.handle_intent, intent_names=intent_names)
+            intent_names = [d.name for d in getattr(agent, "intent_descriptors", [])]
+
+            # AD-596b: Add intents from cognitive skills available to this agent
+            if self._cognitive_skill_catalog:
+                _dept = None
+                if self._ontology:
+                    _dept = self._ontology.get_agent_department(agent.agent_type)
+                _rank_str = None
+                try:
+                    _trust = self._trust_network.get_score(agent.id)
+                    from probos.crew_profile import Rank
+                    _rank_str = Rank.from_trust(_trust).value
+                except Exception:
+                    pass
+                for entry in self._cognitive_skill_catalog.list_entries(department=_dept, min_rank=_rank_str):
+                    for intent_name in entry.intents:
+                        if intent_name not in intent_names:
+                            intent_names.append(intent_name)
+
+            self._intent_bus.subscribe(agent.id, agent.handle_intent, intent_names=intent_names or None)
+
+        # AD-596c: Wire skill bridge and cached skill profile onto crew agents
+        if self._skill_bridge and hasattr(agent, 'handle_intent'):
+            agent._skill_bridge = self._skill_bridge
+            # Cache the skill profile to avoid async DB calls on every intent
+            try:
+                _profile = await self._skill_bridge._service.get_profile(agent.id)
+                agent._skill_profile = _profile
+            except Exception:
+                agent._skill_profile = None
+                logger.debug("AD-596c: Could not cache skill profile for %s", agent.id)
 
         # Initialize trust record
         self._trust_network.get_or_create(agent.id)
@@ -357,6 +396,10 @@ class AgentOnboardingService:
                     "AD-423c: ToolContext creation failed for %s",
                     agent.agent_type, exc_info=True,
                 )
+
+        # AD-596b: Wire cognitive skill catalog for on-demand skill loading
+        if self._cognitive_skill_catalog:
+            agent._cognitive_skill_catalog = self._cognitive_skill_catalog
 
     async def run_naming_ceremony(self, agent: Any) -> str:
         """Run the self-naming ceremony for a crew agent. Returns chosen callsign (AD-442)."""

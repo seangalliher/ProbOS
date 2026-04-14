@@ -51,6 +51,7 @@ class ProcedureStep:
             "invariants": self.invariants,
             "agent_role": self.agent_role,
             "resolved_agent_type": self.resolved_agent_type,
+            "required_tools": self.required_tools,
         }
 
 
@@ -90,6 +91,8 @@ class Procedure:
     is_archived: bool = False     # archived (removed from active index) (AD-538)
     # AD-567d: Anchor provenance from source episodes
     source_anchors: list[dict[str, Any]] = field(default_factory=list)
+    # AD-596c: T2→T3 provenance — links to CognitiveSkillEntry.skill_id
+    source_skill_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -119,6 +122,7 @@ class Procedure:
             "last_used_at": self.last_used_at,
             "is_archived": self.is_archived,
             "source_anchors": self.source_anchors,
+            "source_skill_id": self.source_skill_id,
         }
 
     @classmethod
@@ -152,6 +156,7 @@ class Procedure:
             last_used_at=data.get("last_used_at", 0.0),
             is_archived=data.get("is_archived", False),
             source_anchors=data.get("source_anchors", []),
+            source_skill_id=data.get("source_skill_id", ""),
         )
 
 

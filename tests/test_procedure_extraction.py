@@ -242,6 +242,8 @@ class TestProcedureSchema:
             "last_used_at", "is_archived",
             # AD-567d: anchor provenance
             "source_anchors",
+            # AD-596c: T2→T3 provenance
+            "source_skill_id",
         }
         assert set(d.keys()) == expected_keys
 

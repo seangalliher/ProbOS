@@ -666,6 +666,10 @@ class EmergentDetectorConfig(BaseModel):
     cluster_cooldown_seconds: float = 1800.0
     cluster_activity_window: float = 900.0  # BF-165: seconds without Hebbian interaction before suppressing cluster detection (0 = disabled)
     dream_min_history: int = 5  # BF-166: minimum dream reports before anomaly detection fires
+    # BF-175: Minimum absolute floors — prevent false positives when baseline averages are low
+    dream_anomaly_min_strengthened: int = 10  # ignore strengthened spikes below this count
+    dream_anomaly_min_pruned: int = 5  # ignore pruning spikes below this count
+    dream_anomaly_min_trust_adj: int = 10  # ignore trust adjustment spikes below this count
 
 
 class EarnedAgencyConfig(BaseModel):
