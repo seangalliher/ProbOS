@@ -17,18 +17,6 @@ _WARD_ROOM_CREW = {
 }
 
 
-# AD-619: Agent types with ship-wide cross-department authority.
-# Bridge officers who report directly to the Captain and need visibility
-# into all department channels + cross-shard Oracle recall.
-# Ontology equivalent: posts with reports_to == "captain" and tier == "crew".
-_SHIP_WIDE_AUTHORITY_TYPES = {"counselor"}
-
-
-def has_ship_wide_authority(agent: Any) -> bool:
-    """Check if an agent has ship-wide cross-department authority (AD-619)."""
-    return getattr(agent, 'agent_type', '') in _SHIP_WIDE_AUTHORITY_TYPES
-
-
 def is_crew_agent(agent: Any, ontology: Any | None = None) -> bool:
     """Check if an agent is core crew eligible for Ward Room participation."""
     if not hasattr(agent, 'agent_type'):
