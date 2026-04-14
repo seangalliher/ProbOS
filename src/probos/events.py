@@ -149,6 +149,10 @@ class EventType(str, Enum):
     WARD_ROOM_ECHO_DETECTED = "ward_room_echo_detected"  # AD-583g
     OBSERVABLE_STATE_MISMATCH = "observable_state_mismatch"  # AD-583f
     SELF_MODEL_DRIFT = "self_model_drift"  # AD-589: introspective confabulation detected
+    DM_CONVERGENCE_DETECTED = "dm_convergence_detected"  # AD-623: DM thread converged
+    TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
+    TOOL_LOCKED = "tool_locked"  # AD-423b: LOTO lock acquired
+    TOOL_UNLOCKED = "tool_unlocked"  # AD-423b: LOTO lock released
 
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"

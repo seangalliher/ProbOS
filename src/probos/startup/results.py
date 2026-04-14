@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from probos.bridge_alerts import BridgeAlertService
     from probos.build_dispatcher import BuildDispatcher
     from probos.build_queue import BuildQueue
+    from probos.clearance_grants import ClearanceGrantStore
     from probos.cognitive.agent_patcher import AgentPatcher
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
     from probos.cognitive.codebase_index import CodebaseIndex
@@ -47,6 +48,8 @@ if TYPE_CHECKING:
     from probos.skill_framework import AgentSkillService, SkillRegistry
     from probos.substrate.scaler import PoolScaler
     from probos.task_tracker import TaskTracker
+    from probos.tools.permissions import ToolPermissionStore
+    from probos.tools.registry import ToolRegistry
     from probos.ward_room import WardRoomService
     from probos.ward_room_router import WardRoomRouter
     from probos.warm_boot import WarmBootService
@@ -148,6 +151,9 @@ class CommunicationResult:
     skill_service: "AgentSkillService"
     acm: "AgentCapitalService"
     ontology: "VesselOntologyService | None"
+    clearance_grant_store: "ClearanceGrantStore | None"
+    tool_registry: "ToolRegistry | None"
+    tool_permission_store: "ToolPermissionStore | None"
 
 
 @dataclass

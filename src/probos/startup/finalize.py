@@ -132,6 +132,8 @@ async def finalize_startup(
         # Wire the router ref so Ward Room emit callback can route events
         if hasattr(runtime.ward_room, '_ward_room_router_ref'):
             runtime.ward_room._ward_room_router_ref[0] = ward_room_router
+        # AD-621: Populate membership cache after startup subscriptions
+        await ward_room_router.populate_membership_cache()
 
     # Agent Onboarding Service — patch in late-init dependencies
     # PATCH(AD-517): These are set via private attrs because onboarding

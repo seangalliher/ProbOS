@@ -24,6 +24,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _noop_handler(**kwargs: Any) -> None:
+    """Placeholder handler for ontology-seeded tools.
+
+    AD-423c will replace these with real service bindings during
+    onboarding when ToolContext is established.
+    """
+    return None
+
+
 async def init_communication(
     *,
     config: "SystemConfig",
@@ -134,7 +143,7 @@ async def init_communication(
 
         # AD-425: Auto-subscribe crew agents to department + All Hands channels
         from probos.cognitive.standing_orders import get_department
-        from probos.crew_utils import is_crew_agent, has_ship_wide_authority
+        from probos.crew_utils import is_crew_agent
 
         wr_channels = await ward_room.list_channels()
         all_hands_id = None
@@ -154,14 +163,34 @@ async def init_communication(
             elif ch.channel_type == "department" and ch.department:
                 dept_channel_map[ch.department] = ch.id
 
+        # AD-621: Pre-compute agent_types that report to captain (bridge officers).
+        # OntologyLoader is used because VesselOntologyService isn't created yet.
+        _ad621_bridge_agents: set[str] = set()
+        try:
+            from probos.ontology.loader import OntologyLoader as _OntLoader
+
+            _ont_dir = Path(__file__).resolve().parent.parent.parent.parent / "config" / "ontology"
+            if _ont_dir.exists():
+                _ont_loader = _OntLoader(_ont_dir)
+                await _ont_loader.initialize()
+                for _atype, _assignment in _ont_loader.assignments.items():
+                    _post = _ont_loader.posts.get(_assignment.post_id)
+                    if _post and _post.reports_to == "captain":
+                        _ad621_bridge_agents.add(_atype)
+        except Exception:
+            pass  # Graceful degradation — no cross-dept subscriptions
+
         for agent in registry.all():
             if not is_crew_agent(agent):
                 continue
             dept = get_department(agent.agent_type)
             if dept and dept in dept_channel_map:
                 await ward_room.subscribe(agent.id, dept_channel_map[dept])
-            # AD-619: Ship-wide authority agents get all department channels
-            if has_ship_wide_authority(agent):
+            # AD-621: Bridge officers (reports_to: captain) get all department channels.
+            # Channel visibility is about observation (being in the room),
+            # not capability access — separate concern from clearance.
+            # Ontology service isn't created yet, so use OntologyLoader directly.
+            if _ad621_bridge_agents and agent.agent_type in _ad621_bridge_agents:
                 for dept_ch_id in dept_channel_map.values():
                     await ward_room.subscribe(agent.id, dept_ch_id)
             if all_hands_id:
@@ -218,6 +247,22 @@ async def init_communication(
         )
         logger.info("bridge-alerts started")
 
+    # --- Clearance Grant Store (AD-622) ---
+    clearance_grant_store = None
+    from probos.clearance_grants import ClearanceGrantStore
+
+    clearance_grant_store = ClearanceGrantStore(
+        db_path=str(data_dir / "clearance_grants.db"),
+    )
+    await clearance_grant_store.start()
+    logger.info("clearance-grant-store started")
+
+    # --- Tool Registry (AD-423a) ---
+    from probos.tools.registry import ToolRegistry
+
+    tool_registry = ToolRegistry()
+    # Ontology seeding deferred until after VesselOntologyService init below
+
     # --- Cognitive Journal (AD-431) ---
     cognitive_journal = None
     if config.cognitive_journal.enabled:
@@ -264,6 +309,43 @@ async def init_communication(
         for agent in registry.all():
             ontology.wire_agent(agent.agent_type, agent.id)
         logger.info("ontology initialized")
+
+    # --- AD-423a: Seed tool registry from ontology tool capabilities ---
+    if ontology:
+        from probos.tools.adapters import DirectServiceAdapter
+        from probos.tools.protocol import ToolType
+
+        for tc in ontology.get_tool_capabilities():
+            _type_map = {
+                "ship_computer": ToolType.INFRA_SERVICE,
+                "ward_room": ToolType.COMMUNICATION,
+                "dreaming_engine": ToolType.INFRA_SERVICE,
+            }
+            adapter = DirectServiceAdapter(
+                tool_id=tc.id,
+                name=tc.name,
+                description=tc.description,
+                handler=_noop_handler,
+                tool_type=_type_map.get(tc.provider, ToolType.INFRA_SERVICE),
+            )
+            tool_registry.register(
+                adapter,
+                provider=tc.provider,
+                tags=[tc.id, tc.provider],
+            )
+
+    # --- Tool Permission Store (AD-423b) ---
+    from probos.tools.permissions import ToolPermissionStore
+
+    tool_permission_store = ToolPermissionStore(
+        db_path=str(data_dir / "tool_permissions.db"),
+    )
+    await tool_permission_store.start()
+    tool_registry.set_permission_store(tool_permission_store)
+    tool_registry.set_event_callback(emit_event_fn)
+    logger.info("tool-permission-store started")
+
+    logger.info("tool-registry started (%d tools)", tool_registry.count())
 
     # --- Ship Commissioning (AD-441b) ---
     if ontology and identity_registry:
@@ -320,4 +402,7 @@ async def init_communication(
         skill_service=skill_service,
         acm=acm,
         ontology=ontology,
+        clearance_grant_store=clearance_grant_store,
+        tool_registry=tool_registry,
+        tool_permission_store=tool_permission_store,
     )

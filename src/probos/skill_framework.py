@@ -15,6 +15,7 @@ from typing import Any
 import aiosqlite
 
 from probos.protocols import ConnectionFactory, DatabaseConnection
+from probos.tools.protocol import ToolPreference
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ class SkillDefinition:
     prerequisites: list[str] = field(default_factory=list)  # skill_ids required at APPLY+
     decay_rate_days: int = 14   # Days idle before proficiency drops one level
     origin: str = "built_in"    # "built_in" (PCC), "role", "acquired", "designed"
+    preferred_tools: list[ToolPreference] = field(default_factory=list)
 
 
 @dataclass
@@ -335,6 +337,14 @@ class SkillRegistry:
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
             await self._db.commit()
+            # AD-423a: Add preferred_tools column if missing (migration)
+            try:
+                await self._db.execute(
+                    "ALTER TABLE skill_definitions ADD COLUMN preferred_tools TEXT DEFAULT '[]'"
+                )
+                await self._db.commit()
+            except Exception:
+                pass  # Column already exists
             # Load existing definitions into cache
             async with self._db.execute("SELECT * FROM skill_definitions") as cur:
                 async for row in cur:
@@ -346,6 +356,8 @@ class SkillRegistry:
             self._db = None
 
     def _row_to_definition(self, row) -> SkillDefinition:
+        prefs_raw = json.loads(row["preferred_tools"] if "preferred_tools" in row.keys() else "[]")
+        prefs = [ToolPreference(tool_id=p["tool_id"], priority=p.get("priority", 0), context=p.get("context", "")) for p in prefs_raw]
         return SkillDefinition(
             skill_id=row["skill_id"],
             name=row["name"],
@@ -355,18 +367,20 @@ class SkillRegistry:
             prerequisites=json.loads(row["prerequisites"] or "[]"),
             decay_rate_days=row["decay_rate_days"] or 14,
             origin=row["origin"] or "built_in",
+            preferred_tools=prefs,
         )
 
     async def register_skill(self, defn: SkillDefinition) -> SkillDefinition:
         """Register or update a skill definition."""
         self._cache[defn.skill_id] = defn
         if self._db:
+            prefs_json = json.dumps([{"tool_id": p.tool_id, "priority": p.priority, "context": p.context} for p in defn.preferred_tools])
             await self._db.execute(
                 "INSERT OR REPLACE INTO skill_definitions "
-                "(skill_id, name, category, description, domain, prerequisites, decay_rate_days, origin) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(skill_id, name, category, description, domain, prerequisites, decay_rate_days, origin, preferred_tools) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (defn.skill_id, defn.name, defn.category.value, defn.description,
-                 defn.domain, json.dumps(defn.prerequisites), defn.decay_rate_days, defn.origin),
+                 defn.domain, json.dumps(defn.prerequisites), defn.decay_rate_days, defn.origin, prefs_json),
             )
             await self._db.commit()
         return defn

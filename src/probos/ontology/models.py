@@ -24,6 +24,7 @@ class Post:
     reports_to: str | None  # post_id
     authority_over: list[str] = field(default_factory=list)  # post_ids
     tier: str = "crew"  # "crew", "utility", "infrastructure", "external"
+    clearance: str = ""  # AD-620: RecallTier name (BASIC/ENHANCED/FULL/ORACLE). Empty = no billet clearance.
 
 
 @dataclass

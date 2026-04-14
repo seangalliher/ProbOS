@@ -27,18 +27,21 @@ posts:
     reports_to: null  # Top of chain
     authority_over: [first_officer, counselor]
     tier: external  # Human, not agent
+    clearance: ORACLE
   - id: first_officer
     title: "First Officer"
     department: bridge
     reports_to: captain
     authority_over: [chief_engineer, chief_science, chief_medical, chief_security, chief_operations]
     tier: crew
+    clearance: ORACLE
   - id: counselor
     title: "Ship's Counselor"
     department: bridge
     reports_to: captain
     authority_over: []
     tier: crew
+    clearance: ORACLE
 
   # Engineering
   - id: chief_engineer
@@ -47,18 +50,21 @@ posts:
     reports_to: first_officer
     authority_over: [engineering_officer, builder_officer]
     tier: crew
+    clearance: FULL
   - id: engineering_officer
     title: "Engineering Officer"
     department: engineering
     reports_to: chief_engineer
     authority_over: []
     tier: crew
+    clearance: ENHANCED
   - id: builder_officer
     title: "Builder"
     department: engineering
     reports_to: chief_engineer
     authority_over: []
     tier: crew
+    clearance: ENHANCED
 
   # Science
   - id: chief_science
@@ -67,6 +73,7 @@ posts:
     reports_to: first_officer
     authority_over: [scout_officer, data_analyst_officer, systems_analyst_officer, research_specialist_officer]
     tier: crew
+    clearance: FULL
     note: "Number One is dual-hatted as First Officer and Chief Science Officer"
   - id: scout_officer
     title: "Scout"
@@ -74,6 +81,7 @@ posts:
     reports_to: chief_science
     authority_over: []
     tier: crew
+    clearance: ENHANCED
 
   - id: data_analyst_officer
     title: "Data Analyst"
@@ -81,6 +89,7 @@ posts:
     reports_to: chief_science
     authority_over: []
     tier: crew
+    clearance: ENHANCED
 
   - id: systems_analyst_officer
     title: "Systems Analyst"
@@ -88,6 +97,7 @@ posts:
     reports_to: chief_science
     authority_over: []
     tier: crew
+    clearance: ENHANCED
 
   - id: research_specialist_officer
     title: "Research Specialist"
@@ -95,6 +105,7 @@ posts:
     reports_to: chief_science
     authority_over: []
     tier: crew
+    clearance: ENHANCED
 
   # Medical
   - id: chief_medical
@@ -103,24 +114,28 @@ posts:
     reports_to: first_officer
     authority_over: [surgeon_officer, pharmacist_officer, pathologist_officer]
     tier: crew
+    clearance: FULL
   - id: surgeon_officer
     title: "Surgeon"
     department: medical
     reports_to: chief_medical
     authority_over: []
     tier: crew
+    clearance: ENHANCED
   - id: pharmacist_officer
     title: "Pharmacist"
     department: medical
     reports_to: chief_medical
     authority_over: []
     tier: crew
+    clearance: ENHANCED
   - id: pathologist_officer
     title: "Pathologist"
     department: medical
     reports_to: chief_medical
     authority_over: []
     tier: crew
+    clearance: ENHANCED
 
   # Security
   - id: chief_security
@@ -129,6 +144,7 @@ posts:
     reports_to: first_officer
     authority_over: []
     tier: crew
+    clearance: FULL
 
   # Operations
   - id: chief_operations
@@ -137,6 +153,7 @@ posts:
     reports_to: first_officer
     authority_over: []
     tier: crew
+    clearance: FULL
 
 # Agent-to-post assignments (which agent_type fills which post)
 # watches: which watch rotations the agent stands (alpha/beta/gamma).

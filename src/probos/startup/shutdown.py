@@ -175,6 +175,16 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime.cognitive_journal.stop()
         runtime.cognitive_journal = None
 
+    # AD-622: Clearance grant store
+    if hasattr(runtime, 'clearance_grant_store') and runtime.clearance_grant_store:
+        await runtime.clearance_grant_store.stop()
+        runtime.clearance_grant_store = None
+
+    # AD-423b: Tool permission store
+    if hasattr(runtime, 'tool_permission_store') and runtime.tool_permission_store:
+        await runtime.tool_permission_store.stop()
+        runtime.tool_permission_store = None
+
     # Stop Counselor Profile Store (AD-503)
     if runtime._counselor_profile_store:
         await runtime._counselor_profile_store.stop()

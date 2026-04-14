@@ -186,6 +186,7 @@ class OntologyLoader:
                 reports_to=post_data.get("reports_to"),
                 authority_over=post_data.get("authority_over", []),
                 tier=post_data.get("tier", "crew"),
+                clearance=post_data.get("clearance", ""),
             )
             self.posts[post.id] = post
 

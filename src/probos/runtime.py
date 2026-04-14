@@ -118,6 +118,7 @@ if TYPE_CHECKING:
     from probos.acm import AgentCapitalService
     from probos.assignment import AssignmentService
     from probos.bridge_alerts import BridgeAlertService
+    from probos.clearance_grants import ClearanceGrantStore
     from probos.cognitive.agent_patcher import AgentPatcher
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
     from probos.cognitive.codebase_index import CodebaseIndex
@@ -137,6 +138,8 @@ if TYPE_CHECKING:
     from probos.persistent_tasks import PersistentTaskStore
     from probos.proactive import ProactiveCognitiveLoop
     from probos.skill_framework import AgentSkillService, SkillRegistry
+    from probos.tools.permissions import ToolPermissionStore
+    from probos.tools.registry import ToolRegistry
     from probos.ward_room import WardRoomService
     from probos.watch_rotation import NightOrdersManager, WatchManager
     from probos.workforce import WorkItemStore
@@ -196,6 +199,8 @@ class ProbOSRuntime:
     ward_room_router: WardRoomRouter | None
     assignment_service: AssignmentService | None
     bridge_alerts: BridgeAlertService | None
+    clearance_grant_store: ClearanceGrantStore | None
+    tool_registry: ToolRegistry | None
     dream_scheduler: DreamScheduler | None
     task_scheduler: TaskScheduler | None
     persistent_task_store: PersistentTaskStore | None
@@ -383,6 +388,15 @@ class ProbOSRuntime:
 
         # --- Bridge Alerts (AD-410) ---
         self.bridge_alerts: BridgeAlertService | None = None
+
+        # --- Clearance Grants (AD-622) ---
+        self.clearance_grant_store: ClearanceGrantStore | None = None
+
+        # --- Tool Registry (AD-423a) ---
+        self.tool_registry: ToolRegistry | None = None
+
+        # --- Tool Permission Store (AD-423b) ---
+        self.tool_permission_store: ToolPermissionStore | None = None
 
         # --- Dreaming ---
         self.dream_scheduler: DreamScheduler | None = None
@@ -1372,6 +1386,9 @@ class ProbOSRuntime:
 
         self.assignment_service = comm.assignment_service
         self.bridge_alerts = comm.bridge_alerts
+        self.clearance_grant_store = comm.clearance_grant_store
+        self.tool_registry = comm.tool_registry
+        self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
         self.skill_registry = comm.skill_registry
         self.skill_service = comm.skill_service
