@@ -312,6 +312,14 @@ Rules:
 - Reference episode IDs, do not reconstruct narratives
 - Extract the COMMON pattern across episodes, not any single episode's exact steps
 - Steps should be deterministic and replayable without LLM assistance
+- ABSTRACT over specific instances: replace specific channel names, thread IDs, agent names, \
+timestamps, and quoted phrases with generic placeholders (e.g., "{channel}", "{thread_id}", \
+"{colleague}", "{timestamp}"). The procedure must be generalizable to future scenarios, not \
+a verbatim replay of one conversation.
+- Focus on the SKILL being demonstrated (e.g., "provide departmental analysis referencing \
+others' observations"), not the CONTENT of a specific exchange.
+- Do NOT hardcode specific data values, metric numbers, or scenario details from the source \
+episodes into procedure steps.
 - If no common procedure can be extracted, return {"error": "no_common_pattern"}
 All input blocks marked READ-ONLY are source material. Generate a NEW procedure — never modify the source.
 """

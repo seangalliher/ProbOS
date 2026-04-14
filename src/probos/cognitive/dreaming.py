@@ -238,18 +238,43 @@ class DreamingEngine:
                 logger.debug("Idle scale-down failed: %s", e)
 
         # Step 6: Episode clustering (AD-531, replaces dead extract_strategies)
+        # BF-169: Partition by primary intent_type before clustering to prevent
+        # high-volume intents (ward_room_post) from drowning out other types.
         clusters_found = 0
         clusters: list = []
         try:
             episode_ids = [ep.id for ep in episodes]
             embeddings = await self.episodic_memory.get_embeddings(episode_ids)
             if embeddings:
-                clusters = cluster_episodes(
-                    episodes=episodes,
-                    embeddings=embeddings,
-                    distance_threshold=0.15,
-                    min_episodes=3,
-                )
+                # BF-169: Group episodes by primary intent_type
+                intent_groups: dict[str, list] = {}
+                for ep in episodes:
+                    primary_intent = ""
+                    for outcome in getattr(ep, "outcomes", []):
+                        intent = outcome.get("intent", "")
+                        if intent:
+                            primary_intent = intent
+                            break
+                    if not primary_intent:
+                        primary_intent = "_unknown"
+                    intent_groups.setdefault(primary_intent, []).append(ep)
+
+                # Cluster each intent group independently
+                for intent_key, intent_episodes in intent_groups.items():
+                    intent_embs = {
+                        ep.id: embeddings[ep.id]
+                        for ep in intent_episodes
+                        if ep.id in embeddings
+                    }
+                    if not intent_embs:
+                        continue
+                    intent_clusters = cluster_episodes(
+                        episodes=intent_episodes,
+                        embeddings=intent_embs,
+                        distance_threshold=0.15,
+                        min_episodes=3,
+                    )
+                    clusters.extend(intent_clusters)
                 clusters_found = len(clusters)
                 self._last_clusters = clusters
                 if clusters_found > 0:
@@ -325,10 +350,32 @@ class DreamingEngine:
                         procedures.append(procedure)
                         procedures_extracted += 1
                         self._extracted_cluster_ids.add(cluster.cluster_id)
-                        # AD-533: Persist to store
+                        # AD-533: Persist to store (BF-169: pre-save dedup gate)
                         if self._procedure_store:
                             try:
-                                await self._procedure_store.save(procedure)
+                                # BF-169: Check semantic similarity before saving
+                                skip_save = False
+                                query_text = f"{procedure.name}. {procedure.description}"
+                                existing = await self._procedure_store.find_matching(
+                                    query_text, n_results=3, min_compilation_level=0,
+                                )
+                                for match in existing:
+                                    if match.get("score", 0.0) >= 0.85:
+                                        # Also require shared intent_type
+                                        match_intents = set(match.get("intent_types", []))
+                                        proc_intents = set(cluster.intent_types)
+                                        if match_intents & proc_intents:
+                                            logger.info(
+                                                "Skipping duplicate procedure '%s' "
+                                                "(%.1f%% similar to existing '%s')",
+                                                procedure.name,
+                                                match["score"] * 100,
+                                                match.get("name", match.get("id", "?")),
+                                            )
+                                            skip_save = True
+                                            break
+                                if not skip_save:
+                                    await self._procedure_store.save(procedure)
                             except Exception as e:
                                 logger.debug(
                                     "Procedure persistence failed (non-critical): %s", e
@@ -395,10 +442,31 @@ class DreamingEngine:
                         procedures.append(procedure)
                         negative_procedures_extracted += 1
                         self._extracted_cluster_ids.add(cluster.cluster_id)
-                        # AD-533: Persist to store
+                        # AD-533: Persist to store (BF-169: pre-save dedup gate)
                         if self._procedure_store:
                             try:
-                                await self._procedure_store.save(procedure)
+                                skip_save = False
+                                query_text = f"{procedure.name}. {procedure.description}"
+                                existing = await self._procedure_store.find_matching(
+                                    query_text, n_results=3, min_compilation_level=0,
+                                    exclude_negative=False,
+                                )
+                                for match in existing:
+                                    if match.get("score", 0.0) >= 0.85:
+                                        match_intents = set(match.get("intent_types", []))
+                                        proc_intents = set(cluster.intent_types)
+                                        if match_intents & proc_intents:
+                                            logger.info(
+                                                "Skipping duplicate negative procedure '%s' "
+                                                "(%.1f%% similar to existing '%s')",
+                                                procedure.name,
+                                                match["score"] * 100,
+                                                match.get("name", match.get("id", "?")),
+                                            )
+                                            skip_save = True
+                                            break
+                                if not skip_save:
+                                    await self._procedure_store.save(procedure)
                             except Exception as e:
                                 logger.debug(
                                     "Negative procedure persistence failed (non-critical): %s", e
