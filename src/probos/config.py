@@ -636,7 +636,7 @@ class WardRoomConfig(BaseModel):
     retention_days_captain: int = 0            # 0 = indefinite retention for Captain posts
     archive_enabled: bool = True               # Write pruned posts to JSONL archive before deletion
     prune_interval_seconds: float = 86400.0    # How often to run pruning (default: daily)
-    dm_exchange_limit: int = 3          # AD-614/BF-168: max posts per agent per DM thread (lowered from 6)
+    dm_exchange_limit: int = 5          # BF-170: raised from 3 (stacked throttling blocked all DMs)
     dm_similarity_threshold: float = 0.6  # AD-614: Jaccard threshold for DM self-similarity suppression
     router_concurrency_limit: int = 10     # AD-616: max concurrent route_event() tasks
     event_coalesce_ms: int = 200           # AD-616: coalesce window for rapid-fire post events (0 = disabled)
@@ -680,6 +680,7 @@ class DutyDefinition(BaseModel):
     cron: str = ""              # Cron expression (croniter format). Empty = interval-based.
     interval_seconds: float = 0 # Alternative to cron: simple interval. 0 = use cron.
     priority: int = 2           # 1-5, higher = more important when multiple due
+    required_skills: list[str] = []  # AD-423c: skill_ids needed for this duty (informational)
 
 
 class DutyScheduleConfig(BaseModel):

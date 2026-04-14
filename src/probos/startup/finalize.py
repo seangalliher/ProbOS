@@ -146,6 +146,10 @@ async def finalize_startup(
     if hasattr(runtime, '_orientation_service') and runtime._orientation_service:
         runtime.onboarding.set_orientation_service(runtime._orientation_service)
 
+    # AD-423c: Wire tool registry into onboarding service
+    if runtime.tool_registry:
+        runtime.onboarding.set_tool_registry(runtime.tool_registry)
+
     # AD-526a: Wire RecreationService with late-init dependencies
     from probos.recreation.service import RecreationService
     runtime.recreation_service = RecreationService(

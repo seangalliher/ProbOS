@@ -65,6 +65,9 @@ class CognitiveAgent(BaseAgent):
         # AD-534b: near-miss/failure context for fallback learning
         self._last_fallback_info: dict[str, Any] | None = None
 
+        # AD-423c: ToolContext, set during onboarding
+        self.tool_context: Any = None
+
         # AD-573: Unified working memory — cognitive continuity across pathways
         from probos.cognitive.agent_working_memory import AgentWorkingMemory
         self._working_memory = AgentWorkingMemory()

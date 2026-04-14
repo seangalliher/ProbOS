@@ -126,8 +126,9 @@ class Tool(Protocol):
 
         Args:
             params: Input parameters matching input_schema.
-            context: Optional invocation context (agent_id, department, etc.).
-                     AD-423c will formalize this as ToolContext.
+            context: Invocation context dict. When called through ToolContext
+                     (AD-423c), includes agent_id, permission, agent_department,
+                     and agent_rank. Direct callers may pass any dict.
 
         Returns:
             ToolResult with output or error.

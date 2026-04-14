@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from probos.ontology import VesselOntologyService
     from probos.substrate.event_log import EventLog
     from probos.substrate.registry import AgentRegistry
+    from probos.tools.registry import ToolRegistry
     from probos.ward_room import WardRoomService
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class AgentOnboardingService:
         registry: AgentRegistry,
         ward_room: WardRoomService | None,
         acm: AgentCapitalService | None,
+        tool_registry: "ToolRegistry | None" = None,
     ) -> None:
         self._callsign_registry = callsign_registry
         self._capability_registry = capability_registry
@@ -69,12 +71,17 @@ class AgentOnboardingService:
         self._registry = registry
         self._ward_room = ward_room
         self._acm = acm
+        self._tool_registry: ToolRegistry | None = tool_registry
         self._start_time_wall: float = 0.0  # Set by runtime after creation
         self._orientation_service: Any = None  # AD-567g: Late-bound
 
     def set_orientation_service(self, svc: Any) -> None:
         """AD-567g / BF-113: Set orientation service (public setter for LoD)."""
         self._orientation_service = svc
+
+    def set_tool_registry(self, registry: "ToolRegistry") -> None:
+        """AD-423c: Set tool registry (public setter for LoD)."""
+        self._tool_registry = registry
 
     async def wire_agent(self, agent: Any) -> None:
         """Connect an agent to the mesh infrastructure."""
@@ -302,6 +309,54 @@ class AgentOnboardingService:
                     )
             except Exception as e:
                 logger.warning("AD-442: Welcome announcement failed for %s: %s", agent.callsign, e)
+
+        # AD-423c: Create ToolContext for crew agents
+        if is_crew and self._tool_registry:
+            try:
+                from probos.tools.context import ToolContext
+                from probos.cognitive.standing_orders import get_department
+
+                dept = (
+                    (self._ontology.get_agent_department(agent.agent_type) if self._ontology else None)
+                    or get_department(agent.agent_type)
+                    or ""
+                )
+
+                # Resolve rank from trust network
+                rank = "ensign"  # default
+                try:
+                    trust_score = self._trust_network.get_score(agent.id)
+                    from probos.crew_profile import Rank
+                    rank = Rank.from_trust(trust_score).value
+                except Exception:
+                    pass
+
+                tool_context = ToolContext(
+                    agent_id=getattr(agent, "sovereign_id", "") or agent.id,
+                    agent_rank=rank,
+                    agent_department=dept,
+                    agent_types=[agent.agent_type],
+                )
+                tool_context.set_registry(self._tool_registry)
+                agent.tool_context = tool_context
+
+                self._event_emitter(EventType.TOOL_CONTEXT_CREATED, {
+                    "agent_id": agent.id,
+                    "agent_type": agent.agent_type,
+                    "rank": rank,
+                    "department": dept,
+                    "tool_count": len(tool_context.available_tools()),
+                })
+
+                logger.debug(
+                    "AD-423c: ToolContext created for %s (%s, %s) — %d tools visible",
+                    agent.agent_type, rank, dept, len(tool_context.available_tools()),
+                )
+            except Exception:
+                logger.debug(
+                    "AD-423c: ToolContext creation failed for %s",
+                    agent.agent_type, exc_info=True,
+                )
 
     async def run_naming_ceremony(self, agent: Any) -> str:
         """Run the self-naming ceremony for a crew agent. Returns chosen callsign (AD-442)."""

@@ -153,6 +153,7 @@ class EventType(str, Enum):
     TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
     TOOL_LOCKED = "tool_locked"  # AD-423b: LOTO lock acquired
     TOOL_UNLOCKED = "tool_unlocked"  # AD-423b: LOTO lock released
+    TOOL_CONTEXT_CREATED = "tool_context_created"  # AD-423c: fired during onboarding
 
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"

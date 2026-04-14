@@ -39,6 +39,7 @@ class ProcedureStep:
     invariants: list[str] = field(default_factory=list)  # must remain true during step
     agent_role: str = ""  # AD-532d: functional role (e.g. "security_analysis"), "" = any agent
     resolved_agent_type: str = ""  # AD-534c: concrete agent_type for dispatch, "" = unresolved
+    required_tools: list[str] = field(default_factory=list)  # AD-423c: tool_ids needed for this step
 
     def to_dict(self) -> dict[str, Any]:
         return {

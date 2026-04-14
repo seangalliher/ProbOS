@@ -4376,3 +4376,38 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Files modified:** `src/probos/tools/protocol.py`, `src/probos/tools/registry.py`, `src/probos/experience/shell.py`, `src/probos/events.py`, `src/probos/startup/results.py`, `src/probos/startup/communication.py`, `src/probos/runtime.py`, `src/probos/startup/shutdown.py`. 2 new files: `src/probos/tools/permissions.py`, `src/probos/experience/commands/commands_tool_access.py`. 1 new test file: `tests/test_ad423b_tool_permissions.py` (28 tests across 7 classes).
 
 **Build prompt:** `prompts/ad-423b-tool-permissions.md`. **Issue:** #145.
+
+### AD-423c: ToolContext + Role-Based Tool Assignment (2026-04-14, COMPLETE)
+
+**Problem:** AD-423a/b delivered the Tool protocol, ToolRegistry, and permission system — but agents have no scoped view of their available tools. Every agent would need to call ToolRegistry directly, passing identity context manually. No integration with the onboarding pipeline. No declarative tool dependency fields on procedures or duties.
+
+**Decision:** ToolContext as a scoped, permission-filtered view of the shared ToolRegistry, constructed at onboarding.
+
+| Decision | Rationale |
+|----------|-----------|
+| `ToolContext` as `@dataclass` (not Protocol) | Concrete wrapper around shared ToolRegistry — one instance per agent, constructed at onboarding. Agent identity snapshot (agent_id, rank, department, types) enables permission filtering without accessing agent internals |
+| `available_tools()` filters via `resolve_permission()` > NONE | Delegates all permission logic to AD-423b's five-layer resolution chain. ToolContext adds no new permission rules |
+| `invoke()` delegates to `check_and_invoke()` with merged context dict | Single invocation path — agent identity (id, rank, department, permission) injected into tool's context parameter |
+| `refresh()` for identity re-snapshot | Trust changes → rank promotion → tool visibility changes. `refresh(agent_rank=...)` updates snapshot without rebinding registry |
+| Constructed at onboarding in `wire_agent()` | Crew agents only (non-crew skip). Uses sovereign_id (AD-441), rank from `Rank.from_trust()`, department from ontology or standing orders |
+| Late-binding via `set_tool_registry()` public setter | Law of Demeter — onboarding service doesn't reach through runtime. `finalize.py` wires after both exist, following `set_orientation_service()` pattern |
+| `ProcedureStep.required_tools: list[str]` | Declarative field for Cognitive JIT tool dependencies. Not enforced in this AD — AD-534 replay engine can check `tool_context.has_tool()` later |
+| `DutyDefinition.required_skills: list[str]` | Informational field closing Duty→Skill link. Not enforced — future qualification gating |
+| `CognitiveAgent.tool_context: Any = None` | Attribute set during onboarding. `Any` type avoids circular import. None for non-crew agents |
+| `TOOL_CONTEXT_CREATED` event | Emitted during onboarding with agent_id, agent_type, rank, department, tool_count. Counselor/VitalsMonitor awareness |
+| Deferred: qualification-gated tool authorization, config-driven YAML role templates, fallback cascade | These require AD-566 qualification probes and deeper Skill Framework integration. Current AD delivers the runtime wiring |
+
+**Implementation:**
+- `ToolContext` dataclass in new `tools/context.py` — `available_tools()`, `has_tool()`, `invoke()`, `get_permission()`, `refresh()`, `to_dict()`, `set_registry()`
+- `wire_agent()` in `agent_onboarding.py` creates ToolContext for crew agents: sovereign_id resolution, `Rank.from_trust()`, department from ontology/standing_orders
+- `finalize.py` wires `tool_registry` into onboarding service via `set_tool_registry()`
+- `ProcedureStep.required_tools` in `procedures.py`, `DutyDefinition.required_skills` in `config.py`
+- `CognitiveAgent.tool_context` attribute in `cognitive_agent.py`
+- `TOOL_CONTEXT_CREATED` event in `events.py`
+- `Tool.invoke()` docstring update in `protocol.py`
+
+**Completes:** AD-423 decomposition (AD-423a → AD-423b → AD-423c). Tool Registry fully delivered.
+
+**Files modified:** `src/probos/tools/protocol.py`, `src/probos/agent_onboarding.py`, `src/probos/startup/finalize.py`, `src/probos/cognitive/procedures.py`, `src/probos/config.py`, `src/probos/cognitive/cognitive_agent.py`, `src/probos/events.py`. 1 new file: `src/probos/tools/context.py`. 2 new test files: `tests/test_ad423c_tool_context.py` (22 tests across 5 classes), `tests/test_ad423c_onboarding.py` (5 tests across 2 classes). 27 total tests.
+
+**Build prompt:** `prompts/ad-423c-toolcontext-onboarding.md`. **Issue:** #146.
