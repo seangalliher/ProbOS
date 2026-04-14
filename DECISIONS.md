@@ -4137,6 +4137,21 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Design document:** `docs/research/clearance-system-design.md`
 **Build order:** AD-620 (foundation) → AD-621 (channel visibility) + AD-622 (grants) in parallel.
 
+## AD-621: Billet-Driven Channel Visibility (2026-04-13)
+
+**Problem:** AD-620 subscribed all FULL+ clearance agents (8 chiefs + bridge) to every department channel. This was too broad — department chiefs don't need to observe all other departments. The subscription policy should follow the chain of command: only bridge officers who report directly to the Captain need ship-wide visibility.
+
+| Decision | Rationale |
+|----------|-----------|
+| Membership-based routing replaces department matching | Router checks `_channel_members` cache (channel→agent set) instead of `agent_dept == channel.department`. Subscription is the single source of truth for notification routing |
+| Membership cache at startup, not per-event DB queries | `find_targets()` is sync but Ward Room DB is async-only. Cache populated once via `populate_membership_cache()` after all subscriptions complete in finalize.py |
+| `reports_to: captain` determines cross-dept subscription | Only First Officer and Counselor report directly to Captain. This is 2 agents instead of 10+ with FULL+ clearance. Follows Navy chain-of-command: bridge staff has ship-wide situational awareness |
+| OntologyLoader used for subscription policy (not service) | Subscription runs in communication.py before VesselOntologyService is created. Direct OntologyLoader lookup avoids startup ordering dependency |
+| Channel visibility ≠ clearance | Being in a room (subscription) is observation. Clearance gates capability access. Separate concerns — an agent can be subscribed to a channel without having ORACLE recall tier |
+| `same_department` flag preserved for Earned Agency | Cross-dept subscribers get `same_department=False` (higher ambient response threshold). Home-dept agents get `True`. EA behavioral gating is independent of subscription |
+| @mention overrides subscription | Non-subscribed agents can still be reached via `@callsign` mention. Subscription gates ambient notification, not addressability |
+| list_channels(agent_id) filters by membership | INNER JOIN with memberships table when agent_id provided. All existing callers pass None (unchanged behavior) |
+
 ## AD-617: LLM Rate Governance (2026-04-13)
 
 **Problem:** BF-163 DM flood incident (8,448 DMs in 90 minutes) exposed zero LLM call governance. Agent-to-agent feedback loops generated up to 101K LLM proxy requests. HTTP 500 errors were literally the only rate limiter. `_cache` dict grew unbounded (memory leak). No 429 backoff, no RPM limits, no concurrency caps on the `.complete()` path.
@@ -4156,3 +4171,208 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Files created:** `tests/test_ad617_llm_rate_governance.py` (13 tests across 4 classes).
 **Issues:** #201 (AD-617).
 
+## AD-617b: Per-Agent Hourly Token Budget (2026-04-13)
+
+**Problem:** AD-617 provided ship-wide RPM limits but no per-agent fairness. A single runaway agent (e.g., BF-163 flood) could monopolize the entire LLM budget while other agents starve.
+
+**Decision:** Enforce per-agent token budget at the proactive loop gate level, not at `.complete()`.
+
+| Decision | Rationale |
+|----------|-----------|
+| Gate at proactive loop, not `.complete()` | Proactive thinks drive the flood (BF-163 pattern). Adding `agent_id` to `LLMRequest` would touch 36 production + 40+ test call sites — disproportionate blast radius. Only 7 of 36 `.complete()` call sites even have agent identity |
+| DMs/WR bypass budget gate | BF-156 established DM delivery is communication reliability. Budget exhaustion degrades proactive initiative, never silences the agent |
+| Query CognitiveJournal (existing data) | Journal already tracks `agent_id`, `total_tokens`, `timestamp` for every `_decide_via_llm()` call. No new instrumentation needed |
+| 60-second exhaustion cache | Avoids hammering journal DB every proactive cycle (2-minute interval). Cache expires → re-query → agent may recover if tokens aged out |
+| `per_agent_hourly_token_cap` default 0 (disabled) | Safe-by-default, opt-in governance. Follows `composite_score_floor` pattern (AD-590) |
+| `token_budget_exhausted` event emission | Fire-and-forget for Counselor awareness. Bridge Alert subscription deferred |
+| Gate ordering: after circuit breaker, before `_think_for_agent()` | Tripped/throttled agents don't need budget check. Budget check is the last gate before actual LLM work |
+
+**Files modified:** `journal.py` (`get_token_usage_since()`), `proactive.py` (`_budget_exhausted`, `_is_over_token_budget()`, budget gate in `_run_cycle()`), `config.py` (`per_agent_hourly_token_cap`).
+**Files created:** `tests/test_ad617b_per_agent_token_budget.py` (13 tests across 3 classes).
+**Issues:** #201 (AD-617b).
+
+## AD-611: 3D Memory Graph Visualization (2026-04-13)
+
+**Problem:** Episodic memory is a flat, invisible data structure. No way to see cluster patterns, semantic neighborhoods, temporal chains, or cross-agent memory connections. Debugging recall quality and understanding memory topology requires visual tools.
+
+**Decision:** Interactive 3D force-directed graph visualization of agent episodic memory using `react-force-graph-3d`, served by a new backend router.
+
+| Decision | Rationale |
+|----------|-----------|
+| Three-tier node selection (recency 70%, importance 20%, activation 10%) | Balances operational recency with highlighting important/recently-accessed memories |
+| Four edge types: semantic (HNSW cosine), thread co-occurrence, temporal (5min window), participant (Jaccard ≥0.3) | Each edge type reveals different memory topology — semantic clusters, conversation threads, temporal chains, social patterns |
+| Direct `_collection.query()` for HNSW embedding neighbors | No public wrapper exists for embedding-vector queries on EpisodicMemory. Pragmatic LoD exception documented |
+| Sigmoid activation normalization (1/(1+exp(-raw))) | ACT-R raw values range -5 to +5; sigmoid maps cleanly to 0-1 for opacity/glow |
+| Node color by channel (per-agent) vs department (ship-wide) | Channel is more relevant for single-agent exploration; department groups make sense for ship-wide view |
+| Ship-wide toggle merges across `is_crew_agent()` agents | Enables cross-agent memory topology exploration without a separate endpoint |
+| 200 default / 500 cap nodes, 2000 edge cap | Balances visual density vs browser performance. Edge cap keeps strongest edges |
+| Memory tab hidden for non-crew agents | Non-crew (infrastructure) agents don't have meaningful episodic memory to visualize |
+
+**Files created:** `src/probos/routers/memory_graph.py`, `ui/src/components/profile/memoryGraphTypes.ts`, `ui/src/components/profile/MemoryGraph3D.tsx`, `ui/src/components/profile/ProfileMemoryTab.tsx`, `tests/test_ad611_memory_graph.py` (11 tests).
+**Files modified:** `src/probos/api.py` (router registration), `ui/src/components/profile/AgentProfilePanel.tsx` (Memory tab).
+**Issues:** #192 (AD-611).
+
+## AD-622: Special Access Grants — ClearanceGrant (2026-04-13)
+
+**Problem:** AD-620/621 established billet-based clearance and channel visibility, but no mechanism for temporary elevated access. Security investigations, cross-department projects, and emergency responses require time-limited elevated recall tiers without permanent rank or billet changes. Military analog: Special Access Programs (SAPs).
+
+**Decision:** Captain-issued, time-limited, scoped, revocable ClearanceGrant system — the third input source to `effective_recall_tier()`.
+
+| Decision | Rationale |
+|----------|-----------|
+| `ClearanceGrant` frozen dataclass in `earned_agency.py` | Immutable after creation. Same module as `RecallTier` and `effective_recall_tier()` — keeps tier computation collocated |
+| `effective_recall_tier(rank, billet, grants)` — max of all three | Grants elevate, never downgrade. Same pattern as rank vs billet — highest wins. Backward compatible (grants defaults to empty tuple) |
+| `resolve_active_grants()` Law of Demeter helper | Prevents callers from reaching through `runtime.clearance_grant_store`. Fail-open: returns `[]` on None store or exception — grants are additive, absence is safe |
+| `ClearanceGrantStore` with in-memory cache | `effective_recall_tier()` is called in sync contexts (cognitive_agent.py, proactive.py). Cache populated at `start()`, updated on issue/revoke. `get_active_grants_sync()` is zero-I/O |
+| SQLite-backed with WAL mode | Audit trail requires persistence. WAL + busy_timeout(5000) + synchronous=NORMAL matches BF-099 canonical pattern |
+| Soft-delete revocation (`revoked` flag + `revoked_at` timestamp) | Audit trail — revoked grants remain queryable via `list_grants(active_only=False)`. Active grants exclude revoked + expired |
+| Lazy expiry cleanup in `get_active_grants_sync()` | Expired grants filtered at read time, not via background task. Simpler, no timer management |
+| Sovereign ID targeting | Grants target persistent agent identity (`sovereign_id`), not slot ID. Shell command resolves via `resolve_sovereign_id_from_slot()` when identity_registry available |
+| Shell `/grant` command with issue/revoke/list subcommands | Follows `commands_alert.py` pattern. Prefix-match revocation (8+ char prefix). Rich table output for list. Callsign resolution via `callsign_registry.resolve()` |
+| Scope field (default "general") | Enables future scope-gated grants (e.g., "investigation:sec-42"). Not enforced yet — present for audit and future extension |
+
+**Files created:** `src/probos/clearance_grants.py` (ClearanceGrantStore), `src/probos/experience/commands/commands_clearance.py` (shell command), `tests/test_ad622_clearance_grants.py` (22 tests across 6 classes).
+**Files modified:** `src/probos/earned_agency.py` (ClearanceGrant dataclass, effective_recall_tier grants param, resolve_active_grants), `src/probos/cognitive/cognitive_agent.py` (grant resolution), `src/probos/proactive.py` (grant resolution), `src/probos/startup/results.py` (CommunicationResult field), `src/probos/startup/communication.py` (store creation), `src/probos/runtime.py` (wiring), `src/probos/startup/shutdown.py` (teardown), `src/probos/experience/shell.py` (/grant registration).
+**Issues:** #208 (AD-622).
+
+## AD-423a: Tool Foundation — Unified Tool Protocol & Registry (2026-04-13)
+
+**Problem:** ProbOS had no uniform interface for tools. Infrastructure agents, Ship's Computer services, MCP servers, and deterministic functions were all invoked differently. The Skill Framework had no way to express tool preferences. AD-483 (Tool Layer — Instruments) was scoped but never implemented.
+
+**Decision:** Deliver the foundation layer (AD-423a) as the first of three phased deliverables (AD-423a→b→c). Create a `Tool` typing.Protocol (not ABC — Interface Segregation), a `ToolRegistry` in-memory catalog, and three adapter implementations wrapping existing infrastructure patterns. Add `SkillDefinition.preferred_tools` to close the Skill→Tool link.
+
+| Component | Design Choice | Rationale |
+|---|---|---|
+| `Tool` protocol | `typing.Protocol`, `runtime_checkable` | ISP — no inheritance coupling, adapters implement without subclassing |
+| `ToolType` enum | `str, Enum` with 9 values from AD-422 taxonomy | JSON-serializable, future-proof for MCP/federation/browser |
+| `ToolResult` | Frozen dataclass with `success` property | Immutable, consistent error handling across all tool types |
+| `ToolRegistry` | In-memory dict, no SQLite | Tools are code definitions, not user data — restart-safe |
+| `InfraServiceAdapter` | Intent bus `broadcast()`, first-success pattern | Wraps existing infrastructure agent dispatch |
+| `DirectServiceAdapter` | Async method call | Wraps Ship's Computer services (EpisodicMemory, TrustNetwork, etc.) |
+| `DeterministicFunctionAdapter` | Sync callable | Wraps Cognitive JIT compiled procedures |
+| `ToolPreference` | Priority-ranked tool_id + context on SkillDefinition | Skill→Tool link for AD-423c onboarding wiring |
+| Ontology seeding | 7 noop-handler adapters from resources.yaml | AD-423c replaces with real bindings at ToolContext creation |
+
+**Build prompt verification caught 3 would-break-build errors:** (1) IntentMessage fields are `params`/`context`, not `payload`/`source`. (2) IntentBus has no `dispatch()` method — only `send()` (targeted) and `broadcast()` (untargeted). (3) `broadcast()` returns `list[IntentResult]`, not a single result.
+
+**Files created:** `src/probos/tools/__init__.py`, `src/probos/tools/protocol.py` (Tool, ToolType, ToolResult, ToolRegistration, ToolPreference), `src/probos/tools/registry.py` (ToolRegistry), `src/probos/tools/adapters.py` (InfraServiceAdapter, DirectServiceAdapter, DeterministicFunctionAdapter), `tests/test_ad423a_tool_foundation.py` (24 tests across 7 classes).
+**Files modified:** `src/probos/skill_framework.py` (preferred_tools field + migration + serialization), `src/probos/startup/results.py` (CommunicationResult.tool_registry), `src/probos/startup/communication.py` (ToolRegistry creation + ontology seeding), `src/probos/runtime.py` (wiring).
+**Issues:** #144 (AD-423a), closes #77 (AD-483 absorbed).
+
+## BF-167: get_embeddings() numpy truthiness + MemoryGraph3D sizing (2026-04-13)
+
+**Problem:** AD-611 Memory Graph rendered a black canvas with zero semantic edges despite 140 episodes loading correctly. Two independent bugs.
+
+**Root cause 1:** `EpisodicMemory.get_embeddings()` used bare truthiness checks (`not result["embeddings"]`, `if emb and len(emb) > 0`) on ChromaDB return values. ChromaDB returns numpy arrays, which raise `ValueError: The truth value of an array with more than one element is ambiguous` on bare `bool()`. The `except Exception: return {}` swallowed the error silently. Latent since AD-531 — never triggered because nothing called `get_embeddings()` with real ChromaDB data until AD-611.
+
+**Root cause 2:** `ForceGraph3D` component doesn't auto-detect container size from CSS flex layout. Parent gave `flex: 1` but the canvas rendered at 0×0 pixels.
+
+**Fix 1:** Changed `not result["embeddings"]` → `result["embeddings"] is None` and `if emb and` → `if emb is not None and` in `episodic.py`.
+**Fix 2:** Added `ResizeObserver` to measure container, passing explicit `width`/`height` props to `ForceGraph3D`.
+
+**Files modified:** `src/probos/cognitive/episodic.py`, `ui/src/components/profile/MemoryGraph3D.tsx`.
+
+## AD-620: Clearance Model Foundation — Separation of Rank and Access (2026-04-13)
+
+**Problem:** AD-619 introduced a ship-wide authority hack (`has_ship_wide_authority()`, `_SHIP_WIDE_AUTHORITY_TYPES`) to give the Counselor ORACLE access and all-department channel subscriptions. This conflated rank with access eligibility — a Lieutenant-rank agent needed a hardcoded bypass set rather than principled role-based clearance.
+
+**Decision:** Navy-inspired billet-based clearance model. Clearance follows the *post* (billet), not the individual. Like the Navy: rank measures behavioral maturity, clearance measures access eligibility, and the two are independent.
+
+| Decision | Rationale |
+|----------|-----------|
+| `clearance` field on Post dataclass | Billet defines required access tier. Each post explicitly declares its RecallTier clearance |
+| Bridge=ORACLE, Chiefs=FULL, Officers=ENHANCED | Mirrors naval clearance hierarchy. Counselor gets ORACLE because her *post* carries it |
+| `effective_recall_tier(rank, billet_clearance)` = max(rank-tier, billet-tier) | Higher of rank-derived or billet-derived tier wins. Ensures clearance never *reduces* rank-based access |
+| `_TIER_ORDER` dict for RecallTier comparison | RecallTier is `str, Enum` with lowercase values — can't compare directly. Explicit numeric ordering |
+| `resolve_billet_clearance()` in earned_agency.py | Law of Demeter — isolates ontology lookup. Callers don't reach through runtime.ontology.get_post_for_agent(x).clearance |
+| **Counselor clinical model: direct experience only ("Minority Report" principle)** | The Counselor builds her clinical picture through direct engagement — Ward Room observation, event subscriptions, wellness rounds, 1:1 DMs. She does NOT use Oracle Service to pull other agents' episodic memories. Accessing private memories for assessment is surveillance, not therapy. A therapist observes and engages; she doesn't read your diary. Oracle clearance enables deep *self*-recall and system-level queries, not crew memory extraction. |
+| Oracle gate: clearance alone, no strategy requirement | Original gate required DEEP strategy AND ORACLE tier. Strategy is a *retrieval optimization*, not a *permission* — eliminated the conflation |
+| FULL+ billet clearance → all department channel subscriptions | Replaces hardcoded SWA set. Bridge officers and department chiefs naturally get all-department visibility |
+| Complete removal of `has_ship_wide_authority()` | Clean break. SWA was always a hack — clearance is the principled model |
+| `recall_tier_from_rank()` preserved internally | Called by `effective_recall_tier()` as one input. Backward-compatible — rank still matters |
+
+**Files modified:** `src/probos/earned_agency.py`, `src/probos/cognitive/cognitive_agent.py`, `src/probos/proactive.py`, `src/probos/startup/communication.py`, `src/probos/crew_utils.py`, `src/probos/ontology/models.py`, `src/probos/ontology/loader.py`, `config/ontology/organization.yaml`.
+**Files created:** `tests/test_ad620_clearance_model.py` (27 tests).
+**Files migrated:** `tests/test_ad619_counselor_awareness.py` (9 tests rewritten for clearance model).
+
+---
+
+### BF-168: DM Exchange Limit Reduction (2026-04-13)
+
+**Problem:** Atlas-Kira DM thread exhibited 12+ repetitive exchanges — both agents reached agreement within 2-3 messages, then spent 9+ messages restating conclusions with minor phrasing variations and fabricated metrics. AD-614's `dm_exchange_limit=6` was too generous.
+
+**Decision:** Lower `dm_exchange_limit` from 6 to 3. Three exchanges (1.5 back-and-forth rounds) is sufficient for DM conversations. Agents that need longer conversations can use Ward Room threads.
+
+| Decision | Rationale |
+|----------|-----------|
+| `dm_exchange_limit: int = 3` | 3 exchanges = 1.5 rounds. Most DM conversations that haven't converged by then won't converge at all |
+| Immediate fix, not structural | Blunt instrument — stops the bleeding while AD-623 (convergence gate) provides structural detection |
+
+**Files modified:** `src/probos/config.py` (1 line).
+
+---
+
+### AD-623: DM Convergence Gate + DM Self-Monitoring (2026-04-13, COMPLETE)
+
+**Problem:** Five-layer failure in DM conversation management. Exchange limit is a blunt cap that doesn't detect convergence. Self-monitoring context only runs in proactive loop — agents responding to DM notifications have zero awareness of their own repetition. Source governance tags are prompt-only with no code validation.
+
+**Decision:** Two structural mechanisms to detect and prevent DM conversation loops.
+
+| Decision | Rationale |
+|----------|-----------|
+| DM Convergence Gate — cross-author Jaccard similarity (threshold 0.55) over last 3 exchange pairs | Detects mutual agreement, not just length. Two agents saying the same thing = conversation is done |
+| Thread-level check before per-agent loop | Single check, single event emission. More efficient than per-agent |
+| `DM_CONVERGENCE_DETECTED` event (distinct from `CONVERGENCE_DETECTED`) | AD-551 CONVERGENCE_DETECTED is analytical convergence. DM convergence is conversational — different semantics |
+| DM self-monitoring in ward_room_notification path | Closes the gap: self-monitoring was proactive-only, DM responses had zero self-awareness |
+| `_build_dm_self_monitoring()` on CognitiveAgent | Self-contained — doesn't import ProactiveLoop. Checks agent's own posts in the thread for self-repetition (>=0.4 threshold) |
+| Fail-open on all checks | Convergence check failure → continue routing. Self-monitoring failure → no warning injected. Never silently drop DMs |
+| `get_posts_by_author()` gains `thread_id` filter | Self-monitoring needs thread-scoped posts, not global. Optional parameter with conditional SQL branching |
+| Counselor handler for `DM_CONVERGENCE_DETECTED` | Clinical awareness — Counselor logs convergence events for crew assessment patterns |
+| Guard chain ordering: after responder cap, before thread context | Thread-level check avoids per-agent iteration when conversation is already done |
+
+**Implementation:**
+- `check_dm_convergence()` in threads.py — standalone function, cross-author exchange pair extraction, Jaccard similarity via `cognitive/similarity.py`
+- Convergence gate in `ward_room_router.py` `route_event()` — after responder cap, before thread context build. Emits `DM_CONVERGENCE_DETECTED` event, returns early
+- `_build_dm_self_monitoring()` on CognitiveAgent — injected in `_build_user_message()` WR notification path for `dm-` channels
+- `check_dm_convergence()` facade on WardRoomService
+- Counselor `_on_dm_convergence_detected()` handler + event subscription
+
+**Files modified:** `src/probos/ward_room/threads.py`, `src/probos/ward_room/service.py`, `src/probos/ward_room_router.py`, `src/probos/cognitive/cognitive_agent.py`, `src/probos/cognitive/counselor.py`, `src/probos/events.py`. 1 new test file: `tests/test_ad623_dm_convergence.py` (18 tests across 6 classes).
+
+**Build prompt:** `prompts/ad-623-dm-convergence-gate.md`. **Issue:** #212.
+
+### AD-423b: Tool Permissions & Scoping (2026-04-13, COMPLETE)
+
+**Problem:** AD-423a delivered the Tool protocol and ToolRegistry, but tools have no access control — any agent can invoke any tool. No department scoping, no rank gating, no Captain overrides, no exclusive access for dangerous tools. The permission model is needed before AD-423c can wire tools into agent onboarding.
+
+**Decision:** Five-layer permission resolution with CRUD+O model and LOTO exclusive access.
+
+| Decision | Rationale |
+|----------|-----------|
+| `ToolPermission` enum with 5 additive levels: NONE < OBSERVE < READ < WRITE < FULL | Additive hierarchy — WRITE includes READ, FULL includes all. `permission_includes()` pure function via `_PERMISSION_ORDER` dict |
+| Five-layer resolution chain: enabled → department → restricted_to → rank gate → Captain override | Progressive narrowing with Captain override as final escalation. Each layer can deny but only Captain can grant above rank |
+| Department scoping on ToolRegistration | Tool belongs to a department — agents outside that department get NONE. None = unscoped (available to all) |
+| `restricted_to` allowlist on ToolRegistration | Hard allowlist filter — if set, only listed agent IDs can access the tool at all |
+| `default_permissions` rank matrix on ToolRegistration | Dict mapping rank → permission level. Empty matrix = READ for all (deny-by-default, READ-by-convention) |
+| `ToolAccessGrant` frozen dataclass with `is_restriction` flag | Captain grants can elevate (grant up) or restrict (grant down). Restriction = explicit permission ceiling |
+| `ToolPermissionStore` (SQLite, WAL, in-memory cache) | Follows ClearanceGrantStore pattern — `get_active_grants_sync()` is zero-I/O from cache, lazy expiration on read |
+| LOTO (Lock-Out/Tag-Out) in-memory volatile locks | Exclusive access for dangerous tools. Timeout auto-expire. Captain `break_lock`. Does NOT survive restart — deliberate (no orphaned locks after crash) |
+| `check_and_invoke()` on ToolRegistry | Permission-checked invocation: resolve → check LOTO → invoke. Single call site for permission enforcement |
+| `ToolPermissionDenied` exception with `held` and `required` fields | Rich context for debugging and Counselor awareness |
+| `/tool-access` shell command with 6 subcommands | Captain tool governance: grant, restrict, revoke, break-lock, list, check |
+| Deferred: per-invocation audit trail, tool usage metrics, rate limiting per tool | AD-423c or later — need ToolContext first |
+
+**Implementation:**
+- `ToolPermission`, `_PERMISSION_ORDER`, `permission_includes()`, `ToolAccessGrant` in `tools/protocol.py`
+- `ToolRegistration` extended with `default_permissions`, `restricted_to`, `concurrency`, `lock_timeout_seconds`
+- `ToolPermissionDenied`, `resolve_permission()`, `check_and_invoke()`, LOTO methods in `tools/registry.py`
+- `ToolPermissionStore` in new `tools/permissions.py`
+- `/tool-access` command in new `experience/commands/commands_tool_access.py`
+- Events: `TOOL_PERMISSION_DENIED`, `TOOL_LOCKED`, `TOOL_UNLOCKED` in `events.py`
+- Startup wiring: `communication.py` creates store + wires to registry, `runtime.py` assigns, `shutdown.py` tears down
+
+**Unlocks:** AD-423c (ToolContext + onboarding — role-based tool assignment with permission filtering).
+
+**Files modified:** `src/probos/tools/protocol.py`, `src/probos/tools/registry.py`, `src/probos/experience/shell.py`, `src/probos/events.py`, `src/probos/startup/results.py`, `src/probos/startup/communication.py`, `src/probos/runtime.py`, `src/probos/startup/shutdown.py`. 2 new files: `src/probos/tools/permissions.py`, `src/probos/experience/commands/commands_tool_access.py`. 1 new test file: `tests/test_ad423b_tool_permissions.py` (28 tests across 7 classes).
+
+**Build prompt:** `prompts/ad-423b-tool-permissions.md`. **Issue:** #145.

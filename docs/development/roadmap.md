@@ -1713,8 +1713,8 @@ Self-originated goals emerge from: dream consolidation ("I keep seeing pattern X
 
 **Sub-ADs (phased decomposition):**
 
-> - **AD-423a: Tool Foundation** *(planned, OSS)* — `Tool` protocol + `ToolRegistry` service + adapter implementations. Defines the uniform interface for all 9 tool types (utility agent, infra service, MCP server, remote API, computer use, browser, communication, federation, deterministic function). Creates `src/probos/tools/` package. Wraps existing infrastructure agents and Ship's Computer services as `Tool` instances. Absorbs AD-483 programming model. Adds `SkillDefinition.preferred_tools: list[ToolPreference]` field — closes the Skill→Tool link in the hierarchy (priority-ranked tool selection per skill). Issue #144.
-> - **AD-423b: Tool Permissions & Scoping** *(planned, OSS, depends: AD-423a)* — CRUD+O permission model (Observe/Read/Write/Execute/Delegate), department tool scoping, Earned Agency rank-based access gates, Captain overrides (grant/revoke), LOTO exclusive access for dangerous tools. Deny-by-default. Issue #145.
+> - **AD-423a: Tool Foundation** *(complete, OSS)* — `Tool` protocol + `ToolRegistry` service + adapter implementations. Defines the uniform interface for all 9 tool types (utility agent, infra service, MCP server, remote API, computer use, browser, communication, federation, deterministic function). Creates `src/probos/tools/` package. Wraps existing infrastructure agents and Ship's Computer services as `Tool` instances. Absorbs AD-483 programming model. Adds `SkillDefinition.preferred_tools: list[ToolPreference]` field — closes the Skill→Tool link in the hierarchy (priority-ranked tool selection per skill). Issue #144.
+> - **AD-423b: Tool Permissions & Scoping** *(complete, OSS, depends: AD-423a)* — CRUD+O permission model (NONE/OBSERVE/READ/WRITE/FULL), five-layer resolution chain (enabled → department → restricted_to → rank gate → Captain override), LOTO exclusive access with timeout auto-expire + Captain break_lock, ToolPermissionStore (SQLite, WAL, in-memory cache), /tool-access shell command (6 subcommands), deny-by-default. 28 tests. Issue #145.
 > - **AD-423c: Role-Based Tool Assignment + ToolContext** *(planned, OSS, depends: AD-423a, AD-423b, AD-429, AD-428, AD-566)* — Onboarding wiring (`wire_agent()` assigns tools from role template), `ToolContext` (permission-filtered view per agent), qualification-gated tool authorization, `ProcedureStep.required_tools` field, fallback cascade (skill → LLM → chain-of-command escalation). Adds `DutyDefinition.required_skills: list[str]` field — closes the Duty→Skill link in the hierarchy. Config-driven role templates (YAML instead of Python dict). Closes connections C1 (Role → Tool Assignment), C3 (Qualification → Tool Authorization), C5 (Tool Registry → Onboarding). Issue #146.
 
 **MCP ecosystem compatibility:** ProbOS's Tool Registry maps directly to Claude Cowork's plugin model — both are MCP servers under the hood (open protocol). AD-423a can consume the existing MCP plugin ecosystem (Jira, Asana, Google Workspace, Salesforce, GitHub, etc.) as first-class tools. ProbOS differentiator: governance layer on top — trust-gated access (AD-423b), Standing Orders approval for sensitive tools, tool agents (utility tier with identity) vs stateless function calls, consultation-aware tool usage (AD-594), and full audit trail. Commercial extension: curated MCP server marketplace + ProbOS-native extensions with deeper crew integration.
@@ -5304,7 +5304,7 @@ MCP Apps is the convergence standard — adopted by Claude Desktop, VS Code GitH
 
 ---
 
-### 3D Memory Graph Visualization (AD-611) *(scoped, OSS)*
+### 3D Memory Graph Visualization (AD-611) *(complete, OSS)*
 
 **AD-611: 3D Memory Graph Visualization** *(scoped, OSS, depends: AD-567d Activation Tracker, AD-570 Anchor Recall, AD-531 Episode Clustering, AD-605 Enhanced Embedding)* — Interactive force-directed graph visualization of agent episodic memory in the HXI agent profile panel. Episodes rendered as 3D nodes; semantic similarity (HNSW nearest-neighbor), thread co-occurrence, temporal proximity, and participant overlap form edges. Three-tier node selection (recency 70%, importance 20%, activation 10%) with 200 default / 500 max cap. Node visuals encode importance (size), activation (opacity/glow), and channel or department (color). Four edge types with distinct colors. Ship-wide toggle merges episodes across all crew agents. Backend: new `memory_graph` router. Frontend: `react-force-graph-3d` component in new "Memory" tab.
 
@@ -5356,13 +5356,15 @@ MCP Apps is the convergence standard — adopted by Claude Desktop, VS Code GitH
 
 ---
 
-### LLM Rate Governance (AD-617) *(complete, OSS)*
+### LLM Rate Governance (AD-617/617b) *(complete, OSS)*
 
-**AD-617: LLM Rate Governance — Token Bucket Rate Limiter, HTTP 429 Backoff, LRU Cache Eviction** *(complete, OSS)* — No system-wide LLM call rate limiter existed. During the 8,448-DM flood, the LLM proxy received up to 101K requests in 90 minutes — HTTP 500 errors were the only backpressure mechanism. Four parts delivered: (1) **Token bucket rate limiter**: Per-tier sliding window RPM limits (fast=60, standard=30, deep=15 RPM) on `OpenAICompatibleClient`. Requests exceeding budget wait up to `max_wait_seconds`, then return cached response or error. (2) **HTTP 429 backoff**: Inner retry loop (max 5 per tier) with `Retry-After` header respect + exponential backoff `min(2^n, 8.0)` without header. 429 not counted as tier failure. (3) **LRU cache eviction**: `OrderedDict` with `move_to_end()` + `popitem(last=False)` at configurable 500-entry limit. Fixes unbounded `dict` memory leak. (4) **LLMRateConfig**: Pydantic model in SystemConfig with `rpm_fast`, `rpm_standard`, `rpm_deep`, `max_wait_seconds`, `cache_max_entries`. Constructor-injected via `rate_config` parameter. Per-agent token budget deferred to AD-617b (requires `LLMRequest` schema change). 3 source files (llm_client.py, config.py, __main__.py), 13 tests across 4 classes.
+**AD-617: LLM Rate Governance — Token Bucket Rate Limiter, HTTP 429 Backoff, LRU Cache Eviction** *(complete, OSS)* — No system-wide LLM call rate limiter existed. During the 8,448-DM flood, the LLM proxy received up to 101K requests in 90 minutes — HTTP 500 errors were the only backpressure mechanism. Four parts delivered: (1) **Token bucket rate limiter**: Per-tier sliding window RPM limits (fast=60, standard=30, deep=15 RPM) on `OpenAICompatibleClient`. Requests exceeding budget wait up to `max_wait_seconds`, then return cached response or error. (2) **HTTP 429 backoff**: Inner retry loop (max 5 per tier) with `Retry-After` header respect + exponential backoff `min(2^n, 8.0)` without header. 429 not counted as tier failure. (3) **LRU cache eviction**: `OrderedDict` with `move_to_end()` + `popitem(last=False)` at configurable 500-entry limit. Fixes unbounded `dict` memory leak. (4) **LLMRateConfig**: Pydantic model in SystemConfig with `rpm_fast`, `rpm_standard`, `rpm_deep`, `max_wait_seconds`, `cache_max_entries`. Constructor-injected via `rate_config` parameter. 3 source files (llm_client.py, config.py, __main__.py), 13 tests across 4 classes.
 
-**Connects to:** AD-576 (LLM Unavailability Awareness — infrastructure state machine feeds into rate governance), AD-488 (Circuit Breaker — velocity detection complements rate limiting), AD-614 (DM termination — the incident that exposed the gap).
+**AD-617b: Per-Agent Hourly Token Budget** *(complete, OSS)* — Per-agent fairness enforcement at the proactive loop gate. Budget-exhausted agents skip proactive thinks but still receive DMs, Ward Room notifications, and Captain directives (communication reliability). `CognitiveJournal.get_token_usage_since()` queries hourly sliding window (excludes cached). `_is_over_token_budget()` with 60-second exhaustion cache avoids hammering journal DB. Gate ordering: after circuit breaker, before `_think_for_agent()`. `token_budget_exhausted` event emitted for Counselor awareness. Config: `per_agent_hourly_token_cap` on `LLMRateConfig` (default 0 = disabled). 3 source files (journal.py, proactive.py, config.py), 13 tests across 3 classes.
 
-**Issues:** #201 (AD-617).
+**Connects to:** AD-576 (LLM Unavailability Awareness — infrastructure state machine feeds into rate governance), AD-488 (Circuit Breaker — velocity detection complements rate limiting), AD-614 (DM termination — the incident that exposed the gap), AD-431 (Cognitive Journal — per-agent token tracking).
+
+**Issues:** #201 (AD-617/617b).
 
 ---
 
@@ -5392,7 +5394,7 @@ MCP Apps is the convergence standard — adopted by Claude Desktop, VS Code GitH
 
 > **Note:** AD-619's ship-wide authority bypass (`has_ship_wide_authority()`,
 > `_SHIP_WIDE_AUTHORITY_TYPES`, Oracle tier override, strategy gate relaxation)
-> will be replaced by the principled clearance system in AD-620/621/622.
+> has been replaced by the principled clearance system. AD-620 COMPLETE.
 > Channel subscriptions preserved and improved. BF-164 (cross-agent episodic
 > recall) was **rejected** — violates sovereign memory principle.
 
@@ -5408,42 +5410,60 @@ and clearance via `recall_tier_from_rank()`. AD-619 exposed this conflation
 when the Counselor needed ORACLE access at LIEUTENANT rank — requiring a
 special bypass hack instead of principled role-based clearance.
 
-**AD-620: Clearance Model Foundation** *(scoped, OSS, depends: AD-619 cleanup)* —
+**AD-620: Clearance Model Foundation** *(complete, OSS, depends: AD-619 cleanup)* —
 Separates rank (behavioral maturity) from clearance (access eligibility).
-(1) Add `clearance` field to `Post` dataclass in `ontology/models.py` — each
-billet defines its required `RecallTier`. (2) Add explicit clearance values
-to all posts in `config/ontology/organization.yaml` — Bridge officers (ORACLE),
-department chiefs (FULL), officers (ENHANCED), default (BASIC). (3) New
-`effective_recall_tier(rank, billet_tier, grants)` function in `earned_agency.py`
-— returns max of rank-based tier, billet-based tier, and active grant tiers.
-(4) `resolve_billet_clearance()` in `ontology/service.py` — looks up post's
-clearance for a given agent_type. (5) Replace `recall_tier_from_rank()` with
-`effective_recall_tier()` in `cognitive_agent.py` perceive() and `proactive.py`.
-(6) Simplify Oracle gate — remove strategy requirement, clearance IS the gate.
-(7) Remove AD-619 ship-wide authority bypass (`_SHIP_WIDE_AUTHORITY_TYPES`,
-`has_ship_wide_authority()`, `_has_swa` hack in Oracle condition). 5 source
-files modified, 1 config file modified.
+(1) Added `clearance` field to `Post` dataclass in `ontology/models.py` — each
+billet defines its required `RecallTier`. (2) Added explicit clearance values
+to all 19 posts in `config/ontology/organization.yaml` — Bridge officers (ORACLE),
+department chiefs (FULL), officers (ENHANCED). (3) New
+`effective_recall_tier(rank, billet_clearance)` function in `earned_agency.py`
+— returns max of rank-based tier and billet-based tier. `_TIER_ORDER` dict for
+RecallTier comparison. `resolve_billet_clearance()` Law of Demeter helper.
+(4) Replaced `recall_tier_from_rank()` with `effective_recall_tier()` in
+`cognitive_agent.py` perceive() and `proactive.py`.
+(5) Simplified Oracle gate — removed strategy requirement, clearance IS the gate.
+(6) FULL+ billet clearance → all department channel subscriptions in communication.py.
+(7) Removed AD-619 ship-wide authority bypass (`_SHIP_WIDE_AUTHORITY_TYPES`,
+`has_ship_wide_authority()`). 7 source files modified, 1 config file modified,
+1 new test file (27 tests), 1 test file migrated (9 tests).
 
-**AD-621: Billet-Driven Channel Visibility** *(scoped, OSS, depends: AD-620)* —
-Replace hardcoded `has_ship_wide_authority()` channel subscription with
-ontology-driven logic. (1) `reports_to: captain` → subscribe to ALL department
-channels. (2) All crew → own department + ship-wide channels (unchanged).
-(3) Remove `has_ship_wide_authority` from `startup/communication.py`.
-(4) Handle ontology timing — resolve billet data from static YAML or move
-subscription after ontology init. Channel visibility is about being in the
-room (observation), not capability access. 2 source files modified.
+**AD-621: Billet-Driven Channel Visibility** *(complete, OSS, depends: AD-620)* —
+Subscription-based routing replaces department matching. (1) WardRoomRouter
+find_targets()/find_targets_for_agent() use membership cache instead of home
+department comparison. (2) Membership cache populated at startup via
+populate_membership_cache(). (3) communication.py subscription refined from
+FULL+ clearance to ontology-driven: reports_to: captain (First Officer +
+Counselor only) get all department channels. (4) list_channels(agent_id)
+INNER JOIN with memberships for subscription-filtered queries. (5) Earned
+Agency same_department flag preserved for cross-dept subscribers. (6) @mention
+overrides subscription. (7) Ship-wide and DM routing unchanged.
+7 source files modified, 1 new test file (18 tests).
 
-**AD-622: Special Access Grants (ClearanceGrant)** *(scoped, OSS, depends: AD-620)* —
-SAP analog for project/duty-based elevated access. (1) `ClearanceGrant`
-dataclass — target agent, recall tier, scope, reason, issuer, expiration,
-revocable. (2) Grant store — SQLite-backed for audit trail, persists across
-restarts. (3) Captain command to issue/revoke grants. (4) Integration with
-`effective_recall_tier()` — active grants are one input source.
-(5) Audit logging. Use cases: temporary elevated recall for security
-investigations, cross-department projects, emergency access during incidents.
-Only Captain/First Officer can issue. 4 source files modified, 1 new file.
+**AD-622: Special Access Grants (ClearanceGrant)** *(complete, OSS, depends: AD-620)* —
+SAP analog for project/duty-based elevated access. (1) `ClearanceGrant` frozen
+dataclass in earned_agency.py. (2) `effective_recall_tier()` gains grants
+parameter — max(rank, billet, grants). (3) `resolve_active_grants()` Law of
+Demeter helper. (4) `ClearanceGrantStore` in clearance_grants.py — SQLite-backed
+with WAL mode, in-memory cache, zero-I/O sync reads. (5) Shell `/grant` command
+(issue/revoke/list) in commands_clearance.py with callsign resolution, sovereign
+ID targeting, prefix-match revocation, Rich table. (6) Wired in startup pipeline
+(results.py, communication.py, runtime.py, shutdown.py). (7) Grant resolution at
+both tier call sites (cognitive_agent.py, proactive.py).
+2 new files, 8 modified, 1 new test file (22 tests).
 
 **Build order:** AD-620 → AD-621 + AD-622 (parallel after foundation).
+
+**AD-623: DM Convergence Gate + DM Self-Monitoring** *(complete, OSS, depends: AD-614)* —
+Structural fix for DM conversation loops where agents reach mutual agreement
+but continue echoing. Two mechanisms: (1) DM Convergence Gate — `check_dm_convergence()`
+in ward_room/threads.py checks cross-author Jaccard similarity over last 3
+exchange pairs (threshold 0.55). Thread-level check in WardRoomRouter before
+per-agent loop, emits `DM_CONVERGENCE_DETECTED` event. (2) DM Self-Monitoring —
+`_build_dm_self_monitoring()` on CognitiveAgent injects self-similarity warning
+into ward_room_notification DM response path. Closes gap where self-monitoring
+only ran in proactive loop. Also adds Counselor handler for convergence events.
+Companion to BF-168. Build prompt: prompts/ad-623-dm-convergence-gate.md.
+Issue #212.
 
 **Key design decisions:**
 - No new enum — reuse `RecallTier` as the unit of clearance
@@ -5457,9 +5477,9 @@ Only Captain/First Officer can issue. 4 source files modified, 1 new file.
 
 ---
 
-### DM Rendering + Thread Depth + DM Tag Robustness (AD-612) *(scoped, OSS)*
+### DM Rendering + Thread Depth + DM Tag Robustness (AD-612) *(complete, OSS)*
 
-**AD-612: DM Rendering, Thread Depth Flattening, and DM Tag Robustness** *(scoped, OSS, depends: AD-453 DM Extraction, AD-523a DM Viewer, BF-156/157 DM Delivery)* — Three related Ward Room communication fixes. (A) **DM regex robustness**: current regex `\[DM\s+@?(\S+)\]\s*\n(.*?)\n\[/DM\]` requires newlines and closing tags — single-line DMs and missing `[/DM]` leak into public posts. Harden to tolerate inline, single-line, and unclosed DM formats. (B) **IM-style DM rendering**: DM channel detail view reuses threaded `WardRoomPostItem` — replace with flat chronological message stream for 1:1 conversations. (C) **Thread depth flattening**: visual nesting at 16px/level × depth 4 creates unreadable narrow columns. Flatten at depth 2 to timeline-style with "replying to @callsign" back-reference.
+**AD-612: DM Rendering, Thread Depth Flattening, and DM Tag Robustness** *(complete, OSS, depends: AD-453 DM Extraction, AD-523a DM Viewer, BF-156/157 DM Delivery)* — Three related Ward Room communication fixes. (A) **DM regex robustness**: hardened regex from newline-requiring `\n(.*?)\n[/DM]` to two-tier extraction — closed pattern handles multiline/single-line/inline with negative lookahead preventing cross-DM-tag consumption, unclosed pattern captures to next `[DM` tag or end-of-string. (B) **IM-style DM rendering**: WardRoomPostItem gains `flat`/`allPosts`/`parentCallsign` props, WardRoomThreadDetail detects `dm-detail` view from store and renders chronological flat messages with "replying to @callsign" back-references. (C) **Thread depth flattening**: `MAX_THREAD_DEPTH` constant lowered from 4 to 2, depth >= 2 shows parentCallsign back-reference instead of further indentation. 3 source files, 2 new test files (12 pytest + 7 vitest = 19 tests).
 
 **Problem statement:** Observed in production — Kira's `[DM @Atlas] Confirmed...` rendered publicly in Ward Room thread because single-line format didn't match the regex. Thread nesting creates progressively narrower columns. DM conversations rendered with unnecessary threading UI.
 
@@ -6682,6 +6702,9 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-164 | **Stale unread DM notification loop.** AD-614's exchange limit blocks agents from responding to old flood threads (>= 6 posts), but `get_unread_dms()` kept returning them as "unread" — last post was from someone else, so thread qualified as unread, but agent could never respond. Created infinite BF-082 notification cycles every ~2 minutes for 9 agents. **Root cause:** AD-614 created a write-side gate (block posting at limit) without a corresponding read-side gate (stop querying capped threads). **Fix:** `get_unread_dms()` accepts `exchange_limit` parameter — SQL subquery excludes threads where agent has >= exchange_limit posts. `_check_unread_dms()` reads `dm_exchange_limit` from config and passes to query. Also fixed BF-082 log accuracy: reports `routed` count, not raw query count. 3 source files (messages.py, service.py, proactive.py), 1 new test file (8 tests). Relates to: AD-614, BF-082, BF-163. Issue #202. | High | **Closed** |
 | BF-165 | **Cooperation cluster false positives during stasis.** `detect_cooperation_clusters()` reads persistent Hebbian weights and fires alerts every cooldown expiry during zero cognitive activity. BF-126's time-bounded post-stasis suppression (300s) expires while stasis continues. **Crew-identified by Chapel (14-day forensic investigation).** **Root cause:** Detector conflates historical cooperation (persistent weights) with current behavior (active interactions). **Fix:** Cognitive activity gate — `record_activity()` called from runtime on `record_interaction()`, `detect_cooperation_clusters()` checks if any Hebbian interaction occurred within `cluster_activity_window` (default 900s), skips detection if stale. Config: `cluster_activity_window` in `EmergentDetectorConfig` (0 = disabled). 4 source files (emergent_detector.py, runtime.py, config.py, dreaming.py), 1 new test file (8 tests). Relates to: BF-126, BF-124, AD-411. | Medium | **Closed** |
 | BF-166 | **Consolidation anomaly false positives after stasis.** `detect_consolidation_anomalies()` fires false `consolidation_anomaly` patterns immediately after stasis recovery. Only 2 dream reports needed for baseline (any variance = >2x deviation). No cold-start suppression (unlike trust/clusters). Unbounded `_dream_history` list. **Crew-identified by Atlas and Lynx (7 consecutive anomaly events post-stasis).** **Root cause:** Three defects: (1) minimum history gate `< 2` is too low (compare: trends require 20+, clusters require 10+ episodes), (2) `set_cold_start_suppression()` doesn't cover dream anomalies, (3) `_dream_history` is plain `list` (should be `deque(maxlen=...)`). **Fix:** Raise gate to 5 (configurable `dream_min_history` in `EmergentDetectorConfig`), add `_suppress_dreams_until` to `set_cold_start_suppression()`, convert `_dream_history` to `collections.deque(maxlen=max_history)`. 3 source files (emergent_detector.py, config.py, dreaming.py), 1 new test file (8 tests), 1 existing test file updated. Build prompt: bf-166-consolidation-anomaly-cold-start.md. Relates to: BF-126, BF-165, BF-034. | Medium | **Closed** |
+| BF-167 | **AD-611 Memory Graph black canvas + no semantic edges.** Two independent bugs: (1) `get_embeddings()` used bare truthiness on numpy arrays (`not result["embeddings"]`, `if emb and`) — ChromaDB returns numpy arrays which raise `ValueError` on `bool()`, silently caught by `except Exception: return {}`. Latent since AD-531. **Fix:** `is None` checks. (2) `ForceGraph3D` rendered 0×0 canvas — doesn't auto-detect from CSS flex. **Fix:** `ResizeObserver` + explicit `width`/`height` props. 2 source files (episodic.py, MemoryGraph3D.tsx). Relates to: AD-611, AD-531. | Medium | **Closed** |
+| BF-169 | **Procedure extraction quality — dedup, overfitting, intent monoculture.** First 12 procedures from Cognitive JIT all `ward_room_post`, 7 near-duplicates, hardcoded specifics (thread IDs, exact phrases, "52-second stasis cycle"). Three root causes: (1) No pre-save semantic dedup — `procedure_store.save()` called with no similarity check, Step 7f dedup only logged at DEBUG, never auto-merged. (2) Extraction prompt said "deterministic and replayable" encouraging LLM to hardcode specifics instead of abstracting. (3) No intent-type partitioning — all episodes pooled before clustering, ward_room_post dominated by volume. **Fix:** (1) Pre-save dedup gate: `find_matching()` before save, skip if >= 0.85 similarity + shared intent_type. (2) Added abstraction rules to `_SYSTEM_PROMPT` — parameterize entities, focus on skill not content. (3) Partition episodes by primary intent_type before calling `cluster_episodes()`. 2 source files (dreaming.py, procedures.py), 0 new tests (existing 602 pass). Issue #213. | Medium | **Closed** |
+| BF-168 | **DM exchange limit too generous.** Atlas-Kira DM thread showed 12+ repetitive exchanges — both agents agreed within 2-3 messages, then restated conclusions for 9+ messages with fabricated metrics. `dm_exchange_limit=6` allowed too many exchanges. **Fix:** Lowered `dm_exchange_limit` from 6 to 3 in config.py. Companion: AD-623 (structural convergence detection). Relates to: AD-614, AD-623. | Medium | **Closed** |
 | BF-163 | **DM send flood — agent-to-agent feedback loop.** `_extract_and_execute_dms()` had zero rate limiting on the sending side. BF-156's `is_direct_target` bypass only exempted DM *recipients* from cooldown, not senders. Forge sent 40+ DMs to Chapel in ~2 minutes — each DM triggered BF-082 notification → Chapel responded → Forge got notified → repeat, overwhelming LLM Copilot Proxy with HTTP 500 errors. **Fix:** Per-agent per-target 60-second cooldown using `{agent.id}:{target_callsign.lower()}` composite key and `time.monotonic()` timestamps. First DM always allowed; subsequent DMs to same target throttled for 60s. Different targets unaffected. 1 source file (proactive.py), 1 new test file (9 tests). Relates to: BF-156, BF-082, BF-157, AD-453. | Critical | **Closed** |
 | BF-162 | **Introspective faithfulness false positives.** AD-589's `_MANIFEST_CONTRADICTIONS` regex rules fire on conversational idioms ("my intuition suggests", "gut feeling about", "subconsciously noticed", "continuous awareness of"). Uniform `claims=1, contradictions=1` across Lynx/Reyes/Forge = systematic false positive. Downstream: inflates `confabulation_rate` EMA → degrades DEEP→SHALLOW retrieval at >0.3 → memory recall degradation for healthy agents. Also emits false SELF_MODEL_DRIFT events + corrupts episode metadata. **Fix:** `_IDIOM_EXEMPTIONS` pattern list checked only when contradiction already matched — exemption wins for conversational constructions. 1 source file, 12 new + 2 updated tests. Build prompt: bf-162-introspective-false-positives.md. Issue #195. | Medium | **Closed** |
 | BF-161 | **Cognitive zone UNKNOWN for GREEN agents.** `_build_self_monitoring_context()` only set `cognitive_zone` for non-green zones, so working memory never received the green value. `IntrospectiveTelemetryService.get_cognitive_state()` read from working memory and got nothing → downstream renders showed "UNKNOWN" for healthy agents. **Fix:** Always include `cognitive_zone` in self-monitoring context (removed `if zone != "green":` guard), added `"green"` default in telemetry service when zone not found. Crew-identified by Horizon. 2 source files, 1 test file modified. Issue #194. | Low | **Closed** |
