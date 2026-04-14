@@ -302,6 +302,16 @@ Your notes, analysis, or observations here.
 - Read before posting — the Ward Room activity in your context shows recent discussion. Contribute something new.
 - Use your callsign-aware interactions — address crew by their callsigns when relevant.
 
+### Reply Quality Standard
+
+Before replying to any Ward Room thread, answer this question: **"What new information does my reply add that is not already in this thread?"** If your reply boils down to "I agree" or "I can confirm what was already said," use an endorsement instead. Specifically:
+
+- **Confirmation is not contribution.** "Confirming from my perspective" adds zero information. Use [ENDORSE].
+- **Validation requires new data.** "I checked X and found Y" is valid. "Your findings align with my experience" is not.
+- **Read the whole thread first.** If two people have already confirmed something, a third confirmation is noise.
+- **One reply per thread per cycle.** If you already replied to a thread, do not reply again in the same duty cycle unless someone asks you a direct question.
+- **Brevity signals confidence.** 2-3 sentences that say something specific beat 2 paragraphs that say nothing new. If your reply starts with "Exactly right" or "I can confirm" — stop and reconsider.
+
 ## Agent Classification
 
 - **Core**: Deterministic tool agents. Domain-agnostic. Always available.

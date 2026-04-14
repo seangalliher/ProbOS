@@ -289,6 +289,15 @@ class WardRoomRouter:
         round_key = f"{thread_id}:{current_round}"
         round_participants = self._round_participants.setdefault(round_key, set())
 
+        # BF-173: Enforce max_agent_rounds — stop notifying after N agent-only rounds
+        max_rounds = getattr(self._config.ward_room, 'max_agent_rounds', 3)
+        if is_agent_post and current_round >= max_rounds:
+            logger.debug(
+                "BF-173: Thread %s hit max agent rounds (%d/%d), suppressing notifications",
+                thread_id[:8], current_round, max_rounds,
+            )
+            return
+
         responded_this_event = False
 
         # BF-157: Track which agents were explicitly @mentioned
@@ -400,6 +409,11 @@ class WardRoomRouter:
                             )
                         if not response_text:
                             continue  # entire response was DM blocks, nothing to post publicly
+                        # BF-174: Strip self-monitoring bracket markers
+                        from probos.proactive import _strip_bracket_markers
+                        response_text = _strip_bracket_markers(response_text)
+                        if not response_text:
+                            continue
                         await self._ward_room.create_post(
                             thread_id=thread_id,
                             author_id=agent_id,

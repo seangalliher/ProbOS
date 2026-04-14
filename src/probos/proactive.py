@@ -9,6 +9,21 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable
 
+# BF-174: Pattern to strip self-monitoring bracket markers that LLMs parrot back.
+# Matches [observed], [observed clinical consensus], [surgical validation], etc.
+_BRACKET_MARKER_RE = re.compile(
+    r'\s*\[(?:observed|analyzed|verified|confirmed|validated|noted|monitored|detected'
+    r'|assessed|reviewed|investigated|evaluated|checked|inspected|measured|recorded'
+    r'|tracked|surveyed|documented|reported|logged|flagged|identified|resolved'
+    r')[^\]]{0,80}\]\s*',
+    re.IGNORECASE,
+)
+
+
+def _strip_bracket_markers(text: str) -> str:
+    """BF-174: Remove self-monitoring bracket markers from agent output."""
+    return _BRACKET_MARKER_RE.sub(' ', text).strip()
+
 from probos.config import format_trust
 from probos.crew_profile import Rank
 from probos.crew_utils import is_crew_agent
@@ -165,6 +180,7 @@ class ProactiveCognitiveLoop:
         self._budget_exhausted: dict[str, float] = {}  # AD-617b: agent_id -> exhaustion timestamp
         self._notified_dm_threads: set[str] = set()  # BF-082: dedup guard
         self._dm_send_cooldowns: dict[str, float] = {}  # BF-163: per-agent DM send rate limit
+        self._reply_cooldowns: dict[str, float] = {}  # BF-171: per-agent per-channel reply cooldown
         self._last_dm_body: dict[str, str] = {}  # AD-614: self-similarity gate
         self._notified_dm_threads_reset: float = time.monotonic()  # hourly reset
         self._pending_notebook_reads: dict[str, str] = {}  # AD-504: agent_id -> topic_slug
@@ -620,6 +636,17 @@ class ProactiveCognitiveLoop:
                 agent.agent_type,
             )
             # Still record duty execution if applicable
+            if duty and self._duty_tracker:
+                self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+            return
+
+        # BF-172: Suppress raw JSON intent payloads leaking from LLM mode-confusion
+        stripped = response_text.lstrip()
+        if stripped.startswith("{") and '"intents"' in stripped[:200]:
+            logger.warning(
+                "BF-172: Suppressed raw intent JSON from %s (%d chars)",
+                agent.agent_type, len(response_text),
+            )
             if duty and self._duty_tracker:
                 self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
             return
@@ -1847,6 +1874,7 @@ class ProactiveCognitiveLoop:
             callsign = rt.callsign_registry.get_callsign(agent.agent_type)
 
         # Truncate to first sentence/line for title, use full text as body
+        text = _strip_bracket_markers(text)  # BF-174
         title_text = text.split('\n')[0][:100]
         if len(title_text) < len(text.split('\n')[0]):
             title_text += "..."
@@ -2534,6 +2562,19 @@ class ProactiveCognitiveLoop:
                     )
                     continue
 
+                # BF-171: Per-agent per-channel reply cooldown (120s)
+                channel_id = thread_data.get("channel_id", "")
+                if channel_id:
+                    cooldown_key = f"{agent.id}:{channel_id}"
+                    last_reply = self._reply_cooldowns.get(cooldown_key, 0.0)
+                    if last_reply > 0 and (time.monotonic() - last_reply) < 120:
+                        logger.debug(
+                            "BF-171: Reply cooldown for %s in channel %s (%.0fs remaining)",
+                            agent.agent_type, channel_id[:8],
+                            120 - (time.monotonic() - last_reply),
+                        )
+                        continue
+
                 # Get callsign
                 callsign = ""
                 if hasattr(rt, 'callsign_registry'):
@@ -2547,6 +2588,9 @@ class ProactiveCognitiveLoop:
                 reply_body, reply_cmd_actions = await self._extract_commands_from_reply(
                     agent, reply_body, callsign,
                 )
+                reply_body = _strip_bracket_markers(reply_body)  # BF-174
+                if not reply_body:
+                    continue
 
                 await rt.ward_room.create_post(
                     thread_id=thread_id,
@@ -2554,6 +2598,9 @@ class ProactiveCognitiveLoop:
                     body=reply_body,
                     author_callsign=callsign or agent.agent_type,
                 )
+                # BF-171: Record reply timestamp for channel cooldown
+                if channel_id:
+                    self._reply_cooldowns[f"{agent.id}:{channel_id}"] = time.monotonic()
                 actions.append({
                     "type": "reply",
                     "thread_id": thread_id,
