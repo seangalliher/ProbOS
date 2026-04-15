@@ -5571,6 +5571,135 @@ Issue #225.
 (reply gates), AD-625 (communication skill), AD-596a–e (cognitive skill catalog), AD-628
 (Training Officer — adjacent but separate scope).*
 
+**AD-631: Skill Effectiveness Improvements** *(COMPLETE 2026-04-15, OSS, absorbs BF-174 root cause,
+depends: AD-625, AD-626, AD-627, AD-629, AD-596b)* — Eight structural improvements to
+address why crew agents partially or wholly ignore the communication-discipline cognitive
+skill. Root causes: quadruple instruction injection (federation.md, Tier 7, comm_proficiency
+guidance, augmentation skill — same topic in 4 places), weak plain-text injection framing,
+no self-verification gate, negative framing ("Never…"), communication rules buried early in
+a 5,400-token system prompt, and self-monitoring bracket markers parroted by LLM. **Changes:**
+(1) DRY deduplication — move operational comm rules out of federation.md into the skill
+as single source of truth; federation.md retains channel descriptions and format
+mechanics only; Theory of Mind — Complementary Contribution absorbed into skill.
+(2) XML tag wrapping — replace `--- Behavioral Guidance ---` delimiters with
+`<active_skill>` / `<skill_instructions>` XML tags per Anthropic prompt engineering
+guidance. (3) Self-verification gate — "Pre-Submit Check" section in SKILL.md asking
+agents to verify novelty, opening sentence, and endorsement criteria before finalizing.
+(4) Positive framing with reasoning — rewrite Safety Rules as Contribution Standard
+using "do X because Y" instead of "Never X." (5) Tier 7 XML enhancement — skill
+descriptions in `<available_skills>` XML with behavioral primer in description text.
+(6) Consolidate `_get_comm_proficiency_guidance()` — remove standalone system prompt
+injection, flow tier guidance through `<proficiency_tier>` in augmentation skill frame;
+reduces 4 injection points to 2. (7) Anti-pattern addressing — explicit "Looking at…" /
+"I notice…" / "I can confirm…" opener detection and replacement instruction in operating
+sequence. (8) Self-monitoring XML reframing (BF-174 root cause) — replace bracket
+markers (`[COGNITIVE ZONE:]`, `--- Recent Activity ---`) with XML tags
+(`<cognitive_zone>`, `<recent_activity>`) to prevent LLM parroting; retain
+`_strip_bracket_markers()` as defense-in-depth. Evidence from live observation: zero
+endorsements, ubiquitous "Looking at…" opener, agreement-as-reply, same topic across
+all departments. Research: Anthropic XML tags, MRKL neuro-symbolic (Karpas 2022),
+Lipenkova 2023 domain knowledge precision, AgentSkills.io XML wrapping. Issue #226.
+
+*Connects to: AD-625 (communication skill content), AD-626 (dual-mode activation),
+AD-627 (research enrichment), AD-629 (reply gates — structural enforcement), AD-596b
+(intent discovery integration), AD-630 (leadership feedback — reinforcement layer),
+BF-174 (self-monitoring bracket markers — root cause absorbed, regex retained).*
+
+**AD-632: Cognitive Sub-Task Protocol** *(SCOPED, OSS, umbrella, depends: AD-631, AD-625,
+AD-626, AD-596a–e, AD-531–539)* — Enables crew agents to decompose complex reasoning
+into focused sub-steps instead of handling everything in a single LLM call. Three-level
+cognitive escalation matching SOAR's processing model: Level 1 Cognitive JIT replay
+(0 calls, automatic), Level 2 single-call reasoning (1 call, deliberate — current),
+Level 3 sub-task protocol (2-4 focused calls, subgoaling — this AD). Five sub-task types:
+Query (deterministic data retrieval, zero LLM), Analyze (narrow LLM prompt for input
+comprehension), Compose (LLM with augmentation skill for response generation), Evaluate
+(criteria-based quality scoring), Reflect (self-critique before committing). Selective
+activation — NOT a constant cost multiplier. Three trigger mechanisms: skill frontmatter
+annotation (`probos-subtask-mode`), complexity heuristic thresholds (thread post count,
+contributor count), quality fallback on self-verification failure (SOAR impasse model).
+Key insight: augmentation skill instructions land in the Compose sub-task where they have
+focused attention, not competing with thread parsing. Sub-tasks are intra-agent only — no
+identity, no trust profile, no episodic memory shard. Token accounting attributed to parent
+agent. Single-call fallback on any sub-task failure (defense in depth). **Eight sub-ADs:**
+AD-632a (foundation — protocol, executor, journal, config), AD-632b (Query deterministic),
+AD-632c (Analyze LLM), AD-632d (Compose with skill), AD-632e (Evaluate + Reflect quality
+gates), AD-632f (activation triggers), AD-632g (Cognitive JIT integration — learn
+decomposition patterns, SOAR chunking analog), AD-632h (parallel sub-task dispatch).
+Research: `docs/research/cognitive-sub-task-protocol.md` (13 sources: SOAR impasse-driven
+subgoaling, ACT-R goal stack, ReAct thought-action-observation, DECOMP specialized
+handlers, Inner Monologue closed-loop dialogue, Tree of Thoughts deliberate path evaluation,
+Reflexion verbal self-critique, LATS tree search with reflection, MRKL hybrid dispatch,
+Claude Code context forking, Kahneman System 1/System 2). Issue #227.
+
+*Connects to: AD-631 (skill effectiveness — self-verification gate feeds Evaluate), AD-625
+(communication skill), AD-626 (dual-mode activation — skill injection in Compose), AD-596a–e
+(skill catalog — subtask-mode frontmatter), AD-531–539 (Cognitive JIT — AD-632g learns
+decomposition patterns), AD-618 (Bill System — multi-step SOP execution via sub-tasks),
+AD-633 (predictive branching — pre-computed sub-tasks served to decision pipeline).*
+
+**AD-633: Predictive Cognitive Branching** *(SCOPED, OSS, umbrella, depends: AD-632, AD-531–539,
+AD-557, AD-573, AD-357)* — Enables crew agents to engage in forward-looking thought during idle
+cycles — pre-computation, anticipatory reasoning, and goal origination through speculative
+thought grounded in cognitive science research. Three functions: (1) Pre-Computation (CPU branch
+prediction analog — speculatively execute likely sub-tasks during idle time, serve results when
+event materializes), (2) Anticipatory Reasoning (Prospection / Default Mode Network analog —
+forward-looking thought producing new awareness, not just faster responses), (3) Goal Origination
+(Constructive Episodic Simulation / Hippocampal Preplay analog — agents generate novel goals from
+observation, identify skill gaps, post structured PROPOSALs). Four speculation tiers: Zero-Cost
+(deterministic), Cheap (fast-tier LLM, >70% confidence), Standard (standard-tier, >85%), Anticipatory
+(self-originated during idle cycles). Separate speculative token budget — does NOT compete with
+operational reasoning. Prediction accuracy feedback loop adjusts budgets (flush rate >30% = budget
+reduction). Earned Agency gates speculation budgets by trust tier. Preplay dream step (Step 13) —
+forward simulation using consolidated memories, generates implementation intentions ("when X, I will
+Y"). Prediction errors feed EmergenceMetricsEngine as novelty signal. Repeated predictions compile
+into Cognitive JIT procedures. **Nine sub-ADs:** AD-633a (prediction engine — deterministic
+confidence scoring from Hebbian, Ward Room stats, ontology, circuit breaker, Working Memory),
+AD-633b (speculation executor + Working Memory cache with TTL), AD-633c (speculation budget
+management — separate pool, flush rate feedback, Earned Agency gating), AD-633d (decision pipeline
+integration — `_decide_via_llm()` consumes pre-computed analysis), AD-633e (prediction accuracy
+tracking — hit rate, flush rate, quality delta feedback), AD-633f (anticipatory reasoning mode —
+idle cycle forward thought, pattern recognition, skill gap identification, PROPOSAL generation,
+conversational pre-rehearsal for Ward Room contributions with communication skill criteria applied
+in focused context),
+AD-633g (preplay dream step — Step 13 forward simulation, implementation intentions), AD-633h
+(prediction error as emergence signal — AD-557 integration, Bridge Alerts on collective error
+spikes), AD-633i (Cognitive JIT compilation — repeated predictions → learned procedures).
+Research: `docs/research/predictive-cognitive-branching.md` (14 sources: Homo Prospectus, Constructive
+Episodic Simulation, Default Mode Network, Hippocampal Preplay, Predictive Processing, Implementation
+Intentions, World Models, CPU Branch Prediction, SOAR chunking). Issue #228.
+
+*Connects to: AD-632 (cognitive sub-task protocol — speculative work dispatches to sub-task handlers),
+AD-531–539 (Cognitive JIT — AD-633i compiles predictions into procedures), AD-557 (emergence metrics —
+AD-633h feeds prediction errors), AD-573 (working memory — speculation cache), AD-357 (earned agency —
+budget gating), AD-617b (token budgets — separate speculative pool), AD-504 (self-monitoring —
+prediction accuracy metric), AD-618 (Bill System — anticipatory SOP preparation), AD-625/631
+(communication skill — conversational pre-rehearsal applies comm discipline criteria in focused context).*
+
+**AD-634: Notebook Analytical Quality Skill** *(SCOPED, OSS, config-only, depends: AD-631, AD-625,
+AD-626, AD-596a-e)* — Augmentation skill teaching crew agents what constitutes analytically useful
+notebook content. Existing notebook infrastructure (AD-550 dedup, AD-552 self-repetition, AD-555
+quality scoring) measures structural quality — topic diversity, freshness, novelty — but nothing
+evaluates semantic content quality. Observable failures: entries that summarize Ward Room posts
+instead of adding depth, vague process narration without findings, data recording presented as
+analysis, no temporal threading between entries on the same topic. **Config-only AD — one new
+`config/skills/notebook-quality/SKILL.md` file, no code changes.** Skill teaches: (1) Analytical
+Purpose Gate — every `[NOTEBOOK]` entry must answer a question or advance a hypothesis, (2) Finding-
+First Structure (Minto Pyramid, consistent with communication-discipline), (3) Temporal Threading —
+entries on existing topics must build on prior entries (what changed, what confirmed, what revised),
+(4) Data vs. Analysis — recording is the floor, analysis requires interpretation and comparison to
+baseline, (5) Ward Room Differentiation — notebook must go beyond what was said in thread,
+(6) Anti-Patterns with explanations (process narration, WR summary repackaging, baseline recording
+without interpretation, topic reset, conclusion-free entries), (7) Pre-Write Verification Gate —
+verify conclusion exists, builds on prior analysis, exceeds Ward Room content. Co-activates with
+communication-discipline on `proactive_think` intent — `_load_augmentation_skills()` concatenates
+both. Proficiency progression (7-level Dreyfus, FOLLOW→SHAPE). Issue #229.
+
+*Connects to: AD-631 (XML `<active_skill>` framing for proper skill injection), AD-625/626/627
+(augmentation activation, proficiency gating, communication discipline framework), AD-555 (measures
+structural quality; AD-634 teaches content quality), AD-552 (catches repetition structurally; AD-634
+teaches why revision without new analysis is low-value), AD-551 (higher-quality entries produce
+better dream consolidation), AD-550 (dedup gate — AD-634 teaches why unique content matters).*
+
 ---
 
 ### DM Rendering + Thread Depth + DM Tag Robustness (AD-612) *(complete, OSS)*
