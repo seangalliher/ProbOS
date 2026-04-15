@@ -174,8 +174,8 @@ class TestSkillMdContent:
     def test_skill_md_has_operating_sequence(self, skill_md):
         assert "## Operating Sequence" in skill_md
 
-    def test_skill_md_has_safety_rules(self, skill_md):
-        assert "## Safety Rules" in skill_md
+    def test_skill_md_has_contribution_standard(self, skill_md):
+        assert "## Contribution Standard" in skill_md
 
     def test_skill_md_has_no_response_action(self, skill_md):
         assert "[NO_RESPONSE]" in skill_md
@@ -213,7 +213,8 @@ class TestStandingOrdersProficiency:
                 agent_rank="ensign",
                 skill_profile=profile,
             )
-        assert "(Proficient)" in result
+        # AD-631: XML format — proficiency now in attribute, not parenthesized text
+        assert 'proficiency="Proficient"' in result
 
     def test_compose_instructions_no_profile_no_label(self):
         """Without skill_profile, no proficiency labels appear."""

@@ -4722,3 +4722,28 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Files modified:** `src/probos/cognitive/skill_catalog.py` (`activation` field on CognitiveSkillEntry, `find_augmentation_skills()`, `find_by_intent()` filter, intent parser fix), `src/probos/cognitive/cognitive_agent.py` (`_load_augmentation_skills()` helper, augmentation injection in `_decide_via_llm()`, exercise recording block), `config/skills/communication-discipline/SKILL.md` (`probos-activation: augmentation`, `ward_room_notification` intent). 1 new test file: `tests/test_ad626_skill_activation.py` (46 tests across 8 classes).
 
 **Build prompt:** `prompts/ad-626-dual-mode-skill-activation.md`.
+
+---
+
+### AD-631: Skill Effectiveness Improvements (2026-04-15, COMPLETE)
+
+**Summary:** Eight structural fixes addressing why crew agents partially or wholly ignore the communication-discipline cognitive skill. Consolidates instruction injection from 4 sites to 2, replaces plain-text delimiters with XML tags, adds self-verification gate, rewrites negative framing to positive, and absorbs BF-174 root cause (self-monitoring bracket markers parroted by LLM).
+
+**Context:** Live observation showed zero endorsements, ubiquitous "Looking at…" openers, agreement-as-reply, and identical analysis across departments — despite AD-625/626/627 delivering a full augmentation skill pipeline. Root causes identified: quadruple instruction injection (federation.md, Tier 7, `_get_comm_proficiency_guidance()`, augmentation skill), plain-text `---` delimiters ignored by LLM, all-negative framing ("Never..."), no self-check, and bracket markers (`[COGNITIVE ZONE:]`) surfacing in agent output.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: DRY deduplication | Removed 3 sections from federation.md (Theory of Mind, Communication Etiquette, Reply Quality Standard) — absorbed into SKILL.md | Federation.md is channel mechanics and format examples. Behavioral communication guidance belongs in the skill that teaches it. Single source of truth |
+| DD-2: XML tag injection | `<active_skill name="..." activation="augmentation">` / `<skill_instructions>` / `<proficiency_tier>` / `<skill_context>` | Anthropic prompt engineering: XML tags are recognized as structure, not content. Plain-text `---` delimiters blended with content and were ignored |
+| DD-3: Self-verification gate | "Pre-Submit Check" section — verify 3 criteria (novelty, opening sentence, endorsement) before finalizing | Self-verification is the cheapest intervention — agent catches its own violations before output. No additional LLM call |
+| DD-4: Positive framing | "Contribution Standard" with "do X because Y" instead of "Safety Rules" with "Never X" | Anthropic guidance: "Tell Claude what to do instead of what not to do." Reasoning ("because Y") enables generalization |
+| DD-5: Tier 7 XML | `<available_skills>` / `<skill name="..." proficiency="...">` in compose_instructions() | Consistent with DD-2 XML migration. Proficiency as attribute keeps it structured |
+| DD-6: Proficiency consolidation | Removed standalone `## Communication Discipline` injection from `_decide_via_llm()`, wired through `<proficiency_tier>` in skill frame | 4 injection points → 2. Proficiency guidance now arrives in context alongside the skill instructions it calibrates |
+| DD-7: Anti-pattern step 7 | Explicit "Looking at..." / "I notice..." / "I can confirm..." detection + deletion instruction | Most common anti-pattern. Naming the specific opener and saying "delete it" is more effective than abstract rules |
+| DD-8: Self-monitoring XML (BF-174) | `<cognitive_zone>`, `<recent_activity>`, `<notebook>`, `<source_awareness>` replace bracket markers | Root cause: `[COGNITIVE ZONE: AMBER]` is text-like — LLM echoes it in output. XML is recognized as structure. `_strip_bracket_markers()` retained as defense-in-depth |
+
+**Files modified:** `config/standing_orders/federation.md` (removed 3 absorbed sections), `config/skills/communication-discipline/SKILL.md` (full rewrite — positive framing, Pre-Submit Check, anti-patterns, ToM absorption), `src/probos/cognitive/cognitive_agent.py` (XML framing, proficiency consolidation, self-monitoring XML), `src/probos/cognitive/standing_orders.py` (Tier 7 XML format). **Tests:** `tests/test_ad631_skill_effectiveness.py` (NEW, 23 tests across 6 classes), `tests/test_ad625_comm_discipline.py` (2 assertions updated), `tests/test_ad626_skill_activation.py` (5 tests rewritten for XML format).
+
+**Build prompt:** `prompts/ad-631-skill-effectiveness-improvements.md`. **Issue:** #226.

@@ -592,27 +592,30 @@ class TestFrameTaskWithSkill:
         from probos.cognitive.cognitive_agent import CognitiveAgent
         agent = MagicMock(spec=CognitiveAgent)
         agent._frame_task_with_skill = CognitiveAgent._frame_task_with_skill.__get__(agent)
+        agent._augmentation_skills_used = []
         return agent
 
     def test_basic_framing(self):
         agent = self._make_agent()
         lines = agent._frame_task_with_skill("Do the thing.", "My Task")
         text = "\n".join(lines)
-        assert "Behavioral Guidance: My Task" in text
+        # AD-631: XML framing
+        assert "<active_skill" in text
+        assert "</active_skill>" in text
         assert "Do the thing." in text
-        assert "End of Guidance" in text
-        assert "Do NOT include" in text
+        assert "<skill_instructions>" in text
 
     def test_context_summary_included(self):
         agent = self._make_agent()
         lines = agent._frame_task_with_skill("Instructions", "Task", "Replies: 3")
         text = "\n".join(lines)
-        assert "[Replies: 3]" in text
+        assert "<skill_context>Replies: 3</skill_context>" in text
 
-    def test_no_context_summary_no_bracket_line(self):
+    def test_no_context_summary_no_context_tag(self):
         agent = self._make_agent()
         lines = agent._frame_task_with_skill("Instructions", "Task")
-        assert not any("[" in ln and "]" in ln for ln in lines if "TASK" not in ln and "Apply" not in ln)
+        text = "\n".join(lines)
+        assert "<skill_context>" not in text
 
     def test_returns_list_of_strings(self):
         agent = self._make_agent()
@@ -621,12 +624,13 @@ class TestFrameTaskWithSkill:
         assert all(isinstance(s, str) for s in result)
 
     def test_generic_for_any_task_label(self):
-        """Framing works with arbitrary task labels — not hardcoded to Ward Room."""
+        """Framing works with arbitrary task labels -- not hardcoded to Ward Room."""
         agent = self._make_agent()
         for label in ["Process Ward Room Thread", "Review Code", "Analyze Metrics", "Draft Report"]:
             lines = agent._frame_task_with_skill("skill body", label)
             text = "\n".join(lines)
-            assert f"Behavioral Guidance: {label}" in text
+            assert "<active_skill" in text
+            assert "skill body" in text
 
 
 class TestExtractThreadMetadata:

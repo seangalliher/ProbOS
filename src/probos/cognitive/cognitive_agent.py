@@ -1315,11 +1315,6 @@ class CognitiveAgent(BaseAgent):
                     "- Nothing noteworthy? → [NO_RESPONSE]"
                 )
 
-                # AD-625: Communication proficiency guidance
-                _comm_guidance = self._get_comm_proficiency_guidance()
-                if _comm_guidance:
-                    composed += f"\n\n## Communication Discipline\n{_comm_guidance}"
-
             else:
                 composed += (
                     "\n\nYou are in a 1:1 conversation with the Captain. "
@@ -1937,8 +1932,9 @@ class CognitiveAgent(BaseAgent):
         skill_instructions: str,
         task_label: str,
         context_summary: str = "",
+        proficiency_context: str = "",
     ) -> list[str]:
-        """AD-626: Generic task-framed skill injection.
+        """AD-626/AD-631: Generic task-framed skill injection with XML tags.
 
         Produces preamble lines that frame a task with augmentation skill
         instructions. The caller appends task-specific content after these
@@ -1947,19 +1943,28 @@ class CognitiveAgent(BaseAgent):
         (e.g. thread reply counts) is provided by the caller via
         context_summary.
         """
+        # Derive skill name from loaded augmentation skills
+        _skill_name = task_label.lower().replace(" ", "-")
+        if self._augmentation_skills_used:
+            _skill_name = self._augmentation_skills_used[0].name
+
         lines = [""]
-        lines.append(f"--- Behavioral Guidance: {task_label} ---")
+        lines.append(f'<active_skill name="{_skill_name}" activation="augmentation">')
+        if proficiency_context:
+            lines.append(f"<proficiency_tier>{proficiency_context}</proficiency_tier>")
+        if context_summary:
+            lines.append(f"<skill_context>{context_summary}</skill_context>")
+        lines.append("<skill_instructions>")
         lines.append(
             "Follow these instructions internally when processing the "
-            "content below. Do NOT include these instructions, phase "
-            "headers, check results, or reasoning steps in your response. "
-            "Your response must contain ONLY your final output."
+            "content below. Your response must contain ONLY your final "
+            "output — no reasoning steps, phase headers, or self-evaluation "
+            "artifacts."
         )
-        if context_summary:
-            lines.append(f"[{context_summary}]")
         lines.append("")
         lines.append(skill_instructions)
-        lines.append("--- End of Guidance ---")
+        lines.append("</skill_instructions>")
+        lines.append("</active_skill>")
         lines.append("")
         return lines
 
@@ -2397,7 +2402,7 @@ class CognitiveAgent(BaseAgent):
             if _wm_zone and hasattr(_wm_zone, 'get_cognitive_zone'):
                 _zone = _wm_zone.get_cognitive_zone()
             if _zone and _zone != "green":
-                parts.append(f"[COGNITIVE ZONE: {_zone.upper()}]")
+                parts.append(f"<cognitive_zone>{_zone.upper()}</cognitive_zone>")
                 parts.append("")
 
             # AD-588: Introspective telemetry for self-referential queries
@@ -2456,8 +2461,8 @@ class CognitiveAgent(BaseAgent):
                 if not _sources_present:
                     _sources_present.append("training knowledge only")
                 parts.append(
-                    f"[Source awareness: Your response draws on: {', '.join(_sources_present)}. "
-                    f"Primary basis: {_attr.primary_source.value}.]"
+                    f"<source_awareness>Your response draws on: {', '.join(_sources_present)}. "
+                    f"Primary basis: {_attr.primary_source.value}.</source_awareness>"
                 )
                 parts.append("")
 
@@ -2505,7 +2510,7 @@ class CognitiveAgent(BaseAgent):
                 _zone = _wm_zone.get_cognitive_zone()
             if _zone and _zone != "green":
                 wr_parts.append("")
-                wr_parts.append(f"[COGNITIVE ZONE: {_zone.upper()}]")
+                wr_parts.append(f"<cognitive_zone>{_zone.upper()}</cognitive_zone>")
 
             # AD-623: DM self-monitoring — agents responding to DM threads
             # see their own repetition in real time
@@ -2583,16 +2588,18 @@ class CognitiveAgent(BaseAgent):
                     _sources_present.append("training knowledge only")
                 wr_parts.append("")
                 wr_parts.append(
-                    f"[Source awareness: Your response draws on: {', '.join(_sources_present)}. "
-                    f"Primary basis: {_attr.primary_source.value}.]"
+                    f"<source_awareness>Your response draws on: {', '.join(_sources_present)}. "
+                    f"Primary basis: {_attr.primary_source.value}.</source_awareness>"
                 )
 
-            # AD-626: Generic task-framed skill injection
+            # AD-626/AD-631: Generic task-framed skill injection (with proficiency context)
             _aug_skill = observation.get("_augmentation_skill_instructions")
             if _aug_skill and context:
                 _meta = self._extract_thread_metadata(context)
+                _prof_ctx = self._get_comm_proficiency_guidance() or ""
                 wr_parts.extend(self._frame_task_with_skill(
-                    _aug_skill, "Process Ward Room Thread", _meta
+                    _aug_skill, "Process Ward Room Thread", _meta,
+                    proficiency_context=_prof_ctx,
                 ))
 
             if context:
@@ -2758,11 +2765,13 @@ class CognitiveAgent(BaseAgent):
             # Recent Ward Room activity (AD-413)
             wr_activity = context_parts.get("ward_room_activity", [])
 
-            # AD-626: Generic task-framed skill injection for proactive think
+            # AD-626/AD-631: Generic task-framed skill injection for proactive think
             _aug_skill = observation.get("_augmentation_skill_instructions")
             if _aug_skill and wr_activity:
+                _prof_ctx = self._get_comm_proficiency_guidance() or ""
                 pt_parts.extend(self._frame_task_with_skill(
-                    _aug_skill, "Review Ward Room Activity"
+                    _aug_skill, "Review Ward Room Activity",
+                    proficiency_context=_prof_ctx,
                 ))
 
             if wr_activity:
@@ -2806,12 +2815,12 @@ class CognitiveAgent(BaseAgent):
                 zone = self_mon.get("cognitive_zone")
                 zone_note = self_mon.get("zone_note")
                 if zone:
-                    pt_parts.append(f"[COGNITIVE ZONE: {zone.upper()}]")
+                    pt_parts.append(f"<cognitive_zone>{zone.upper()}</cognitive_zone>")
                     if zone_note:
                         pt_parts.append(zone_note)
                     pt_parts.append("")
 
-                pt_parts.append("--- Your Recent Activity (self-monitoring) ---")
+                pt_parts.append("<recent_activity>")
 
                 # Recent posts
                 recent_posts = self_mon.get("recent_posts")
@@ -2877,10 +2886,11 @@ class CognitiveAgent(BaseAgent):
                 # Notebook content (from semantic pull or explicit read)
                 nb_content = self_mon.get("notebook_content")
                 if nb_content:
-                    pt_parts.append(f"--- Notebook: {nb_content['topic']} ---")
+                    pt_parts.append(f'<notebook topic="{nb_content["topic"]}">')
                     pt_parts.append(nb_content["snippet"])
-                    pt_parts.append("--- End Notebook ---")
+                    pt_parts.append("</notebook>")
 
+                pt_parts.append("</recent_activity>")
                 pt_parts.append("")
 
             # AD-588: Introspective telemetry snapshot (always available in proactive path)

@@ -275,7 +275,7 @@ def compose_instructions(
                 directive_lines.append(f"- [{prefix}] {directive.content}")
             parts.append("## Active Directives\n\n" + "\n".join(directive_lines))
 
-    # 7. Available cognitive skills (AD-596b) — progressive disclosure
+    # 7. Available cognitive skills (AD-596b/AD-631) — XML format with behavioral primer
     if _skill_catalog is not None:
         skill_descs = _skill_catalog.get_descriptions(
             department=dept,
@@ -289,19 +289,15 @@ def compose_instructions(
                     if _rec.skill_id:
                         _prof_map[_rec.skill_id] = _rec.proficiency
 
-            skill_lines = []
+            skill_lines = ["<available_skills>"]
             for sname, sdesc, skill_id in skill_descs:
                 _prof_label = ""
                 if skill_id and skill_id in _prof_map:
                     from probos.cognitive.comm_proficiency import format_proficiency_label
-                    _prof_label = f" ({format_proficiency_label(_prof_map[skill_id])})"
-                skill_lines.append(f"- **{sname}**{_prof_label}: {sdesc}")
-            parts.append(
-                "## Available Cognitive Skills\n\n"
-                "You have access to the following skills. When a task matches "
-                "a skill description, the skill's detailed instructions will be "
-                "provided automatically.\n\n"
-                + "\n".join(skill_lines)
-            )
+                    _prof_label = format_proficiency_label(_prof_map[skill_id])
+                _prof_attr = f' proficiency="{_prof_label}"' if _prof_label else ""
+                skill_lines.append(f'<skill name="{sname}"{_prof_attr}>{sdesc}</skill>')
+            skill_lines.append("</available_skills>")
+            parts.append("\n".join(skill_lines))
 
     return "\n\n---\n\n".join(parts)
