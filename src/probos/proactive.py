@@ -1733,6 +1733,18 @@ class ProactiveCognitiveLoop:
 
         return result
 
+    def _get_comm_gate_overrides(self, agent):
+        """AD-625: Look up communication proficiency gate overrides."""
+        _profiles = getattr(self._runtime, '_comm_profiles', {})
+        _profile = _profiles.get(agent.id)
+        if _profile is None:
+            return None
+        for rec in _profile.all_skills:
+            if rec.skill_id == "communication":
+                from probos.cognitive.comm_proficiency import get_gate_overrides
+                return get_gate_overrides(rec.proficiency)
+        return None
+
     async def _is_similar_to_recent_posts(self, agent: Any, text: str, threshold: float = 0.5) -> bool:
         """BF-032: Check if proposed post is too similar to agent's recent Ward Room posts.
 
@@ -2588,16 +2600,20 @@ class ProactiveCognitiveLoop:
                     )
                     continue
 
-                # BF-171: Per-agent per-channel reply cooldown (120s)
+                # BF-171 + AD-625: Per-agent per-channel reply cooldown (proficiency-modulated)
                 channel_id = thread_data.get("channel_id", "")
                 if channel_id:
+                    _reply_cd = 120  # Default (Competent tier)
+                    _overrides = self._get_comm_gate_overrides(agent)
+                    if _overrides is not None:
+                        _reply_cd = _overrides.reply_cooldown_seconds
                     cooldown_key = f"{agent.id}:{channel_id}"
                     last_reply = self._reply_cooldowns.get(cooldown_key, 0.0)
-                    if last_reply > 0 and (time.monotonic() - last_reply) < 120:
+                    if last_reply > 0 and (time.monotonic() - last_reply) < _reply_cd:
                         logger.debug(
                             "BF-171: Reply cooldown for %s in channel %s (%.0fs remaining)",
                             agent.agent_type, channel_id[:8],
-                            120 - (time.monotonic() - last_reply),
+                            _reply_cd - (time.monotonic() - last_reply),
                         )
                         continue
 

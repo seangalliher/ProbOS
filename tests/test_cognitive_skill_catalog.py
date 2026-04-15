@@ -323,12 +323,12 @@ class TestCognitiveSkillCatalog:
 
     @pytest.mark.asyncio
     async def test_get_descriptions_progressive_disclosure(self, skills_dir: Path, db_path: str) -> None:
-        """Returns (name, description) tuples only."""
+        """Returns (name, description, skill_id) tuples only."""
         catalog = CognitiveSkillCatalog(skills_dir=skills_dir, db_path=db_path)
         await catalog.start()
         try:
             descs = catalog.get_descriptions()
-            assert all(isinstance(d, tuple) and len(d) == 2 for d in descs)
+            assert all(isinstance(d, tuple) and len(d) == 3 for d in descs)
             names = [d[0] for d in descs]
             assert "basic-skill" in names
         finally:

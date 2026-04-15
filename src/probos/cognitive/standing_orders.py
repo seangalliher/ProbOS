@@ -213,6 +213,7 @@ def compose_instructions(
     department: str | None = None,
     callsign: str | None = None,
     agent_rank: str | None = None,
+    skill_profile: object | None = None,  # AD-625: SkillProfile for proficiency display
 ) -> str:
     """Compose an agent's complete instructions from all tiers.
 
@@ -281,9 +282,20 @@ def compose_instructions(
             agent_rank=agent_rank,
         )
         if skill_descs:
+            # AD-625: Build proficiency lookup from skill profile
+            _prof_map: dict[str, int] = {}
+            if skill_profile is not None:
+                for _rec in getattr(skill_profile, 'all_skills', []):
+                    if _rec.skill_id:
+                        _prof_map[_rec.skill_id] = _rec.proficiency
+
             skill_lines = []
-            for sname, sdesc in skill_descs:
-                skill_lines.append(f"- **{sname}**: {sdesc}")
+            for sname, sdesc, skill_id in skill_descs:
+                _prof_label = ""
+                if skill_id and skill_id in _prof_map:
+                    from probos.cognitive.comm_proficiency import format_proficiency_label
+                    _prof_label = f" ({format_proficiency_label(_prof_map[skill_id])})"
+                skill_lines.append(f"- **{sname}**{_prof_label}: {sdesc}")
             parts.append(
                 "## Available Cognitive Skills\n\n"
                 "You have access to the following skills. When a task matches "

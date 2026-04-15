@@ -74,6 +74,27 @@ class WardRoomRouter:
         self._channel_members: dict[str, set[str]] = {}  # AD-621: channel_id -> {agent_ids}
 
     # ------------------------------------------------------------------
+    # AD-625: Communication proficiency helpers
+    # ------------------------------------------------------------------
+
+    def _get_comm_gate_overrides(self, agent_id: str):
+        """AD-625: Look up communication proficiency gate overrides for an agent."""
+        _rt = getattr(self._proactive_loop, '_runtime', None) if self._proactive_loop else None
+        if not _rt or not hasattr(_rt, 'skill_service'):
+            return None
+        try:
+            _profile = getattr(_rt, '_comm_profiles', {}).get(agent_id)
+            if _profile is None:
+                return None
+            for rec in _profile.all_skills:
+                if rec.skill_id == "communication":
+                    from probos.cognitive.comm_proficiency import get_gate_overrides
+                    return get_gate_overrides(rec.proficiency)
+        except Exception:
+            logger.debug("Comm gate override lookup failed for %s", agent_id, exc_info=True)
+        return None
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -351,6 +372,10 @@ class WardRoomRouter:
             # BF-016b: Per-thread agent response cap — prevent thread explosion
             if not is_direct_target:
                 max_per_thread = getattr(self._config.ward_room, 'max_agent_responses_per_thread', 3)
+                # AD-625: Proficiency-modulated gate override
+                _overrides = self._get_comm_gate_overrides(agent_id)
+                if _overrides is not None:
+                    max_per_thread = _overrides.max_responses_per_thread
                 thread_agent_key = f"{thread_id}:{agent_id}"
                 prior_responses = self._agent_thread_responses.get(thread_agent_key, 0)
                 if prior_responses >= max_per_thread:
@@ -422,6 +447,13 @@ class WardRoomRouter:
                             parent_id=data.get("post_id") if event_type == "ward_room_post_created" else None,
                             author_callsign=agent_callsign or (agent.agent_type if agent else "unknown"),
                         )
+                        # AD-625: Record communication exercise
+                        _rt = getattr(self._proactive_loop, '_runtime', None) if self._proactive_loop else None
+                        if _rt and hasattr(_rt, 'skill_service') and _rt.skill_service:
+                            try:
+                                await _rt.skill_service.record_exercise(agent_id, "communication")
+                            except Exception:
+                                logger.debug("Skill exercise recording failed for %s", agent_id, exc_info=True)
                         self._cooldowns[agent_id] = time.time()
                         round_participants.add(agent_id)
                         responded_this_event = True

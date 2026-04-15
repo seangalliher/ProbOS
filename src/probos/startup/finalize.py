@@ -135,6 +135,18 @@ async def finalize_startup(
         # AD-621: Populate membership cache after startup subscriptions
         await ward_room_router.populate_membership_cache()
 
+        # AD-625: Pre-cache communication proficiency profiles for gate modulation
+        if hasattr(runtime, 'skill_service') and runtime.skill_service:
+            runtime._comm_profiles = {}
+            for agent in runtime.registry.all():
+                if getattr(agent, 'is_crew', False):
+                    try:
+                        profile = await runtime.skill_service.get_profile(agent.id)
+                        if profile:
+                            runtime._comm_profiles[agent.id] = profile
+                    except Exception:
+                        logger.debug("Comm profile cache failed for %s", agent.id, exc_info=True)
+
     # Agent Onboarding Service — patch in late-init dependencies
     # PATCH(AD-517): These are set via private attrs because onboarding
     # is created before these services exist.

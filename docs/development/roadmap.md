@@ -5465,16 +5465,45 @@ only ran in proactive loop. Also adds Counselor handler for convergence events.
 Companion to BF-168. Build prompt: prompts/ad-623-dm-convergence-gate.md.
 Issue #212.
 
-**AD-625: Communication Discipline Skill** *(planned, OSS, depends: AD-428, AD-535, AD-423c)* —
-Formal `communication_discipline` skill in the Skill Framework with Dreyfus proficiency
-levels (Novice→Competent→Proficient→Expert) that feed into both prompt guidance and
-system gates. Novice agents get stricter per-thread caps and longer cooldowns; Expert
-agents earn relaxed limits. Proficiency based on endorsement-to-post ratio, [NO_RESPONSE]
-discipline rate, self-similarity scores, peer repetition incidents. Addresses root cause
-of pile-on/echo chamber behavior that 16+ layers of guardrails fail to prevent — agents
-need learned communication judgment, not more rules. Gap: no mechanism today to feed
-skill proficiency back into prompt construction or modulate system gates per-agent.
-Issue #219.
+**AD-625: Communication Discipline Skill** *(COMPLETE, OSS)* —
+Tier 2 cognitive skill teaching agents Ward Room reply self-evaluation with proficiency-gated
+system gate modulation. CommTier enum (NOVICE/COMPETENT/PROFICIENT/EXPERT) mapped from
+ProficiencyLevel via 4-band mapping. Gate overrides scale with proficiency: max_responses_per_thread
+(1→3→4→5), reply_cooldown_seconds (180→120→90→60). Exercise recording on every Ward Room post.
+Cognitive checklist in SKILL.md (Thread Awareness, Novelty Test, Action Selection, Brevity Check,
+Anti-Patterns). Prompt guidance injection into proactive_think. Profile caching at startup.
+get_descriptions() 3-tuple for proficiency label display. Reuses existing "communication" PCC.
+1 new file (comm_proficiency.py), 7 modified, 52 new tests. Build prompt:
+prompts/ad-625-communication-discipline-skill.md. Issue #219.
+
+**AD-627: Communication Skill Research Enrichment** *(COMPLETE, OSS, depends: AD-625)* —
+Content-only enrichment of communication-discipline SKILL.md, incorporating 630 lines of
+framework research into actionable agent instructions. Expanded from 52-line basic checklist
+to structured 5-gate pre-composition protocol. Research synthesized: Shannon information
+delta gate, Minto Pyramid answer-first structure, Canale & Swain communicative act typing
+(INFORM/ANALYZE/REQUEST/PROPOSE/DISSENT/ACKNOWLEDGE with suppression rules), Robert's Rules
+consent-by-silence protocol, Dreyfus 7-level proficiency progression (FOLLOW→SHAPE), ACH
+diagnosticity check, Delphi independent analysis mode, military net discipline and brevity
+codes. New sections: action selection matrix, thread discipline (consent-by-silence, dissent
+premium, independent analysis, channel register), 10 anti-patterns with failure explanations,
+full proficiency progression table mapping to ProficiencyLevel enum. No code changes — config
+file only. Research source: docs/research/communication-discipline-skill-research.md.
+
+**AD-626: Dual-Mode Skill Activation** *(COMPLETE, OSS, depends: AD-596a–e, AD-625)* —
+Discovery + Augmentation dual activation modes for cognitive skills. Discovery mode
+(existing): catalog consulted for unhandled intents, skill provides entire capability.
+Augmentation mode (new): catalog consulted for all intents, matching skills provide
+supplementary instructions layered onto existing behavior. `probos-activation` YAML
+frontmatter field: "discovery" (default), "augmentation", or "both". `find_augmentation_skills()`
+query method with department/rank filtering. `_load_augmentation_skills()` on CognitiveAgent
+loads matching skills as "## Skill Guidance:" sections (vs "## Active Skill:" for discovery).
+Proficiency gates apply to augmentation too. Exercise recording for augmentation skills
+(fire-and-forget). `find_by_intent()` updated to exclude augmentation-only skills from
+discovery path. Intent parser enhanced to handle both comma and space separators.
+Communication-discipline skill updated: `probos-activation: augmentation`,
+`ward_room_notification` added to intents. 2 modified files (skill_catalog.py,
+cognitive_agent.py), 1 modified config (SKILL.md), 1 new test file (46 tests).
+Build prompt: prompts/ad-626-dual-mode-skill-activation.md.
 
 **Key design decisions:**
 - No new enum — reuse `RecallTier` as the unit of clearance

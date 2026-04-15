@@ -4574,3 +4574,83 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Files modified:** `src/probos/cognitive/skill_catalog.py` (SkillValidationResult + `_validate_spec()` + `validate_skill()` + `validate_all()` + `enrich_skill()` context param), `src/probos/routers/skills.py` (2 new validation endpoints + `_build_validation_context()`), `src/probos/experience/commands/commands_skill.py` (`validate` subcommand). 1 new test file: `tests/test_ad596e_skill_validation.py` (35 tests).
 
 **Build prompt:** `prompts/ad-596e-skill-validation-linting.md`. **Issue:** #166.
+
+### AD-625: Communication Discipline Skill (2026-04-14, COMPLETE)
+
+**Summary:** Tier 2 cognitive skill that teaches agents to self-evaluate before composing Ward Room replies, with proficiency-gated system gate modulation. CommTier enum maps ProficiencyLevel (7 levels) to 4 communication tiers (Novice/Competent/Proficient/Expert) that control both prompt guidance and mechanical gate parameters.
+
+**Context:** 16+ layers of guardrails (BF-016b per-thread caps, BF-156 cooldowns, AD-614 DM termination, AD-623 convergence gates, AD-506b peer repetition, etc.) treat communication quality as a policing problem. Agents need learned communication judgment, not more rules. The Skill Framework (AD-535) provides Dreyfus proficiency levels; the cognitive skill catalog (AD-596a) provides instruction injection. AD-625 bridges these: proficiency modulates both the agent's self-evaluation instructions and the system's mechanical gates.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: Reuse existing "communication" PCC | `probos-skill-id: communication` | SkillRegistry already tracks communication proficiency. Creating `ward_room_discipline` would fragment the PCC and require bridging. One skill, one proficiency track |
+| DD-2: CommTier 4-band mapping | 4 tiers from 7 ProficiencyLevel values (FOLLOW/ASSIST→NOVICE, APPLY/ENABLE→COMPETENT, ADVISE→PROFICIENT, LEAD/SHAPE→EXPERT) | Communication is coarser-grained than Dreyfus. Two models of 4 tiers each confuse; one set of 4 is clear |
+| DD-3: Config overlay, not mutation | Read WardRoomConfig defaults, apply proficiency overrides at decision time | SOLID Open/Closed. Don't mutate shared config — compute effective values per-agent. No side effects on startup |
+| DD-4: Profile caching at startup | `runtime._comm_profiles` dict populated in `finalize.py` | `_get_comm_gate_overrides()` runs on every Ward Room post event. Async DB query per event is prohibitive. Cache is populated once, read many |
+| DD-5: Exercise recording on post | `record_exercise(agent_id, "communication")` after `create_post()` | Every successful Ward Room post = practice. Simplest signal. Auto-acquire at FOLLOW (AD-596c) means the skill self-bootstraps |
+| DD-6: Cognitive checklist in SKILL.md | Thread Awareness → Novelty Test → Action Selection → Brevity Check → Anti-Patterns | Agents internalize the checklist via prompt injection at their tier. Not enforced mechanically — teaches judgment |
+| DD-7: get_descriptions() 3-tuple | Return `(name, description, skill_id)` instead of `(name, description)` | Standing orders Tier 7 needs skill_id to look up proficiency label. Breaking change isolated to one caller + tests |
+
+**Files modified:** `config/skills/communication-discipline/SKILL.md` (full rewrite), `src/probos/cognitive/comm_proficiency.py` (NEW — CommTier, CommGateOverrides, 4 public functions), `src/probos/cognitive/skill_catalog.py` (3-tuple), `src/probos/cognitive/standing_orders.py` (skill_profile param + proficiency label), `src/probos/cognitive/cognitive_agent.py` (guidance injection + helper), `src/probos/ward_room_router.py` (exercise recording + gate modulation + helper), `src/probos/proactive.py` (cooldown modulation + helper), `src/probos/startup/finalize.py` (profile cache). 1 new test file: `tests/test_ad625_comm_discipline.py` (52 tests across 9 classes).
+
+**Build prompt:** `prompts/ad-625-communication-discipline-skill.md`. **Issue:** #219.
+
+### AD-627: Communication Skill Research Enrichment (2026-04-14, COMPLETE)
+
+**Summary:** Content-only enrichment of communication-discipline SKILL.md, incorporating the comprehensive framework research from `docs/research/communication-discipline-skill-research.md` into actionable agent instructions. No code changes.
+
+**Context:** AD-625 created the communication-discipline SKILL.md with a basic 52-line 4-step checklist (Thread Awareness, Novelty Test, Action Selection, Brevity Check). Meanwhile, 630 lines of framework research had been completed covering 8 major communication discipline frameworks with encodable rules mapped to agent anti-patterns. The research was never consumed during the AD-625 build. AD-627 bridges the gap — enriching the skill instructions so that agents receive research-backed communication guidance when AD-626's augmentation mode injects the SKILL.md content.
+
+**Frameworks incorporated:**
+
+| Framework | Application |
+|-----------|------------|
+| Shannon Information Theory | Information Delta Gate — novelty estimation before posting |
+| Minto Pyramid / MECE | Answer-first structure, overlap detection |
+| Canale & Swain | Communicative act typing (INFORM/ANALYZE/REQUEST/PROPOSE/DISSENT/ACKNOWLEDGE) |
+| Robert's Rules | Consent-by-silence protocol, germane debate |
+| Dreyfus Model | 7-level proficiency progression (FOLLOW→SHAPE) with behavioral descriptions |
+| ACH (CIA) | Diagnosticity check — does contribution distinguish between competing explanations? |
+| Delphi Method | Independent analysis mode — anchor to observation, not prior replies |
+| Military Net Discipline | Brevity codes, SITREP format, channel register, pre-transmission evaluation |
+
+**Key design choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: 5-gate protocol | Expanded from 4-step checklist to 5 sequential gates (Thread Awareness → Information Delta → Communicative Act Typing → Answer-First Structure → Brevity Check) | Each gate is a stop/go decision point. Fail any gate = do not post. Research showed the original "Novelty Test" was too vague — Shannon + ACH + MECE provide specific criteria |
+| DD-2: Communicative act classification | INFORM/ANALYZE/REQUEST/PROPOSE/DISSENT/ACKNOWLEDGE taxonomy with ACKNOWLEDGE explicitly suppressed | Canale & Swain actional competence. Makes implicit message intent explicit. ACKNOWLEDGE is the root cause of pile-on — making it the only suppressed type eliminates the category |
+| DD-3: Consent-by-silence | "Your silence IS your consent" as explicit instruction | Robert's Rules. Eliminates the entire "+1" / "I agree" message category. Agents don't need to confirm — absence of objection is consent |
+| DD-4: Dissent premium | "Respectful disagreement backed by evidence is the HIGHEST-value contribution" | ACH diagnosticity. Disagreement distinguishes between hypotheses; agreement does not. Reverses the social incentive to pile on |
+| DD-5: Independent analysis | "Form your analysis BEFORE reading other replies" | Delphi method anti-bandwagon. Prevents echo chamber anchoring. Agents should anchor to the original observation, not to prior responses |
+| DD-6: Full 7-level proficiency mapping | Map all ProficiencyLevel values (FOLLOW→SHAPE) instead of AD-625's 4-tier CommTier | Research Section 6.2 had detailed per-level behavioral descriptions. The skill instructions should teach agents what mastery looks like at every level. "The goal is to RELEASE the rules, not accumulate them" |
+| DD-7: Anti-pattern table with failure explanations | 10 anti-patterns with "Why It Fails" column | Agents need to understand WHY a behavior is wrong, not just that it is wrong. Explanation enables generalization to novel situations |
+
+**Files modified:** `config/skills/communication-discipline/SKILL.md` (content enrichment — no code changes).
+
+**Research source:** `docs/research/communication-discipline-skill-research.md` (630 lines, 8 frameworks).
+
+### AD-626: Dual-Mode Skill Activation (2026-04-14, COMPLETE)
+
+**Summary:** Discovery + Augmentation dual activation modes for cognitive skills. Skills can now declare whether they provide new capabilities (discovery), enhance existing ones (augmentation), or both. Enables AD-625's communication-discipline skill to inject instructions for intents agents already handle.
+
+**Context:** AD-625 created a communication-discipline skill with `proactive_think` as its intent, but all crew agents already handle `proactive_think`. Since the skill catalog was only consulted for *unhandled* intents (`find_by_intent()` in the discovery path of `handle_intent()`), the SKILL.md instructions were never loaded. Agents could already "reach" — they just couldn't reach the "pole." AD-626 adds augmentation mode: the catalog is also consulted for handled intents, loading matching skills as supplementary behavioral guidance layered onto existing prompts.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: Two modes, one catalog | Same `CognitiveSkillCatalog`, two consultation points (discovery in `handle_intent()`, augmentation in `_decide_via_llm()`) | No new registry needed. One catalog, same `find_by_intent()`/`find_augmentation_skills()` API |
+| DD-2: SKILL.md declares activation | `probos-activation: discovery \| augmentation \| both`, default `"discovery"` | Backward-compatible. Skill author controls when instructions load. Infrastructure doesn't guess |
+| DD-3: Different headers | Discovery: `## Active Skill:` (primary). Augmentation: `## Skill Guidance:` (supplementary) | Signals to agent that augmentation is guidance, not replacement. Multiple augmentation skills can stack |
+| DD-4: Proficiency gates apply | Same `check_proficiency_gate()` as discovery | Tool-in-toolbox check — you must own the tool. Consistency across both modes |
+| DD-5: Load in `_decide_via_llm()` | After `compose_instructions()`, before LLM call | Agent has committed to handling the intent. Augmentation is prompt construction, not routing. No self-deselection possible |
+| DD-6: Always load for matching intents | Don't try to predict output; skill's own checklist gates application | Token cost minimal (~200-400 tokens). Like human cognitive tools — accessible in working memory for duration of relevant activity |
+| DD-7: `find_by_intent()` excludes augmentation-only | Discovery path only returns `activation in ("discovery", "both")` | Augmentation-only skills should never be used as primary capability providers |
+| DD-8: Intent parser enhanced | Handle both comma and space separators in `probos-intents` | Robustness. Comma-separated is natural for multi-intent declarations |
+
+**Files modified:** `src/probos/cognitive/skill_catalog.py` (`activation` field on CognitiveSkillEntry, `find_augmentation_skills()`, `find_by_intent()` filter, intent parser fix), `src/probos/cognitive/cognitive_agent.py` (`_load_augmentation_skills()` helper, augmentation injection in `_decide_via_llm()`, exercise recording block), `config/skills/communication-discipline/SKILL.md` (`probos-activation: augmentation`, `ward_room_notification` intent). 1 new test file: `tests/test_ad626_skill_activation.py` (46 tests across 8 classes).
+
+**Build prompt:** `prompts/ad-626-dual-mode-skill-activation.md`.

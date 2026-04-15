@@ -1205,6 +1205,7 @@ class CognitiveAgent(BaseAgent):
                 hardcoded_instructions="",
                 callsign=self._resolve_callsign(),
                 agent_rank=getattr(self, "rank", None),  # AD-596b
+                skill_profile=getattr(self, '_skill_profile', None),  # AD-625
             )
             if observation.get("intent") == "ward_room_notification":
                 composed += (
@@ -1301,6 +1302,12 @@ class CognitiveAgent(BaseAgent):
                     "- See something new? → Write an observation (new thread)\n"
                     "- Nothing noteworthy? → [NO_RESPONSE]"
                 )
+
+                # AD-625: Communication proficiency guidance
+                _comm_guidance = self._get_comm_proficiency_guidance()
+                if _comm_guidance:
+                    composed += f"\n\n## Communication Discipline\n{_comm_guidance}"
+
             else:
                 composed += (
                     "\n\nYou are in a 1:1 conversation with the Captain. "
@@ -1327,12 +1334,18 @@ class CognitiveAgent(BaseAgent):
                 hardcoded_instructions=self.instructions or "",
                 callsign=self._resolve_callsign(),
                 agent_rank=getattr(self, "rank", None),  # AD-596b
+                skill_profile=getattr(self, '_skill_profile', None),  # AD-625
             )
 
         # AD-596b: Append cognitive skill instructions when activated
         _skill_instr = observation.get("cognitive_skill_instructions")
         if _skill_instr:
             composed += f"\n\n---\n\n## Active Skill: {observation.get('cognitive_skill_name', 'Unknown')}\n\n{_skill_instr}"
+
+        # AD-626: Load augmentation skills for handled intents
+        _aug_instructions = self._load_augmentation_skills(observation.get("intent", ""))
+        if _aug_instructions:
+            composed += _aug_instructions
 
         request = LLMRequest(
             prompt=user_message,
@@ -1556,6 +1569,21 @@ class CognitiveAgent(BaseAgent):
                     )
                 except Exception:
                     logger.debug("AD-596c: Exercise recording task creation failed", exc_info=True)
+
+        # AD-626: Record exercises for augmentation skills
+        _aug_used = getattr(self, '_augmentation_skills_used', None)
+        if _aug_used:
+            _bridge = getattr(self, '_skill_bridge', None)
+            if _bridge:
+                for _aug_entry in _aug_used:
+                    try:
+                        import asyncio
+                        asyncio.create_task(
+                            _bridge.record_skill_exercise(self.id, _aug_entry)
+                        )
+                    except Exception:
+                        logger.debug("AD-626: Aug skill exercise recording failed", exc_info=True)
+            self._augmentation_skills_used = []
 
         # AD-534c: compound procedure dispatch
         if decision.get("compound") and decision.get("procedure"):
@@ -1828,6 +1856,62 @@ class CognitiveAgent(BaseAgent):
                              cert.callsign, self.agent_type)
                 return cert.callsign
         return None
+
+    def _get_comm_proficiency_guidance(self) -> str | None:
+        """AD-625: Return tier-specific communication guidance based on proficiency."""
+        profile = getattr(self, '_skill_profile', None)
+        if not profile:
+            return None
+        for rec in profile.all_skills:
+            if rec.skill_id == "communication":
+                from probos.cognitive.comm_proficiency import get_prompt_guidance
+                return get_prompt_guidance(rec.proficiency)
+        return None
+
+    def _load_augmentation_skills(self, intent: str) -> str:
+        """AD-626: Load augmentation skill instructions for a handled intent.
+
+        Returns concatenated skill guidance sections, or empty string.
+        Augmentation skills enhance existing behavior — they don't provide
+        new capabilities. Think: cognitive tools that extend natural ability.
+        """
+        if not intent:
+            return ""
+        catalog = getattr(self, '_cognitive_skill_catalog', None)
+        if not catalog:
+            return ""
+
+        department = getattr(self, 'department', None)
+        rank = getattr(self, 'rank', None)
+        rank_val = rank.value if hasattr(rank, 'value') else rank
+
+        entries = catalog.find_augmentation_skills(
+            intent, department=department, agent_rank=rank_val,
+        )
+        if not entries:
+            self._augmentation_skills_used = []
+            return ""
+
+        bridge = getattr(self, '_skill_bridge', None)
+        profile = getattr(self, '_skill_profile', None)
+        parts = []
+        loaded_entries = []
+        for entry in entries:
+            if bridge and not bridge.check_proficiency_gate(self.id, entry, profile):
+                continue
+            instructions = catalog.get_instructions(entry.name)
+            if instructions:
+                parts.append(
+                    f"\n\n---\n\n## Skill Guidance: {entry.name}\n\n{instructions}"
+                )
+                loaded_entries.append(entry)
+                logger.debug(
+                    "AD-626: Loaded augmentation skill '%s' for intent '%s' on %s",
+                    entry.name, intent, self.agent_type,
+                )
+
+        self._augmentation_skills_used = loaded_entries
+        return "".join(parts)
 
     def _detect_self_in_content(self, content: str) -> str:
         """Detect if agent's own callsign appears in content and return grounding cue.

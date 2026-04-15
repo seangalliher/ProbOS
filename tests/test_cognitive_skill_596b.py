@@ -28,7 +28,7 @@ from probos.types import IntentDescriptor, IntentMessage
 
 
 def _make_catalog_mock(
-    descriptions: list[tuple[str, str]] | None = None,
+    descriptions: list[tuple[str, str, str]] | None = None,
     entries: list[CognitiveSkillEntry] | None = None,
     instructions: dict[str, str] | None = None,
     intent_map: dict[str, list[CognitiveSkillEntry]] | None = None,
@@ -77,8 +77,8 @@ class TestComposeSkillIntegration:
     def test_compose_includes_skill_descriptions(self):
         """With catalog set, output includes Available Cognitive Skills section."""
         catalog = _make_catalog_mock(descriptions=[
-            ("code-review", "Review code for quality"),
-            ("design-check", "Check architecture compliance"),
+            ("code-review", "Review code for quality", "code_review"),
+            ("design-check", "Check architecture compliance", "design_check"),
         ])
         set_skill_catalog(catalog)
 
@@ -95,7 +95,7 @@ class TestComposeSkillIntegration:
 
     def test_compose_filters_by_department(self):
         """Department is passed to get_descriptions for filtering."""
-        catalog = _make_catalog_mock(descriptions=[("s", "d")])
+        catalog = _make_catalog_mock(descriptions=[("s", "d", "")])
         set_skill_catalog(catalog)
 
         compose_instructions("builder", "", department="engineering")
@@ -106,7 +106,7 @@ class TestComposeSkillIntegration:
 
     def test_compose_filters_by_rank(self):
         """agent_rank parameter is passed through for rank filtering."""
-        catalog = _make_catalog_mock(descriptions=[("s", "d")])
+        catalog = _make_catalog_mock(descriptions=[("s", "d", "")])
         set_skill_catalog(catalog)
 
         # "builder" auto-resolves to department="engineering" via get_department()
@@ -118,7 +118,7 @@ class TestComposeSkillIntegration:
 
     def test_compose_agent_rank_none_shows_all(self):
         """agent_rank=None shows all skills (backward compat)."""
-        catalog = _make_catalog_mock(descriptions=[("s", "d")])
+        catalog = _make_catalog_mock(descriptions=[("s", "d", "")])
         set_skill_catalog(catalog)
 
         # "builder" auto-resolves to department="engineering" via get_department()

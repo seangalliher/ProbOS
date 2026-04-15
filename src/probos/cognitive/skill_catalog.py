@@ -67,6 +67,7 @@ class CognitiveSkillEntry:
     intents: list[str] = field(default_factory=list)
     origin: str = "internal"
     loaded_at: float = 0.0
+    activation: str = "discovery"  # AD-626: "discovery", "augmentation", or "both"
 
 
 @dataclass
@@ -129,7 +130,15 @@ def parse_skill_file(path: Path) -> CognitiveSkillEntry | None:
     # ProbOS metadata extensions
     meta = fm.get("metadata") or {}
     intents_str = str(meta.get("probos-intents", "")).strip()
-    intents = intents_str.split() if intents_str else []
+    # AD-626: Handle both comma-separated and space-separated intents
+    if "," in intents_str:
+        intents = [i.strip() for i in intents_str.split(",") if i.strip()]
+    else:
+        intents = intents_str.split() if intents_str else []
+
+    # AD-626: Parse activation mode
+    _raw_activation = str(meta.get("probos-activation", "discovery")).strip().lower()
+    activation = _raw_activation if _raw_activation in ("discovery", "augmentation", "both") else "discovery"
 
     return CognitiveSkillEntry(
         name=str(name).strip(),
@@ -144,6 +153,7 @@ def parse_skill_file(path: Path) -> CognitiveSkillEntry | None:
         intents=intents,
         origin="internal",
         loaded_at=time.time(),
+        activation=activation,
     )
 
 
@@ -327,13 +337,13 @@ class CognitiveSkillCatalog:
         self,
         department: str | None = None,
         agent_rank: str | None = None,
-    ) -> list[tuple[str, str]]:
-        """Return (name, description) tuples for progressive disclosure.
+    ) -> list[tuple[str, str, str]]:
+        """Return (name, description, skill_id) tuples for progressive disclosure.
 
         Only skills the agent is allowed to see (department + rank filtering).
         """
         entries = self.list_entries(department=department, min_rank=agent_rank)
-        return [(e.name, e.description) for e in entries]
+        return [(e.name, e.description, e.skill_id) for e in entries]
 
     def get_instructions(self, name: str) -> str | None:
         """Load and return full SKILL.md content below the frontmatter.
@@ -353,8 +363,42 @@ class CognitiveSkillCatalog:
         return list(entry.intents) if entry else []
 
     def find_by_intent(self, intent_name: str) -> list[CognitiveSkillEntry]:
-        """Reverse lookup: which skills handle a given intent?"""
-        return [e for e in self._cache.values() if intent_name in e.intents]
+        """Reverse lookup: which skills handle a given intent (discovery mode).
+
+        AD-626: Only returns skills with activation 'discovery' or 'both'.
+        Augmentation-only skills are excluded from the discovery path.
+        """
+        return [
+            e for e in self._cache.values()
+            if intent_name in e.intents and e.activation in ("discovery", "both")
+        ]
+
+    def find_augmentation_skills(
+        self,
+        intent_name: str,
+        department: str | None = None,
+        agent_rank: str | None = None,
+    ) -> list[CognitiveSkillEntry]:
+        """AD-626: Find skills that augment an already-handled intent.
+
+        Returns skills where activation is 'augmentation' or 'both',
+        intent_name is in the skill's declared intents, and department/rank
+        filters pass.
+        """
+        results = []
+        for entry in self._cache.values():
+            if entry.activation not in ("augmentation", "both"):
+                continue
+            if intent_name not in entry.intents:
+                continue
+            if department and entry.department != "*" and entry.department != department:
+                continue
+            if agent_rank:
+                agent_rank_order = _RANK_ORDER.get(agent_rank, 0)
+                if _RANK_ORDER.get(entry.min_rank, 0) > agent_rank_order:
+                    continue
+            results.append(entry)
+        return results
 
     # ------------------------------------------------------------------
     # AD-596e: Skill validation + instruction linting
