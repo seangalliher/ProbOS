@@ -165,6 +165,10 @@ async def finalize_startup(
     # AD-596b: Wire cognitive skill catalog into onboarding service
     if runtime.cognitive_skill_catalog:
         runtime.onboarding.set_cognitive_skill_catalog(runtime.cognitive_skill_catalog)
+        # BF: Backfill catalog onto agents created before the catalog existed (Phase 2 < Phase 7)
+        for _agent in runtime.registry.all():
+            if not getattr(_agent, '_cognitive_skill_catalog', None):
+                _agent._cognitive_skill_catalog = runtime.cognitive_skill_catalog
 
     # AD-596c: Wire skill bridge into onboarding service
     if hasattr(runtime, 'skill_bridge') and runtime.skill_bridge:
