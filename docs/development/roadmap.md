@@ -5532,6 +5532,25 @@ joint reduced-duty recommendation with remediation plan). TRAINO division of res
 Medical = fitness-for-duty, Counselor = behavioral observation, TRAINO = qualification
 tracking + training execution. Issue #223.
 
+**AD-629: Ward Room Reply Gate Enforcement + Post ID Context** *(planned, OSS, depends:
+AD-424, AD-426, AD-437, AD-625, BF-016b, BF-105, BF-171)* — Three structural holes allow
+agents to bypass `max_responses_per_thread`: (1) proactive `[REPLY]` path calls
+`create_post()` without checking `_agent_thread_responses`, (2) `is_direct_target` bypass
+skips both cap check AND counter increment for @mentioned agents, (3) cap only blocks
+notification routing, not post creation. Additionally, agents are told to use
+`[ENDORSE post_id UP]` but post IDs are never included in thread context — the instruction
+is impossible to follow. **Fix:** (A) Unified `check_and_increment_reply_cap()` method on
+WardRoomRouter — single enforcement point called by both `route_event()` and
+`_extract_and_execute_replies()`. @mention bypass applies to cooldown timing only, not
+per-thread cap. (B) Per-department reply gate — max one reply per department per thread
+(AD-424 chief funnel). (C) Post IDs included in thread context as `[{id}] callsign: body`
+so agents can construct ENDORSE commands. (D) Post IDs in proactive Ward Room activity
+context. Issue #224.
+
+*Connects to: AD-424 (thread classification — chief funnel), AD-426 (endorsement activation),
+AD-437 (action space), AD-625 (communication discipline skill), BF-016b (per-thread cap),
+BF-105 (self-repetition guard), BF-171 (channel cooldown).*
+
 ---
 
 ### DM Rendering + Thread Depth + DM Tag Robustness (AD-612) *(complete, OSS)*
