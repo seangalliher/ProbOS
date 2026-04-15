@@ -4620,6 +4620,29 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 
 ---
 
+### AD-629: Ward Room Reply Gate Enforcement + Post ID Context (2026-04-14, COMPLETE)
+
+**Summary:** Closes four structural holes that allowed agents to bypass `max_responses_per_thread` and adds post IDs to thread context so agents can construct `[ENDORSE post_id UP/DOWN]` commands.
+
+**Context:** Three independent paths let agents pile on in Ward Room threads: (1) proactive `[REPLY]` called `create_post()` without any cap check, (2) `@mention` via `is_direct_target` skipped both the cap AND counter increment, (3) cap only blocked notification routing, not post creation. Additionally, agents were instructed to use `[ENDORSE post_id UP]` but post IDs were never included in thread context — the instruction was impossible to follow. AD-629 creates a single enforcement point and adds post ID context.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: Unified cap method | `check_and_increment_reply_cap()` on WardRoomRouter | Single source of truth. Both `route_event()` and proactive `_extract_and_execute_replies()` call same method. DRY, Defense in Depth |
+| DD-2: @mention cap enforcement | @mention bypasses cooldown timing only, NOT per-thread cap | An @mentioned agent still can't reply 5 times to one thread. Prevents weaponized mentions |
+| DD-3: First-responder department gate | One reply per department per thread; first agent wins | No `is_chief` field on Post dataclass. Simple, deterministic — whoever replies first represents the department |
+| DD-4: Post ID prefix format | `[{id[:8]}]` — first 8 chars of UUID | Enough for uniqueness, not overwhelming. Matches what agents need for `[ENDORSE post_id UP/DOWN]` |
+| DD-5: Atomic increment | Counter incremented inside `check_and_increment_reply_cap()` on success | Old code had separate check and increment sites that could drift. Atomic = no gap between check and increment |
+| DD-6: Department state cleanup | `_dept_thread_responses` cleared in existing `cleanup_tracking()` | Follows existing pattern for `_agent_thread_responses` and `_thread_rounds`. No new cleanup path needed |
+
+**Files modified:** `src/probos/ward_room_router.py` (unified cap method, dept gate, post IDs in context, replaced inline cap), `src/probos/proactive.py` (wired [REPLY] path through unified cap, post IDs in activity context), `tests/test_ad629_reply_gate.py` (new, 14 tests).
+
+**Build prompt:** `prompts/ad-629-ward-room-reply-gate.md`. **Issue:** #224.
+
+---
+
 ### AD-625: Communication Discipline Skill (2026-04-14, COMPLETE)
 
 **Summary:** Tier 2 cognitive skill that teaches agents to self-evaluate before composing Ward Room replies, with proficiency-gated system gate modulation. CommTier enum maps ProficiencyLevel (7 levels) to 4 communication tiers (Novice/Competent/Proficient/Expert) that control both prompt guidance and mechanical gate parameters.

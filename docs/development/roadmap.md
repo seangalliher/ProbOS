@@ -5532,7 +5532,7 @@ joint reduced-duty recommendation with remediation plan). TRAINO division of res
 Medical = fitness-for-duty, Counselor = behavioral observation, TRAINO = qualification
 tracking + training execution. Issue #223.
 
-**AD-629: Ward Room Reply Gate Enforcement + Post ID Context** *(planned, OSS, depends:
+**AD-629: Ward Room Reply Gate Enforcement + Post ID Context** *(COMPLETE 2026-04-14, OSS, depends:
 AD-424, AD-426, AD-437, AD-625, BF-016b, BF-105, BF-171)* — Three structural holes allow
 agents to bypass `max_responses_per_thread`: (1) proactive `[REPLY]` path calls
 `create_post()` without checking `_agent_thread_responses`, (2) `is_direct_target` bypass
@@ -5550,6 +5550,26 @@ context. Issue #224.
 *Connects to: AD-424 (thread classification — chief funnel), AD-426 (endorsement activation),
 AD-437 (action space), AD-625 (communication discipline skill), BF-016b (per-thread cap),
 BF-105 (self-repetition guard), BF-171 (channel cooldown).*
+
+**AD-630: Leadership Developmental Feedback** *(SCOPED, OSS, depends: AD-504, AD-506b,
+AD-629, AD-625, AD-596a–e)* — Department Chiefs gain the ability to observe subordinate
+communication patterns and provide developmental feedback through the chain of command.
+Navy parallel: CPOs observe, coach, and develop — they don't wait for a circuit breaker
+trip. **Components:** (A) Per-agent communication pattern metrics on WardRoomRouter (posts,
+replies, endorsements, redundant posts, cap hits, silence ratio). (B) Leadership Feedback
+cognitive skill (`leadership-feedback/SKILL.md`) — augmentation for Chief+ rank
+(lieutenant_commander minimum) that teaches pattern recognition and developmental DM
+composition. (C) Subordinate stats injected into Chief proactive context during
+`_gather_context()`. (D) Leadership and Mentorship standing order addition to
+`federation.md`. (E) Developmental DMs flow through existing DM delivery → episodic memory
+→ dream consolidation pipeline — no new infrastructure. Scope boundary: NOT
+onboarding/training (AD-628 TRAINO), NOT Holodeck (AD-539b), NOT clinical (AD-505
+Counselor), NOT structural limits (AD-629). This is day-to-day leadership reinforcement.
+Issue #225.
+
+*Connects to: AD-504 (self-monitoring), AD-506b (peer repetition detection), AD-629
+(reply gates), AD-625 (communication skill), AD-596a–e (cognitive skill catalog), AD-628
+(Training Officer — adjacent but separate scope).*
 
 ---
 

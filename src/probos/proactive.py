@@ -1216,7 +1216,9 @@ class ProactiveCognitiveLoop:
                                 {
                                     "type": a["type"],
                                     "author": a["author"],
-                                    "body": a.get("title", a.get("body", ""))[:500],
+                                    # AD-629: Include post ID prefix for [ENDORSE post_id UP/DOWN]
+                                    "body": (f"[{(a.get('post_id', a.get('id', '')) or '')[:8]}] " if a.get("post_id", a.get("id")) else "")
+                                        + (a.get("title", a.get("body", ""))[:500]),
                                     "net_score": a.get("net_score", 0),       # AD-426
                                     "post_id": a.get("post_id", a.get("id", "")),  # AD-426
                                     "thread_id": a.get("thread_id", ""),  # AD-437
@@ -1248,7 +1250,9 @@ class ProactiveCognitiveLoop:
                                 {
                                     "type": item["type"],
                                     "author": item.get("author", "unknown"),
-                                    "body": item.get("body", "")[:500],
+                                    # AD-629: Include post ID prefix for [ENDORSE post_id UP/DOWN]
+                                    "body": (f"[{(item.get('post_id', item.get('id', '')) or '')[:8]}] " if item.get("post_id", item.get("id")) else "")
+                                        + (item.get("body", "")[:500]),
                                     "channel": "All Hands",
                                     "net_score": item.get("net_score", 0),       # AD-426
                                     "post_id": item.get("post_id", item.get("id", "")),  # AD-426
@@ -1281,7 +1285,9 @@ class ProactiveCognitiveLoop:
                                 {
                                     "type": item["type"],
                                     "author": item.get("author", "unknown"),
-                                    "body": item.get("body", "")[:500],
+                                    # AD-629: Include post ID prefix for [ENDORSE post_id UP/DOWN]
+                                    "body": (f"[{(item.get('post_id', item.get('id', '')) or '')[:8]}] " if item.get("post_id", item.get("id")) else "")
+                                        + (item.get("body", "")[:500]),
                                     "channel": "Recreation",
                                     "net_score": item.get("net_score", 0),
                                     "post_id": item.get("post_id", item.get("id", "")),
@@ -2616,6 +2622,15 @@ class ProactiveCognitiveLoop:
                             _reply_cd - (time.monotonic() - last_reply),
                         )
                         continue
+
+                # AD-629: Per-thread reply cap — unified enforcement
+                wr_router = getattr(rt, 'ward_room_router', None)
+                if wr_router and not wr_router.check_and_increment_reply_cap(thread_id, agent.id):
+                    logger.debug(
+                        "AD-629: Reply cap hit for %s in thread %s",
+                        agent.agent_type, thread_id[:8],
+                    )
+                    continue
 
                 # Get callsign
                 callsign = ""

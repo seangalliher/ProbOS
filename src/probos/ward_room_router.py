@@ -72,6 +72,7 @@ class WardRoomRouter:
         self._coalesce_timers: dict[str, asyncio.TimerHandle] = {}  # AD-616: thread_id -> pending timer
         self._coalesce_ms: int = getattr(config.ward_room, 'event_coalesce_ms', 200)
         self._channel_members: dict[str, set[str]] = {}  # AD-621: channel_id -> {agent_ids}
+        self._dept_thread_responses: dict[str, set[str]] = {}  # AD-629: thread_id -> {department_ids}
 
     # ------------------------------------------------------------------
     # AD-625: Communication proficiency helpers
@@ -93,6 +94,62 @@ class WardRoomRouter:
         except Exception:
             logger.debug("Comm gate override lookup failed for %s", agent_id, exc_info=True)
         return None
+
+    # ------------------------------------------------------------------
+    # AD-629: Unified reply cap — single enforcement point
+    # ------------------------------------------------------------------
+
+    def check_and_increment_reply_cap(
+        self, thread_id: str, agent_id: str,
+    ) -> bool:
+        """Check whether agent_id may reply to thread_id.
+
+        Returns True if the agent is under the cap (reply allowed).
+        Returns False if the cap is reached (reply blocked).
+        When True, atomically increments the counter.
+
+        AD-629: Single enforcement point. Both ward_room_router.route_event()
+        and proactive.py._extract_and_execute_replies() call this instead of
+        inlining their own checks.
+        """
+        # --- Per-agent cap ---
+        max_per_thread = getattr(
+            self._config.ward_room, 'max_agent_responses_per_thread', 3,
+        )
+        # AD-625: Proficiency-modulated gate override
+        _overrides = self._get_comm_gate_overrides(agent_id)
+        if _overrides is not None:
+            max_per_thread = _overrides.max_responses_per_thread
+
+        thread_agent_key = f"{thread_id}:{agent_id}"
+        prior_responses = self._agent_thread_responses.get(thread_agent_key, 0)
+        if prior_responses >= max_per_thread:
+            logger.debug(
+                "AD-629: Agent %s hit per-thread cap (%d) in thread %s",
+                agent_id[:12], max_per_thread, thread_id[:8],
+            )
+            return False
+
+        # --- Per-department gate (first responder wins) ---
+        dept_id = None
+        if self._ontology:
+            agent_obj = self._registry.get(agent_id)
+            if agent_obj:
+                dept_id = self._ontology.get_agent_department(agent_obj.agent_type)
+        if dept_id:
+            dept_set = self._dept_thread_responses.get(thread_id, set())
+            if dept_id in dept_set:
+                logger.debug(
+                    "AD-629: Dept %s already replied in thread %s, blocking %s",
+                    dept_id, thread_id[:8], agent_id[:12],
+                )
+                return False
+            # Record department participation
+            self._dept_thread_responses.setdefault(thread_id, set()).add(dept_id)
+
+        # Increment and allow
+        self._agent_thread_responses[thread_agent_key] = prior_responses + 1
+        return True
 
     # ------------------------------------------------------------------
     # Public API
@@ -293,9 +350,12 @@ class WardRoomRouter:
                 # Include recent posts (last 5) for context
                 recent_posts = posts[-5:] if len(posts) > 5 else posts
                 for p in recent_posts:
+                    p_id = p.get("id", "") if isinstance(p, dict) else getattr(p, "id", "")
                     p_callsign = p.get("author_callsign", "") if isinstance(p, dict) else getattr(p, "author_callsign", "")
                     p_body = p.get("body", "") if isinstance(p, dict) else getattr(p, "body", "")
-                    thread_context += f"\n{p_callsign}: {p_body}"
+                    # AD-629: Include post ID so agents can construct [ENDORSE post_id UP/DOWN]
+                    _id_prefix = f"[{p_id[:8]}] " if p_id else ""
+                    thread_context += f"\n{_id_prefix}{p_callsign}: {p_body}"
 
         # --- Send intents to target agents ---
         from probos.types import IntentMessage
@@ -370,20 +430,9 @@ class WardRoomRouter:
                 continue
 
             # BF-016b: Per-thread agent response cap — prevent thread explosion
-            if not is_direct_target:
-                max_per_thread = getattr(self._config.ward_room, 'max_agent_responses_per_thread', 3)
-                # AD-625: Proficiency-modulated gate override
-                _overrides = self._get_comm_gate_overrides(agent_id)
-                if _overrides is not None:
-                    max_per_thread = _overrides.max_responses_per_thread
-                thread_agent_key = f"{thread_id}:{agent_id}"
-                prior_responses = self._agent_thread_responses.get(thread_agent_key, 0)
-                if prior_responses >= max_per_thread:
-                    logger.debug(
-                        "Ward Room: agent %s hit per-thread response cap (%d) in thread %s",
-                        agent_id[:12], max_per_thread, thread_id[:8],
-                    )
-                    continue
+            # AD-629: Unified reply cap (applies to all agents, including @mentioned)
+            if not self.check_and_increment_reply_cap(thread_id, agent_id):
+                continue
 
             intent = IntentMessage(
                 intent="ward_room_notification",
@@ -457,9 +506,6 @@ class WardRoomRouter:
                         self._cooldowns[agent_id] = time.time()
                         round_participants.add(agent_id)
                         responded_this_event = True
-                        # BF-016b: Increment per-thread response count
-                        if not is_direct_target:
-                            self._agent_thread_responses[thread_agent_key] = prior_responses + 1
             except Exception as e:
                 logger.warning("Ward Room agent notification failed for %s: %s", agent_id, e)
 
@@ -908,6 +954,8 @@ class WardRoomRouter:
         """Remove in-memory tracking entries for pruned threads (AD-416)."""
         for tid in pruned_thread_ids:
             self._thread_rounds.pop(tid, None)
+            # AD-629: Clean up department tracking
+            self._dept_thread_responses.pop(tid, None)
             keys_to_remove = [k for k in self._round_participants
                               if k.startswith(f"{tid}:")]
             for k in keys_to_remove:
