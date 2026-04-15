@@ -5517,6 +5517,23 @@ Build prompt: prompts/ad-626-dual-mode-skill-activation.md.
 
 ---
 
+**AD-628: Crew Skill Readiness Monitoring + Training Officer Role** *(SCOPED, OSS, depends:
+AD-596a–e, AD-625/626/627, AD-535, AD-506a, AD-566a–f, AD-477, AD-486, AD-539b)* —
+Crew skill performance monitoring by Medical + Counselor, backed by structured skill telemetry
+events. Introduces **Training Officer (TRAINO)** as new crew agent — qualification tracking,
+training coordination, new agent onboarding, Holodeck simulation management. Naval model:
+PQS qualification system + COSC stress continuum + IMR readiness + Training Team + Career
+Development Boards + C-Rating readiness reporting. Seven sub-ADs: AD-628a (skill telemetry
+events), AD-628b (agent skill readiness profile), AD-628c (Training Officer agent + standing
+orders), AD-628d (TRAINO Holodeck integration — drill scheduling + evaluation), AD-628e
+(TRAINO onboarding coordination — Birth Chamber mentorship), AD-628f (readiness reporting —
+ship-wide + department skill coverage metrics), AD-628g (LIMDU protocol — Medical + TRAINO
+joint reduced-duty recommendation with remediation plan). TRAINO division of responsibility:
+Medical = fitness-for-duty, Counselor = behavioral observation, TRAINO = qualification
+tracking + training execution. Issue #223.
+
+---
+
 ### DM Rendering + Thread Depth + DM Tag Robustness (AD-612) *(complete, OSS)*
 
 **AD-612: DM Rendering, Thread Depth Flattening, and DM Tag Robustness** *(complete, OSS, depends: AD-453 DM Extraction, AD-523a DM Viewer, BF-156/157 DM Delivery)* — Three related Ward Room communication fixes. (A) **DM regex robustness**: hardened regex from newline-requiring `\n(.*?)\n[/DM]` to two-tier extraction — closed pattern handles multiline/single-line/inline with negative lookahead preventing cross-DM-tag consumption, unclosed pattern captures to next `[DM` tag or end-of-string. (B) **IM-style DM rendering**: WardRoomPostItem gains `flat`/`allPosts`/`parentCallsign` props, WardRoomThreadDetail detects `dm-detail` view from store and renders chronological flat messages with "replying to @callsign" back-references. (C) **Thread depth flattening**: `MAX_THREAD_DEPTH` constant lowered from 4 to 2, depth >= 2 shows parentCallsign back-reference instead of further indentation. 3 source files, 2 new test files (12 pytest + 7 vitest = 19 tests).

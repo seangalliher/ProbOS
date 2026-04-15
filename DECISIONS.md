@@ -4575,6 +4575,51 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 
 **Build prompt:** `prompts/ad-596e-skill-validation-linting.md`. **Issue:** #166.
 
+### AD-628: Crew Skill Readiness Monitoring + Training Officer Role (2026-04-14, SCOPED)
+
+**Summary:** Crew skill performance monitoring by Medical + Counselor agents, backed by structured skill telemetry events. Introduces Training Officer (TRAINO) as a new crew agent role responsible for qualification tracking, training coordination, new agent onboarding, and Holodeck simulation management. Naval analog: PQS qualification system + COSC stress continuum + IMR readiness + Training Team + Career Development Boards.
+
+**Context:** AD-625/626/627 established the communication discipline skill and augmentation injection pipeline, but there is no feedback loop — no agent can observe whether skills are loading, whether proficiency gates are blocking, or whether agents are following skill instructions. Medical agents diagnose crew cognitive health but have zero visibility into skill telemetry. The Counselor monitors cognitive zones (AD-506a) and behavioral drift (AD-566c) but cannot correlate with skill proficiency trends. The Navy separates these responsibilities: Medical handles fitness-for-duty (FFFD/LIMDU), Counselors handle behavioral observation (COSC), and a dedicated Training Officer tracks qualifications (PQS), schedules drills, evaluates performance, and reports readiness to the CO.
+
+| Component | Design Choice | Rationale |
+|---|---|---|
+| DD-1: Training Officer as new agent | New crew agent role (TRAINO), not a Counselor extension | Navy separates training from medical/counseling. Training Officer owns qualification tracking, drill scheduling, readiness reporting. Counselor retains behavioral/wellness domain. Prevents Counselor scope creep |
+| DD-2: Skill telemetry events | Structured events (SKILL_LOADED, SKILL_BLOCKED, SKILL_REGRESSION) flowing through event bus | Medical/Counselor/TRAINO can subscribe via existing event infrastructure (AD-503 pattern). No log file parsing — agents read structured data, not text |
+| DD-3: Training Officer owns onboarding | TRAINO coordinates new agent cognitive onboarding + Holodeck scenarios | Currently agent_onboarding.py is infrastructure code with no agent ownership. TRAINO provides the "human element" — a knowledgeable mentor guiding new crew through orientation (connects AD-486 Holodeck Birth Chamber) |
+| DD-4: Training Officer owns Holodeck | TRAINO schedules and evaluates Holodeck training scenarios | Holodeck creates experiences that generate memories (AD-486). Someone needs to design scenarios, schedule drills, and evaluate performance. TRAINO is the natural owner (connects AD-539b scenario generation, AD-477 qualification programs) |
+| DD-5: LIMDU analog | Medical + TRAINO joint authority to recommend reduced duty scope during skill remediation | Navy LIMDU (Limited Duty) requires medical recommendation. ProbOS analog: agent showing skill regression gets reduced proactive cycle participation while re-training via Holodeck. Counselor provides behavioral assessment, Medical provides fitness determination, TRAINO provides remediation plan |
+| DD-6: Readiness reporting | Ship-wide and per-department skill coverage metrics, C-rating analog | Navy DRRS-N readiness reporting across Personnel/Training/Equipment/Supply pillars. ProbOS Training pillar: aggregate skill coverage, proficiency distribution, trend direction. Captain gets a single readiness score |
+| DD-7: Division of responsibility | Medical = fitness-for-duty, Counselor = behavioral observation, TRAINO = qualification tracking + training execution | Mirrors Navy organizational structure. Each role has distinct authority and distinct data needs. No overlap in decision authority — collaboration in assessment |
+
+**Naval Reference Model:**
+
+| Navy Concept | ProbOS Analog | Owner |
+|---|---|---|
+| PQS (Personnel Qualification Standards) | Skill Framework (AD-535) + Cognitive Skill Catalog (AD-596) | TRAINO |
+| Training Team / Training Officer | Training Officer agent (new) | TRAINO |
+| COSC Stress Continuum (Ready/Reacting/Injured/Ill) | Cognitive Zones GREEN/AMBER/RED/CRITICAL (AD-506a) | Counselor |
+| IMR (Individual Medical Readiness) | Agent Skill Readiness Profile (new) | Medical + TRAINO |
+| Career Development Board (CDB) | Skill progression recommendations | TRAINO + Dept Chiefs |
+| FFFD / LIMDU (Fit for Full Duty / Limited Duty) | Reduced duty scope during remediation | Medical + TRAINO |
+| C-Rating Training Pillar | Ship-wide skill readiness score | TRAINO → Captain |
+| Drill Scheduling & Evaluation | Holodeck scenario management (AD-539b) | TRAINO |
+| PQS Board Examination | Qualification Programs (AD-477) | TRAINO |
+
+**Sub-ADs (tentative decomposition):**
+- AD-628a: Skill Telemetry Events — structured events for skill loading, blocking, usage, regression
+- AD-628b: Agent Skill Readiness Profile — per-agent queryable skill state (qualifications, proficiency levels, trends)
+- AD-628c: Training Officer Agent — new crew role with TRAINO standing orders, department assignment, onboarding ownership
+- AD-628d: TRAINO Holodeck Integration — drill scheduling, scenario selection, performance evaluation (connects AD-539b, AD-486)
+- AD-628e: TRAINO Onboarding Coordination — new agent cognitive onboarding mentorship (connects AD-486 Birth Chamber)
+- AD-628f: Readiness Reporting — ship-wide and department skill coverage metrics, C-rating analog
+- AD-628g: LIMDU Protocol — Medical + TRAINO joint reduced-duty recommendation with remediation plan
+
+**Depends:** AD-596a–e (skill catalog), AD-625/626/627 (communication skill + augmentation), AD-535 (Dreyfus proficiency), AD-506a (cognitive zones), AD-566a–f (qualification probes + drift detection), AD-477 (qualification programs), AD-486 (Holodeck Birth Chamber), AD-539b (Holodeck scenarios)
+
+**Files:** None yet — scoping only.
+
+---
+
 ### AD-625: Communication Discipline Skill (2026-04-14, COMPLETE)
 
 **Summary:** Tier 2 cognitive skill that teaches agents to self-evaluate before composing Ward Room replies, with proficiency-gated system gate modulation. CommTier enum maps ProficiencyLevel (7 levels) to 4 communication tiers (Novice/Competent/Proficient/Expert) that control both prompt guidance and mechanical gate parameters.

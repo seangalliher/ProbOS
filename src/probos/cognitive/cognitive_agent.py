@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -22,6 +23,11 @@ _DECISION_CACHES: dict[str, dict[str, tuple[dict, float, float]]] = {}
 # {agent_type: {hash: (decision_dict, created_at_monotonic, ttl_seconds)}}
 _CACHE_HITS: dict[str, int] = {}
 _CACHE_MISSES: dict[str, int] = {}
+
+# PROBOS_SKILL_DEBUG=1 — verbose skill loading diagnostics at INFO level.
+# Shows why augmentation skills matched/missed, proficiency gate results,
+# and catalog state. Toggle on to diagnose skill injection issues.
+_SKILL_DEBUG = os.environ.get("PROBOS_SKILL_DEBUG", "").lower() in ("1", "true", "yes")
 
 
 class CognitiveAgent(BaseAgent):
@@ -1879,6 +1885,8 @@ class CognitiveAgent(BaseAgent):
             return ""
         catalog = getattr(self, '_cognitive_skill_catalog', None)
         if not catalog:
+            if _SKILL_DEBUG:
+                logger.info("AD-626 [SKILL_DEBUG]: No catalog on %s", self.agent_type)
             return ""
 
         department = getattr(self, 'department', None)
@@ -1889,6 +1897,13 @@ class CognitiveAgent(BaseAgent):
             intent, department=department, agent_rank=rank_val,
         )
         if not entries:
+            if _SKILL_DEBUG:
+                logger.info(
+                    "AD-626 [SKILL_DEBUG]: No augmentation skills matched intent='%s' "
+                    "dept='%s' rank='%s' on %s (catalog has %d skills)",
+                    intent, department, rank_val, self.agent_type,
+                    len(catalog._cache),
+                )
             self._augmentation_skills_used = []
             return ""
 
@@ -1898,6 +1913,11 @@ class CognitiveAgent(BaseAgent):
         loaded_entries = []
         for entry in entries:
             if bridge and not bridge.check_proficiency_gate(self.id, entry, profile):
+                if _SKILL_DEBUG:
+                    logger.info(
+                        "AD-626 [SKILL_DEBUG]: Proficiency gate blocked '%s' on %s",
+                        entry.name, self.agent_type,
+                    )
                 continue
             instructions = catalog.get_instructions(entry.name)
             if instructions:
@@ -1905,7 +1925,7 @@ class CognitiveAgent(BaseAgent):
                     f"\n\n---\n\n## Skill Guidance: {entry.name}\n\n{instructions}"
                 )
                 loaded_entries.append(entry)
-                logger.debug(
+                logger.info(
                     "AD-626: Loaded augmentation skill '%s' for intent '%s' on %s",
                     entry.name, intent, self.agent_type,
                 )

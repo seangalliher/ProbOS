@@ -276,6 +276,14 @@ class CognitiveSkillCatalog:
                 count += 1
 
         logger.info("AD-596a: Scanned %d cognitive skills from %s", count, self._skills_dir)
+
+        # AD-626: Log activation modes so operators can verify augmentation skills are registered
+        for entry in self._cache.values():
+            logger.info(
+                "AD-626: Skill '%s' registered — activation=%s, intents=%s",
+                entry.name, entry.activation, entry.intents,
+            )
+
         return count
 
     async def register(self, entry: CognitiveSkillEntry) -> None:
