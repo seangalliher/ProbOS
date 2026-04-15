@@ -1179,6 +1179,12 @@ class CognitiveAgent(BaseAgent):
         Builds messages, calls LLM, records to journal.
         Returns decision dict. Does NOT check decision cache or procedural memory.
         """
+        # AD-626: Load augmentation skills BEFORE building user message
+        # so _build_user_message() can frame tasks with skill instructions.
+        _aug_instructions = self._load_augmentation_skills(observation.get("intent", ""))
+        if _aug_instructions:
+            observation["_augmentation_skill_instructions"] = _aug_instructions
+
         user_message = await self._build_user_message(observation)
 
         # Strategy advice (AD-384)
@@ -1347,14 +1353,6 @@ class CognitiveAgent(BaseAgent):
         _skill_instr = observation.get("cognitive_skill_instructions")
         if _skill_instr:
             composed += f"\n\n---\n\n## Active Skill: {observation.get('cognitive_skill_name', 'Unknown')}\n\n{_skill_instr}"
-
-        # AD-626: Load augmentation skills for handled intents
-        # Skill instructions are injected into the user message (task context),
-        # not the system prompt — aligns with OpenClaw/Claude Code lazy-loading
-        # pattern where skills frame the task, not the identity.
-        _aug_instructions = self._load_augmentation_skills(observation.get("intent", ""))
-        if _aug_instructions:
-            observation["_augmentation_skill_instructions"] = _aug_instructions
 
         request = LLMRequest(
             prompt=user_message,
@@ -1933,6 +1931,60 @@ class CognitiveAgent(BaseAgent):
 
         self._augmentation_skills_used = loaded_entries
         return "".join(parts)
+
+    def _frame_task_with_skill(
+        self,
+        skill_instructions: str,
+        task_label: str,
+        context_summary: str = "",
+    ) -> list[str]:
+        """AD-626: Generic task-framed skill injection.
+
+        Produces preamble lines that frame a task with augmentation skill
+        instructions. The caller appends task-specific content after these
+        lines. This is the single injection mechanism for all intent types —
+        skill content and framing are task-type-agnostic. Specific metadata
+        (e.g. thread reply counts) is provided by the caller via
+        context_summary.
+        """
+        lines = [""]
+        lines.append(f"=== TASK: {task_label} ===")
+        if context_summary:
+            lines.append(f"[{context_summary}]")
+        lines.append(skill_instructions)
+        lines.append("=== Apply the above skill to the content below ===")
+        lines.append("")
+        return lines
+
+    @staticmethod
+    def _extract_thread_metadata(thread_text: str) -> str:
+        """Extract reply count and contributor callsigns from Ward Room thread text.
+
+        Returns a summary string like 'Replies so far: ~3 | Contributors: A, B'
+        or empty string if no metadata can be extracted. This is Ward-Room-
+        specific context passed to the generic _frame_task_with_skill().
+        """
+        if not thread_text:
+            return ""
+        _lines = thread_text.strip().split("\n")
+        _reply_count = sum(
+            1 for ln in _lines
+            if ln.strip().startswith("- ") or ln.strip().startswith("Reply from")
+        )
+        _callsigns: set[str] = set()
+        for ln in _lines:
+            for marker in ("posted:", "Reply from ", "— "):
+                idx = ln.find(marker)
+                if idx != -1:
+                    _cs = ln[idx + len(marker):].strip().split()[0].rstrip(":,")
+                    if _cs and len(_cs) < 30:
+                        _callsigns.add(_cs)
+        _parts: list[str] = []
+        if _reply_count > 0:
+            _parts.append(f"Replies so far: ~{_reply_count}")
+        if _callsigns:
+            _parts.append(f"Contributors: {', '.join(sorted(_callsigns))}")
+        return " | ".join(_parts) if _parts else ""
 
     def _detect_self_in_content(self, content: str) -> str:
         """Detect if agent's own callsign appears in content and return grounding cue.
@@ -2528,38 +2580,13 @@ class CognitiveAgent(BaseAgent):
                     f"Primary basis: {_attr.primary_source.value}.]"
                 )
 
-            # AD-626: Task-framed skill injection — skill instructions wrap the
-            # thread content so the agent processes it through the skill lens.
-            # This is an improvement over OpenClaw's model: instead of the skill
-            # being a separate message the model reads, the skill FRAMES the task.
-            # Pre-computed thread metadata helps the agent execute Phase 1 (RECEIVE).
+            # AD-626: Generic task-framed skill injection
             _aug_skill = observation.get("_augmentation_skill_instructions")
             if _aug_skill and context:
-                # Pre-compute thread metadata to assist Phase 1 (RECEIVE)
-                _thread_lines = context.strip().split("\n")
-                _reply_count = sum(1 for ln in _thread_lines if ln.strip().startswith("- ") or ln.strip().startswith("Reply from"))
-                _callsigns_seen: set[str] = set()
-                for ln in _thread_lines:
-                    for marker in ("posted:", "Reply from ", "— "):
-                        idx = ln.find(marker)
-                        if idx != -1:
-                            _cs = ln[idx + len(marker):].strip().split()[0].rstrip(":,")
-                            if _cs and len(_cs) < 30:
-                                _callsigns_seen.add(_cs)
-                _meta_parts = []
-                if _reply_count > 0:
-                    _meta_parts.append(f"Replies so far: ~{_reply_count}")
-                if _callsigns_seen:
-                    _meta_parts.append(f"Contributors: {', '.join(sorted(_callsigns_seen))}")
-                _meta_line = " | ".join(_meta_parts) if _meta_parts else ""
-
-                wr_parts.append("")
-                wr_parts.append("=== TASK: Process Ward Room Thread ===")
-                if _meta_line:
-                    wr_parts.append(f"[Thread metadata: {_meta_line}]")
-                wr_parts.append(_aug_skill)
-                wr_parts.append("=== Apply the above skill to the thread below ===")
-                wr_parts.append("")
+                _meta = self._extract_thread_metadata(context)
+                wr_parts.extend(self._frame_task_with_skill(
+                    _aug_skill, "Process Ward Room Thread", _meta
+                ))
 
             if context:
                 wr_parts.append(f"\nConversation so far:\n{context}")
@@ -2721,16 +2748,16 @@ class CognitiveAgent(BaseAgent):
                     pt_parts.append(f"  - [{e.get('category', '?')}] {e.get('event', '?')}")
                 pt_parts.append("")
 
-            # AD-626: Task-framed skill injection for proactive think
-            _aug_skill = observation.get("_augmentation_skill_instructions")
-            if _aug_skill and wr_activity:
-                pt_parts.append("=== TASK: Review Ward Room Activity ===")
-                pt_parts.append(_aug_skill)
-                pt_parts.append("=== Apply the above skill when reviewing the activity below ===")
-                pt_parts.append("")
-
             # Recent Ward Room activity (AD-413)
             wr_activity = context_parts.get("ward_room_activity", [])
+
+            # AD-626: Generic task-framed skill injection for proactive think
+            _aug_skill = observation.get("_augmentation_skill_instructions")
+            if _aug_skill and wr_activity:
+                pt_parts.extend(self._frame_task_with_skill(
+                    _aug_skill, "Review Ward Room Activity"
+                ))
+
             if wr_activity:
                 pt_parts.append("Recent Ward Room discussion in your department:")
                 for a in wr_activity:

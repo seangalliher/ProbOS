@@ -578,3 +578,76 @@ class TestEdgeCases:
 
         assert len(discovery) == 1
         assert len(augmentation) == 1
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Generic task-framed skill injection
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestFrameTaskWithSkill:
+    """_frame_task_with_skill() generic framing method."""
+
+    def _make_agent(self):
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+        agent = MagicMock(spec=CognitiveAgent)
+        agent._frame_task_with_skill = CognitiveAgent._frame_task_with_skill.__get__(agent)
+        return agent
+
+    def test_basic_framing(self):
+        agent = self._make_agent()
+        lines = agent._frame_task_with_skill("Do the thing.", "My Task")
+        text = "\n".join(lines)
+        assert "=== TASK: My Task ===" in text
+        assert "Do the thing." in text
+        assert "=== Apply the above skill to the content below ===" in text
+
+    def test_context_summary_included(self):
+        agent = self._make_agent()
+        lines = agent._frame_task_with_skill("Instructions", "Task", "Replies: 3")
+        text = "\n".join(lines)
+        assert "[Replies: 3]" in text
+
+    def test_no_context_summary_no_bracket_line(self):
+        agent = self._make_agent()
+        lines = agent._frame_task_with_skill("Instructions", "Task")
+        assert not any("[" in ln and "]" in ln for ln in lines if "TASK" not in ln and "Apply" not in ln)
+
+    def test_returns_list_of_strings(self):
+        agent = self._make_agent()
+        result = agent._frame_task_with_skill("X", "Y")
+        assert isinstance(result, list)
+        assert all(isinstance(s, str) for s in result)
+
+    def test_generic_for_any_task_label(self):
+        """Framing works with arbitrary task labels — not hardcoded to Ward Room."""
+        agent = self._make_agent()
+        for label in ["Process Ward Room Thread", "Review Code", "Analyze Metrics", "Draft Report"]:
+            lines = agent._frame_task_with_skill("skill body", label)
+            text = "\n".join(lines)
+            assert f"=== TASK: {label} ===" in text
+
+
+class TestExtractThreadMetadata:
+    """_extract_thread_metadata() Ward-Room-specific helper."""
+
+    def test_counts_replies(self):
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+        text = "Thread title\n- Reply one\n- Reply two\n- Reply three"
+        result = CognitiveAgent._extract_thread_metadata(text)
+        assert "Replies so far: ~3" in result
+
+    def test_extracts_callsigns(self):
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+        text = "Forge posted: something\nReply from Atlas: more\n— Lynx said stuff"
+        result = CognitiveAgent._extract_thread_metadata(text)
+        assert "Contributors:" in result
+
+    def test_empty_text_returns_empty(self):
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+        assert CognitiveAgent._extract_thread_metadata("") == ""
+
+    def test_no_replies_no_count(self):
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+        result = CognitiveAgent._extract_thread_metadata("Just a title line")
+        assert "Replies" not in result
