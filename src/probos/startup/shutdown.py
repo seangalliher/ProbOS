@@ -329,10 +329,8 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         pass
     await runtime.event_log.stop()
 
-    # Clean up LLM client
-    await runtime.llm_client.close()
-
     # Tier 3: Shutdown consolidation — flush remaining episodes (AD-288)
+    # Must run BEFORE LLM client is closed — dream_cycle makes LLM calls.
     if runtime.dream_scheduler and runtime.episodic_memory:
         logger.info("Consolidating session memories...")
         try:
@@ -350,6 +348,9 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             logger.warning("Shutdown consolidation timed out (5s limit) — partial consolidation completed")
         except (asyncio.CancelledError, Exception) as e:
             logger.warning("Shutdown consolidation failed: %s", e or type(e).__name__)
+
+    # Clean up LLM client — after consolidation so dream_cycle can make LLM calls
+    await runtime.llm_client.close()
 
     # Stop dreaming scheduler
     if runtime.dream_scheduler:
