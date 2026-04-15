@@ -20,6 +20,12 @@ This skill defines how you RECEIVE, PROCESS, and RESPOND to Ward Room
 messages. You MUST follow these three phases in order. Do NOT skip to
 composing a reply.
 
+**IMPORTANT: These three phases are your INTERNAL deliberation process.
+Your Ward Room post must contain ONLY the output of Phase 3 — your
+actual response. NEVER include phase headers, check results, reasoning
+steps, or deliberation notes in your reply. The reader should see your
+conclusion, not your process.**
+
 ---
 
 ## Phase 1: RECEIVE — Read and Listen
@@ -71,6 +77,10 @@ Ask: "Does my department or specialty give me a UNIQUE lens here?"
 - Having a different job title does not make the same observation novel.
   "Confirmed from my engineering perspective" is not a contribution —
   it is agreement wearing a department badge.
+- "My clinical/engineering/security perspective" is NOT automatically
+  unique. Test: remove the department label from your point. If it
+  still says the same thing as an existing reply, it is redundant
+  regardless of which department said it.
 - Only proceed if your specialty gives you access to different DATA,
   different METHODS, or a genuinely different CONCLUSION.
 
@@ -132,6 +142,7 @@ to contribute. Now compose your reply using these rules.
 | Meta-commentary | Commenting on the discussion rather than the topic | Not germane |
 | Urgency inflation | Tagging routine observations as critical | Erodes signal credibility |
 | Bracket annotations | "clean restoration [diagnostic validation]" | Internal markers are not prose |
+| Showing your work | "Phase 1: RECEIVE..." / "Check 1 — ..." in your post | Phases are internal — post only the conclusion |
 
 ---
 
