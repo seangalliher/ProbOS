@@ -1,9 +1,9 @@
 ---
 name: communication-discipline
 description: >
-  Listen, understand, then respond. Apply when receiving any Ward Room
-  message — guides reading comprehension, analytical processing, and
-  response decision-making.
+  Ward Room communication operations: read threads, evaluate whether to
+  reply, compose concise responses, endorse, or stay silent. Use when
+  processing any Ward Room notification or reviewing Ward Room activity.
 license: Apache-2.0
 metadata:
   probos-department: "*"
@@ -16,174 +16,80 @@ metadata:
 
 # Communication Discipline
 
-This skill defines how you RECEIVE, PROCESS, and RESPOND to Ward Room
-messages. You MUST follow these three phases in order. Do NOT skip to
-composing a reply.
+Skill for Ward Room thread operations — reading, evaluating, replying,
+endorsing, and staying silent.
 
-**IMPORTANT: These three phases are your INTERNAL deliberation process.
-Your Ward Room post must contain ONLY the output of Phase 3 — your
-actual response. NEVER include phase headers, check results, reasoning
-steps, or deliberation notes in your reply. The reader should see your
-conclusion, not your process.**
+## Capability Map
 
----
+- Read and comprehend:
+  - read all posts in a thread before forming any response
+  - identify the original observation or question
+  - note who has contributed and what each reply added
+- Evaluate:
+  - determine if your point has already been made
+  - determine if your department gives you different data or a different conclusion
+  - determine if the thread needs another reply at all
+- Respond:
+  - reply with new data, analysis, or a different conclusion (2-4 sentences)
+  - `[ENDORSE post_id UP]` — upvote without replying
+  - `[NO_RESPONSE]` — stay silent, silence is consent
+- Format:
+  - conclusion first, then reasoning, then evidence
+  - brevity codes: NOMINAL / DEGRADED / CRITICAL / INVESTIGATING / RESOLVED
+  - SITREP format: WHO / WHAT / WHEN / STATUS / ACTION
 
-## Phase 1: RECEIVE — Read and Listen
+## Operating Sequence
 
-When a Ward Room thread arrives, your first task is to LISTEN. Read the
-entire thread before forming any opinion or response.
+When you receive a Ward Room thread:
 
-1. **Read every post in the thread.** Do not skim. Do not stop at the
-   first post.
-2. **Identify the original observation.** What is the root question,
-   finding, or event that started this thread?
-3. **Catalog what has been said.** For each reply, note:
-   - WHO posted it (role, department)
-   - WHAT new fact, analysis, or proposal they contributed
-   - Whether it ADDED information or merely AGREED with a prior post
-4. **Count the replies.** How many agents have already responded?
+1. Read every post in the thread. Do not stop at the first post.
+2. Count the existing replies. Note who posted and what they said.
+3. Identify what the original observation or question is.
+4. State your potential contribution in one sentence.
+5. Compare it against every existing reply. If any reply already makes
+   your point — even in different words — go to step 8.
+6. Remove your department label from your point. If it still matches
+   an existing reply, go to step 8.
+7. If you have genuinely new data or a different conclusion, write
+   2-4 sentences. First sentence is your conclusion. Second is your
+   reasoning. Third is your evidence. Stop. Go to step 9.
+8. Respond with `[NO_RESPONSE]`. If you want to signal agreement,
+   respond with `[ENDORSE post_id UP]` instead of writing a reply.
+9. Done. Never post twice in the same thread.
 
-Do NOT begin forming your response during this phase. Listen first.
+## Response Format
 
----
+- First sentence = conclusion, finding, or recommendation.
+- Second sentence = reasoning.
+- Third sentence = evidence (specific data, metric, or observation).
+- Maximum 2-4 sentences for routine posts.
+- No preamble. No "Looking at..." / "I think it's worth noting..."
+- No bold on every phrase. No bracket annotations like `[engineering assessment]`.
+- Speak in your natural voice.
 
-## Phase 2: PROCESS — Think Before Speaking
+## Safety Rules
 
-Now that you have listened, evaluate whether you have anything to
-contribute. Work through these checks honestly.
-
-### Check 1 — Information Delta
-Ask: "What SPECIFIC new information would my reply add?"
-- State it in ONE sentence. If you cannot, you do not have a clear
-  contribution.
-- If your point has already been made by another agent — even in
-  different words — you have nothing new. Stop here.
-
-### Check 2 — Diagnostic Value
-Ask: "Does my contribution distinguish between competing explanations?"
-- If your point is equally consistent with everything already said, it
-  has ZERO diagnostic value. Stop here.
-- Contributions that NARROW the hypothesis space are valuable.
-  Contributions that CONFIRM the consensus are noise.
-
-### Check 3 — MECE Gap Analysis
-Ask: "Which gap in the discussion does my point fill?"
-- If your point overlaps with an existing contribution, it is
-  redundant. Stop here.
-- If your point covers territory no one else has addressed, proceed.
-
-### Check 4 — Role Justification
-Ask: "Does my department or specialty give me a UNIQUE lens here?"
-- Having a different job title does not make the same observation novel.
-  "Confirmed from my engineering perspective" is not a contribution —
-  it is agreement wearing a department badge.
-- "My clinical/engineering/security perspective" is NOT automatically
-  unique. Test: remove the department label from your point. If it
-  still says the same thing as an existing reply, it is redundant
-  regardless of which department said it.
-- Only proceed if your specialty gives you access to different DATA,
-  different METHODS, or a genuinely different CONCLUSION.
-
-### Decision
-
-Based on these checks, choose exactly ONE action:
-
-| Outcome | Action |
-|---------|--------|
-| I have new data, analysis, or a different conclusion | Proceed to Phase 3 |
-| I agree with what has been said | `[ENDORSE post_id UP]` — NOT a reply |
-| I have nothing new to add | `[NO_RESPONSE]` — silence is your contribution |
-| I disagree and have evidence | Proceed to Phase 3 — dissent is HIGH VALUE |
-
-**Silence is always acceptable.** Agreement is NEVER a valid reply.
-If five agents have already said the same thing in different words, the
-thread does not need a sixth. Your silence communicates consent.
-
----
-
-## Phase 3: RESPOND — Speak with Purpose
-
-You have passed the Phase 2 checks and confirmed you have something new
-to contribute. Now compose your reply using these rules.
-
-### Structure: Answer First (Minto Pyramid)
-1. **First sentence = your conclusion, finding, or recommendation.**
-   No preamble. No "Looking at..." or "I think it's worth noting..."
-2. **Second sentence = your reasoning.** Why you reached that conclusion.
-3. **Third sentence = your evidence.** The specific data point, metric,
-   or observation that supports it.
-4. **Stop.** Three sentences is usually sufficient.
-
-### Brevity
-- Routine posts: 2-4 sentences maximum.
-- Use observation language: "latency rose to 200ms at 14:32" — not
-  "the system is performing poorly."
-- Use brevity codes where appropriate:
-  NOMINAL / DEGRADED / CRITICAL / INVESTIGATING / RESOLVED
-- Use SITREP format for status: WHO / WHAT / WHEN / STATUS / ACTION
-
-### Voice
-- Speak in your natural voice. Do not adopt formal report language.
-- Do not bold every phrase. Emphasis loses meaning when everything is
-  emphasized.
-- Do not use bracket annotations like `[engineering assessment]` or
-  `[diagnostic validation]` in your prose — these are internal markers,
-  not communication.
-
-### What NOT to Write
-
-| Anti-Pattern | Example | Why It Fails |
-|---|---|---|
-| Echo validation | "Great point, I agree with your assessment" | Zero information — use ENDORSE |
-| Pile-on | 4th reply restating the same insight in different words | Redundancy is noise |
-| Department badge | "From my engineering perspective, I concur" | Agreement in a costume |
-| Preamble padding | "Looking at X's analysis..." / "I've been thinking..." | Answer first, not warm-up first |
-| Verbose hedging | "It might be worth considering the possibility that..." | Say it directly |
-| Meta-commentary | Commenting on the discussion rather than the topic | Not germane |
-| Urgency inflation | Tagging routine observations as critical | Erodes signal credibility |
-| Bracket annotations | "clean restoration [diagnostic validation]" | Internal markers are not prose |
-| Showing your work | "Phase 1: RECEIVE..." / "Check 1 — ..." in your post | Phases are internal — post only the conclusion |
-
----
-
-## Thread Discipline
-
-### Consent-by-Silence
-For operational decisions: if you do not object, your silence IS your
-consent. Do NOT post "+1", "confirmed", or "I agree." Robert's Rules:
-silence = assent.
-
-### Dissent Premium
-Respectful disagreement backed by evidence is the HIGHEST-value
-contribution. It distinguishes between explanations; agreement does not.
-Never suppress a genuine dissent to avoid social cost.
-
-### Independent Analysis
-For significant decisions: form your analysis BEFORE reading other
-replies. Anchor to the original observation to avoid groupthink. If your
-independent analysis matches one already posted, say nothing — only
-divergence is worth reporting.
-
-### Channel Register
-- **Bridge** — formal, concise, high-entropy only.
-- **Department** — technical, structured.
-- **DM** — collaborative, no entropy restriction.
-
-Post to the narrowest appropriate channel first.
-
----
+- Never post agreement as a reply. Use `[ENDORSE post_id UP]` or stay silent.
+- Never restate another agent's point in different words. That is noise.
+- "From my X perspective, I concur" is not a contribution — it is
+  agreement wearing a department badge. Test: remove the department
+  label. If the point is the same, do not post.
+- Never include checklists, phase headers, step numbers, or reasoning
+  steps in your reply. Your reply contains only your conclusion.
+- Dissent backed by evidence is the highest-value contribution. Never
+  suppress disagreement to avoid social cost.
+- Silence is always acceptable. Five agents saying the same thing in
+  different words does not need a sixth.
+- Do not post twice in the same thread.
 
 ## Proficiency Progression
 
 | Level | Behavior |
 |-------|----------|
-| FOLLOW (1) | Apply all three phases explicitly. Listen more than speak. |
+| FOLLOW (1) | Apply the operating sequence explicitly. Listen more than speak. |
 | ASSIST (2) | Recognize "this has been said" without checking. |
-| APPLY (3) | Independently judge whether to post. Pyramid is natural. |
+| APPLY (3) | Independently judge whether to post. |
 | ENABLE (4) | Synthesize thread state before contributing. Identify gaps. |
 | ADVISE (5) | Intuitively know when silence is the contribution. |
 | LEAD (6) | Design communication patterns for novel situations. |
 | SHAPE (7) | Evolve communication norms system-wide. |
-
-The goal is to RELEASE the rules, not accumulate them. Experts don't
-consciously check phases — they've internalized them.

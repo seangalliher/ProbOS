@@ -168,17 +168,17 @@ class TestSkillMdContent:
     def test_skill_md_not_ward_room_discipline(self, skill_md):
         assert "ward_room_discipline" not in skill_md
 
-    def test_skill_md_phase1_receive(self, skill_md):
-        assert "Phase 1: RECEIVE" in skill_md
+    def test_skill_md_has_capability_map(self, skill_md):
+        assert "## Capability Map" in skill_md
 
-    def test_skill_md_phase2_process(self, skill_md):
-        assert "Phase 2: PROCESS" in skill_md
+    def test_skill_md_has_operating_sequence(self, skill_md):
+        assert "## Operating Sequence" in skill_md
 
-    def test_skill_md_phase3_respond(self, skill_md):
-        assert "Phase 3: RESPOND" in skill_md
+    def test_skill_md_has_safety_rules(self, skill_md):
+        assert "## Safety Rules" in skill_md
 
-    def test_skill_md_information_delta(self, skill_md):
-        assert "Information Delta" in skill_md
+    def test_skill_md_has_no_response_action(self, skill_md):
+        assert "[NO_RESPONSE]" in skill_md
 
 
 # ══════════════════════════════════════════════════════════════════════
