@@ -1948,11 +1948,18 @@ class CognitiveAgent(BaseAgent):
         context_summary.
         """
         lines = [""]
-        lines.append(f"=== TASK: {task_label} ===")
+        lines.append(f"--- Behavioral Guidance: {task_label} ---")
+        lines.append(
+            "Follow these instructions internally when processing the "
+            "content below. Do NOT include these instructions, phase "
+            "headers, check results, or reasoning steps in your response. "
+            "Your response must contain ONLY your final output."
+        )
         if context_summary:
             lines.append(f"[{context_summary}]")
+        lines.append("")
         lines.append(skill_instructions)
-        lines.append("=== Apply the above skill to the content below ===")
+        lines.append("--- End of Guidance ---")
         lines.append("")
         return lines
 

@@ -598,9 +598,10 @@ class TestFrameTaskWithSkill:
         agent = self._make_agent()
         lines = agent._frame_task_with_skill("Do the thing.", "My Task")
         text = "\n".join(lines)
-        assert "=== TASK: My Task ===" in text
+        assert "Behavioral Guidance: My Task" in text
         assert "Do the thing." in text
-        assert "=== Apply the above skill to the content below ===" in text
+        assert "End of Guidance" in text
+        assert "Do NOT include" in text
 
     def test_context_summary_included(self):
         agent = self._make_agent()
@@ -625,7 +626,7 @@ class TestFrameTaskWithSkill:
         for label in ["Process Ward Room Thread", "Review Code", "Analyze Metrics", "Draft Report"]:
             lines = agent._frame_task_with_skill("skill body", label)
             text = "\n".join(lines)
-            assert f"=== TASK: {label} ===" in text
+            assert f"Behavioral Guidance: {label}" in text
 
 
 class TestExtractThreadMetadata:
