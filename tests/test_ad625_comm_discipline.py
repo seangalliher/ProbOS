@@ -168,17 +168,17 @@ class TestSkillMdContent:
     def test_skill_md_not_ward_room_discipline(self, skill_md):
         assert "ward_room_discipline" not in skill_md
 
-    def test_skill_md_pre_composition_checklist_present(self, skill_md):
-        assert "Pre-Composition Checklist" in skill_md
+    def test_skill_md_phase1_receive(self, skill_md):
+        assert "Phase 1: RECEIVE" in skill_md
 
-    def test_skill_md_anti_patterns_section_present(self, skill_md):
-        assert "Anti-Patterns" in skill_md
+    def test_skill_md_phase2_process(self, skill_md):
+        assert "Phase 2: PROCESS" in skill_md
 
-    def test_skill_md_thread_awareness(self, skill_md):
-        assert "Thread Awareness" in skill_md
+    def test_skill_md_phase3_respond(self, skill_md):
+        assert "Phase 3: RESPOND" in skill_md
 
-    def test_skill_md_novelty_test(self, skill_md):
-        assert "Novelty Test" in skill_md
+    def test_skill_md_information_delta(self, skill_md):
+        assert "Information Delta" in skill_md
 
 
 # ══════════════════════════════════════════════════════════════════════
