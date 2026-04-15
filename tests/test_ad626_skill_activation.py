@@ -295,8 +295,9 @@ class TestLoadAugmentationSkills:
         agent._skill_profile = None
 
         result = agent._load_augmentation_skills("proactive_think")
-        assert "## Skill Guidance: comm-discipline" in result
+        # AD-626 update: raw instructions returned (no header wrapping)
         assert "## Checklist" in result
+        assert "Check things" in result
 
     def test_not_loaded_without_catalog(self):
         agent = self._make_agent()
@@ -322,7 +323,8 @@ class TestLoadAugmentationSkills:
         agent._skill_profile = MagicMock()
 
         result = agent._load_augmentation_skills("proactive_think")
-        assert "## Skill Guidance: gated" in result
+        # AD-626 update: raw instructions returned (no header wrapping)
+        assert "Instructions" in result
         bridge.check_proficiency_gate.assert_called_once()
 
     def test_fails_proficiency_returns_empty(self):
@@ -351,10 +353,13 @@ class TestLoadAugmentationSkills:
         agent._skill_profile = None
 
         result = agent._load_augmentation_skills("proactive_think")
-        assert "## Skill Guidance: skill-a" in result
-        assert "## Skill Guidance: skill-b" in result
+        # AD-626 update: raw instructions returned (no header wrapping)
+        assert "Instructions" in result
+        # Both skills' instructions should be present
+        assert result.count("Instructions") == 2
 
-    def test_format_uses_skill_guidance_header(self):
+    def test_format_returns_raw_instructions(self):
+        """AD-626 update: augmentation skills return raw instructions, no header wrapping."""
         agent = self._make_agent()
         aug = _make_entry("my-skill", activation="augmentation", intents=["proactive_think"])
         catalog = _make_catalog(aug)
@@ -364,7 +369,9 @@ class TestLoadAugmentationSkills:
         agent._skill_profile = None
 
         result = agent._load_augmentation_skills("proactive_think")
-        assert "## Skill Guidance:" in result
+        assert "Body text" in result
+        # Raw instructions — no header wrapping
+        assert "## Skill Guidance:" not in result
         assert "## Active Skill:" not in result
 
     def test_no_skills_returns_empty_string(self):
@@ -502,7 +509,7 @@ class TestEdgeCases:
         agent._skill_profile = None
 
         result = agent._load_augmentation_skills("proactive_think")
-        assert "## Skill Guidance: aug" in result
+        assert "Body" in result
 
     def test_agent_without_bridge_still_loads_instructions(self):
         """If bridge is None, proficiency gate is skipped (always pass)."""
@@ -522,7 +529,7 @@ class TestEdgeCases:
         agent._skill_bridge = None
 
         result = agent._load_augmentation_skills("proactive_think")
-        assert "## Skill Guidance: aug" in result
+        assert "Body" in result
 
     def test_existing_discovery_skills_unaffected(self):
         """Discovery-mode skills still only appear via find_by_intent()."""

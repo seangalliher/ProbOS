@@ -1349,9 +1349,12 @@ class CognitiveAgent(BaseAgent):
             composed += f"\n\n---\n\n## Active Skill: {observation.get('cognitive_skill_name', 'Unknown')}\n\n{_skill_instr}"
 
         # AD-626: Load augmentation skills for handled intents
+        # Skill instructions are injected into the user message (task context),
+        # not the system prompt — aligns with OpenClaw/Claude Code lazy-loading
+        # pattern where skills frame the task, not the identity.
         _aug_instructions = self._load_augmentation_skills(observation.get("intent", ""))
         if _aug_instructions:
-            composed += _aug_instructions
+            observation["_augmentation_skill_instructions"] = _aug_instructions
 
         request = LLMRequest(
             prompt=user_message,
@@ -1921,9 +1924,7 @@ class CognitiveAgent(BaseAgent):
                 continue
             instructions = catalog.get_instructions(entry.name)
             if instructions:
-                parts.append(
-                    f"\n\n---\n\n## Skill Guidance: {entry.name}\n\n{instructions}"
-                )
+                parts.append(instructions)
                 loaded_entries.append(entry)
                 logger.info(
                     "AD-626: Loaded augmentation skill '%s' for intent '%s' on %s",
@@ -2527,6 +2528,39 @@ class CognitiveAgent(BaseAgent):
                     f"Primary basis: {_attr.primary_source.value}.]"
                 )
 
+            # AD-626: Task-framed skill injection — skill instructions wrap the
+            # thread content so the agent processes it through the skill lens.
+            # This is an improvement over OpenClaw's model: instead of the skill
+            # being a separate message the model reads, the skill FRAMES the task.
+            # Pre-computed thread metadata helps the agent execute Phase 1 (RECEIVE).
+            _aug_skill = observation.get("_augmentation_skill_instructions")
+            if _aug_skill and context:
+                # Pre-compute thread metadata to assist Phase 1 (RECEIVE)
+                _thread_lines = context.strip().split("\n")
+                _reply_count = sum(1 for ln in _thread_lines if ln.strip().startswith("- ") or ln.strip().startswith("Reply from"))
+                _callsigns_seen: set[str] = set()
+                for ln in _thread_lines:
+                    for marker in ("posted:", "Reply from ", "— "):
+                        idx = ln.find(marker)
+                        if idx != -1:
+                            _cs = ln[idx + len(marker):].strip().split()[0].rstrip(":,")
+                            if _cs and len(_cs) < 30:
+                                _callsigns_seen.add(_cs)
+                _meta_parts = []
+                if _reply_count > 0:
+                    _meta_parts.append(f"Replies so far: ~{_reply_count}")
+                if _callsigns_seen:
+                    _meta_parts.append(f"Contributors: {', '.join(sorted(_callsigns_seen))}")
+                _meta_line = " | ".join(_meta_parts) if _meta_parts else ""
+
+                wr_parts.append("")
+                wr_parts.append("=== TASK: Process Ward Room Thread ===")
+                if _meta_line:
+                    wr_parts.append(f"[Thread metadata: {_meta_line}]")
+                wr_parts.append(_aug_skill)
+                wr_parts.append("=== Apply the above skill to the thread below ===")
+                wr_parts.append("")
+
             if context:
                 wr_parts.append(f"\nConversation so far:\n{context}")
 
@@ -2685,6 +2719,14 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append("Recent system events:")
                 for e in events:
                     pt_parts.append(f"  - [{e.get('category', '?')}] {e.get('event', '?')}")
+                pt_parts.append("")
+
+            # AD-626: Task-framed skill injection for proactive think
+            _aug_skill = observation.get("_augmentation_skill_instructions")
+            if _aug_skill and wr_activity:
+                pt_parts.append("=== TASK: Review Ward Room Activity ===")
+                pt_parts.append(_aug_skill)
+                pt_parts.append("=== Apply the above skill when reviewing the activity below ===")
                 pt_parts.append("")
 
             # Recent Ward Room activity (AD-413)
