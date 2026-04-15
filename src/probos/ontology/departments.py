@@ -113,3 +113,17 @@ class DepartmentService:
             if a.agent_id == agent_id:
                 return a
         return None
+
+    def get_agents_for_post(self, post_id: str) -> list[Assignment]:
+        """AD-630: Return all agent assignments for a given post_id.
+
+        Typically returns one assignment, but the model allows multiple
+        agents assigned to the same billet.
+
+        Args:
+            post_id: The post identifier from organization.yaml.
+
+        Returns:
+            List of Assignment objects with matching post_id.
+        """
+        return [a for a in self._assignments.values() if a.post_id == post_id]

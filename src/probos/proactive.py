@@ -1382,6 +1382,30 @@ class ProactiveCognitiveLoop:
             except Exception:
                 logger.debug("Skill profile fetch failed for %s", agent.id, exc_info=True)
 
+        # AD-630: Subordinate communication stats for Chiefs
+        if hasattr(rt, 'ontology') and rt.ontology:
+            try:
+                subordinate_types = rt.ontology.get_subordinate_agent_types(
+                    agent.agent_type
+                )
+                if subordinate_types and hasattr(rt, 'ward_room_service') and rt.ward_room_service:
+                    sub_stats: dict = {}
+                    since = getattr(rt, '_start_time_wall', None)
+                    for sub_type in subordinate_types:
+                        sub_agent = rt.agent_pool.get(sub_type) if hasattr(rt, 'agent_pool') else None
+                        if sub_agent:
+                            sub_id = getattr(sub_agent, 'sovereign_id', None) or sub_agent.id
+                            stats = await rt.ward_room_service.get_agent_comm_stats(
+                                sub_id, since=since
+                            )
+                            if stats.get("posts_total", 0) >= 3:
+                                callsign = getattr(sub_agent, 'callsign', sub_type)
+                                sub_stats[callsign] = stats
+                    if sub_stats:
+                        context["subordinate_stats"] = sub_stats
+            except Exception:
+                logger.debug("AD-630: Subordinate stats fetch failed for %s", agent.id, exc_info=True)
+
         # AD-504: Self-monitoring context
         try:
             callsign = ""

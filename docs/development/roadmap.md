@@ -5551,20 +5551,18 @@ context. Issue #224.
 AD-437 (action space), AD-625 (communication discipline skill), BF-016b (per-thread cap),
 BF-105 (self-repetition guard), BF-171 (channel cooldown).*
 
-**AD-630: Leadership Developmental Feedback** *(SCOPED, OSS, depends: AD-504, AD-506b,
-AD-629, AD-625, AD-596a–e)* — Department Chiefs gain the ability to observe subordinate
-communication patterns and provide developmental feedback through the chain of command.
-Navy parallel: CPOs observe, coach, and develop — they don't wait for a circuit breaker
-trip. **Components:** (A) Per-agent communication pattern metrics on WardRoomRouter (posts,
-replies, endorsements, redundant posts, cap hits, silence ratio). (B) Leadership Feedback
-cognitive skill (`leadership-feedback/SKILL.md`) — augmentation for Chief+ rank
-(lieutenant_commander minimum) that teaches pattern recognition and developmental DM
-composition. (C) Subordinate stats injected into Chief proactive context during
-`_gather_context()`. (D) Leadership and Mentorship standing order addition to
-`federation.md`. (E) Developmental DMs flow through existing DM delivery → episodic memory
-→ dream consolidation pipeline — no new infrastructure. Scope boundary: NOT
-onboarding/training (AD-628 TRAINO), NOT Holodeck (AD-539b), NOT clinical (AD-505
-Counselor), NOT structural limits (AD-629). This is day-to-day leadership reinforcement.
+**AD-630: Leadership Developmental Feedback** *(COMPLETE 2026-04-15, OSS, depends: AD-504, AD-506b,
+AD-629, AD-625, AD-596a–e)* — Department Chiefs observe subordinate communication patterns
+and provide developmental mentoring via DMs. Five components: (A) Per-agent communication
+stats on WardRoomService layer (`get_agent_comm_stats()` — posts, endorsements given/received,
+credibility score). (B) Leadership Feedback cognitive skill (`leadership-feedback/SKILL.md`)
+— augmentation for Chief+ rank (lieutenant_commander minimum) that teaches pattern
+recognition and developmental DM composition. (C) Ontology reverse lookup
+(`get_subordinate_agent_types()`) discovers subordinates via `authority_over` on Post.
+(D) Subordinate stats injected into Chief proactive context during `_gather_context()`,
+rendered as `<subordinate_activity>` XML tags. (E) Leadership and Mentorship standing
+order in `federation.md`. Developmental DMs flow through existing DM delivery → episodic
+memory → dream consolidation — no new infrastructure. 28 tests across 8 classes.
 Issue #225.
 
 *Connects to: AD-504 (self-monitoring), AD-506b (peer repetition detection), AD-629
@@ -5675,24 +5673,20 @@ budget gating), AD-617b (token budgets — separate speculative pool), AD-504 (s
 prediction accuracy metric), AD-618 (Bill System — anticipatory SOP preparation), AD-625/631
 (communication skill — conversational pre-rehearsal applies comm discipline criteria in focused context).*
 
-**AD-634: Notebook Analytical Quality Skill** *(SCOPED, OSS, config-only, depends: AD-631, AD-625,
-AD-626, AD-596a-e)* — Augmentation skill teaching crew agents what constitutes analytically useful
-notebook content. Existing notebook infrastructure (AD-550 dedup, AD-552 self-repetition, AD-555
-quality scoring) measures structural quality — topic diversity, freshness, novelty — but nothing
-evaluates semantic content quality. Observable failures: entries that summarize Ward Room posts
-instead of adding depth, vague process narration without findings, data recording presented as
-analysis, no temporal threading between entries on the same topic. **Config-only AD — one new
-`config/skills/notebook-quality/SKILL.md` file, no code changes.** Skill teaches: (1) Analytical
-Purpose Gate — every `[NOTEBOOK]` entry must answer a question or advance a hypothesis, (2) Finding-
-First Structure (Minto Pyramid, consistent with communication-discipline), (3) Temporal Threading —
-entries on existing topics must build on prior entries (what changed, what confirmed, what revised),
-(4) Data vs. Analysis — recording is the floor, analysis requires interpretation and comparison to
-baseline, (5) Ward Room Differentiation — notebook must go beyond what was said in thread,
-(6) Anti-Patterns with explanations (process narration, WR summary repackaging, baseline recording
-without interpretation, topic reset, conclusion-free entries), (7) Pre-Write Verification Gate —
-verify conclusion exists, builds on prior analysis, exceeds Ward Room content. Co-activates with
-communication-discipline on `proactive_think` intent — `_load_augmentation_skills()` concatenates
-both. Proficiency progression (7-level Dreyfus, FOLLOW→SHAPE). Issue #229.
+**AD-634: Notebook Analytical Quality Skill** *(COMPLETE 2026-04-15, OSS, config-only, depends: AD-631,
+AD-625, AD-626, AD-596a-e)* — Augmentation skill teaching crew agents what constitutes analytically
+useful notebook content. Config-only AD — one new `config/skills/notebook-quality/SKILL.md` file,
+no code changes. Skill catalog auto-discovers via `rglob("SKILL.md")`. Teaches seven analytical
+quality dimensions: (1) Analytical Purpose Gate — "What does this mean?" and "So what?" questions,
+(2) Finding-First Structure (Minto Pyramid adapted for notebook, conclusion→evidence→implications),
+(3) Temporal Threading — read prior entry, state what changed/confirmed/revised, build not restart,
+(4) Data vs Analysis — measurement is not analysis, interpretation required,
+(5) Ward Room Differentiation — notebook must exceed thread content (depth, synthesis, longitudinal),
+(6) Anti-Patterns with explanations (process narration, WR repackaging, baseline without interpretation,
+topic reset, conclusion-free entries), (7) Pre-Write Verification Gate (conclusion check, threading
+check, differentiation check — fail any → skip entry). Co-activates with communication-discipline
+on `proactive_think` intent. `probos-min-rank: ensign` (all crew agents). 7-level Dreyfus proficiency
+(FOLLOW→SHAPE). 21 tests across 4 classes. Issue #229.
 
 *Connects to: AD-631 (XML `<active_skill>` framing for proper skill injection), AD-625/626/627
 (augmentation activation, proficiency gating, communication discipline framework), AD-555 (measures

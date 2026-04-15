@@ -293,6 +293,31 @@ class WardRoomService(EventEmitterMixin):
         """AD-614: Count posts by a specific author in a thread."""
         return await self._threads.count_posts_by_author(thread_id, author_id)
 
+    async def get_agent_comm_stats(
+        self, agent_id: str, since: float | None = None,
+    ) -> dict[str, int | float]:
+        """AD-630: Aggregate communication stats for leadership feedback.
+
+        Args:
+            agent_id: Agent sovereign ID.
+            since: Optional Unix timestamp. If provided, stats cover
+                   the window [since, now]. If None, all-time stats.
+
+        Returns:
+            Dict with keys: posts_total, endorsements_given,
+            endorsements_received, credibility_score.
+        """
+        posts_total = await self._threads.count_all_posts_by_author(agent_id, since)
+        endorsements_given = await self._messages.count_endorsements_by_voter(agent_id, since)
+        endorsements_received = await self._messages.count_endorsements_for_author(agent_id, since)
+        cred = await self._messages.get_credibility(agent_id)
+        return {
+            "posts_total": posts_total,
+            "endorsements_given": endorsements_given,
+            "endorsements_received": endorsements_received,
+            "credibility_score": cred.credibility_score,
+        }
+
     async def check_dm_convergence(self, thread_id: str) -> dict | None:
         """AD-623: Check if a DM thread has converged."""
         from probos.ward_room.threads import check_dm_convergence

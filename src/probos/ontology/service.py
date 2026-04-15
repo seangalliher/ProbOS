@@ -140,6 +140,28 @@ class VesselOntologyService:
     def get_assignment_for_agent_by_id(self, agent_id: str) -> Assignment | None:
         return self._dept.get_assignment_for_agent_by_id(agent_id)  # type: ignore[union-attr]
 
+    def get_subordinate_agent_types(self, agent_type: str) -> list[str]:
+        """AD-630: Return agent_types of all direct reports for the given agent.
+
+        Uses authority_over from ontology to find subordinate posts,
+        then reverse-maps to agent assignments.
+
+        Args:
+            agent_type: The agent type (e.g., 'engineering_officer').
+
+        Returns:
+            List of agent_type strings for subordinates. Empty if not a chief.
+        """
+        post = self.get_post_for_agent(agent_type)
+        if not post or not post.authority_over:
+            return []
+        result: list[str] = []
+        for sub_post_id in post.authority_over:
+            assignments = self._dept.get_agents_for_post(sub_post_id)  # type: ignore[union-attr]
+            for a in assignments:
+                result.append(a.agent_type)
+        return result
+
     # -------------------------------------------------------------------
     # Rank queries (delegated)
     # -------------------------------------------------------------------

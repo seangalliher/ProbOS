@@ -269,6 +269,30 @@ class ThreadManager:
             row = await cursor.fetchone()
             return row[0] if row else 0
 
+    async def count_all_posts_by_author(
+        self, author_id: str, since: float | None = None,
+    ) -> int:
+        """AD-630: Count all posts by an author across all threads.
+
+        Args:
+            author_id: Agent sovereign ID.
+            since: Optional Unix timestamp — only count posts after this time.
+
+        Returns:
+            Total post count.
+        """
+        if not self._db:
+            return 0
+        if since is not None:
+            sql = "SELECT COUNT(*) FROM posts WHERE author_id = ? AND deleted = 0 AND created_at >= ?"
+            params: tuple = (author_id, since)
+        else:
+            sql = "SELECT COUNT(*) FROM posts WHERE author_id = ? AND deleted = 0"
+            params = (author_id,)
+        async with self._db.execute(sql, params) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
     async def browse_threads(
         self,
         agent_id: str,

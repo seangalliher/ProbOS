@@ -2706,6 +2706,20 @@ class CognitiveAgent(BaseAgent):
                     pt_parts.append(f"Ship status: {vessel.get('name', 'ProbOS')} v{vessel.get('version', '?')} — Alert Condition {alert}.")
                 pt_parts.append("")
 
+            # AD-630: Subordinate communication stats for Chiefs
+            sub_stats = context_parts.get("subordinate_stats")
+            if sub_stats:
+                pt_parts.append("<subordinate_activity>")
+                for callsign, stats in sub_stats.items():
+                    pt_parts.append(
+                        f"  {callsign}: {stats['posts_total']} posts, "
+                        f"{stats['endorsements_given']} endorsements given, "
+                        f"{stats['endorsements_received']} endorsements received, "
+                        f"credibility {stats['credibility_score']:.2f}"
+                    )
+                pt_parts.append("</subordinate_activity>")
+                pt_parts.append("")
+
             # AD-567g: Diminishing orientation supplement for young agents
             orientation_supp = context_parts.get("orientation_supplement")
             if orientation_supp:

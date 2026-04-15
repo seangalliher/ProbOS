@@ -4747,3 +4747,51 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Files modified:** `config/standing_orders/federation.md` (removed 3 absorbed sections), `config/skills/communication-discipline/SKILL.md` (full rewrite — positive framing, Pre-Submit Check, anti-patterns, ToM absorption), `src/probos/cognitive/cognitive_agent.py` (XML framing, proficiency consolidation, self-monitoring XML), `src/probos/cognitive/standing_orders.py` (Tier 7 XML format). **Tests:** `tests/test_ad631_skill_effectiveness.py` (NEW, 23 tests across 6 classes), `tests/test_ad625_comm_discipline.py` (2 assertions updated), `tests/test_ad626_skill_activation.py` (5 tests rewritten for XML format).
 
 **Build prompt:** `prompts/ad-631-skill-effectiveness-improvements.md`. **Issue:** #226.
+
+---
+
+### AD-630: Leadership Developmental Feedback (2026-04-15, COMPLETE)
+
+**Summary:** Department Chiefs observe subordinate communication patterns and provide developmental mentoring via DMs. Five components: per-agent communication stats on WardRoomService layer, ontology reverse lookup for subordinate discovery, subordinate stats injection into Chief proactive context, XML rendering of `<subordinate_activity>` tags, and a leadership-feedback augmentation skill gated to lieutenant_commander+ rank.
+
+**Context:** Federation standing orders define Leadership and Mentorship responsibilities but Chiefs had no data to act on. Communication discipline (AD-625/626/631) teaches agents what good communication looks like; this AD gives Chiefs the observational tools to coach subordinates toward it. Navy parallel: CPOs observe, coach, and develop — day-to-day reinforcement, not crisis response.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: Stats on WardRoomService | `get_agent_comm_stats()` on service layer, not WardRoomRouter | Router is volatile in-memory state. Service layer queries persistent ThreadManager/MessageStore for cross-thread aggregates |
+| DD-2: Ontology reverse lookup | `get_subordinate_agent_types()` via `authority_over` on Post + `get_agents_for_post()` | Reuses existing ontology graph. No new data model. Chief's post declares authority; reverse traversal finds subordinate agent_types |
+| DD-3: 3-post minimum threshold | Feedback only when subordinate has 3+ posts | Prevents fabricating concern from insufficient evidence. Documented in SKILL.md and enforced by skill instruction |
+| DD-4: XML rendering | `<subordinate_activity>` tags wrapping per-agent stats | Consistent with AD-631 XML migration. Anthropic prompt engineering: XML recognized as structure, not content |
+| DD-5: Augmentation skill | `probos-activation: augmentation`, `probos-intents: proactive_think`, `probos-min-rank: lieutenant_commander` | Pattern recognition + feedback composition is a teachable skill, not hardcoded logic. Augmentation = injected alongside other context during proactive_think |
+| DD-6: Federation standing orders | "Leadership and Mentorship" section in federation.md | Establishes philosophical foundation across all ProbOS instances. Corrective feedback = DM, praise = public or private |
+| DD-7: No new infrastructure | DMs flow through existing `_extract_and_execute_dms()` → delivery → episodic memory → dream consolidation | Scope boundary: this is coaching, not a new system. Existing DM pipeline handles everything |
+
+**Files modified:** `src/probos/ward_room/threads.py` (`count_all_posts_by_author()`), `src/probos/ward_room/messages.py` (`count_endorsements_by_voter()`, `count_endorsements_for_author()`), `src/probos/ward_room/service.py` (`get_agent_comm_stats()` facade), `src/probos/ontology/departments.py` (`get_agents_for_post()`), `src/probos/ontology/service.py` (`get_subordinate_agent_types()`), `src/probos/proactive.py` (subordinate stats in `_gather_context()`), `src/probos/cognitive/cognitive_agent.py` (`<subordinate_activity>` XML rendering in `_build_user_message()`), `config/skills/leadership-feedback/SKILL.md` (NEW — augmentation skill), `config/standing_orders/federation.md` (Leadership and Mentorship section). **Tests:** `tests/test_ad630_leadership_feedback.py` (NEW, 28 tests across 8 classes).
+
+**Build prompt:** `prompts/ad-630-leadership-developmental-feedback.md`. **Issue:** #225.
+
+---
+
+### AD-634: Notebook Analytical Quality Skill (2026-04-15, COMPLETE)
+
+**Summary:** Config-only augmentation skill teaching crew agents analytical quality standards for notebook entries. One new file (`config/skills/notebook-quality/SKILL.md`), no code changes. Addresses semantic content quality gap — existing infrastructure (AD-550/552/555) measures structural quality but nothing evaluated whether notebook content contained actual analysis.
+
+**Context:** Live observation showed agents producing notebook entries that passed all structural quality gates but lacked analytical depth: Ward Room summary repackaging, process narration without findings, data recording without interpretation, topic resets ignoring prior entries, conclusion-free observations. The skill teaches agents to self-evaluate content quality before writing.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: Config-only AD | Single SKILL.md file, zero code changes | Skill catalog auto-discovers via `rglob("SKILL.md")`. Augmentation infrastructure (AD-626) handles injection. No new methods, schemas, or APIs needed |
+| DD-2: All-crew rank gate | `probos-min-rank: ensign` | Every agent writes notebooks. Unlike leadership-feedback (lieutenant_commander+), analytical quality applies universally |
+| DD-3: Co-activation design | Both communication-discipline and notebook-quality fire on `proactive_think` | `_load_augmentation_skills()` concatenates all matching skills. Different output targets (`[POST]`/`[REPLY]` vs `[NOTEBOOK]`) — no conflict |
+| DD-4: Finding-first shared principle | Minto Pyramid in both skills, different guidance | Not DRY violation — same principle at different scales (2-4 sentence Ward Room post vs multi-paragraph notebook entry) with different specific guidance |
+| DD-5: Pre-Write Verification Gate | Three mandatory checks before composing `[NOTEBOOK]` | Mirrors communication-discipline's Pre-Submit Check pattern. Cheapest intervention — agent self-evaluates before writing |
+| DD-6: No duplication of standing orders | Skill references existing notebook mechanics, does not repeat format/syntax | Federation.md (lines 292-303) and ship.md cover notebook mechanics. Skill teaches analytical quality only |
+| DD-7: Generic examples | Used "Agent A/B/C" instead of crew callsigns in examples | Callsign linting (AD-596e Layer 3) catches hardcoded callsigns. Generic references ensure skill works across all crews |
+
+**Files created:** `config/skills/notebook-quality/SKILL.md` (NEW — augmentation skill with 9 sections: title, Analytical Purpose Gate, Finding-First Structure, Temporal Threading, Data vs Analysis, Ward Room Differentiation, Anti-Patterns, Pre-Write Verification Gate, Proficiency Progression). **Tests:** `tests/test_ad634_notebook_quality.py` (NEW, 21 tests across 4 classes: TestSkillDiscovery, TestSkillMetadata, TestCoActivation, TestSkillContent).
+
+**Build prompt:** `prompts/ad-634-notebook-analytical-quality.md`. **Issue:** #229.

@@ -516,6 +516,81 @@ class MessageStore:
                 )
         return WardRoomCredibility(agent_id=agent_id)
 
+    async def count_endorsements_by_voter(
+        self, voter_id: str, since: float | None = None,
+    ) -> int:
+        """AD-630: Count endorsements GIVEN by an agent.
+
+        Args:
+            voter_id: Agent sovereign ID.
+            since: Optional Unix timestamp for windowed query.
+
+        Returns:
+            Total endorsement count given.
+        """
+        if not self._db:
+            return 0
+        if since is not None:
+            sql = "SELECT COUNT(*) FROM endorsements WHERE voter_id = ? AND created_at >= ?"
+            params: tuple = (voter_id, since)
+        else:
+            sql = "SELECT COUNT(*) FROM endorsements WHERE voter_id = ?"
+            params = (voter_id,)
+        async with self._db.execute(sql, params) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def count_endorsements_for_author(
+        self, author_id: str, since: float | None = None,
+    ) -> int:
+        """AD-630: Count endorsements RECEIVED by an agent.
+
+        Joins endorsements on posts (target_type='post') to resolve
+        the target author. Thread-level endorsements are attributed
+        to the thread creator (first post author).
+
+        Args:
+            author_id: Agent sovereign ID.
+            since: Optional Unix timestamp for windowed query.
+
+        Returns:
+            Total endorsements received.
+        """
+        if not self._db:
+            return 0
+        # Endorsements on posts authored by this agent
+        sql = (
+            "SELECT COUNT(*) FROM endorsements e "
+            "JOIN posts p ON e.target_id = p.id AND e.target_type = 'post' "
+            "WHERE p.author_id = ?"
+        )
+        params_list: list = [author_id]
+        if since is not None:
+            sql += " AND e.created_at >= ?"
+            params_list.append(since)
+        async with self._db.execute(sql, tuple(params_list)) as cursor:
+            row = await cursor.fetchone()
+            post_count = row[0] if row else 0
+
+        # Endorsements on threads created by this agent (first post)
+        sql2 = (
+            "SELECT COUNT(*) FROM endorsements e "
+            "JOIN threads t ON e.target_id = t.id AND e.target_type = 'thread' "
+            "JOIN posts p ON p.thread_id = t.id "
+            "WHERE p.author_id = ? AND p.id = ("
+            "  SELECT id FROM posts WHERE thread_id = t.id ORDER BY created_at ASC LIMIT 1"
+            ")"
+        )
+        params_list2: list = [author_id]
+        if since is not None:
+            sql2 += " AND e.created_at >= ?"
+            params_list2.append(since)
+        async with self._db.execute(sql2, tuple(params_list2)) as cursor:
+            row = await cursor.fetchone()
+            thread_count = row[0] if row else 0
+
+        return post_count + thread_count
+
     async def _update_credibility(self, agent_id: str, endorsement_delta: int) -> None:
         """Adjust total_endorsements and recalculate credibility_score."""
         if not self._db:
