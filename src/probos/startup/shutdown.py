@@ -263,6 +263,27 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime._federation_transport.stop()
         runtime._federation_transport = None
 
+    # Tier 3: Shutdown consolidation — flush remaining episodes (AD-288)
+    # Must run BEFORE pools stop (dream_cycle may trigger Ward Room notifications)
+    # and BEFORE LLM client is closed (dream_cycle makes LLM calls).
+    if runtime.dream_scheduler and runtime.episodic_memory:
+        logger.info("Consolidating session memories...")
+        try:
+            report = await asyncio.wait_for(
+                runtime.dream_scheduler.engine.dream_cycle(),
+                timeout=5.0,  # Don't let consolidation block shutdown
+            )
+            logger.info(
+                "Session consolidation complete: replayed=%d strengthened=%d pruned=%d",
+                report.episodes_replayed,
+                report.weights_strengthened,
+                report.weights_pruned,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Shutdown consolidation timed out (5s limit) — partial consolidation completed")
+        except (asyncio.CancelledError, Exception) as e:
+            logger.warning("Shutdown consolidation failed: %s", e or type(e).__name__)
+
     # AD-573: Freeze all agent working memory before pools stop
     if hasattr(runtime, 'working_memory_store') and runtime.working_memory_store:
         try:
@@ -328,26 +349,6 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     except (asyncio.CancelledError, Exception):
         pass
     await runtime.event_log.stop()
-
-    # Tier 3: Shutdown consolidation — flush remaining episodes (AD-288)
-    # Must run BEFORE LLM client is closed — dream_cycle makes LLM calls.
-    if runtime.dream_scheduler and runtime.episodic_memory:
-        logger.info("Consolidating session memories...")
-        try:
-            report = await asyncio.wait_for(
-                runtime.dream_scheduler.engine.dream_cycle(),
-                timeout=5.0,  # Don't let consolidation block shutdown
-            )
-            logger.info(
-                "Session consolidation complete: replayed=%d strengthened=%d pruned=%d",
-                report.episodes_replayed,
-                report.weights_strengthened,
-                report.weights_pruned,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("Shutdown consolidation timed out (5s limit) — partial consolidation completed")
-        except (asyncio.CancelledError, Exception) as e:
-            logger.warning("Shutdown consolidation failed: %s", e or type(e).__name__)
 
     # Clean up LLM client — after consolidation so dream_cycle can make LLM calls
     await runtime.llm_client.close()
