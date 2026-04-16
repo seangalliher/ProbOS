@@ -73,10 +73,44 @@ class WardRoomRouter:
         self._coalesce_ms: int = getattr(config.ward_room, 'event_coalesce_ms', 200)
         self._channel_members: dict[str, set[str]] = {}  # AD-621: channel_id -> {agent_ids}
         self._dept_thread_responses: dict[str, set[str]] = {}  # AD-629: thread_id -> {department_ids}
+        # BF-198: Track threads each agent has already responded to.
+        # Shared between router path and proactive loop to prevent double-response.
+        # Key: (agent_id, thread_id), Value: timestamp of response.
+        self._responded_threads: dict[tuple[str, str], float] = {}
+        self._last_responded_eviction: float = time.time()
         # BF-188: Captain delivery coordination — agent-reply routing waits
         # until Captain's routing to all targets completes
         self._captain_delivery_done: asyncio.Event = asyncio.Event()
         self._captain_delivery_done.set()  # Initially done (no Captain routing in progress)
+
+    # ------------------------------------------------------------------
+    # BF-198: Responded-thread tracker (prevents router/proactive double-post)
+    # ------------------------------------------------------------------
+
+    def record_agent_response(self, agent_id: str, thread_id: str) -> None:
+        """BF-198: Record that agent has responded to thread."""
+        if not agent_id or not thread_id:
+            return
+        self._responded_threads[(agent_id, thread_id)] = time.time()
+
+    def has_agent_responded(self, agent_id: str, thread_id: str) -> bool:
+        """BF-198: Check if agent already responded to thread."""
+        if not agent_id or not thread_id:
+            return False
+        return (agent_id, thread_id) in self._responded_threads
+
+    def _evict_stale_responses(self, max_age: float = 600.0) -> None:
+        """BF-198: Evict response records older than ``max_age`` seconds."""
+        cutoff = time.time() - max_age
+        self._responded_threads = {
+            k: v for k, v in self._responded_threads.items() if v > cutoff
+        }
+        self._last_responded_eviction = time.time()
+
+    def _maybe_evict_stale_responses(self, interval: float = 60.0) -> None:
+        """BF-198: Periodic eviction — runs at most once per ``interval`` seconds."""
+        if time.time() - self._last_responded_eviction >= interval:
+            self._evict_stale_responses()
 
     # ------------------------------------------------------------------
     # AD-625: Communication proficiency helpers
@@ -234,6 +268,9 @@ class WardRoomRouter:
         """
         if not self._ward_room:
             return
+
+        # BF-198: Periodic eviction of stale responded-thread records
+        self._maybe_evict_stale_responses()
 
         # AD-416: Clean up tracking dicts when threads are pruned
         if event_type == "ward_room_pruned":
@@ -605,6 +642,8 @@ class WardRoomRouter:
                 parent_id=data.get("post_id") if event_type == "ward_room_post_created" else None,
                 author_callsign=agent_callsign or (agent.agent_type if agent else "unknown"),
             )
+            # BF-198: Record response so proactive loop doesn't double-post
+            self.record_agent_response(agent_id, thread_id)
             # AD-625: Record communication exercise
             _rt = getattr(self._proactive_loop, '_runtime', None) if self._proactive_loop else None
             if _rt and hasattr(_rt, 'skill_service') and _rt.skill_service:

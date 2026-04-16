@@ -1214,6 +1214,9 @@ class ProactiveCognitiveLoop:
                 if callsign:
                     self_ids.add(callsign)
 
+                # BF-198: Skip threads agent already responded to via router
+                wr_router = getattr(rt, 'ward_room_router', None)
+
                 if dept:
                     channels = await rt.ward_room.list_channels()
                     dept_channel = None
@@ -1247,6 +1250,7 @@ class ProactiveCognitiveLoop:
                                 }
                                 for a in activity
                                 if (a.get("author_id", "") or a.get("author", "")) not in self_ids  # BF-032
+                                and not (wr_router and wr_router.has_agent_responded(agent.id, a.get("thread_id", "")))  # BF-198
                             ]
                             # AD-425: Mark channel as seen after consuming activity
                             try:
@@ -1282,6 +1286,7 @@ class ProactiveCognitiveLoop:
                                 }
                                 for item in all_hands_filtered[:3]
                                 if (item.get("author_id", "") or item.get("author", "")) not in self_ids  # BF-032
+                                and not (wr_router and wr_router.has_agent_responded(agent.id, item.get("thread_id", "")))  # BF-198
                             ])
                             # AD-425: Mark All Hands as seen
                             try:
@@ -1298,6 +1303,7 @@ class ProactiveCognitiveLoop:
                         rec_filtered = [
                             item for item in rec_items
                             if (item.get("author_id", "") or item.get("author", "")) not in self_ids
+                            and not (wr_router and wr_router.has_agent_responded(agent.id, item.get("thread_id", "")))  # BF-198
                         ]
                         if rec_filtered:
                             if "ward_room_activity" not in context:
@@ -1977,13 +1983,18 @@ class ProactiveCognitiveLoop:
         if len(title_text) < len(text.split('\n')[0]):
             title_text += "..."
 
-        await rt.ward_room.create_thread(
+        _obs_thread = await rt.ward_room.create_thread(
             channel_id=target_channel.id,
             author_id=agent.id,
             title=f"[Observation] {title_text}",
             body=text,
             author_callsign=callsign or agent.agent_type,
         )
+        # BF-198: Record own thread so router won't double-respond on event fan-out
+        if rt.ward_room_router and _obs_thread is not None:
+            _obs_tid = getattr(_obs_thread, 'id', '') or ''
+            if _obs_tid:
+                rt.ward_room_router.record_agent_response(agent.id, _obs_tid)
 
     async def _extract_and_execute_actions(
         self, agent: Any, text: str,
@@ -2724,6 +2735,9 @@ class ProactiveCognitiveLoop:
                     body=reply_body,
                     author_callsign=callsign or agent.agent_type,
                 )
+                # BF-198: Record reply so router won't double-respond
+                if rt.ward_room_router:
+                    rt.ward_room_router.record_agent_response(agent.id, thread_id)
                 # BF-171: Record reply timestamp for channel cooldown
                 if channel_id:
                     self._reply_cooldowns[f"{agent.id}:{channel_id}"] = time.monotonic()
