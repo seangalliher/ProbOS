@@ -550,61 +550,59 @@ class WardRoomRouter:
             if not result or not result.result:
                 continue
             response_text = str(result.result).strip()
-            # AD-426: Extract endorsements before filtering
-            response_text, endorsements = self.extract_endorsements(response_text)
-            if endorsements:
-                await self.process_endorsements(
-                    endorsements, agent_id=agent_id
+            if not response_text or response_text == "[NO_RESPONSE]":
+                continue
+
+            # Get agent's callsign for attribution
+            agent = self._registry.get(agent_id)
+            agent_callsign = ""
+            if agent and self._callsign_registry:
+                agent_callsign = self._callsign_registry.get_callsign(agent.agent_type)
+
+            # BF-196: Unified action extraction — single pipeline shared with
+            # proactive loop.  Handles endorsements, replies, DMs, notebooks,
+            # rank gating, and markdown tag stripping in one place.  Replaces
+            # piecemeal per-tag extraction that drifted out of sync (BF-195).
+            if agent and self._proactive_loop:
+                response_text, _actions = await self._proactive_loop._extract_and_execute_actions(
+                    agent, response_text,
                 )
-            if response_text and response_text != "[NO_RESPONSE]":
-                # Get agent's callsign for attribution
-                agent = self._registry.get(agent_id)
-                agent_callsign = ""
-                if agent and self._callsign_registry:
-                    agent_callsign = self._callsign_registry.get_callsign(agent.agent_type)
-                # BF-066: Extract [DM @callsign]...[/DM] blocks before posting
-                if agent and self._proactive_loop:
-                    response_text, dm_actions = await self._proactive_loop._extract_and_execute_dms(
-                        agent, response_text,
-                    )
-                    response_text = response_text.strip()
-                # BF-195: Extract [REPLY]...[/REPLY] blocks — agent may wrap
-                # its response in REPLY tags even though it's already replying
-                # to the thread.  Strip the tags and use the inner content.
-                if agent and self._proactive_loop:
-                    response_text, _reply_actions = await self._proactive_loop._extract_and_execute_replies(
-                        agent, response_text,
-                    )
-                    response_text = response_text.strip()
-                # BF-123: Extract CHALLENGE/MOVE from Ward Room responses.
-                if agent and self._proactive_loop:
-                    response_text = await self._extract_recreation_commands(
-                        agent, response_text, agent_callsign,
-                    )
-                if not response_text:
-                    continue
-                # BF-174: Strip self-monitoring bracket markers
-                from probos.proactive import _strip_bracket_markers
-                response_text = _strip_bracket_markers(response_text)
-                if not response_text:
-                    continue
-                await self._ward_room.create_post(
-                    thread_id=thread_id,
-                    author_id=agent_id,
-                    body=response_text,
-                    parent_id=data.get("post_id") if event_type == "ward_room_post_created" else None,
-                    author_callsign=agent_callsign or (agent.agent_type if agent else "unknown"),
+                response_text = response_text.strip()
+            else:
+                # Fallback when proactive loop unavailable: endorsements only
+                response_text, endorsements = self.extract_endorsements(response_text)
+                if endorsements:
+                    await self.process_endorsements(endorsements, agent_id=agent_id)
+
+            # BF-123: Recreation commands (router-specific, not in proactive pipeline)
+            if agent and self._proactive_loop:
+                response_text = await self._extract_recreation_commands(
+                    agent, response_text, agent_callsign,
                 )
-                # AD-625: Record communication exercise
-                _rt = getattr(self._proactive_loop, '_runtime', None) if self._proactive_loop else None
-                if _rt and hasattr(_rt, 'skill_service') and _rt.skill_service:
-                    try:
-                        await _rt.skill_service.record_exercise(agent_id, "communication")
-                    except Exception:
-                        logger.debug("Skill exercise recording failed for %s", agent_id, exc_info=True)
-                self._cooldowns[agent_id] = time.time()
-                round_participants.add(agent_id)
-                responded_this_event = True
+            if not response_text:
+                continue
+            # BF-174: Strip self-monitoring bracket markers
+            from probos.proactive import _strip_bracket_markers
+            response_text = _strip_bracket_markers(response_text)
+            if not response_text:
+                continue
+            await self._ward_room.create_post(
+                thread_id=thread_id,
+                author_id=agent_id,
+                body=response_text,
+                parent_id=data.get("post_id") if event_type == "ward_room_post_created" else None,
+                author_callsign=agent_callsign or (agent.agent_type if agent else "unknown"),
+            )
+            # AD-625: Record communication exercise
+            _rt = getattr(self._proactive_loop, '_runtime', None) if self._proactive_loop else None
+            if _rt and hasattr(_rt, 'skill_service') and _rt.skill_service:
+                try:
+                    await _rt.skill_service.record_exercise(agent_id, "communication")
+                except Exception:
+                    logger.debug("Skill exercise recording failed for %s", agent_id, exc_info=True)
+            self._cooldowns[agent_id] = time.time()
+            round_participants.add(agent_id)
+            responded_this_event = True
 
         # Increment round counter if any agent responded to an agent post
         if is_agent_post and responded_this_event:
