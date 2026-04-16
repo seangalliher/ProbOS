@@ -116,6 +116,7 @@ async def chat(
                 intent="direct_message",
                 params={"text": message_text, "from": "hxi", "session": False},
                 target_agent_id=resolved["agent_id"],
+                ttl_seconds=60.0,  # AD-636: Extended TTL for Captain DMs
             )
             result = await runtime.intent_bus.send(intent)
             response = f"{resolved['callsign']}: {result.result}" if result and result.result else f"{resolved['callsign']}: (no response)"

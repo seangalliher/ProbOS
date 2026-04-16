@@ -183,6 +183,7 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
             "session_history": req.history[-10:] if req.history else [],
         },
         target_agent_id=agent_id,
+        ttl_seconds=60.0,  # AD-636: Extended TTL for Captain DMs
     )
     result = await runtime.intent_bus.send(intent)
 

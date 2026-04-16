@@ -116,6 +116,7 @@ class SessionManager:
                 "session_history": self.history,
             },
             target_agent_id=self.agent_id,
+            ttl_seconds=60.0,  # AD-636: Extended TTL for Captain DMs
         )
 
         result = await runtime.intent_bus.send(intent)

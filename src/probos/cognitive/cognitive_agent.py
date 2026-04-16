@@ -1403,7 +1403,9 @@ class CognitiveAgent(BaseAgent):
 
         # AD-431: Time the LLM call for journal
         _t0 = time.monotonic()
-        response = await self._llm_client.complete(request)
+        # AD-636: Interactive priority for Captain DMs
+        _priority = "interactive" if observation.get("intent") == "direct_message" else "background"
+        response = await self._llm_client.complete(request, priority=_priority)
         _latency_ms = (time.monotonic() - _t0) * 1000
 
         decision = {

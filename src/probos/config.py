@@ -260,6 +260,7 @@ class SubTaskConfig(BaseModel):
     step_timeout_ms: int = 15000               # Default per-step timeout (15s)
     max_chain_steps: int = 6                   # Maximum steps per chain (defense in depth)
     fallback_on_timeout: str = "single_call"   # Degradation strategy
+    max_concurrent_chains: int = 4             # AD-636: Cap simultaneous chain executions
 
 
 class LLMRateConfig(BaseModel):
@@ -278,6 +279,11 @@ class LLMRateConfig(BaseModel):
 
     # AD-617b: Per-agent hourly token cap (0 = disabled)
     per_agent_hourly_token_cap: int = 0
+
+    # AD-636: Global concurrency cap for LLM calls
+    max_concurrent_calls: int = 6
+    # AD-636: Reserved slots for interactive (Captain DM) priority
+    interactive_reserved_slots: int = 2
 
 
 class MemoryConfig(BaseModel):
@@ -713,6 +719,9 @@ class ProactiveCognitiveConfig(BaseModel):
     trust_no_response_weight: float = 0.0   # Trust signal for [NO_RESPONSE] (0 = no signal, silence is fine)
     trust_duty_bonus: float = 0.1           # Additional trust weight when completing a scheduled duty
     duty_schedule: DutyScheduleConfig = DutyScheduleConfig()
+    # AD-636: Stagger proactive agent dispatch across cycle interval
+    stagger_enabled: bool = True
+    min_stagger_seconds: float = 5.0
 
 
 class PersistentTasksConfig(BaseModel):

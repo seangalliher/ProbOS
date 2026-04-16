@@ -22,7 +22,7 @@ class BaseLLMClient(ABC):
     """Abstract LLM client interface."""
 
     @abstractmethod
-    async def complete(self, request: LLMRequest) -> LLMResponse:
+    async def complete(self, request: LLMRequest, *, priority: str = "background") -> LLMResponse:
         """Send a completion request and return the response."""
 
     def get_health_status(self) -> dict[str, Any]:
@@ -146,6 +146,18 @@ class OpenAICompatibleClient(BaseLLMClient):
 
         # AD-617: Per-tier 429 consecutive counter for exponential backoff
         self._consecutive_429s: dict[str, int] = {t: 0 for t in ("fast", "standard", "deep")}
+
+        # AD-636: Priority-lane concurrency semaphores
+        _max_concurrent = 6
+        _interactive_reserved = 2
+        if rate_config:
+            if hasattr(rate_config, 'max_concurrent_calls'):
+                _max_concurrent = rate_config.max_concurrent_calls
+            if hasattr(rate_config, 'interactive_reserved_slots'):
+                _interactive_reserved = rate_config.interactive_reserved_slots
+        _background_slots = max(1, _max_concurrent - _interactive_reserved)
+        self._interactive_semaphore = asyncio.Semaphore(_interactive_reserved)
+        self._background_semaphore = asyncio.Semaphore(_background_slots)
 
     # Backward-compat properties
     @property
@@ -281,13 +293,33 @@ class OpenAICompatibleClient(BaseLLMClient):
         except (httpx.ConnectError, httpx.TimeoutException, OSError):
             return False
 
-    async def complete(self, request: LLMRequest) -> LLMResponse:
+    async def complete(self, request: LLMRequest, *, priority: str = "background") -> LLMResponse:
         """Send a completion request with fallback chain.
 
         Routes to the appropriate tier's endpoint and client.
         Fallback order: requested tier → next available tier → cache → error.
         Tier fallback: fast → standard → deep.
+
+        AD-636: priority="interactive" uses reserved slots (Captain DMs).
+        priority="background" uses remaining capacity (proactive, chains).
         """
+        # AD-636: Acquire priority-lane semaphore
+        sem = self._interactive_semaphore if priority == "interactive" else self._background_semaphore
+        try:
+            await asyncio.wait_for(sem.acquire(), timeout=30.0)
+        except asyncio.TimeoutError:
+            # Fail-open: if semaphore times out, proceed without it (degrade, don't block Captain)
+            logger.warning("AD-636: %s semaphore acquisition timed out, proceeding without", priority)
+            sem = None  # type: ignore[assignment]
+
+        try:
+            return await self._complete_inner(request)
+        finally:
+            if sem is not None:
+                sem.release()
+
+    async def _complete_inner(self, request: LLMRequest) -> LLMResponse:
+        """Inner completion logic (separated from semaphore for AD-636)."""
         tier = request.tier or self.default_tier
 
         # AD-617: Rate limit check before dispatch
@@ -829,7 +861,7 @@ class MockLLMClient(BaseLLMClient):
         """Set the response for unmatched inputs."""
         self._default_response = response
 
-    async def complete(self, request: LLMRequest) -> LLMResponse:
+    async def complete(self, request: LLMRequest, *, priority: str = "background") -> LLMResponse:
         """Match input against patterns and return canned response."""
         self._call_log.append(request)
 

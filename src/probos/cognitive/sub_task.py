@@ -187,6 +187,14 @@ class SubTaskExecutor:
         self._emit_event_fn = emit_event_fn
         self._handlers: dict[SubTaskType, SubTaskHandler] = {}
 
+        # AD-636: Global semaphore limiting concurrent chain executions
+        _max_chains = 4
+        if config and hasattr(config, 'max_concurrent_chains'):
+            _val = config.max_concurrent_chains
+            if isinstance(_val, int):
+                _max_chains = _val
+        self._chain_semaphore = asyncio.Semaphore(_max_chains)
+
     def register_handler(self, sub_task_type: SubTaskType, handler: SubTaskHandler) -> None:
         """Register a handler for a sub-task type. Raises ValueError on duplicate (fail fast)."""
         if sub_task_type in self._handlers:
@@ -228,6 +236,9 @@ class SubTaskExecutor:
         calls to the cognitive journal with structured dag_node_id.
         Emits SUB_TASK_CHAIN_COMPLETED event on completion.
 
+        AD-636: Acquires chain concurrency semaphore to limit global
+        simultaneous chain executions.
+
         Six invariants (see AD-632a design doc):
         1. Token accounting attributed to parent agent_id
         2. No episodic memory storage
@@ -236,6 +247,27 @@ class SubTaskExecutor:
         5. Journal recording with dag_node_id
         6. No nesting (handlers don't receive executor)
         """
+        # AD-636: Limit concurrent chain executions globally
+        async with self._chain_semaphore:
+            return await self._execute_chain(
+                chain, context,
+                agent_id=agent_id, agent_type=agent_type,
+                intent=intent, intent_id=intent_id,
+                journal=journal,
+            )
+
+    async def _execute_chain(
+        self,
+        chain: SubTaskChain,
+        context: dict,
+        *,
+        agent_id: str,
+        agent_type: str = "",
+        intent: str = "",
+        intent_id: str = "",
+        journal: Any | None = None,
+    ) -> list[SubTaskResult]:
+        """Inner chain execution (AD-636: separated for semaphore wrapping)."""
         if not self.can_execute(chain):
             missing = [
                 s.name for s in chain.steps

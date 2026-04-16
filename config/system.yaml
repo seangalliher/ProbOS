@@ -247,6 +247,9 @@ proactive_cognitive:
   enabled: true
   interval_seconds: 120
   cooldown_seconds: 300
+  # AD-636: Stagger agent dispatch to distribute LLM load
+  stagger_enabled: true
+  min_stagger_seconds: 5.0
   # AD-414: Trust signal weights
   trust_reward_weight: 0.1
   trust_no_response_weight: 0.0
@@ -361,3 +364,4 @@ sub_task:
   enabled: true
   chain_timeout_ms: 30000
   step_timeout_ms: 15000
+  max_concurrent_chains: 4       # AD-636: cap simultaneous chain executions

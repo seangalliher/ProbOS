@@ -361,17 +361,33 @@ class ProactiveCognitiveLoop:
             await asyncio.sleep(self._interval)
 
     async def _run_cycle(self) -> None:
-        """One think cycle: iterate all crew agents sequentially."""
+        """One think cycle: iterate all crew agents with AD-636 stagger."""
         rt = self._runtime
         if not rt or not rt.ward_room:
             return
 
+        # AD-636: Count eligible agents for stagger calculation
+        eligible_agents: list[Any] = []
         for agent in rt.registry.all():
             if not is_crew_agent(agent, rt.ontology):
                 continue
             if not agent.is_alive:
                 continue
+            eligible_agents.append(agent)
 
+        # AD-636: Calculate stagger delay
+        stagger_delay = 0.0
+        _proactive_config = getattr(getattr(rt, 'config', None), 'proactive_cognitive', None)
+        _stagger_enabled = getattr(_proactive_config, 'stagger_enabled', True) if _proactive_config else True
+        _min_stagger = getattr(_proactive_config, 'min_stagger_seconds', 5.0) if _proactive_config else 5.0
+        if _stagger_enabled and len(eligible_agents) > 1:
+            stagger_delay = max(_min_stagger, self._interval / len(eligible_agents))
+            # Don't let total stagger time exceed interval
+            if stagger_delay * len(eligible_agents) > self._interval:
+                stagger_delay = self._interval / len(eligible_agents)
+
+        agents_dispatched = 0
+        for agent in eligible_agents:
             # BF-156: Unread DM check BEFORE agency gating.
             # DM delivery is communication reliability, not proactive agency.
             # Ensigns should still receive their DMs.
@@ -437,6 +453,11 @@ class ProactiveCognitiveLoop:
                     agent.confidence,
                     exc_info=True,
                 )
+
+            # AD-636: Stagger delay between agents to distribute LLM load
+            agents_dispatched += 1
+            if stagger_delay > 0 and agents_dispatched < len(eligible_agents):
+                await asyncio.sleep(stagger_delay)
 
     async def _check_unread_dms(self, agent: Any, rt: Any) -> None:
         """Check for and route unread DMs for an agent."""

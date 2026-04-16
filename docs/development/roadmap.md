@@ -5845,6 +5845,27 @@ extended), AD-632e (EVALUATE + REFLECT handlers — the parallel candidates), AD
 triggers — chain construction with dependency annotations), AD-617 (LLM rate governance —
 concurrent call safety), AD-633 (predictive branching — parallelism enables faster chains).*
 
+**AD-636: LLM Priority Scheduling & Load Distribution** *(COMPLETE, OSS, depends: AD-632, AD-617)*
+— AD-632 sub-task chains increased LLM call volume 3-5x per agent (5-step chain vs single call).
+With 14 crew agents running proactive cycles every 120s, the LLM proxy saturates and Captain DMs
+timeout at the 30s TTL — a chain-of-command violation. Four-part fix: **Part A** Priority Lanes
+in LLMClient — `asyncio.Semaphore` global concurrency cap (default 6), separate interactive
+reserved slots (default 2). Interactive requests (Captain DMs, HXI chat) bypass background
+queue. `priority` parameter on `LLMClient.complete()` (default `"background"`). **Part B**
+Proactive Loop Staggering — inter-agent delay in `_run_cycle()` distributes LLM load evenly
+across cycle interval (`stagger_delay = interval / eligible_count`). Converts burst-at-start
+to even distribution. **Part C** DM TTL Increase — `ttl_seconds` 30→60 for `direct_message`
+intents in HXI DM endpoint and shell `/hail`. **Part D** Chain Concurrency Cap — global
+`asyncio.Semaphore` on `SubTaskExecutor` limiting concurrent chain executions (default 4).
+Interactive intents don't use chains, so no DM impact. Config: `llm.max_concurrent_calls`,
+`llm.interactive_reserved_slots`, `proactive.stagger_enabled`, `proactive.min_stagger_seconds`,
+`sub_task.max_concurrent_chains`. 8 files, 26-33 tests. Build prompt:
+`prompts/ad-636-llm-priority-scheduling.md`. Issue #244.
+
+*Connects to: AD-632 (sub-task chains — the load source), AD-617 (LLM rate governance — per-tier
+token bucket, complementary to priority lanes), AD-617b (per-agent token budget — fairness
+enforcement), AD-576 (LLM unavailability awareness — brownout protocol for degraded state).*
+
 **AD-635: Medical Diagnostic Data Access — Clinical Telemetry Query Interface** *(SCOPED, OSS,
 depends: AD-588, AD-620/621/622)* — Medical and Counselor agents have clinical responsibility
 for fitness-for-duty assessments and crew cognitive health monitoring but zero visibility into
@@ -7163,6 +7184,10 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-160 | **CrossAgentSynthesisProbe false failure at CREW level.** BF-150 redesigned to per-agent but left tier=3, so `run_collective()` invokes with `__crew__` → agent not found → score=0.0. **Fix:** Added `__crew__` skip guard returning `_make_skip_result` (score=1.0, passed=True). 1 source file, 1 test file modified (1 new test). Issue #191. | Low | **Closed** |
 | BF-177 | **Scout reports stopped — duty-triggered proactive_think short-circuited by BF-024 guard.** Scout reports stopped generating ~2026-03-27. `scout_reports/` data directory empty. BF-024 added early-return guard in `ScoutAgent.act()` for `proactive_think` intent, but duty schedule also sends `proactive_think` for daily `scout_report` duty — report parsing, JSON saving, Discord notification never reached. Additionally, `duty` dict was never propagated from observation params to `decision` dict that `act()` receives. **Fix:** (1) `cognitive_agent.py`: propagate `duty` from observation params to decision dict alongside existing `intent` propagation. (2) `scout.py`: check `decision.get("duty")` before short-circuiting — duty-triggered proactive_think reaches report generation. 2 source files (cognitive_agent.py, scout.py). Relates to: BF-024, AD-419. Issue #234. | Medium | **Closed** |
 | BF-178 | **Consolidation anomaly false positives during micro-stasis recovery.** After short stasis periods (e.g., 31 seconds), `detect_consolidation_anomalies()` fires false positive `consolidation_anomaly` events. Cold-start suppression (`set_cold_start_suppression()`) only fires on true cold starts (empty trust+memory), so stasis recovery skips it. But `_dream_history` retains stale pre-stasis baselines, causing inflated counts to trigger false 2x anomalies. **Fix:** `clear_dream_history()` on EmergentDetector + stasis recovery branch in `startup/dreaming.py` clears stale history and applies 60s suppression window. Lineage: BF-166→BF-175→BF-178. 2 source files (emergent_detector.py, startup/dreaming.py), 6 tests. Issue #241. | Medium | **Closed** |
+| BF-179 | **Sub-task executor never wired onto crew agents.** `finalize.py:228` used `getattr(_agent, 'is_crew', False)` which always returned `False` — `is_crew` attribute doesn't exist on any agent. SubTaskExecutor was created and handlers registered but never attached to any agent. **Fix:** changed to `is_crew_agent(_agent, runtime.ontology)` (the standard pattern used everywhere else). Same fix at line 142 for comm profile caching. 1 source file (finalize.py). Relates to: AD-632, BF-180/181/182. Issue #243. | Critical | **Closed** |
+| BF-180 | **Duplicate augmentation skill loading.** AD-632f added `_load_augmentation_skills()` at line 1170 in `decide()`, but `_decide_via_llm()` at line 1228 already called it. Every skill loaded twice per agent per intent — doubled token cost, duplicated log lines. **Fix:** guard with `if "_augmentation_skill_instructions" not in observation:` before loading. 1 source file (cognitive_agent.py). Relates to: AD-632f, AD-626. Issue #243. | Low | **Closed** |
+| BF-181 | **`asyncio` not defined in chain error handler.** `_execute_sub_task_chain()` except block at line 1600 referenced `asyncio.TimeoutError` but `asyncio` was not imported at module level or in the method. **Fix:** local `import asyncio as _asyncio` in except block. 1 source file (cognitive_agent.py). Relates to: AD-632a. Issue #243. | Medium | **Closed** |
+| BF-182 | **Query handler can't access agent_id/thread_id data.** Three sub-issues: (1) context filter stripped `_`-prefixed identity keys (`_agent_id`, `_callsign`), (2) QUERY steps received filtered context despite needing full access for service dispatch, (3) `thread_id`/`channel_id` nested in `observation["params"]` not found by top-level lookup. **Fix:** pass `_`-prefixed keys through filter, bypass filtering entirely for QUERY steps, `_ctx()` helper resolves from nested `params` dict. 2 source files (sub_task.py, query.py). Relates to: AD-632b, AD-632f. Issue #243. | Medium | **Closed** |
 | BF-157 | **@mention in Ward Room thread doesn't guarantee response.** Two root causes: (1) `mentions` list used for routing only (deciding WHO to notify) but never forwarded in IntentMessage params — agent has no idea it was @mentioned, prompt allows `[NO_RESPONSE]` identically to ambient notifications, (2) per-agent cooldown (45s) and per-thread response cap (3) silently suppress @mentioned agents. **Fix:** `mentioned_agent_ids` set built from `_callsign_registry.resolve()`, `was_mentioned` flag passed in IntentMessage params, agent prompt requires response when @mentioned (suppresses `[NO_RESPONSE]`), `is_direct_target` bypasses cooldown/caps for to @mentioned agents. 3 source files, 2 new test files (7 tests). Issue #188. Relates to: BF-016a, BF-082, BF-156, AD-574. | Medium | **Closed** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).

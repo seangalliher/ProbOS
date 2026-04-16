@@ -4971,3 +4971,20 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Files modified:** `src/probos/cognitive/sub_task.py` (depends_on field + validate_chain() + _get_ready_steps() + wave-based _execute_steps() + _execute_single_step()), `src/probos/cognitive/cognitive_agent.py` (depends_on on EVALUATE/REFLECT steps in both chain types). **Tests:** `tests/test_ad632h_parallel_dispatch.py` (NEW, 34 tests across 7 classes).
 
 **Build prompt:** `prompts/ad-632h-parallel-dispatch.md`. **Issue:** #243.
+### AD-636: LLM Priority Scheduling & Load Distribution (2026-04-16, COMPLETE)
+
+**Context:** AD-632 sub-task chains increased LLM call volume 3-5x per agent. With 14 crew agents running proactive cycles every 120s, the LLM proxy saturates and Captain DMs timeout at the 30s TTL. Four-part fix ensures interactive requests always get priority while background work is distributed evenly.
+
+| DD | Decision | Reasoning |
+|----|----------|-----------|
+| DD-1: Separate interactive/background semaphores | Two `asyncio.Semaphore` instances: interactive (2 slots) + background (4 slots) from global 6 cap | HXI Cockpit View Principle — Captain always needs the stick. Reserved interactive slots guarantee DM responsiveness regardless of background load |
+| DD-2: Fail-open semaphore acquisition | 30s timeout → proceed without semaphore on timeout | "Degrade, don't block Captain." Overloaded system still serves requests, just without concurrency governance. Follows AD-632e fail-open pattern |
+| DD-3: Proactive loop staggering | `stagger_delay = interval / eligible_count` between agent dispatches | Converts burst-at-cycle-start to even distribution across interval. Eliminates LLM proxy thundering herd. Configurable via `stagger_enabled` + `min_stagger_seconds` |
+| DD-4: DM TTL 30s→60s | `ttl_seconds=60.0` on IntentMessage for direct_message intents | Under load, 30s TTL expired before agent could acquire semaphore + complete chain. 60s provides headroom without unbounded waiting |
+| DD-5: Chain concurrency cap | Global `asyncio.Semaphore` on SubTaskExecutor (default 4) | Prevents all 14 agents from running chains simultaneously. Interactive intents don't use chains, so no Captain DM impact |
+| DD-6: isinstance guard on config values | `isinstance(_val, int)` before using MagicMock-able config | Existing tests pass MagicMock as config — `config.max_concurrent_chains` returns MagicMock not int, causing asyncio.Semaphore TypeError |
+| DD-7: priority parameter on BaseLLMClient.complete() | `*, priority: str = "background"` keyword-only with default | Backward compatible — all existing callers work unchanged. Only cognitive_agent.py needs to pass `priority="interactive"` for DMs |
+
+**Files modified:** `src/probos/config.py`, `config/system.yaml`, `src/probos/cognitive/llm_client.py`, `src/probos/proactive.py`, `src/probos/cognitive/sub_task.py`, `src/probos/cognitive/cognitive_agent.py`, `src/probos/routers/agents.py`, `src/probos/routers/chat.py`, `src/probos/experience/commands/session.py`. **Tests:** `tests/test_ad636_llm_priority_scheduling.py` (NEW, 30 tests across 4 classes).
+
+**Build prompt:** `prompts/ad-636-llm-priority-scheduling.md`. **Issue:** #244.
