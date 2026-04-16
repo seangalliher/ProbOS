@@ -238,6 +238,32 @@ class EvaluateHandler:
         callsign = context.get("_callsign", "agent")
         department = context.get("_department", "")
 
+        # BF-184: Captain messages and @mentions bypass quality gate.
+        # Social obligation outranks quality scoring — failing to respond
+        # to the Captain is worse than a mediocre response.
+        if context.get("_from_captain") or context.get("_was_mentioned"):
+            reason = "captain_message" if context.get("_from_captain") else "mentioned"
+            logger.info(
+                "BF-184: Evaluate auto-approved for %s (social obligation: %s)",
+                context.get("_agent_type", "unknown"),
+                reason,
+            )
+            return SubTaskResult(
+                sub_task_type=SubTaskType.EVALUATE,
+                name=spec.name,
+                result={
+                    "pass": True,
+                    "score": 1.0,
+                    "criteria": {},
+                    "recommendation": "approve",
+                    "bypass_reason": reason,
+                },
+                tokens_used=0,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                success=True,
+                tier_used="",
+            )
+
         system_prompt, user_prompt = builder(
             context, prior_results, callsign, department,
         )

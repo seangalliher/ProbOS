@@ -276,6 +276,31 @@ class ReflectHandler:
                 tier_used="",
             )
 
+        # BF-185: Captain messages and @mentions bypass self-critique.
+        # Social obligation outranks self-critique — the Captain expects a response.
+        if context.get("_from_captain") or context.get("_was_mentioned"):
+            compose_output = _get_compose_output(prior_results)
+            reason = "captain_message" if context.get("_from_captain") else "mentioned"
+            logger.info(
+                "BF-185: Reflect auto-approved for %s (social obligation: %s)",
+                context.get("_agent_type", "unknown"),
+                reason,
+            )
+            return SubTaskResult(
+                sub_task_type=SubTaskType.REFLECT,
+                name=spec.name,
+                result={
+                    "output": compose_output,
+                    "revised": False,
+                    "suppressed": False,
+                    "bypass_reason": reason,
+                },
+                tokens_used=0,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                success=True,
+                tier_used="",
+            )
+
         # Mode dispatch
         mode_key = spec.prompt_template or _DEFAULT_MODE
         builder = _REFLECTION_MODES.get(mode_key)

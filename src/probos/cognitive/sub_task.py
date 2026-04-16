@@ -47,7 +47,7 @@ class SubTaskSpec:
     prompt_template: str = ""           # Template for LLM sub-tasks (QUERY has none)
     context_keys: tuple[str, ...] = ()  # Keys to extract from parent context
     tier: str = "standard"              # LLM tier override for this step
-    timeout_ms: int = 15000             # Per-step timeout (15s default)
+    timeout_ms: int = 60000             # Per-step timeout (60s default)
     required: bool = True               # If True, failure aborts chain
     depends_on: tuple[str, ...] = ()    # AD-632h: Step names this step depends on
 
@@ -69,7 +69,7 @@ class SubTaskResult:
 class SubTaskChain:
     """Ordered sequence of sub-task specifications with execution config."""
     steps: list[SubTaskSpec] = field(default_factory=list)
-    chain_timeout_ms: int = 30000       # Total chain timeout (30s default)
+    chain_timeout_ms: int = 240000      # Total chain timeout (240s default)
     fallback: str = "single_call"       # Degradation strategy on failure
     source: str = ""                    # What triggered this chain (skill, heuristic, quality)
 
@@ -305,6 +305,7 @@ class SubTaskExecutor:
                     agent_id=agent_id, agent_type=agent_type,
                     intent=intent, intent_id=intent_id,
                     journal=journal,
+                    chain_start_time=chain_start,
                 ),
                 timeout=chain.chain_timeout_ms / 1000,
             )
@@ -345,6 +346,7 @@ class SubTaskExecutor:
         intent: str,
         intent_id: str,
         journal: Any | None,
+        chain_start_time: float,
     ) -> None:
         """AD-632h: Execute steps respecting dependencies. Independent steps run in parallel."""
         completed: set[str] = set()
@@ -364,6 +366,8 @@ class SubTaskExecutor:
                     spec, step_index, context, list(results),
                     chain_id=chain_id, agent_id=agent_id, agent_type=agent_type,
                     intent=intent, intent_id=intent_id, journal=journal,
+                    chain_start_time=chain_start_time,
+                    chain_timeout_ms=chain.chain_timeout_ms,
                 )
                 results.append(result)
                 completed.add(spec.name)
@@ -379,6 +383,8 @@ class SubTaskExecutor:
                         spec, step_index, context, prior,
                         chain_id=chain_id, agent_id=agent_id, agent_type=agent_type,
                         intent=intent, intent_id=intent_id, journal=journal,
+                        chain_start_time=chain_start_time,
+                        chain_timeout_ms=chain.chain_timeout_ms,
                     )
                     for step_index, spec in ready
                 ]
@@ -454,6 +460,8 @@ class SubTaskExecutor:
         intent: str,
         intent_id: str,
         journal: Any | None,
+        chain_start_time: float,
+        chain_timeout_ms: int,
     ) -> SubTaskResult:
         """Execute a single sub-task step with context filtering, timeout, and journal recording."""
         handler = self._handlers.get(spec.sub_task_type)
@@ -492,10 +500,63 @@ class SubTaskExecutor:
                 timeout=spec.timeout_ms / 1000,
             )
         except asyncio.TimeoutError:
-            raise SubTaskStepError(
-                spec.name, spec.sub_task_type,
-                f"Step timed out after {spec.timeout_ms}ms",
-            )
+            # BF-183: Budget-aware retry before fallback
+            elapsed_ms = (time.monotonic() - chain_start_time) * 1000
+            remaining_ms = chain_timeout_ms - elapsed_ms
+            backoff_ms = 2000  # Fixed 2s backoff
+
+            if remaining_ms >= (spec.timeout_ms + backoff_ms):
+                # Journal record the timeout attempt
+                if spec.sub_task_type != SubTaskType.QUERY and journal is not None:
+                    timeout_dag_id = f"st:{chain_id}:{step_index}:{spec.sub_task_type.value}:timeout"
+                    try:
+                        await journal.record(
+                            entry_id=uuid.uuid4().hex,
+                            timestamp=time.time(),
+                            agent_id=agent_id,
+                            agent_type=agent_type,
+                            tier=spec.tier,
+                            total_tokens=0,
+                            latency_ms=spec.timeout_ms,
+                            intent=intent,
+                            intent_id=intent_id,
+                            success=False,
+                            dag_node_id=timeout_dag_id,
+                        )
+                    except Exception:
+                        logger.debug("BF-183: Journal recording failed for timeout step", exc_info=True)
+
+                logger.info(
+                    "BF-183: Step '%s' timed out, retrying (%.0fms budget remaining)",
+                    spec.name, remaining_ms,
+                )
+                await asyncio.sleep(backoff_ms / 1000)
+
+                # Retry with remaining budget as timeout (capped at step timeout)
+                retry_timeout_ms = min(spec.timeout_ms, remaining_ms - backoff_ms)
+                try:
+                    result = await asyncio.wait_for(
+                        handler(spec, step_context, prior_results),
+                        timeout=retry_timeout_ms / 1000,
+                    )
+                except (asyncio.TimeoutError, Exception) as retry_exc:
+                    logger.warning(
+                        "BF-183: Step '%s' retry also failed: %s",
+                        spec.name, retry_exc,
+                    )
+                    raise SubTaskStepError(
+                        spec.name, spec.sub_task_type,
+                        f"Step timed out after {spec.timeout_ms}ms (retry also failed)",
+                    )
+            else:
+                logger.info(
+                    "BF-183: Step '%s' timed out, no budget for retry (%.0fms remaining)",
+                    spec.name, remaining_ms,
+                )
+                raise SubTaskStepError(
+                    spec.name, spec.sub_task_type,
+                    f"Step timed out after {spec.timeout_ms}ms (no retry budget)",
+                )
         except SubTaskStepError:
             raise
         except Exception as exc:

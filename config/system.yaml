@@ -362,6 +362,6 @@ circuit_breaker:
 
 sub_task:
   enabled: true
-  chain_timeout_ms: 30000
-  step_timeout_ms: 15000
+  chain_timeout_ms: 240000        # 80% of llm_timeout_deep (300s)
+  step_timeout_ms: 60000           # Aligned with llm_timeout_seconds (30s) with headroom
   max_concurrent_chains: 4       # AD-636: cap simultaneous chain executions
