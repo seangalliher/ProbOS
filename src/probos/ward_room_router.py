@@ -568,6 +568,14 @@ class WardRoomRouter:
                         agent, response_text,
                     )
                     response_text = response_text.strip()
+                # BF-195: Extract [REPLY]...[/REPLY] blocks — agent may wrap
+                # its response in REPLY tags even though it's already replying
+                # to the thread.  Strip the tags and use the inner content.
+                if agent and self._proactive_loop:
+                    response_text, _reply_actions = await self._proactive_loop._extract_and_execute_replies(
+                        agent, response_text,
+                    )
+                    response_text = response_text.strip()
                 # BF-123: Extract CHALLENGE/MOVE from Ward Room responses.
                 if agent and self._proactive_loop:
                     response_text = await self._extract_recreation_commands(
