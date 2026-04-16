@@ -362,7 +362,6 @@ class WardRoomRouter:
                     thread_context += f"\n{_id_prefix}{p_callsign}: {p_body}"
 
         # --- Send intents to target agents ---
-        now = time.time()
 
         # Layer 4: Use longer cooldown for agent-triggered responses
         agent_cooldown = getattr(self._config.ward_room, 'agent_cooldown_seconds', 45)
@@ -423,6 +422,7 @@ class WardRoomRouter:
     ):
         """Route intents to target agents — extracted for BF-188 try/finally."""
         from probos.types import IntentMessage
+        now = time.time()
         responded_this_event = False
 
         for agent_id in target_agent_ids:

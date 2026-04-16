@@ -269,6 +269,31 @@ class EvaluateHandler:
                 tier_used="",
             )
 
+        # BF-191: Deterministic JSON rejection — compose output must be natural language
+        compose_output = _get_compose_output(prior_results)
+        stripped = compose_output.strip()
+        if stripped.startswith("{") and ('"intents"' in stripped[:200] or '"intent"' in stripped[:200]):
+            logger.warning(
+                "BF-191: Evaluate rejected raw intent JSON from %s (%d chars)",
+                context.get("_agent_type", "unknown"),
+                len(compose_output),
+            )
+            return SubTaskResult(
+                sub_task_type=SubTaskType.EVALUATE,
+                name=spec.name,
+                result={
+                    "pass": False,
+                    "score": 0.0,
+                    "criteria": {"format": {"pass": False, "reason": "Raw JSON instead of natural language"}},
+                    "recommendation": "suppress",
+                    "rejection_reason": "raw_json_output",
+                },
+                tokens_used=0,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                success=True,
+                tier_used="",
+            )
+
         system_prompt, user_prompt = builder(
             context, prior_results, callsign, department,
         )

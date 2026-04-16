@@ -5010,6 +5010,21 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 
 ---
 
+## BF-190/BF-191: Route `now` NameError + Evaluate Raw JSON Pass-Through (2026-04-16)
+
+**Context:** Two bugs: (1) BF-188 extracted `_route_to_agents()` but left `now = time.time()` in `route_event()` — dead code — and used `import time as _time` locally instead of the module-level import. (2) Compose sometimes produces raw intent JSON (`{"intents": [...]}`), which Evaluate's LLM judge scores as `pass=True, score=1.00` because 15 chars of JSON doesn't trigger any quality criterion.
+
+**Decision:** (1) Remove dead `now` from `route_event()`, use module-level `time` import in `_route_to_agents()`. (2) Add deterministic pre-LLM format check in Evaluate — pattern-match `startswith("{")` + `"intents"` in first 200 chars. Returns `pass=False, score=0.0, recommendation=suppress` with 0 LLM tokens. Defense in depth with BF-172 guard in proactive.py.
+
+| Design Decision | Choice | Rationale |
+|---|---|---|
+| DD-1: JSON detection method | Pattern match, not LLM | LLMs score garbage charitably. Deterministic check is reliable, 0 tokens. |
+| DD-2: Check placement | After social obligation, before LLM judge | Social obligations override all quality gates. Format validation is a precondition to quality judgment. |
+| DD-3: result.success | `True` (step succeeded, draft failed) | The evaluate step itself worked correctly — it determined the draft is bad. Triggers existing suppress path. |
+
+---
+
+
 ## BF-189: Chain Pipeline Memory Context Gaps (2026-04-16)
 
 **Context:** Three memory context gaps in the sub-task chain pipeline caused confabulation. (1) `analyze.py` `_build_thread_analysis_prompt()` rendered `recent_memories` (a `list[dict]`) as Python repr instead of formatted text. (2) DM comprehension and situation review modes had zero memory context. (3) Compose step had no memory grounding — only saw Analyze JSON output, not raw memories. Single-shot path had none of these issues because `_format_memory_section()` was called inline.
