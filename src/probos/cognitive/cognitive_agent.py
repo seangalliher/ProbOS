@@ -1600,6 +1600,15 @@ class CognitiveAgent(BaseAgent):
         observation["_skill_profile"] = getattr(self, '_skill_profile', None)
         observation["_crew_manifest"] = self._compose_dm_instructions()
 
+        # BF-189: Pre-format memories for chain handlers (AD-567b/568c/592 compliance)
+        raw_memories = observation.get("recent_memories", [])
+        if raw_memories and isinstance(raw_memories, list):
+            source_framing = observation.get("_source_framing")
+            formatted_lines = self._format_memory_section(raw_memories, source_framing=source_framing)
+            observation["_formatted_memories"] = "\n".join(formatted_lines)
+        else:
+            observation["_formatted_memories"] = ""
+
         try:
             results = await self._sub_task_executor.execute(
                 chain,

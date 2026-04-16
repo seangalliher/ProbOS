@@ -231,6 +231,11 @@ def _build_user_prompt(
                 parts.append("## Prior Data\n\n" + "\n".join(lines))
             break
 
+    # BF-189: Compose needs memory grounding to prevent confabulation
+    formatted_memories = context.get("_formatted_memories", "")
+    if formatted_memories:
+        parts.append(f"## Your Episodic Memories\n\n{formatted_memories}")
+
     if not parts:
         parts.append("Compose a response based on your current knowledge and standing orders.")
 

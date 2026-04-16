@@ -65,11 +65,11 @@ def _build_thread_analysis_prompt(
                 context_section = "## Prior Data\n\n" + "\n".join(lines) + "\n\n"
             break  # Use first successful prior result
 
-    # Episodic memories if present
-    memories = context.get("recent_memories", "")
+    # BF-189: Use pre-formatted memory text (AD-567b/568c/592 compliant)
+    formatted_memories = context.get("_formatted_memories", "")
     memory_section = ""
-    if memories:
-        memory_section = f"## Relevant Memories\n\n{memories}\n\n"
+    if formatted_memories:
+        memory_section = f"## Your Episodic Memories\n\n{formatted_memories}\n\n"
 
     user_prompt = (
         f"## Thread Content\n\n{thread_content}\n\n"
@@ -127,9 +127,16 @@ def _build_situation_review_prompt(
                 context_section = "## Prior Data\n\n" + "\n".join(lines) + "\n\n"
             break
 
+    # BF-189: Situation review needs memory for context
+    formatted_memories = context.get("_formatted_memories", "")
+    memory_section = ""
+    if formatted_memories:
+        memory_section = f"## Your Episodic Memories\n\n{formatted_memories}\n\n"
+
     user_prompt = (
         f"## Current Situation\n\n{situation_content}\n\n"
         f"{context_section}"
+        f"{memory_section}"
         "## Assessment Required\n\n"
         f"From your department's perspective ({department}), assess:\n\n"
         "1. **active_threads**: List active discussion threads requiring attention.\n"
@@ -174,9 +181,16 @@ def _build_dm_comprehension_prompt(
                 context_section = "## Prior Data\n\n" + "\n".join(lines) + "\n\n"
             break
 
+    # BF-189: DM analysis needs memory for grounding (prevents confabulation)
+    formatted_memories = context.get("_formatted_memories", "")
+    memory_section = ""
+    if formatted_memories:
+        memory_section = f"## Your Episodic Memories\n\n{formatted_memories}\n\n"
+
     user_prompt = (
         f"## Direct Message\n\n{dm_content}\n\n"
         f"{context_section}"
+        f"{memory_section}"
         "## Comprehension Required\n\n"
         "Analyze this direct message:\n\n"
         "1. **sender_intent**: What is the sender trying to accomplish?\n"

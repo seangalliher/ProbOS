@@ -5010,6 +5010,21 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 
 ---
 
+## BF-189: Chain Pipeline Memory Context Gaps (2026-04-16)
+
+**Context:** Three memory context gaps in the sub-task chain pipeline caused confabulation. (1) `analyze.py` `_build_thread_analysis_prompt()` rendered `recent_memories` (a `list[dict]`) as Python repr instead of formatted text. (2) DM comprehension and situation review modes had zero memory context. (3) Compose step had no memory grounding — only saw Analyze JSON output, not raw memories. Single-shot path had none of these issues because `_format_memory_section()` was called inline.
+
+**Decision:** Pre-format memories once in `_execute_sub_task_chain()` using the existing `_format_memory_section()` method (DRY), store as `_formatted_memories` string in observation dict. All chain handlers read this flat string — they don't know about `SourceFraming`, anchor headers, or confabulation guards (Law of Demeter). Defense in depth: memory grounding at BOTH Analyze (decision quality) AND Compose (response quality).
+
+| Design Decision | Choice | Rationale |
+|---|---|---|
+| DD-1: Memory formatting location | Pre-format once in `_execute_sub_task_chain()` | DRY — one formatting path for both single-shot and chain. No new formatter. |
+| DD-2: Chain handler interface | Flat `_formatted_memories` string, not `list[dict]` | Law of Demeter — handlers read a string, don't need to know about `_format_memory_section()` internals. |
+| DD-3: Compose memory grounding | Memory in `_build_user_prompt()` (shared), not per-mode | Open/Closed — new compose modes automatically get memory. One change covers all modes. |
+| DD-4: Memory section ordering | After analysis results in Compose prompt | LLM sees analysis context first, then memories for grounding. Matches single-shot prompt structure. |
+
+---
+
 ## BF-187/BF-188: DM Social Obligation + Captain Delivery Guarantee (2026-04-16)
 
 **Context:** Two bugs prevented reliable crew communication: (1) DMs from crew-to-crew went through the sub-task chain where Analyze/Evaluate/Reflect could suppress responses — no `_is_dm` flag existed. (2) Captain posts to all-hands routed sequentially to 14 agents, but agent replies spawned concurrent fire-and-forget tasks competing for LLM capacity — only 6/14 responded.
