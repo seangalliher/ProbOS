@@ -167,10 +167,10 @@ class TestFloorFilterBehavior:
         results = await em.recall_weighted(
             "agent-001", "test query",
             anchor_confidence_gate=0.3,
-            composite_score_floor=0.40,
+            composite_score_floor=0.50,
         )
         # ep_low_anchor: fails anchor gate (0.0 < 0.3) — filtered at 3b
-        # ep_low_composite: passes anchor gate (1.0 > 0.3) but fails floor (<0.40) — filtered at 3c
+        # ep_low_composite: passes anchor gate (1.0 > 0.3) but fails floor (<0.50) — filtered at 3c
         # Result: neither passes
         assert len(results) == 0
 

@@ -47,11 +47,10 @@ class TestLoadFromProfiles:
         assert registry.resolve("picard") is None
 
     def test_get_callsign_by_type(self):
-        """get_callsign('builder') returns 'Scotty'."""
+        """get_callsign('builder') returns 'Forge'."""
         registry = CallsignRegistry()
         registry.load_from_profiles()
-        assert registry.get_callsign("builder") == "Scotty"
-
+        assert registry.get_callsign("builder") == "Forge"
     def test_all_callsigns(self):
         """Returns dict mapping agent_type to display-case callsign."""
         registry = CallsignRegistry()
@@ -59,7 +58,7 @@ class TestLoadFromProfiles:
         callsigns = registry.all_callsigns()
         assert isinstance(callsigns, dict)
         assert "Wesley" in callsigns.values()
-        assert "Scotty" in callsigns.values()
+        assert "Forge" in callsigns.values()
         assert "Bones" in callsigns.values()
 
     def test_resolve_with_live_agent(self):

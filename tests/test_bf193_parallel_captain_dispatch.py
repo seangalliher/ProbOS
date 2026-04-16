@@ -35,6 +35,8 @@ def _make_router():
     router._cooldowns = {}
     router._thread_rounds = {}
     router._round_participants = {}
+    router._responded_threads = {}  # BF-198
+    router._last_responded_eviction = time.time()  # BF-198
     router._captain_delivery_done = asyncio.Event()
     router._captain_delivery_done.set()
     router._WARD_ROOM_COOLDOWN_SECONDS = 30
@@ -217,7 +219,7 @@ class TestCaptainParallelDispatch:
         router._registry.get = MagicMock(return_value=None)
 
         # Agent-05 is at reply cap
-        def _cap_check(thread_id, agent_id):
+        def _cap_check(thread_id, agent_id, *, is_department_channel=False):
             return agent_id != "agent-05"
 
         router.check_and_increment_reply_cap = MagicMock(side_effect=_cap_check)

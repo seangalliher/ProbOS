@@ -48,6 +48,9 @@ class MockLLMClient:
 
     async def complete(self, request: Any) -> LLMResponse:
         self.last_request = request
+        # Yield to event loop — ensures duration_ms is measurably > 0 on
+        # platforms with coarse monotonic clock resolution (Windows).
+        await asyncio.sleep(0.001)
         if self._raise_exc:
             raise self._raise_exc
         return LLMResponse(
@@ -339,13 +342,17 @@ class TestAgentIdentityInjection:
 
     @pytest.mark.asyncio
     async def test_department_fallback_to_standing_orders(self, handler: AnalyzeHandler) -> None:
-        """When _department missing, handler uses 'unassigned' gracefully."""
+        """When _department missing, handler uses 'unassigned' gracefully.
+
+        The ``department`` value propagates into the user prompt (system prompt
+        is derived from _agent_type via standing_orders, which is unaffected).
+        """
         ctx = _make_context()
         del ctx["_department"]
         result = await handler(_make_spec(), ctx, [])
         assert result.success is True
         req = handler._llm_client.last_request
-        assert "unassigned" in req.system_prompt
+        assert "unassigned" in req.prompt
 
 
 # ===========================================================================

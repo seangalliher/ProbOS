@@ -304,9 +304,9 @@ class TestLLMRateConfig:
     def test_default_values(self):
         """Verify LLMRateConfig defaults."""
         config = LLMRateConfig()
-        assert config.rpm_fast == 60
-        assert config.rpm_standard == 30
-        assert config.rpm_deep == 15
+        assert config.rpm_fast == 120
+        assert config.rpm_standard == 120
+        assert config.rpm_deep == 30
         assert config.max_wait_seconds == 30.0
         assert config.cache_max_entries == 500
 
@@ -314,4 +314,4 @@ class TestLLMRateConfig:
         """Verify SystemConfig().llm_rate returns an LLMRateConfig instance."""
         sys_config = SystemConfig()
         assert isinstance(sys_config.llm_rate, LLMRateConfig)
-        assert sys_config.llm_rate.rpm_fast == 60
+        assert sys_config.llm_rate.rpm_fast == 120

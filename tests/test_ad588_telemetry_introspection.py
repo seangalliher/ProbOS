@@ -484,7 +484,7 @@ class TestTelemetryInjection:
             "params": {"text": "Status report"},
         }
         result = await agent._build_user_message(obs)
-        assert "COGNITIVE ZONE: AMBER" in result
+        assert "<cognitive_zone>AMBER</cognitive_zone>" in result
 
     @pytest.mark.asyncio
     async def test_cognitive_zone_green_not_shown(self):
@@ -499,7 +499,7 @@ class TestTelemetryInjection:
             "params": {"text": "Status report"},
         }
         result = await agent._build_user_message(obs)
-        assert "COGNITIVE ZONE" not in result
+        assert "<cognitive_zone>" not in result
 
 
 # ── Test Class 4: Render Telemetry Context ───────────────────────

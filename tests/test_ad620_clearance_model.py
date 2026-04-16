@@ -300,14 +300,18 @@ class TestWardRoomSubscription:
 
 class TestSWARemoval:
     def test_no_swa_references_in_source(self) -> None:
-        """Grep for has_ship_wide_authority in src/probos/ — should return 0 results."""
-        result = subprocess.run(
-            ["grep", "-rn", "--include=*.py", "has_ship_wide_authority", "src/probos/"],
-            capture_output=True,
-            text=True,
-            cwd=str(Path(__file__).parent.parent),
-        )
-        matches = result.stdout.strip()
-        assert matches == "", (
-            f"has_ship_wide_authority still referenced in src/probos/:\n{matches}"
+        """Scan src/probos/ for has_ship_wide_authority — should find 0 references."""
+        src_root = Path(__file__).parent.parent / "src" / "probos"
+        offenders: list[str] = []
+        for py in src_root.rglob("*.py"):
+            try:
+                text = py.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if "has_ship_wide_authority" in line:
+                    offenders.append(f"{py.relative_to(src_root.parent.parent)}:{lineno}: {line.strip()}")
+        assert not offenders, (
+            "has_ship_wide_authority still referenced in src/probos/:\n"
+            + "\n".join(offenders)
         )

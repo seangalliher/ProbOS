@@ -273,6 +273,8 @@ class TestAlertDelivery:
         dept_channel.department = "engineering"
         dept_channel.id = "eng-ch"
         ward_room.list_channels = AsyncMock(return_value=[ship_channel, dept_channel])
+        ward_room.get_channel_by_type = AsyncMock(return_value=ship_channel)
+        ward_room.get_channel_by_department = AsyncMock(return_value=dept_channel)
         ward_room.create_thread = AsyncMock()
         notify_fn = MagicMock()
         event_log = MagicMock(spec=EventLog)
@@ -288,7 +290,7 @@ class TestAlertDelivery:
             episodic_memory=None,
             event_emitter=MagicMock(),
             event_log=event_log,
-            config=MagicMock(spec=SystemConfig),
+            config=SystemConfig(),
             notify_fn=notify_fn,
             proactive_loop=None,
         )
@@ -322,6 +324,8 @@ class TestAlertDelivery:
         ship_channel.channel_type = "ship"
         ship_channel.id = "ship-ch"
         ward_room.list_channels = AsyncMock(return_value=[ship_channel])
+        ward_room.get_channel_by_type = AsyncMock(return_value=ship_channel)
+        ward_room.get_channel_by_department = AsyncMock(return_value=None)
         ward_room.create_thread = AsyncMock()
         notify_fn = MagicMock()
         event_log = MagicMock(spec=EventLog)
@@ -337,7 +341,7 @@ class TestAlertDelivery:
             episodic_memory=None,
             event_emitter=MagicMock(),
             event_log=event_log,
-            config=MagicMock(spec=SystemConfig),
+            config=SystemConfig(),
             notify_fn=notify_fn,
             proactive_loop=None,
         )
@@ -372,6 +376,8 @@ class TestAlertDelivery:
         eng_channel.department = "science"
         eng_channel.id = "sci-ch"
         ward_room.list_channels = AsyncMock(return_value=[ship_channel, eng_channel])
+        ward_room.get_channel_by_type = AsyncMock(return_value=ship_channel)
+        ward_room.get_channel_by_department = AsyncMock(return_value=eng_channel)
         ward_room.create_thread = AsyncMock()
         notify_fn = MagicMock()
         event_log = MagicMock(spec=EventLog)
@@ -387,7 +393,7 @@ class TestAlertDelivery:
             episodic_memory=None,
             event_emitter=MagicMock(),
             event_log=event_log,
-            config=MagicMock(spec=SystemConfig),
+            config=SystemConfig(),
             notify_fn=notify_fn,
             proactive_loop=None,
         )

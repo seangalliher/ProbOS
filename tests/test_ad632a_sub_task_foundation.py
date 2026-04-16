@@ -139,7 +139,7 @@ class TestSubTaskSpec:
 
     def test_defaults(self):
         spec = SubTaskSpec(sub_task_type=SubTaskType.COMPOSE, name="c")
-        assert spec.timeout_ms == 15000
+        assert spec.timeout_ms == 60000
         assert spec.tier == "standard"
         assert spec.required is True
         assert spec.prompt_template == ""
@@ -216,7 +216,7 @@ class TestSubTaskChain:
 
     def test_defaults(self):
         chain = SubTaskChain()
-        assert chain.chain_timeout_ms == 30000
+        assert chain.chain_timeout_ms == 240000
         assert chain.fallback == "single_call"
         assert chain.source == ""
         assert chain.steps == []

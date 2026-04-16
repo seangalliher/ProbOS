@@ -404,10 +404,10 @@ class TestDmTtl:
         assert found, "Expected ttl_seconds=60.0 in chat.py"
 
     def test_default_ttl_unchanged(self):
-        """IntentMessage default TTL should remain 30s."""
+        """IntentMessage default TTL is 60s (raised for chain pipeline)."""
         from probos.types import IntentMessage
         msg = IntentMessage(intent="proactive_think", params={})
-        assert msg.ttl_seconds == 30.0
+        assert msg.ttl_seconds == 60.0
 
 
 # ===================================================================
