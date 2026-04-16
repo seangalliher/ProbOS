@@ -240,7 +240,7 @@ bridge_alerts:
 
 # --- Earned Agency (AD-357) ---
 earned_agency:
-  enabled: true
+  enabled: false  # Disabled for cold-start — boot camp AD will handle re-enablement
 
 # --- Proactive Cognitive Loop (Phase 28b) ---
 proactive_cognitive:

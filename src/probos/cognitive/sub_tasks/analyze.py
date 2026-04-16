@@ -14,6 +14,7 @@ import logging
 import time
 from typing import Any
 
+from probos.cognitive.standing_orders import compose_instructions
 from probos.cognitive.sub_task import SubTaskResult, SubTaskSpec, SubTaskType
 from probos.types import LLMRequest
 from probos.utils.json_extract import extract_json
@@ -34,9 +35,16 @@ def _build_thread_analysis_prompt(
     department: str,
 ) -> tuple[str, str]:
     """Build system + user prompts for Ward Room thread comprehension."""
-    system_prompt = (
-        f"You are {callsign}, a crew member in the {department} department.\n\n"
-        "Your task is to ANALYZE the following content. Do NOT compose a response.\n"
+    # BF-186: Full standing orders context for better SILENT/RESPOND decisions
+    system_prompt = compose_instructions(
+        agent_type=context.get("_agent_type", "agent"),
+        hardcoded_instructions="",
+        callsign=callsign,
+        agent_rank=context.get("_agent_rank"),
+        skill_profile=context.get("_skill_profile"),
+    )
+    system_prompt += (
+        "\n\nYour task is to ANALYZE the following content. Do NOT compose a response.\n"
         "Do NOT suggest what to say. Only analyze what has been said and identify\n"
         "what is relevant to your department's expertise.\n\n"
         "Respond with a JSON object containing your structured analysis. No\n"
@@ -93,9 +101,16 @@ def _build_situation_review_prompt(
     department: str,
 ) -> tuple[str, str]:
     """Build system + user prompts for proactive situation assessment."""
-    system_prompt = (
-        f"You are {callsign}, a crew member in the {department} department.\n\n"
-        "Your task is to ASSESS the current situation. Do NOT compose a response.\n"
+    # BF-186: Full standing orders context
+    system_prompt = compose_instructions(
+        agent_type=context.get("_agent_type", "agent"),
+        hardcoded_instructions="",
+        callsign=callsign,
+        agent_rank=context.get("_agent_rank"),
+        skill_profile=context.get("_skill_profile"),
+    )
+    system_prompt += (
+        "\n\nYour task is to ASSESS the current situation. Do NOT compose a response.\n"
         "Do NOT suggest what to say. Only analyze what is happening and identify\n"
         "priorities relevant to your department.\n\n"
         "Respond with a JSON object containing your structured analysis. No\n"
@@ -134,9 +149,16 @@ def _build_dm_comprehension_prompt(
     department: str,
 ) -> tuple[str, str]:
     """Build system + user prompts for direct message understanding."""
-    system_prompt = (
-        f"You are {callsign}, a crew member in the {department} department.\n\n"
-        "Your task is to UNDERSTAND the following direct message. Do NOT compose\n"
+    # BF-186: Full standing orders context
+    system_prompt = compose_instructions(
+        agent_type=context.get("_agent_type", "agent"),
+        hardcoded_instructions="",
+        callsign=callsign,
+        agent_rank=context.get("_agent_rank"),
+        skill_profile=context.get("_skill_profile"),
+    )
+    system_prompt += (
+        "\n\nYour task is to UNDERSTAND the following direct message. Do NOT compose\n"
         "a reply. Only analyze the sender's intent and identify what is being asked.\n\n"
         "Respond with a JSON object containing your structured analysis. No\n"
         "conversational text outside the JSON block."

@@ -4988,3 +4988,41 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Files modified:** `src/probos/config.py`, `config/system.yaml`, `src/probos/cognitive/llm_client.py`, `src/probos/proactive.py`, `src/probos/cognitive/sub_task.py`, `src/probos/cognitive/cognitive_agent.py`, `src/probos/routers/agents.py`, `src/probos/routers/chat.py`, `src/probos/experience/commands/session.py`. **Tests:** `tests/test_ad636_llm_priority_scheduling.py` (NEW, 30 tests across 4 classes).
 
 **Build prompt:** `prompts/ad-636-llm-priority-scheduling.md`. **Issue:** #244.
+
+---
+
+## BF-186: Compose Standing Orders Regression (2026-04-16)
+
+**Context:** AD-632d sub-task chain compose/analyze handlers hardcoded 80+ lines of Ward Room action vocabulary (ENDORSE, REPLY, DM, NOTEBOOK, PROPOSAL, CHALLENGE, MOVE) instead of relying on the Standing Orders system (AD-339). Missing context injection: `_agent_rank`, `_skill_profile`, `_crew_manifest` not threaded into chain observation. Analyze handler used bare identity prompt without standing orders. Compose SILENT short-circuit ignored social obligation flags.
+
+**Decision:** DRY — standing orders are the single source of truth for Ward Room capabilities. Compose mode builders provide only mode-specific framing (2-4 sentence instructions); all action vocabulary comes from `config/standing_orders/ship.md` via `compose_instructions()`. Social obligation bypass at compose layer complements BF-184 (evaluate) and BF-185 (reflect) — all three quality gates now respect `_from_captain` / `_was_mentioned`.
+
+| Design Decision | Choice | Rationale |
+|---|---|---|
+| DD-1: Action vocabulary location | ship.md standing orders | DRY — one source of truth. Compose builders must not duplicate. |
+| DD-2: Context injection | `_agent_rank`, `_skill_profile`, `_crew_manifest` in chain observation | All three are needed by `compose_instructions()` and crew DM targeting. |
+| DD-3: Analyze enrichment | `compose_instructions()` replaces bare identity | Better SILENT/RESPOND decisions with full personality + standing orders context. |
+| DD-4: `_should_short_circuit()` signature | Add optional `context` parameter | Backward compatible: `context=None` defaults to existing behavior. |
+
+**Files modified:** `src/probos/cognitive/cognitive_agent.py`, `src/probos/cognitive/sub_tasks/compose.py`, `src/probos/cognitive/sub_tasks/analyze.py`, `config/standing_orders/ship.md`. **Tests:** `tests/test_bf186_compose_standing_orders.py` (NEW, 20 tests across 8 classes).
+
+**Build prompt:** `prompts/bf-186-compose-standing-orders-regression.md`. **Issue:** #251.
+
+---
+
+## BF-187/BF-188: DM Social Obligation + Captain Delivery Guarantee (2026-04-16)
+
+**Context:** Two bugs prevented reliable crew communication: (1) DMs from crew-to-crew went through the sub-task chain where Analyze/Evaluate/Reflect could suppress responses — no `_is_dm` flag existed. (2) Captain posts to all-hands routed sequentially to 14 agents, but agent replies spawned concurrent fire-and-forget tasks competing for LLM capacity — only 6/14 responded.
+
+**Decision:** Extend the social obligation bypass pattern (BF-184/185/186) with `_is_dm` at all four chain gates. Reorder reflect to check social obligation BEFORE suppress (defense in depth). Add `asyncio.Event` for Captain delivery coordination — agent-reply routing waits until Captain delivery completes (120s timeout prevents deadlock).
+
+| Design Decision | Choice | Rationale |
+|---|---|---|
+| DD-1: DM detection mechanism | `is_dm_channel` in intent params from `channel.channel_type` | Law of Demeter — chain handlers read flat flag, don't reach into ward room objects. |
+| DD-2: Reflect suppress/social ordering | Social obligation checked BEFORE suppress | Defense in depth — even if Evaluate has a bug returning "suppress" for a DM, Reflect won't honor it. |
+| DD-3: Captain delivery coordination | `asyncio.Event` with 120s timeout | Simple, no-deadlock coordination. Stopgap until AD-637 (NATS event bus) provides proper priority queues. |
+| DD-4: Routing loop extraction | `_route_to_agents()` method | Enables try/finally around Captain delivery clear/set without re-indenting 130 lines. |
+
+**Files modified:** `src/probos/ward_room_router.py`, `src/probos/cognitive/cognitive_agent.py`, `src/probos/cognitive/sub_tasks/compose.py`, `src/probos/cognitive/sub_tasks/evaluate.py`, `src/probos/cognitive/sub_tasks/reflect.py`. **Tests:** `tests/test_bf187_bf188_dm_captain_delivery.py` (NEW, 18 tests across 6 classes).
+
+**Build prompt:** `prompts/bf-187-188-dm-social-captain-delivery.md`. **Issue:** #253.

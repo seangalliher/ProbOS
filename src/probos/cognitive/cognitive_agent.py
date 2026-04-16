@@ -1592,6 +1592,14 @@ class CognitiveAgent(BaseAgent):
         observation["_from_captain"] = _params.get("author_id", "") == "captain"
         observation["_was_mentioned"] = _params.get("was_mentioned", False)
 
+        # BF-187: DM social obligation — DM recipients must always respond
+        observation["_is_dm"] = _params.get("is_dm_channel", False)
+
+        # BF-186: Thread rank, skill_profile, and crew manifest into chain context
+        observation["_agent_rank"] = getattr(self, "rank", None)
+        observation["_skill_profile"] = getattr(self, '_skill_profile', None)
+        observation["_crew_manifest"] = self._compose_dm_instructions()
+
         try:
             results = await self._sub_task_executor.execute(
                 chain,

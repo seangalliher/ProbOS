@@ -29,8 +29,11 @@ _DEFAULT_MODE = "ward_room_response"
 # SILENT short-circuit helpers
 # ---------------------------------------------------------------------------
 
-def _should_short_circuit(prior_results: list[SubTaskResult]) -> bool:
+def _should_short_circuit(prior_results: list[SubTaskResult], context: dict | None = None) -> bool:
     """Return True if prior Analyze determined silence is appropriate."""
+    # BF-186 + BF-187: Social obligation overrides SILENT
+    if context and (context.get("_from_captain") or context.get("_was_mentioned") or context.get("_is_dm")):
+        return False
     for pr in reversed(prior_results):
         if pr.sub_task_type == SubTaskType.ANALYZE and pr.success and pr.result:
             r = pr.result
@@ -60,32 +63,29 @@ def _build_ward_room_compose_prompt(
     department: str,
 ) -> tuple[str, str]:
     """Build system + user prompts for Ward Room response composition."""
-    # Full system prompt with personality and standing orders
+    # Full system prompt with personality and standing orders (BF-186)
+    agent_rank = context.get("_agent_rank")
+    skill_profile = context.get("_skill_profile")
     system_prompt = compose_instructions(
         agent_type=context.get("_agent_type", "agent"),
         hardcoded_instructions="",
         callsign=callsign,
-        agent_rank=None,
+        agent_rank=agent_rank,
+        skill_profile=skill_profile,
     )
 
+    # BF-186: Short mode framing — action vocabulary comes from standing orders
     system_prompt += (
-        "\n\nYou are participating in the Ward Room — the ship's discussion forum. "
+        "\n\nYou are responding to a Ward Room thread. "
         "Write concise, conversational posts (2-4 sentences). "
-        "Speak in your natural voice. Don't be formal unless the topic demands it. "
-        "You may be responding to the Captain or to a fellow crew member. "
         "Engage naturally — agree, disagree, build on ideas, ask questions. "
-        "Do NOT repeat what someone else already said. "
-        "If you have nothing meaningful to add, respond with exactly: [NO_RESPONSE]"
-        "\n\nAfter your reply (or [NO_RESPONSE]), you may endorse posts you've read in this thread. "
-        "If a post is particularly insightful, actionable, or well-reasoned, endorse it up. "
-        "If a post is incorrect, misleading, or unhelpful, endorse it down. "
-        "Only endorse when you have a clear opinion — not every post needs a vote. "
-        "Use this format, one per line:\n"
-        "[ENDORSE post_id UP]\n"
-        "[ENDORSE post_id DOWN]\n"
-        "Place endorsements AFTER your reply text, each on its own line. "
-        "Do NOT endorse your own posts."
+        "Do NOT repeat what someone else already said."
     )
+
+    # BF-186: Crew manifest for DM targeting
+    crew_manifest = context.get("_crew_manifest", "")
+    if crew_manifest:
+        system_prompt += f"\n\n{crew_manifest}"
 
     # Skill injection
     system_prompt = _inject_skills(system_prompt, context)
@@ -107,7 +107,8 @@ def _build_dm_compose_prompt(
         agent_type=context.get("_agent_type", "agent"),
         hardcoded_instructions="",
         callsign=callsign,
-        agent_rank=None,
+        agent_rank=context.get("_agent_rank"),
+        skill_profile=context.get("_skill_profile"),
     )
 
     system_prompt += (
@@ -118,6 +119,11 @@ def _build_dm_compose_prompt(
         "Be genuine, personable, and engage with what the Captain says. "
         "Draw on your expertise and personality, but keep it conversational."
     )
+
+    # BF-186: Crew manifest for DM targeting
+    crew_manifest = context.get("_crew_manifest", "")
+    if crew_manifest:
+        system_prompt += f"\n\n{crew_manifest}"
 
     # Skill injection
     system_prompt = _inject_skills(system_prompt, context)
@@ -138,75 +144,23 @@ def _build_proactive_compose_prompt(
         agent_type=context.get("_agent_type", "agent"),
         hardcoded_instructions="",
         callsign=callsign,
-        agent_rank=None,
+        agent_rank=context.get("_agent_rank"),
+        skill_profile=context.get("_skill_profile"),
     )
 
+    # BF-186: Short mode framing — all action vocabulary comes from standing orders
     system_prompt += (
         "\n\nYou are reviewing recent ship activity during a quiet moment. "
         "If you notice something noteworthy — a pattern, a concern, an insight "
         "related to your expertise — compose a brief observation (2-4 sentences). "
         "This will be posted to the Ward Room as a new thread. "
-        "Speak in your natural voice. Be specific and actionable. "
-        "If nothing warrants attention right now, respond with exactly: [NO_RESPONSE]\n"
-        "Keep game-related discussions (tic-tac-toe, game strategy, match commentary) "
-        "in the Recreation channel using [REPLY] to existing game threads. "
-        "Your department channel is for professional observations related to your role."
-        "\n\nIf you identify a concrete, actionable improvement to the ship's systems "
-        "(not a vague observation), propose it using:\n"
-        "[PROPOSAL]\n"
-        "Title: <short title>\n"
-        "Rationale: <why this matters and what it would improve>\n"
-        "Affected Systems: <comma-separated subsystems>\n"
-        "Priority: low|medium|high\n"
-        "[/PROPOSAL]\n"
-        "Only propose improvements you have evidence for — not speculation. "
-        "Reserve proposals for genuine insights.\n"
-        "IMPORTANT: If you recently participated in a discussion that identified a system "
-        "problem, diagnosed a root cause, or suggested an improvement — and no formal "
-        "improvement proposal has been submitted for it yet — you should submit one now. "
-        "Collaborative diagnosis should culminate in a formal proposal so the Captain "
-        "can track and act on the finding."
-        "\n\n## Available Actions\n"
-        "Beyond posting observations, you can take structured actions on Ward Room content. "
-        "Place action tags AFTER your observation text, each on its own line.\n\n"
-        "**Endorse posts** — signal agreement or disagreement with a post:\n"
-        "[ENDORSE post_id UP]\n"
-        "[ENDORSE post_id DOWN]\n"
-        "Only endorse when you have a clear, justified opinion. Do NOT endorse your own posts.\n\n"
-        "**Reply to threads** — contribute to an existing discussion instead of starting a new one:\n"
-        "[REPLY thread_id]\n"
-        "Your reply text here (2-3 sentences).\n"
-        "[/REPLY]\n"
-        "Reply when you have something to ADD to an existing conversation. "
-        "Do not reply just to agree — use endorsement for that. "
-        "Replies require Lieutenant rank or higher.\n\n"
-        "**Notebook entries** — document extended analysis in Ship's Records:\n"
-        "[NOTEBOOK topic-slug]\n"
-        "Your extended analysis, research findings, or diagnostic report here.\n"
-        "[/NOTEBOOK]\n"
-        "Use for: research findings, pattern analysis, baseline readings, diagnostic reports. "
-        "This writes to your personal notebook in Ship's Records (AD-434).\n\n"
-        "**Send a direct message** — private communication with a crewmate:\n"
-        "[DM @callsign]\n"
-        "Your message here.\n"
-        "[/DM]\n"
-        "Use DMs for: specialist questions, private coordination, sensitive matters.\n\n"
-        "**Challenge a crewmate** — initiate a game in the Recreation channel:\n"
-        "[CHALLENGE @callsign tictactoe]\n"
-        "Challenge when the mood is light and you want to build social bonds. "
-        "Do NOT challenge during alert conditions or critical situations.\n\n"
-        "**Make a game move** — play your turn in an active game:\n"
-        "[MOVE position]\n"
-        "Position is game-specific (e.g. 0-8 for tic-tac-toe). "
-        "Only respond with a move when it's your turn.\n\n"
-        "**When to act vs. observe:**\n"
-        "- See a good post? → [ENDORSE post_id UP] (not a reply saying 'good point')\n"
-        "- Have a concrete addition? → [REPLY thread_id] with your contribution\n"
-        "- Need specialist input? → [DM @callsign] with your question\n"
-        "- Detailed analysis warranted? → [NOTEBOOK topic-slug] with your findings\n"
-        "- See something new? → Write an observation (new thread)\n"
-        "- Nothing noteworthy? → [NO_RESPONSE]"
+        "Speak in your natural voice. Be specific and actionable."
     )
+
+    # BF-186: Crew manifest for DM targeting
+    crew_manifest = context.get("_crew_manifest", "")
+    if crew_manifest:
+        system_prompt += f"\n\n{crew_manifest}"
 
     # Skill injection
     system_prompt = _inject_skills(system_prompt, context)
@@ -332,7 +286,7 @@ class ComposeHandler:
             )
 
         # SILENT short-circuit: skip LLM call if analysis says don't respond
-        if _should_short_circuit(prior_results):
+        if _should_short_circuit(prior_results, context):
             duration = (time.monotonic() - start) * 1000
             logger.debug("AD-632d: SILENT short-circuit — skipping compose LLM call")
             return SubTaskResult(

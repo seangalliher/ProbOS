@@ -73,6 +73,10 @@ class WardRoomRouter:
         self._coalesce_ms: int = getattr(config.ward_room, 'event_coalesce_ms', 200)
         self._channel_members: dict[str, set[str]] = {}  # AD-621: channel_id -> {agent_ids}
         self._dept_thread_responses: dict[str, set[str]] = {}  # AD-629: thread_id -> {department_ids}
+        # BF-188: Captain delivery coordination — agent-reply routing waits
+        # until Captain's routing to all targets completes
+        self._captain_delivery_done: asyncio.Event = asyncio.Event()
+        self._captain_delivery_done.set()  # Initially done (no Captain routing in progress)
 
     # ------------------------------------------------------------------
     # AD-625: Communication proficiency helpers
@@ -358,7 +362,6 @@ class WardRoomRouter:
                     thread_context += f"\n{_id_prefix}{p_callsign}: {p_body}"
 
         # --- Send intents to target agents ---
-        from probos.types import IntentMessage
         now = time.time()
 
         # Layer 4: Use longer cooldown for agent-triggered responses
@@ -379,7 +382,12 @@ class WardRoomRouter:
             )
             return
 
-        responded_this_event = False
+        # BF-188: Agent-reply routing waits for Captain delivery to complete
+        if is_agent_post:
+            try:
+                await asyncio.wait_for(self._captain_delivery_done.wait(), timeout=120.0)
+            except asyncio.TimeoutError:
+                logger.warning("BF-188: Timed out waiting for Captain delivery, proceeding")
 
         # BF-157: Track which agents were explicitly @mentioned
         mentioned_agent_ids: set[str] = set()
@@ -389,6 +397,33 @@ class WardRoomRouter:
                 resolved = self._callsign_registry.resolve(callsign)
                 if resolved and resolved.get("agent_id"):
                     mentioned_agent_ids.add(resolved["agent_id"])
+
+        # BF-188: Signal Captain delivery in progress
+        if is_captain:
+            self._captain_delivery_done.clear()
+
+        try:
+            await self._route_to_agents(
+                target_agent_ids, is_captain, is_agent_post,
+                mentioned_agent_ids, channel, thread_id, channel_id,
+                event_type, title, author_id, data, thread_context,
+                cooldown, current_round, round_participants,
+            )
+        finally:
+            # BF-188: Signal Captain delivery complete (even on error)
+            if is_captain:
+                self._captain_delivery_done.set()
+
+    async def _route_to_agents(
+        self,
+        target_agent_ids, is_captain, is_agent_post,
+        mentioned_agent_ids, channel, thread_id, channel_id,
+        event_type, title, author_id, data, thread_context,
+        cooldown, current_round, round_participants,
+    ):
+        """Route intents to target agents — extracted for BF-188 try/finally."""
+        from probos.types import IntentMessage
+        responded_this_event = False
 
         for agent_id in target_agent_ids:
             # BF-156/157: @mentioned agents and DM recipients bypass cooldown/caps.
@@ -446,6 +481,8 @@ class WardRoomRouter:
                     "author_callsign": data.get("author_callsign", ""),
                     # BF-157: Tell the agent it was directly mentioned
                     "was_mentioned": agent_id in mentioned_agent_ids,
+                    # BF-187: DM channel flag for social obligation bypass in chain
+                    "is_dm_channel": getattr(channel, 'channel_type', '') == "dm",
                 },
                 context=thread_context,
                 target_agent_id=agent_id,

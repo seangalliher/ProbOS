@@ -259,30 +259,18 @@ class ReflectHandler:
                 tier_used="",
             )
 
-        # Suppress short-circuit: Evaluate recommended suppress
-        if _should_suppress(prior_results):
-            duration = int((time.monotonic() - start) * 1000)
-            logger.info(
-                "AD-632e: Reflect short-circuit for %s: Evaluate recommended suppress",
-                context.get("_agent_type", "unknown"),
-            )
-            return SubTaskResult(
-                sub_task_type=SubTaskType.REFLECT,
-                name=spec.name,
-                result={"output": "[NO_RESPONSE]", "revised": False, "suppressed": True},
-                tokens_used=0,
-                duration_ms=duration,
-                success=True,
-                tier_used="",
-            )
-
-        # BF-185: Captain messages and @mentions bypass self-critique.
-        # Social obligation outranks self-critique — the Captain expects a response.
-        if context.get("_from_captain") or context.get("_was_mentioned"):
+        # BF-185/187: Social obligation bypass — FIRST (defense in depth)
+        # Social obligation outranks both suppress and self-critique.
+        if context.get("_from_captain") or context.get("_was_mentioned") or context.get("_is_dm"):
             compose_output = _get_compose_output(prior_results)
-            reason = "captain_message" if context.get("_from_captain") else "mentioned"
+            if context.get("_from_captain"):
+                reason = "captain_message"
+            elif context.get("_was_mentioned"):
+                reason = "mentioned"
+            else:
+                reason = "dm_recipient"
             logger.info(
-                "BF-185: Reflect auto-approved for %s (social obligation: %s)",
+                "BF-185/187: Reflect auto-approved for %s (social obligation: %s)",
                 context.get("_agent_type", "unknown"),
                 reason,
             )
@@ -297,6 +285,23 @@ class ReflectHandler:
                 },
                 tokens_used=0,
                 duration_ms=int((time.monotonic() - start) * 1000),
+                success=True,
+                tier_used="",
+            )
+
+        # Suppress short-circuit: Evaluate recommended suppress (AFTER social obligation)
+        if _should_suppress(prior_results):
+            duration = int((time.monotonic() - start) * 1000)
+            logger.info(
+                "AD-632e: Reflect short-circuit for %s: Evaluate recommended suppress",
+                context.get("_agent_type", "unknown"),
+            )
+            return SubTaskResult(
+                sub_task_type=SubTaskType.REFLECT,
+                name=spec.name,
+                result={"output": "[NO_RESPONSE]", "revised": False, "suppressed": True},
+                tokens_used=0,
+                duration_ms=duration,
                 success=True,
                 tier_used="",
             )

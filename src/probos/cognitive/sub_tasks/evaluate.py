@@ -238,13 +238,18 @@ class EvaluateHandler:
         callsign = context.get("_callsign", "agent")
         department = context.get("_department", "")
 
-        # BF-184: Captain messages and @mentions bypass quality gate.
+        # BF-184/187: Captain, @mention, and DM bypass quality gate.
         # Social obligation outranks quality scoring — failing to respond
-        # to the Captain is worse than a mediocre response.
-        if context.get("_from_captain") or context.get("_was_mentioned"):
-            reason = "captain_message" if context.get("_from_captain") else "mentioned"
+        # to the Captain or a DM is worse than a mediocre response.
+        if context.get("_from_captain") or context.get("_was_mentioned") or context.get("_is_dm"):
+            if context.get("_from_captain"):
+                reason = "captain_message"
+            elif context.get("_was_mentioned"):
+                reason = "mentioned"
+            else:
+                reason = "dm_recipient"
             logger.info(
-                "BF-184: Evaluate auto-approved for %s (social obligation: %s)",
+                "BF-184/187: Evaluate auto-approved for %s (social obligation: %s)",
                 context.get("_agent_type", "unknown"),
                 reason,
             )
