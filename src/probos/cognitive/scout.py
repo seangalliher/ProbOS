@@ -350,7 +350,9 @@ class ScoutAgent(CognitiveAgent):
     async def act(self, decision: dict[str, Any]) -> dict[str, Any]:
         """Parse LLM classification, store report, deliver notifications."""
         # AD-398/BF-024: pass through conversational responses for 1:1, ward room, and proactive
-        if decision.get("intent") in ("direct_message", "ward_room_notification", "proactive_think"):
+        # BF-177: Allow duty-triggered proactive_think (scout_report) to reach report generation
+        is_duty_triggered = bool(decision.get("duty", {}).get("duty_id"))
+        if decision.get("intent") in ("direct_message", "ward_room_notification", "proactive_think") and not is_duty_triggered:
             return {"success": True, "result": decision.get("llm_output", "")}
         llm_output = decision.get("llm_output", "")
         if "No new repositories" in llm_output or not llm_output.strip():

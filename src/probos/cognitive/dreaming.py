@@ -20,6 +20,7 @@ from probos.cognitive.similarity import jaccard_similarity, text_to_words  # AD-
 from probos.cognitive.gap_predictor import predict_gaps, detect_gaps, map_gap_to_skill, trigger_qualification_if_needed
 from probos.cognitive.procedures import (
     extract_procedure_from_cluster,
+    extract_chain_procedure,
     extract_procedure_from_observation,
     extract_compound_procedure_from_cluster,
     extract_negative_procedure_from_cluster,
@@ -299,6 +300,7 @@ class DreamingEngine:
 
         # Step 7: Procedure extraction from success clusters (AD-532)
         procedures_extracted = 0
+        chain_procedures_extracted = 0  # AD-632g
         procedures: list = []
         if self._llm_client and clusters:
             for cluster in clusters:
@@ -324,8 +326,12 @@ class DreamingEngine:
                     ]
                     if not matched_episodes:
                         continue
+                    # AD-632g: Try chain-aware extraction first (0 LLM calls)
+                    procedure = extract_chain_procedure(cluster, matched_episodes)
+                    if procedure is not None:
+                        chain_procedures_extracted += 1
                     # AD-532d: Route to compound extraction for multi-agent clusters
-                    if len(cluster.participating_agents) >= 2:
+                    elif len(cluster.participating_agents) >= 2:
                         procedure = await extract_compound_procedure_from_cluster(
                             cluster=cluster,
                             episodes=matched_episodes,
@@ -1179,6 +1185,7 @@ class DreamingEngine:
             clusters_found=clusters_found,
             clusters=clusters,
             procedures_extracted=procedures_extracted,
+            chain_procedures_extracted=chain_procedures_extracted,  # AD-632g
             procedures=procedures,
             procedures_evolved=procedures_evolved,
             negative_procedures_extracted=negative_procedures_extracted,

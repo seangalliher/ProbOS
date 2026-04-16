@@ -428,6 +428,7 @@ class DreamReport:
     clusters_found: int = 0  # AD-531 (replaces strategies_extracted)
     clusters: list[Any] = field(default_factory=list)  # AD-531: EpisodeCluster objects
     procedures_extracted: int = 0  # AD-532
+    chain_procedures_extracted: int = 0  # AD-632g: chain-compiled procedures
     procedures: list[Any] = field(default_factory=list)  # AD-532: Procedure objects
     procedures_evolved: int = 0  # AD-532b
     negative_procedures_extracted: int = 0  # AD-532c

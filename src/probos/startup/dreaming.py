@@ -157,6 +157,13 @@ async def init_dreaming(
             cold_start = True
             emergent_detector.set_cold_start_suppression(300)  # 5 minutes
             logger.info("BF-034: Cold start detected — suppressing trust anomalies for 5 minutes")
+        elif runtime and getattr(runtime, '_lifecycle_state', None) == 'stasis_recovery':
+            # BF-178: Stasis recovery is not a cold start (trust/memory preserved),
+            # but dream history is stale. Clear it so dream_min_history gate re-applies
+            # and apply a short suppression window for the first dream cycle.
+            emergent_detector.clear_dream_history()
+            emergent_detector.set_cold_start_suppression(60)  # 1 minute
+            logger.info("BF-178: Stasis recovery — cleared stale dream history, suppressing anomalies for 60s")
 
     # BF-034: Announce fresh start to crew
     if cold_start and ward_room:

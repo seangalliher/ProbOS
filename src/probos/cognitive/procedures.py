@@ -85,7 +85,7 @@ class Procedure:
     is_negative: bool = False  # anti-pattern flag (AD-532c)
     superseded_by: str = ""  # ID of procedure that replaced this one (AD-532b)
     tags: list[str] = field(default_factory=list)  # domain, agent_type, etc.
-    learned_via: str = "direct"  # "direct" | "observational" | "taught" (AD-537)
+    learned_via: str = "direct"  # "direct" | "observational" | "taught" | "chain_compiled" (AD-537, AD-632g)
     learned_from: str = ""  # callsign of the agent observed/taught from (AD-537)
     last_used_at: float = 0.0    # timestamp of last replay selection (AD-538)
     is_archived: bool = False     # archived (removed from active index) (AD-538)
@@ -1326,3 +1326,123 @@ async def evolve_fix_from_fallback(
     except Exception as e:
         logger.debug("Fallback FIX evolution failed (non-critical): %s", e)
         return None
+
+
+# ------------------------------------------------------------------
+# Chain-aware extraction (AD-632g)
+# ------------------------------------------------------------------
+
+_CHAIN_DOMINANCE_THRESHOLD = 0.6  # 60% of cluster episodes must be chain-derived
+
+
+def extract_chain_procedure(
+    cluster: Any,  # EpisodeCluster
+    episodes: list[Any],  # Episode objects in this cluster
+) -> Procedure | None:
+    """Extract a procedure from a chain-dominant episode cluster.
+
+    Unlike extract_procedure_from_cluster() (LLM-based), this uses the
+    structured chain metadata preserved in episode outcomes to build
+    procedure steps deterministically. Zero LLM calls.
+
+    Returns None if the cluster is not chain-dominant or metadata is
+    insufficient.
+    """
+    if not episodes:
+        return None
+
+    # Count chain-derived episodes via outcomes metadata
+    chain_episodes = []
+    for ep in episodes:
+        is_chain = False
+        for outcome in (ep.outcomes or []):
+            if outcome.get("sub_task_chain") is True:
+                is_chain = True
+                break
+        if is_chain:
+            chain_episodes.append(ep)
+
+    # Check chain dominance threshold
+    if len(chain_episodes) / len(episodes) < _CHAIN_DOMINANCE_THRESHOLD:
+        return None
+
+    # Find most recent successful chain episode for metadata extraction
+    best_ep = None
+    best_time = 0.0
+    for ep in chain_episodes:
+        has_success = any(o.get("success") for o in (ep.outcomes or []))
+        if has_success and ep.timestamp > best_time:
+            best_ep = ep
+            best_time = ep.timestamp
+
+    if best_ep is None:
+        return None
+
+    # Extract chain metadata from the best episode's outcomes
+    chain_source = ""
+    intent = ""
+    for outcome in (best_ep.outcomes or []):
+        if outcome.get("sub_task_chain"):
+            chain_source = outcome.get("chain_source", "")
+            intent = outcome.get("intent", "")
+            break
+
+    if not intent:
+        # Try cluster intent_types
+        intent = cluster.intent_types[0] if cluster.intent_types else ""
+
+    if not intent:
+        return None
+
+    # Build procedure steps from chain output pattern
+    # The chain has already validated quality through Evaluate/Reflect,
+    # so we capture the final response pattern as a single replay step
+    response_text = best_ep.outcomes[0].get("response", "") if best_ep.outcomes else ""
+    action_tags = []
+    for tag in ("REPLY", "ENDORSE", "RECOMMEND", "ANALYZE", "NO_RESPONSE"):
+        if f"[{tag}]" in response_text or f"<{tag}>" in response_text:
+            action_tags.append(tag)
+
+    steps = [
+        ProcedureStep(
+            step_number=1,
+            action=f"Replay chain-validated response pattern for {intent}",
+            expected_input=intent,
+            expected_output=", ".join(action_tags) if action_tags else "response",
+        ),
+    ]
+
+    # Collect source anchors from chain episodes
+    source_anchors: list[dict[str, Any]] = []
+    for ep in chain_episodes:
+        if ep.anchors is not None:
+            try:
+                anchor_dict = {
+                    "channel": getattr(ep.anchors, "channel", ""),
+                    "department": getattr(ep.anchors, "department", ""),
+                    "trigger_type": getattr(ep.anchors, "trigger_type", ""),
+                }
+                if anchor_dict not in source_anchors:
+                    source_anchors.append(anchor_dict)
+            except Exception:
+                pass
+
+    procedure = Procedure(
+        name=f"Chain pattern: {intent}",
+        description=f"Chain-compiled procedure for {intent} via {chain_source or 'sub-task chain'}",
+        steps=steps,
+        preconditions=[f"Intent type is {intent}"],
+        postconditions=[],
+        intent_types=[intent],
+        origin_cluster_id=cluster.cluster_id,
+        origin_agent_ids=cluster.participating_agents,
+        provenance=[ep.id for ep in chain_episodes],
+        extraction_date=time.time(),
+        evolution_type="CAPTURED",
+        compilation_level=2,  # Guided — starts higher (chain already validated quality)
+        is_negative=cluster.success_rate < 0.5 if hasattr(cluster, "success_rate") else False,
+        tags=["chain_compiled"] + ([f"chain_source:{chain_source}"] if chain_source else []),
+        learned_via="chain_compiled",
+        source_anchors=source_anchors,
+    )
+    return procedure

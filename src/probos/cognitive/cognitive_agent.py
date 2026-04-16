@@ -29,6 +29,12 @@ _CACHE_MISSES: dict[str, int] = {}
 # and catalog state. Toggle on to diagnose skill injection issues.
 _SKILL_DEBUG = os.environ.get("PROBOS_SKILL_DEBUG", "").lower() in ("1", "true", "yes")
 
+# AD-632f: Intents eligible for multi-step sub-task chain activation.
+_CHAIN_ELIGIBLE_INTENTS: frozenset[str] = frozenset({
+    "ward_room_notification",
+    "proactive_think",
+})
+
 
 class CognitiveAgent(BaseAgent):
     """Agent whose decide() step consults an LLM guided by instructions.
@@ -78,6 +84,10 @@ class CognitiveAgent(BaseAgent):
         from probos.cognitive.agent_working_memory import AgentWorkingMemory
         self._working_memory = AgentWorkingMemory()
 
+        # AD-632a: Sub-task protocol executor and pending chain
+        self._sub_task_executor = None
+        self._pending_sub_task_chain = None
+
         # Validate instructions exist
         if not self.instructions:
             raise ValueError(
@@ -92,6 +102,10 @@ class CognitiveAgent(BaseAgent):
         """AD-567g / BF-113: Set orientation text and context (public setter for LoD)."""
         self._orientation_rendered = rendered
         self._orientation_context = context
+
+    def set_sub_task_executor(self, executor) -> None:
+        """AD-632a: Wire sub-task executor for Level 3 reasoning."""
+        self._sub_task_executor = executor
 
     @property
     def working_memory(self):
@@ -1151,6 +1165,36 @@ class CognitiveAgent(BaseAgent):
                     logger.debug("Journal recording failed", exc_info=True)
             return procedural_result
 
+        # --- AD-632f: Load augmentation skills before chain check (Compose handler needs them) ---
+        if observation.get("intent") in _CHAIN_ELIGIBLE_INTENTS:
+            _aug = self._load_augmentation_skills(observation.get("intent", ""))
+            if _aug:
+                observation["_augmentation_skill_instructions"] = _aug
+
+        # --- AD-632f: Sub-task chain activation (Level 3) ---
+        # Priority 1: externally-set chain (escape hatch for skills, JIT, etc.)
+        # Priority 2: inline trigger evaluation
+        chain = None
+        if self._pending_sub_task_chain is not None:
+            chain = self._pending_sub_task_chain
+            self._pending_sub_task_chain = None  # consume once
+        elif self._should_activate_chain(observation):
+            chain = self._build_chain_for_intent(observation)
+
+        if chain is not None:
+            logger.info(
+                "AD-632f: Chain activated for %s (intent=%s, source=%s)",
+                self.agent_type,
+                observation.get("intent", ""),
+                getattr(chain, "source", "unknown"),
+            )
+            chain_result = await self._execute_sub_task_chain(chain, observation)
+            if chain_result is not None:
+                _cache_ttl = self._get_cache_ttl()
+                cache[cache_key] = (chain_result, time.monotonic(), _cache_ttl)
+                return chain_result
+            logger.info("AD-632f: Falling back to single-call for %s", self.agent_type)
+
         # --- LLM call (cache miss) ---
         decision = await self._decide_via_llm(observation)
 
@@ -1407,6 +1451,196 @@ class CognitiveAgent(BaseAgent):
             logger.debug("LLM fallback decision failed", exc_info=True)
             return None
 
+    # --- AD-632f: Chain activation trigger methods ---
+
+    def _should_activate_chain(self, observation: dict) -> bool:
+        """AD-632f: Evaluate whether this observation warrants a multi-step chain.
+
+        Gates (evaluated in order, first failure short-circuits):
+          0. Executor exists and is enabled
+          1. Intent type is in _CHAIN_ELIGIBLE_INTENTS
+        """
+        # Gate 0: executor readiness
+        if self._sub_task_executor is None:
+            return False
+        if not self._sub_task_executor.enabled:
+            return False
+        # Gate 1: intent type filter
+        intent = observation.get("intent", "")
+        if intent not in _CHAIN_ELIGIBLE_INTENTS:
+            logger.debug(
+                "AD-632f: Chain skipped for %s (intent=%s not eligible)",
+                self.agent_type, intent,
+            )
+            return False
+        return True
+
+    def _build_chain_for_intent(self, observation: dict):
+        """AD-632f: Build a SubTaskChain for the given intent type.
+
+        Returns SubTaskChain or None (unknown intent → single-call fallback).
+        """
+        from probos.cognitive.sub_task import SubTaskChain, SubTaskSpec, SubTaskType
+
+        intent = observation.get("intent", "")
+
+        if intent == "ward_room_notification":
+            return SubTaskChain(
+                steps=[
+                    SubTaskSpec(
+                        sub_task_type=SubTaskType.QUERY,
+                        name="query-thread-context",
+                        context_keys=("thread_metadata", "credibility"),
+                    ),
+                    SubTaskSpec(
+                        sub_task_type=SubTaskType.ANALYZE,
+                        name="analyze-thread",
+                        prompt_template="thread_analysis",
+                    ),
+                    SubTaskSpec(
+                        sub_task_type=SubTaskType.COMPOSE,
+                        name="compose-reply",
+                        prompt_template="ward_room_response",
+                    ),
+                    SubTaskSpec(
+                        sub_task_type=SubTaskType.EVALUATE,
+                        name="evaluate-reply",
+                        prompt_template="ward_room_quality",
+                        required=False,
+                        depends_on=("compose-reply",),
+                    ),
+                    SubTaskSpec(
+                        sub_task_type=SubTaskType.REFLECT,
+                        name="reflect-reply",
+                        prompt_template="ward_room_reflection",
+                        required=False,
+                        depends_on=("compose-reply",),
+                    ),
+                ],
+                source="intent_trigger:ward_room_notification",
+            )
+
+        if intent == "proactive_think":
+            return SubTaskChain(
+                steps=[
+                    SubTaskSpec(
+                        sub_task_type=SubTaskType.QUERY,
+                        name="query-situation",
+                        context_keys=("unread_counts", "trust_score"),
+                    ),
+                    SubTaskSpec(
+                        sub_task_type=SubTaskType.ANALYZE,
+                        name="analyze-situation",
+                        prompt_template="situation_review",
+                    ),
+                    SubTaskSpec(
+                        sub_task_type=SubTaskType.COMPOSE,
+                        name="compose-observation",
+                        prompt_template="proactive_observation",
+                    ),
+                    SubTaskSpec(
+                        sub_task_type=SubTaskType.EVALUATE,
+                        name="evaluate-observation",
+                        prompt_template="proactive_quality",
+                        required=False,
+                        depends_on=("compose-observation",),
+                    ),
+                    SubTaskSpec(
+                        sub_task_type=SubTaskType.REFLECT,
+                        name="reflect-observation",
+                        prompt_template="proactive_reflection",
+                        required=False,
+                        depends_on=("compose-observation",),
+                    ),
+                ],
+                source="intent_trigger:proactive_think",
+            )
+
+        return None
+
+    async def _execute_sub_task_chain(
+        self,
+        chain,
+        observation: dict,
+    ) -> dict | None:
+        """AD-632a: Execute a sub-task chain, falling back to None on failure.
+
+        Returns a decision dict if the chain completes successfully, or None
+        to signal the caller to fall through to single-call _decide_via_llm().
+        """
+        if self._sub_task_executor is None:
+            return None
+        if not self._sub_task_executor.can_execute(chain):
+            return None
+
+        # AD-632c: Inject agent identity into context for handler access
+        observation["_agent_id"] = self.id
+        observation["_agent_type"] = self.agent_type
+        observation["_callsign"] = getattr(self, 'callsign', self.agent_type)
+        _dept = getattr(self, 'department', None)
+        if _dept is None:
+            from probos.cognitive.standing_orders import get_department
+            _dept = get_department(self.agent_type) or "unassigned"
+        observation["_department"] = _dept
+
+        try:
+            results = await self._sub_task_executor.execute(
+                chain,
+                observation,
+                agent_id=self.id,
+                agent_type=self.agent_type,
+                intent=observation.get("intent", ""),
+                intent_id=observation.get("intent_id", ""),
+                journal=self._cognitive_journal,
+            )
+        except Exception as exc:
+            from probos.cognitive.sub_task import SubTaskError
+            if isinstance(exc, (SubTaskError, asyncio.TimeoutError)):
+                logger.warning(
+                    "AD-632a: Sub-task chain failed, falling back to single-call: %s",
+                    exc,
+                )
+            else:
+                logger.error(
+                    "AD-632a: Unexpected error in sub-task chain: %s",
+                    exc, exc_info=True,
+                )
+            return None
+
+        # Construct decision from chain results — prefer REFLECT > COMPOSE > fallback
+        from probos.cognitive.sub_task import SubTaskType
+        reflect_results = [
+            r for r in results
+            if r.sub_task_type == SubTaskType.REFLECT and r.success
+        ]
+        compose_results = [
+            r for r in results
+            if r.sub_task_type == SubTaskType.COMPOSE and r.success
+        ]
+        if reflect_results:
+            llm_output = reflect_results[-1].result.get("output", "")
+            tier_used = reflect_results[-1].tier_used
+        elif compose_results:
+            llm_output = compose_results[-1].result.get("output", "")
+            tier_used = compose_results[-1].tier_used
+        else:
+            # Concatenate all successful result outputs
+            parts = [
+                r.result.get("output", str(r.result))
+                for r in results if r.success
+            ]
+            llm_output = "\n".join(parts)
+            tier_used = results[-1].tier_used if results else ""
+
+        return {
+            "action": "execute",
+            "llm_output": llm_output,
+            "tier_used": tier_used,
+            "sub_task_chain": True,
+            "chain_source": chain.source,  # AD-632g: e.g., "intent_trigger:ward_room_notification"
+            "chain_steps": len(chain.steps),  # AD-632g: step count for extraction
+        }
+
     async def act(self, decision: dict) -> dict:
         """Execute based on LLM decision.  Override for structured output."""
         if decision.get("action") == "error":
@@ -1486,6 +1720,9 @@ class CognitiveAgent(BaseAgent):
 
         decision = await self.decide(observation)
         decision["intent"] = intent.intent  # AD-398: propagate intent name to act()
+        # BF-177: propagate duty info so domain agents can distinguish duty-triggered thinks
+        if observation.get("params", {}).get("duty"):
+            decision["duty"] = observation["params"]["duty"]
 
         # AD-568e: Post-decision faithfulness verification
         _faithfulness = self._check_response_faithfulness(decision, observation)
@@ -1649,6 +1886,13 @@ class CognitiveAgent(BaseAgent):
             logger.debug("AD-573: Working memory action record failed", exc_info=True)
 
         # AD-430c (Pillar 5): Store action as episodic memory for crew agents
+        # AD-632g: Propagate chain metadata into observation for episode storage
+        if decision.get("sub_task_chain"):
+            observation["_chain_metadata"] = {
+                "sub_task_chain": True,
+                "chain_source": decision.get("chain_source", ""),
+                "chain_steps": decision.get("chain_steps", 0),
+            }
         await self._store_action_episode(intent, observation, report)
 
         success = report.get("success", False)
@@ -3549,6 +3793,8 @@ class CognitiveAgent(BaseAgent):
                     "response": result_text,
                     "agent_type": self.agent_type,
                     "source": source or "intent_bus",
+                    # AD-632g: Chain metadata for procedure extraction
+                    **(observation.get("_chain_metadata") or {}),
                 }],
                 dag_summary=self._build_episode_dag_summary(observation),  # AD-568e
                 reflection=f"{callsign or self.agent_type} handled {intent.intent}: {result_text[:100]}",

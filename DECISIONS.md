@@ -4795,3 +4795,179 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Files created:** `config/skills/notebook-quality/SKILL.md` (NEW — augmentation skill with 9 sections: title, Analytical Purpose Gate, Finding-First Structure, Temporal Threading, Data vs Analysis, Ward Room Differentiation, Anti-Patterns, Pre-Write Verification Gate, Proficiency Progression). **Tests:** `tests/test_ad634_notebook_quality.py` (NEW, 21 tests across 4 classes: TestSkillDiscovery, TestSkillMetadata, TestCoActivation, TestSkillContent).
 
 **Build prompt:** `prompts/ad-634-notebook-analytical-quality.md`. **Issue:** #229.
+
+---
+
+### AD-632a: Sub-Task Protocol Foundation (2026-04-15, COMPLETE)
+
+**Summary:** Foundation infrastructure for Level 3 cognitive escalation — protocol, executor, journal integration, and config for decomposing single-call LLM reasoning into multi-step sub-task chains. Three-level cognitive escalation: Level 1 Cognitive JIT replay (0 calls), Level 2 single-call reasoning (1 call, current baseline), Level 3 sub-task protocol (2-4 focused calls, this module). Establishes the handler registry and execution engine; concrete handlers are deferred to AD-632b through 632e.
+
+**Context:** SOAR's impasse-driven subgoaling model: when a single LLM call can't produce sufficient quality, decompose into focused sub-steps. Each sub-task gets a narrow prompt with filtered context instead of competing with thread parsing, skill instructions, and self-monitoring in a single call. Selective activation (AD-632f) ensures this is not a constant cost multiplier — most requests stay at Level 2.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: Five sub-task types | QUERY (0 LLM), ANALYZE (1 LLM narrow), COMPOSE (1 LLM + skill), EVALUATE (1 LLM criteria), REFLECT (1 LLM self-critique) | SOAR + DECOMP synthesis. QUERY for deterministic data retrieval. Four LLM types cover comprehension → generation → verification → self-critique |
+| DD-2: Open/Closed registry | `register_handler(type, handler)` with ValueError on duplicate | New sub-task types (AD-632b-e) require zero changes to SubTaskExecutor. Handlers registered externally |
+| DD-3: SubTaskHandler Protocol | `@runtime_checkable` Protocol with `async __call__(spec, context, prior_results)` | DIP — executor depends on protocol, not concrete implementations. Matches StateProvider pattern (AD-583f) |
+| DD-4: Consume-once pending chain | `_pending_sub_task_chain` set to None after consumption in decide() | Chain is explicitly requested by activation trigger (AD-632f). One attempt, then fall through to single-call. Prevents retry loops |
+| DD-5: dag_node_id format | `st:{chain_id}:{step_index}:{sub_task_type}` | Populates existing dead column from AD-432. Chain ID for grouping, step index for ordering, type for categorization. Gap predictor (AD-539) already reads this column |
+| DD-6: Six invariants | Token attribution, no episodic memory, no trust, no circuit breaker, journal recording, no nesting | Sub-tasks are intra-agent decomposition, not sovereign entities. They inherit parent context, don't create their own |
+| DD-7: QUERY excluded from journal | `if spec.sub_task_type != SubTaskType.QUERY` guard | QUERY is deterministic data retrieval — zero LLM calls, no tokens to record |
+| DD-8: max_chain_steps defense | Config-enforced cap (default 6) checked before execution | Defense in depth — prevents runaway chains even if activation logic has a bug |
+| DD-9: SubTaskConfig enabled=False | System stays at Level 2 until handlers registered and triggers wired | Foundation only — no handlers exist yet. Avoids premature activation |
+
+**Files created:** `src/probos/cognitive/sub_task.py` (NEW — SubTaskType, SubTaskSpec, SubTaskResult, SubTaskChain, SubTaskHandler Protocol, SubTaskExecutor, exception hierarchy). **Files modified:** `src/probos/cognitive/cognitive_agent.py` (_sub_task_executor, _pending_sub_task_chain, set_sub_task_executor(), _execute_sub_task_chain(), decide() integration), `src/probos/config.py` (SubTaskConfig in SystemConfig), `src/probos/events.py` (SUB_TASK_COMPLETED, SUB_TASK_CHAIN_COMPLETED event types + SubTaskChainCompletedEvent dataclass). **Tests:** `tests/test_ad632a_sub_task_foundation.py` (NEW, 41 tests across 9 classes: TestSubTaskType, TestSubTaskSpec, TestSubTaskResult, TestSubTaskChain, TestSubTaskExecutor, TestSubTaskJournalRecording, TestSubTaskEventEmission, TestCognitiveAgentIntegration, TestSubTaskConfig).
+
+**Build prompt:** `prompts/ad-632a-sub-task-foundation.md`. **Issue:** #230.
+
+### AD-632b: Query Sub-Task Handler (2026-04-15, COMPLETE)
+
+**Summary:** First concrete SubTaskHandler implementation — deterministic data retrieval for Level 3 cognitive escalation with zero LLM calls. QueryHandler multiplexes `spec.context_keys` through an Open/Closed dispatch table (`_QUERY_OPERATIONS`) to ProbOS service methods. Nine query operations wrap WardRoomService (7) and TrustNetwork (2). Startup wiring in `finalize.py` creates SubTaskExecutor, registers QueryHandler, and wires onto all crew agents.
+
+**Context:** The Sub-Task Protocol foundation (AD-632a) delivered the executor engine and handler registry but no concrete handlers — the system was disabled. QUERY is the first step in every proposed sub-task chain (thread response, proactive think, duty execution). Without it, no chain can execute because QUERY steps are `required: True` by default. MRKL principle: route to the cheapest capable handler — thread reply counting is SQL, not LLM judgment.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: Open/Closed dispatch table | `_QUERY_OPERATIONS: dict[str, QueryOperation]` mapping operation key → async function | New operations added by registering new entries. Zero changes to QueryHandler.__call__() or SubTaskExecutor. Matches ToolRegistry pattern |
+| DD-2: Constructor injection (DIP) | `QueryHandler.__init__(self, runtime)` — services accessed via `getattr(self._runtime, 'service_name', None)` | Handler depends on runtime abstraction, not concrete service classes. Matches existing defensive pattern in cognitive_agent.py |
+| DD-3: Smart context_keys separation | `operation_keys = [k for k in spec.context_keys if k in _QUERY_OPERATIONS]` — only known operations dispatched, data keys pass through silently | context_keys serves dual purpose: executor uses them to filter context dict (sub_task.py lines 269-275), handler uses them to select operations. Data keys (thread_id, agent_id) must be in context_keys to survive filtering but shouldn't be dispatched as operations |
+| DD-4: Partial failure reporting | Multi-key queries merge successful results and collect per-key errors. `success=False` when any error, but successful data still available | Lets the chain decide whether to continue with partial data. Balances fail-fast (no silent swallowing) with graceful degradation (partial results usable) |
+| DD-5: _ServiceUnavailableError | Internal exception class for service unavailability, caught at dispatch level | Separates service-not-available (expected in testing/startup) from method exceptions (unexpected runtime failures). Logged at DEBUG vs WARNING |
+| DD-6: WardRoomCredibility conversion | `asdict(cred)` for dataclass → plain dict | No ProbOS-internal objects in SubTaskResult.result — serialization boundary. Defense in depth for downstream consumers |
+| DD-7: TrustNetwork sync methods | `trust.get_score(agent_id)` and `trust.summary()` called without await | Both are in-memory lookups on TrustNetwork. Wrapping in asyncio.to_thread() would add overhead for no benefit |
+| DD-8: Startup wiring in finalize.py | Inline wiring after RecreationService, following procedure_store pattern | Matches existing patterns. try/except wrapper ensures partial initialization doesn't crash boot. Executor wired onto all crew agents via same `registry.all()` + `is_crew` loop used by other services |
+| DD-9: SubTaskConfig.enabled stays False | QueryHandler alone insufficient for useful chains | Chains need ANALYZE (AD-632c) and/or COMPOSE (AD-632d) handlers to produce output. Enabling happens when those handlers deliver |
+
+**Files created:** `src/probos/cognitive/sub_tasks/__init__.py` (NEW — package init, exports QueryHandler), `src/probos/cognitive/sub_tasks/query.py` (NEW — QueryHandler class, 9 query operation functions, _QUERY_OPERATIONS dispatch table, _ServiceUnavailableError, QueryOperation type alias). **Files modified:** `src/probos/startup/finalize.py` (SubTaskExecutor wiring block — create executor, register QueryHandler, wire onto crew agents). **Tests:** `tests/test_ad632b_query_handler.py` (NEW, 31 tests across 11 classes: TestQueryHandlerProtocol, TestThreadMetadata, TestCommStats, TestTrustQueries, TestCredibilityAndUnread, TestMultipleOperations, TestServiceUnavailable, TestContextKeyFiltering, TestDurationTracking, TestExecutorIntegration, TestPostsByAuthor).
+
+**Build prompt:** `prompts/ad-632b-query-handler.md`. **Issue:** #232.
+
+### AD-632c: Analyze Sub-Task Handler (2026-04-15, COMPLETE)
+
+**Summary:** First LLM-calling SubTaskHandler — focused comprehension via a single narrow LLM call, producing structured JSON analysis without response composition. Three analysis modes (thread_analysis, situation_review, dm_comprehension) dispatched via Open/Closed prompt builder table. Agent identity injection into `_execute_sub_task_chain()` benefits all current and future handlers.
+
+**Context:** The core value of the Sub-Task Protocol is decomposing the overloaded single LLM call. In Level 2, one call simultaneously parses thread, reasons about novelty, composes response, and emits actions. When prompt length exceeds the model's effective attention window, lowest-salience instructions (typically skill guidance) get dropped. ANALYZE isolates comprehension — "what has been said? what's new? what's my department's angle?" — so downstream COMPOSE (AD-632d) can focus entirely on response generation with full skill compliance. DECOMP principle (Khot et al., ICLR 2023): reasoning steps in isolation are easier than the same steps in complex contexts.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: Open/Closed mode dispatch | `_ANALYSIS_MODES: dict[str, PromptBuilder]` mapping mode key → prompt builder function | New analysis modes added by registering new prompt builders. Zero changes to `__call__()`. Matches QueryHandler's `_QUERY_OPERATIONS` pattern |
+| DD-2: Narrow system prompt | Identity (callsign, department) only — NO standing orders, NO skill instructions, NO action vocabulary | Analysis is comprehension, not behavior. Standing orders govern response generation (Compose). Skill instructions compete with analysis instructions for attention |
+| DD-3: spec.tier for LLM routing | `LLMRequest.tier = spec.tier` — NOT the agent's `_resolve_tier()` | Allows chains to route Analyze to "fast" tier and Compose to "deep" tier. Sub-task tier is a chain-level decision, not an agent-level one |
+| DD-4: temperature=0.0, max_tokens=1024 | Deterministic analysis, shorter than full response | Analysis should be reproducible. JSON output is typically 200-500 tokens. Saves budget for Compose |
+| DD-5: Agent identity via context dict | `_execute_sub_task_chain()` injects `_agent_id`, `_agent_type`, `_callsign`, `_department` into observation | ISP — handler depends on flat dict keys, not agent object. One addition to `_execute_sub_task_chain()` benefits ALL handlers (Open/Closed). No runtime registry lookup needed in handler |
+| DD-6: Department fallback | `context.get("_department", "unassigned")` — no exception on missing | Graceful degradation for testing and edge cases. Prompt still functional with "unassigned" department |
+| DD-7: extract_json() reuse | Uses existing `probos.utils.json_extract.extract_json()` | DRY — handles markdown fences, think blocks, preamble text. No JSON extraction reimplementation |
+| DD-8: Three-tier error handling | LLM unavailable → immediate fail result; LLM exception → caught/wrapped; JSON parse → fail with truncated content | Fail Fast with graceful degradation. No retries — executor handles chain-level timeout and fallback |
+| DD-9: Prior results as factual context | QUERY step results incorporated into user prompt as "## Prior Data" section | Analyze sees thread_metadata, comm_stats, etc. as facts, not raw service data. Natural language context for the LLM |
+
+**Files created:** `src/probos/cognitive/sub_tasks/analyze.py` (NEW — AnalyzeHandler class, 3 analysis mode prompt builders, _ANALYSIS_MODES dispatch table). **Files modified:** `src/probos/cognitive/sub_tasks/__init__.py` (AnalyzeHandler export), `src/probos/cognitive/cognitive_agent.py` (_execute_sub_task_chain agent identity injection: _agent_id, _agent_type, _callsign, _department), `src/probos/startup/finalize.py` (AnalyzeHandler registration with SubTaskExecutor). **Tests:** `tests/test_ad632c_analyze_handler.py` (NEW, 39 tests across 11 classes: TestAnalyzeHandlerProtocol, TestThreadAnalysisMode, TestSituationReviewMode, TestDMComprehensionMode, TestLLMCallConstruction, TestAgentIdentityInjection, TestErrorHandling, TestDurationAndTokenTracking, TestContextFiltering, TestExecutorIntegration, TestStartupWiring).
+
+**Build prompt:** `prompts/ad-632c-analyze-handler.md`. **Issue:** #233.
+
+### AD-632d: Compose Sub-Task Handler (2026-04-15, COMPLETE)
+
+**Summary:** Final handler in the MVP sub-task chain (Query → Analyze → **Compose**). Produces the agent's actual Ward Room post, DM reply, or proactive observation from prior Analyze results using the full system prompt (personality, standing orders, skills) and mode-specific action vocabulary. SILENT short-circuit skips LLM when analysis already determined silence.
+
+**Context:** With Query (deterministic) and Analyze (comprehension), the chain can understand content but cannot produce agent responses. The Compose handler is where skill instructions land, action vocabulary is injected, and personality shapes voice. Critically, Compose uses `compose_instructions()` for the full system prompt — unlike Analyze's narrow identity-only prompt — because response generation requires the agent's full cognitive context. The SILENT short-circuit saves a wasted LLM call when Analyze already determined the agent has nothing to add. Completes the MVP chain but does NOT flip `SubTaskConfig.enabled` — that requires integration testing (follow-up AD).
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: Full system prompt via compose_instructions() | Uses `compose_instructions(agent_type, hardcoded_instructions="", callsign=callsign)` from standing_orders | Response composition needs personality, standing orders, identity — the full agent voice. Unlike Analyze which deliberately uses narrow identity |
+| DD-2: Mode-specific action vocabulary | Ward Room: ENDORSE/NO_RESPONSE; DM: no action tags; Proactive: full set (REPLY/ENDORSE/NOTEBOOK/PROPOSAL/DM/CHALLENGE/MOVE) | Replicates existing cognitive_agent.py patterns (lines 1243-1337). Each mode has different permitted actions |
+| DD-3: SILENT short-circuit | Checks prior Analyze for `contribution_assessment == "SILENT"` or `should_respond == false` → returns `{"output": "[NO_RESPONSE]"}` with `tokens_used=0` | Saves a full LLM call when analysis already determined silence. Chain-level optimization |
+| DD-4: Skill injection via XML tags | `<active_skill name="..." activation="augmentation">` with `<skill_instructions>` and optional `<proficiency_tier>` | Replicates `_frame_task_with_skill()` pattern (cognitive_agent.py:2029-2068). XML framing proven effective per AD-631 |
+| DD-5: temperature=0.3, max_tokens=2048 | Non-zero for natural varied responses; higher budget than Analyze (1024) | Compose needs creativity. Ward Room posts are 2-4 sentences but NOTEBOOK blocks can be long |
+| DD-6: Result shape `{"output": llm_text}` | `_execute_sub_task_chain()` reads `result.get("output", "")` at line 1488 | Mandatory contract — Compose output consumed as `llm_output` string. No JSON parsing of response content |
+| DD-7: No action tag parsing | Handler returns raw LLM text; `act()` parses [ENDORSE], [REPLY], [DM], etc. downstream | SRP — composition produces text, domain agents parse actions. Keeps responsibilities clean |
+
+**Files created:** `src/probos/cognitive/sub_tasks/compose.py` (NEW — ComposeHandler class, 3 composition mode prompt builders, _COMPOSITION_MODES dispatch table, SILENT short-circuit, skill injection helper). **Files modified:** `src/probos/cognitive/sub_tasks/__init__.py` (ComposeHandler export), `src/probos/startup/finalize.py` (ComposeHandler registration with SubTaskExecutor). **Tests:** `tests/test_ad632d_compose_handler.py` (NEW, 40 tests across 11 classes: TestComposeHandlerProtocol, TestModeDispatch, TestSilentShortCircuit, TestSkillInjection, TestActionVocabulary, TestResultFormat, TestPriorResults, TestErrorHandling, TestIdentityInjection, TestLLMCallParams, TestHelpers).
+
+**Build prompt:** `prompts/ad-632d-compose-handler.md`. **Issue:** #236.
+
+### AD-632f: Sub-Task Chain Activation Triggers (2026-04-15, COMPLETE)
+
+**Summary:** Wires the MVP sub-task chain (Query → Analyze → Compose) into live operation by flipping `SubTaskConfig.enabled` to `True`, building chains inline inside `decide()`, and defining the intent-type trigger heuristics that decide when to use multi-step chains vs single-call reasoning.
+
+**Context:** The MVP chain was code-complete after AD-632d — three handlers registered, executor wired onto all crew agents — but nothing ever fired because: (1) `SubTaskConfig.enabled` was `False`, (2) `_pending_sub_task_chain` was always `None`, (3) `decide()` found `None` and fell through to single-call every time. This AD solves all three with conservative Phase 1 triggers: intent-type-only activation for `ward_room_notification` and `proactive_think`, no complexity heuristics, no DM chains.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: Inline chain construction in decide() | `_should_activate_chain()` + `_build_chain_for_intent()` on CognitiveAgent | `decide()` already has the observation context needed to evaluate triggers. No external coordination required. Single Responsibility: decide() owns the decision about *how* to reason |
+| DD-2: Three-gate evaluation | Gate 0: executor exists + enabled. Gate 1: intent in `_CHAIN_ELIGIBLE_INTENTS`. Gate 2: (reserved for Phase 2 complexity heuristics) | Conservative — starts with intent type only. Easy to extend by adding gates. Fail-fast ordering |
+| DD-3: SubTaskExecutor.enabled property | `@property enabled` on SubTaskExecutor returning `self._config.enabled` | Law of Demeter — CognitiveAgent checks executor.enabled, doesn't reach through to config directly |
+| DD-4: External chain preserved as Priority 1 | `_pending_sub_task_chain` checked before inline trigger | Escape hatch for skills, JIT, or future AD-632g. External explicitly requested chains take priority over heuristic triggers |
+| DD-5: Skill preload before chain check | `_load_augmentation_skills()` called before chain activation for eligible intents | Compose handler needs `_augmentation_skill_instructions` in observation dict. Skills loaded once regardless of chain or single-call path |
+| DD-6: Module-level frozenset | `_CHAIN_ELIGIBLE_INTENTS = frozenset({"ward_room_notification", "proactive_think"})` | O(1) lookup, immutable, clear documentation of eligible intents. Easy to extend |
+| DD-7: Config flipped to True | `SubTaskConfig.enabled = True` as default | MVP chain complete — all three handlers deliver. Users can disable via system.yaml `sub_task.enabled: false` |
+
+**Files modified:** `src/probos/cognitive/cognitive_agent.py` (`_CHAIN_ELIGIBLE_INTENTS`, `_should_activate_chain()`, `_build_chain_for_intent()`, expanded `decide()` chain block, skill preload), `src/probos/cognitive/sub_task.py` (`SubTaskExecutor.enabled` property), `src/probos/config.py` (`SubTaskConfig.enabled = True`), `config/system.yaml` (`sub_task:` section). **Tests:** `tests/test_ad632f_activation_triggers.py` (NEW, 34 tests across 8 classes: TestShouldActivateChain, TestBuildChainForIntent, TestDecideIntegration, TestSkillInjection, TestExecutorEnabled, TestConfig, TestChainEligibleIntents). `tests/test_ad632a_sub_task_foundation.py` (updated 2 assertions for enabled=True default).
+
+**Build prompt:** `prompts/ad-632f-activation-triggers.md`. **Issue:** #238.
+
+### AD-632e: Evaluate & Reflect Sub-Task Handlers (2026-04-15, COMPLETE)
+
+**Summary:** Adds quality gates to the sub-task chain by implementing EvaluateHandler (criteria-based scoring) and ReflectHandler (self-critique and revision), extending the MVP 3-step chain to 5 steps (Query → Analyze → Compose → Evaluate → Reflect). Absorbs AD-631 Pre-Submit Check and AD-634 Pre-Write Verification Gate patterns into focused sub-task handlers where they get dedicated LLM attention instead of competing with response composition.
+
+**Context:** The Compose handler's output went directly to `act()` without structured quality evaluation. Three quality mechanisms existed (AD-568e faithfulness, AD-589 introspective faithfulness, AD-631 Pre-Submit Check), but none operated within the chain. AD-631's self-check competed for LLM attention with personality, standing orders, and response content in a single crowded call. Evaluate and Reflect provide focused attention for quality gating. Academic lineage: Reflexion (Shinn et al., NeurIPS 2023) for same-session self-critique, Tree of Thoughts (Yao et al., NeurIPS 2023) for deliberate evaluation.
+
+**Key choices:**
+
+| Choice | Decision | Rationale |
+|--------|----------|-----------|
+| DD-1: Two handlers, not one | EvaluateHandler (judgment) + ReflectHandler (action) as separate handlers | Single Responsibility — evaluation is read-only judgment, reflection is revision. Different temperatures (0.0 vs 0.1). Different output formats (verdict vs revised text) |
+| DD-2: required=False on both steps | Both EVALUATE and REFLECT use `required=False` in SubTaskSpec | Defense in depth — quality gates enhance output but never block it. Chain degrades gracefully to Compose output on any failure |
+| DD-3: Suppress short-circuit | If Evaluate recommends "suppress", Reflect skips LLM entirely → `[NO_RESPONSE]` with tokens_used=0 | Token economy — no point in self-critiquing output the evaluator already rejected. Generalizes SILENT short-circuit pattern from Compose |
+| DD-4: Decision extractor priority REFLECT > COMPOSE | Updated `_execute_sub_task_chain()` to prefer REFLECT output over COMPOSE | Reflect may revise the draft. When both succeed, the revised version should win. Failed Reflect → falls back to COMPOSE (backward compatible) |
+| DD-5: extract_json() try/except wrapping | Both handlers wrap `extract_json()` in try/except (ValueError, TypeError) | `extract_json()` raises ValueError on parse failure, doesn't return None. Existing AnalyzeHandler had the correct pattern; build prompt described behavior inconsistently |
+| DD-6: Fail-open patterns differ by handler | Evaluate: parse failure → pass-by-default (score=1.0, approve). Reflect: LLM failure → return original Compose output unchanged | Evaluate fail-open prevents blocking good output on parser errors. Reflect fail-open preserves the Compose result — never lose working output on a Reflect error |
+| DD-7: Skill instructions in Reflect only | `_augmentation_skill_instructions` injected into Reflect system prompt, not Evaluate | Evaluate judges against objective criteria (novelty, opening quality). Reflect checks against skill-specific rules. Keeps evaluation criteria stable across skill contexts |
+
+**Files created:** `src/probos/cognitive/sub_tasks/evaluate.py` (EvaluateHandler + 3 evaluation mode builders + prior result helpers), `src/probos/cognitive/sub_tasks/reflect.py` (ReflectHandler + 3 reflection mode builders + suppress short-circuit). **Files modified:** `src/probos/cognitive/sub_tasks/__init__.py` (added EvaluateHandler + ReflectHandler exports), `src/probos/startup/finalize.py` (handler registration + updated log message), `src/probos/cognitive/cognitive_agent.py` (decision extractor REFLECT priority + chain expansion 3→5 steps). **Tests:** `tests/test_ad632e_evaluate_reflect.py` (NEW, 57 tests across 12 classes). `tests/test_ad632f_activation_triggers.py` (updated 2 assertions for 5-step chains).
+
+**Build prompt:** `prompts/ad-632e-evaluate-reflect-handlers.md`. **Issue:** #240.
+
+### AD-632g: Cognitive JIT Integration — Chain Pattern Learning (2026-04-15, COMPLETE)
+
+**Context:** SOAR chunking: when a production (sub-task chain) repeatedly fires successfully, chunk it into a single compiled production for faster execution. Closes the learning loop between Level 3 chains (2-4 LLM calls) and Level 1 procedural replay (0 LLM calls).
+
+| DD | Decision | Reasoning |
+|----|----------|-----------|
+| DD-1: Chain dominance threshold 60% | `_CHAIN_DOMINANCE_THRESHOLD = 0.6` — cluster must have >60% chain-derived episodes to qualify for chain extraction | Conservative threshold prevents learning from mixed clusters where chain pattern may not be dominant. Tunable constant, not config |
+| DD-2: Deterministic extraction (0 LLM calls) | `extract_chain_procedure()` builds Procedure from episode metadata without LLM | Chain metadata (source, steps, intent) is already structured — no need to re-extract via LLM. Faster, cheaper, deterministic |
+| DD-3: Compilation Level 2 (Guided) | Chain-compiled procedures start at Dreyfus Level 2, not Level 1 | Chain-derived procedures have been validated by Evaluate/Reflect handlers — higher confidence than raw episode-derived procedures |
+| DD-4: learned_via="chain_compiled" | Fourth value alongside "direct", "observational", "taught" | Distinct provenance for chain-compiled procedures enables separate analytics and lifecycle management |
+| DD-5: Metadata in outcomes, not Episode.metadata | Chain metadata (sub_task_chain, chain_source, chain_steps) stored in `outcomes[0]` dict | Episode has no `metadata` field. Decision dict → observation `_chain_metadata` → outcomes unpacking maintains existing data flow |
+| DD-6: Dream Step 7 pre-check | Chain extraction attempted before LLM extraction | Zero-cost path tried first. If cluster is chain-dominant, skip LLM entirely. Falls through to existing compound/standard extraction on None |
+| DD-7: Flat Level 1 replay (Phase 1) | Chain-compiled procedures replay as single-step Level 1 shortcuts | Full chain reconstruction replay (re-expanding into sub-task chain at replay time) deferred to Phase 2. Keeps scope tight |
+
+**Files modified:** `src/probos/cognitive/procedures.py` (extract_chain_procedure + _CHAIN_DOMINANCE_THRESHOLD + learned_via docs), `src/probos/cognitive/cognitive_agent.py` (chain_source/chain_steps in decision dict + _chain_metadata propagation to episode outcomes), `src/probos/startup/dreaming.py` (Step 7 chain pre-check + chain_procedures_extracted counter), `src/probos/types.py` (DreamReport.chain_procedures_extracted field). **Tests:** `tests/test_ad632g_cognitive_jit_integration.py` (NEW, 29 tests across 6 classes).
+
+**Build prompt:** `prompts/ad-632g-cognitive-jit-integration.md`. **Issue:** #242.
+
+### AD-632h: Parallel Sub-Task Dispatch (2026-04-15, COMPLETE)
+
+**Context:** Final AD in AD-632 umbrella. EVALUATE and REFLECT sub-task steps are independent — both depend only on COMPOSE output. Running them sequentially wastes one LLM call's wall-clock time (~15s). Transporter Pattern and TaskDAG already establish wave-based `asyncio.gather()` as the codebase convention for DAG parallelism.
+
+| DD | Decision | Reasoning |
+|----|----------|-----------|
+| DD-1: Explicit `depends_on` on SubTaskSpec | `depends_on: tuple[str, ...] = ()` field on frozen dataclass | Matches `ChunkSpec.depends_on` and `TaskNode.depends_on` patterns in the codebase. Explicit > implicit for reasoning about execution order |
+| DD-2: Empty depends_on = sequential (backward compat) | Steps with `depends_on=()` implicitly depend on all prior steps | Existing chains without dependency annotations produce identical sequential behavior. No breaking change |
+| DD-3: Wave execution via asyncio.gather() | Collect ready steps → dispatch wave → collect results → repeat | Established codebase convention from Transporter/TaskDAG. No novel execution model needed |
+| DD-4: return_exceptions=True | Parallel siblings aren't cancelled on failure | All wave results collected before deciding to abort. Required failure raises after wave completes. Prevents orphaned coroutines |
+| DD-5: Fail-open validation | validate_chain() warns but doesn't block execution | Follows AD-632e fail-open pattern. Validation errors logged as warnings — don't prevent chains from running |
+| DD-6: No executor-level rate limiting | AD-617 per-tier token bucket already governs | Two concurrent LLM calls from same chain naturally rate-limited. No duplicate governance needed |
+| DD-7: Original step_index in journal | dag_node_id uses position in chain.steps list, not wave position | Preserves ordering semantics and backward-compatible journal queries |
+
+**Files modified:** `src/probos/cognitive/sub_task.py` (depends_on field + validate_chain() + _get_ready_steps() + wave-based _execute_steps() + _execute_single_step()), `src/probos/cognitive/cognitive_agent.py` (depends_on on EVALUATE/REFLECT steps in both chain types). **Tests:** `tests/test_ad632h_parallel_dispatch.py` (NEW, 34 tests across 7 classes).
+
+**Build prompt:** `prompts/ad-632h-parallel-dispatch.md`. **Issue:** #243.

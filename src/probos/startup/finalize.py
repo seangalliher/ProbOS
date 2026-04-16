@@ -182,6 +182,63 @@ async def finalize_startup(
         emit_event_fn=runtime._emit_event,
     )
 
+    # AD-632b: Wire SubTaskExecutor + QueryHandler for Level 3 cognitive escalation
+    try:
+        from probos.cognitive.sub_task import SubTaskExecutor, SubTaskType
+        from probos.cognitive.sub_tasks import (
+            AnalyzeHandler, ComposeHandler, EvaluateHandler, QueryHandler, ReflectHandler,
+        )
+
+        sub_task_config = config.sub_task
+        executor = SubTaskExecutor(
+            config=sub_task_config,
+            emit_event_fn=runtime._emit_event,
+        )
+        query_handler = QueryHandler(runtime)
+        executor.register_handler(SubTaskType.QUERY, query_handler)
+
+        analyze_handler = AnalyzeHandler(
+            llm_client=runtime.llm_client,
+            runtime=runtime,
+        )
+        executor.register_handler(SubTaskType.ANALYZE, analyze_handler)
+
+        compose_handler = ComposeHandler(
+            llm_client=runtime.llm_client,
+            runtime=runtime,
+        )
+        executor.register_handler(SubTaskType.COMPOSE, compose_handler)
+
+        evaluate_handler = EvaluateHandler(
+            llm_client=runtime.llm_client,
+            runtime=runtime,
+        )
+        executor.register_handler(SubTaskType.EVALUATE, evaluate_handler)
+
+        reflect_handler = ReflectHandler(
+            llm_client=runtime.llm_client,
+            runtime=runtime,
+        )
+        executor.register_handler(SubTaskType.REFLECT, reflect_handler)
+
+        runtime._sub_task_executor = executor
+
+        # Wire executor onto all crew agents
+        for _agent in runtime.registry.all():
+            if getattr(_agent, 'is_crew', False):
+                _agent.set_sub_task_executor(executor)
+
+        logger.info(
+            "AD-632e: SubTaskExecutor wired with Query + Analyze + Compose + Evaluate + Reflect handlers (enabled=%s)",
+            sub_task_config.enabled,
+        )
+    except Exception:
+        logger.warning(
+            "AD-632c: SubTaskExecutor wiring failed — continuing without",
+            exc_info=True,
+        )
+        runtime._sub_task_executor = None
+
     # --- AD-583f/583g: Observable State Verification + Source Tracing ---
     try:
         from probos.ward_room.thread_echo import ThreadEchoAnalyzer

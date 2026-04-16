@@ -5619,10 +5619,10 @@ Key insight: augmentation skill instructions land in the Compose sub-task where 
 focused attention, not competing with thread parsing. Sub-tasks are intra-agent only — no
 identity, no trust profile, no episodic memory shard. Token accounting attributed to parent
 agent. Single-call fallback on any sub-task failure (defense in depth). **Eight sub-ADs:**
-AD-632a (foundation — protocol, executor, journal, config), AD-632b (Query deterministic),
-AD-632c (Analyze LLM), AD-632d (Compose with skill), AD-632e (Evaluate + Reflect quality
-gates), AD-632f (activation triggers), AD-632g (Cognitive JIT integration — learn
-decomposition patterns, SOAR chunking analog), AD-632h (parallel sub-task dispatch).
+AD-632a (foundation — protocol, executor, journal, config, **COMPLETE**), AD-632b (Query deterministic, **COMPLETE**),
+AD-632c (Analyze LLM, **COMPLETE**), AD-632d (Compose with skill, **COMPLETE**), AD-632e (Evaluate + Reflect quality
+gates, **COMPLETE**), AD-632f (activation triggers, **COMPLETE**), AD-632g (Cognitive JIT integration — learn
+decomposition patterns, SOAR chunking analog, **COMPLETE**), AD-632h (parallel sub-task dispatch, **COMPLETE**).
 Research: `docs/research/cognitive-sub-task-protocol.md` (13 sources: SOAR impasse-driven
 subgoaling, ACT-R goal stack, ReAct thought-action-observation, DECOMP specialized
 handlers, Inner Monologue closed-loop dialogue, Tree of Thoughts deliberate path evaluation,
@@ -5693,6 +5693,232 @@ on `proactive_think` intent. `probos-min-rank: ensign` (all crew agents). 7-leve
 structural quality; AD-634 teaches content quality), AD-552 (catches repetition structurally; AD-634
 teaches why revision without new analysis is low-value), AD-551 (higher-quality entries produce
 better dream consolidation), AD-550 (dedup gate — AD-634 teaches why unique content matters).*
+
+**AD-632b: Query Sub-Task Handler** *(COMPLETE, OSS, depends: AD-632a)* — Deterministic data
+retrieval handler for Level 3 cognitive escalation. First handler implementation for the Sub-Task
+Protocol — `QueryHandler` class implementing `SubTaskHandler` protocol with zero LLM calls.
+Multiplexer pattern: `spec.context_keys` determines which service queries to run. Nine query
+operations: `thread_metadata`, `thread_activity`, `comm_stats`, `credibility`, `unread_counts`,
+`unread_dms`, `trust_score`, `trust_summary`, `posts_by_author`. Constructor-injected runtime
+reference (DIP). Open/Closed dispatch table — future operations (episodic recall, journal, records,
+emergence) added as new entries with zero changes to handler class. Always `tokens_used=0`,
+`tier_used=""`. MRKL cheapest-capable-handler principle: thread reply counting is SQL, not LLM.
+Does NOT flip `SubTaskConfig.enabled` — needs Analyze/Compose handlers (AD-632c/d) first.
+Services wrapped: WardRoomService (7 operations), TrustNetwork (2 operations). Startup wiring
+in `finalize.py` registers handler with SubTaskExecutor and wires onto all crew agents.
+Build prompt: `prompts/ad-632b-query-handler.md`. Issue #232.
+
+*Connects to: AD-632a (foundation — executor, protocol, journal integration), AD-632c (Analyze
+handler — consumes Query results as structured input), AD-632d (Compose handler — end of chain
+after Query→Analyze), AD-632f (activation triggers — builds chains with Query steps), AD-617b
+(token budgets — Query steps cost 0 tokens, pure data retrieval).*
+
+**AD-632c: Analyze Sub-Task Handler — Focused LLM Comprehension** *(COMPLETE, OSS, depends:
+AD-632a, AD-632b)* — First LLM-calling handler for the Sub-Task Protocol. `AnalyzeHandler` class
+implementing `SubTaskHandler` protocol with **one focused LLM call** per invocation. Performs
+thread/context comprehension with a narrow prompt — agent identity + department scope only,
+**excluding** skill instructions, standing orders, and action vocabulary (those go to Compose,
+AD-632d). Three analysis modes via `spec.prompt_template`: `thread_analysis` (Ward Room thread
+comprehension → topics_covered, gaps, endorsement_candidates, contribution_assessment,
+novel_posts), `situation_review` (proactive think cycle → active_threads, pending_actions,
+priority_topics, department_relevance), `dm_comprehension` (DM understanding → sender_intent,
+key_questions, required_actions, emotional_tone). Structured JSON output parsed via existing
+`extract_json()` utility. Agent identity (`_callsign`, `_department`) injected into observation
+dict by `_execute_sub_task_chain()` so all handlers can access it. Constructor-injected
+`llm_client` + `runtime` (DIP). Uses `spec.tier` for LLM routing (not agent's `_resolve_tier()`),
+`temperature=0.0`, `max_tokens=1024`. Does NOT flip `SubTaskConfig.enabled` — needs Compose
+handler (AD-632d) to complete the chain. Build prompt: `prompts/ad-632c-analyze-handler.md`.
+Issue #233.
+
+*Connects to: AD-632a (foundation — executor, protocol, journal integration), AD-632b (Query
+handler — prior step provides structured data consumed by Analyze), AD-632d (Compose handler —
+receives Analyze output as input context for skill-augmented response generation), AD-632e
+(Evaluate/Reflect — quality gates on Analyze→Compose chain), AD-632f (activation triggers —
+builds chains with Analyze steps).*
+
+**AD-632d: Compose Sub-Task Handler — Skill-Augmented Response Composition** *(COMPLETE, OSS,
+depends: AD-632a, AD-632c)* — Final LLM call in the MVP sub-task chain (Query → Analyze →
+Compose). Receives AnalyzeHandler's structured analysis as input and produces the agent's actual
+Ward Room post, DM reply, or proactive observation. Three composition modes via Open/Closed
+dispatch (`ward_room_response`, `dm_response`, `proactive_observation`). Full system prompt via
+`compose_instructions()` (standing orders + personality, unlike Analyze's narrow identity). Skill
+instruction injection via XML `<active_skill>` framing with proficiency tier support. Action
+vocabulary per mode (WR: ENDORSE/NO_RESPONSE; DM: conversational only; Proactive: full set
+REPLY/ENDORSE/NOTEBOOK/PROPOSAL/DM/CHALLENGE/MOVE). SILENT short-circuit: skips LLM call
+entirely when Analyze says `contribution_assessment=SILENT` or `should_respond=false`, returns
+`[NO_RESPONSE]` with `tokens_used=0`. `temperature=0.3`, `max_tokens=2048`, `tier=spec.tier`.
+Result `{"output": llm_text}` consumed by `_execute_sub_task_chain()`. Does NOT flip
+`SubTaskConfig.enabled` (follow-up AD). 1 new file (`sub_tasks/compose.py`), 2 modified files,
+40 tests across 11 classes. Build prompt: `prompts/ad-632d-compose-handler.md`. Issue #236.
+
+*Connects to: AD-632a (foundation), AD-632c (Analyze — prior step providing structured analysis
+as input), AD-632e (Evaluate/Reflect — quality gates on Compose output), AD-632f (activation
+triggers — builds chains ending with Compose steps).*
+
+**AD-632f: Sub-Task Chain Activation Triggers** *(COMPLETE, OSS, depends: AD-632a, AD-632b,
+AD-632c, AD-632d)* — Inline chain construction in `decide()` with intent-type trigger
+heuristics. `_should_activate_chain()` three-gate evaluation: global enable via
+`SubTaskExecutor.enabled` property (Law of Demeter), intent type filter
+(`_CHAIN_ELIGIBLE_INTENTS`: `ward_room_notification` + `proactive_think`), executor readiness.
+`_build_chain_for_intent()` constructs `SubTaskChain` per intent: WR chain (QUERY
+`thread_metadata`+`credibility` → ANALYZE `thread_analysis` → COMPOSE `ward_room_response`),
+proactive chain (QUERY `unread_counts`+`trust_score` → ANALYZE `situation_review` → COMPOSE
+`proactive_observation`). Skill preloading before chain check ensures
+`_augmentation_skill_instructions` available for Compose handler. `SubTaskConfig.enabled`
+flipped to `True`. External `_pending_sub_task_chain` preserved as escape hatch. Config:
+`sub_task` section in `system.yaml`. Conservative Phase 1 — no complexity heuristics, no skill
+annotation triggers, no DM chains. 4 modified files (`cognitive_agent.py`, `sub_task.py`,
+`config.py`, `config/system.yaml`), 1 new test file (34 tests across 8 classes). Build prompt:
+`prompts/ad-632f-activation-triggers.md`. Issue #238.
+
+*Connects to: AD-632a (foundation — executor, protocol), AD-632b (Query handler — QUERY steps
+in chains), AD-632c (Analyze handler — ANALYZE steps), AD-632d (Compose handler — final step),
+AD-632e (Evaluate/Reflect — quality gates on Compose output, **COMPLETE**), AD-632g (Cognitive JIT —
+learned chain patterns), AD-633 (predictive branching — pre-computed sub-tasks).*
+
+**AD-632e: Evaluate & Reflect Sub-Task Handlers — Quality Gates on Compose Output** *(COMPLETE,
+OSS, depends: AD-632a, AD-632d)* — Two new handlers completing the 5-step chain (Query →
+Analyze → Compose → **Evaluate** → **Reflect**). EvaluateHandler performs criteria-based quality
+scoring of Compose output across three modes: `ward_room_quality` (absorbs AD-631 Pre-Submit
+Check: novelty, opening quality, non-redundancy), `proactive_quality` (actionability,
+specificity, department relevance), `notebook_quality` (absorbs AD-634 Pre-Write Verification
+Gate: conclusion, threading, differentiation). Returns structured verdict with pass/fail, score,
+per-criterion results, recommendation (approve/revise/suppress). `temperature=0.0`,
+`max_tokens=512`. ReflectHandler performs self-critique and revision across three modes:
+`ward_room_reflection`, `proactive_reflection`, `general_reflection`. Suppress short-circuit
+when Evaluate recommends suppress (returns `[NO_RESPONSE]` with `tokens_used=0`). Returns
+output (original or revised) + revised flag. `temperature=0.1`, `max_tokens=2048`. Decision
+extractor updated to prefer REFLECT > COMPOSE output. Chain expansion from 3 to 5 steps in
+`_build_chain_for_intent()`, both new steps `required=False`. Fail-open design: Evaluate JSON
+parse failure → pass by default, Reflect failure → original Compose output unchanged.
+`extract_json()` raises ValueError — wrapped in try/except. Complementary to (not replacing)
+AD-568e/589/592 zero-cost heuristic checks. Academic lineage: Reflexion (Shinn et al., NeurIPS
+2023). 2 new files (`sub_tasks/evaluate.py`, `sub_tasks/reflect.py`), 3 modified files
+(`cognitive_agent.py`, `startup/finalize.py`, `sub_tasks/__init__.py`), 57 tests across 12
+classes. Build prompt: `prompts/ad-632e-evaluate-reflect-handlers.md`. Issue #240.
+
+*Connects to: AD-632a (foundation — executor, protocol), AD-632d (Compose — prior step whose
+output is evaluated/reflected), AD-632f (activation triggers — chains expanded with E+R steps),
+AD-631 (Pre-Submit Check criteria absorbed into ward_room_quality mode), AD-634 (Pre-Write
+Verification Gate criteria absorbed into notebook_quality mode).*
+
+**AD-632g: Cognitive JIT Integration — Chain Pattern Learning** *(COMPLETE, OSS, depends:
+AD-632a, AD-632f, AD-531-539)* — Closes the learning loop between Level 3 sub-task chains
+(2-4 LLM calls) and Level 1 procedural replay (0 LLM calls). SOAR chunking analog: when a
+chain decomposition pattern repeatedly produces good results, extract it as a deterministic
+procedure. Chain-dominant episode clusters (>60% chain-derived episodes) use
+`extract_chain_procedure()` — zero LLM calls, preserves structured chain metadata instead of
+re-extracting via LLM. Chain procedures start at Dreyfus Level 2 (Guided) because
+Evaluate/Reflect has already validated quality. `learned_via="chain_compiled"` (fourth value
+alongside direct/observational/taught). Dream Step 7 chain-aware pre-check before LLM
+extraction. Decision dict gains `chain_source` and `chain_steps` metadata propagated through
+`observation._chain_metadata` → episode `outcomes[0]`. DreamReport gains
+`chain_procedures_extracted` counter. Phase 1 replays as flat Level 1 shortcuts — full chain
+reconstruction replay deferred to phase 2. 4 modified files (`procedures.py`,
+`cognitive_agent.py`, `dreaming.py`, `types.py`), 29 tests across 6 classes. Build prompt:
+`prompts/ad-632g-cognitive-jit-integration.md`. Issue #242.
+
+*Connects to: AD-632a (foundation — SubTaskChain, executor), AD-632f (activation triggers —
+chain.source field), AD-531-539 (Cognitive JIT pipeline — procedure extraction, store, replay,
+compilation), AD-632e (Evaluate/Reflect — chain quality validation that justifies Level 2
+compilation start), AD-633 (predictive branching — pre-computed sub-tasks).*
+
+**AD-632h: Parallel Sub-Task Dispatch** *(COMPLETE, OSS, depends: AD-632a, AD-632e, AD-632f,
+AD-617)* — Wave-based concurrent execution of independent sub-task steps within chains. Adds
+explicit `depends_on: tuple[str, ...]` field to `SubTaskSpec` for dependency declaration. Steps
+with satisfied dependencies dispatch concurrently via `asyncio.gather(return_exceptions=True)`.
+Current chains gain EVALUATE‖REFLECT parallelism (both depend only on COMPOSE output — saves one
+LLM call's worth of wall-clock time). `validate_chain()` catches invalid references, cycles, and
+self-references (fail-open — warns but doesn't block). `_get_ready_steps()` computes per-wave
+readiness: explicit `depends_on` → ready when named deps completed; empty `depends_on` → depends
+on all prior steps (backward compatible sequential behavior). `_execute_single_step()` extracted
+from loop body for reuse in both single-step and parallel paths. Follows established
+Transporter/TaskDAG wave pattern. LLM rate limiting governed by existing AD-617 per-tier token
+bucket (no duplicate governance). Required step failure in parallel wave → chain aborts after wave
+completes (all siblings finish first via `return_exceptions=True`). Journal `dag_node_id` preserves
+original step indices. Closes AD-632 umbrella — all 8 sub-ADs complete. 2 modified files
+(`sub_task.py`, `cognitive_agent.py`), 34 tests across 7 classes. Build prompt:
+`prompts/ad-632h-parallel-dispatch.md`. Issue #243.
+
+*Connects to: AD-632a (foundation — SubTaskSpec, SubTaskExecutor, sequential loop being
+extended), AD-632e (EVALUATE + REFLECT handlers — the parallel candidates), AD-632f (activation
+triggers — chain construction with dependency annotations), AD-617 (LLM rate governance —
+concurrent call safety), AD-633 (predictive branching — parallelism enables faster chains).*
+
+**AD-635: Medical Diagnostic Data Access — Clinical Telemetry Query Interface** *(SCOPED, OSS,
+depends: AD-588, AD-620/621/622)* — Medical and Counselor agents have clinical responsibility
+for fitness-for-duty assessments and crew cognitive health monitoring but zero visibility into
+the substrate data needed for differential diagnosis. AD-588 (Telemetry-Grounded Introspection)
+solved the self-query problem — agents inspect their own telemetry. AD-635 solves the
+cross-agent clinical query problem — Medical and Counselor inspect other agents' substrate
+telemetry for diagnostic purposes.
+
+**Observable gap (crew-originated):** Chapel (Diagnostician, Chief Medical, FULL clearance)
+proposed substrate intervention based on consolidation anomalies during a 68-second stasis
+period. When asked to provide log evidence, she discovered she has no mechanism to query
+dream cycle data, consolidation anomaly details, or cross-agent cognitive journal entries.
+The proposal was correctly rejected — but the diagnostic access gap that prevented proper
+analysis is a real architectural deficiency. A Chief Medical Officer who cannot run
+diagnostics on the systems she's responsible for monitoring cannot do her job.
+
+**Four data domains currently invisible to clinical agents:**
+
+(1) **Dream cycle history** — `EmergentDetector._dream_history` (deque of up to 100 dream
+report dicts: weights_strengthened, weights_pruned, trust_adjustments, pre_warm_intents).
+No API endpoint, no shell command, no agent-facing query. The Captain's `/dream` command
+shows only the single most recent report, not history. Clinical need: differential diagnosis
+of consolidation anomalies requires reviewing the baseline that triggered (or didn't trigger)
+the anomaly.
+
+(2) **Consolidation anomaly audit trail** — EmergentDetector emits `consolidation_anomaly`
+pattern events but the raw diagnostic data (which guard triggered, threshold values at time
+of detection, historical average vs current value, whether cold-start suppression was active)
+is not persisted or queryable. Clinical need: distinguishing genuine substrate pathology from
+false positive patterns (BF-166, BF-175).
+
+(3) **Cross-agent cognitive journal** — CognitiveJournal records per-agent reasoning chains
+but no cross-agent clinical query exists. Medical reviewing another agent's recent cognitive
+journal would enable diagnosis of reasoning degradation, unusual decision patterns, or
+sub-task failures (AD-632). Clinical need: fitness-for-duty assessment requires observing
+the agent's reasoning, not just their output.
+
+(4) **Circuit breaker state history** — `/api/system/circuit-breakers` endpoint exists but
+isn't surfaced to agents in proactive context, and only shows current state (not trip
+history). Clinical need: identifying agents with recurring circuit breaker trips as
+candidates for Counselor intervention or LIMDU.
+
+**Access model:** Clearance-gated read-only query service. Two qualifying roles:
+
+| Role | Post | Clearance | Clinical Justification |
+|------|------|-----------|----------------------|
+| Diagnostician (Chapel) | chief_medical | FULL | Fitness-for-duty, substrate health monitoring |
+| Counselor (Echo) | counselor | ORACLE | Behavioral assessment, therapeutic intervention |
+
+Access gates on billet clearance (FULL+) AND clinical role (medical/counselor department or
+Bridge counselor post). Not a general-purpose telemetry firehose — scoped to diagnostic
+queries with clinical justification. Defense in depth: query audit trail records who
+accessed what, when.
+
+**Design direction (not decomposed into sub-ADs yet):**
+- `ClinicalTelemetryService` — query facade over dream history, anomaly audit, cognitive
+  journal, circuit breaker state. Clearance-checked at query time.
+- Proactive context injection — clinical agents see diagnostic data summary during
+  `_gather_context()` when subordinate/crew health assessment is active (parallels
+  AD-630 subordinate stats injection pattern).
+- Shell command — `/clinical` or `/medbay` for Captain to query the same data directly.
+- API endpoints — REST routes gated by clearance resolution.
+
+**Origin:** Crew proposal from Chapel (consolidation anomaly investigation). Proposal
+rejected on analytical grounds, but the diagnostic access gap it revealed is genuine.
+Issue #231.
+
+*Connects to: AD-588 (introspective telemetry — self-query; AD-635 extends to cross-agent
+clinical query), AD-628g (LIMDU protocol — Medical fitness-for-duty needs diagnostic data
+to justify reduced-duty recommendations), AD-620/621/622 (clearance model — FULL+ gates
+access), AD-566c (drift detection — drift reports as diagnostic data Medical should see),
+AD-505 (Counselor — shares clinical domain, requires same access for therapeutic
+intervention), AD-504 (self-monitoring — clinical view of another agent's self-monitoring
+state), AD-632a (sub-task journal entries — future diagnostic data source via dag_node_id).*
 
 ---
 
@@ -6935,6 +7161,8 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-162 | **Introspective faithfulness false positives.** AD-589's `_MANIFEST_CONTRADICTIONS` regex rules fire on conversational idioms ("my intuition suggests", "gut feeling about", "subconsciously noticed", "continuous awareness of"). Uniform `claims=1, contradictions=1` across Lynx/Reyes/Forge = systematic false positive. Downstream: inflates `confabulation_rate` EMA → degrades DEEP→SHALLOW retrieval at >0.3 → memory recall degradation for healthy agents. Also emits false SELF_MODEL_DRIFT events + corrupts episode metadata. **Fix:** `_IDIOM_EXEMPTIONS` pattern list checked only when contradiction already matched — exemption wins for conversational constructions. 1 source file, 12 new + 2 updated tests. Build prompt: bf-162-introspective-false-positives.md. Issue #195. | Medium | **Closed** |
 | BF-161 | **Cognitive zone UNKNOWN for GREEN agents.** `_build_self_monitoring_context()` only set `cognitive_zone` for non-green zones, so working memory never received the green value. `IntrospectiveTelemetryService.get_cognitive_state()` read from working memory and got nothing → downstream renders showed "UNKNOWN" for healthy agents. **Fix:** Always include `cognitive_zone` in self-monitoring context (removed `if zone != "green":` guard), added `"green"` default in telemetry service when zone not found. Crew-identified by Horizon. 2 source files, 1 test file modified. Issue #194. | Low | **Closed** |
 | BF-160 | **CrossAgentSynthesisProbe false failure at CREW level.** BF-150 redesigned to per-agent but left tier=3, so `run_collective()` invokes with `__crew__` → agent not found → score=0.0. **Fix:** Added `__crew__` skip guard returning `_make_skip_result` (score=1.0, passed=True). 1 source file, 1 test file modified (1 new test). Issue #191. | Low | **Closed** |
+| BF-177 | **Scout reports stopped — duty-triggered proactive_think short-circuited by BF-024 guard.** Scout reports stopped generating ~2026-03-27. `scout_reports/` data directory empty. BF-024 added early-return guard in `ScoutAgent.act()` for `proactive_think` intent, but duty schedule also sends `proactive_think` for daily `scout_report` duty — report parsing, JSON saving, Discord notification never reached. Additionally, `duty` dict was never propagated from observation params to `decision` dict that `act()` receives. **Fix:** (1) `cognitive_agent.py`: propagate `duty` from observation params to decision dict alongside existing `intent` propagation. (2) `scout.py`: check `decision.get("duty")` before short-circuiting — duty-triggered proactive_think reaches report generation. 2 source files (cognitive_agent.py, scout.py). Relates to: BF-024, AD-419. Issue #234. | Medium | **Closed** |
+| BF-178 | **Consolidation anomaly false positives during micro-stasis recovery.** After short stasis periods (e.g., 31 seconds), `detect_consolidation_anomalies()` fires false positive `consolidation_anomaly` events. Cold-start suppression (`set_cold_start_suppression()`) only fires on true cold starts (empty trust+memory), so stasis recovery skips it. But `_dream_history` retains stale pre-stasis baselines, causing inflated counts to trigger false 2x anomalies. **Fix:** `clear_dream_history()` on EmergentDetector + stasis recovery branch in `startup/dreaming.py` clears stale history and applies 60s suppression window. Lineage: BF-166→BF-175→BF-178. 2 source files (emergent_detector.py, startup/dreaming.py), 6 tests. Issue #241. | Medium | **Closed** |
 | BF-157 | **@mention in Ward Room thread doesn't guarantee response.** Two root causes: (1) `mentions` list used for routing only (deciding WHO to notify) but never forwarded in IntentMessage params — agent has no idea it was @mentioned, prompt allows `[NO_RESPONSE]` identically to ambient notifications, (2) per-agent cooldown (45s) and per-thread response cap (3) silently suppress @mentioned agents. **Fix:** `mentioned_agent_ids` set built from `_callsign_registry.resolve()`, `was_mentioned` flag passed in IntentMessage params, agent prompt requires response when @mentioned (suppresses `[NO_RESPONSE]`), `is_direct_target` bypasses cooldown/caps for to @mentioned agents. 3 source files, 2 new test files (7 tests). Issue #188. Relates to: BF-016a, BF-082, BF-156, AD-574. | Medium | **Closed** |
 
 > **Bug details (BF-001–011):** All closed. See [roadmap-completed.md](roadmap-completed.md#bug-tracker--closed-issues).

@@ -252,6 +252,16 @@ class CognitiveConfig(BaseModel):
         }
 
 
+class SubTaskConfig(BaseModel):
+    """AD-632a: Sub-task protocol configuration."""
+
+    enabled: bool = True                       # AD-632f: MVP chain complete, enabled by default
+    chain_timeout_ms: int = 30000              # Default chain timeout (30s)
+    step_timeout_ms: int = 15000               # Default per-step timeout (15s)
+    max_chain_steps: int = 6                   # Maximum steps per chain (defense in depth)
+    fallback_on_timeout: str = "single_call"   # Degradation strategy
+
+
 class LLMRateConfig(BaseModel):
     """AD-617: LLM call rate governance configuration."""
 
@@ -965,6 +975,7 @@ class SystemConfig(BaseModel):
     source_tracing: SourceTracingConfig = SourceTracingConfig()
     observable_state: ObservableStateConfig = ObservableStateConfig()
     llm_rate: LLMRateConfig = LLMRateConfig()  # AD-617
+    sub_task: SubTaskConfig = SubTaskConfig()  # AD-632a
 
 
 def load_config(path: str | Path) -> SystemConfig:

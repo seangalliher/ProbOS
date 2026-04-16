@@ -356,3 +356,8 @@ circuit_breaker:
   # critical_decay_seconds: 3600.0
   # critical_trip_window_seconds: 3600.0
   # critical_trip_count: 3
+
+sub_task:
+  enabled: true
+  chain_timeout_ms: 30000
+  step_timeout_ms: 15000

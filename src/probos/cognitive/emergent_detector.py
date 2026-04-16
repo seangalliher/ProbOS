@@ -231,6 +231,15 @@ class EmergentDetector:
         self._suppress_clusters_until = time.monotonic() + duration_seconds
         self._suppress_dreams_until = time.monotonic() + duration_seconds
 
+    def clear_dream_history(self) -> None:
+        """Clear stale dream report history.
+
+        BF-178: After stasis recovery, pre-stasis dream baselines cause
+        false consolidation anomalies. Clearing forces dream_min_history
+        gate to re-apply, requiring fresh baseline accumulation.
+        """
+        self._dream_history.clear()
+
     def record_activity(self) -> None:
         """Record that cognitive activity occurred (Hebbian interaction).
 

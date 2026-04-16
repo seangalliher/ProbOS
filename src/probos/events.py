@@ -155,6 +155,10 @@ class EventType(str, Enum):
     TOOL_UNLOCKED = "tool_unlocked"  # AD-423b: LOTO lock released
     TOOL_CONTEXT_CREATED = "tool_context_created"  # AD-423c: fired during onboarding
 
+    # Sub-task protocol (AD-632a)
+    SUB_TASK_COMPLETED = "sub_task_completed"
+    SUB_TASK_CHAIN_COMPLETED = "sub_task_chain_completed"
+
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
     NODE_COMPLETE = "node_complete"
@@ -687,3 +691,20 @@ class CorroborationVerifiedEvent(BaseEvent):
     corroborating_agents: list[str] = field(default_factory=list)
     corroboration_score: float = 0.0
     anchor_independence_score: float = 0.0
+
+
+@dataclass
+class SubTaskChainCompletedEvent(BaseEvent):
+    """AD-632a: Emitted when a sub-task chain finishes execution."""
+    event_type: EventType = field(
+        default=EventType.SUB_TASK_CHAIN_COMPLETED, init=False
+    )
+    agent_id: str = ""
+    agent_type: str = ""
+    intent: str = ""
+    chain_steps: int = 0
+    total_tokens: int = 0
+    total_duration_ms: float = 0.0
+    success: bool = True
+    fallback_used: bool = False
+    source: str = ""          # What triggered the chain
