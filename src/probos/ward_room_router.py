@@ -574,6 +574,18 @@ class WardRoomRouter:
                 if endorsements:
                     await self.process_endorsements(endorsements, agent_id=agent_id)
 
+            # BF-197: Self-similarity guard — prevent near-duplicate posts
+            # via the router path (mirrors BF-032 in proactive loop).
+            if agent and self._proactive_loop:
+                if await self._proactive_loop._is_similar_to_recent_posts(
+                    agent, response_text,
+                ):
+                    logger.debug(
+                        "BF-197: Suppressed similar router response from %s",
+                        agent.agent_type,
+                    )
+                    continue
+
             # BF-123: Recreation commands (router-specific, not in proactive pipeline)
             if agent and self._proactive_loop:
                 response_text = await self._extract_recreation_commands(

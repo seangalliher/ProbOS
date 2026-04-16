@@ -1844,6 +1844,15 @@ class ProactiveCognitiveLoop:
                 if similarity >= threshold:
                     return True
 
+                # BF-197b: Containment check — if the shorter message's words
+                # are mostly contained in the longer one, it's a near-duplicate
+                # even when Jaccard is low (superset expansion dilutes Jaccard).
+                shorter, longer = (new_words, old_words) if len(new_words) <= len(old_words) else (old_words, new_words)
+                if shorter:
+                    containment = len(shorter & longer) / len(shorter)
+                    if containment >= 0.85:
+                        return True
+
                 # BF-062: Bigram similarity catches paraphrased near-duplicates
                 new_bigrams = set(zip(text.lower().split(), text.lower().split()[1:]))
                 old_bigrams = set(zip(post.lower().split(), post.lower().split()[1:]))
