@@ -267,9 +267,9 @@ class LLMRateConfig(BaseModel):
     """AD-617: LLM call rate governance configuration."""
 
     # Per-tier requests per minute (0 = disabled)
-    rpm_fast: int = 60
-    rpm_standard: int = 30
-    rpm_deep: int = 15
+    rpm_fast: int = 120
+    rpm_standard: int = 120
+    rpm_deep: int = 30
 
     # Max seconds to wait for a rate limit slot before returning error
     max_wait_seconds: float = 30.0

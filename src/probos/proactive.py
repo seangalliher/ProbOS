@@ -2669,13 +2669,28 @@ class ProactiveCognitiveLoop:
                         continue
 
                 # AD-629: Per-thread reply cap — unified enforcement
+                # BF-194: Scope department gate to department channels only
                 wr_router = getattr(rt, 'ward_room_router', None)
-                if wr_router and not wr_router.check_and_increment_reply_cap(thread_id, agent.id):
-                    logger.debug(
-                        "AD-629: Reply cap hit for %s in thread %s",
-                        agent.agent_type, thread_id[:8],
-                    )
-                    continue
+                if wr_router:
+                    _is_dept_ch = False
+                    if channel_id:
+                        try:
+                            _ch = await rt.ward_room.get_channel(channel_id)
+                            _is_dept_ch = (
+                                _ch is not None
+                                and getattr(_ch, 'channel_type', '') == "department"
+                            )
+                        except Exception:
+                            pass  # Safe default: no department gate
+                    if not wr_router.check_and_increment_reply_cap(
+                        thread_id, agent.id,
+                        is_department_channel=_is_dept_ch,
+                    ):
+                        logger.debug(
+                            "AD-629: Reply cap hit for %s in thread %s",
+                            agent.agent_type, thread_id[:8],
+                        )
+                        continue
 
                 # Get callsign
                 callsign = ""

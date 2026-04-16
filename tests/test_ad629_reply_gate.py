@@ -111,7 +111,10 @@ class TestCheckAndIncrementReplyCap:
         registry.get.return_value = agent_obj
 
         router = _make_router(ontology=ontology, registry=registry)
-        assert router.check_and_increment_reply_cap("thread-1", "agent-scotty") is True
+        # BF-194: Department gate only fires on department channels.
+        assert router.check_and_increment_reply_cap(
+            "thread-1", "agent-scotty", is_department_channel=True,
+        ) is True
         assert "engineering" in router._dept_thread_responses.get("thread-1", set())
 
     def test_department_gate_second_agent_blocked(self):
@@ -126,10 +129,15 @@ class TestCheckAndIncrementReplyCap:
         registry.get.side_effect = lambda aid: agent_a if aid == "agent-scotty" else agent_b
 
         router = _make_router(ontology=ontology, registry=registry)
+        # BF-194: Department gate only fires on department channels.
         # First agent from engineering
-        assert router.check_and_increment_reply_cap("thread-1", "agent-scotty") is True
+        assert router.check_and_increment_reply_cap(
+            "thread-1", "agent-scotty", is_department_channel=True,
+        ) is True
         # Second agent from engineering — blocked by department gate
-        assert router.check_and_increment_reply_cap("thread-1", "agent-laforge") is False
+        assert router.check_and_increment_reply_cap(
+            "thread-1", "agent-laforge", is_department_channel=True,
+        ) is False
 
     def test_different_departments_both_allowed(self):
         """Agents from different departments both pass."""
@@ -148,8 +156,13 @@ class TestCheckAndIncrementReplyCap:
         registry.get.side_effect = lambda aid: agent_eng if aid == "agent-eng" else agent_sci
 
         router = _make_router(ontology=ontology, registry=registry)
-        assert router.check_and_increment_reply_cap("thread-1", "agent-eng") is True
-        assert router.check_and_increment_reply_cap("thread-1", "agent-sci") is True
+        # BF-194: Department gate only fires on department channels.
+        assert router.check_and_increment_reply_cap(
+            "thread-1", "agent-eng", is_department_channel=True,
+        ) is True
+        assert router.check_and_increment_reply_cap(
+            "thread-1", "agent-sci", is_department_channel=True,
+        ) is True
 
     def test_counter_survives_across_calls(self):
         """Multiple calls accumulate the counter."""
@@ -207,8 +220,11 @@ class TestProactiveReplyCapIntegration:
 
         cleaned, actions = await real_method(loop, agent, text)
 
-        # Cap check should have been called
-        wr_router.check_and_increment_reply_cap.assert_called_once_with("thread-abc", "agent-scotty")
+        # Cap check should have been called (BF-194: with channel-type kwarg)
+        wr_router.check_and_increment_reply_cap.assert_called_once()
+        _args, _kwargs = wr_router.check_and_increment_reply_cap.call_args
+        assert _args == ("thread-abc", "agent-scotty")
+        assert "is_department_channel" in _kwargs
 
     @pytest.mark.asyncio
     async def test_proactive_reply_blocked_at_cap(self):

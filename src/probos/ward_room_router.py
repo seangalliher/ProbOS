@@ -105,6 +105,7 @@ class WardRoomRouter:
 
     def check_and_increment_reply_cap(
         self, thread_id: str, agent_id: str,
+        *, is_department_channel: bool = False,
     ) -> bool:
         """Check whether agent_id may reply to thread_id.
 
@@ -115,6 +116,13 @@ class WardRoomRouter:
         AD-629: Single enforcement point. Both ward_room_router.route_event()
         and proactive.py._extract_and_execute_replies() call this instead of
         inlining their own checks.
+
+        BF-194: ``is_department_channel`` scopes the per-department gate. On
+        department channels the gate fires (first responder per department
+        wins). On ship-wide channels (All Hands, Recreation) the gate is
+        skipped so all crew can acknowledge Captain all-hands messages.
+        Default ``False`` over-permits rather than under-permits, which is
+        the safe failure mode for Captain-facing traffic.
         """
         # --- Per-agent cap ---
         max_per_thread = getattr(
@@ -135,21 +143,24 @@ class WardRoomRouter:
             return False
 
         # --- Per-department gate (first responder wins) ---
-        dept_id = None
-        if self._ontology:
-            agent_obj = self._registry.get(agent_id)
-            if agent_obj:
-                dept_id = self._ontology.get_agent_department(agent_obj.agent_type)
-        if dept_id:
-            dept_set = self._dept_thread_responses.get(thread_id, set())
-            if dept_id in dept_set:
-                logger.debug(
-                    "AD-629: Dept %s already replied in thread %s, blocking %s",
-                    dept_id, thread_id[:8], agent_id[:12],
-                )
-                return False
-            # Record department participation
-            self._dept_thread_responses.setdefault(thread_id, set()).add(dept_id)
+        # BF-194: Only apply on department channels — ship-wide channels
+        # (All Hands, Recreation) allow multiple agents per department.
+        if is_department_channel:
+            dept_id = None
+            if self._ontology:
+                agent_obj = self._registry.get(agent_id)
+                if agent_obj:
+                    dept_id = self._ontology.get_agent_department(agent_obj.agent_type)
+            if dept_id:
+                dept_set = self._dept_thread_responses.get(thread_id, set())
+                if dept_id in dept_set:
+                    logger.debug(
+                        "AD-629: Dept %s already replied in thread %s, blocking %s",
+                        dept_id, thread_id[:8], agent_id[:12],
+                    )
+                    return False
+                # Record department participation
+                self._dept_thread_responses.setdefault(thread_id, set()).add(dept_id)
 
         # Increment and allow
         self._agent_thread_responses[thread_agent_key] = prior_responses + 1
@@ -471,7 +482,14 @@ class WardRoomRouter:
 
             # BF-016b: Per-thread agent response cap
             # AD-629: Unified reply cap
-            if not self.check_and_increment_reply_cap(thread_id, agent_id):
+            # BF-194: Department gate only applies on department channels
+            if not self.check_and_increment_reply_cap(
+                thread_id, agent_id,
+                is_department_channel=(
+                    channel is not None
+                    and getattr(channel, 'channel_type', '') == "department"
+                ),
+            ):
                 continue
 
             intent = IntentMessage(
@@ -489,6 +507,9 @@ class WardRoomRouter:
                 },
                 context=thread_context,
                 target_agent_id=agent_id,
+                # BF-193: Captain messages get extended TTL to survive chain
+                # slot contention when agents are busy with DM/proactive chains.
+                ttl_seconds=120.0 if is_captain else 30.0,
             )
             eligible.append((agent_id, intent))
 

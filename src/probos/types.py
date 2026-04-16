@@ -54,7 +54,7 @@ class IntentMessage:
     params: dict[str, Any] = field(default_factory=dict)
     urgency: float = 0.5
     context: str = ""
-    ttl_seconds: float = 30.0
+    ttl_seconds: float = 60.0  # raised from 30s for chain pipeline (5-step × LLM call)
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     target_agent_id: str | None = None  # AD-397: if set, deliver only to this agent
