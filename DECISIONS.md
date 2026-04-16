@@ -5010,6 +5010,20 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 
 ---
 
+## BF-193: Parallel Captain Message Dispatch (2026-04-16)
+
+**Context:** Captain all-hands messages only reach 6/14 crew. `_route_to_agents()` dispatches sequentially — each `await intent_bus.send()` blocks for the full chain pipeline (~10-15s per agent). 14 agents × 10s = 140s, exceeding TTL timeouts.
+
+**Decision:** Refactor into three phases: (1) Pre-filter eligible agents. (2) `asyncio.gather` for Captain only; sequential for non-Captain (prevents O(N²) cascading chains). (3) Sequential result processing (shared). Post ordering preserved by `asyncio.gather`'s input-order guarantee.
+
+| Design Decision | Choice | Rationale |
+|---|---|---|
+| DD-1: Captain-only parallelism | `asyncio.gather` when `is_captain=True` | Agent-triggered sequential prevents cascading chains. Captain has social obligation bypass — all WILL respond. |
+| DD-2: Error isolation | Per-agent try/except in `_dispatch_one()` | One failure must not prevent other 13 from responding. |
+| DD-3: Post ordering | Process results in `eligible` list order | `asyncio.gather` preserves input order. Deterministic, not completion-order. |
+
+---
+
 ## BF-190/BF-191: Route `now` NameError + Evaluate Raw JSON Pass-Through (2026-04-16)
 
 **Context:** Two bugs: (1) BF-188 extracted `_route_to_agents()` but left `now = time.time()` in `route_event()` — dead code — and used `import time as _time` locally instead of the module-level import. (2) Compose sometimes produces raw intent JSON (`{"intents": [...]}`), which Evaluate's LLM judge scores as `pass=True, score=1.00` because 15 chars of JSON doesn't trigger any quality criterion.

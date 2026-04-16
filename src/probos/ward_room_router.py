@@ -420,23 +420,28 @@ class WardRoomRouter:
         event_type, title, author_id, data, thread_context,
         cooldown, current_round, round_participants,
     ):
-        """Route intents to target agents — extracted for BF-188 try/finally."""
+        """Route intents to target agents — extracted for BF-188 try/finally.
+
+        BF-193: Three-phase structure — pre-filter, dispatch, process.
+        Captain messages dispatch concurrently; non-Captain sequential.
+        """
         from probos.types import IntentMessage
         now = time.time()
         responded_this_event = False
 
+        # ---------------------------------------------------------------
+        # Phase 1: Pre-filter eligible agents and build intents
+        # ---------------------------------------------------------------
+        eligible: list[tuple[str, IntentMessage]] = []
+
         for agent_id in target_agent_ids:
             # BF-156/157: @mentioned agents and DM recipients bypass cooldown/caps.
-            # These guards prevent thread explosion in public channels, not
-            # suppress direct communication.
             is_direct_target = (
                 agent_id in mentioned_agent_ids
                 or (channel and channel.channel_type == "dm")
             )
 
-            # AD-614: DM thread exchange limit — prevent conversation loops.
-            # Unlike other guards, this applies even for is_direct_target because
-            # DMs bypass all existing caps. Without this, DM conversations are unbounded.
+            # AD-614: DM thread exchange limit
             if channel and channel.channel_type == "dm":
                 try:
                     dm_limit = getattr(
@@ -464,8 +469,8 @@ class WardRoomRouter:
             if not is_direct_target and is_agent_post and agent_id in round_participants:
                 continue
 
-            # BF-016b: Per-thread agent response cap — prevent thread explosion
-            # AD-629: Unified reply cap (applies to all agents, including @mentioned)
+            # BF-016b: Per-thread agent response cap
+            # AD-629: Unified reply cap
             if not self.check_and_increment_reply_cap(thread_id, agent_id):
                 continue
 
@@ -479,72 +484,98 @@ class WardRoomRouter:
                     "title": title,
                     "author_id": author_id,
                     "author_callsign": data.get("author_callsign", ""),
-                    # BF-157: Tell the agent it was directly mentioned
                     "was_mentioned": agent_id in mentioned_agent_ids,
-                    # BF-187: DM channel flag for social obligation bypass in chain
                     "is_dm_channel": getattr(channel, 'channel_type', '') == "dm",
                 },
                 context=thread_context,
                 target_agent_id=agent_id,
             )
-            try:
-                result = await self._intent_bus.send(intent)
-                # Layer 5: [NO_RESPONSE] filtering
-                if result and result.result:
-                    response_text = str(result.result).strip()
-                    # AD-426: Extract endorsements before filtering
-                    response_text, endorsements = self.extract_endorsements(response_text)
-                    if endorsements:
-                        await self.process_endorsements(
-                            endorsements, agent_id=agent_id
-                        )
-                    if response_text and response_text != "[NO_RESPONSE]":
-                        # Get agent's callsign for attribution
-                        agent = self._registry.get(agent_id)
-                        agent_callsign = ""
-                        if agent and self._callsign_registry:
-                            agent_callsign = self._callsign_registry.get_callsign(agent.agent_type)
-                        # BF-066: Extract [DM @callsign]...[/DM] blocks before posting
-                        if agent and self._proactive_loop:
-                            response_text, dm_actions = await self._proactive_loop._extract_and_execute_dms(
-                                agent, response_text,
-                            )
-                            response_text = response_text.strip()
-                        # BF-123: Extract CHALLENGE/MOVE from Ward Room responses.
-                        # Ward Room router only extracted endorsements + DMs — recreation
-                        # commands were silently ignored because this path bypasses
-                        # _extract_and_execute_actions() in proactive.py.
-                        if agent and self._proactive_loop:
-                            response_text = await self._extract_recreation_commands(
-                                agent, response_text, agent_callsign,
-                            )
-                        if not response_text:
-                            continue  # entire response was DM blocks, nothing to post publicly
-                        # BF-174: Strip self-monitoring bracket markers
-                        from probos.proactive import _strip_bracket_markers
-                        response_text = _strip_bracket_markers(response_text)
-                        if not response_text:
-                            continue
-                        await self._ward_room.create_post(
-                            thread_id=thread_id,
-                            author_id=agent_id,
-                            body=response_text,
-                            # BF-015: reply to the specific post, not just the thread
-                            parent_id=data.get("post_id") if event_type == "ward_room_post_created" else None,
-                            author_callsign=agent_callsign or (agent.agent_type if agent else "unknown"),
-                        )
-                        # AD-625: Record communication exercise
-                        _rt = getattr(self._proactive_loop, '_runtime', None) if self._proactive_loop else None
-                        if _rt and hasattr(_rt, 'skill_service') and _rt.skill_service:
-                            try:
-                                await _rt.skill_service.record_exercise(agent_id, "communication")
-                            except Exception:
-                                logger.debug("Skill exercise recording failed for %s", agent_id, exc_info=True)
-                        self._cooldowns[agent_id] = time.time()
-                        round_participants.add(agent_id)
-                        responded_this_event = True
-            except Exception as e:
-                logger.warning("Ward Room agent notification failed for %s: %s", agent_id, e)
+            eligible.append((agent_id, intent))
+
+        if not eligible:
+            return
+
+        # ---------------------------------------------------------------
+        # Phase 2: Dispatch — parallel for Captain, sequential otherwise
+        # ---------------------------------------------------------------
+        dispatch_results: list[tuple[str, object]] = []
+
+        if is_captain:
+            # BF-193: Parallel dispatch — all crew hear Captain simultaneously
+            async def _dispatch_one(aid: str, intent: IntentMessage):
+                try:
+                    return aid, await self._intent_bus.send(intent)
+                except Exception as e:
+                    logger.warning("Ward Room agent notification failed for %s: %s", aid, e)
+                    return aid, None
+
+            dispatch_results = list(await asyncio.gather(
+                *[_dispatch_one(aid, intent) for aid, intent in eligible],
+            ))
+        else:
+            # Non-Captain: sequential (prevents thread explosion)
+            for agent_id, intent in eligible:
+                try:
+                    result = await self._intent_bus.send(intent)
+                    dispatch_results.append((agent_id, result))
+                except Exception as e:
+                    logger.warning("Ward Room agent notification failed for %s: %s", agent_id, e)
+                    dispatch_results.append((agent_id, None))
+
+        # ---------------------------------------------------------------
+        # Phase 3: Sequential result processing
+        # ---------------------------------------------------------------
+        for agent_id, result in dispatch_results:
+            if not result or not result.result:
+                continue
+            response_text = str(result.result).strip()
+            # AD-426: Extract endorsements before filtering
+            response_text, endorsements = self.extract_endorsements(response_text)
+            if endorsements:
+                await self.process_endorsements(
+                    endorsements, agent_id=agent_id
+                )
+            if response_text and response_text != "[NO_RESPONSE]":
+                # Get agent's callsign for attribution
+                agent = self._registry.get(agent_id)
+                agent_callsign = ""
+                if agent and self._callsign_registry:
+                    agent_callsign = self._callsign_registry.get_callsign(agent.agent_type)
+                # BF-066: Extract [DM @callsign]...[/DM] blocks before posting
+                if agent and self._proactive_loop:
+                    response_text, dm_actions = await self._proactive_loop._extract_and_execute_dms(
+                        agent, response_text,
+                    )
+                    response_text = response_text.strip()
+                # BF-123: Extract CHALLENGE/MOVE from Ward Room responses.
+                if agent and self._proactive_loop:
+                    response_text = await self._extract_recreation_commands(
+                        agent, response_text, agent_callsign,
+                    )
+                if not response_text:
+                    continue
+                # BF-174: Strip self-monitoring bracket markers
+                from probos.proactive import _strip_bracket_markers
+                response_text = _strip_bracket_markers(response_text)
+                if not response_text:
+                    continue
+                await self._ward_room.create_post(
+                    thread_id=thread_id,
+                    author_id=agent_id,
+                    body=response_text,
+                    parent_id=data.get("post_id") if event_type == "ward_room_post_created" else None,
+                    author_callsign=agent_callsign or (agent.agent_type if agent else "unknown"),
+                )
+                # AD-625: Record communication exercise
+                _rt = getattr(self._proactive_loop, '_runtime', None) if self._proactive_loop else None
+                if _rt and hasattr(_rt, 'skill_service') and _rt.skill_service:
+                    try:
+                        await _rt.skill_service.record_exercise(agent_id, "communication")
+                    except Exception:
+                        logger.debug("Skill exercise recording failed for %s", agent_id, exc_info=True)
+                self._cooldowns[agent_id] = time.time()
+                round_participants.add(agent_id)
+                responded_this_event = True
 
         # Increment round counter if any agent responded to an agent post
         if is_agent_post and responded_this_event:
