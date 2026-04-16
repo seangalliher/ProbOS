@@ -1225,9 +1225,11 @@ class CognitiveAgent(BaseAgent):
         """
         # AD-626: Load augmentation skills BEFORE building user message
         # so _build_user_message() can frame tasks with skill instructions.
-        _aug_instructions = self._load_augmentation_skills(observation.get("intent", ""))
-        if _aug_instructions:
-            observation["_augmentation_skill_instructions"] = _aug_instructions
+        # Skip if already loaded by decide() for chain activation (AD-632f).
+        if "_augmentation_skill_instructions" not in observation:
+            _aug_instructions = self._load_augmentation_skills(observation.get("intent", ""))
+            if _aug_instructions:
+                observation["_augmentation_skill_instructions"] = _aug_instructions
 
         user_message = await self._build_user_message(observation)
 
@@ -1594,8 +1596,9 @@ class CognitiveAgent(BaseAgent):
                 journal=self._cognitive_journal,
             )
         except Exception as exc:
+            import asyncio as _asyncio
             from probos.cognitive.sub_task import SubTaskError
-            if isinstance(exc, (SubTaskError, asyncio.TimeoutError)):
+            if isinstance(exc, (SubTaskError, _asyncio.TimeoutError)):
                 logger.warning(
                     "AD-632a: Sub-task chain failed, falling back to single-call: %s",
                     exc,

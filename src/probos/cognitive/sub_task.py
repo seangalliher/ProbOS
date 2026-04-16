@@ -444,11 +444,13 @@ class SubTaskExecutor:
             )
 
         # Filter context to spec.context_keys if specified
+        # QUERY handlers use context_keys as operation dispatch, not context filter —
+        # they need full observation access for data lookups (thread_id in params, etc.)
         step_context = context
-        if spec.context_keys:
+        if spec.context_keys and spec.sub_task_type != SubTaskType.QUERY:
             step_context = {
                 k: v for k, v in context.items()
-                if k in spec.context_keys
+                if k in spec.context_keys or k.startswith("_")
             }
 
         step_start = time.monotonic()

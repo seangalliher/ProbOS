@@ -16,6 +16,16 @@ from probos.cognitive.sub_task import SubTaskResult, SubTaskSpec, SubTaskType
 
 logger = logging.getLogger(__name__)
 
+
+def _ctx(context: dict, key: str, default: str = "") -> str:
+    """Resolve a key from context, falling back to nested params dict."""
+    val = context.get(key, "")
+    if not val:
+        params = context.get("params")
+        if isinstance(params, dict):
+            val = params.get(key, "")
+    return val or default
+
 # Type alias for async query operation functions
 QueryOperation = Callable[
     [Any, SubTaskSpec, dict],  # runtime, spec, context
@@ -36,7 +46,7 @@ async def _query_thread_metadata(
     if ward_room is None:
         raise _ServiceUnavailableError("WardRoomService")
 
-    thread_id = context.get("thread_id", "")
+    thread_id = _ctx(context, "thread_id")
     if not thread_id:
         raise ValueError("thread_id required for thread_metadata query")
 
@@ -55,7 +65,7 @@ async def _query_thread_activity(
     if ward_room is None:
         raise _ServiceUnavailableError("WardRoomService")
 
-    channel_id = context.get("channel_id", "")
+    channel_id = _ctx(context, "channel_id")
     if not channel_id:
         raise ValueError("channel_id required for thread_activity query")
 
@@ -73,7 +83,7 @@ async def _query_comm_stats(
     if ward_room is None:
         raise _ServiceUnavailableError("WardRoomService")
 
-    agent_id = context.get("agent_id", "")
+    agent_id = context.get("_agent_id", "") or _ctx(context, "agent_id")
     if not agent_id:
         raise ValueError("agent_id required for comm_stats query")
 
@@ -90,7 +100,7 @@ async def _query_credibility(
     if ward_room is None:
         raise _ServiceUnavailableError("WardRoomService")
 
-    agent_id = context.get("agent_id", "")
+    agent_id = context.get("_agent_id", "") or _ctx(context, "agent_id")
     if not agent_id:
         raise ValueError("agent_id required for credibility query")
 
@@ -107,7 +117,7 @@ async def _query_unread_counts(
     if ward_room is None:
         raise _ServiceUnavailableError("WardRoomService")
 
-    agent_id = context.get("agent_id", "")
+    agent_id = context.get("_agent_id", "") or _ctx(context, "agent_id")
     if not agent_id:
         raise ValueError("agent_id required for unread_counts query")
 
@@ -123,7 +133,7 @@ async def _query_unread_dms(
     if ward_room is None:
         raise _ServiceUnavailableError("WardRoomService")
 
-    agent_id = context.get("agent_id", "")
+    agent_id = context.get("_agent_id", "") or _ctx(context, "agent_id")
     if not agent_id:
         raise ValueError("agent_id required for unread_dms query")
 
@@ -140,7 +150,7 @@ async def _query_trust_score(
     if trust is None:
         raise _ServiceUnavailableError("TrustNetwork")
 
-    agent_id = context.get("agent_id", "")
+    agent_id = context.get("_agent_id", "") or _ctx(context, "agent_id")
     if not agent_id:
         raise ValueError("agent_id required for trust_score query")
 

@@ -139,7 +139,7 @@ async def finalize_startup(
         if hasattr(runtime, 'skill_service') and runtime.skill_service:
             runtime._comm_profiles = {}
             for agent in runtime.registry.all():
-                if getattr(agent, 'is_crew', False):
+                if is_crew_agent(agent, runtime.ontology):
                     try:
                         profile = await runtime.skill_service.get_profile(agent.id)
                         if profile:
@@ -225,7 +225,7 @@ async def finalize_startup(
 
         # Wire executor onto all crew agents
         for _agent in runtime.registry.all():
-            if getattr(_agent, 'is_crew', False):
+            if is_crew_agent(_agent, runtime.ontology):
                 _agent.set_sub_task_executor(executor)
 
         logger.info(
@@ -297,7 +297,7 @@ async def finalize_startup(
 
     # BF-125: Subscribe to GAME_COMPLETED to clean both players' working memory
     from probos.events import EventType
-    from probos.crew_utils import is_crew_agent  # BF-127
+
 
     async def _on_game_completed(event: dict) -> None:
         """BF-125: Clean both players' working memory on game completion."""
@@ -490,7 +490,7 @@ async def finalize_startup(
             and runtime.working_memory_store):
         try:
             from probos.cognitive.agent_working_memory import AgentWorkingMemory
-            from probos.crew_utils import is_crew_agent  # BF-127
+        
             frozen_states = await runtime.working_memory_store.load_all()
             stale_hours = config.working_memory.stale_threshold_hours
             restored = 0
