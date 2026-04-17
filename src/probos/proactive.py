@@ -2499,6 +2499,12 @@ class ProactiveCognitiveLoop:
                     logger.warning("AD-526a: MOVE failed for %s: %s", callsign, e)
             text = re.sub(move_pattern, '', text).strip()
 
+        # BF-203: Strip unrecognized bracket command tags that the LLM hallucinated.
+        # Known tags (REPLY, DM, ENDORSE, NOTEBOOK, READ_NOTEBOOK, CHALLENGE, MOVE)
+        # are already extracted above. Any remaining [UPPERCASE_COMMAND ...] patterns
+        # are hallucinations that would leak into Ward Room posts as visible text.
+        text = re.sub(r'\[(?:[A-Z][A-Z_]+)(?:\s[^\]]{0,120})?\]', '', text).strip()
+
         return text, actions_executed
 
     async def _write_convergence_report(
@@ -2691,29 +2697,18 @@ class ProactiveCognitiveLoop:
                         )
                         continue
 
-                # AD-629: Per-thread reply cap — unified enforcement
-                # BF-194: Scope department gate to department channels only
+                # BF-201: Thread post cap — proactive path
                 wr_router = getattr(rt, 'ward_room_router', None)
-                if wr_router:
-                    _is_dept_ch = False
-                    if channel_id:
-                        try:
-                            _ch = await rt.ward_room.get_channel(channel_id)
-                            _is_dept_ch = (
-                                _ch is not None
-                                and getattr(_ch, 'channel_type', '') == "department"
-                            )
-                        except Exception:
-                            pass  # Safe default: no department gate
-                    if wr_router.check_and_increment_reply_cap(
-                        thread_id, agent.id,
-                        is_department_channel=_is_dept_ch,
-                    ) != wr_router.CAP_ALLOWED:
-                        logger.debug(
-                            "AD-629: Reply cap hit for %s in thread %s",
-                            agent.agent_type, thread_id[:8],
-                        )
-                        continue
+                if wr_router and thread_id:
+                    try:
+                        _td = await rt.ward_room.get_thread(thread_id)
+                        if _td:
+                            _max = getattr(rt.config.ward_room, 'max_thread_posts', 50)
+                            if len(_td.get("posts", [])) >= _max:
+                                logger.debug("BF-201: Thread %s at post cap, skipping proactive reply", thread_id[:8])
+                                continue
+                    except Exception:
+                        pass  # Safe default: allow reply
 
                 # Get callsign
                 callsign = ""
