@@ -103,10 +103,10 @@ class TestDepartmentGateScope:
 
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-scotty", is_department_channel=True,
-        ) is True
+        ) == router.CAP_ALLOWED
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-laforge", is_department_channel=True,
-        ) is False
+        ) == router.CAP_DEPT_GATE
 
     def test_department_gate_allows_on_ship_channel(self):
         """BF-194 fix: same-dept agents both pass on ship-wide channel."""
@@ -118,10 +118,10 @@ class TestDepartmentGateScope:
 
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-scotty", is_department_channel=False,
-        ) is True
+        ) == router.CAP_ALLOWED
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-laforge", is_department_channel=False,
-        ) is True
+        ) == router.CAP_ALLOWED
 
     def test_department_gate_default_false(self):
         """Omitting the kwarg must NOT apply the department gate (safe
@@ -134,10 +134,10 @@ class TestDepartmentGateScope:
 
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-scotty",
-        ) is True
+        ) == router.CAP_ALLOWED
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-laforge",
-        ) is True
+        ) == router.CAP_ALLOWED
 
     def test_per_agent_cap_still_enforced_on_ship_channel(self):
         """Per-agent cap is independent of channel type."""
@@ -149,14 +149,14 @@ class TestDepartmentGateScope:
 
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-scotty", is_department_channel=False,
-        ) is True
+        ) == router.CAP_ALLOWED
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-scotty", is_department_channel=False,
-        ) is True
+        ) == router.CAP_ALLOWED
         # Third attempt blocked by per-agent cap, not department gate
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-scotty", is_department_channel=False,
-        ) is False
+        ) == router.CAP_AGENT_LIMIT
 
     def test_all_14_crew_eligible_ship_channel(self):
         """Regression witness: 14 crew across 6 departments all pass on a
@@ -192,7 +192,7 @@ class TestDepartmentGateScope:
             )
             for agent_id in crew
         ]
-        assert all(allowed), f"Expected 14 allowed, got {sum(allowed)}"
+        assert all(r == router.CAP_ALLOWED for r in allowed), f"Expected 14 allowed, got {sum(1 for r in allowed if r == router.CAP_ALLOWED)}"
         assert len(allowed) == 14
 
     def test_department_gate_mixed_channels(self):
@@ -208,16 +208,16 @@ class TestDepartmentGateScope:
         # Department channel: thread-dept. Scotty records engineering.
         assert router.check_and_increment_reply_cap(
             "thread-dept", "agent-scotty", is_department_channel=True,
-        ) is True
+        ) == router.CAP_ALLOWED
         # Ship-wide channel: thread-ship. LaForge (same dept) is NOT
         # blocked — different thread, and gate is skipped anyway.
         assert router.check_and_increment_reply_cap(
             "thread-ship", "agent-laforge", is_department_channel=False,
-        ) is True
+        ) == router.CAP_ALLOWED
         # And Scotty can also reply in the ship thread.
         assert router.check_and_increment_reply_cap(
             "thread-ship", "agent-scotty", is_department_channel=False,
-        ) is True
+        ) == router.CAP_ALLOWED
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -237,7 +237,7 @@ class TestProactiveReplyPassesChannelType:
         loop._reply_cooldowns = {}
 
         wr_router = MagicMock()
-        wr_router.check_and_increment_reply_cap.return_value = True
+        wr_router.check_and_increment_reply_cap.return_value = "allowed"
         loop._runtime.ward_room_router = wr_router
 
         # Mock async ward_room with get_thread and get_channel
@@ -286,7 +286,7 @@ class TestProactiveReplyPassesChannelType:
         loop._reply_cooldowns = {}
 
         wr_router = MagicMock()
-        wr_router.check_and_increment_reply_cap.return_value = True
+        wr_router.check_and_increment_reply_cap.return_value = "allowed"
         loop._runtime.ward_room_router = wr_router
 
         loop._runtime.ward_room = AsyncMock()
@@ -334,7 +334,7 @@ class TestProactiveReplyPassesChannelType:
         loop._reply_cooldowns = {}
 
         wr_router = MagicMock()
-        wr_router.check_and_increment_reply_cap.return_value = True
+        wr_router.check_and_increment_reply_cap.return_value = "allowed"
         loop._runtime.ward_room_router = wr_router
 
         loop._runtime.ward_room = AsyncMock()

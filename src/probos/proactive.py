@@ -2705,10 +2705,10 @@ class ProactiveCognitiveLoop:
                             )
                         except Exception:
                             pass  # Safe default: no department gate
-                    if not wr_router.check_and_increment_reply_cap(
+                    if wr_router.check_and_increment_reply_cap(
                         thread_id, agent.id,
                         is_department_channel=_is_dept_ch,
-                    ):
+                    ) != wr_router.CAP_ALLOWED:
                         logger.debug(
                             "AD-629: Reply cap hit for %s in thread %s",
                             agent.agent_type, thread_id[:8],

@@ -68,17 +68,17 @@ class TestCheckAndIncrementReplyCap:
     def test_first_reply_allowed(self):
         router = _make_router()
         # First reply to a thread should be allowed
-        assert router.check_and_increment_reply_cap("thread-1", "agent-a") is True
+        assert router.check_and_increment_reply_cap("thread-1", "agent-a") == router.CAP_ALLOWED
         # Counter should be incremented
         assert router._agent_thread_responses["thread-1:agent-a"] == 1
 
     def test_at_cap_blocked(self):
         router = _make_router(config=_make_config(max_per_thread=2))
         # Use up the cap
-        assert router.check_and_increment_reply_cap("thread-1", "agent-a") is True
-        assert router.check_and_increment_reply_cap("thread-1", "agent-a") is True
+        assert router.check_and_increment_reply_cap("thread-1", "agent-a") == router.CAP_ALLOWED
+        assert router.check_and_increment_reply_cap("thread-1", "agent-a") == router.CAP_ALLOWED
         # Third attempt should be blocked
-        assert router.check_and_increment_reply_cap("thread-1", "agent-a") is False
+        assert router.check_and_increment_reply_cap("thread-1", "agent-a") == router.CAP_AGENT_LIMIT
         # Counter should stay at 2 (not incremented on block)
         assert router._agent_thread_responses["thread-1:agent-a"] == 2
 
@@ -89,8 +89,8 @@ class TestCheckAndIncrementReplyCap:
         overrides = MagicMock()
         overrides.max_responses_per_thread = 1
         with patch.object(router, '_get_comm_gate_overrides', return_value=overrides):
-            assert router.check_and_increment_reply_cap("thread-1", "agent-a") is True
-            assert router.check_and_increment_reply_cap("thread-1", "agent-a") is False
+            assert router.check_and_increment_reply_cap("thread-1", "agent-a") == router.CAP_ALLOWED
+            assert router.check_and_increment_reply_cap("thread-1", "agent-a") == router.CAP_AGENT_LIMIT
 
     def test_mentioned_agent_still_capped(self):
         """@mention bypasses cooldown but NOT the per-thread cap (AD-629 fix)."""
@@ -99,7 +99,7 @@ class TestCheckAndIncrementReplyCap:
         router.check_and_increment_reply_cap("thread-1", "agent-mentioned")
         router.check_and_increment_reply_cap("thread-1", "agent-mentioned")
         # Even though this agent would be @mentioned, cap is enforced
-        assert router.check_and_increment_reply_cap("thread-1", "agent-mentioned") is False
+        assert router.check_and_increment_reply_cap("thread-1", "agent-mentioned") == router.CAP_AGENT_LIMIT
 
     def test_department_gate_first_agent_allowed(self):
         """First agent from a department passes department gate."""
@@ -114,7 +114,7 @@ class TestCheckAndIncrementReplyCap:
         # BF-194: Department gate only fires on department channels.
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-scotty", is_department_channel=True,
-        ) is True
+        ) == router.CAP_ALLOWED
         assert "engineering" in router._dept_thread_responses.get("thread-1", set())
 
     def test_department_gate_second_agent_blocked(self):
@@ -133,11 +133,11 @@ class TestCheckAndIncrementReplyCap:
         # First agent from engineering
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-scotty", is_department_channel=True,
-        ) is True
+        ) == router.CAP_ALLOWED
         # Second agent from engineering — blocked by department gate
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-laforge", is_department_channel=True,
-        ) is False
+        ) == router.CAP_DEPT_GATE
 
     def test_different_departments_both_allowed(self):
         """Agents from different departments both pass."""
@@ -159,18 +159,18 @@ class TestCheckAndIncrementReplyCap:
         # BF-194: Department gate only fires on department channels.
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-eng", is_department_channel=True,
-        ) is True
+        ) == router.CAP_ALLOWED
         assert router.check_and_increment_reply_cap(
             "thread-1", "agent-sci", is_department_channel=True,
-        ) is True
+        ) == router.CAP_ALLOWED
 
     def test_counter_survives_across_calls(self):
         """Multiple calls accumulate the counter."""
         router = _make_router(config=_make_config(max_per_thread=5))
         for i in range(5):
-            assert router.check_and_increment_reply_cap("thread-1", "agent-a") is True
+            assert router.check_and_increment_reply_cap("thread-1", "agent-a") == router.CAP_ALLOWED
         assert router._agent_thread_responses["thread-1:agent-a"] == 5
-        assert router.check_and_increment_reply_cap("thread-1", "agent-a") is False
+        assert router.check_and_increment_reply_cap("thread-1", "agent-a") == router.CAP_AGENT_LIMIT
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -193,7 +193,7 @@ class TestProactiveReplyCapIntegration:
 
         # Mock ward_room_router on runtime
         wr_router = MagicMock()
-        wr_router.check_and_increment_reply_cap.return_value = True
+        wr_router.check_and_increment_reply_cap.return_value = "allowed"
         loop._runtime.ward_room_router = wr_router
         loop._runtime.ward_room = AsyncMock()
         loop._runtime.ward_room.get_thread = AsyncMock(return_value={
@@ -236,7 +236,7 @@ class TestProactiveReplyCapIntegration:
         loop._reply_cooldowns = {}
 
         wr_router = MagicMock()
-        wr_router.check_and_increment_reply_cap.return_value = False  # CAP HIT
+        wr_router.check_and_increment_reply_cap.return_value = "agent_limit"  # CAP HIT
         loop._runtime.ward_room_router = wr_router
         loop._runtime.ward_room = AsyncMock()
         loop._runtime.ward_room.get_thread = AsyncMock(return_value={

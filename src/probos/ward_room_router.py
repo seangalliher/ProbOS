@@ -188,15 +188,22 @@ class WardRoomRouter:
     # AD-629: Unified reply cap — single enforcement point
     # ------------------------------------------------------------------
 
+    # Return sentinels for check_and_increment_reply_cap
+    CAP_ALLOWED = "allowed"
+    CAP_AGENT_LIMIT = "agent_limit"
+    CAP_DEPT_GATE = "dept_gate"
+
     def check_and_increment_reply_cap(
         self, thread_id: str, agent_id: str,
         *, is_department_channel: bool = False,
-    ) -> bool:
+    ) -> str:
         """Check whether agent_id may reply to thread_id.
 
-        Returns True if the agent is under the cap (reply allowed).
-        Returns False if the cap is reached (reply blocked).
-        When True, atomically increments the counter.
+        Returns CAP_ALLOWED if the agent is under the cap (reply allowed).
+        Returns CAP_AGENT_LIMIT if the per-agent cap is reached.
+        Returns CAP_DEPT_GATE if another agent from the same department
+        already responded (first-responder filter, not a cap).
+        When CAP_ALLOWED, atomically increments the counter.
 
         AD-629: Single enforcement point. Both ward_room_router.route_event()
         and proactive.py._extract_and_execute_replies() call this instead of
@@ -225,7 +232,7 @@ class WardRoomRouter:
                 "AD-629: Agent %s hit per-thread cap (%d) in thread %s",
                 agent_id[:12], max_per_thread, thread_id[:8],
             )
-            return False
+            return self.CAP_AGENT_LIMIT
 
         # --- Per-department gate (first responder wins) ---
         # BF-194: Only apply on department channels — ship-wide channels
@@ -243,13 +250,13 @@ class WardRoomRouter:
                         "AD-629: Dept %s already replied in thread %s, blocking %s",
                         dept_id, thread_id[:8], agent_id[:12],
                     )
-                    return False
+                    return self.CAP_DEPT_GATE
                 # Record department participation
                 self._dept_thread_responses.setdefault(thread_id, set()).add(dept_id)
 
         # Increment and allow
         self._agent_thread_responses[thread_agent_key] = prior_responses + 1
-        return True
+        return self.CAP_ALLOWED
 
     # ------------------------------------------------------------------
     # Public API
@@ -580,16 +587,21 @@ class WardRoomRouter:
             # BF-200: DM channels use dm_exchange_limit, not the per-thread reply cap
             if channel and channel.channel_type == "dm":
                 pass  # Already guarded by AD-614 dm_exchange_limit above
-            elif not self.check_and_increment_reply_cap(
-                thread_id, agent_id,
-                is_department_channel=(
-                    channel is not None
-                    and getattr(channel, 'channel_type', '') == "department"
-                ),
-            ):
-                # BF-200: Notify thread that cap was hit
-                await self._post_cap_notification(thread_id, agent_id, "reply_cap")
-                continue
+            else:
+                cap_result = self.check_and_increment_reply_cap(
+                    thread_id, agent_id,
+                    is_department_channel=(
+                        channel is not None
+                        and getattr(channel, 'channel_type', '') == "department"
+                    ),
+                )
+                if cap_result == self.CAP_AGENT_LIMIT:
+                    # BF-200: Notify thread that per-agent cap was hit
+                    await self._post_cap_notification(thread_id, agent_id, "reply_cap")
+                    continue
+                elif cap_result == self.CAP_DEPT_GATE:
+                    # Department first-responder filter — silent, not a cap
+                    continue
 
             intent = IntentMessage(
                 intent="ward_room_notification",

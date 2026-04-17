@@ -63,17 +63,17 @@ class TestDMReplyCap:
         # not block. Verify via the DM bypass path existing in the router.
         # Direct verification: check_and_increment_reply_cap returns False,
         # but DM channel wouldn't hit that path.
-        assert router.check_and_increment_reply_cap("thread-1", "agent-1") is False
+        assert router.check_and_increment_reply_cap("thread-1", "agent-1") == router.CAP_AGENT_LIMIT
 
     def test_non_dm_still_uses_reply_cap(self):
         """Test 3: Non-DM channel still subject to reply cap."""
         router = _make_router()
         # Default max is 3 (NOVICE)
-        assert router.check_and_increment_reply_cap("thread-2", "agent-2") is True
-        assert router.check_and_increment_reply_cap("thread-2", "agent-2") is True
-        assert router.check_and_increment_reply_cap("thread-2", "agent-2") is True
+        assert router.check_and_increment_reply_cap("thread-2", "agent-2") == router.CAP_ALLOWED
+        assert router.check_and_increment_reply_cap("thread-2", "agent-2") == router.CAP_ALLOWED
+        assert router.check_and_increment_reply_cap("thread-2", "agent-2") == router.CAP_ALLOWED
         # 4th should be blocked
-        assert router.check_and_increment_reply_cap("thread-2", "agent-2") is False
+        assert router.check_and_increment_reply_cap("thread-2", "agent-2") == router.CAP_AGENT_LIMIT
 
 
 # ---------------------------------------------------------------------------

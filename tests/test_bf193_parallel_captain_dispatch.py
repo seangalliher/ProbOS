@@ -40,9 +40,10 @@ def _make_router():
     router._captain_delivery_done = asyncio.Event()
     router._captain_delivery_done.set()
     router._WARD_ROOM_COOLDOWN_SECONDS = 30
+    router._cap_notices_posted = set()
 
     # Default: check_and_increment_reply_cap always allows
-    router.check_and_increment_reply_cap = MagicMock(return_value=True)
+    router.check_and_increment_reply_cap = MagicMock(return_value="allowed")
     # extract_endorsements returns text unchanged, no endorsements
     router.extract_endorsements = MagicMock(side_effect=lambda t: (t, []))
 
@@ -220,7 +221,7 @@ class TestCaptainParallelDispatch:
 
         # Agent-05 is at reply cap
         def _cap_check(thread_id, agent_id, *, is_department_channel=False):
-            return agent_id != "agent-05"
+            return "allowed" if agent_id != "agent-05" else "agent_limit"
 
         router.check_and_increment_reply_cap = MagicMock(side_effect=_cap_check)
 
