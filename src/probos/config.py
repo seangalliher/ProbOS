@@ -676,9 +676,9 @@ class WardRoomConfig(BaseModel):
     """Ward Room communication fabric configuration (AD-407)."""
 
     enabled: bool = False  # Disabled by default — enable after HXI surface is ready
-    max_agent_rounds: int = 3           # AD-407d: max consecutive agent-only rounds per thread
+    max_agent_rounds: int = 5           # AD-407d / BF-201: max consecutive agent-only rounds per thread
     agent_cooldown_seconds: float = 45  # AD-407d: cooldown for agent-triggered responses
-    max_agent_responses_per_thread: int = 3  # BF-016b: per-agent cap per thread (prevents explosion)
+    max_thread_posts: int = 50          # BF-201: total posts per thread (all authors)
     default_discuss_responder_cap: int = 3  # AD-424: Default max_responders for DISCUSS threads
     # AD-416: Retention & archival
     retention_days: int = 7                    # Regular posts older than this are pruned

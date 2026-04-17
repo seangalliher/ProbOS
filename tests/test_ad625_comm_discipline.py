@@ -71,29 +71,25 @@ class TestGateOverrides:
 
     def test_novice_gate_overrides_strict(self):
         o = get_gate_overrides(ProficiencyLevel.FOLLOW)
-        assert o.max_responses_per_thread == 1
         assert o.reply_cooldown_seconds == 180
         assert o.tier == CommTier.NOVICE
 
     def test_competent_gate_overrides_standard(self):
         o = get_gate_overrides(ProficiencyLevel.APPLY)
-        assert o.max_responses_per_thread == 3
         assert o.reply_cooldown_seconds == 120
 
     def test_proficient_gate_overrides_relaxed(self):
         o = get_gate_overrides(ProficiencyLevel.ADVISE)
-        assert o.max_responses_per_thread == 4
         assert o.reply_cooldown_seconds == 90
 
     def test_expert_gate_overrides_minimal(self):
         o = get_gate_overrides(ProficiencyLevel.LEAD)
-        assert o.max_responses_per_thread == 5
         assert o.reply_cooldown_seconds == 60
 
     def test_gate_overrides_frozen(self):
         o = get_gate_overrides(ProficiencyLevel.FOLLOW)
         with pytest.raises(AttributeError):
-            o.max_responses_per_thread = 10  # type: ignore[misc]
+            o.reply_cooldown_seconds = 999  # type: ignore[misc]
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -327,71 +323,6 @@ class TestCognitiveAgentCommGuidance:
 # ══════════════════════════════════════════════════════════════════════
 
 
-class TestWardRoomRouterGateOverrides:
-    """_get_comm_gate_overrides() on WardRoomRouter."""
-
-    def _make_router(self, comm_profiles=None):
-        from probos.ward_room_router import WardRoomRouter
-        router = WardRoomRouter.__new__(WardRoomRouter)
-        # Minimal state
-        rt = MagicMock()
-        rt.skill_service = MagicMock()
-        rt._comm_profiles = comm_profiles or {}
-        loop = MagicMock()
-        loop._runtime = rt
-        router._proactive_loop = loop
-        router._config = MagicMock()
-        router._config.ward_room = MagicMock()
-        return router
-
-    def test_proficiency_modulates_per_thread_cap_novice(self):
-        profile = SkillProfile(
-            agent_id="agent-1",
-            pccs=[AgentSkillRecord(
-                agent_id="agent-1",
-                skill_id="communication",
-                proficiency=ProficiencyLevel.FOLLOW,
-            )],
-        )
-        router = self._make_router({"agent-1": profile})
-        overrides = router._get_comm_gate_overrides("agent-1")
-        assert overrides is not None
-        assert overrides.max_responses_per_thread == 1
-
-    def test_proficiency_modulates_per_thread_cap_expert(self):
-        profile = SkillProfile(
-            agent_id="agent-1",
-            pccs=[AgentSkillRecord(
-                agent_id="agent-1",
-                skill_id="communication",
-                proficiency=ProficiencyLevel.LEAD,
-            )],
-        )
-        router = self._make_router({"agent-1": profile})
-        overrides = router._get_comm_gate_overrides("agent-1")
-        assert overrides is not None
-        assert overrides.max_responses_per_thread == 5
-
-    def test_no_profile_returns_none(self):
-        router = self._make_router({})
-        overrides = router._get_comm_gate_overrides("agent-1")
-        assert overrides is None
-
-    def test_no_proactive_loop_returns_none(self):
-        from probos.ward_room_router import WardRoomRouter
-        router = WardRoomRouter.__new__(WardRoomRouter)
-        router._proactive_loop = None
-        overrides = router._get_comm_gate_overrides("agent-1")
-        assert overrides is None
-
-    def test_exercise_recording_log_and_degrade(self):
-        """Exercise recording failure doesn't propagate."""
-        router = self._make_router({})
-        rt = router._proactive_loop._runtime
-        rt.skill_service.record_exercise = AsyncMock(side_effect=RuntimeError("DB fail"))
-        # Should not raise — log-and-degrade
-        # (This tests the pattern exists; actual recording is async in route_event)
-
 
 # ══════════════════════════════════════════════════════════════════════
 # proactive.py — reply cooldown modulation
@@ -469,28 +400,6 @@ class TestProactiveReplyCooldown:
 
 class TestEdgeCases:
     """Edge cases and graceful degradation."""
-
-    def test_non_crew_agent_no_profile(self):
-        """Non-crew agents won't have profiles in cache."""
-        from probos.ward_room_router import WardRoomRouter
-        router = WardRoomRouter.__new__(WardRoomRouter)
-        rt = MagicMock()
-        rt._comm_profiles = {}  # Empty — no crew profiles
-        loop = MagicMock()
-        loop._runtime = rt
-        router._proactive_loop = loop
-        # Non-crew agent not in cache → None
-        assert router._get_comm_gate_overrides("non-crew-agent") is None
-
-    def test_missing_skill_service_graceful(self):
-        """Missing skill_service → no overrides."""
-        from probos.ward_room_router import WardRoomRouter
-        router = WardRoomRouter.__new__(WardRoomRouter)
-        rt = MagicMock(spec=[])  # No attributes at all
-        loop = MagicMock()
-        loop._runtime = rt
-        router._proactive_loop = loop
-        assert router._get_comm_gate_overrides("agent-1") is None
 
     def test_missing_runtime_graceful(self):
         """Missing runtime → no overrides."""

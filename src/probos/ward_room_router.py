@@ -68,11 +68,9 @@ class WardRoomRouter:
         self._cooldowns: dict[str, float] = {}  # agent_id -> last_response_timestamp
         self._thread_rounds: dict[str, int] = {}  # thread_id -> current agent round count
         self._round_participants: dict[str, set[str]] = {}  # "thread_id:round" -> set of agent_ids
-        self._agent_thread_responses: dict[str, int] = {}  # "thread_id:agent_id" -> count
         self._coalesce_timers: dict[str, asyncio.TimerHandle] = {}  # AD-616: thread_id -> pending timer
         self._coalesce_ms: int = getattr(config.ward_room, 'event_coalesce_ms', 200)
         self._channel_members: dict[str, set[str]] = {}  # AD-621: channel_id -> {agent_ids}
-        self._dept_thread_responses: dict[str, set[str]] = {}  # AD-629: thread_id -> {department_ids}
         # BF-198: Track threads each agent has already responded to.
         # Shared between router path and proactive loop to prevent double-response.
         # Key: (agent_id, thread_id), Value: timestamp of response.
@@ -143,7 +141,13 @@ class WardRoomRouter:
             except Exception:
                 callsign = agent_id[:8]
 
-        if callsign:
+        if cap_name == "thread_post_limit":
+            max_posts = getattr(self._config.ward_room, 'max_thread_posts', 50)
+            body = (
+                f"[System] This thread has reached {max_posts} posts. "
+                "To continue this discussion, start a new thread."
+            )
+        elif callsign:
             body = (
                 f"[System] Thread response limit reached for {callsign}. "
                 "To continue this discussion, start a new thread or DM."
@@ -162,101 +166,6 @@ class WardRoomRouter:
             )
         except Exception:
             logger.debug("BF-200: Failed to post cap notification", exc_info=True)
-
-    # ------------------------------------------------------------------
-    # AD-625: Communication proficiency helpers
-    # ------------------------------------------------------------------
-
-    def _get_comm_gate_overrides(self, agent_id: str):
-        """AD-625: Look up communication proficiency gate overrides for an agent."""
-        _rt = getattr(self._proactive_loop, '_runtime', None) if self._proactive_loop else None
-        if not _rt or not hasattr(_rt, 'skill_service'):
-            return None
-        try:
-            _profile = getattr(_rt, '_comm_profiles', {}).get(agent_id)
-            if _profile is None:
-                return None
-            for rec in _profile.all_skills:
-                if rec.skill_id == "communication":
-                    from probos.cognitive.comm_proficiency import get_gate_overrides
-                    return get_gate_overrides(rec.proficiency)
-        except Exception:
-            logger.debug("Comm gate override lookup failed for %s", agent_id, exc_info=True)
-        return None
-
-    # ------------------------------------------------------------------
-    # AD-629: Unified reply cap — single enforcement point
-    # ------------------------------------------------------------------
-
-    # Return sentinels for check_and_increment_reply_cap
-    CAP_ALLOWED = "allowed"
-    CAP_AGENT_LIMIT = "agent_limit"
-    CAP_DEPT_GATE = "dept_gate"
-
-    def check_and_increment_reply_cap(
-        self, thread_id: str, agent_id: str,
-        *, is_department_channel: bool = False,
-    ) -> str:
-        """Check whether agent_id may reply to thread_id.
-
-        Returns CAP_ALLOWED if the agent is under the cap (reply allowed).
-        Returns CAP_AGENT_LIMIT if the per-agent cap is reached.
-        Returns CAP_DEPT_GATE if another agent from the same department
-        already responded (first-responder filter, not a cap).
-        When CAP_ALLOWED, atomically increments the counter.
-
-        AD-629: Single enforcement point. Both ward_room_router.route_event()
-        and proactive.py._extract_and_execute_replies() call this instead of
-        inlining their own checks.
-
-        BF-194: ``is_department_channel`` scopes the per-department gate. On
-        department channels the gate fires (first responder per department
-        wins). On ship-wide channels (All Hands, Recreation) the gate is
-        skipped so all crew can acknowledge Captain all-hands messages.
-        Default ``False`` over-permits rather than under-permits, which is
-        the safe failure mode for Captain-facing traffic.
-        """
-        # --- Per-agent cap ---
-        max_per_thread = getattr(
-            self._config.ward_room, 'max_agent_responses_per_thread', 3,
-        )
-        # AD-625: Proficiency-modulated gate override
-        _overrides = self._get_comm_gate_overrides(agent_id)
-        if _overrides is not None:
-            max_per_thread = _overrides.max_responses_per_thread
-
-        thread_agent_key = f"{thread_id}:{agent_id}"
-        prior_responses = self._agent_thread_responses.get(thread_agent_key, 0)
-        if prior_responses >= max_per_thread:
-            logger.debug(
-                "AD-629: Agent %s hit per-thread cap (%d) in thread %s",
-                agent_id[:12], max_per_thread, thread_id[:8],
-            )
-            return self.CAP_AGENT_LIMIT
-
-        # --- Per-department gate (first responder wins) ---
-        # BF-194: Only apply on department channels — ship-wide channels
-        # (All Hands, Recreation) allow multiple agents per department.
-        if is_department_channel:
-            dept_id = None
-            if self._ontology:
-                agent_obj = self._registry.get(agent_id)
-                if agent_obj:
-                    dept_id = self._ontology.get_agent_department(agent_obj.agent_type)
-            if dept_id:
-                dept_set = self._dept_thread_responses.get(thread_id, set())
-                if dept_id in dept_set:
-                    logger.debug(
-                        "AD-629: Dept %s already replied in thread %s, blocking %s",
-                        dept_id, thread_id[:8], agent_id[:12],
-                    )
-                    return self.CAP_DEPT_GATE
-                # Record department participation
-                self._dept_thread_responses.setdefault(thread_id, set()).add(dept_id)
-
-        # Increment and allow
-        self._agent_thread_responses[thread_agent_key] = prior_responses + 1
-        return self.CAP_ALLOWED
 
     # ------------------------------------------------------------------
     # Public API
@@ -516,7 +425,7 @@ class WardRoomRouter:
                 target_agent_ids, is_captain, is_agent_post,
                 mentioned_agent_ids, channel, thread_id, channel_id,
                 event_type, title, author_id, data, thread_context,
-                cooldown, current_round, round_participants,
+                cooldown, current_round, round_participants, thread_detail,
             )
         finally:
             # BF-188: Signal Captain delivery complete (even on error)
@@ -528,7 +437,7 @@ class WardRoomRouter:
         target_agent_ids, is_captain, is_agent_post,
         mentioned_agent_ids, channel, thread_id, channel_id,
         event_type, title, author_id, data, thread_context,
-        cooldown, current_round, round_participants,
+        cooldown, current_round, round_participants, thread_detail=None,
     ):
         """Route intents to target agents — extracted for BF-188 try/finally.
 
@@ -538,6 +447,18 @@ class WardRoomRouter:
         from probos.types import IntentMessage
         now = time.time()
         responded_this_event = False
+
+        # ---------------------------------------------------------------
+        # BF-201: Total thread post cap (replaces per-agent and department gate)
+        # DM channels use dm_exchange_limit only, not the thread post cap.
+        # ---------------------------------------------------------------
+        if channel and channel.channel_type != "dm":
+            max_posts = getattr(self._config.ward_room, 'max_thread_posts', 50)
+            if thread_detail:
+                post_count = len(thread_detail.get("posts", []))
+                if post_count >= max_posts:
+                    await self._post_cap_notification(thread_id, "", "thread_post_limit")
+                    return  # Stop routing entirely — thread is full
 
         # ---------------------------------------------------------------
         # Phase 1: Pre-filter eligible agents and build intents
@@ -580,28 +501,6 @@ class WardRoomRouter:
             # Layer 3: Agent already responded in this round of this thread
             if not is_direct_target and is_agent_post and agent_id in round_participants:
                 continue
-
-            # BF-016b: Per-thread agent response cap
-            # AD-629: Unified reply cap
-            # BF-194: Department gate only applies on department channels
-            # BF-200: DM channels use dm_exchange_limit, not the per-thread reply cap
-            if channel and channel.channel_type == "dm":
-                pass  # Already guarded by AD-614 dm_exchange_limit above
-            else:
-                cap_result = self.check_and_increment_reply_cap(
-                    thread_id, agent_id,
-                    is_department_channel=(
-                        channel is not None
-                        and getattr(channel, 'channel_type', '') == "department"
-                    ),
-                )
-                if cap_result == self.CAP_AGENT_LIMIT:
-                    # BF-200: Notify thread that per-agent cap was hit
-                    await self._post_cap_notification(thread_id, agent_id, "reply_cap")
-                    continue
-                elif cap_result == self.CAP_DEPT_GATE:
-                    # Department first-responder filter — silent, not a cap
-                    continue
 
             intent = IntentMessage(
                 intent="ward_room_notification",
@@ -1177,13 +1076,12 @@ class WardRoomRouter:
         """Remove in-memory tracking entries for pruned threads (AD-416)."""
         for tid in pruned_thread_ids:
             self._thread_rounds.pop(tid, None)
-            # AD-629: Clean up department tracking
-            self._dept_thread_responses.pop(tid, None)
             keys_to_remove = [k for k in self._round_participants
                               if k.startswith(f"{tid}:")]
             for k in keys_to_remove:
                 del self._round_participants[k]
-            keys_to_remove = [k for k in self._agent_thread_responses
-                              if k.startswith(f"{tid}:")]
-            for k in keys_to_remove:
-                del self._agent_thread_responses[k]
+        # BF-201: Clean up cap notification dedup state for pruned threads
+        self._cap_notices_posted = {
+            (tid, cap) for tid, cap in self._cap_notices_posted
+            if tid not in pruned_thread_ids
+        }

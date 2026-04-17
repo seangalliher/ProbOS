@@ -699,7 +699,7 @@ def _make_mock_runtime(ward_room=None):
     runtime.config = MagicMock()
     runtime.config.ward_room.max_agent_rounds = 3
     runtime.config.ward_room.agent_cooldown_seconds = 45
-    runtime.config.ward_room.max_agent_responses_per_thread = 3
+    runtime.config.ward_room.max_thread_posts = 50
     runtime.config.earned_agency.enabled = False  # AD-357: off by default in tests
 
     runtime.intent_bus = MagicMock()
@@ -736,7 +736,6 @@ def _make_mock_runtime(ward_room=None):
     runtime._ward_room_cooldowns = router._cooldowns
     runtime._ward_room_thread_rounds = router._thread_rounds
     runtime._ward_room_round_participants = router._round_participants
-    runtime._ward_room_agent_thread_responses = router._agent_thread_responses
 
     return runtime
 

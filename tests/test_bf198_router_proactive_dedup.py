@@ -18,10 +18,10 @@ import pytest
 # ══════════════════════════════════════════════════════════════════════
 
 
-def _make_config(max_per_thread: int = 3):
+def _make_config():
     cfg = MagicMock()
-    cfg.ward_room.max_agent_responses_per_thread = max_per_thread
     cfg.ward_room.event_coalesce_ms = 200
+    cfg.ward_room.max_thread_posts = 50
     return cfg
 
 

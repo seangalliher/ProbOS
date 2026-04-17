@@ -21,6 +21,7 @@ def _make_router():
     config = MagicMock()
     config.ward_room.dm_exchange_limit = 6
     config.ward_room.agent_cooldown_seconds = 45
+    config.ward_room.max_thread_posts = 50
     config.communications = MagicMock()
     config.communications.recreation_min_rank = "ensign"
 
@@ -42,8 +43,6 @@ def _make_router():
     router._WARD_ROOM_COOLDOWN_SECONDS = 30
     router._cap_notices_posted = set()
 
-    # Default: check_and_increment_reply_cap always allows
-    router.check_and_increment_reply_cap = MagicMock(return_value="allowed")
     # extract_endorsements returns text unchanged, no endorsements
     router.extract_endorsements = MagicMock(side_effect=lambda t: (t, []))
 
@@ -213,17 +212,14 @@ class TestCaptainParallelDispatch:
         assert router._ward_room.create_post.call_count == 13
 
     @pytest.mark.asyncio
-    async def test_captain_dispatch_respects_reply_cap(self):
-        """Pre-filter applies reply cap — capped agents excluded from dispatch batch."""
+    async def test_captain_dispatch_respects_thread_post_cap(self):
+        """BF-201: Thread at post cap → no agents dispatched."""
         router = _make_router()
         router._intent_bus.send = AsyncMock(return_value=_make_result("Response"))
         router._registry.get = MagicMock(return_value=None)
 
-        # Agent-05 is at reply cap
-        def _cap_check(thread_id, agent_id, *, is_department_channel=False):
-            return "allowed" if agent_id != "agent-05" else "agent_limit"
-
-        router.check_and_increment_reply_cap = MagicMock(side_effect=_cap_check)
+        # Simulate thread at 50 posts
+        thread_detail = {"posts": [{"id": f"p-{i}"} for i in range(50)]}
 
         await router._route_to_agents(
             target_agent_ids=AGENT_IDS,
@@ -241,10 +237,11 @@ class TestCaptainParallelDispatch:
             cooldown=30,
             current_round=0,
             round_participants=set(),
+            thread_detail=thread_detail,
         )
 
-        # 13 dispatched (agent-05 filtered out by cap)
-        assert router._intent_bus.send.call_count == 13
+        # No agents dispatched — thread is full
+        assert router._intent_bus.send.call_count == 0
 
     @pytest.mark.asyncio
     async def test_captain_dispatch_post_ordering(self):

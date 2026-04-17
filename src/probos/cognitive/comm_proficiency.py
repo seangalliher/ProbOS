@@ -18,7 +18,6 @@ class CommTier(IntEnum):
 @dataclass(frozen=True)
 class CommGateOverrides:
     """Per-tier system gate adjustments."""
-    max_responses_per_thread: int
     reply_cooldown_seconds: int
     tier: CommTier
 
@@ -37,22 +36,18 @@ _TIER_MAP: dict[int, CommTier] = {
 
 _GATE_OVERRIDES: dict[CommTier, CommGateOverrides] = {
     CommTier.NOVICE: CommGateOverrides(
-        max_responses_per_thread=1,
         reply_cooldown_seconds=180,
         tier=CommTier.NOVICE,
     ),
     CommTier.COMPETENT: CommGateOverrides(
-        max_responses_per_thread=3,
         reply_cooldown_seconds=120,
         tier=CommTier.COMPETENT,
     ),
     CommTier.PROFICIENT: CommGateOverrides(
-        max_responses_per_thread=4,
         reply_cooldown_seconds=90,
         tier=CommTier.PROFICIENT,
     ),
     CommTier.EXPERT: CommGateOverrides(
-        max_responses_per_thread=5,
         reply_cooldown_seconds=60,
         tier=CommTier.EXPERT,
     ),

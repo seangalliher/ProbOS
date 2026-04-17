@@ -74,7 +74,8 @@ def _make_router(
     config.ward_room.event_coalesce_ms = 200
     config.ward_room.dm_exchange_limit = 6
     config.ward_room.agent_cooldown_seconds = 45
-    config.ward_room.max_agent_responses_per_thread = 3
+    config.ward_room.max_thread_posts = 50
+    config.ward_room.max_agent_rounds = 5
 
     return WardRoomRouter(
         ward_room=ward_room or MagicMock(),
