@@ -195,6 +195,30 @@ async def init_dreaming(
         except RuntimeError:
             pass
 
+    # AD-638: Activate boot camp for cold-start crew
+    if cold_start and runtime and hasattr(runtime, 'boot_camp') and runtime.boot_camp:
+        from probos.cognitive.standing_orders import get_department
+        crew_agents = []
+        for a in runtime.registry.all():
+            if getattr(a, 'tier', '') in ("crew", "domain"):
+                crew_agents.append({
+                    "agent_id": a.id,
+                    "callsign": getattr(a, 'callsign', '') or a.agent_type,
+                    "department": getattr(a, 'department', '') or get_department(a.agent_type) or "unassigned",
+                })
+        if crew_agents:
+            async def _activate_boot_camp():
+                try:
+                    await runtime.boot_camp.activate(crew_agents)
+                    logger.info("AD-638: Boot camp activated for %d crew agents", len(crew_agents))
+                except Exception:
+                    logger.debug("AD-638: Boot camp activation failed", exc_info=True)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_activate_boot_camp())
+            except RuntimeError:
+                pass
+
     # Wire post-dream analysis callback (AD-237)
     # NOTE: These are re-wired to DreamAdapter below in the AD-515 service creation block.
     if dream_scheduler:

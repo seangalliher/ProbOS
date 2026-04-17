@@ -155,6 +155,12 @@ class EventType(str, Enum):
     TOOL_UNLOCKED = "tool_unlocked"  # AD-423b: LOTO lock released
     TOOL_CONTEXT_CREATED = "tool_context_created"  # AD-423c: fired during onboarding
 
+    # Boot camp (AD-638)
+    BOOT_CAMP_ACTIVATED = "boot_camp_activated"
+    BOOT_CAMP_PHASE_ADVANCE = "boot_camp_phase_advance"
+    BOOT_CAMP_GRADUATION = "boot_camp_graduation"
+    BOOT_CAMP_TIMEOUT = "boot_camp_timeout"
+
     # Sub-task protocol (AD-632a)
     SUB_TASK_COMPLETED = "sub_task_completed"
     SUB_TASK_CHAIN_COMPLETED = "sub_task_chain_completed"

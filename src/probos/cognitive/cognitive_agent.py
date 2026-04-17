@@ -1595,6 +1595,11 @@ class CognitiveAgent(BaseAgent):
         # BF-187: DM social obligation — DM recipients must always respond
         observation["_is_dm"] = _params.get("is_dm_channel", False)
 
+        # AD-638: Boot camp quality gate relaxation
+        _rt = getattr(self, '_runtime', None)
+        if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.is_enrolled(self.id):
+            observation["_boot_camp_active"] = True
+
         # BF-186: Thread rank, skill_profile, and crew manifest into chain context
         observation["_agent_rank"] = getattr(self, "rank", None)
         observation["_skill_profile"] = getattr(self, '_skill_profile', None)

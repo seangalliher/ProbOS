@@ -269,6 +269,29 @@ class EvaluateHandler:
                 tier_used="",
             )
 
+        # AD-638: Boot camp quality gate relaxation
+        if context.get("_boot_camp_active"):
+            compose_output = _get_compose_output(prior_results)
+            logger.info(
+                "AD-638: Evaluate auto-approved for %s (boot camp)",
+                context.get("_agent_type", "unknown"),
+            )
+            return SubTaskResult(
+                sub_task_type=SubTaskType.EVALUATE,
+                name=spec.name,
+                result={
+                    "pass": True,
+                    "score": 0.8,
+                    "criteria": {},
+                    "recommendation": "approve",
+                    "bypass_reason": "boot_camp",
+                },
+                tokens_used=0,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                success=True,
+                tier_used="",
+            )
+
         # BF-191: Deterministic JSON rejection — compose output must be natural language
         compose_output = _get_compose_output(prior_results)
         stripped = compose_output.strip()

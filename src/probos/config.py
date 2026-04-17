@@ -263,6 +263,19 @@ class SubTaskConfig(BaseModel):
     max_concurrent_chains: int = 4             # AD-636: Cap simultaneous chain executions
 
 
+class BootCampConfig(BaseModel):
+    """AD-638: Cold-start boot camp configuration."""
+
+    enabled: bool = True
+    min_episodes: int = 5
+    min_ward_room_posts: int = 3
+    min_dm_conversations: int = 1
+    min_trust_score: float = 0.55
+    min_time_minutes: int = 60
+    timeout_minutes: int = 120
+    nudge_cooldown_seconds: int = 600
+
+
 class LLMRateConfig(BaseModel):
     """AD-617: LLM call rate governance configuration."""
 
@@ -985,6 +998,7 @@ class SystemConfig(BaseModel):
     observable_state: ObservableStateConfig = ObservableStateConfig()
     llm_rate: LLMRateConfig = LLMRateConfig()  # AD-617
     sub_task: SubTaskConfig = SubTaskConfig()  # AD-632a
+    boot_camp: BootCampConfig = BootCampConfig()  # AD-638
 
 
 def load_config(path: str | Path) -> SystemConfig:

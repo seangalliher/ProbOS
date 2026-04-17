@@ -289,6 +289,28 @@ class ReflectHandler:
                 tier_used="",
             )
 
+        # AD-638: Boot camp quality gate relaxation
+        if context.get("_boot_camp_active"):
+            compose_output = _get_compose_output(prior_results)
+            logger.info(
+                "AD-638: Reflect auto-approved for %s (boot camp)",
+                context.get("_agent_type", "unknown"),
+            )
+            return SubTaskResult(
+                sub_task_type=SubTaskType.REFLECT,
+                name=spec.name,
+                result={
+                    "output": compose_output,
+                    "revised": False,
+                    "suppressed": False,
+                    "bypass_reason": "boot_camp",
+                },
+                tokens_used=0,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                success=True,
+                tier_used="",
+            )
+
         # Suppress short-circuit: Evaluate recommended suppress (AFTER social obligation)
         if _should_suppress(prior_results):
             duration = int((time.monotonic() - start) * 1000)

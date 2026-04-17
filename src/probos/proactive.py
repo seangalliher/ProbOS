@@ -2738,6 +2738,19 @@ class ProactiveCognitiveLoop:
                 # BF-198: Record reply so router won't double-respond
                 if rt.ward_room_router:
                     rt.ward_room_router.record_agent_response(agent.id, thread_id)
+                # AD-638: Track post for boot camp graduation
+                if hasattr(rt, 'boot_camp') and rt.boot_camp and rt.boot_camp.is_enrolled(agent.id):
+                    try:
+                        _ch_type = ""
+                        if channel_id:
+                            try:
+                                _ch_obj = await rt.ward_room.get_channel(channel_id)
+                                _ch_type = getattr(_ch_obj, 'channel_type', '')
+                            except Exception:
+                                pass
+                        await rt.boot_camp.on_agent_post(agent.id, _ch_type)
+                    except Exception:
+                        logger.debug("AD-638: Boot camp post tracking failed", exc_info=True)
                 # BF-171: Record reply timestamp for channel cooldown
                 if channel_id:
                     self._reply_cooldowns[f"{agent.id}:{channel_id}"] = time.monotonic()

@@ -54,6 +54,7 @@ from probos.cognitive.builder import BuilderAgent
 from probos.cognitive.architect import ArchitectAgent
 from probos.cognitive.scout import ScoutAgent
 from probos.cognitive.counselor import CounselorAgent
+from probos.boot_camp import BootCampCoordinator
 from probos.cognitive.security_officer import SecurityAgent
 from probos.cognitive.operations_officer import OperationsAgent
 from probos.cognitive.engineering_officer import EngineeringAgent
@@ -448,6 +449,9 @@ class ProbOSRuntime:
 
         # BF-034: Cold-start flag — True when booting with empty state (post-reset)
         self._cold_start: bool = False
+
+        # AD-638: Boot camp coordinator
+        self.boot_camp: BootCampCoordinator | None = None
 
         # --- Pool scaling ---
         self.pool_scaler: PoolScaler | None = None
@@ -1388,6 +1392,25 @@ class ProbOSRuntime:
         # AD-567c: Late-bind WardRoom into SIF for anchor integrity cross-reference
         if self.sif and self.ward_room:
             self.sif.set_ward_room(self.ward_room)
+
+        # AD-638: Boot camp coordinator (late-bound, needs ward_room + trust + episodic)
+        if (
+            self.config.boot_camp.enabled
+            and self.ward_room
+            and self.trust_network
+            and getattr(self, 'episodic_memory', None)
+        ):
+            try:
+                self.boot_camp = BootCampCoordinator(
+                    config=self.config.boot_camp,
+                    ward_room=self.ward_room,
+                    trust_service=self.trust_network,
+                    episodic_memory=self.episodic_memory,
+                    emit_event_fn=self._emit_event,
+                )
+                logger.info("AD-638: BootCampCoordinator initialized")
+            except Exception as e:
+                logger.warning("AD-638: BootCampCoordinator failed to start: %s", e)
 
         self.assignment_service = comm.assignment_service
         self.bridge_alerts = comm.bridge_alerts
