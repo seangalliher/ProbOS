@@ -56,7 +56,7 @@ def _make_ward_room() -> MagicMock:
 
 def _make_trust() -> MagicMock:
     trust = MagicMock()
-    trust.get_trust_score = MagicMock(return_value=0.6)
+    trust.get_trust_score = MagicMock(return_value=0.5)
     return trust
 
 
@@ -221,6 +221,7 @@ class TestGraduation:
         """Test 5: All criteria met → graduated."""
         coord = _make_coordinator()
         await coord.activate(_CREW)
+        coord._trust.get_trust_score.return_value = 0.6  # Above graduation threshold
         state = coord.get_state("agent-1")
         state.ward_room_posts = 5
         state.dm_conversations = 2
@@ -291,6 +292,7 @@ class TestGraduation:
         emit = MagicMock()
         coord = _make_coordinator(emit_event_fn=emit)
         await coord.activate(_CREW)
+        coord._trust.get_trust_score.return_value = 0.6  # Above graduation threshold
         state = coord.get_state("agent-1")
         state.ward_room_posts = 5
         state.dm_conversations = 2
@@ -308,6 +310,7 @@ class TestGraduation:
     async def test_all_graduated_deactivates_boot_camp(self):
         coord = _make_coordinator()
         await coord.activate(_CREW)
+        coord._trust.get_trust_score.return_value = 0.6  # Above graduation threshold
         for info in _CREW:
             state = coord.get_state(info["agent_id"])
             state.ward_room_posts = 5
@@ -473,6 +476,7 @@ class TestActivityTracking:
         """Post tracking triggers graduation check automatically."""
         coord = _make_coordinator()
         await coord.activate(_CREW)
+        coord._trust.get_trust_score.return_value = 0.6  # Above graduation threshold
         state = coord.get_state("agent-1")
         state.dm_conversations = 2
 
@@ -497,6 +501,7 @@ class TestEventEmission:
 
         # Activation
         await coord.activate(_CREW)
+        coord._trust.get_trust_score.return_value = 0.6  # Above graduation threshold
         # Phase advance
         await coord.run_phase_2_introductions("counselor-id", "Echo")
         # Graduation
@@ -524,6 +529,7 @@ class TestGraduatedNotBypassed:
         """Test 17: After graduation, is_enrolled returns False."""
         coord = _make_coordinator()
         await coord.activate(_CREW)
+        coord._trust.get_trust_score.return_value = 0.6  # Above graduation threshold
         state = coord.get_state("agent-1")
         state.ward_room_posts = 5
         state.dm_conversations = 2
@@ -576,6 +582,7 @@ class TestFullLifecycle:
             assert coord.get_state(info["agent_id"]).phase >= 3
 
         # Simulate activity for all agents
+        coord._trust.get_trust_score.return_value = 0.6  # Above graduation threshold
         for info in _CREW:
             state = coord.get_state(info["agent_id"])
             state.ward_room_posts = 5

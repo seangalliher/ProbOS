@@ -152,8 +152,26 @@ class AgentOnboardingService:
                 agent._skill_profile = None
                 logger.debug("AD-596c: Could not cache skill profile for %s", agent.id)
 
-        # Initialize trust record
-        self._trust_network.get_or_create(agent.id)
+        # AD-640: Initialize trust record with role-based tier
+        from probos.tiered_trust import initialize_trust
+        tier = initialize_trust(
+            agent_id=agent.id,
+            pool=agent.pool,
+            callsign=agent.callsign,
+            trust_network=self._trust_network,
+            config=self._config.tiered_trust,
+            consensus_alpha=self._config.consensus.trust_prior_alpha,
+            consensus_beta=self._config.consensus.trust_prior_beta,
+        )
+
+        # AD-640: Emit tiered trust event
+        self._event_emitter(EventType.TIERED_TRUST_INITIALIZED, {
+            "agent_id": agent.id,
+            "callsign": agent.callsign,
+            "pool": agent.pool,
+            "tier": tier.value,
+            "trust": format_trust(self._trust_network.get_score(agent.id)),
+        })
 
         # Emit agent_state event for HXI (AD-254)
         self._event_emitter(EventType.AGENT_STATE, {

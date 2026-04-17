@@ -78,6 +78,7 @@ class WardRoomRouter:
         # Key: (agent_id, thread_id), Value: timestamp of response.
         self._responded_threads: dict[tuple[str, str], float] = {}
         self._last_responded_eviction: float = time.time()
+        self._cap_notices_posted: set[tuple[str, str]] = set()  # BF-200: (thread_id, cap_name)
         # BF-188: Captain delivery coordination — agent-reply routing waits
         # until Captain's routing to all targets completes
         self._captain_delivery_done: asyncio.Event = asyncio.Event()
@@ -111,6 +112,56 @@ class WardRoomRouter:
         """BF-198: Periodic eviction — runs at most once per ``interval`` seconds."""
         if time.time() - self._last_responded_eviction >= interval:
             self._evict_stale_responses()
+
+    # ------------------------------------------------------------------
+    # BF-200: Cap notification posting
+    # ------------------------------------------------------------------
+
+    async def _post_cap_notification(
+        self, thread_id: str, agent_id: str, cap_name: str,
+    ) -> None:
+        """BF-200: Post a system notice when a response cap silences an agent."""
+        if not self._ward_room:
+            return
+        # Deduplicate: only post once per (thread, cap_name)
+        cap_key = (thread_id, cap_name)
+        if cap_key in self._cap_notices_posted:
+            return
+        self._cap_notices_posted.add(cap_key)
+
+        # Evict if set grows large
+        if len(self._cap_notices_posted) > 500:
+            self._cap_notices_posted.clear()
+
+        callsign = ""
+        if agent_id:
+            # Try to get callsign from the agent registry
+            try:
+                agent = self._registry.get(agent_id)
+                if agent:
+                    callsign = getattr(agent, 'callsign', '') or agent_id[:8]
+            except Exception:
+                callsign = agent_id[:8]
+
+        if callsign:
+            body = (
+                f"[System] Thread response limit reached for {callsign}. "
+                "To continue this discussion, start a new thread or DM."
+            )
+        else:
+            body = (
+                "[System] Thread response limit reached. "
+                "To continue this discussion, start a new thread or DM."
+            )
+        try:
+            await self._ward_room.create_post(
+                thread_id=thread_id,
+                author_id="system",
+                body=body,
+                author_callsign="System",
+            )
+        except Exception:
+            logger.debug("BF-200: Failed to post cap notification", exc_info=True)
 
     # ------------------------------------------------------------------
     # AD-625: Communication proficiency helpers
@@ -336,6 +387,8 @@ class WardRoomRouter:
                     "Ward Room: thread %s hit agent round limit (%d), silencing",
                     thread_id[:8], max_rounds,
                 )
+                # BF-200: Notify thread that cap was hit
+                await self._post_cap_notification(thread_id, "", "agent_round_limit")
                 return
 
         # --- Layer 2: Selective targeting ---
@@ -383,6 +436,8 @@ class WardRoomRouter:
                             "exchange_count": convergence["exchange_count"],
                         },
                     )
+                    # BF-200: Notify DM thread that convergence ended it
+                    await self._post_cap_notification(thread_id, "", "dm_convergence")
                     return  # Thread is done — no more routing
             except Exception:
                 logger.debug("AD-623: convergence gate check failed", exc_info=True)
@@ -503,6 +558,8 @@ class WardRoomRouter:
                             "AD-614: %s hit DM exchange limit (%d/%d) in thread %s",
                             agent_id[:12], agent_post_count, dm_limit, thread_id[:8],
                         )
+                        # BF-200: Notify thread that cap was hit
+                        await self._post_cap_notification(thread_id, agent_id, "dm_exchange_limit")
                         continue
                 except Exception:
                     logger.debug("AD-614: exchange limit check failed", exc_info=True)
@@ -520,13 +577,18 @@ class WardRoomRouter:
             # BF-016b: Per-thread agent response cap
             # AD-629: Unified reply cap
             # BF-194: Department gate only applies on department channels
-            if not self.check_and_increment_reply_cap(
+            # BF-200: DM channels use dm_exchange_limit, not the per-thread reply cap
+            if channel and channel.channel_type == "dm":
+                pass  # Already guarded by AD-614 dm_exchange_limit above
+            elif not self.check_and_increment_reply_cap(
                 thread_id, agent_id,
                 is_department_channel=(
                     channel is not None
                     and getattr(channel, 'channel_type', '') == "department"
                 ),
             ):
+                # BF-200: Notify thread that cap was hit
+                await self._post_cap_notification(thread_id, agent_id, "reply_cap")
                 continue
 
             intent = IntentMessage(
@@ -587,6 +649,9 @@ class WardRoomRouter:
             if not result or not result.result:
                 continue
             response_text = str(result.result).strip()
+            # BF-199: Extract text from leaked chain JSON
+            from probos.utils.text_sanitize import sanitize_ward_room_text
+            response_text = sanitize_ward_room_text(response_text)
             if not response_text or response_text == "[NO_RESPONSE]":
                 continue
 

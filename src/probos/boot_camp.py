@@ -148,9 +148,21 @@ class BootCampCoordinator:
 
         for agent_info in crew_agents:
             agent_id = agent_info["agent_id"]
+            callsign = agent_info.get("callsign", "")
+
+            # AD-640: Skip agents already above graduation trust threshold
+            # (Bridge/Chief agents initialized with high trust priors)
+            current_trust = self._trust.get_trust_score(agent_id)
+            if current_trust >= self._config.min_trust_score:
+                logger.info(
+                    "AD-640: %s trust=%.2f — skips boot camp (above graduation threshold)",
+                    callsign, current_trust,
+                )
+                continue
+
             self._agents[agent_id] = AgentBootCampState(
                 agent_id=agent_id,
-                callsign=agent_info.get("callsign", ""),
+                callsign=callsign,
                 department=agent_info.get("department", ""),
             )
 

@@ -276,6 +276,27 @@ class BootCampConfig(BaseModel):
     nudge_cooldown_seconds: int = 600
 
 
+class TieredTrustConfig(BaseModel):
+    """AD-640: Role-based trust initialization tiers."""
+
+    enabled: bool = True
+
+    # Bridge tier (Captain, First Officer, Counselor)
+    bridge_alpha: float = 4.5
+    bridge_beta: float = 1.0
+
+    # Department Chief tier
+    chief_alpha: float = 3.0
+    chief_beta: float = 1.0
+
+    # Crew tier uses existing consensus priors — no separate config needed.
+
+    # Callsigns in each tier.
+    bridge_pools: list[str] = ["counselor"]
+    bridge_callsigns: list[str] = ["Meridian"]
+    chief_callsigns: list[str] = ["Bones", "LaForge", "Number One", "Worf", "O'Brien"]
+
+
 class LLMRateConfig(BaseModel):
     """AD-617: LLM call rate governance configuration."""
 
@@ -665,7 +686,7 @@ class WardRoomConfig(BaseModel):
     retention_days_captain: int = 0            # 0 = indefinite retention for Captain posts
     archive_enabled: bool = True               # Write pruned posts to JSONL archive before deletion
     prune_interval_seconds: float = 86400.0    # How often to run pruning (default: daily)
-    dm_exchange_limit: int = 5          # BF-170: raised from 3 (stacked throttling blocked all DMs)
+    dm_exchange_limit: int = 40          # BF-200: raised from 5 — DMs need room for substantive conversation
     dm_similarity_threshold: float = 0.6  # AD-614: Jaccard threshold for DM self-similarity suppression
     router_concurrency_limit: int = 10     # AD-616: max concurrent route_event() tasks
     event_coalesce_ms: int = 200           # AD-616: coalesce window for rapid-fire post events (0 = disabled)
@@ -999,6 +1020,7 @@ class SystemConfig(BaseModel):
     llm_rate: LLMRateConfig = LLMRateConfig()  # AD-617
     sub_task: SubTaskConfig = SubTaskConfig()  # AD-632a
     boot_camp: BootCampConfig = BootCampConfig()  # AD-638
+    tiered_trust: TieredTrustConfig = TieredTrustConfig()  # AD-640
 
 
 def load_config(path: str | Path) -> SystemConfig:

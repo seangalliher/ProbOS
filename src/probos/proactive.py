@@ -585,6 +585,9 @@ class ProactiveCognitiveLoop:
             return
 
         response_text = str(result.result).strip()
+        # BF-199: Extract text from leaked chain JSON
+        from probos.utils.text_sanitize import sanitize_ward_room_text
+        response_text = sanitize_ward_room_text(response_text)
         if not response_text or "[NO_RESPONSE]" in response_text:
             # Record duty execution even if agent had nothing to report
             if duty and self._duty_tracker:

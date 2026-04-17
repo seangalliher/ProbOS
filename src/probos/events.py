@@ -161,6 +161,9 @@ class EventType(str, Enum):
     BOOT_CAMP_GRADUATION = "boot_camp_graduation"
     BOOT_CAMP_TIMEOUT = "boot_camp_timeout"
 
+    # Tiered trust (AD-640)
+    TIERED_TRUST_INITIALIZED = "tiered_trust_initialized"
+
     # Sub-task protocol (AD-632a)
     SUB_TASK_COMPLETED = "sub_task_completed"
     SUB_TASK_CHAIN_COMPLETED = "sub_task_chain_completed"
