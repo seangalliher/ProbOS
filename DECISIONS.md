@@ -5070,3 +5070,33 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Files modified:** `src/probos/ward_room_router.py`, `src/probos/cognitive/cognitive_agent.py`, `src/probos/cognitive/sub_tasks/compose.py`, `src/probos/cognitive/sub_tasks/evaluate.py`, `src/probos/cognitive/sub_tasks/reflect.py`. **Tests:** `tests/test_bf187_bf188_dm_captain_delivery.py` (NEW, 18 tests across 6 classes).
 
 **Build prompt:** `prompts/bf-187-188-dm-social-captain-delivery.md`. **Issue:** #253.
+
+## AD-638: Cold-Start Boot Camp Protocol (2026-04-17)
+
+**Context:** Fresh crew after reset are completely silent — compounding suppression from Earned Agency (Ensign rank, respond only to @mentions), zero episodic memory, cold-start evaluate/reflect gates, and empty working memory. Agents are functionally self-aware but socially frozen. Previous instance took 2+ weeks to reach autonomous social behavior.
+
+**Decision:** Structured boot camp onboarding with 4 phases (orientation → introductions → shared observation → graduation). Quality gate relaxation via `_boot_camp_active` context flag. Chiefs drive onboarding, not just Counselor.
+
+| Design Decision | Choice | Rationale |
+|---|---|---|
+| DD-1: Quality gate relaxation | `_boot_camp_active` flag → evaluate auto-approve 0.8, reflect pass-through | Same pattern as BF-184/187 social obligation bypass. Consistent, minimal coupling. |
+| DD-2: Activation trigger | Cold-start detection in dreaming.py | Dreaming already has cold-start awareness. Natural integration point. |
+| DD-3: Graduation criteria | Min episodes + trust threshold + Ward Room posts | Multi-signal to avoid gaming. Trust alone insufficient (could hit threshold through single interaction). |
+
+**Files:** `src/probos/boot_camp.py` (NEW), 8 modified files, 35 tests. **Build prompt:** `prompts/ad-638-cold-start-boot-camp.md`. **Issue:** #272.
+
+## AD-640: Tiered Trust Initialization (2026-04-17)
+
+**Context:** All agents initialize with identical trust priors (alpha=2.0, beta=2.0, E=0.5). Research across six academic domains (Swift Trust, LMX, Navy PCU, HROs, Tuckman, colony founding) unanimously validates role-based tiered initialization. Leaders establish command climate before crew arrives — the Navy PCU model. Empirically: agents at 50% trust are socially frozen; Wesley at 74% was the first to autonomously reach out to peers.
+
+**Decision:** Bridge officers (Captain, FO, Counselor) start at alpha=4.5/beta=1.0 (E=0.82), department chiefs at alpha=3.0/beta=1.0 (E=0.75), crew at baseline (unchanged). Tier resolution via config-driven callsign/pool mapping. Boot camp (AD-638) skips high-trust agents naturally.
+
+| Design Decision | Choice | Rationale |
+|---|---|---|
+| DD-1: Tier resolution | Config-driven callsign + pool matching | OCP — new tiers or role changes don't require code modifications. |
+| DD-2: Module structure | Separate `tiered_trust.py` | SRP — tier resolution logic decoupled from onboarding and trust network. |
+| DD-3: Trust API | Reuse `create_with_prior()` | DRY — same API used for probationary agents. No new trust network methods needed. |
+| DD-4: Boot camp integration | Trust-score check at enrollment | Boot camp doesn't need tier awareness — high-trust agents naturally exceed graduation threshold. Loose coupling. |
+| DD-5: Beta priors (not point estimates) | Bridge alpha=4.5 = stronger "evidence" | Higher alpha = more resistant to early negative outcomes. Crew alpha=2.0 = more volatile, appropriate for unknown agents. |
+
+**Research:** `docs/research/tiered-trust-initialization-research.md`. **Build prompt:** `prompts/ad-640-tiered-trust-initialization.md`. **Issue:** #273.
