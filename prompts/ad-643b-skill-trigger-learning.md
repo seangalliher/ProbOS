@@ -448,3 +448,25 @@ zero trigger injection overhead. New crew get full scaffolding.
 **DD-5: Three-phase delivery for risk management.**
 Each phase independently valuable. Phase 3 can defer until trigger count
 warrants the complexity.
+
+---
+
+## Deferred: Over-Declaration Diagnostics
+
+**Observed (2026-04-18):** Pathologist declared `intended_actions=['ward_room_post', 'notebook']`,
+both skills loaded correctly, but no `[NOTEBOOK]` tag appeared in COMPOSE output — the agent
+declared intent but didn't follow through. The `notebook-quality` skill's quality gate likely
+raised the bar and the agent self-censored.
+
+**Over-declaration** is the inverse of under-declaration (Lyra case). Both are triage accuracy
+signals:
+- **Under-declaration:** action taken without declaring → skill didn't load (quality miss)
+- **Over-declaration:** action declared but not taken → skill loaded unnecessarily (token waste)
+
+**Not a bug** — "declared but chose not to" is acceptable. The skill working as a quality gate
+is desirable behavior.
+
+**Future diagnostic (low priority):** Log when declared actions don't appear in COMPOSE output.
+Useful for tuning triage prompt accuracy and measuring skill loading efficiency. Could feed into
+the same `TriggerProficiency` tracker from Phase 3 as an `over_declarations` counter alongside
+`correct_declarations` and `missed_declarations`.
