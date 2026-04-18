@@ -68,7 +68,7 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 ### AD-643b — Skill Trigger Learning: Adaptive Trigger Discovery & Graduation
 
 **Date:** 2026-04-18
-**Status:** Design
+**Status:** Complete (Phase 1+2 of 3; Phase 3 graduation deferred)
 **Issue:** #284
 
 **Motivation:** AD-643a requires agents to declare `intended_actions` for skills to load, but agents sometimes take undeclared actions (e.g., writing a notebook without declaring `notebook`). Quality skills don't load, degrading output. At scale (100+ triggers), injecting full trigger lists into prompts defeats token savings.
