@@ -87,3 +87,37 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 | DD-3 | Episodic memory as learning medium | REFLECT feedback → episodic storage → future recall. No new infrastructure |
 | DD-4 | Graduation reduces overhead over time | Training wheels self-remove; mature crews have zero trigger injection overhead |
 | DD-5 | Three-phase delivery | Each phase independently valuable and backward compatible |
+| DD-6 | Re-reflect is a synchronous workaround | NATS decoupling (AD-643d) replaces re-reflect with message-flow interception |
+
+---
+
+### AD-643d — NATS-Based Trigger Feedback Pipeline
+
+**Date:** 2026-04-18
+**Status:** Deferred — blocked on AD-637 (NATS Event Bus)
+**Parent:** AD-643 (Intent-Driven Skill Activation)
+**Depends on:** AD-637 (NATS), AD-643b (trigger learning)
+
+**Decision:** Refactor AD-643b's re-reflect workaround into a native NATS message-flow pattern once the cognitive pipeline is decoupled via NATS subjects (AD-641g).
+
+**Motivation:** AD-643b detects undeclared actions *after* the full chain completes, then re-runs REFLECT as a partial chain to inject feedback into episodic memory. This works but is a synchronous workaround — the chain runs, completes, then a second REFLECT fires. With NATS subjects decoupling each chain step, trigger detection becomes a natural consumer in the message flow rather than a post-hoc re-run.
+
+**Design (sketch — refine when AD-637 lands):**
+
+Three options, not mutually exclusive:
+
+1. **Intercept consumer.** A trigger-detection consumer subscribes to `chain.{agent_id}.compose.complete`. It inspects compose output for undeclared actions, enriches the observation with `_undeclared_action_feedback`, and forwards to `chain.{agent_id}.evaluate`. REFLECT receives feedback naturally — no re-run.
+
+2. **BPMN-style gateway.** Exclusive gateway after COMPOSE: clean path (no undeclared actions) routes directly to EVALUATE; feedback path routes through DETECT → ENRICH → EVALUATE. Maps to BPMN 2.0 (ISO 19510:2013) process modeling. The chain becomes a declarative flow graph, not imperative code.
+
+3. **Retriggerable REFLECT.** REFLECT subscribes to `chain.{agent_id}.reflect`. On undeclared action detection, publish a second message to the same subject with feedback. Both reflections enter episodic memory. Zero chain modification.
+
+**What survives from AD-643b:** `_detect_undeclared_actions()` detection logic, feedback format, `get_eligible_triggers()` awareness injection, graduation tracking (Phase 3). Only the orchestration wrapper (`_re_reflect_with_feedback`) gets replaced.
+
+**What gets removed:** `_re_reflect_with_feedback()`, `_re_reflect_compose_output` observation key, `_get_compose_output()` fallback parameter.
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| DD-1 | Deferred until NATS lands | Re-reflect works; refactoring before NATS exists is premature |
+| DD-2 | Option 1 (intercept) is likely default | Simplest, preserves single REFLECT execution, no duplicate episodic entries |
+| DD-3 | AD-643b detection logic reused as-is | Pattern matching is transport-agnostic |
