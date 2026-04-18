@@ -7,7 +7,7 @@ description: >
 license: Apache-2.0
 metadata:
   probos-department: "*"
-  probos-skill-id: leadership-feedback
+  probos-skill-id: ""
   probos-min-proficiency: 1
   probos-min-rank: lieutenant_commander
   probos-intents: "proactive_think"

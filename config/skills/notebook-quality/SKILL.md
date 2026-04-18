@@ -7,7 +7,7 @@ description: >
 license: Apache-2.0
 metadata:
   probos-department: "*"
-  probos-skill-id: notebook-quality
+  probos-skill-id: ""
   probos-min-proficiency: 1
   probos-min-rank: ensign
   probos-intents: "proactive_think"
