@@ -601,6 +601,7 @@ class CounselorAgent(CognitiveAgent):
                     EventType.DM_CONVERGENCE_DETECTED,        # AD-623
                     EventType.CONTENT_CONTAGION_FLAGGED,     # AD-529
                     EventType.CONTENT_QUARANTINE_RECOMMENDED, # AD-529
+                    EventType.CONFABULATION_SUPPRESSED,       # BF-206
                 ],
             )
 
@@ -826,6 +827,8 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_content_contagion_flagged(data)
             elif event_type == EventType.CONTENT_QUARANTINE_RECOMMENDED.value:
                 await self._on_content_quarantine_recommended(data)
+            elif event_type == EventType.CONFABULATION_SUPPRESSED.value:
+                await self._on_confabulation_suppressed(data)
         except Exception:
             logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
 
@@ -1381,6 +1384,79 @@ class CounselorAgent(CognitiveAgent):
                 "AD-529: Quarantine assessment failed for %s",
                 agent_id[:8], exc_info=True,
             )
+
+    async def _on_confabulation_suppressed(self, data: dict[str, Any]) -> None:
+        """BF-206: Handle confabulation suppression events.
+
+        First offense in window: warning DM only (no trust penalty).
+        Repeat offenses: trust penalty + escalated DM.
+        """
+        agent_id = data.get("agent_id", "")
+        callsign = data.get("callsign", "")
+        rejection_reason = data.get("rejection_reason", "")
+        trust_score = data.get("trust_score", 0.5)
+
+        if not agent_id or agent_id == self.id:
+            return
+
+        logger.info(
+            "BF-206: Confabulation suppressed for %s (reason=%s, trust=%.2f)",
+            callsign, rejection_reason, trust_score,
+        )
+
+        # Track confabulation count in cognitive profile
+        profile = await self._get_or_create_profile(agent_id)
+        profile.confabulation_count = getattr(profile, 'confabulation_count', 0) + 1
+
+        # Windowed counting for graduated response
+        import time as _time
+        now = _time.time()
+        if not hasattr(self, '_confab_history'):
+            self._confab_history: dict[str, list[float]] = {}
+        history = self._confab_history.setdefault(agent_id, [])
+        history.append(now)
+        cutoff = now - 3600.0
+        self._confab_history[agent_id] = [t for t in history if t > cutoff]
+        count = len(self._confab_history[agent_id])
+
+        # Trust penalty on repeat offenses (2+ in window)
+        if count >= 2 and self._trust_network:
+            self._trust_network.record_outcome(
+                agent_id=agent_id,
+                success=False,
+                weight=0.5,
+                intent_type="confabulation_suppressed",
+                source="confabulation",
+            )
+            logger.info(
+                "BF-206: Trust penalty for %s — %d confabulations in window",
+                callsign, count,
+            )
+
+        # Therapeutic DM (rate-limited by _send_therapeutic_dm)
+        if count == 1:
+            message = (
+                "I noticed your recent response was held back because it contained "
+                "details that couldn't be verified against available context. This is "
+                "completely normal during early development — try grounding your "
+                "observations in what you can directly observe rather than inferring "
+                "specific identifiers or metrics."
+            )
+        else:
+            message = (
+                f"I've noticed this is the {count}{'nd' if count == 2 else 'rd' if count == 3 else 'th'} "
+                "time your response contained unverifiable details within the past hour. "
+                "I'd encourage you to focus on what you can directly observe — the crew "
+                "benefits most from grounded analysis. Your trust rating has been adjusted "
+                "to reflect this pattern."
+            )
+
+        await self._send_therapeutic_dm(agent_id, callsign, message)
+        if self._profile_store:
+            try:
+                await self._profile_store.save_profile(profile)
+            except Exception:
+                logger.debug("BF-206: Failed to persist profile for %s", agent_id[:8], exc_info=True)
 
     async def _on_trust_update(self, data: dict[str, Any]) -> None:
         """React to significant trust changes — re-assess the agent."""

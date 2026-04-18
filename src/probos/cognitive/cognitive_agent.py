@@ -1518,7 +1518,7 @@ class CognitiveAgent(BaseAgent):
                         name="reflect-reply",
                         prompt_template="ward_room_reflection",
                         required=False,
-                        depends_on=("compose-reply",),
+                        depends_on=("compose-reply", "evaluate-reply"),  # BF-206
                     ),
                 ],
                 source="intent_trigger:ward_room_notification",
@@ -1554,7 +1554,7 @@ class CognitiveAgent(BaseAgent):
                         name="reflect-observation",
                         prompt_template="proactive_reflection",
                         required=False,
-                        depends_on=("compose-observation",),
+                        depends_on=("compose-observation", "evaluate-observation"),  # BF-206
                     ),
                 ],
                 source="intent_trigger:proactive_think",
@@ -1658,6 +1658,43 @@ class CognitiveAgent(BaseAgent):
                     exc, exc_info=True,
                 )
             return None
+
+        # BF-206: Defense-in-depth — check Evaluate suppress before extracting output
+        from probos.cognitive.sub_task import SubTaskType as _SubTaskType
+        evaluate_results = [
+            r for r in results
+            if r.sub_task_type == _SubTaskType.EVALUATE and r.success and r.result
+        ]
+        for eval_r in evaluate_results:
+            if eval_r.result.get("recommendation") == "suppress":
+                rejection = eval_r.result.get("rejection_reason", "quality_gate")
+                logger.info(
+                    "BF-206: Chain output suppressed — Evaluate recommended suppress (%s)",
+                    rejection,
+                )
+                # Emit confabulation suppressed event
+                _rt = getattr(self, '_runtime', None)
+                if _rt and hasattr(_rt, '_emit_event') and _rt._emit_event:
+                    from probos.events import EventType
+                    _rt._emit_event(EventType.CONFABULATION_SUPPRESSED, {
+                        "agent_id": self.id,
+                        "agent_type": self.agent_type,
+                        "callsign": getattr(self, 'callsign', self.agent_type),
+                        "rejection_reason": rejection,
+                        "intent": observation.get("intent", ""),
+                        "trust_score": observation.get("_trust_score", 0.5),
+                        "chain_trust_band": observation.get("_chain_trust_band", "unknown"),
+                    })
+                return {
+                    "action": "execute",
+                    "llm_output": "[NO_RESPONSE]",
+                    "tier_used": "",
+                    "sub_task_chain": True,
+                    "chain_source": chain.source,
+                    "chain_steps": len(chain.steps),
+                    "_suppressed": True,
+                    "_suppression_reason": rejection,
+                }
 
         # Construct decision from chain results — prefer REFLECT > COMPOSE > fallback
         from probos.cognitive.sub_task import SubTaskType
