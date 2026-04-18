@@ -1506,6 +1506,36 @@ class CognitiveAgent(BaseAgent):
                 return []
         return []
 
+    @staticmethod
+    def _detect_undeclared_actions(
+        compose_output: str,
+        intended_actions: list[str],
+    ) -> list[str]:
+        """AD-643b: Detect actions in COMPOSE output not declared in intended_actions.
+
+        Scans for known action markers and returns undeclared action tags.
+        Patterns match the markers used by proactive.py action extraction.
+        """
+        if not compose_output:
+            return []
+
+        declared = set(intended_actions)
+        undeclared = []
+
+        markers = {
+            "notebook": re.compile(r'\[NOTEBOOK\s', re.IGNORECASE),
+            "endorse": re.compile(r'\[ENDORSE\s', re.IGNORECASE),
+            "proposal": re.compile(r'\[PROPOSAL\]', re.IGNORECASE),
+            "dm": re.compile(r'\[DM\s', re.IGNORECASE),
+            "ward_room_reply": re.compile(r'\[REPLY\s', re.IGNORECASE),
+        }
+
+        for action_tag, pattern in markers.items():
+            if action_tag not in declared and pattern.search(compose_output):
+                undeclared.append(action_tag)
+
+        return undeclared
+
     def _build_chain_for_intent(self, observation: dict):
         """AD-632f: Build a SubTaskChain for the given intent type.
 
@@ -1820,6 +1850,20 @@ class CognitiveAgent(BaseAgent):
         else:
             observation["_formatted_memories"] = ""
 
+        # AD-643b: Inject eligible trigger awareness for ANALYZE prompt
+        catalog = getattr(self, '_cognitive_skill_catalog', None)
+        if catalog:
+            _dept = observation.get("_department")
+            _rank_val = observation.get("_agent_rank")
+            if hasattr(_rank_val, 'value'):
+                _rank_val = _rank_val.value
+            eligible = catalog.get_eligible_triggers(
+                department=_dept,
+                agent_rank=_rank_val,
+            )
+            if eligible:
+                observation["_eligible_triggers"] = eligible
+
         # --- Phase 1: Build and execute triage (QUERY + ANALYZE only) ---
         full_chain = self._build_chain_for_intent(observation)
         if full_chain is None:
@@ -1923,10 +1967,45 @@ class CognitiveAgent(BaseAgent):
 
         # --- Phase 2: Execute remaining chain or fall through ---
         if has_comm_action and execute_steps:
-            # Re-execute full chain with skills now loaded.
-            # Triage re-runs but that's 1 QUERY (0 tokens) + 1 ANALYZE call.
-            # Total overhead: ~200 tokens. Acceptable for correctness.
-            return await self._execute_sub_task_chain(full_chain, observation)
+            # Phase 2a: Execute full chain with skills loaded
+            chain_result = await self._execute_sub_task_chain(full_chain, observation)
+
+            # Phase 2b: Detect undeclared actions in compose output
+            if chain_result and intended_actions:
+                compose_text = chain_result.get("llm_output", "")
+                undeclared = self._detect_undeclared_actions(compose_text, intended_actions)
+                if undeclared:
+                    # Find which skills would have loaded
+                    missed_skills = []
+                    if catalog:
+                        for tag in undeclared:
+                            triggered = catalog.find_triggered_skills(
+                                [tag], intent,
+                                department=department, agent_rank=rank_val,
+                            )
+                            missed_skills.extend(e.name for e in triggered)
+                    missed_skills = list(set(missed_skills))
+
+                    logger.info(
+                        "AD-643b: %s took undeclared actions %s, missed skills %s",
+                        self.agent_type, undeclared, missed_skills,
+                    )
+
+                    # Store feedback in observation for episode enrichment
+                    observation["_undeclared_action_feedback"] = {
+                        "undeclared_actions": undeclared,
+                        "missed_skills": missed_skills,
+                    }
+
+                    # Provide compose output for re-reflect context
+                    observation["_re_reflect_compose_output"] = compose_text
+
+                    # Phase 2c: Re-reflect with feedback
+                    chain_result = await self._re_reflect_with_feedback(
+                        full_chain, observation, chain_result,
+                    )
+
+            return chain_result
         else:
             # Non-communication actions: fall through to _decide_via_llm()
             # Skills are already loaded in observation if any matched.
@@ -1935,6 +2014,73 @@ class CognitiveAgent(BaseAgent):
                 intended_actions,
             )
             return None
+
+    async def _re_reflect_with_feedback(
+        self,
+        full_chain,
+        observation: dict,
+        original_result: dict,
+    ) -> dict:
+        """AD-643b: Run a REFLECT-only chain with undeclared action feedback.
+
+        After detecting undeclared actions in compose output, re-run REFLECT
+        with feedback injected into the observation. The re-reflect output
+        replaces the original chain result, ensuring the feedback flows into
+        episodic memory via the reflection.
+
+        Returns the updated decision dict (or original if re-reflect fails).
+        """
+        from probos.cognitive.sub_task import SubTaskChain, SubTaskType
+        from dataclasses import replace as _dc_replace
+
+        reflect_steps = [
+            _dc_replace(s, depends_on=())
+            for s in full_chain.steps
+            if s.sub_task_type == SubTaskType.REFLECT
+        ]
+        if not reflect_steps:
+            return original_result
+
+        reflect_chain = SubTaskChain(
+            steps=reflect_steps,
+            chain_timeout_ms=30000,  # 30s — single step, generous timeout
+            fallback="skip",
+            source=f"{full_chain.source}:re_reflect",
+        )
+
+        try:
+            reflect_results = await self._sub_task_executor.execute(
+                reflect_chain,
+                observation,
+                agent_id=self.id,
+                agent_type=self.agent_type,
+                intent=observation.get("intent", ""),
+                intent_id=observation.get("intent_id", ""),
+                journal=self._cognitive_journal,
+            )
+
+            # Extract re-reflect output
+            for r in reversed(reflect_results):
+                if r.sub_task_type == SubTaskType.REFLECT and r.success and r.result:
+                    new_output = r.result.get("output", "")
+                    if new_output:
+                        logger.info(
+                            "AD-643b: Re-reflect updated output for %s",
+                            self.agent_type,
+                        )
+                        return {
+                            **original_result,
+                            "llm_output": new_output,
+                            "chain_source": f"{original_result.get('chain_source', '')}:re_reflect",
+                        }
+
+        except Exception as exc:
+            logger.warning(
+                "AD-643b: Re-reflect failed for %s, keeping original: %s",
+                self.agent_type, exc,
+            )
+
+        return original_result
 
     async def act(self, decision: dict) -> dict:
         """Execute based on LLM decision.  Override for structured output."""
@@ -4090,6 +4236,11 @@ class CognitiveAgent(BaseAgent):
                     "source": source or "intent_bus",
                     # AD-632g: Chain metadata for procedure extraction
                     **(observation.get("_chain_metadata") or {}),
+                    # AD-643b: Trigger learning feedback
+                    **({
+                        "undeclared_actions": observation["_undeclared_action_feedback"].get("undeclared_actions", []),
+                        "missed_skills": observation["_undeclared_action_feedback"].get("missed_skills", []),
+                    } if observation.get("_undeclared_action_feedback") else {}),
                 }],
                 dag_summary=self._build_episode_dag_summary(observation),  # AD-568e
                 reflection=f"{callsign or self.agent_type} handled {intent.intent}: {result_text[:100]}",

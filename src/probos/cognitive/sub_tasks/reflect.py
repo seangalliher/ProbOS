@@ -25,14 +25,47 @@ _MAX_ERROR_CONTENT = 200
 
 
 # ---------------------------------------------------------------------------
+# AD-643b: Trigger feedback formatting
+# ---------------------------------------------------------------------------
+
+def _format_trigger_feedback(feedback: dict) -> str:
+    """AD-643b: Format undeclared action feedback for REFLECT prompt."""
+    undeclared = feedback.get("undeclared_actions", [])
+    missed = feedback.get("missed_skills", [])
+    if not undeclared:
+        return ""
+    actions_str = ", ".join(undeclared)
+    skills_str = ", ".join(missed) if missed else "none"
+    return (
+        "\n## Skill Trigger Feedback\n\n"
+        "You took actions without declaring them in your intended_actions "
+        "during triage:\n"
+        f"- Undeclared actions: {actions_str}\n"
+        f"- Quality skills that did NOT load: {skills_str}\n\n"
+        "In future triage, include these action tags in your intended_actions "
+        "so the relevant quality skills load and improve your output.\n"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Prior result extraction helpers
 # ---------------------------------------------------------------------------
 
-def _get_compose_output(prior_results: list[SubTaskResult]) -> str:
-    """Extract the most recent successful Compose output."""
+def _get_compose_output(
+    prior_results: list[SubTaskResult],
+    context: dict | None = None,
+) -> str:
+    """Extract the most recent successful Compose output.
+
+    Falls back to observation key for AD-643b re-reflect chains where
+    prior_results may not contain compose output.
+    """
     for pr in reversed(prior_results):
         if pr.sub_task_type == SubTaskType.COMPOSE and pr.success and pr.result:
             return pr.result.get("output", "")
+    # AD-643b: Fallback for re-reflect partial chains
+    if context:
+        return context.get("_re_reflect_compose_output", "")
     return ""
 
 
@@ -126,7 +159,7 @@ def _build_ward_room_reflect_prompt(
         "\"reflection\": \"brief explanation\"}"
     )
 
-    compose_output = _get_compose_output(prior_results)
+    compose_output = _get_compose_output(prior_results, context)
     eval_result = _get_evaluate_result(prior_results)
 
     user_prompt = "## Your Draft Response\n\n" + compose_output + "\n"
@@ -135,6 +168,10 @@ def _build_ward_room_reflect_prompt(
             "\n## Evaluation Verdict\n\n"
             + json.dumps(eval_result, indent=2) + "\n"
         )
+    # AD-643b: Inject undeclared action feedback
+    undeclared_feedback = context.get("_undeclared_action_feedback")
+    if undeclared_feedback:
+        user_prompt += _format_trigger_feedback(undeclared_feedback)
     user_prompt += (
         "\n## Self-Critique Instructions\n\n"
         "Review your draft against the criteria above. "
@@ -204,7 +241,7 @@ def _build_proactive_reflect_prompt(
         "\"reflection\": \"brief explanation\"}"
     )
 
-    compose_output = _get_compose_output(prior_results)
+    compose_output = _get_compose_output(prior_results, context)
     eval_result = _get_evaluate_result(prior_results)
 
     user_prompt = "## Your Draft Response\n\n" + compose_output + "\n"
@@ -213,6 +250,10 @@ def _build_proactive_reflect_prompt(
             "\n## Evaluation Verdict\n\n"
             + json.dumps(eval_result, indent=2) + "\n"
         )
+    # AD-643b: Inject undeclared action feedback
+    undeclared_feedback = context.get("_undeclared_action_feedback")
+    if undeclared_feedback:
+        user_prompt += _format_trigger_feedback(undeclared_feedback)
     user_prompt += (
         "\n## Self-Critique Instructions\n\n"
         "Review your draft against the criteria above. "
@@ -280,7 +321,7 @@ def _build_general_reflect_prompt(
         "\"reflection\": \"brief explanation\"}"
     )
 
-    compose_output = _get_compose_output(prior_results)
+    compose_output = _get_compose_output(prior_results, context)
     eval_result = _get_evaluate_result(prior_results)
 
     user_prompt = "## Your Draft Response\n\n" + compose_output + "\n"
@@ -289,6 +330,10 @@ def _build_general_reflect_prompt(
             "\n## Evaluation Verdict\n\n"
             + json.dumps(eval_result, indent=2) + "\n"
         )
+    # AD-643b: Inject undeclared action feedback
+    undeclared_feedback = context.get("_undeclared_action_feedback")
+    if undeclared_feedback:
+        user_prompt += _format_trigger_feedback(undeclared_feedback)
     user_prompt += (
         "\n## Self-Critique Instructions\n\n"
         "Review your draft against the criteria above. "
@@ -368,7 +413,7 @@ class ReflectHandler:
         # BF-185/187: Social obligation bypass
         # Social obligation outranks quality self-critique but not safety.
         if context.get("_from_captain") or context.get("_was_mentioned") or context.get("_is_dm"):
-            compose_output = _get_compose_output(prior_results)
+            compose_output = _get_compose_output(prior_results, context)
             if context.get("_from_captain"):
                 reason = "captain_message"
             elif context.get("_was_mentioned"):
@@ -397,7 +442,7 @@ class ReflectHandler:
 
         # AD-638: Boot camp quality gate relaxation
         if context.get("_boot_camp_active"):
-            compose_output = _get_compose_output(prior_results)
+            compose_output = _get_compose_output(prior_results, context)
             logger.info(
                 "AD-638: Reflect auto-approved for %s (boot camp)",
                 context.get("_agent_type", "unknown"),
@@ -419,7 +464,7 @@ class ReflectHandler:
 
         # AD-639: Low trust band — skip self-critique, preserve personality
         if context.get("_chain_trust_band") == "low":
-            compose_output = _get_compose_output(prior_results)
+            compose_output = _get_compose_output(prior_results, context)
             logger.info(
                 "AD-639: Reflect skipped for %s (low trust band, trust=%.2f)",
                 context.get("_agent_type", "unknown"),
@@ -457,7 +502,7 @@ class ReflectHandler:
         )
 
         # Preserve compose output for fail-open fallback
-        compose_output = _get_compose_output(prior_results)
+        compose_output = _get_compose_output(prior_results, context)
 
         # LLM call
         try:

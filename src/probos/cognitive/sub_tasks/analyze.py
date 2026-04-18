@@ -28,6 +28,21 @@ logger = logging.getLogger(__name__)
 _MAX_ERROR_CONTENT = 200  # Truncate LLM content in error messages
 
 
+def _format_trigger_awareness(context: dict) -> str:
+    """AD-643b: Format eligible triggers for ANALYZE prompt injection."""
+    eligible = context.get("_eligible_triggers")
+    if not eligible:
+        return ""
+    lines = []
+    for tag, skills in sorted(eligible.items()):
+        skill_names = ", ".join(skills)
+        lines.append(f"   - {tag} \u2192 loads: {skill_names}")
+    return (
+        "   Declare ALL actions you plan to take so quality skills load:\n"
+        + "\n".join(lines) + "\n"
+    )
+
+
 def _build_thread_analysis_prompt(
     context: dict,
     prior_results: list[SubTaskResult],
@@ -93,7 +108,8 @@ def _build_thread_analysis_prompt(
         f"   specific actions will you take? List as a JSON array from:\n"
         f"   ward_room_reply, endorse, silent.\n"
         f"   If RESPOND: [\"ward_room_reply\"]. If ENDORSE: [\"endorse\"].\n"
-        f"   If both: [\"ward_room_reply\", \"endorse\"]. If SILENT: [\"silent\"].\n\n"
+        f"   If both: [\"ward_room_reply\", \"endorse\"]. If SILENT: [\"silent\"].\n"
+        f"{_format_trigger_awareness(context)}\n"
         f"Return a JSON object with these 6 keys. No other text."
     )
     return system_prompt, user_prompt
@@ -152,7 +168,8 @@ def _build_situation_review_prompt(
         "5. **intended_actions**: What actions will you take? List as a JSON array from:\n"
         "   ward_room_post, ward_room_reply, endorse, notebook, leadership_review,\n"
         "   proposal, dm, silent. Include ALL that apply.\n"
-        "   Examples: [\"ward_room_post\", \"notebook\"], [\"endorse\"], [\"silent\"]\n\n"
+        "   Examples: [\"ward_room_post\", \"notebook\"], [\"endorse\"], [\"silent\"]\n"
+        f"{_format_trigger_awareness(context)}\n"
         "Return a JSON object with these 5 keys. No other text."
     )
     return system_prompt, user_prompt

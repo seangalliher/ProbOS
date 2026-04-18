@@ -457,6 +457,34 @@ class CognitiveSkillCatalog:
             results.append(entry)
         return results
 
+    def get_eligible_triggers(
+        self,
+        department: str | None = None,
+        agent_rank: str | None = None,
+    ) -> dict[str, list[str]]:
+        """AD-643b: Return {action_tag: [skill_names]} for eligible skills.
+
+        Filters by department and rank. Used to inject trigger awareness
+        into ANALYZE so agents know what actions load quality skills.
+        """
+        result: dict[str, list[str]] = {}
+        for entry in self._cache.values():
+            if entry.activation not in ("augmentation", "both"):
+                continue
+            if not entry.triggers:
+                continue
+            # Department gate
+            if department and entry.department != "*" and entry.department != department:
+                continue
+            # Rank gate
+            if agent_rank:
+                agent_rank_order = _RANK_ORDER.get(agent_rank, 0)
+                if _RANK_ORDER.get(entry.min_rank, 0) > agent_rank_order:
+                    continue
+            for tag in entry.triggers:
+                result.setdefault(tag, []).append(entry.name)
+        return result
+
     # ------------------------------------------------------------------
     # AD-596e: Skill validation + instruction linting
     # ------------------------------------------------------------------
