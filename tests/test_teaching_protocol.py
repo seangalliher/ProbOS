@@ -101,7 +101,7 @@ def _make_runtime(trust: float = 0.9):
     rt = MagicMock()
     # Trust network
     rt.trust_network = MagicMock()
-    rt.trust_network.get_trust = MagicMock(return_value=trust)
+    rt.trust_network.get_score = MagicMock(return_value=trust)
     # Ward Room
     rt.ward_room = AsyncMock()
     rt.ward_room.get_or_create_dm_channel = AsyncMock(return_value=_FakeDMChannel())

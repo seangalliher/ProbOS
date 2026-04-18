@@ -238,6 +238,12 @@ bridge_alerts:
   trust_drop_threshold: 0.15
   trust_drop_alert_threshold: 0.25
 
+# --- Content Contagion Firewall (AD-529) ---
+firewall:
+  enabled: true
+  scan_trust_threshold: 0.65
+  quarantine_threshold: 3
+
 # --- Earned Agency (AD-357) ---
 earned_agency:
   enabled: false  # Disabled for cold-start — boot camp AD will handle re-enablement
@@ -365,3 +371,16 @@ sub_task:
   chain_timeout_ms: 240000        # 80% of llm_timeout_deep (300s)
   step_timeout_ms: 60000           # Aligned with llm_timeout_seconds (30s) with headroom
   max_concurrent_chains: 4       # AD-636: cap simultaneous chain executions
+
+# --- Communication Quality Benchmarks (AD-642) ---
+qualification:
+  communication_benchmarks:
+    enabled: true
+    frequency_hours: 12  # Every 12h (more expensive than qualification tests)
+    probes:
+      - thread_relevance
+      - memory_grounding
+      - memory_absence
+      - expertise
+      - silence_appropriateness
+      - dm_action

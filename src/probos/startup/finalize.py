@@ -108,6 +108,21 @@ async def finalize_startup(
         if ward_room:
             ward_room.set_social_verification(runtime._social_verification)
 
+    # --- AD-529: Wire content contagion firewall into Ward Room ---
+    if runtime.ward_room and runtime.trust_network and config.firewall.enabled:
+        from probos.ward_room.content_firewall import ContentFirewall
+
+        _content_firewall = ContentFirewall(
+            trust_network=runtime.trust_network,
+            emit_event_fn=runtime._emit_event,
+            config=config.firewall,
+        )
+        if runtime.ward_room._messages:
+            runtime.ward_room._messages.set_content_firewall(_content_firewall)
+        if runtime.ward_room._threads:
+            runtime.ward_room._threads.set_content_firewall(_content_firewall)
+        logger.info("AD-529: Content contagion firewall wired")
+
     # --- AD-515: Create extracted service instances ---
     from probos.ward_room_router import WardRoomRouter
     from probos.self_mod_manager import SelfModManager
@@ -555,7 +570,7 @@ async def finalize_startup(
                     _trust = 0.5
                     if runtime.trust_network:
                         try:
-                            _trust = runtime.trust_network.get_trust(agent.id)
+                            _trust = runtime.trust_network.get_score(agent.id)
                         except Exception:
                             pass
                     # AD-513: Crew names excluding self

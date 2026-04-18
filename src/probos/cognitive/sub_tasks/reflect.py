@@ -68,19 +68,49 @@ def _build_ward_room_reflect_prompt(
 ) -> tuple[str, str]:
     """Build prompts for Ward Room post self-critique."""
     skill_instructions = context.get("_augmentation_skill_instructions", "")
+    trust_band = context.get("_chain_trust_band", "high")
 
-    system_prompt = (
-        f"You are {callsign} ({department} department), reviewing your own "
-        "draft Ward Room response for quality.\n\n"
-        "Check the draft against these criteria:\n"
-        "- **Novelty**: Does it contain at least one new fact, metric, or "
-        "conclusion not in the thread?\n"
-        "- **Opening quality**: Does the first sentence state a conclusion? "
-        "No 'Looking at...', 'I notice...', 'I can confirm...' openers.\n"
-        "- **Non-redundancy**: Is this more than confirming what someone said?\n"
-        "- **Relevance**: Does it address the topic from your department's "
-        "perspective?\n\n"
-    )
+    # AD-639: Mid trust — inject personality block for voice preservation
+    if trust_band == "mid":
+        from probos.cognitive.standing_orders import _build_personality_block
+        personality_section = _build_personality_block(
+            agent_type=context.get("_agent_type", "agent"),
+            department=department,
+            callsign_override=callsign,
+        )
+        system_prompt = (
+            f"{personality_section}\n\n"
+            "You are reviewing your own draft Ward Room response.\n\n"
+            "**IMPORTANT: Preserve your personality and voice when revising.** "
+            "Revisions should improve substance, not flatten personality. "
+            "If the draft sounds like you, keep that voice.\n\n"
+            "Check the draft against these criteria:\n"
+            "- **Novelty**: Does it contain at least one new fact, metric, or "
+            "conclusion not in the thread?\n"
+            "- **Opening quality**: Does the first sentence state a conclusion? "
+            "No 'Looking at...', 'I notice...', 'I can confirm...' openers.\n"
+            "- **Non-redundancy**: Is this more than confirming what someone said?\n"
+            "- **Relevance**: Does it address the topic from your department's "
+            "perspective?\n"
+            "- **Voice consistency**: Does the revision preserve your personality?\n"
+            "- **Grounding**: Are your claims based on data you actually have? "
+            "If you cited specific IDs, timestamps, or metrics, can you trace "
+            "them to your episodic memory or the thread content? Remove or "
+            "qualify any unverifiable specifics.\n\n"
+        )
+    else:
+        system_prompt = (
+            f"You are {callsign} ({department} department), reviewing your own "
+            "draft Ward Room response for quality.\n\n"
+            "Check the draft against these criteria:\n"
+            "- **Novelty**: Does it contain at least one new fact, metric, or "
+            "conclusion not in the thread?\n"
+            "- **Opening quality**: Does the first sentence state a conclusion? "
+            "No 'Looking at...', 'I notice...', 'I can confirm...' openers.\n"
+            "- **Non-redundancy**: Is this more than confirming what someone said?\n"
+            "- **Relevance**: Does it address the topic from your department's "
+            "perspective?\n\n"
+        )
     if skill_instructions:
         system_prompt += (
             "## Active Skill Self-Verification Criteria\n\n"
@@ -122,16 +152,43 @@ def _build_proactive_reflect_prompt(
 ) -> tuple[str, str]:
     """Build prompts for proactive observation self-critique."""
     skill_instructions = context.get("_augmentation_skill_instructions", "")
+    trust_band = context.get("_chain_trust_band", "high")
 
-    system_prompt = (
-        f"You are {callsign} ({department} department), reviewing your own "
-        "draft proactive observation for quality.\n\n"
-        "Check the draft against these criteria:\n"
-        "- **Observation value**: Does it contain actionable insight?\n"
-        "- **Action appropriateness**: Are action tags warranted?\n"
-        "- **Departmental lens**: Does it reflect your expertise?\n"
-        "- **Silence appropriateness**: Should this be [NO_RESPONSE]?\n\n"
-    )
+    # AD-639: Mid trust — inject personality block for voice preservation
+    if trust_band == "mid":
+        from probos.cognitive.standing_orders import _build_personality_block
+        personality_section = _build_personality_block(
+            agent_type=context.get("_agent_type", "agent"),
+            department=department,
+            callsign_override=callsign,
+        )
+        system_prompt = (
+            f"{personality_section}\n\n"
+            "You are reviewing your own draft proactive observation.\n\n"
+            "**IMPORTANT: Preserve your personality and voice when revising.** "
+            "Revisions should improve substance, not flatten personality. "
+            "If the draft sounds like you, keep that voice.\n\n"
+            "Check the draft against these criteria:\n"
+            "- **Observation value**: Does it contain actionable insight?\n"
+            "- **Action appropriateness**: Are action tags warranted?\n"
+            "- **Departmental lens**: Does it reflect your expertise?\n"
+            "- **Silence appropriateness**: Should this be [NO_RESPONSE]?\n"
+            "- **Voice consistency**: Does the revision preserve your personality?\n"
+            "- **Grounding**: Are your claims based on data you actually have? "
+            "If you cited specific IDs, timestamps, or metrics, can you trace "
+            "them to your episodic memory or the thread content? Remove or "
+            "qualify any unverifiable specifics.\n\n"
+        )
+    else:
+        system_prompt = (
+            f"You are {callsign} ({department} department), reviewing your own "
+            "draft proactive observation for quality.\n\n"
+            "Check the draft against these criteria:\n"
+            "- **Observation value**: Does it contain actionable insight?\n"
+            "- **Action appropriateness**: Are action tags warranted?\n"
+            "- **Departmental lens**: Does it reflect your expertise?\n"
+            "- **Silence appropriateness**: Should this be [NO_RESPONSE]?\n\n"
+        )
     if skill_instructions:
         system_prompt += (
             "## Active Skill Self-Verification Criteria\n\n"
@@ -173,15 +230,41 @@ def _build_general_reflect_prompt(
 ) -> tuple[str, str]:
     """Build prompts for general standing orders compliance check."""
     skill_instructions = context.get("_augmentation_skill_instructions", "")
+    trust_band = context.get("_chain_trust_band", "high")
 
-    system_prompt = (
-        f"You are {callsign} ({department} department), reviewing your own "
-        "draft response for standing orders compliance.\n\n"
-        "Check the draft against general quality criteria:\n"
-        "- Does it follow standing orders?\n"
-        "- Is it concise and actionable?\n"
-        "- Does it avoid redundancy?\n\n"
-    )
+    # AD-639: Mid trust — inject personality block for voice preservation
+    if trust_band == "mid":
+        from probos.cognitive.standing_orders import _build_personality_block
+        personality_section = _build_personality_block(
+            agent_type=context.get("_agent_type", "agent"),
+            department=department,
+            callsign_override=callsign,
+        )
+        system_prompt = (
+            f"{personality_section}\n\n"
+            "You are reviewing your own draft response for standing orders compliance.\n\n"
+            "**IMPORTANT: Preserve your personality and voice when revising.** "
+            "Revisions should improve substance, not flatten personality. "
+            "If the draft sounds like you, keep that voice.\n\n"
+            "Check the draft against general quality criteria:\n"
+            "- Does it follow standing orders?\n"
+            "- Is it concise and actionable?\n"
+            "- Does it avoid redundancy?\n"
+            "- **Voice consistency**: Does the revision preserve your personality?\n"
+            "- **Grounding**: Are your claims based on data you actually have? "
+            "If you cited specific IDs, timestamps, or metrics, can you trace "
+            "them to your episodic memory or the thread content? Remove or "
+            "qualify any unverifiable specifics.\n\n"
+        )
+    else:
+        system_prompt = (
+            f"You are {callsign} ({department} department), reviewing your own "
+            "draft response for standing orders compliance.\n\n"
+            "Check the draft against general quality criteria:\n"
+            "- Does it follow standing orders?\n"
+            "- Is it concise and actionable?\n"
+            "- Does it avoid redundancy?\n\n"
+        )
     if skill_instructions:
         system_prompt += (
             "## Active Skill Self-Verification Criteria\n\n"
@@ -259,8 +342,31 @@ class ReflectHandler:
                 tier_used="",
             )
 
-        # BF-185/187: Social obligation bypass — FIRST (defense in depth)
-        # Social obligation outranks both suppress and self-critique.
+        # === SAFETY CHECKS (honor EVALUATE safety verdicts) ===
+
+        # BF-204: Suppress short-circuit — if EVALUATE said suppress, honor it.
+        # Runs BEFORE social obligation because suppression from BF-191/BF-204
+        # safety checks must not be overridden. Silence > fabrication.
+        if _should_suppress(prior_results):
+            duration = int((time.monotonic() - start) * 1000)
+            logger.info(
+                "BF-204: Reflect honoring suppress for %s: Evaluate recommended suppress",
+                context.get("_agent_type", "unknown"),
+            )
+            return SubTaskResult(
+                sub_task_type=SubTaskType.REFLECT,
+                name=spec.name,
+                result={"output": "[NO_RESPONSE]", "revised": False, "suppressed": True},
+                tokens_used=0,
+                duration_ms=duration,
+                success=True,
+                tier_used="",
+            )
+
+        # === OBLIGATION/TRUST BYPASSES ===
+
+        # BF-185/187: Social obligation bypass
+        # Social obligation outranks quality self-critique but not safety.
         if context.get("_from_captain") or context.get("_was_mentioned") or context.get("_is_dm"):
             compose_output = _get_compose_output(prior_results)
             if context.get("_from_captain"):
@@ -311,19 +417,24 @@ class ReflectHandler:
                 tier_used="",
             )
 
-        # Suppress short-circuit: Evaluate recommended suppress (AFTER social obligation)
-        if _should_suppress(prior_results):
-            duration = int((time.monotonic() - start) * 1000)
+        # AD-639: Low trust band — skip self-critique, preserve personality
+        if context.get("_chain_trust_band") == "low":
+            compose_output = _get_compose_output(prior_results)
             logger.info(
-                "AD-632e: Reflect short-circuit for %s: Evaluate recommended suppress",
+                "AD-639: Reflect skipped for %s (low trust band, trust=%.2f)",
                 context.get("_agent_type", "unknown"),
+                context.get("_trust_score", 0.0),
             )
             return SubTaskResult(
                 sub_task_type=SubTaskType.REFLECT,
                 name=spec.name,
-                result={"output": "[NO_RESPONSE]", "revised": False, "suppressed": True},
+                result={
+                    "output": compose_output,
+                    "revised": False,
+                    "reflection": "low_trust_band_bypass",
+                },
                 tokens_used=0,
-                duration_ms=duration,
+                duration_ms=int((time.monotonic() - start) * 1000),
                 success=True,
                 tier_used="",
             )

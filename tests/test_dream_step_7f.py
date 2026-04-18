@@ -34,7 +34,7 @@ def _build_engine(mock_store, **overrides):
     engine.router.get_recent_pairs = MagicMock(return_value=[])
     engine.router.prune = MagicMock(return_value=0)
     engine.trust_network = MagicMock()
-    engine.trust_network.get_trust = MagicMock(return_value=0.5)
+    engine.trust_network.get_score = MagicMock(return_value=0.5)
     engine.episodic_memory = AsyncMock()
     engine.episodic_memory.get_stats = AsyncMock(return_value={"total": 0})
     engine.episodic_memory.get_recent = AsyncMock(return_value=[])

@@ -403,7 +403,7 @@ class TestCrewManifest:
         # Wire an agent to give it an ID
         service.wire_agent("architect", "test-agent-id-123")
         trust_net = MagicMock()
-        trust_net.get_trust.return_value = 0.85
+        trust_net.get_score.return_value = 0.85
         manifest = service.get_crew_manifest(trust_network=trust_net)
         arch_entry = next((e for e in manifest if e["agent_type"] == "architect"), None)
         assert arch_entry is not None

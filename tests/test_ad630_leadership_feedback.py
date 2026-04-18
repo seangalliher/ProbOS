@@ -463,7 +463,7 @@ class TestChiefContextInjection:
         rt.agent_pool = sub_agents or {}
         rt._start_time_wall = 1000.0
         rt.trust_network = AsyncMock()
-        rt.trust_network.get_trust = AsyncMock(return_value=0.5)
+        rt.trust_network.get_score = AsyncMock(return_value=0.5)
         rt.skill_service = None
         rt._introspective_telemetry = None
         rt.conn_manager = None

@@ -68,7 +68,7 @@ def mock_runtime():
     rt.registry.get.return_value = None
 
     rt.trust_network = MagicMock(spec=TrustNetwork)
-    rt.trust_network.get_trust.return_value = 0.5
+    rt.trust_network.get_score.return_value = 0.5
     rt.trust_network.get_or_create.return_value = MagicMock(trust_score=0.5)
 
     rt.ward_room = AsyncMock(spec=WardRoomService)

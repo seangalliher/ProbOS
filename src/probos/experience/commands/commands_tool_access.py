@@ -263,7 +263,7 @@ async def _cmd_check(runtime: Any, console: Any, args: str) -> None:
 
     trust = 0.5
     if agent and hasattr(runtime, "trust_network"):
-        trust = runtime.trust_network.get_trust(agent_id)
+        trust = runtime.trust_network.get_score(agent_id)
 
     from probos.crew_profile import Rank
 

@@ -36,10 +36,15 @@ class MessageStore:
         self._format_trust = format_trust_fn
         self._identity_registry = identity_registry
         self._social_verification: Any = None  # AD-567f: late-bound
+        self._content_firewall: Any = None  # AD-529: late-bound
 
     def set_social_verification(self, svc: Any) -> None:
         """AD-567f: Late-bind social verification service."""
         self._social_verification = svc
+
+    def set_content_firewall(self, firewall: Any) -> None:
+        """AD-529: Late-bind content contagion firewall."""
+        self._content_firewall = firewall
 
     def set_echo_services(
         self,
@@ -53,6 +58,50 @@ class MessageStore:
         self._observable_state_verifier = observable_state_verifier
         self._bridge_alerts = bridge_alerts
         self._ward_room_router = ward_room_router
+
+    async def set_restriction(self, agent_id: str, restriction: str) -> None:
+        """AD-529: Add a restriction to an agent's credibility record."""
+        if not self._db:
+            return
+        async with self._db.execute(
+            "SELECT restrictions FROM credibility WHERE agent_id = ?",
+            (agent_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row:
+            restrictions = json.loads(row[0]) if row[0] else []
+            if restriction not in restrictions:
+                restrictions.append(restriction)
+                await self._db.execute(
+                    "UPDATE credibility SET restrictions = ? WHERE agent_id = ?",
+                    (json.dumps(restrictions), agent_id),
+                )
+                await self._db.commit()
+        else:
+            await self._db.execute(
+                "INSERT INTO credibility (agent_id, restrictions) VALUES (?, ?)",
+                (agent_id, json.dumps([restriction])),
+            )
+            await self._db.commit()
+
+    async def remove_restriction(self, agent_id: str, restriction: str) -> None:
+        """AD-529: Remove a restriction from an agent's credibility record."""
+        if not self._db:
+            return
+        async with self._db.execute(
+            "SELECT restrictions FROM credibility WHERE agent_id = ?",
+            (agent_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row:
+            restrictions = json.loads(row[0]) if row[0] else []
+            if restriction in restrictions:
+                restrictions.remove(restriction)
+                await self._db.execute(
+                    "UPDATE credibility SET restrictions = ? WHERE agent_id = ?",
+                    (json.dumps(restrictions), agent_id),
+                )
+                await self._db.commit()
 
     async def _check_cascade_risk(
         self, peer_matches: list[dict], author_id: str,
@@ -122,6 +171,27 @@ class MessageStore:
                 restrictions = json.loads(row[0]) if row[0] else []
                 if "post" in restrictions:
                     raise ValueError("Author is restricted from posting")
+
+        # AD-529: Content firewall scan (after restriction check, before INSERT)
+        if self._content_firewall:
+            # Fetch thread context: recent post bodies for grounding
+            _thread_ctx = ""
+            try:
+                async with self._db.execute(
+                    "SELECT body FROM posts WHERE thread_id = ? "
+                    "ORDER BY created_at DESC LIMIT 5",
+                    (thread_id,),
+                ) as ctx_cursor:
+                    _ctx_rows = await ctx_cursor.fetchall()
+                    _thread_ctx = " ".join(r[0] for r in _ctx_rows if r[0])
+            except Exception:
+                pass  # Degrade gracefully — scan without context
+            _scan = self._content_firewall.scan_post(
+                author_id=author_id, body=body, thread_context=_thread_ctx,
+            )
+            if _scan.flagged:
+                body = f"[UNVERIFIED — {', '.join(_scan.reasons)}] {body}"
+                self._content_firewall.record_flag(author_id, _scan)
 
         # AD-506b: Peer repetition detection
         from probos.ward_room.threads import check_peer_similarity

@@ -159,10 +159,15 @@ class ThreadManager:
         self._last_stats: dict[str, Any] | None = None
         self._identity_registry = identity_registry
         self._social_verification: Any = None  # AD-567f: late-bound
+        self._content_firewall: Any = None  # AD-529: late-bound
 
     def set_social_verification(self, svc: Any) -> None:
         """AD-567f: Late-bind social verification service."""
         self._social_verification = svc
+
+    def set_content_firewall(self, firewall: Any) -> None:
+        """AD-529: Late-bind content contagion firewall."""
+        self._content_firewall = firewall
 
     def set_echo_services(
         self,
@@ -434,6 +439,17 @@ class ThreadManager:
                 restrictions = _json.loads(row[0]) if row[0] else []
                 if "post" in restrictions:
                     raise ValueError("Author is restricted from posting")
+
+        # AD-529: Content firewall scan (after restriction check, before INSERT)
+        if self._content_firewall:
+            # Thread context for new threads = title only
+            _thread_ctx = title or ""
+            _scan = self._content_firewall.scan_post(
+                author_id=author_id, body=body, thread_context=_thread_ctx,
+            )
+            if _scan.flagged:
+                body = f"[UNVERIFIED — {', '.join(_scan.reasons)}] {body}"
+                self._content_firewall.record_flag(author_id, _scan)
 
         # AD-506b: Peer repetition detection (detection, not suppression)
         peer_matches = await check_peer_similarity(self._db, channel_id, author_id, body)

@@ -599,6 +599,8 @@ class CounselorAgent(CognitiveAgent):
                     EventType.WARD_ROOM_ECHO_DETECTED,       # AD-583g
                     EventType.OBSERVABLE_STATE_MISMATCH,      # AD-583f
                     EventType.DM_CONVERGENCE_DETECTED,        # AD-623
+                    EventType.CONTENT_CONTAGION_FLAGGED,     # AD-529
+                    EventType.CONTENT_QUARANTINE_RECOMMENDED, # AD-529
                 ],
             )
 
@@ -820,6 +822,10 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_observable_mismatch(data)
             elif event_type == EventType.DM_CONVERGENCE_DETECTED.value:
                 await self._on_dm_convergence_detected(data)
+            elif event_type == EventType.CONTENT_CONTAGION_FLAGGED.value:
+                await self._on_content_contagion_flagged(data)
+            elif event_type == EventType.CONTENT_QUARANTINE_RECOMMENDED.value:
+                await self._on_content_quarantine_recommended(data)
         except Exception:
             logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
 
@@ -1198,6 +1204,28 @@ class CounselorAgent(CognitiveAgent):
             )
             return
 
+        # AD-642c: Communication quality drift — always concerning
+        if drift_type == "communication":
+            logger.info(
+                "AD-642c: Communication quality drift for %s on %s (z=%.2f)",
+                callsign, test_name, data.get("z_score", 0.0),
+            )
+            metrics = self._gather_agent_metrics(agent_id)
+            assessment = self.assess_agent(
+                agent_id=agent_id,
+                current_trust=metrics["trust_score"],
+                current_confidence=metrics["confidence"],
+                hebbian_avg=metrics["hebbian_avg"],
+                success_rate=metrics["success_rate"],
+                personality_drift=metrics["personality_drift"],
+                trigger="qualification_drift_communication",
+            )
+            await self._save_profile_and_assessment(agent_id, assessment)
+            await self._maybe_send_therapeutic_dm(
+                agent_id, callsign, assessment, trigger="communication_drift",
+            )
+            return
+
         # AD-567c: Concerning drift — intervene even at warning level
         if drift_type == "concerning" or severity == "critical":
             logger.info(
@@ -1265,6 +1293,94 @@ class CounselorAgent(CognitiveAgent):
                 if getattr(agent, 'callsign', None) == callsign:
                     return getattr(agent, 'id', None)
         return None
+
+    async def _on_content_contagion_flagged(self, data: dict[str, Any]) -> None:
+        """AD-529: Handle content contagion flag events.
+
+        Log for wellness context.  On high severity: send therapeutic DM.
+        """
+        agent_id = data.get("agent_id", "")
+        severity = data.get("severity", "")
+        reasons = data.get("reasons", [])
+
+        logger.info(
+            "AD-529: Content contagion flag — agent=%s severity=%s reasons=%s",
+            agent_id[:8] if agent_id else "?", severity, reasons,
+        )
+
+        if severity == "high" and agent_id and agent_id != self.id:
+            callsign = None
+            if hasattr(self, '_registry') and self._registry:
+                agent = self._registry.get(agent_id)
+                if agent:
+                    callsign = getattr(agent, 'callsign', None)
+            if callsign:
+                message = (
+                    "I noticed your recent post may contain unverified details. "
+                    "Could you double-check your observations against your actual "
+                    "memory before building further analysis on them?"
+                )
+                await self._send_therapeutic_dm(agent_id, callsign, message)
+
+    async def _on_content_quarantine_recommended(self, data: dict[str, Any]) -> None:
+        """AD-529: Handle quarantine recommendation events.
+
+        Assess the agent and decide whether to add ``"post"`` restriction.
+        Quarantine is the Counselor's decision, not automatic.
+        """
+        agent_id = data.get("agent_id", "")
+        flags_in_window = data.get("flags_in_window", 0)
+        reasons = data.get("reasons", [])
+
+        if not agent_id or agent_id == self.id:
+            return
+
+        logger.warning(
+            "AD-529: Quarantine recommended for %s — %d flags, reasons=%s",
+            agent_id[:8], flags_in_window, reasons,
+        )
+
+        # Run assessment to inform quarantine decision
+        try:
+            metrics = self._gather_agent_metrics(agent_id)
+            assessment = self.assess_agent(
+                agent_id=agent_id,
+                current_trust=metrics["trust_score"],
+                current_confidence=metrics["confidence"],
+                hebbian_avg=metrics["hebbian_avg"],
+                success_rate=metrics["success_rate"],
+                personality_drift=metrics["personality_drift"],
+                trigger="contagion_quarantine",
+            )
+            await self._save_profile_and_assessment(agent_id, assessment)
+
+            # Quarantine if wellness is low or many flags
+            if assessment.wellness_score < 0.5 or flags_in_window >= 5:
+                ward_room = self._ward_room
+                if ward_room and hasattr(ward_room, '_messages') and ward_room._messages:
+                    await ward_room._messages.set_restriction(agent_id, "post")
+                    logger.warning(
+                        "AD-529: Quarantine applied — %s restricted from posting",
+                        agent_id[:8],
+                    )
+                    # Therapeutic DM about the restriction
+                    callsign = None
+                    if hasattr(self, '_registry') and self._registry:
+                        agent = self._registry.get(agent_id)
+                        if agent:
+                            callsign = getattr(agent, 'callsign', None)
+                    if callsign:
+                        await self._send_therapeutic_dm(
+                            agent_id, callsign,
+                            "I've temporarily paused your posting while we review "
+                            "some verification concerns. This isn't punitive — let's "
+                            "work together to recalibrate your observations.",
+                        )
+        except Exception:
+            logger.debug(
+                "AD-529: Quarantine assessment failed for %s",
+                agent_id[:8], exc_info=True,
+            )
 
     async def _on_trust_update(self, data: dict[str, Any]) -> None:
         """React to significant trust changes — re-assess the agent."""
@@ -2224,11 +2340,15 @@ class CounselorAgent(CognitiveAgent):
                      current_confidence: float = 0.0, hebbian_avg: float = 0.0,
                      success_rate: float = 0.0,
                      personality_drift: float = 0.0,
-                     trigger: str = "manual") -> CounselorAssessment:
+                     trigger: str = "manual",
+                     communication_quality: float = 1.0) -> CounselorAssessment:
         """Run a deterministic cognitive assessment.
 
         This is the non-LLM fast path. The LLM path (via decide()) adds
         nuanced professional judgment on top of these metrics.
+
+        AD-642c: ``communication_quality`` (0.0-1.0) from most recent
+        communication benchmark results.  Default 1.0 = no data yet.
         """
         profile = self.get_or_create_profile(agent_id)
         baseline = profile.baseline
@@ -2283,6 +2403,11 @@ class CounselorAgent(CognitiveAgent):
         wellness -= max(0, personality_drift - 0.3) * 0.5
         if success_rate > 0 and success_rate < 0.5:
             wellness -= 0.2
+        # AD-642c: Communication quality degradation
+        if communication_quality < 0.5:
+            concerns.append(f"Low communication quality ({communication_quality:.2f})")
+            recommendations.append("Review standing orders compliance and memory grounding")
+        wellness -= max(0, 0.7 - communication_quality) * 0.4
         wellness = max(0.0, min(1.0, wellness))
 
         fit_for_duty = wellness >= COUNSELOR_WELLNESS_FIT and len(concerns) < 4
@@ -2291,6 +2416,7 @@ class CounselorAgent(CognitiveAgent):
             and current_trust >= COUNSELOR_TRUST_PROMOTION
             and len(concerns) == 0
             and success_rate >= 0.7
+            and communication_quality >= 0.6  # AD-642c: communication quality gate
         )
 
         assessment = CounselorAssessment(

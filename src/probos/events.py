@@ -144,6 +144,8 @@ class EventType(str, Enum):
     QUALIFICATION_BASELINE_SET = "qualification_baseline_set"  # AD-566a
     QUALIFICATION_DRIFT_DETECTED = "qualification_drift_detected"  # AD-566c
     CASCADE_CONFABULATION_DETECTED = "cascade_confabulation_detected"  # AD-567f
+    CONTENT_CONTAGION_FLAGGED = "content_contagion_flagged"  # AD-529
+    CONTENT_QUARANTINE_RECOMMENDED = "content_quarantine_recommended"  # AD-529
     CORROBORATION_VERIFIED = "corroboration_verified"  # AD-567f
     WRONG_CONVERGENCE_DETECTED = "wrong_convergence_detected"  # AD-583
     WARD_ROOM_ECHO_DETECTED = "ward_room_echo_detected"  # AD-583g

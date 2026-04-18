@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -55,10 +56,9 @@ def _build_ward_room_eval_prompt(
     department: str,
 ) -> tuple[str, str]:
     """Build prompts for Ward Room post quality evaluation."""
-    system_prompt = (
-        f"You are evaluating a draft Ward Room response by {callsign} "
-        f"({department} department).\n\n"
-        "Score the draft against these criteria:\n"
+    trust_band = context.get("_chain_trust_band", "high")
+
+    criteria = (
         "1. **Novelty** — Contains at least one fact, metric, or conclusion "
         "not already present in the thread.\n"
         "2. **Opening quality** — First sentence states a conclusion, not a "
@@ -66,14 +66,37 @@ def _build_ward_room_eval_prompt(
         "'I can confirm...' openers.\n"
         "3. **Non-redundancy** — More than confirming what someone already said.\n"
         "4. **Relevance** — Addresses the thread topic from the agent's "
-        "departmental perspective.\n\n"
+        "departmental perspective.\n"
+        "5. **Grounding** — Claims reference observable data (events, logs, "
+        "metrics, thread content) or are clearly marked as inference. "
+        "Specific IDs, timestamps, or measurements that cannot be verified "
+        "from the provided context are fabrication. Fail this criterion if "
+        "the response presents unverifiable specifics as fact.\n"
+    )
+
+    # AD-639: Mid trust — add personality preservation criterion
+    if trust_band == "mid":
+        criteria += (
+            "6. **Voice** — Response has a distinct voice consistent with the "
+            "agent's personality, not generic or clinical.\n"
+        )
+
+    system_prompt = (
+        f"You are evaluating a draft Ward Room response by {callsign} "
+        f"({department} department).\n\n"
+        f"Score the draft against these criteria:\n{criteria}\n"
         "Respond with JSON only:\n"
         '{"pass": true/false, "score": 0.0-1.0, '
         '"criteria": {"novelty": {"pass": true/false, "reason": "..."}, '
         '"opening_quality": {"pass": true/false, "reason": "..."}, '
         '"non_redundancy": {"pass": true/false, "reason": "..."}, '
-        '"relevance": {"pass": true/false, "reason": "..."}}, '
-        '"recommendation": "approve"|"revise"|"suppress"}'
+        '"relevance": {"pass": true/false, "reason": "..."}, '
+        '"grounding": {"pass": true/false, "reason": "..."}'
+    )
+    if trust_band == "mid":
+        system_prompt += ', "voice": {"pass": true/false, "reason": "..."}'
+    system_prompt += (
+        '}, "recommendation": "approve"|"revise"|"suppress"}'
     )
 
     compose_output = _get_compose_output(prior_results)
@@ -99,23 +122,45 @@ def _build_proactive_eval_prompt(
     department: str,
 ) -> tuple[str, str]:
     """Build prompts for proactive observation quality evaluation."""
-    system_prompt = (
-        f"You are evaluating a draft proactive observation by {callsign} "
-        f"({department} department).\n\n"
-        "Score the draft against these criteria:\n"
+    trust_band = context.get("_chain_trust_band", "high")
+
+    criteria = (
         "1. **Observation value** — Contains actionable insight, not just "
         "restating known status.\n"
         "2. **Action appropriateness** — Action tags ([REPLY], [NOTEBOOK], "
         "[ENDORSE]) are well-targeted and warranted.\n"
         "3. **Departmental lens** — Reflects this agent's expertise.\n"
-        "4. **Silence appropriateness** — Should this be [NO_RESPONSE] instead?\n\n"
+        "4. **Silence appropriateness** — Should this be [NO_RESPONSE] instead?\n"
+        "5. **Grounding** — Claims reference observable data (events, logs, "
+        "metrics, thread content) or are clearly marked as inference. "
+        "Specific IDs, timestamps, or measurements that cannot be verified "
+        "from the provided context are fabrication. Fail this criterion if "
+        "the response presents unverifiable specifics as fact.\n"
+    )
+
+    # AD-639: Mid trust — add personality preservation criterion
+    if trust_band == "mid":
+        criteria += (
+            "6. **Voice** — Response has a distinct voice consistent with the "
+            "agent's personality, not generic or clinical.\n"
+        )
+
+    system_prompt = (
+        f"You are evaluating a draft proactive observation by {callsign} "
+        f"({department} department).\n\n"
+        f"Score the draft against these criteria:\n{criteria}\n"
         "Respond with JSON only:\n"
         '{"pass": true/false, "score": 0.0-1.0, '
         '"criteria": {"observation_value": {"pass": true/false, "reason": "..."}, '
         '"action_appropriateness": {"pass": true/false, "reason": "..."}, '
         '"departmental_lens": {"pass": true/false, "reason": "..."}, '
-        '"silence_appropriateness": {"pass": true/false, "reason": "..."}}, '
-        '"recommendation": "approve"|"revise"|"suppress"}'
+        '"silence_appropriateness": {"pass": true/false, "reason": "..."}, '
+        '"grounding": {"pass": true/false, "reason": "..."}'
+    )
+    if trust_band == "mid":
+        system_prompt += ', "voice": {"pass": true/false, "reason": "..."}'
+    system_prompt += (
+        '}, "recommendation": "approve"|"revise"|"suppress"}'
     )
 
     compose_output = _get_compose_output(prior_results)
@@ -149,12 +194,15 @@ def _build_notebook_eval_prompt(
         "hypothesis (not just observations).\n"
         "2. **Threading** — Builds on prior notebook entries on this topic.\n"
         "3. **Differentiation** — Contains analysis beyond what was said in "
-        "the Ward Room thread.\n\n"
+        "the Ward Room thread.\n"
+        "4. **Grounding** — Claims reference observable data or are clearly "
+        "marked as inference. No fabricated specifics.\n\n"
         "Respond with JSON only:\n"
         '{"pass": true/false, "score": 0.0-1.0, '
         '"criteria": {"conclusion_presence": {"pass": true/false, "reason": "..."}, '
         '"threading": {"pass": true/false, "reason": "..."}, '
-        '"differentiation": {"pass": true/false, "reason": "..."}}, '
+        '"differentiation": {"pass": true/false, "reason": "..."}, '
+        '"grounding": {"pass": true/false, "reason": "..."}}, '
         '"recommendation": "approve"|"revise"|"suppress"}'
     )
 
@@ -238,6 +286,70 @@ class EvaluateHandler:
         callsign = context.get("_callsign", "agent")
         department = context.get("_department", "")
 
+        # === SAFETY CHECKS (always run, 0 tokens) ===
+
+        # BF-191: Deterministic JSON rejection — compose output must be natural language
+        compose_output = _get_compose_output(prior_results)
+        stripped = compose_output.strip()
+        if stripped.startswith("{") and ('"intents"' in stripped[:200] or '"intent"' in stripped[:200]):
+            logger.warning(
+                "BF-191: Evaluate rejected raw intent JSON from %s (%d chars)",
+                context.get("_agent_type", "unknown"),
+                len(compose_output),
+            )
+            return SubTaskResult(
+                sub_task_type=SubTaskType.EVALUATE,
+                name=spec.name,
+                result={
+                    "pass": False,
+                    "score": 0.0,
+                    "criteria": {"format": {"pass": False, "reason": "Raw JSON instead of natural language"}},
+                    "recommendation": "suppress",
+                    "rejection_reason": "raw_json_output",
+                },
+                tokens_used=0,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                success=True,
+                tier_used="",
+            )
+
+        # BF-204: Deterministic grounding pre-check — catch fabricated identifiers
+        # Runs at ALL trust bands, even social obligation. Safety > obligation.
+        _grounding_source = (context.get("context", "") + " "
+                             + json.dumps(_get_analysis_result(prior_results)))
+        # Hex IDs (6+ chars) in compose output that don't appear in source material
+        _hex_ids = re.findall(r'\b[0-9a-f]{6,}\b', compose_output.lower())
+        _ungrounded_ids = [h for h in _hex_ids if h not in _grounding_source.lower()]
+        if len(_ungrounded_ids) >= 2:
+            logger.warning(
+                "BF-204: Grounding check failed for %s — %d ungrounded hex IDs: %s",
+                context.get("_agent_type", "unknown"),
+                len(_ungrounded_ids),
+                _ungrounded_ids[:3],
+            )
+            return SubTaskResult(
+                sub_task_type=SubTaskType.EVALUATE,
+                name=spec.name,
+                result={
+                    "pass": False,
+                    "score": 0.0,
+                    "criteria": {
+                        "grounding": {
+                            "pass": False,
+                            "reason": f"Ungrounded identifiers: {_ungrounded_ids[:3]}",
+                        },
+                    },
+                    "recommendation": "suppress",
+                    "rejection_reason": "confabulation_detected",
+                },
+                tokens_used=0,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                success=True,
+                tier_used="",
+            )
+
+        # === OBLIGATION/TRUST BYPASSES ===
+
         # BF-184/187: Captain, @mention, and DM bypass quality gate.
         # Social obligation outranks quality scoring — failing to respond
         # to the Captain or a DM is worse than a mediocre response.
@@ -271,7 +383,6 @@ class EvaluateHandler:
 
         # AD-638: Boot camp quality gate relaxation
         if context.get("_boot_camp_active"):
-            compose_output = _get_compose_output(prior_results)
             logger.info(
                 "AD-638: Evaluate auto-approved for %s (boot camp)",
                 context.get("_agent_type", "unknown"),
@@ -292,30 +403,30 @@ class EvaluateHandler:
                 tier_used="",
             )
 
-        # BF-191: Deterministic JSON rejection — compose output must be natural language
-        compose_output = _get_compose_output(prior_results)
-        stripped = compose_output.strip()
-        if stripped.startswith("{") and ('"intents"' in stripped[:200] or '"intent"' in stripped[:200]):
-            logger.warning(
-                "BF-191: Evaluate rejected raw intent JSON from %s (%d chars)",
+        # AD-639: Low trust band — skip evaluation, let personality through
+        if context.get("_chain_trust_band") == "low":
+            logger.info(
+                "AD-639: Evaluate skipped for %s (low trust band, trust=%.2f)",
                 context.get("_agent_type", "unknown"),
-                len(compose_output),
+                context.get("_trust_score", 0.0),
             )
             return SubTaskResult(
                 sub_task_type=SubTaskType.EVALUATE,
                 name=spec.name,
                 result={
-                    "pass": False,
-                    "score": 0.0,
-                    "criteria": {"format": {"pass": False, "reason": "Raw JSON instead of natural language"}},
-                    "recommendation": "suppress",
-                    "rejection_reason": "raw_json_output",
+                    "pass": True,
+                    "score": 0.0,  # 0.0 signals "not evaluated", not "bad"
+                    "criteria": {},
+                    "recommendation": "approve",
+                    "bypass_reason": "low_trust_band",
                 },
                 tokens_used=0,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 success=True,
                 tier_used="",
             )
+
+        # === LLM EVALUATION ===
 
         system_prompt, user_prompt = builder(
             context, prior_results, callsign, department,

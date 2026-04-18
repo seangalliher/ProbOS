@@ -461,7 +461,7 @@ class VesselOntologyService:
             # Enrich with trust score + rank
             if trust_network and assignment.agent_id:
                 try:
-                    trust_score = trust_network.get_trust(assignment.agent_id)
+                    trust_score = trust_network.get_score(assignment.agent_id)
                     entry["trust_score"] = round(trust_score, 3)
                     entry["rank"] = Rank.from_trust(trust_score).value
                 except Exception:

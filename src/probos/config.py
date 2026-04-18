@@ -297,6 +297,17 @@ class TieredTrustConfig(BaseModel):
     chief_callsigns: list[str] = ["Bones", "LaForge", "Number One", "Worf", "O'Brien"]
 
 
+class ChainTuningConfig(BaseModel):
+    """AD-639: Trust-adaptive chain personality tuning."""
+
+    enabled: bool = True
+
+    # Trust band thresholds
+    low_trust_ceiling: float = 0.60   # Below this: skip evaluate/reflect
+    high_trust_floor: float = 0.75    # At or above: full chain as-is
+    # Mid band is implicitly [low_trust_ceiling, high_trust_floor)
+
+
 class LLMRateConfig(BaseModel):
     """AD-617: LLM call rate governance configuration."""
 
@@ -708,6 +719,19 @@ class BridgeAlertConfig(BaseModel):
     default_dismiss_duration: float = 14400.0  # AD-580: default dismiss duration (4 hours)
 
 
+class FirewallConfig(BaseModel):
+    """AD-529: Communication Contagion Firewall configuration."""
+
+    enabled: bool = True
+    scan_trust_threshold: float = 0.65      # Scan posts from agents below this
+    low_trust_threshold: float = 0.45       # Extra checks for very low trust
+    hex_id_min_length: int = 6              # Min hex string length to flag
+    hex_id_threshold: int = 2               # Flag if N+ ungrounded hex IDs
+    fabricated_metrics_threshold: int = 3   # Flag if N+ precise claims with no source
+    flag_window_seconds: float = 3600.0     # Window for counting flags
+    quarantine_threshold: int = 3           # Flags in window before quarantine escalation
+
+
 class EmergentDetectorConfig(BaseModel):
     """BF-124: Emergent detector calibration parameters."""
     cluster_edge_threshold: float = 0.3
@@ -955,6 +979,21 @@ class SystemInfo(BaseModel):
     log_level: str = "INFO"
 
 
+class CommunicationBenchmarksConfig(BaseModel):
+    """AD-642: Communication Quality Benchmarks configuration."""
+
+    enabled: bool = True
+    frequency_hours: float = 12.0
+    probes: list[str] = [
+        "thread_relevance",
+        "memory_grounding",
+        "memory_absence",
+        "expertise",
+        "silence_appropriateness",
+        "dm_action",
+    ]
+
+
 class QualificationConfig(BaseModel):
     """Configuration for the Crew Qualification Battery (AD-566)."""
 
@@ -962,6 +1001,9 @@ class QualificationConfig(BaseModel):
     baseline_auto_capture: bool = True
     significance_threshold: float = 0.15
     test_timeout_seconds: float = 60.0
+
+    # AD-642: Communication Quality Benchmarks
+    communication_benchmarks: CommunicationBenchmarksConfig = CommunicationBenchmarksConfig()
 
     # AD-566c: Drift Detection Pipeline
     drift_check_enabled: bool = True
@@ -995,6 +1037,7 @@ class SystemConfig(BaseModel):
     ward_room: WardRoomConfig = WardRoomConfig()
     assignments: AssignmentConfig = AssignmentConfig()
     bridge_alerts: BridgeAlertConfig = BridgeAlertConfig()
+    firewall: FirewallConfig = FirewallConfig()
     emergent_detector: EmergentDetectorConfig = EmergentDetectorConfig()
     earned_agency: EarnedAgencyConfig = EarnedAgencyConfig()
     proactive_cognitive: ProactiveCognitiveConfig = ProactiveCognitiveConfig()
@@ -1021,6 +1064,7 @@ class SystemConfig(BaseModel):
     sub_task: SubTaskConfig = SubTaskConfig()  # AD-632a
     boot_camp: BootCampConfig = BootCampConfig()  # AD-638
     tiered_trust: TieredTrustConfig = TieredTrustConfig()  # AD-640
+    chain_tuning: ChainTuningConfig = ChainTuningConfig()  # AD-639
 
 
 def load_config(path: str | Path) -> SystemConfig:

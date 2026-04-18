@@ -166,19 +166,20 @@ class TestReflectDmBypass:
         llm.complete.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_reflect_dm_overrides_suppress(self):
-        """DM + Evaluate suppress → social obligation wins (reorder fix)."""
+    async def test_reflect_dm_suppress_honored(self):
+        """DM + Evaluate suppress → BF-204: safety suppress wins over social obligation."""
         llm = _mock_llm_client()
         handler = ReflectHandler(llm_client=llm, runtime=None)
         ctx = _base_context(_is_dm=True)
-        # Evaluate recommended suppress, but DM social obligation overrides
+        # BF-204: Suppress from EVALUATE safety verdict is honored even for DMs
         prior = [_compose_result("DM reply"), _evaluate_result("suppress")]
         result = await handler(_reflect_spec(), ctx, prior)
 
         assert result.success
-        assert result.result["output"] == "DM reply"
-        assert result.result["suppressed"] is False
-        assert result.result["bypass_reason"] == "dm_recipient"
+        assert result.result["output"] == "[NO_RESPONSE]"
+        assert result.result["suppressed"] is True
+        # Social obligation did NOT bypass the safety check
+        assert result.result.get("bypass_reason") is None
 
     @pytest.mark.asyncio
     async def test_reflect_suppress_still_works_without_social(self):
@@ -194,8 +195,8 @@ class TestReflectDmBypass:
         assert result.result.get("suppressed") is True
 
     @pytest.mark.asyncio
-    async def test_reflect_captain_overrides_suppress(self):
-        """Captain + suppress → social obligation wins (reorder regression)."""
+    async def test_reflect_captain_suppress_honored(self):
+        """Captain + suppress → BF-204: safety suppress wins over social obligation."""
         llm = _mock_llm_client()
         handler = ReflectHandler(llm_client=llm, runtime=None)
         ctx = _base_context(_from_captain=True)
@@ -203,9 +204,10 @@ class TestReflectDmBypass:
         result = await handler(_reflect_spec(), ctx, prior)
 
         assert result.success
-        assert result.result["output"] == "Captain reply"
-        assert result.result["suppressed"] is False
-        assert result.result["bypass_reason"] == "captain_message"
+        assert result.result["output"] == "[NO_RESPONSE]"
+        assert result.result["suppressed"] is True
+        # Safety check takes precedence — no bypass
+        assert result.result.get("bypass_reason") is None
 
 
 class TestChainContextInjection:

@@ -966,7 +966,7 @@ class CognitiveAgent(BaseAgent):
         agent_type = getattr(self, "agent_type", "")
         trust_score = 0.5
         if _rt and hasattr(_rt, "trust_network") and _rt.trust_network:
-            trust_score = _rt.trust_network.get_trust(agent_type)
+            trust_score = _rt.trust_network.get_score(agent_type)
         if trust_score < TEACHING_MIN_TRUST:
             logger.debug("AD-537: Trust %.2f below teaching threshold %.2f", trust_score, TEACHING_MIN_TRUST)
             return False
@@ -1599,6 +1599,26 @@ class CognitiveAgent(BaseAgent):
         _rt = getattr(self, '_runtime', None)
         if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.is_enrolled(self.id):
             observation["_boot_camp_active"] = True
+
+        # AD-639: Trust-adaptive chain personality tuning
+        if not observation.get("_boot_camp_active"):
+            _chain_cfg = getattr(getattr(_rt, 'config', None), 'chain_tuning', None) if _rt else None
+            if _chain_cfg and _chain_cfg.enabled:
+                _agent_type = getattr(self, "agent_type", "")
+                _trust = 0.5
+                if _rt and hasattr(_rt, "trust_network") and _rt.trust_network:
+                    _trust = _rt.trust_network.get_score(_agent_type)
+                observation["_trust_score"] = _trust
+                if _trust < _chain_cfg.low_trust_ceiling:
+                    observation["_chain_trust_band"] = "low"
+                elif _trust >= _chain_cfg.high_trust_floor:
+                    observation["_chain_trust_band"] = "high"
+                else:
+                    observation["_chain_trust_band"] = "mid"
+                logger.debug(
+                    "AD-639: %s trust=%.2f band=%s",
+                    _agent_type, _trust, observation["_chain_trust_band"],
+                )
 
         # BF-186: Thread rank, skill_profile, and crew manifest into chain context
         observation["_agent_rank"] = getattr(self, "rank", None)

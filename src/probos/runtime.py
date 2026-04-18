@@ -1259,6 +1259,14 @@ class ProbOSRuntime:
                 RetrievalAccuracyBenchmark,
             ):
                 self._qualification_harness.register_test(test_cls())
+
+            # AD-642: Register Tier 2 communication quality probes
+            if self.config.qualification.communication_benchmarks.enabled:
+                from probos.cognitive.communication_benchmarks import (
+                    ALL_COMMUNICATION_PROBES,
+                )
+                for probe in ALL_COMMUNICATION_PROBES:
+                    self._qualification_harness.register_test(probe)
         except Exception as e:
             logger.warning("QualificationStore failed to start: %s — continuing without", e)
             self._qualification_store = None
