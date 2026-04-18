@@ -271,7 +271,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         try:
             report = await asyncio.wait_for(
                 runtime.dream_scheduler.engine.dream_cycle(),
-                timeout=5.0,  # Don't let consolidation block shutdown
+                timeout=2.0,  # BF-207: Reduced from 5s — must leave budget for cleanup within __main__'s 5s limit
             )
             logger.info(
                 "Session consolidation complete: replayed=%d strengthened=%d pruned=%d",
@@ -280,7 +280,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                 report.weights_pruned,
             )
         except asyncio.TimeoutError:
-            logger.warning("Shutdown consolidation timed out (5s limit) — partial consolidation completed")
+            logger.warning("Shutdown consolidation timed out (2s limit) — partial consolidation completed")
         except (asyncio.CancelledError, Exception) as e:
             logger.warning("Shutdown consolidation failed: %s", e or type(e).__name__)
 
@@ -306,6 +306,19 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     for name, pool in runtime.pools.items():
         await pool.stop()
     runtime.pools.clear()
+
+    # BF-207: Close episodic memory (ChromaDB) early — nothing below writes episodes,
+    # and the 5s __main__.py shutdown timeout often expires before reaching the
+    # original position. Without client.close(), ChromaDB's internal state may not
+    # finalize, causing hash mismatches on restart.
+    if runtime.episodic_memory:
+        await runtime.episodic_memory.stop()
+
+    # AD-541f: Stop eviction audit log (companion to episodic memory)
+    _eviction_audit = getattr(runtime, "_eviction_audit", None)
+    if _eviction_audit is not None:
+        await _eviction_audit.stop()
+        runtime._eviction_audit = None
 
     # Persist knowledge store artifacts before stopping services
     if runtime._knowledge_store:
@@ -362,16 +375,6 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     if runtime.task_scheduler:
         await runtime.task_scheduler.stop()
         runtime.task_scheduler = None
-
-    # Stop episodic memory
-    if runtime.episodic_memory:
-        await runtime.episodic_memory.stop()
-
-    # AD-541f: Stop eviction audit log
-    _eviction_audit = getattr(runtime, "_eviction_audit", None)
-    if _eviction_audit is not None:
-        await _eviction_audit.stop()
-        runtime._eviction_audit = None
 
     # Stop semantic knowledge layer (AD-243)
     if runtime._semantic_layer:

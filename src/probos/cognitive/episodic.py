@@ -490,9 +490,12 @@ def _verify_episode_hash(
         return True  # Legacy episode — no hash to verify
     recomputed = compute_episode_hash(episode)
     if recomputed != stored_hash:
-        # Auto-heal: episodes stored with older normalization have stale hashes.
         stored_v = metadata.get("_hash_v", 0) if metadata else 0
-        if stored_v < _HASH_VERSION and collection:
+        # Auto-heal: update stale hash from version upgrade OR shutdown race (BF-207).
+        # Shutdown can leave ChromaDB in a state where metadata doesn't match
+        # the hash computed at store time. The data in ChromaDB is authoritative
+        # (it's what will be used), so recompute the hash to match.
+        if collection and metadata:
             try:
                 updated_meta = dict(metadata)
                 updated_meta["content_hash"] = recomputed
@@ -501,14 +504,21 @@ def _verify_episode_hash(
                     ids=[episode.id],
                     metadatas=[updated_meta],
                 )
-                logger.info(
-                    "AD-541e: Auto-healed hash v%d->v%d for episode %s",
-                    stored_v, _HASH_VERSION, episode.id[:8],
-                )
+                if stored_v < _HASH_VERSION:
+                    logger.info(
+                        "AD-541e: Auto-healed hash v%d->v%d for episode %s",
+                        stored_v, _HASH_VERSION, episode.id[:8],
+                    )
+                else:
+                    logger.warning(
+                        "BF-207: Repaired hash mismatch for episode %s "
+                        "(likely shutdown race — stored=%s recomputed=%s)",
+                        episode.id[:8], stored_hash[:12], recomputed[:12],
+                    )
                 return True
             except Exception:
                 logger.debug("Auto-heal failed for %s", episode.id[:8], exc_info=True)
-        # Genuine mismatch on a current-version episode — log warning
+        # No collection available — can't heal, log warning only
         logger.warning(
             "Episode %s hash mismatch (v%d): stored=%s recomputed=%s",
             episode.id[:8] if episode.id else "unknown",
