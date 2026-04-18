@@ -52,6 +52,8 @@ async def finalize_startup(
             dispatch_fn=runtime._dispatch_watch_intent,
             check_interval=30.0,
         )
+        # Wire watch_manager early so _populate_watch_roster() can find it
+        runtime.watch_manager = watch_manager
         # Populate roster from ontology
         if runtime.ontology:
             runtime._populate_watch_roster()
