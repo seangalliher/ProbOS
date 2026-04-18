@@ -68,6 +68,7 @@ class CognitiveSkillEntry:
     origin: str = "internal"
     loaded_at: float = 0.0
     activation: str = "discovery"  # AD-626: "discovery", "augmentation", or "both"
+    triggers: list[str] = field(default_factory=list)  # AD-643a: action tags this skill enhances
 
 
 @dataclass
@@ -140,6 +141,13 @@ def parse_skill_file(path: Path) -> CognitiveSkillEntry | None:
     _raw_activation = str(meta.get("probos-activation", "discovery")).strip().lower()
     activation = _raw_activation if _raw_activation in ("discovery", "augmentation", "both") else "discovery"
 
+    # AD-643a: Parse trigger tags for intent-driven activation
+    triggers_str = str(meta.get("probos-triggers", "")).strip()
+    if "," in triggers_str:
+        triggers = [t.strip().lower() for t in triggers_str.split(",") if t.strip()]
+    else:
+        triggers = [t.lower() for t in triggers_str.split() if t] if triggers_str else []
+
     return CognitiveSkillEntry(
         name=str(name).strip(),
         description=str(description).strip(),
@@ -154,6 +162,7 @@ def parse_skill_file(path: Path) -> CognitiveSkillEntry | None:
         origin="internal",
         loaded_at=time.time(),
         activation=activation,
+        triggers=triggers,
     )
 
 
@@ -401,6 +410,46 @@ class CognitiveSkillCatalog:
                 continue
             if department and entry.department != "*" and entry.department != department:
                 continue
+            if agent_rank:
+                agent_rank_order = _RANK_ORDER.get(agent_rank, 0)
+                if _RANK_ORDER.get(entry.min_rank, 0) > agent_rank_order:
+                    continue
+            results.append(entry)
+        return results
+
+    def find_triggered_skills(
+        self,
+        intended_actions: list[str],
+        intent_name: str,
+        department: str | None = None,
+        agent_rank: str | None = None,
+    ) -> list[CognitiveSkillEntry]:
+        """AD-643a: Find augmentation skills matching specific action triggers.
+
+        Unlike find_augmentation_skills() which matches by intent name,
+        this matches by action trigger tags declared in probos-triggers.
+        Falls back to intent matching for skills without triggers (backward compat).
+        """
+        if not intended_actions:
+            return []
+
+        action_set = set(intended_actions)
+        results = []
+        for entry in self._cache.values():
+            if entry.activation not in ("augmentation", "both"):
+                continue
+            # AD-643a: Match by triggers if declared
+            if entry.triggers:
+                if not action_set.intersection(entry.triggers):
+                    continue
+            else:
+                # No triggers declared — fall back to intent matching (backward compat)
+                if intent_name not in entry.intents:
+                    continue
+            # Department gate
+            if department and entry.department != "*" and entry.department != department:
+                continue
+            # Rank gate
             if agent_rank:
                 agent_rank_order = _RANK_ORDER.get(agent_rank, 0)
                 if _RANK_ORDER.get(entry.min_rank, 0) > agent_rank_order:

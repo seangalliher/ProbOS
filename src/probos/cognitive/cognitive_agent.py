@@ -1165,25 +1165,18 @@ class CognitiveAgent(BaseAgent):
                     logger.debug("Journal recording failed", exc_info=True)
             return procedural_result
 
-        # --- AD-632f: Load augmentation skills before chain check (Compose handler needs them) ---
-        if observation.get("intent") in _CHAIN_ELIGIBLE_INTENTS:
-            _aug = self._load_augmentation_skills(observation.get("intent", ""))
-            if _aug:
-                observation["_augmentation_skill_instructions"] = _aug
-
-        # --- AD-632f: Sub-task chain activation (Level 3) ---
+        # --- AD-643a: Intent-driven chain activation with targeted skill loading ---
         # Priority 1: externally-set chain (escape hatch for skills, JIT, etc.)
-        # Priority 2: inline trigger evaluation
-        chain = None
         if self._pending_sub_task_chain is not None:
             chain = self._pending_sub_task_chain
             self._pending_sub_task_chain = None  # consume once
-        elif self._should_activate_chain(observation):
-            chain = self._build_chain_for_intent(observation)
-
-        if chain is not None:
+            # External chains get all augmentation skills (pre-AD-643 behavior)
+            if observation.get("intent") in _CHAIN_ELIGIBLE_INTENTS:
+                _aug = self._load_augmentation_skills(observation.get("intent", ""))
+                if _aug:
+                    observation["_augmentation_skill_instructions"] = _aug
             logger.info(
-                "AD-632f: Chain activated for %s (intent=%s, source=%s)",
+                "AD-632f: External chain activated for %s (intent=%s, source=%s)",
                 self.agent_type,
                 observation.get("intent", ""),
                 getattr(chain, "source", "unknown"),
@@ -1194,6 +1187,16 @@ class CognitiveAgent(BaseAgent):
                 cache[cache_key] = (chain_result, time.monotonic(), _cache_ttl)
                 return chain_result
             logger.info("AD-632f: Falling back to single-call for %s", self.agent_type)
+
+        # Priority 2: intent-driven routing (AD-643a)
+        elif self._should_activate_chain(observation):
+            chain_result = await self._execute_chain_with_intent_routing(observation)
+            if chain_result is not None:
+                _cache_ttl = self._get_cache_ttl()
+                cache[cache_key] = (chain_result, time.monotonic(), _cache_ttl)
+                return chain_result
+            # chain_result is None → fall through to _decide_via_llm()
+            # Skills may already be loaded in observation from intent routing
 
         # --- LLM call (cache miss) ---
         decision = await self._decide_via_llm(observation)
@@ -1479,6 +1482,30 @@ class CognitiveAgent(BaseAgent):
             return False
         return True
 
+    @staticmethod
+    def _extract_intended_actions(chain_results: list) -> list[str]:
+        """AD-643a: Extract intended_actions from ANALYZE step results.
+
+        Returns normalized list of action tags, or empty list if not found.
+        Handles: list, comma-separated string, single string.
+        """
+        from probos.cognitive.sub_task import SubTaskType
+        for r in reversed(chain_results):
+            if r.sub_task_type == SubTaskType.ANALYZE and r.success and r.result:
+                raw = r.result.get("intended_actions")
+                if raw is None:
+                    return []
+                if isinstance(raw, list):
+                    return [str(a).strip().lower() for a in raw if str(a).strip()]
+                if isinstance(raw, str):
+                    # Handle comma-separated or single value
+                    if "," in raw:
+                        return [a.strip().lower() for a in raw.split(",") if a.strip()]
+                    stripped = raw.strip().lower()
+                    return [stripped] if stripped else []
+                return []
+        return []
+
     def _build_chain_for_intent(self, observation: dict):
         """AD-632f: Build a SubTaskChain for the given intent type.
 
@@ -1729,6 +1756,185 @@ class CognitiveAgent(BaseAgent):
             "chain_source": chain.source,  # AD-632g: e.g., "intent_trigger:ward_room_notification"
             "chain_steps": len(chain.steps),  # AD-632g: step count for extraction
         }
+
+    async def _execute_chain_with_intent_routing(self, observation: dict) -> dict | None:
+        """AD-643a: Two-phase chain execution with intent-driven skill loading.
+
+        Phase 1 (Triage): QUERY + ANALYZE — no skills, determines intended_actions.
+        Phase 2 (Execute): Load targeted skills, run remaining chain steps.
+
+        Returns decision dict or None (fall through to _decide_via_llm).
+        """
+        from probos.cognitive.sub_task import SubTaskChain, SubTaskType
+
+        intent = observation.get("intent", "")
+
+        # --- Inject agent context (same keys as _execute_sub_task_chain) ---
+        observation["_agent_id"] = self.id
+        observation["_agent_type"] = self.agent_type
+        observation["_callsign"] = getattr(self, 'callsign', self.agent_type)
+        _dept = getattr(self, 'department', None)
+        if _dept is None:
+            from probos.cognitive.standing_orders import get_department
+            _dept = get_department(self.agent_type) or "unassigned"
+        observation["_department"] = _dept
+
+        # BF-184: Social obligation flags
+        _params = observation.get("params", {})
+        observation["_from_captain"] = _params.get("author_id", "") == "captain"
+        observation["_was_mentioned"] = _params.get("was_mentioned", False)
+        observation["_is_dm"] = _params.get("is_dm_channel", False)
+
+        # AD-638: Boot camp quality gate relaxation
+        _rt = getattr(self, '_runtime', None)
+        if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.is_enrolled(self.id):
+            observation["_boot_camp_active"] = True
+
+        # AD-639: Trust-adaptive chain personality tuning
+        if not observation.get("_boot_camp_active"):
+            _chain_cfg = getattr(getattr(_rt, 'config', None), 'chain_tuning', None) if _rt else None
+            if _chain_cfg and _chain_cfg.enabled:
+                _agent_type = getattr(self, "agent_type", "")
+                _trust = 0.5
+                if _rt and hasattr(_rt, "trust_network") and _rt.trust_network:
+                    _trust = _rt.trust_network.get_score(_agent_type)
+                observation["_trust_score"] = _trust
+                if _trust < _chain_cfg.low_trust_ceiling:
+                    observation["_chain_trust_band"] = "low"
+                elif _trust >= _chain_cfg.high_trust_floor:
+                    observation["_chain_trust_band"] = "high"
+                else:
+                    observation["_chain_trust_band"] = "mid"
+
+        # BF-186: Thread rank, skill_profile, crew manifest
+        observation["_agent_rank"] = getattr(self, "rank", None)
+        observation["_skill_profile"] = getattr(self, '_skill_profile', None)
+        observation["_crew_manifest"] = self._compose_dm_instructions()
+
+        # BF-189: Pre-format memories
+        raw_memories = observation.get("recent_memories", [])
+        if raw_memories and isinstance(raw_memories, list):
+            source_framing = observation.get("_source_framing")
+            formatted_lines = self._format_memory_section(raw_memories, source_framing=source_framing)
+            observation["_formatted_memories"] = "\n".join(formatted_lines)
+        else:
+            observation["_formatted_memories"] = ""
+
+        # --- Phase 1: Build and execute triage (QUERY + ANALYZE only) ---
+        full_chain = self._build_chain_for_intent(observation)
+        if full_chain is None:
+            return None
+
+        # Split chain: triage = QUERY + ANALYZE, execute = COMPOSE + EVALUATE + REFLECT
+        triage_steps = [s for s in full_chain.steps if s.sub_task_type in (SubTaskType.QUERY, SubTaskType.ANALYZE)]
+        execute_steps = [s for s in full_chain.steps if s.sub_task_type not in (SubTaskType.QUERY, SubTaskType.ANALYZE)]
+
+        if not triage_steps:
+            # No triage steps — fall back to full chain with all skills
+            return None
+
+        triage_chain = SubTaskChain(
+            steps=triage_steps,
+            chain_timeout_ms=full_chain.chain_timeout_ms,
+            fallback=full_chain.fallback,
+            source=f"{full_chain.source}:triage",
+        )
+
+        try:
+            triage_results = await self._sub_task_executor.execute(
+                triage_chain,
+                observation,
+                agent_id=self.id,
+                agent_type=self.agent_type,
+                intent=intent,
+                intent_id=observation.get("intent_id", ""),
+                journal=self._cognitive_journal,
+            )
+        except Exception as exc:
+            logger.warning("AD-643a: Triage phase failed, falling back: %s", exc)
+            return None
+
+        # --- Extract intended_actions ---
+        intended_actions = self._extract_intended_actions(triage_results)
+
+        if not intended_actions:
+            # ANALYZE didn't produce intended_actions — fall back to pre-AD-643 behavior
+            logger.info("AD-643a: No intended_actions from ANALYZE, falling back to full chain")
+            _aug = self._load_augmentation_skills(intent)
+            if _aug:
+                observation["_augmentation_skill_instructions"] = _aug
+            # Re-execute full chain (triage results are lost — acceptable for fallback)
+            return await self._execute_sub_task_chain(full_chain, observation)
+
+        logger.info(
+            "AD-643a: Agent %s intended_actions=%s (intent=%s)",
+            self.agent_type, intended_actions, intent,
+        )
+
+        # --- Silent short-circuit ---
+        if intended_actions == ["silent"]:
+            logger.info("AD-643a: Silent intent — short-circuiting")
+            return {
+                "action": "execute",
+                "llm_output": "[NO_RESPONSE]",
+                "tier_used": "",
+                "sub_task_chain": True,
+                "chain_source": f"{full_chain.source}:silent",
+                "chain_steps": len(triage_steps),
+            }
+
+        # --- Determine if communication chain should fire ---
+        _COMM_ACTIONS = frozenset({"ward_room_post", "ward_room_reply", "endorse", "dm"})
+        has_comm_action = bool(_COMM_ACTIONS.intersection(intended_actions))
+
+        # --- Load targeted skills based on intended_actions ---
+        catalog = getattr(self, '_cognitive_skill_catalog', None)
+        if catalog:
+            department = getattr(self, 'department', None)
+            rank = getattr(self, 'rank', None)
+            rank_val = rank.value if hasattr(rank, 'value') else rank
+            entries = catalog.find_triggered_skills(
+                intended_actions, intent,
+                department=department, agent_rank=rank_val,
+            )
+            if entries:
+                bridge = getattr(self, '_skill_bridge', None)
+                profile = getattr(self, '_skill_profile', None)
+                parts = []
+                loaded_entries = []
+                for entry in entries:
+                    if bridge and not bridge.check_proficiency_gate(self.id, entry, profile):
+                        continue
+                    instructions = catalog.get_instructions(entry.name)
+                    if instructions:
+                        parts.append(instructions)
+                        loaded_entries.append(entry)
+                        logger.info(
+                            "AD-643a: Loaded triggered skill '%s' for actions %s on %s",
+                            entry.name, intended_actions, self.agent_type,
+                        )
+                if parts:
+                    observation["_augmentation_skill_instructions"] = "".join(parts)
+                self._augmentation_skills_used = loaded_entries
+            else:
+                self._augmentation_skills_used = []
+        else:
+            self._augmentation_skills_used = []
+
+        # --- Phase 2: Execute remaining chain or fall through ---
+        if has_comm_action and execute_steps:
+            # Re-execute full chain with skills now loaded.
+            # Triage re-runs but that's 1 QUERY (0 tokens) + 1 ANALYZE call.
+            # Total overhead: ~200 tokens. Acceptable for correctness.
+            return await self._execute_sub_task_chain(full_chain, observation)
+        else:
+            # Non-communication actions: fall through to _decide_via_llm()
+            # Skills are already loaded in observation if any matched.
+            logger.info(
+                "AD-643a: No comm actions in %s — skipping chain, using single-call",
+                intended_actions,
+            )
+            return None
 
     async def act(self, decision: dict) -> dict:
         """Execute based on LLM decision.  Override for structured output."""

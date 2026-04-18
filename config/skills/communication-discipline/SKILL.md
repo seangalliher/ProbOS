@@ -12,6 +12,7 @@ metadata:
   probos-min-rank: ensign
   probos-intents: "proactive_think,ward_room_notification"
   probos-activation: augmentation
+  probos-triggers: "ward_room_post,ward_room_reply,endorse"
 ---
 
 # Communication Discipline

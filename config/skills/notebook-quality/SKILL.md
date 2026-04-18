@@ -12,6 +12,7 @@ metadata:
   probos-min-rank: ensign
   probos-intents: "proactive_think"
   probos-activation: augmentation
+  probos-triggers: "notebook"
 ---
 
 # Notebook Analytical Quality

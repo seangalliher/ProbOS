@@ -88,8 +88,13 @@ def _build_thread_analysis_prompt(
         f"   worth endorsing? List callsigns. Empty list if none qualify.\n"
         f"5. **contribution_assessment**: One of: \"RESPOND\" (you have something new\n"
         f"   to add), \"ENDORSE\" (agree with existing analysis, nothing new), or\n"
-        f"   \"SILENT\" (topic outside your scope or fully covered).\n\n"
-        f"Return a JSON object with these 5 keys. No other text."
+        f"   \"SILENT\" (topic outside your scope or fully covered).\n"
+        f"6. **intended_actions**: Based on your contribution_assessment, what\n"
+        f"   specific actions will you take? List as a JSON array from:\n"
+        f"   ward_room_reply, endorse, silent.\n"
+        f"   If RESPOND: [\"ward_room_reply\"]. If ENDORSE: [\"endorse\"].\n"
+        f"   If both: [\"ward_room_reply\", \"endorse\"]. If SILENT: [\"silent\"].\n\n"
+        f"Return a JSON object with these 6 keys. No other text."
     )
     return system_prompt, user_prompt
 
@@ -143,8 +148,12 @@ def _build_situation_review_prompt(
         "2. **pending_actions**: Actions you need to take or respond to.\n"
         "3. **priority_topics**: Topics ranked by departmental relevance.\n"
         "4. **department_relevance**: How relevant is the current situation to your "
-        f"department ({department})? One of: \"HIGH\", \"MEDIUM\", \"LOW\".\n\n"
-        "Return a JSON object with these 4 keys. No other text."
+        f"department ({department})? One of: \"HIGH\", \"MEDIUM\", \"LOW\".\n"
+        "5. **intended_actions**: What actions will you take? List as a JSON array from:\n"
+        "   ward_room_post, ward_room_reply, endorse, notebook, leadership_review,\n"
+        "   proposal, dm, silent. Include ALL that apply.\n"
+        "   Examples: [\"ward_room_post\", \"notebook\"], [\"endorse\"], [\"silent\"]\n\n"
+        "Return a JSON object with these 5 keys. No other text."
     )
     return system_prompt, user_prompt
 

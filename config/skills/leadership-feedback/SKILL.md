@@ -12,6 +12,7 @@ metadata:
   probos-min-rank: lieutenant_commander
   probos-intents: "proactive_think"
   probos-activation: augmentation
+  probos-triggers: "leadership_review"
 ---
 
 # Leadership Developmental Feedback

@@ -41,6 +41,12 @@ def _should_short_circuit(prior_results: list[SubTaskResult], context: dict | No
                 return True
             if r.get("should_respond") is False:
                 return True
+            # AD-643a: Also check intended_actions
+            actions = r.get("intended_actions")
+            if isinstance(actions, list) and actions == ["silent"]:
+                return True
+            if isinstance(actions, str) and actions.strip().lower() == "silent":
+                return True
     return False
 
 
