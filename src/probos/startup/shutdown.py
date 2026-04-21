@@ -350,6 +350,15 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     await runtime.hebbian_router.stop()
     await runtime.trust_network.stop()
 
+    # AD-637: Stop NATS event bus
+    if getattr(runtime, 'nats_bus', None):
+        try:
+            await runtime.nats_bus.stop()
+            runtime.nats_bus = None
+            logger.info("NATS event bus stopped")
+        except Exception as e:
+            logger.warning("NATS shutdown error: %s", e)
+
     # AD-573: Stop working memory store
     if hasattr(runtime, 'working_memory_store') and runtime.working_memory_store:
         try:

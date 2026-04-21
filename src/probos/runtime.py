@@ -140,6 +140,7 @@ if TYPE_CHECKING:
     from probos.proactive import ProactiveCognitiveLoop
     from probos.cognitive.skill_catalog import CognitiveSkillCatalog
     from probos.skill_framework import AgentSkillService, SkillRegistry
+    from probos.mesh.nats_bus import NATSBus
     from probos.tools.permissions import ToolPermissionStore
     from probos.tools.registry import ToolRegistry
     from probos.ward_room import WardRoomService
@@ -235,6 +236,7 @@ class ProbOSRuntime:
     conn_manager: ConnManager | None
     watch_manager: WatchManager | None
     codebase_index: CodebaseIndex | None
+    nats_bus: "NATSBus | None"
 
     # Private attributes
     _data_dir: Path
@@ -606,6 +608,7 @@ class ProbOSRuntime:
 
         # --- CodebaseIndex (AD-290) ---
         self.codebase_index: CodebaseIndex | None = None
+        self.nats_bus: NATSBus | None = None
 
     def register_agent_type(self, type_name: str, agent_class: type) -> None:
         """Register an agent class and refresh the decomposer's intent descriptors."""
@@ -1060,6 +1063,11 @@ class ProbOSRuntime:
         )
         self.identity_registry = infra.identity_registry
 
+        # Phase 1b: NATS event bus (AD-637)
+        from probos.startup.nats import init_nats
+
+        self.nats_bus = await init_nats(self.config)
+
         # Phase 2: Agent Fleet (AD-517)
         from probos.startup.agent_fleet import create_agent_fleet
 
@@ -1431,6 +1439,13 @@ class ProbOSRuntime:
         self.cognitive_skill_catalog = comm.cognitive_skill_catalog
         self.acm = comm.acm
         self.ontology = comm.ontology
+
+        # AD-637: Update NATS subject prefix after ship commissioning assigns DID
+        if self.nats_bus and self.identity_registry:
+            cert = self.identity_registry.get_ship_certificate()
+            if cert:
+                self.nats_bus.set_subject_prefix(f"probos.{cert.ship_did}")
+                logger.info("AD-637: NATS subject prefix updated to probos.%s", cert.ship_did)
 
         # AD-596c (BF-596b fix): Wire cognitive skill catalog into standing orders
         # Must be AFTER Phase 7 assigns self.cognitive_skill_catalog from comm result

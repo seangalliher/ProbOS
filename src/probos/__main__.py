@@ -219,6 +219,33 @@ async def _create_llm_client(config, console: Console):
     return client
 
 
+async def _check_nats(config, console: Console) -> None:
+    """Check NATS server connectivity if enabled (AD-637)."""
+    if not config.nats.enabled:
+        return
+
+    import httpx
+
+    nats_url = config.nats.url
+    # NATS monitoring endpoint: extract host:port from nats://host:port
+    host_port = nats_url.replace("nats://", "").replace("tls://", "")
+    monitor_url = f"http://{host_port}"
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{monitor_url}/varz")
+            if resp.status_code < 400:
+                console.print(f"  [green]\u2713[/green] NATS: {nats_url}")
+                return
+    except (httpx.ConnectError, httpx.TimeoutException, OSError):
+        pass
+
+    console.print(
+        f"  [yellow]\u2717[/yellow] NATS: {nats_url} unreachable "
+        "(will retry on startup)"
+    )
+
+
 def _load_config_with_fallback(config_path: Path | None) -> tuple:
     """Load config from the provided path, ~/.probos, or project default."""
     if config_path is not None:
@@ -274,6 +301,9 @@ async def _boot_runtime(
     # Create LLM client with connectivity check
     console.print("[bold blue]Starting ProbOS...[/bold blue]")
     llm_client = await _create_llm_client(config, console)
+
+    # AD-637: Check NATS connectivity if enabled
+    await _check_nats(config, console)
 
     # AD-541f: Create eviction audit log
     eviction_audit = None

@@ -372,6 +372,17 @@ sub_task:
   step_timeout_ms: 60000           # Aligned with llm_timeout_seconds (30s) with headroom
   max_concurrent_chains: 4       # AD-636: cap simultaneous chain executions
 
+# --- NATS Event Bus (AD-637) ---
+nats:
+  enabled: false
+  url: "nats://localhost:4222"
+  connect_timeout_seconds: 5.0
+  max_reconnect_attempts: 60
+  reconnect_time_wait_seconds: 2.0
+  drain_timeout_seconds: 5.0
+  jetstream_enabled: true
+  subject_prefix: "probos.local"
+
 # --- Communication Quality Benchmarks (AD-642) ---
 qualification:
   communication_benchmarks:

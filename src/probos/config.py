@@ -1016,6 +1016,24 @@ class QualificationConfig(BaseModel):
     drift_check_tiers: list[int] = [1, 2, 3]  # AD-566d/e: Which tiers the drift scheduler runs
 
 
+class NatsConfig(BaseModel):
+    """NATS event bus configuration (AD-637)."""
+
+    enabled: bool = False
+    url: str = "nats://localhost:4222"
+    connect_timeout_seconds: float = 5.0
+    max_reconnect_attempts: int = 60
+    reconnect_time_wait_seconds: float = 2.0
+    drain_timeout_seconds: float = 5.0
+
+    # JetStream
+    jetstream_enabled: bool = True
+    jetstream_domain: str | None = None  # For leaf node isolation
+
+    # Subject prefix — derived from ship DID at runtime, fallback for local
+    subject_prefix: str = "probos.local"
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -1065,6 +1083,7 @@ class SystemConfig(BaseModel):
     boot_camp: BootCampConfig = BootCampConfig()  # AD-638
     tiered_trust: TieredTrustConfig = TieredTrustConfig()  # AD-640
     chain_tuning: ChainTuningConfig = ChainTuningConfig()  # AD-639
+    nats: NatsConfig = NatsConfig()  # AD-637
 
 
 def load_config(path: str | Path) -> SystemConfig:
