@@ -1068,6 +1068,10 @@ class ProbOSRuntime:
 
         self.nats_bus = await init_nats(self.config)
 
+        # AD-637b: Wire NATS transport into IntentBus
+        if self.nats_bus:
+            self.intent_bus.set_nats_bus(self.nats_bus)
+
         # Phase 2: Agent Fleet (AD-517)
         from probos.startup.agent_fleet import create_agent_fleet
 

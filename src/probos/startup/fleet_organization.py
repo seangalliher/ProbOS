@@ -177,7 +177,7 @@ async def organize_fleet(
             )
             await bridge.start()
             # PATCH(AD-517): Wire federation function into intent bus
-            intent_bus._federation_fn = bridge.forward_intent
+            intent_bus.set_federation_handler(bridge.forward_intent)
             federation_bridge = bridge
             federation_transport = transport
             logger.info("Federation started: node=%s", config.federation.node_id)

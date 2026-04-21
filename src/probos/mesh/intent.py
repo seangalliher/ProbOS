@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import time
 import logging
-import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Awaitable
+from typing import TYPE_CHECKING, Any, Callable, Awaitable
 
 from probos.types import IntentMessage, IntentResult
 from probos.mesh.signal import SignalManager
+
+if TYPE_CHECKING:
+    from probos.mesh.nats_bus import NATSBus
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,8 @@ class IntentBus:
         self._broadcast_timestamps: list[tuple[float, str]] = []  # (monotonic_time, intent_name)
         self._window_seconds: float = 60.0
         self._federation_fn: Callable[[IntentMessage], Awaitable[list[IntentResult]]] | None = None
+        self._nats_bus: Any = None  # AD-637b: wired via set_nats_bus()
+        self._nats_subs: dict[str, Any] = {}  # agent_id -> NATS subscription
 
     def subscribe(self, agent_id: str, handler: IntentHandler, intent_names: list[str] | None = None) -> None:
         """Register an agent's intent handler.
@@ -51,11 +55,56 @@ class IntentBus:
                     self._intent_index[name] = set()
                 self._intent_index[name].add(agent_id)
 
+        # AD-637b: Create NATS subscription for targeted send()
+        if self._nats_bus and self._nats_bus.connected:
+            asyncio.ensure_future(self._nats_subscribe_agent(agent_id, handler))
+
+    async def _nats_subscribe_agent(self, agent_id: str, handler: IntentHandler) -> None:
+        """Subscribe an agent to their NATS intent subject for send() delivery."""
+        subject = f"intent.{agent_id}"
+
+        async def _on_nats_intent(msg: Any) -> None:
+            """NATS message adapter: deserialize → handler → serialize reply."""
+            try:
+                intent = self._deserialize_intent(msg.data)
+                result = await handler(intent)
+                if msg.reply:
+                    if result is not None:
+                        await msg.respond(self._serialize_result(result))
+                    else:
+                        # Agent declined — send empty success response
+                        await msg.respond({"declined": True})
+            except Exception as e:
+                logger.warning("NATS intent handler error for %s: %s", agent_id[:8], e)
+                if msg.reply:
+                    error_result = IntentResult(
+                        intent_id=msg.data.get("id", "") if isinstance(msg.data, dict) else "",
+                        agent_id=agent_id,
+                        success=False,
+                        error=str(e),
+                        confidence=0.0,
+                    )
+                    await msg.respond(self._serialize_result(error_result))
+
+        sub = await self._nats_bus.subscribe(subject, _on_nats_intent)
+        self._nats_subs[agent_id] = sub
+
     def unsubscribe(self, agent_id: str) -> None:
         """Remove an agent's subscription and intent index entries."""
         self._subscribers.pop(agent_id, None)
         for agent_set in self._intent_index.values():
             agent_set.discard(agent_id)
+        # AD-637b: Clean up NATS subscription
+        nats_sub = self._nats_subs.pop(agent_id, None)
+        if nats_sub and hasattr(nats_sub, 'unsubscribe'):
+            asyncio.ensure_future(self._nats_unsubscribe(nats_sub))
+
+    async def _nats_unsubscribe(self, sub: Any) -> None:
+        """Unsubscribe from NATS subject."""
+        try:
+            await sub.unsubscribe()
+        except Exception as e:
+            logger.debug("NATS unsubscribe error: %s", e)
 
     @property
     def subscriber_count(self) -> int:
@@ -64,11 +113,18 @@ class IntentBus:
     async def send(self, intent: IntentMessage) -> IntentResult | None:
         """Deliver an intent to a specific agent (targeted dispatch, AD-397).
 
-        Requires intent.target_agent_id to be set.
-        Returns the single result, or None if the agent isn't subscribed.
+        AD-637b: Uses NATS request/reply when connected, direct-call fallback otherwise.
+        Only one path is used per call — never both.
         """
         if not intent.target_agent_id:
             raise ValueError("send() requires target_agent_id")
+
+        # AD-637b: NATS path (when connected and agent has NATS subscription)
+        if (self._nats_bus and self._nats_bus.connected
+                and intent.target_agent_id in self._nats_subs):
+            return await self._nats_send(intent)
+
+        # Direct-call fallback (original behavior, also used when NATS unavailable)
         handler = self._subscribers.get(intent.target_agent_id)
         if handler is None:
             return None
@@ -83,6 +139,29 @@ class IntentBus:
                 error="Agent did not respond in time.",
                 confidence=0.0,
             )
+
+    async def _nats_send(self, intent: IntentMessage) -> IntentResult | None:
+        """Send intent via NATS request/reply to target agent."""
+        subject = f"intent.{intent.target_agent_id}"
+        try:
+            reply = await asyncio.wait_for(
+                self._nats_bus.request(subject, self._serialize_intent(intent)),
+                timeout=intent.ttl_seconds,
+            )
+        except asyncio.TimeoutError:
+            return IntentResult(
+                intent_id=intent.id,
+                agent_id=intent.target_agent_id or "",
+                success=False,
+                error="Agent did not respond in time.",
+                confidence=0.0,
+            )
+        if reply is None:
+            return None
+        data = reply.data if hasattr(reply, 'data') else reply
+        if isinstance(data, dict) and data.get("declined"):
+            return None
+        return self._deserialize_result(data)
 
     async def broadcast(
         self,
@@ -171,6 +250,10 @@ class IntentBus:
         )
         return results
 
+    async def publish(self, intent: IntentMessage, **kwargs: Any) -> list[IntentResult]:
+        """Alias for broadcast() — used by WatchManager dispatch (runtime.py:689)."""
+        return await self.broadcast(intent, **kwargs)
+
     def record_broadcast(self, intent_name: str) -> None:
         """Record a broadcast event with its intent name."""
         self._broadcast_timestamps.append((time.monotonic(), intent_name))
@@ -258,3 +341,84 @@ class IntentBus:
     def set_federation_handler(self, fn: Callable) -> None:
         """Set the federation forwarding handler for cross-realm intents."""
         self._federation_fn = fn
+
+    def set_nats_bus(self, nats_bus: Any) -> None:
+        """Wire NATS transport (called after NATS connects in Phase 1b)."""
+        self._nats_bus = nats_bus
+
+    # ------------------------------------------------------------------
+    # AD-637b: Serialization helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _serialize_intent(intent: IntentMessage) -> dict[str, Any]:
+        """Serialize IntentMessage for NATS transport.
+
+        All fields must be JSON-serializable. params dict values that are
+        not JSON-serializable will raise TypeError — fail fast.
+        """
+        return {
+            "intent": intent.intent,
+            "params": intent.params,
+            "urgency": intent.urgency,
+            "context": intent.context,
+            "ttl_seconds": intent.ttl_seconds,
+            "id": intent.id,
+            "created_at": intent.created_at.isoformat(),
+            "target_agent_id": intent.target_agent_id,
+        }
+
+    @staticmethod
+    def _deserialize_intent(data: dict[str, Any]) -> IntentMessage:
+        """Deserialize IntentMessage from NATS transport."""
+        created_at = data.get("created_at")
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        else:
+            created_at = datetime.now(timezone.utc)
+        return IntentMessage(
+            intent=data["intent"],
+            params=data.get("params", {}),
+            urgency=data.get("urgency", 0.5),
+            context=data.get("context", ""),
+            ttl_seconds=data.get("ttl_seconds", 60.0),
+            id=data.get("id", ""),
+            created_at=created_at,
+            target_agent_id=data.get("target_agent_id"),
+        )
+
+    @staticmethod
+    def _serialize_result(result: IntentResult) -> dict[str, Any]:
+        """Serialize IntentResult for NATS reply.
+
+        result.result must be JSON-serializable. Non-serializable values
+        will raise TypeError — this is intentional (fail fast). Handlers
+        using the NATS path must return serializable results.
+        """
+        return {
+            "intent_id": result.intent_id,
+            "agent_id": result.agent_id,
+            "success": result.success,
+            "result": result.result,
+            "error": result.error,
+            "confidence": result.confidence,
+            "timestamp": result.timestamp.isoformat(),
+        }
+
+    @staticmethod
+    def _deserialize_result(data: dict[str, Any]) -> IntentResult:
+        """Deserialize IntentResult from NATS reply."""
+        ts = data.get("timestamp")
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts)
+        else:
+            ts = datetime.now(timezone.utc)
+        return IntentResult(
+            intent_id=data.get("intent_id", ""),
+            agent_id=data.get("agent_id", ""),
+            success=data.get("success", False),
+            result=data.get("result"),
+            error=data.get("error"),
+            confidence=data.get("confidence", 0.0),
+            timestamp=ts,
+        )
