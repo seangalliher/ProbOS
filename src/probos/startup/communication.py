@@ -46,6 +46,7 @@ async def init_communication(
     process_natural_language_fn: Callable[..., Any],
     register_workforce_resources_fn: Callable[..., Any],
     journal_prune_loop_fn: Callable[[], Any],
+    nats_bus: Any = None,  # AD-637c: NATS event bus for JetStream ward room dispatch
 ) -> CommunicationResult:
     """Start communication services, scheduling, and identity commissioning.
 
@@ -111,23 +112,44 @@ async def init_communication(
     if config.ward_room.enabled:
         from probos.ward_room import WardRoomService
 
-        # Ward room event emitter — routes to both WebSocket and WardRoomRouter.
-        # WardRoomRouter is wired later in finalize phase, so we use getattr guard.
-        _ward_room_router_ref: list[Any] = [None]  # mutable ref for closure
+        # Ward room event emitter — routes to WebSocket + JetStream (AD-637c).
+        # When NATS is connected, events publish to JetStream for durable delivery.
+        # When NATS is disconnected, falls back to create_task direct dispatch.
+        _ward_room_router_ref: list[Any] = [None]  # mutable ref for fallback path only
 
-        # AD-616: Semaphore bounds concurrent route_event() calls
+        # AD-616: Semaphore bounds concurrent route_event() calls (fallback path only)
         _ward_room_semaphore = asyncio.Semaphore(
             getattr(config.ward_room, 'router_concurrency_limit', 10)
         )
 
+        # AD-637c: Task set holds references to publish tasks (prevents GC + silent loss)
+        _wardroom_publish_tasks: set[asyncio.Task] = set()
+
         def _ward_room_emit(event_type: str, data: dict) -> None:
+            # Step 1: Always emit to WebSocket (synchronous)
             emit_event_fn(event_type, data)
-            router = _ward_room_router_ref[0]
-            if router:
-                async def _bounded_route() -> None:
-                    async with _ward_room_semaphore:
-                        await router.route_event_coalesced(event_type, data)
-                asyncio.create_task(_bounded_route())
+
+            # Step 2: Route to WardRoomRouter via NATS or fallback
+            if nats_bus and nats_bus.connected:
+                # AD-637c: JetStream publish — durable, ordered, backpressure-aware
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    logger.warning("AD-637c: Ward room emit called outside event loop, skipping NATS publish")
+                    return
+                payload = {"event_type": event_type, **data}
+                subject = f"wardroom.events.{event_type}"
+                task = loop.create_task(nats_bus.js_publish(subject, payload))
+                _wardroom_publish_tasks.add(task)
+                task.add_done_callback(_wardroom_publish_tasks.discard)
+            else:
+                # Fallback: direct dispatch via create_task (original behavior)
+                router = _ward_room_router_ref[0]
+                if router:
+                    async def _bounded_route() -> None:
+                        async with _ward_room_semaphore:
+                            await router.route_event_coalesced(event_type, data)
+                    asyncio.create_task(_bounded_route())
 
         ward_room = WardRoomService(
             db_path=str(data_dir / "ward_room.db"),

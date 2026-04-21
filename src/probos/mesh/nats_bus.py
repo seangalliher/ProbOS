@@ -298,6 +298,8 @@ class NATSBus:
         callback: MessageCallback,
         durable: str | None = None,
         stream: str | None = None,
+        max_ack_pending: int | None = None,
+        ack_wait: int | None = None,
     ) -> Any:
         """Subscribe to a JetStream subject (durable consumer)."""
         if not self._js:
@@ -332,12 +334,20 @@ class NATSBus:
                 await msg.nak()
 
         try:
-            sub = await self._js.subscribe(
-                full_subject,
-                durable=durable,
-                stream=stream,
-                cb=_handler,
-            )
+            subscribe_kwargs: dict[str, Any] = {
+                "durable": durable,
+                "stream": stream,
+                "cb": _handler,
+            }
+            if max_ack_pending is not None or ack_wait is not None:
+                from nats.js.api import ConsumerConfig
+                config_kwargs: dict[str, Any] = {}
+                if max_ack_pending is not None:
+                    config_kwargs["max_ack_pending"] = max_ack_pending
+                if ack_wait is not None:
+                    config_kwargs["ack_wait"] = ack_wait
+                subscribe_kwargs["config"] = ConsumerConfig(**config_kwargs)
+            sub = await self._js.subscribe(full_subject, **subscribe_kwargs)
             self._subscriptions.append(sub)
             return sub
         except Exception as e:
@@ -528,6 +538,8 @@ class MockNATSBus:
         callback: MessageCallback,
         durable: str | None = None,
         stream: str | None = None,
+        max_ack_pending: int | None = None,
+        ack_wait: int | None = None,
     ) -> str:
         return await self.subscribe(subject, callback)
 

@@ -146,11 +146,46 @@ async def finalize_startup(
             notify_fn=runtime.notify,
             proactive_loop=proactive_loop,
         )
-        # Wire the router ref so Ward Room emit callback can route events
-        if hasattr(runtime.ward_room, '_ward_room_router_ref'):
-            runtime.ward_room._ward_room_router_ref[0] = ward_room_router
+        # AD-637c: Only wire router ref for fallback path (NATS disconnected).
+        # When NATS is connected, events flow through JetStream → consumer callback.
+        # Not wiring the ref when NATS is active makes no-dual-delivery structural.
+        if not (getattr(runtime, 'nats_bus', None) and runtime.nats_bus.connected):
+            if hasattr(runtime.ward_room, '_ward_room_router_ref'):
+                runtime.ward_room._ward_room_router_ref[0] = ward_room_router
         # AD-621: Populate membership cache after startup subscriptions
         await ward_room_router.populate_membership_cache()
+
+        # AD-637c: JetStream setup — stream ensure + consumer subscription
+        # Both are in finalize.py to avoid split-phase race conditions.
+        if getattr(runtime, 'nats_bus', None) and runtime.nats_bus.connected:
+            # Ensure WARDROOM stream exists
+            await runtime.nats_bus.ensure_stream(
+                "WARDROOM",
+                ["wardroom.events.>"],
+                max_msgs=10000,
+                max_age=3600,  # 1 hour retention
+            )
+
+            # Subscribe router as durable JetStream consumer
+            async def _on_wardroom_event(msg: Any) -> None:
+                """JetStream consumer callback — extract event_type and route."""
+                event_type = msg.data.get("event_type", "")
+                if not event_type:
+                    logger.debug("AD-637c: Ward room event missing event_type, skipping")
+                    return
+                # Remove event_type from data before routing (router expects raw event data)
+                data = {k: v for k, v in msg.data.items() if k != "event_type"}
+                await ward_room_router.route_event_coalesced(event_type, data)
+
+            await runtime.nats_bus.js_subscribe(
+                "wardroom.events.>",
+                _on_wardroom_event,
+                durable="wardroom-router",
+                stream="WARDROOM",
+                max_ack_pending=10,  # Matches AD-616 concurrency limit
+                ack_wait=120,  # Seconds — must exceed slow cognitive chain time
+            )
+            logger.info("AD-637c: WARDROOM JetStream stream + consumer wired")
 
         # AD-625: Pre-cache communication proficiency profiles for gate modulation
         if hasattr(runtime, 'skill_service') and runtime.skill_service:
