@@ -602,6 +602,8 @@ class CounselorAgent(CognitiveAgent):
                     EventType.CONTENT_CONTAGION_FLAGGED,     # AD-529
                     EventType.CONTENT_QUARANTINE_RECOMMENDED, # AD-529
                     EventType.CONFABULATION_SUPPRESSED,       # BF-206
+                    EventType.REGISTER_SHIFT_GRANTED,        # AD-653
+                    EventType.REGISTER_SHIFT_DENIED,         # AD-653
                 ],
             )
 
@@ -829,6 +831,8 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_content_quarantine_recommended(data)
             elif event_type == EventType.CONFABULATION_SUPPRESSED.value:
                 await self._on_confabulation_suppressed(data)
+            elif event_type in (EventType.REGISTER_SHIFT_GRANTED.value, EventType.REGISTER_SHIFT_DENIED.value):
+                await self._on_register_shift(data)
         except Exception:
             logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
 
@@ -1457,6 +1461,31 @@ class CounselorAgent(CognitiveAgent):
                 await self._profile_store.save_profile(profile)
             except Exception:
                 logger.debug("BF-206: Failed to persist profile for %s", agent_id[:8], exc_info=True)
+
+    async def _on_register_shift(self, event_data: dict[str, Any]) -> None:
+        """AD-653: Log and optionally review register shift events."""
+        agent_id = event_data.get("agent_id", "")
+        trust = event_data.get("trust", 0.0)
+        authorization = event_data.get("authorization", "")
+        from_reg = event_data.get("from_register", "")
+        to_reg = event_data.get("to_register", "")
+        reason = event_data.get("reason", "")
+
+        if authorization == "flagged":
+            logger.info(
+                "AD-653: Register shift FLAGGED — %s (trust=%.2f) %s→%s",
+                agent_id, trust, from_reg, to_reg,
+            )
+        elif reason:
+            logger.info(
+                "AD-653: Register shift DENIED — %s (trust=%.2f) reason=%s",
+                agent_id, trust, reason,
+            )
+        else:
+            logger.debug(
+                "AD-653: Register shift granted — %s (trust=%.2f) %s→%s",
+                agent_id, trust, from_reg, to_reg,
+            )
 
     async def _on_trust_update(self, data: dict[str, Any]) -> None:
         """React to significant trust changes — re-assess the agent."""

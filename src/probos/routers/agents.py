@@ -398,3 +398,19 @@ async def agent_journal(
         agent_id, limit=min(limit, 100), since=since, until=until,
     )
     return {"agent_id": agent_id, "entries": entries}
+
+
+@router.get("/{agent_id}/working-memory")
+async def agent_working_memory(
+    agent_id: str, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-645: Return agent's working memory state including composition briefs."""
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    wm = getattr(agent, '_working_memory', None)
+    if wm is None:
+        return {"agent_id": agent_id, "working_memory": None}
+
+    return {"agent_id": agent_id, "working_memory": wm.to_dict()}

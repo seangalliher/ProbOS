@@ -354,11 +354,14 @@ class ProactiveCognitiveLoop:
         while True:
             try:
                 await self._run_cycle()
+                await asyncio.sleep(self._interval)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("ProactiveCognitiveLoop cycle failed (fail-open)")
-            await asyncio.sleep(self._interval)
+                # BF-211: Sleep inside try/except so the loop survives
+                # non-cancellation errors during sleep.
+                await asyncio.sleep(self._interval)
 
     async def _run_cycle(self) -> None:
         """One think cycle: iterate all crew agents with AD-636 stagger."""
@@ -681,6 +684,16 @@ class ProactiveCognitiveLoop:
         )
         if cleaned_text != response_text:
             response_text = cleaned_text
+
+        # BF-215: Guard against empty text after tag stripping (BF-203/BF-174)
+        if not response_text.strip():
+            logger.debug(
+                "BF-215: Suppressed empty post from %s after action extraction",
+                agent.agent_type,
+            )
+            if duty and self._duty_tracker:
+                self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+            return
 
         # AD-573: Record proactive observation to working memory
         try:
@@ -2480,7 +2493,9 @@ class ProactiveCognitiveLoop:
                                     winner = result.get("winner", "")
                                     body = f"Game over! {'Winner: ' + winner if winner else 'Draw!'}"
                                 else:
-                                    body = f"```\n{board}\n```\nNext: {game_info['state']['current_player']}"
+                                    _next = game_info['state']['current_player']
+                                    # BF-212: @mention next player so they receive the notification
+                                    body = f"```\n{board}\n```\nYour move, @{_next}"
                                 try:
                                     await rt.ward_room.create_post(
                                         thread_id=player_game["thread_id"],

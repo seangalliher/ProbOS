@@ -147,6 +147,9 @@ class EventType(str, Enum):
     CONTENT_CONTAGION_FLAGGED = "content_contagion_flagged"  # AD-529
     CONTENT_QUARANTINE_RECOMMENDED = "content_quarantine_recommended"  # AD-529
     CONFABULATION_SUPPRESSED = "confabulation_suppressed"  # BF-206
+    # Communication register
+    REGISTER_SHIFT_GRANTED = "register_shift_granted"    # AD-653
+    REGISTER_SHIFT_DENIED = "register_shift_denied"      # AD-653
     CORROBORATION_VERIFIED = "corroboration_verified"  # AD-567f
     WRONG_CONVERGENCE_DETECTED = "wrong_convergence_detected"  # AD-583
     WARD_ROOM_ECHO_DETECTED = "ward_room_echo_detected"  # AD-583g

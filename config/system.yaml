@@ -246,7 +246,7 @@ firewall:
 
 # --- Earned Agency (AD-357) ---
 earned_agency:
-  enabled: false  # Disabled for cold-start — boot camp AD will handle re-enablement
+  enabled: true  # Re-enabled after cold-start stabilization (2026-04-20). AD-638 will automate this gate.
 
 # --- Proactive Cognitive Loop (Phase 28b) ---
 proactive_cognitive:

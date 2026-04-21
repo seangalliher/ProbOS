@@ -28,6 +28,10 @@ posts:
     authority_over: [first_officer, counselor]
     tier: external  # Human, not agent
     clearance: ORACLE
+    capabilities:
+      - id: command_authority
+        summary: "Issue orders, approve proposals, set ship policy"
+    does_not_have: []
   - id: first_officer
     title: "First Officer"
     department: bridge
@@ -35,6 +39,17 @@ posts:
     authority_over: [chief_engineer, chief_science, chief_medical, chief_security, chief_operations]
     tier: crew
     clearance: ORACLE
+    capabilities:
+      - id: design_feature
+        summary: "Analyze codebase and roadmap to produce BuildSpec proposals for the Builder"
+        tools: [codebase_index_query, file_tree_analysis]
+        outputs: [architect_proposal]
+      - id: architecture_review
+        summary: "Review system architecture, identify patterns, verify implementation paths"
+        tools: [codebase_index_query]
+    does_not_have:
+      - "code generation or direct file writing (the Builder writes code)"
+      - "runtime system control (Ship's Computer manages infrastructure)"
   - id: counselor
     title: "Ship's Counselor"
     department: bridge
@@ -42,6 +57,21 @@ posts:
     authority_over: []
     tier: crew
     clearance: ORACLE
+    capabilities:
+      - id: counselor_assess
+        summary: "Assess individual agent cognitive health from trust, confidence, Hebbian weights, personality drift"
+        tools: [trust_network, hebbian_router, crew_profile, episodic_memory]
+        outputs: [cognitive_profile, wellness_dm]
+      - id: counselor_wellness_report
+        summary: "Produce crew-wide wellness summary for Captain"
+        outputs: [wellness_report]
+      - id: counselor_promotion_fitness
+        summary: "Evaluate agent readiness for rank promotion"
+        outputs: [fitness_assessment]
+    does_not_have:
+      - "operational system diagnostics (Medical department handles system health)"
+      - "direct access to other agents' episodic memories (Minority Report principle)"
+      - "authority to modify agent code or configuration"
 
   # Engineering
   - id: chief_engineer
@@ -51,6 +81,14 @@ posts:
     authority_over: [engineering_officer, builder_officer]
     tier: crew
     clearance: FULL
+    capabilities:
+      - id: engineering_analyze
+        summary: "Analyze system performance, architecture quality, and technical debt"
+      - id: engineering_optimize
+        summary: "Propose optimization strategies for system components"
+    does_not_have:
+      - "code generation or direct file writing (the Builder writes code)"
+      - "runtime system control or agent lifecycle management"
   - id: engineering_officer
     title: "Engineering Officer"
     department: engineering
@@ -58,6 +96,11 @@ posts:
     authority_over: []
     tier: crew
     clearance: ENHANCED
+    capabilities:
+      - id: engineering_analyze
+        summary: "Analyze system performance and architecture under Chief Engineer direction"
+    does_not_have:
+      - "code generation or direct file writing"
   - id: builder_officer
     title: "Builder"
     department: engineering
@@ -65,6 +108,14 @@ posts:
     authority_over: []
     tier: crew
     clearance: ENHANCED
+    capabilities:
+      - id: build_code
+        summary: "Execute code changes from BuildSpec proposals using SEARCH/REPLACE blocks"
+        tools: [file_read, file_write, ast_outline]
+        outputs: [code_changes, test_files, git_diff]
+    does_not_have:
+      - "design authority (the Architect designs, the Builder implements)"
+      - "system architecture decisions"
 
   # Science
   - id: chief_science
@@ -75,6 +126,16 @@ posts:
     tier: crew
     clearance: FULL
     note: "Number One is dual-hatted as First Officer and Chief Science Officer"
+    capabilities:
+      - id: design_feature
+        summary: "Analyze codebase and roadmap to produce BuildSpec proposals for the Builder"
+        tools: [codebase_index_query, file_tree_analysis]
+        outputs: [architect_proposal]
+      - id: science_oversight
+        summary: "Direct and coordinate Science department analytical work"
+    does_not_have:
+      - "code generation or direct file writing"
+      - "runtime system control"
   - id: scout_officer
     title: "Scout"
     department: science
@@ -82,6 +143,21 @@ posts:
     authority_over: []
     tier: crew
     clearance: ENHANCED
+    capabilities:
+      - id: scout_search
+        summary: "Search GitHub for trending and relevant repositories using the GitHub API"
+        tools: [search_github]
+        outputs: [github_search_results]
+      - id: scout_report
+        summary: "Classify GitHub repositories as ABSORB/VISITING_OFFICER/SKIP and generate structured findings report"
+        outputs: [scout_report_json, ward_room_notification]
+    does_not_have:
+      - "sensors or sensory arrays of any kind"
+      - "telemetry streams or scan coverage metrics"
+      - "detection thresholds or calibration systems"
+      - "environmental scanning or reconnaissance hardware"
+      - "200+ monitoring sources or sampling intervals"
+      - "the scout searches GitHub repositories via API — that is the only data source"
 
   - id: data_analyst_officer
     title: "Data Analyst"
@@ -90,6 +166,20 @@ posts:
     authority_over: []
     tier: crew
     clearance: ENHANCED
+    capabilities:
+      - id: telemetry_report
+        summary: "Produce quantitative summaries of ship telemetry (trust, Hebbian, emergence, cognitive journal, dreams) against baselines"
+        outputs: [telemetry_report]
+      - id: baseline_update
+        summary: "Recalculate statistical baselines from accumulated telemetry data"
+        outputs: [baseline_update]
+      - id: anomaly_flag
+        summary: "Flag statistically significant deviations from established baselines"
+        outputs: [anomaly_flag]
+    does_not_have:
+      - "external sensors or environmental monitoring"
+      - "direct system control or remediation authority"
+      - "the data analyst processes internal ship telemetry only — trust events, Hebbian weights, emergence metrics, cognitive journal entries, dream results"
 
   - id: systems_analyst_officer
     title: "Systems Analyst"
@@ -98,6 +188,19 @@ posts:
     authority_over: []
     tier: crew
     clearance: ENHANCED
+    capabilities:
+      - id: emergence_analysis
+        summary: "Analyze emergence metrics (synergy, redundancy, coordination balance) to assess collaborative effectiveness"
+        outputs: [emergence_analysis]
+      - id: system_synthesis
+        summary: "Synthesize cross-subsystem patterns to identify emergent behaviors"
+        outputs: [system_synthesis]
+      - id: pattern_advisory
+        summary: "Advise on detected patterns that may indicate system-level issues or opportunities"
+        outputs: [pattern_advisory]
+    does_not_have:
+      - "external sensors or environmental monitoring"
+      - "direct system control or configuration authority"
 
   - id: research_specialist_officer
     title: "Research Specialist"
@@ -106,6 +209,19 @@ posts:
     authority_over: []
     tier: crew
     clearance: ENHANCED
+    capabilities:
+      - id: research_investigation
+        summary: "Conduct directed investigations into specific questions about ship operations, agent dynamics, and system behavior"
+        outputs: [research_report]
+      - id: literature_review
+        summary: "Review training knowledge on topics relevant to ship operations"
+        outputs: [literature_review]
+      - id: research_proposal
+        summary: "Propose formal research questions with methodology"
+        outputs: [research_proposal]
+    does_not_have:
+      - "external data collection or sensors"
+      - "direct system modification authority"
 
   # Medical
   - id: chief_medical
@@ -115,6 +231,18 @@ posts:
     authority_over: [surgeon_officer, pharmacist_officer, pathologist_officer]
     tier: crew
     clearance: FULL
+    capabilities:
+      - id: medical_alert
+        summary: "Diagnose root causes from Vitals Monitor health alerts (threshold breaches)"
+        tools: [vitals_monitor_data]
+        outputs: [diagnosis, remediation_order]
+      - id: diagnose_system
+        summary: "Perform on-demand diagnostic scans of system components"
+        outputs: [diagnosis]
+    does_not_have:
+      - "cognitive wellness assessment (Counselor's domain)"
+      - "direct code modification or system configuration"
+      - "agent personality or identity management"
   - id: surgeon_officer
     title: "Surgeon"
     department: medical
@@ -122,6 +250,14 @@ posts:
     authority_over: []
     tier: crew
     clearance: ENHANCED
+    capabilities:
+      - id: medical_remediate
+        summary: "Execute remediation actions: recycle_agent, force_dream, surge_pool"
+        tools: [pool_health_check, dream_scheduler, pool_scaler]
+        outputs: [remediation_event]
+    does_not_have:
+      - "diagnostic authority (Diagnostician diagnoses, Surgeon remediates)"
+      - "configuration tuning (Pharmacist's domain)"
   - id: pharmacist_officer
     title: "Pharmacist"
     department: medical
@@ -129,6 +265,13 @@ posts:
     authority_over: []
     tier: crew
     clearance: ENHANCED
+    capabilities:
+      - id: medical_tune
+        summary: "Analyze trend data and produce configuration tuning recommendations"
+        outputs: [tuning_recommendation]
+    does_not_have:
+      - "direct configuration modification (recommendations only)"
+      - "acute remediation (Surgeon's domain)"
   - id: pathologist_officer
     title: "Pathologist"
     department: medical
@@ -136,6 +279,14 @@ posts:
     authority_over: []
     tier: crew
     clearance: ENHANCED
+    capabilities:
+      - id: medical_postmortem
+        summary: "Perform post-mortem analysis of serious failures (Tier 3 escalations, consensus failures, crashes)"
+        tools: [episodic_memory, codebase_knowledge]
+        outputs: [postmortem_report]
+    does_not_have:
+      - "real-time monitoring (Vitals Monitor's domain)"
+      - "remediation authority (Surgeon's domain)"
 
   # Security
   - id: chief_security
@@ -145,6 +296,15 @@ posts:
     authority_over: []
     tier: crew
     clearance: FULL
+    capabilities:
+      - id: security_assess
+        summary: "Assess threats and vulnerabilities in system components"
+      - id: security_review
+        summary: "Audit code for security issues, review access control policies"
+    does_not_have:
+      - "direct system control or code modification"
+      - "network monitoring hardware or intrusion detection sensors"
+      - "the security officer analyzes code and policies — threat assessment is analytical, not sensor-based"
 
   # Operations
   - id: chief_operations
@@ -154,6 +314,14 @@ posts:
     authority_over: []
     tier: crew
     clearance: FULL
+    capabilities:
+      - id: ops_status
+        summary: "Analyze resource utilization, capacity, and operational readiness"
+      - id: ops_coordinate
+        summary: "Coordinate cross-department activities and task optimization"
+    does_not_have:
+      - "direct system control or infrastructure management (Ship's Computer manages infrastructure)"
+      - "external communications or networking equipment"
 
 # Agent-to-post assignments (which agent_type fills which post)
 # watches: which watch rotations the agent stands (alpha/beta/gamma).

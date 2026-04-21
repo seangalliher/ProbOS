@@ -36,6 +36,22 @@ _CHAIN_ELIGIBLE_INTENTS: frozenset[str] = frozenset({
 })
 
 
+def derive_communication_context(
+    channel_name: str,
+    is_dm_channel: bool = False,
+) -> str:
+    """AD-649: Derive communication register context from channel metadata."""
+    if is_dm_channel or channel_name.startswith("dm-"):
+        return "private_conversation"
+    if channel_name == "bridge":
+        return "bridge_briefing"
+    if channel_name == "recreation":
+        return "casual_social"
+    if channel_name in ("general", "all-hands"):
+        return "ship_wide"
+    return "department_discussion"
+
+
 class CognitiveAgent(BaseAgent):
     """Agent whose decide() step consults an LLM guided by instructions.
 
@@ -1551,7 +1567,7 @@ class CognitiveAgent(BaseAgent):
                     SubTaskSpec(
                         sub_task_type=SubTaskType.QUERY,
                         name="query-thread-context",
-                        context_keys=("thread_metadata", "credibility"),
+                        context_keys=("thread_metadata", "credibility", "self_monitoring", "introspective_telemetry"),
                     ),
                     SubTaskSpec(
                         sub_task_type=SubTaskType.ANALYZE,
@@ -1677,6 +1693,10 @@ class CognitiveAgent(BaseAgent):
                     _agent_type, _trust, observation["_chain_trust_band"],
                 )
 
+        # AD-653: Wire event emission + agent identity for compose trust gates
+        observation["_emit_event_fn"] = getattr(_rt, '_emit_event', None) if _rt else None
+        observation["_agent_id"] = getattr(self, 'id', '') or getattr(self, 'agent_type', '')
+
         # BF-186: Thread rank, skill_profile, and crew manifest into chain context
         observation["_agent_rank"] = getattr(self, "rank", None)
         observation["_skill_profile"] = getattr(self, '_skill_profile', None)
@@ -1751,6 +1771,7 @@ class CognitiveAgent(BaseAgent):
                     "chain_steps": len(chain.steps),
                     "_suppressed": True,
                     "_suppression_reason": rejection,
+                    "_composition_brief": None,  # AD-645 Phase 3
                 }
 
         # Construct decision from chain results — prefer REFLECT > COMPOSE > fallback
@@ -1778,6 +1799,13 @@ class CognitiveAgent(BaseAgent):
             llm_output = "\n".join(parts)
             tier_used = results[-1].tier_used if results else ""
 
+        # AD-645 Phase 3: Extract composition brief for metacognitive storage
+        _composition_brief = None
+        for r in results:
+            if r.sub_task_type == SubTaskType.ANALYZE and r.success and r.result:
+                _composition_brief = r.result.get("composition_brief")
+                break
+
         return {
             "action": "execute",
             "llm_output": llm_output,
@@ -1785,6 +1813,7 @@ class CognitiveAgent(BaseAgent):
             "sub_task_chain": True,
             "chain_source": chain.source,  # AD-632g: e.g., "intent_trigger:ward_room_notification"
             "chain_steps": len(chain.steps),  # AD-632g: step count for extraction
+            "_composition_brief": _composition_brief,  # AD-645 Phase 3
         }
 
     async def _execute_chain_with_intent_routing(self, observation: dict) -> dict | None:
@@ -1815,6 +1844,18 @@ class CognitiveAgent(BaseAgent):
         observation["_was_mentioned"] = _params.get("was_mentioned", False)
         observation["_is_dm"] = _params.get("is_dm_channel", False)
 
+        # BF-210: Wire DM conversation partner for compose register adaptation
+        if observation["_is_dm"]:
+            observation["_dm_recipient"] = _params.get("author_callsign", "")
+
+        # AD-649: Communication context for chain register adaptation
+        _channel_name = _params.get("channel_name", "")
+        _is_dm_channel = _params.get("is_dm_channel", False)
+        observation["_communication_context"] = derive_communication_context(
+            _channel_name, _is_dm_channel,
+        )
+        observation["_channel_name"] = _channel_name
+
         # AD-638: Boot camp quality gate relaxation
         _rt = getattr(self, '_runtime', None)
         if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.is_enrolled(self.id):
@@ -1836,10 +1877,30 @@ class CognitiveAgent(BaseAgent):
                 else:
                     observation["_chain_trust_band"] = "mid"
 
+        # AD-653: Wire event emission + agent identity for compose trust gates
+        observation["_emit_event_fn"] = getattr(_rt, '_emit_event', None) if _rt else None
+        observation["_agent_id"] = getattr(self, 'id', '') or getattr(self, 'agent_type', '')
+
         # BF-186: Thread rank, skill_profile, crew manifest
         observation["_agent_rank"] = getattr(self, "rank", None)
         observation["_skill_profile"] = getattr(self, '_skill_profile', None)
         observation["_crew_manifest"] = self._compose_dm_instructions()
+
+        # AD-644 Phase 1: Duty context for chain prompts
+        _duty = _params.get("duty")
+        if _duty:
+            observation["_active_duty"] = _duty
+
+        # AD-646: Universal cognitive baseline — always runs
+        _context_parts = _params.get("context_parts", {})
+        _cognitive_state = self._build_cognitive_state(_context_parts, observation=observation)
+        observation.update(_cognitive_state)
+
+        # AD-644 Phase 3: Situation awareness — environmental perception
+        # Only runs when context_parts available (proactive path)
+        if _context_parts:
+            _situation = self._build_situation_awareness(_context_parts)
+            observation.update(_situation)
 
         # BF-189: Pre-format memories
         raw_memories = observation.get("recent_memories", [])
@@ -1925,6 +1986,7 @@ class CognitiveAgent(BaseAgent):
                 "sub_task_chain": True,
                 "chain_source": f"{full_chain.source}:silent",
                 "chain_steps": len(triage_steps),
+                "_composition_brief": None,  # AD-645 Phase 3
             }
 
         # --- Determine if communication chain should fire ---
@@ -2325,6 +2387,34 @@ class CognitiveAgent(BaseAgent):
                     )
         except Exception:
             logger.debug("AD-573: Working memory action record failed", exc_info=True)
+
+        # AD-645 Phase 3: Store composition brief as metacognitive memory
+        try:
+            _wm = getattr(self, '_working_memory', None)
+            if _wm and decision.get("sub_task_chain") and decision.get("_composition_brief"):
+                brief = decision["_composition_brief"]
+                if isinstance(brief, dict):
+                    # Build a human-readable summary from the brief
+                    _situation = brief.get("situation", "")
+                    _cover = brief.get("response_should_cover")
+                    if isinstance(_cover, list):
+                        _cover_text = "; ".join(str(c) for c in _cover[:3])
+                    else:
+                        _cover_text = str(_cover) if _cover else ""
+                    summary_parts = []
+                    if _situation:
+                        summary_parts.append(_situation)
+                    if _cover_text:
+                        summary_parts.append(f"Planned to cover: {_cover_text}")
+                    if summary_parts:
+                        _wm.record_reasoning(
+                            " | ".join(summary_parts),
+                            source=intent.intent,
+                            metadata={"composition_brief": brief},
+                            knowledge_source="reasoning",
+                        )
+        except Exception:
+            logger.debug("AD-645: Composition brief storage failed", exc_info=True)
 
         # AD-430c (Pillar 5): Store action as episodic memory for crew agents
         # AD-632g: Propagate chain metadata into observation for episode storage
@@ -2911,6 +3001,441 @@ class CognitiveAgent(BaseAgent):
             parts.append(crew_complement)
 
         return "\n".join(parts)
+
+    def _build_cognitive_baseline(self, observation: dict) -> dict[str, str]:
+        """AD-646: Agent-intrinsic cognitive state — runs for ALL chain executions.
+
+        Produces baseline self-knowledge from agent attributes and runtime
+        services. Zero dependency on context_parts (which only proactive.py
+        populates). Ward Room chains get temporal awareness, working memory,
+        trust metrics, ontology, and confabulation guards.
+        """
+        state: dict[str, str] = {}
+
+        # 1. Temporal awareness (AD-502) — self-contained
+        temporal = self._build_temporal_context()
+        if temporal:
+            state["_temporal_context"] = temporal
+
+        # 2. Working memory (AD-573) — self-contained
+        _wm = getattr(self, '_working_memory', None)
+        if _wm:
+            wm_text = _wm.render_context(budget=1500)
+            if wm_text:
+                state["_working_memory_context"] = wm_text
+
+        # 3. Agent metrics — computed from runtime (not _params)
+        try:
+            _rt = getattr(self, '_runtime', None)
+            _trust_val = 0.5
+            _rank_val = "ensign"
+            _agency_val = "ensign"
+            if _rt and hasattr(_rt, 'trust_network'):
+                from probos.crew_profile import Rank
+                from probos.earned_agency import agency_from_rank
+                from probos.config import format_trust
+                _trust_val = _rt.trust_network.get_score(self.id)
+                _rank_val = Rank.from_trust(_trust_val).value
+                _agency_val = agency_from_rank(Rank.from_trust(_trust_val)).value
+                _trust_val = format_trust(_trust_val)
+            state["_agent_metrics"] = (
+                f"Your trust: {_trust_val} | "
+                f"Agency: {_agency_val} | "
+                f"Rank: {_rank_val}"
+            )
+        except Exception:
+            logger.debug("AD-646: Agent metrics baseline computation failed", exc_info=True)
+            state["_agent_metrics"] = "Your trust: 0.5 | Agency: ensign | Rank: ensign"
+
+        # 4. Ontology identity grounding — computed from runtime
+        try:
+            _rt = getattr(self, '_runtime', None)
+            if _rt and hasattr(_rt, 'ontology'):
+                ontology = _rt.ontology.get_crew_context(self.agent_type)
+                if ontology:
+                    onto_parts: list[str] = []
+                    identity = ontology.get("identity", {})
+                    dept = ontology.get("department", {})
+                    vessel = ontology.get("vessel", {})
+                    onto_parts.append(
+                        f"You are {identity.get('callsign', '?')}, "
+                        f"{identity.get('post', '?')} in {dept.get('name', '?')} department."
+                    )
+                    if ontology.get("reports_to"):
+                        onto_parts.append(f"You report to {ontology['reports_to']}.")
+                    if ontology.get("direct_reports"):
+                        onto_parts.append(f"Your direct reports: {', '.join(ontology['direct_reports'])}.")
+                    if ontology.get("peers"):
+                        onto_parts.append(f"Department peers: {', '.join(ontology['peers'])}.")
+                    if vessel:
+                        alert = vessel.get("alert_condition", "GREEN")
+                        onto_parts.append(
+                            f"Ship status: {vessel.get('name', 'ProbOS')} "
+                            f"v{vessel.get('version', '?')} — Alert Condition {alert}."
+                        )
+                    # AD-648: Capability grounding — what this post actually does
+                    caps = ontology.get("capabilities", [])
+                    if caps:
+                        cap_lines = [f"- {c['summary']}" for c in caps]
+                        onto_parts.append(
+                            "Your post capabilities (what you actually do):\n"
+                            + "\n".join(cap_lines)
+                        )
+                    negatives = ontology.get("does_not_have", [])
+                    if negatives:
+                        neg_lines = [f"- {n}" for n in negatives]
+                        onto_parts.append(
+                            "You do NOT have (do not claim or reference these):\n"
+                            + "\n".join(neg_lines)
+                        )
+                    state["_ontology_context"] = "\n".join(onto_parts)
+        except Exception:
+            logger.debug("AD-646: Ontology baseline computation failed", exc_info=True)
+
+        # 5. Source attribution (simplified — no authority classification)
+        memories = observation.get("recent_memories", [])
+        _sources: list[str] = []
+        if memories and isinstance(memories, list):
+            _sources.append(f"episodic memory ({len(memories)} episodes)")
+        if not _sources:
+            _sources.append("training knowledge only")
+        state["_source_attribution_text"] = (
+            f"[Source awareness: Your response draws on: {', '.join(_sources)}. "
+            f"Source quality: unknown.]"
+        )
+
+        # 6. Confabulation guard (generic — no authority)
+        state["_confabulation_guard"] = self._confabulation_guard(None)
+
+        # 7. No-memories flag
+        if not memories or not isinstance(memories, list):
+            state["_no_episodic_memories"] = (
+                "You have no stored episodic memories yet. "
+                "Do not reference or invent past experiences you do not have."
+            )
+
+        # 8. Communication proficiency (AD-625) — self-contained
+        comm_guidance = self._get_comm_proficiency_guidance()
+        if comm_guidance:
+            state["_comm_proficiency"] = comm_guidance
+
+        # 9. Cold-start note (BF-102) — sync check
+        _rt_cs = getattr(self, '_runtime', None)
+        if _rt_cs and getattr(_rt_cs, 'is_cold_start', False):
+            state["_cold_start_note"] = (
+                "SYSTEM NOTE: This is a fresh start. You have no prior "
+                "episodic memories. Do not reference or invent past experiences."
+            )
+
+        # 10. Rich source attribution override (AD-568d)
+        _attr = observation.get("_source_attribution")
+        if _attr:
+            try:
+                _sources_present: list[str] = []
+                if _attr.episodic_count > 0:
+                    _sources_present.append(f"episodic memory ({_attr.episodic_count} episodes)")
+                if _attr.procedural_count > 0:
+                    _sources_present.append(f"learned procedures ({_attr.procedural_count})")
+                if _attr.oracle_used:
+                    _sources_present.append("ship's records")
+                if not _sources_present:
+                    _sources_present.append("training knowledge only")
+                state["_source_attribution_text"] = (
+                    f"<source_awareness>Your response draws on: {', '.join(_sources_present)}. "
+                    f"Primary basis: {_attr.primary_source.value}.</source_awareness>"
+                )
+            except Exception:
+                logger.debug("AD-646b: Rich source attribution failed", exc_info=True)
+
+        # 11. Self-recognition (AD-575) — sync regex
+        _content = observation.get("context", "")
+        if _content:
+            self_cue = self._detect_self_in_content(_content)
+            if self_cue:
+                state["_self_recognition_cue"] = self_cue
+
+        return state
+
+    def _build_cognitive_extensions(self, context_parts: dict) -> dict[str, str]:
+        """AD-646: Context-parts-dependent cognitive state — proactive path only.
+
+        Returns keys that override baseline with richer versions when
+        context_parts is available (populated by proactive.py _gather_context()).
+        """
+        state: dict[str, str] = {}
+
+        # 1. Self-monitoring (AD-504/506a) — requires context_parts
+        self_mon = context_parts.get("self_monitoring")
+        if self_mon:
+            sm_parts: list[str] = []
+
+            # Cognitive zone
+            zone = self_mon.get("cognitive_zone")
+            zone_note = self_mon.get("zone_note")
+            if zone:
+                sm_parts.append(f"<cognitive_zone>{zone.upper()}</cognitive_zone>")
+                if zone_note:
+                    sm_parts.append(zone_note)
+
+            # Recent posts
+            recent_posts = self_mon.get("recent_posts")
+            if recent_posts:
+                sm_parts.append("Your recent posts (review before adding):")
+                for p in recent_posts:
+                    age_str = f"[{p['age']} ago]" if p.get("age") else ""
+                    sm_parts.append(f"  - {age_str} {p['body']}")
+
+            # Self-similarity
+            sim = self_mon.get("self_similarity")
+            if sim is not None:
+                sm_parts.append(f"Self-similarity across recent posts: {sim:.2f}")
+                if sim >= 0.5:
+                    sm_parts.append(
+                        "WARNING: Your recent posts show high similarity. "
+                        "Before posting, ensure you have GENUINELY NEW information. "
+                        "If not, respond with [NO_RESPONSE]."
+                    )
+                elif sim >= 0.3:
+                    sm_parts.append(
+                        "Note: Some similarity in your recent posts. "
+                        "Consider whether you are adding new insight or restating."
+                    )
+
+            # Cooldown
+            if self_mon.get("cooldown_increased"):
+                sm_parts.append(
+                    "Your proactive cooldown has been increased due to rising similarity. "
+                    "This is pacing, not punishment — take time to find fresh perspectives."
+                )
+            if self_mon.get("cooldown_reason"):
+                sm_parts.append(f"  Counselor note: {self_mon['cooldown_reason']}")
+
+            # Memory state awareness
+            mem_state = self_mon.get("memory_state")
+            if mem_state:
+                count = mem_state.get("episode_count", 0)
+                lifecycle = mem_state.get("lifecycle", "")
+                uptime_hrs = mem_state.get("uptime_hours", 0)
+                if count < 5 and lifecycle != "reset" and uptime_hrs > 1:
+                    sm_parts.append(
+                        f"Note: You have {count} episodic memories, but the system has been "
+                        f"running for {uptime_hrs:.1f}h. Other crew may have richer histories. "
+                        "Do not generalize from your own sparse memory to the crew's state."
+                    )
+
+            # Notebook index
+            nb_index = self_mon.get("notebook_index")
+            if nb_index:
+                topics = ", ".join(
+                    f"{e['topic']} (updated {e['updated']})" if e.get("updated") else e["topic"]
+                    for e in nb_index
+                )
+                sm_parts.append(f"Your notebooks: [{topics}]")
+                sm_parts.append(
+                    "Use [NOTEBOOK topic-slug] to update. "
+                    "Use [READ_NOTEBOOK topic-slug] to review a notebook next cycle."
+                )
+
+            # Notebook content
+            nb_content = self_mon.get("notebook_content")
+            if nb_content:
+                sm_parts.append(f'<notebook topic="{nb_content["topic"]}">')
+                sm_parts.append(nb_content["snippet"])
+                sm_parts.append("</notebook>")
+
+            if sm_parts:
+                state["_self_monitoring"] = "\n".join(sm_parts)
+
+        # 2. Source attribution — override baseline with authority-aware version
+        memories = context_parts.get("recent_memories", [])
+        _framing = context_parts.get("_source_framing")
+        if memories or _framing:
+            _sources: list[str] = []
+            if memories:
+                _sources.append(f"episodic memory ({len(memories)} episodes)")
+            if not _sources:
+                _sources.append("training knowledge only")
+            _authority = getattr(_framing, 'authority', None) if _framing else None
+            _auth_label = getattr(_authority, 'value', 'unknown') if _authority else "unknown"
+            state["_source_attribution_text"] = (
+                f"[Source awareness: Your response draws on: {', '.join(_sources)}. "
+                f"Source quality: {_auth_label}.]"
+            )
+
+        # 3. Introspective telemetry (AD-588)
+        telemetry = context_parts.get("introspective_telemetry")
+        if telemetry:
+            state["_introspective_telemetry"] = telemetry
+
+        # 4. Ontology identity grounding — override baseline from context_parts
+        ontology = context_parts.get("ontology")
+        if ontology:
+            onto_parts: list[str] = []
+            identity = ontology.get("identity", {})
+            dept = ontology.get("department", {})
+            vessel = ontology.get("vessel", {})
+            onto_parts.append(
+                f"You are {identity.get('callsign', '?')}, "
+                f"{identity.get('post', '?')} in {dept.get('name', '?')} department."
+            )
+            if ontology.get("reports_to"):
+                onto_parts.append(f"You report to {ontology['reports_to']}.")
+            if ontology.get("direct_reports"):
+                onto_parts.append(f"Your direct reports: {', '.join(ontology['direct_reports'])}.")
+            if ontology.get("peers"):
+                onto_parts.append(f"Department peers: {', '.join(ontology['peers'])}.")
+            if vessel:
+                alert = vessel.get("alert_condition", "GREEN")
+                onto_parts.append(
+                    f"Ship status: {vessel.get('name', 'ProbOS')} "
+                    f"v{vessel.get('version', '?')} — Alert Condition {alert}."
+                )
+            state["_ontology_context"] = "\n".join(onto_parts)
+
+        # 5. Orientation supplement (AD-567g)
+        orientation = context_parts.get("orientation_supplement")
+        if orientation:
+            state["_orientation_supplement"] = orientation
+
+        # 6. Confabulation guard — override baseline with authority-calibrated version
+        _authority_val = getattr(_framing, 'authority', None) if _framing else None
+        if _authority_val is not None:
+            state["_confabulation_guard"] = self._confabulation_guard(_authority_val)
+
+        # 7. No-memories flag — override baseline based on context_parts memories
+        if memories:
+            # Has memories — signal removal of baseline's no-memories flag
+            state["_no_episodic_memories"] = None  # type: ignore[assignment]
+        elif not memories and _framing is not None:
+            # context_parts present but no memories — set flag
+            state["_no_episodic_memories"] = (
+                "You have no stored episodic memories yet. "
+                "Do not reference or invent past experiences you do not have."
+            )
+
+        return state
+
+    def _build_cognitive_state(self, context_parts: dict, observation: dict | None = None) -> dict[str, str]:
+        """AD-644 Phase 2 / AD-646: Populate innate faculty observation keys for chain prompts.
+
+        Delegates to baseline (always runs) + extensions (context_parts-dependent).
+        Baseline provides agent-intrinsic self-knowledge; extensions override with
+        richer versions when proactive.py's context_parts is available.
+        """
+        state = self._build_cognitive_baseline(observation or {})
+        if context_parts:
+            extensions = self._build_cognitive_extensions(context_parts)
+            # Extensions can mark keys for removal by setting value to None
+            for key, val in extensions.items():
+                if val is None:
+                    state.pop(key, None)
+                else:
+                    state[key] = val
+        return state
+
+    def _build_situation_awareness(self, context_parts: dict) -> dict[str, str]:
+        """AD-644 Phase 3: Extract situation awareness data for chain prompts.
+
+        Returns a dict of observation keys → rendered strings. Called from
+        _execute_chain_with_intent_routing() after Phase 2 cognitive state.
+
+        These are environmental percepts — what's happening around the agent.
+        The one-shot path renders these inline in _build_user_message().
+        This method extracts them into observation keys so ANALYZE can
+        render the current situation.
+        """
+        state: dict[str, str] = {}
+
+        # 1. Ward Room activity (AD-413) — dept + all-hands + recreation
+        wr_activity = context_parts.get("ward_room_activity", [])
+        if wr_activity:
+            wr_lines: list[str] = []
+            wr_lines.append("Recent Ward Room discussion:")
+            for a in wr_activity:
+                prefix = "[thread]" if a.get("type") == "thread" else "[reply]"
+                ids = ""
+                if a.get("thread_id"):
+                    ids += f" thread:{a['thread_id'][:8]}"
+                if a.get("post_id"):
+                    ids += f" post:{a['post_id'][:8]}"
+                score = a.get("net_score", 0)
+                score_str = f" [+{score}]" if score > 0 else f" [{score}]" if score < 0 else ""
+                channel = f" ({a['channel']})" if a.get("channel") else ""
+                wr_lines.append(
+                    f"  - {prefix}{ids}{score_str} {a.get('author', '?')}{channel}: "
+                    f"{a.get('body', '?')}"
+                )
+            state["_ward_room_activity"] = "\n".join(wr_lines)
+
+        # 2. Recent bridge alerts
+        alerts = context_parts.get("recent_alerts", [])
+        if alerts:
+            alert_lines = ["Recent bridge alerts:"]
+            for a in alerts:
+                alert_lines.append(
+                    f"  - [{a.get('severity', '?')}] {a.get('title', '?')} "
+                    f"(from {a.get('source', '?')})"
+                )
+            state["_recent_alerts"] = "\n".join(alert_lines)
+
+        # 3. Recent system events
+        events = context_parts.get("recent_events", [])
+        if events:
+            event_lines = ["Recent system events:"]
+            for e in events:
+                event_lines.append(
+                    f"  - [{e.get('category', '?')}] {e.get('event', '?')}"
+                )
+            state["_recent_events"] = "\n".join(event_lines)
+
+        # 4. Infrastructure status (AD-576)
+        infra = context_parts.get("infrastructure_status")
+        if infra:
+            llm_status = infra.get("llm_status", "unknown")
+            state["_infrastructure_status"] = (
+                f"[INFRASTRUCTURE NOTE: Communications array {llm_status}]\n"
+                f"{infra.get('message', '')}"
+            )
+
+        # 5. Subordinate stats (AD-630) — Chiefs only
+        sub_stats = context_parts.get("subordinate_stats")
+        if sub_stats:
+            sub_lines = ["<subordinate_activity>"]
+            for callsign, stats in sub_stats.items():
+                sub_lines.append(
+                    f"  {callsign}: {stats['posts_total']} posts, "
+                    f"{stats['endorsements_given']} endorsements given, "
+                    f"{stats['endorsements_received']} endorsements received, "
+                    f"credibility {stats['credibility_score']:.2f}"
+                )
+            sub_lines.append("</subordinate_activity>")
+            state["_subordinate_stats"] = "\n".join(sub_lines)
+
+        # 6. Cold-start system note (BF-034)
+        system_note = context_parts.get("system_note")
+        if system_note:
+            state["_cold_start_note"] = system_note
+
+        # 7. Active game state (BF-110)
+        active_game = context_parts.get("active_game")
+        if active_game:
+            game_lines = [
+                f"You are playing {active_game['game_type']} against "
+                f"{active_game['opponent']}. "
+                f"Moves so far: {active_game['moves_count']}.",
+                f"\nCurrent board:\n```\n{active_game['board']}\n```",
+            ]
+            if active_game["is_my_turn"]:
+                game_lines.append(
+                    f"**It is YOUR turn.** Valid moves: "
+                    f"{', '.join(str(m) for m in active_game['valid_moves'])}. "
+                    f"Reply with [MOVE position] to play."
+                )
+            else:
+                game_lines.append("Waiting for your opponent to move.")
+            state["_active_game"] = "\n".join(game_lines)
+
+        return state
 
     # AD-588: Introspective self-query detection patterns
     _INTROSPECTIVE_PATTERNS: ClassVar[list[re.Pattern]] = [

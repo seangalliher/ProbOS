@@ -285,9 +285,9 @@ class TestLLMCallConstruction:
         assert handler._llm_client.last_request.temperature == 0.0
 
     @pytest.mark.asyncio
-    async def test_max_tokens_1024(self, handler: AnalyzeHandler) -> None:
+    async def test_max_tokens_1536(self, handler: AnalyzeHandler) -> None:
         await handler(_make_spec(), _make_context(), [])
-        assert handler._llm_client.last_request.max_tokens == 1024
+        assert handler._llm_client.last_request.max_tokens == 1536
 
     @pytest.mark.asyncio
     async def test_system_prompt_excludes_skill_instructions(self, handler: AnalyzeHandler) -> None:

@@ -17,6 +17,19 @@ class Department:
 
 
 @dataclass
+class PostCapability:
+    """A structured capability that a post (billet) provides.
+
+    AD-648: Grounding mechanism to prevent conceptual confabulation.
+    Links to actual tools/processes the post uses.
+    """
+    id: str
+    summary: str
+    tools: list[str] = field(default_factory=list)      # tool/function names used
+    outputs: list[str] = field(default_factory=list)     # artifact types produced
+
+
+@dataclass
 class Post:
     id: str
     title: str
@@ -25,6 +38,8 @@ class Post:
     authority_over: list[str] = field(default_factory=list)  # post_ids
     tier: str = "crew"  # "crew", "utility", "infrastructure", "external"
     clearance: str = ""  # AD-620: RecallTier name (BASIC/ENHANCED/FULL/ORACLE). Empty = no billet clearance.
+    capabilities: list[PostCapability] = field(default_factory=list)  # AD-648
+    does_not_have: list[str] = field(default_factory=list)  # AD-648: negative grounding
 
 
 @dataclass

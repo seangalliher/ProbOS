@@ -83,6 +83,7 @@ class AgentWorkingMemory:
         max_recent_observations: int = 5,
         max_recent_conversations: int = 5,
         max_events: int = 10,
+        max_recent_reasoning: int = 5,
     ) -> None:
         self._token_budget = token_budget
 
@@ -91,6 +92,7 @@ class AgentWorkingMemory:
         self._recent_observations: deque[WorkingMemoryEntry] = deque(maxlen=max_recent_observations)
         self._recent_conversations: deque[WorkingMemoryEntry] = deque(maxlen=max_recent_conversations)
         self._recent_events: deque[WorkingMemoryEntry] = deque(maxlen=max_events)
+        self._recent_reasoning: deque[WorkingMemoryEntry] = deque(maxlen=max_recent_reasoning)
 
         # Active engagements (games, tasks, collaborations)
         self._active_engagements: dict[str, ActiveEngagement] = {}
@@ -157,6 +159,19 @@ class AgentWorkingMemory:
             knowledge_source=knowledge_source,
         ))
 
+    def record_reasoning(
+        self, summary: str, *, source: str, metadata: dict[str, Any] | None = None,
+        knowledge_source: str = "unknown",
+    ) -> None:
+        """AD-645: Record a composition brief or reasoning artifact from the cognitive chain."""
+        self._recent_reasoning.append(WorkingMemoryEntry(
+            content=summary,
+            category="reasoning",
+            source_pathway=source,
+            metadata=metadata or {},
+            knowledge_source=knowledge_source,
+        ))
+
     def add_engagement(self, engagement: ActiveEngagement) -> None:
         """Register an active engagement (game, task, etc.)."""
         self._active_engagements[engagement.engagement_id] = engagement
@@ -215,25 +230,33 @@ class AgentWorkingMemory:
                 action_lines.append(f"  - ({age} ago, {entry.source_pathway}) {entry.content}{_src_tag}")
             sections.append((2, "\n".join(action_lines)))
 
-        # Priority 3: Recent conversations — who I just talked to
+        # Priority 3: Recent reasoning — what I was thinking (AD-645)
+        if self._recent_reasoning:
+            reason_lines = ["Recent reasoning:"]
+            for entry in self._recent_reasoning:
+                age = self._format_age(entry.age_seconds())
+                reason_lines.append(f"  - ({age} ago) {entry.content}")
+            sections.append((3, "\n".join(reason_lines)))
+
+        # Priority 4: Recent conversations — who I just talked to
         if self._recent_conversations:
             conv_lines = ["Recent conversations:"]
             for entry in self._recent_conversations:
                 age = self._format_age(entry.age_seconds())
                 partner = entry.metadata.get("partner", "unknown")
                 conv_lines.append(f"  - ({age} ago) with {partner}: {entry.content}")
-            sections.append((3, "\n".join(conv_lines)))
+            sections.append((4, "\n".join(conv_lines)))
 
-        # Priority 4: Recent observations — what I noticed
+        # Priority 5: Recent observations — what I noticed
         if self._recent_observations:
             obs_lines = ["Recent observations:"]
             for entry in self._recent_observations:
                 age = self._format_age(entry.age_seconds())
                 _src_tag = f" [{entry.knowledge_source}]" if entry.knowledge_source != "unknown" else ""
                 obs_lines.append(f"  - ({age} ago) {entry.content}{_src_tag}")
-            sections.append((4, "\n".join(obs_lines)))
+            sections.append((5, "\n".join(obs_lines)))
 
-        # Priority 5: Cognitive state — zone, cooldown
+        # Priority 6: Cognitive state — zone, cooldown
         if self._cognitive_state:
             state_parts = []
             if "zone" in self._cognitive_state:
@@ -241,14 +264,14 @@ class AgentWorkingMemory:
             if "cooldown_reason" in self._cognitive_state:
                 state_parts.append(f"Cooldown: {self._cognitive_state['cooldown_reason']}")
             if state_parts:
-                sections.append((5, "Cognitive state: " + " | ".join(state_parts)))
+                sections.append((6, "Cognitive state: " + " | ".join(state_parts)))
 
-        # Priority 6 (lowest): Recent events
+        # Priority 7 (lowest): Recent events
         if self._recent_events:
             event_lines = ["Recent events:"]
             for entry in list(self._recent_events)[-5:]:
                 event_lines.append(f"  - {entry.content}")
-            sections.append((6, "\n".join(event_lines)))
+            sections.append((7, "\n".join(event_lines)))
 
         if not sections:
             return ""
@@ -327,6 +350,12 @@ class AgentWorkingMemory:
                  "metadata": e.metadata, "knowledge_source": e.knowledge_source}
                 for e in self._recent_events
             ],
+            "recent_reasoning": [
+                {"content": e.content, "category": e.category,
+                 "source_pathway": e.source_pathway, "timestamp": e.timestamp,
+                 "metadata": e.metadata, "knowledge_source": e.knowledge_source}
+                for e in self._recent_reasoning
+            ],
             "active_engagements": {
                 eid: {
                     "engagement_type": eng.engagement_type,
@@ -374,6 +403,7 @@ class AgentWorkingMemory:
         _restore_entries(data.get("recent_observations", []), wm._recent_observations)
         _restore_entries(data.get("recent_conversations", []), wm._recent_conversations)
         _restore_entries(data.get("recent_events", []), wm._recent_events)
+        _restore_entries(data.get("recent_reasoning", []), wm._recent_reasoning)
 
         for eid, eng_data in data.get("active_engagements", {}).items():
             wm._active_engagements[eid] = ActiveEngagement(

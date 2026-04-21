@@ -51,26 +51,31 @@ export function WardRoomThreadDetail() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      {/* Thread header */}
-      <div style={{ padding: '12px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+      {/* Thread header — compact, fixed */}
+      <div style={{ padding: '12px', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
         <div style={{ fontSize: 16, fontWeight: 600, color: '#e0dcd4' }}>
           {thread.title}
         </div>
         <div style={{ fontSize: 12, color: '#8888a0', marginTop: 4 }}>
           by {thread.author_callsign || 'unknown'} · {timeAgo(thread.created_at)}
         </div>
-        {thread.body && (
-          <div style={{ fontSize: 13, color: '#e0dcd4', marginTop: 8, fontFamily: "'Inter', sans-serif", lineHeight: 1.5 }}>
-            <Markdown>{thread.body}</Markdown>
-          </div>
-        )}
-        <div style={{ marginTop: 8 }}>
-          <EndorsementButtons targetId={thread.id} targetType="thread" netScore={thread.net_score} />
-        </div>
       </div>
 
-      {/* Posts */}
+      {/* Scrollable content — thread body + posts */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px' }}>
+        {thread.body && (
+          <div style={{ fontSize: 13, color: '#e0dcd4', padding: '12px 0', fontFamily: "'Inter', sans-serif", lineHeight: 1.5, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <Markdown>{thread.body}</Markdown>
+            <div style={{ marginTop: 8 }}>
+              <EndorsementButtons targetId={thread.id} targetType="thread" netScore={thread.net_score} />
+            </div>
+          </div>
+        )}
+        {!thread.body && (
+          <div style={{ padding: '8px 0' }}>
+            <EndorsementButtons targetId={thread.id} targetType="thread" netScore={thread.net_score} />
+          </div>
+        )}
         {posts.length === 0 && (
           <div style={{ padding: 16, color: '#666680', fontSize: 12, textAlign: 'center' as const }}>
             No replies yet

@@ -25,6 +25,7 @@ from probos.ontology.models import (
     MessagePattern,
     ModelTier,
     Post,
+    PostCapability,
     QualificationPath,
     QualificationRequirement,
     RepositoryDirectory,
@@ -179,6 +180,16 @@ class OntologyLoader:
             self.departments[dept.id] = dept
 
         for post_data in data.get("posts", []):
+            # AD-648: Parse capability profiles
+            capabilities: list[PostCapability] = []
+            for cap_data in post_data.get("capabilities", []):
+                capabilities.append(PostCapability(
+                    id=cap_data["id"],
+                    summary=cap_data["summary"],
+                    tools=cap_data.get("tools", []),
+                    outputs=cap_data.get("outputs", []),
+                ))
+
             post = Post(
                 id=post_data["id"],
                 title=post_data["title"],
@@ -187,6 +198,8 @@ class OntologyLoader:
                 authority_over=post_data.get("authority_over", []),
                 tier=post_data.get("tier", "crew"),
                 clearance=post_data.get("clearance", ""),
+                capabilities=capabilities,
+                does_not_have=post_data.get("does_not_have", []),
             )
             self.posts[post.id] = post
 

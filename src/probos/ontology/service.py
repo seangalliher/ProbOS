@@ -27,6 +27,7 @@ from probos.ontology.models import (
     MessagePattern,
     ModelTier,
     Post,
+    PostCapability,
     QualificationPath,
     RepositoryDirectory,
     RetentionPolicy,
@@ -115,6 +116,27 @@ class VesselOntologyService:
 
     def get_direct_reports(self, post_id: str) -> list[Post]:
         return self._dept.get_direct_reports(post_id)  # type: ignore[union-attr]
+
+    def get_post_capabilities(self, post_id: str) -> list[PostCapability]:
+        """AD-648: Return structured capabilities for a post."""
+        post = self._loader.posts.get(post_id)
+        if not post:
+            return []
+        return list(post.capabilities)
+
+    def get_agent_capabilities(self, agent_type: str) -> list[PostCapability]:
+        """AD-648: Return capabilities for the post an agent fills."""
+        assignment = self._loader.assignments.get(agent_type)
+        if not assignment:
+            return []
+        return self.get_post_capabilities(assignment.post_id)
+
+    def get_post_negative_grounding(self, post_id: str) -> list[str]:
+        """AD-648: Return 'does not have' list for a post."""
+        post = self._loader.posts.get(post_id)
+        if not post:
+            return []
+        return list(post.does_not_have)
 
     def get_all_assignments(self) -> list[Assignment]:
         return self._dept.get_all_assignments()  # type: ignore[union-attr]
@@ -410,6 +432,20 @@ class VesselOntologyService:
                 ],
                 "note": "Tier 1 (Experience) is your episodic memory. Tier 2 (Records) is the ship's shared knowledge. Tier 3 (Operational State) is infrastructure.",
             }
+
+        # AD-648: Post capability profiles — confabulation prevention
+        if post.capabilities:
+            context["capabilities"] = [
+                {
+                    "id": cap.id,
+                    "summary": cap.summary,
+                    "tools": cap.tools,
+                    "outputs": cap.outputs,
+                }
+                for cap in post.capabilities
+            ]
+        if post.does_not_have:
+            context["does_not_have"] = list(post.does_not_have)
 
         return context
 

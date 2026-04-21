@@ -746,7 +746,9 @@ class WardRoomRouter:
                             winner = result.get("winner", "")
                             body = f"Game over! {'Winner: ' + winner if winner else 'Draw!'}"
                         else:
-                            body = f"```\n{board}\n```\nNext: {game_info['state']['current_player']}"
+                            _next = game_info['state']['current_player']
+                            # BF-212: @mention next player so they receive the notification
+                            body = f"```\n{board}\n```\nYour move, @{_next}"
                         try:
                             await self._ward_room.create_post(
                                 thread_id=player_game["thread_id"],

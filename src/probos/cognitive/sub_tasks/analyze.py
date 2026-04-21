@@ -21,6 +21,10 @@ from probos.utils.json_extract import extract_json
 
 logger = logging.getLogger(__name__)
 
+# AD-646b: Import from parent package — constant is defined before handler imports
+# to avoid circular dependency.
+from probos.cognitive.sub_tasks import AD646B_DEDICATED_KEYS
+
 # ---------------------------------------------------------------------------
 # Analysis mode prompt builders
 # ---------------------------------------------------------------------------
@@ -75,7 +79,8 @@ def _build_thread_analysis_prompt(
         if pr.success and pr.result:
             lines = []
             for k, v in pr.result.items():
-                lines.append(f"- {k}: {v}")
+                if k not in AD646B_DEDICATED_KEYS:
+                    lines.append(f"- {k}: {v}")
             if lines:
                 context_section = "## Prior Data\n\n" + "\n".join(lines) + "\n\n"
             break  # Use first successful prior result
@@ -86,11 +91,72 @@ def _build_thread_analysis_prompt(
     if formatted_memories:
         memory_section = f"## Your Episodic Memories\n\n{formatted_memories}\n\n"
 
+    # AD-646: Universal baseline keys — agent self-knowledge
+    agent_state_parts = []
+
+    _temporal = context.get("_temporal_context", "")
+    if _temporal:
+        agent_state_parts.append(f"**Temporal:** {_temporal}")
+
+    _wm = context.get("_working_memory_context", "")
+    if _wm:
+        agent_state_parts.append(f"**Working Memory:**\n{_wm}")
+
+    _metrics = context.get("_agent_metrics", "")
+    if _metrics:
+        agent_state_parts.append(f"**Status:** {_metrics}")
+
+    _ontology = context.get("_ontology_context", "")
+    if _ontology:
+        agent_state_parts.append(f"**Identity:** {_ontology}")
+
+    _source_attr = context.get("_source_attribution_text", "")
+    if _source_attr:
+        agent_state_parts.append(_source_attr)
+
+    _confab = context.get("_confabulation_guard", "")
+    if _confab:
+        agent_state_parts.append(_confab)
+
+    agent_state_section = ""
+    if agent_state_parts:
+        agent_state_section = "## Your Current State\n\n" + "\n\n".join(agent_state_parts) + "\n\n"
+
+    # AD-646b: Oracle context — cross-tier knowledge grounding
+    oracle_section = ""
+    _oracle = context.get("_oracle_context", "")
+    if _oracle:
+        oracle_section = (
+            "## Cross-Tier Knowledge (Ship's Records)\n\n"
+            "These are NOT your personal experiences. They are from the ship's shared "
+            "knowledge stores. Treat as reference material, not memory.\n\n"
+            f"{_oracle}\n\n"
+        )
+
+    # AD-646b: Self-recognition cue
+    _self_cue = context.get("_self_recognition_cue", "")
+
+    # AD-646b: Self-monitoring and telemetry from QUERY results
+    self_monitoring_section = ""
+    for pr in prior_results:
+        if pr.success and pr.result:
+            _sm = pr.result.get("self_monitoring", "")
+            if _sm:
+                self_monitoring_section = f"## Self-Monitoring\n\n{_sm}\n\n"
+            _telemetry = pr.result.get("introspective_telemetry", "")
+            if _telemetry:
+                self_monitoring_section += f"{_telemetry}\n\n"
+            break
+
     user_prompt = (
         f"## Thread Content\n\n{thread_content}\n\n"
         f"{context_section}"
         f"{memory_section}"
-        f"## Analysis Required\n\n"
+        f"{agent_state_section}"
+        f"{oracle_section}"
+        f"{self_monitoring_section}"
+        + (f"{_self_cue}\n\n" if _self_cue else "")
+        + f"## Analysis Required\n\n"
         f"Analyze this thread from your department's perspective ({department}):\n\n"
         f"1. **topics_covered**: List each post's core claim or contribution (one\n"
         f"   sentence per post). Include the author callsign.\n"
@@ -106,11 +172,36 @@ def _build_thread_analysis_prompt(
         f"   \"SILENT\" (topic outside your scope or fully covered).\n"
         f"6. **intended_actions**: Based on your contribution_assessment, what\n"
         f"   specific actions will you take? List as a JSON array from:\n"
-        f"   ward_room_reply, endorse, silent.\n"
+        f"   ward_room_reply, endorse, silent, speak_freely.\n"
         f"   If RESPOND: [\"ward_room_reply\"]. If ENDORSE: [\"endorse\"].\n"
         f"   If both: [\"ward_room_reply\", \"endorse\"]. If SILENT: [\"silent\"].\n"
+        f"   Add \"speak_freely\" if you have something important to communicate\n"
+        f"   that the expected format would constrain or dilute — a candid\n"
+        f"   assessment, a concern that formal structure would flatten, or a\n"
+        f"   personal insight that matters more than protocol compliance.\n"
+        f"   speak_freely is additive: [\"ward_room_reply\", \"speak_freely\"].\n"
+        f"7. **composition_brief**: Your analytical reasoning and composition plan. Include:\n"
+        f"   - **situation**: What is being discussed? (1-2 sentences)\n"
+        f"   - **key_evidence**: Specific findings, metrics, or conclusions — not just\n"
+        f"     activities. Not 'I talked to Wesley' but 'Wesley showed X pattern that\n"
+        f"     resolved after Y'. Cite numbers, trajectories, and causal chains.\n"
+        f"   - **response_should_cover**: What your reply needs to address.\n"
+        f"   - **tone**: How should the reply be framed? Consider the communication\n"
+        f"     context: {context.get('_communication_context', 'department_discussion')}.\n"
+        f"     Private conversations are warm and exploratory. Bridge briefings are\n"
+        f"     concise and strategic. Department discussions are collegial and\n"
+        f"     technically specific. Recreation is casual and playful. Ship-wide\n"
+        f"     posts are measured and broadly relevant.\n"
+        f"     Include your reasoning process, not just conclusions.\n"
+        f"   - **sources_to_draw_on**: Which knowledge sources are relevant.\n"
+        f"   - **analytical_reasoning**: Your thinking about this situation in 2-3\n"
+        f"     sentences. What does this mean beyond the surface? What's the\n"
+        f"     counterargument or alternative perspective? What would a thoughtful\n"
+        f"     colleague notice that a summary would miss? Write as narrative prose,\n"
+        f"     not bullets.\n"
+        f"   If contribution_assessment is \"SILENT\", composition_brief should be null.\n"
         f"{_format_trigger_awareness(context)}\n"
-        f"Return a JSON object with these 6 keys. No other text."
+        f"Return a JSON object with these 7 keys. No other text."
     )
     return system_prompt, user_prompt
 
@@ -138,7 +229,52 @@ def _build_situation_review_prompt(
         "conversational text outside the JSON block."
     )
 
-    situation_content = context.get("context", "")
+    # AD-644 Phase 3: Build situation content from environmental perception keys.
+    # For proactive_think, context.get("context") is empty — all dynamic data
+    # arrives via observation dict keys populated from context_parts.
+    situation_parts: list[str] = []
+
+    # Original context (non-empty for ward_room_notification, empty for proactive_think)
+    _raw_context = context.get("context", "")
+    if _raw_context:
+        situation_parts.append(_raw_context)
+
+    # Cold-start note (BF-034)
+    _cold_start = context.get("_cold_start_note", "")
+    if _cold_start:
+        situation_parts.append(_cold_start)
+
+    # Infrastructure status (AD-576)
+    _infra = context.get("_infrastructure_status", "")
+    if _infra:
+        situation_parts.append(_infra)
+
+    # Ward Room activity (AD-413)
+    _wr_activity = context.get("_ward_room_activity", "")
+    if _wr_activity:
+        situation_parts.append(_wr_activity)
+
+    # Recent alerts
+    _alerts = context.get("_recent_alerts", "")
+    if _alerts:
+        situation_parts.append(_alerts)
+
+    # Recent events
+    _events = context.get("_recent_events", "")
+    if _events:
+        situation_parts.append(_events)
+
+    # Subordinate stats (AD-630) — Chiefs
+    _sub_stats = context.get("_subordinate_stats", "")
+    if _sub_stats:
+        situation_parts.append(_sub_stats)
+
+    # Active game (BF-110)
+    _game = context.get("_active_game", "")
+    if _game:
+        situation_parts.append(f"--- Active Game ---\n{_game}")
+
+    situation_content = "\n\n".join(situation_parts) if situation_parts else ""
 
     context_section = ""
     for pr in prior_results:
@@ -154,7 +290,75 @@ def _build_situation_review_prompt(
     if formatted_memories:
         memory_section = f"## Your Episodic Memories\n\n{formatted_memories}\n\n"
 
+    # AD-644 Phase 1: Duty context + agent metrics
+    _active_duty = context.get("_active_duty")
+    _agent_metrics = context.get("_agent_metrics", "")
+
+    duty_section = ""
+    if _active_duty:
+        _duty_desc = _active_duty.get("description", _active_duty.get("duty_id", "unknown"))
+        duty_section = (
+            f"## Active Duty\n\n"
+            f"[Duty Cycle: {_duty_desc}]\n"
+            f"{_agent_metrics}\n\n"
+            f"This is a scheduled duty. Assess your area of responsibility and "
+            f"report your findings.\n\n"
+        )
+    else:
+        duty_section = (
+            f"## Proactive Review — No Scheduled Duty\n\n"
+            f"{_agent_metrics}\n\n"
+            f"You have no scheduled duty at this time. Assess the situation and "
+            f"decide what action, if any, is warranted. Options include posting an "
+            f"observation, filing a proposal, replying to a thread, sending a DM, "
+            f"challenging a crewmate to a game, or staying silent. "
+            f"Do not post vague observations — if you act, be specific and actionable. "
+            f"If nothing warrants action, [NO_RESPONSE] is appropriate.\n\n"
+        )
+
+    # AD-644 Phase 2: Innate faculties section
+    innate_parts: list[str] = []
+
+    # Temporal awareness
+    _temporal = context.get("_temporal_context", "")
+    if _temporal:
+        innate_parts.append(f"## Temporal Awareness\n\n{_temporal}")
+
+    # Working memory
+    _wm = context.get("_working_memory_context", "")
+    if _wm:
+        innate_parts.append(f"## Working Memory\n\n{_wm}")
+
+    # Ontology identity
+    _ontology = context.get("_ontology_context", "")
+    if _ontology:
+        innate_parts.append(f"## Your Identity\n\n{_ontology}")
+
+    # Orientation supplement
+    _orient = context.get("_orientation_supplement", "")
+    if _orient:
+        innate_parts.append(f"## Orientation\n\n{_orient}")
+
+    # Self-monitoring
+    _self_mon = context.get("_self_monitoring", "")
+    if _self_mon:
+        innate_parts.append(f"## Self-Monitoring\n\n<recent_activity>\n{_self_mon}\n</recent_activity>")
+
+    # Introspective telemetry
+    _telemetry = context.get("_introspective_telemetry", "")
+    if _telemetry:
+        innate_parts.append(f"## Telemetry\n\n{_telemetry}")
+
+    # Source attribution
+    _source_attr = context.get("_source_attribution_text", "")
+    if _source_attr:
+        innate_parts.append(_source_attr)
+
+    innate_section = "\n\n".join(innate_parts) + "\n\n" if innate_parts else ""
+
     user_prompt = (
+        f"{duty_section}"
+        f"{innate_section}"
         f"## Current Situation\n\n{situation_content}\n\n"
         f"{context_section}"
         f"{memory_section}"
@@ -167,10 +371,38 @@ def _build_situation_review_prompt(
         f"department ({department})? One of: \"HIGH\", \"MEDIUM\", \"LOW\".\n"
         "5. **intended_actions**: What actions will you take? List as a JSON array from:\n"
         "   ward_room_post, ward_room_reply, endorse, notebook, leadership_review,\n"
-        "   proposal, dm, silent. Include ALL that apply.\n"
+        "   proposal, dm, silent, speak_freely. Include ALL that apply.\n"
         "   Examples: [\"ward_room_post\", \"notebook\"], [\"endorse\"], [\"silent\"]\n"
+        "   Add \"speak_freely\" if you have something important to communicate\n"
+        "   that the expected format would constrain or dilute — a candid\n"
+        "   assessment, a concern that formal structure would flatten, or a\n"
+        "   personal insight that matters more than protocol compliance.\n"
+        "   speak_freely is additive: [\"ward_room_post\", \"speak_freely\"].\n"
+        "6. **composition_brief**: Your analytical reasoning and composition plan. Include:\n"
+        "   - **situation**: What is happening? (1-2 sentences)\n"
+        "   - **key_evidence**: Specific findings, metrics, or diagnostic conclusions\n"
+        "     from the situation data — not activity summaries. Cite numbers (counts,\n"
+        "     scores, percentages), temporal changes (improving/declining/stable), and\n"
+        "     causal chains (X happened because Y). 'Talked to crew' is useless;\n"
+        "     '3 agents in AMBER zone, trust trending down 0.72→0.65' is evidence.\n"
+        "   - **response_should_cover**: What your response needs to address (bullet list).\n"
+        f"   - **tone**: How should the response be framed? Consider the communication\n"
+        f"     context: {context.get('_communication_context', 'department_discussion')}.\n"
+        f"     Private conversations are warm and exploratory. Bridge briefings are\n"
+        f"     concise and strategic. Department discussions are collegial and\n"
+        f"     technically specific. Recreation is casual and playful. Ship-wide\n"
+        f"     posts are measured and broadly relevant.\n"
+        f"     Include your reasoning process, not just conclusions.\n"
+        "   - **sources_to_draw_on**: Which knowledge sources are relevant (episodic\n"
+        "     memories, Ward Room observations, duty data, training knowledge).\n"
+        "   - **analytical_reasoning**: Your thinking about this situation in 2-3\n"
+        "     sentences. What does this mean beyond the surface? What's the\n"
+        "     counterargument or alternative perspective? What would a thoughtful\n"
+        "     colleague notice that a summary would miss? Write as narrative prose,\n"
+        "     not bullets.\n"
+        "   If intended_actions is [\"silent\"], composition_brief should be null.\n"
         f"{_format_trigger_awareness(context)}\n"
-        "Return a JSON object with these 5 keys. No other text."
+        "Return a JSON object with these 6 keys. No other text."
     )
     return system_prompt, user_prompt
 
@@ -223,8 +455,25 @@ def _build_dm_comprehension_prompt(
         "2. **key_questions**: List specific questions being asked.\n"
         "3. **required_actions**: What actions are expected of you?\n"
         "4. **emotional_tone**: The sender's emotional tone (neutral, urgent, "
-        "appreciative, concerned, etc.).\n\n"
-        "Return a JSON object with these 4 keys. No other text."
+        "appreciative, concerned, etc.).\n"
+        "5. **composition_brief**: Your analytical reasoning and composition plan. Include:\n"
+        "   - **situation**: What is the sender asking/discussing? (1-2 sentences)\n"
+        "   - **key_evidence**: Specific findings or conclusions you should reference —\n"
+        "     not 'I have memories of X' but what those memories revealed. Cite metrics,\n"
+        "     behavioral patterns, and diagnostic conclusions.\n"
+        "   - **response_should_cover**: What your reply needs to address.\n"
+        "   - **tone**: How should you respond given the emotional_tone and your\n"
+        "     relationship with the sender?\n"
+        f"   - **register**: This is a {context.get('_communication_context', 'private_conversation')}.\n"
+        f"     Be warm, conversational, and exploratory. Share reasoning, not just\n"
+        f"     conclusions. Engage as a trusted colleague, not a reporting system.\n"
+        "   - **sources_to_draw_on**: Which knowledge sources are relevant.\n"
+        "   - **analytical_reasoning**: Your thinking about this situation in 2-3\n"
+        "     sentences. What does this mean beyond the surface? What's the\n"
+        "     counterargument or alternative perspective? What would a thoughtful\n"
+        "     colleague notice that a summary would miss? Write as narrative prose,\n"
+        "     not bullets.\n\n"
+        "Return a JSON object with these 5 keys. No other text."
     )
     return system_prompt, user_prompt
 
@@ -306,7 +555,7 @@ class AnalyzeHandler:
             system_prompt=system_prompt,
             tier=spec.tier,
             temperature=0.0,
-            max_tokens=1024,
+            max_tokens=1536,
         )
 
         try:

@@ -227,6 +227,7 @@ class ScoutAgent(CognitiveAgent):
         super().__init__(**kwargs)
         self._runtime = kwargs.get("runtime")
         self._last_findings: list[ScoutFinding] = []
+        self._pending_seen_repos: list[str] = []  # BF-214: deferred seen marking
 
     @property
     def _data_dir(self) -> Path:
@@ -242,6 +243,23 @@ class ScoutAgent(CognitiveAgent):
     @property
     def _reports_dir(self) -> Path:
         return self._data_dir / "scout_reports"
+
+    def _should_activate_chain(self, observation: dict) -> bool:
+        """BF-209: Scout report duty is a structured process, not a communication task.
+
+        The scout report pipeline (parse → enrich → filter → store → notify)
+        lives in act(). The communication chain bypasses act() entirely.
+        Duty-triggered proactive_think must route through decide() → act().
+
+        Ward room notifications still use the chain (communication task).
+        """
+        intent = observation.get("intent", "")
+        if intent == "proactive_think":
+            params = observation.get("params", {})
+            duty = params.get("duty", {})
+            if duty.get("duty_id") == "scout_report":
+                return False
+        return super()._should_activate_chain(observation)
 
     def _resolve_tier(self) -> str:
         return "standard"
@@ -284,6 +302,14 @@ class ScoutAgent(CognitiveAgent):
             result["context"] = report_text or "No scout reports found yet. Run /scout to generate one."
             return result
 
+        # BF-208: Duty-triggered proactive_think should run GitHub search.
+        # The duty scheduler sends proactive_think with params.duty.duty_id
+        # == "scout_report". perceive() must recognize this as a search trigger,
+        # not just scout_search from interactive commands.
+        _duty = result.get("params", {}).get("duty")
+        if intent_name == "proactive_think" and _duty and _duty.get("duty_id") == "scout_report":
+            intent_name = "scout_search"  # Fall through to search pipeline below
+
         if intent_name != "scout_search":
             return result
 
@@ -308,7 +334,6 @@ class ScoutAgent(CognitiveAgent):
                 full_name = item.get("full_name", "")
                 if full_name in seen:
                     continue
-                seen[full_name] = datetime.now(timezone.utc).isoformat()
                 new_repos.append({
                     "full_name": full_name,
                     "description": item.get("description", "") or "",
@@ -321,7 +346,9 @@ class ScoutAgent(CognitiveAgent):
                     "url": item.get("html_url", ""),
                 })
 
-        _save_seen(seen, self._seen_file)
+        # BF-214: Do NOT save seen here — defer to act() after classification succeeds.
+        # Store pending repo names for act() to mark as seen.
+        self._pending_seen_repos = [r["full_name"] for r in new_repos]
 
         if not new_repos:
             result["context"] = "No new repositories found since last scan."
@@ -356,9 +383,36 @@ class ScoutAgent(CognitiveAgent):
             return {"success": True, "result": decision.get("llm_output", "")}
         llm_output = decision.get("llm_output", "")
         if "No new repositories" in llm_output or not llm_output.strip():
+            # BF-214: "No new repositories" means perceive found nothing new —
+            # no pending repos to mark. Safe to return.
             return {"success": True, "result": "No new findings to report."}
 
         findings = parse_scout_reports(llm_output)
+
+        # BF-214: Mark repos as seen ONLY after classification succeeds.
+        # "Succeeds" = parse_scout_reports found at least one ===SCOUT_REPORT=== block
+        # (including SKIP classifications, which parse_scout_reports filters out but
+        # their presence proves the LLM responded in the correct format).
+        # If findings is empty AND llm_output contains ===SCOUT_REPORT===, the LLM
+        # classified everything as SKIP — that's a valid result, mark as seen.
+        # If findings is empty AND no ===SCOUT_REPORT=== blocks, the LLM failed to
+        # produce the expected format — do NOT mark as seen, allow retry next cycle.
+        _pending = getattr(self, "_pending_seen_repos", [])
+        _classification_succeeded = bool(findings) or "===SCOUT_REPORT===" in llm_output
+        if _pending and _classification_succeeded:
+            seen = _load_seen(self._seen_file)
+            _now = datetime.now(timezone.utc).isoformat()
+            for repo_name in _pending:
+                seen[repo_name] = _now
+            _save_seen(seen, self._seen_file)
+            logger.info("Scout: marked %d repos as seen after classification", len(_pending))
+            self._pending_seen_repos = []
+        elif _pending and not _classification_succeeded:
+            logger.warning(
+                "Scout: classification failed — %d repos NOT marked as seen, will retry next cycle",
+                len(_pending),
+            )
+            self._pending_seen_repos = []
 
         # Enrich with metadata from perceive
         metadata = getattr(self, "_repo_metadata", {})

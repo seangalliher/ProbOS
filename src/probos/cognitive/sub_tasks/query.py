@@ -187,6 +187,88 @@ async def _query_posts_by_author(
     return {"posts_by_author": posts}
 
 
+async def _query_self_monitoring(
+    runtime: Any, spec: SubTaskSpec, context: dict,
+) -> dict:
+    """AD-646b: Self-monitoring for chain ward_room path.
+
+    DM threads: check agent's recent posts for self-repetition (Jaccard).
+    All threads: report cognitive zone if not green.
+    """
+    result_parts: list[str] = []
+
+    # DM self-monitoring: check for self-repetition in thread
+    channel_name = _ctx(context, "channel_name")
+    if channel_name.startswith("dm-"):
+        ward_room = getattr(runtime, "ward_room", None)
+        if ward_room:
+            try:
+                callsign = context.get("callsign", "") or _ctx(context, "callsign")
+                thread_id = _ctx(context, "thread_id")
+                if callsign and thread_id:
+                    posts = await ward_room.get_posts_by_author(
+                        callsign, limit=3, thread_id=thread_id,
+                    )
+                    if posts and len(posts) >= 2:
+                        from probos.cognitive.similarity import jaccard_similarity, text_to_words
+                        word_sets = [text_to_words(p["body"]) for p in posts]
+                        total_sim = 0.0
+                        pair_count = 0
+                        for j in range(len(word_sets)):
+                            for k in range(j + 1, len(word_sets)):
+                                total_sim += jaccard_similarity(word_sets[j], word_sets[k])
+                                pair_count += 1
+                        if pair_count > 0:
+                            avg_sim = total_sim / pair_count
+                            if avg_sim >= 0.4:
+                                result_parts.append(
+                                    f"WARNING: Your last {len(posts)} messages in this thread "
+                                    f"show {avg_sim:.0%} self-similarity. You may be repeating "
+                                    "yourself. If you and the other person agree, conclude the "
+                                    "conversation naturally. Do NOT restate conclusions you've "
+                                    "already communicated. If there's nothing new to add, "
+                                    "respond with exactly: [NO_RESPONSE]"
+                                )
+            except Exception:
+                logger.debug("AD-646b: DM self-monitoring query failed", exc_info=True)
+
+    return {"self_monitoring": "\n".join(result_parts) if result_parts else ""}
+
+
+async def _query_introspective_telemetry(
+    runtime: Any, spec: SubTaskSpec, context: dict,
+) -> dict:
+    """AD-646b: Introspective telemetry for self-referential ward room threads.
+
+    Only fires when the thread content matches introspective patterns (AD-588).
+    Returns rendered telemetry text or empty string.
+    """
+    title = _ctx(context, "title")
+    text = _ctx(context, "text")
+    thread_text = f"{title} {text}".strip()
+
+    if not thread_text:
+        return {"introspective_telemetry": ""}
+
+    from probos.cognitive.cognitive_agent import CognitiveAgent
+    if not CognitiveAgent._is_introspective_query(thread_text):
+        return {"introspective_telemetry": ""}
+
+    telemetry_svc = getattr(runtime, '_introspective_telemetry', None)
+    if not telemetry_svc:
+        return {"introspective_telemetry": ""}
+
+    try:
+        agent_id = context.get("_agent_id", "") or _ctx(context, "agent_id")
+        sovereign_id = context.get("sovereign_id", "") or agent_id
+        snapshot = await telemetry_svc.get_full_snapshot(sovereign_id)
+        rendered = telemetry_svc.render_telemetry_context(snapshot)
+        return {"introspective_telemetry": rendered or ""}
+    except Exception:
+        logger.debug("AD-646b: introspective telemetry query failed", exc_info=True)
+        return {"introspective_telemetry": ""}
+
+
 # ---------------------------------------------------------------------------
 # Dispatch table — Open/Closed: add new operations here, no __call__ changes
 # ---------------------------------------------------------------------------
@@ -201,6 +283,8 @@ _QUERY_OPERATIONS: dict[str, QueryOperation] = {
     "trust_score": _query_trust_score,
     "trust_summary": _query_trust_summary,
     "posts_by_author": _query_posts_by_author,
+    "self_monitoring": _query_self_monitoring,                   # AD-646b
+    "introspective_telemetry": _query_introspective_telemetry,  # AD-646b
 }
 
 
