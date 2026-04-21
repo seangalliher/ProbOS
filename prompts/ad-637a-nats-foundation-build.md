@@ -15,14 +15,15 @@ Create the NATS foundation layer that all subsequent migration sub-ADs (637b–6
 ## Prior Work to Absorb
 
 - **`prompts/ad-637-nats-event-bus.md`** — Master design document. Subject hierarchy, sub-AD decomposition, engineering principles. Read sections on AD-637a and Subject Hierarchy Design.
-- **`src/probos/protocols.py`** — Protocol pattern for interface segregation. `EventEmitterMixin` (lines 18-29), `EpisodicMemoryProtocol` (line 39), `TrustNetworkProtocol` (line 49), etc. Follow this pattern for `NATSBusProtocol`.
-- **`src/probos/startup/infrastructure.py`** — Phase 1 startup pattern. `boot_infrastructure()` function signature, logging convention, `InfrastructureResult` return type.
-- **`src/probos/startup/shutdown.py`** — Shutdown sequence. NATS drain/close goes after all publishers have stopped (after pools stop) but before event log and LLM client close.
+- **`src/probos/protocols.py`** — Protocol pattern for interface segregation. `EventEmitterMixin`, `EpisodicMemoryProtocol`, `TrustNetworkProtocol`, etc. Follow this pattern for `NATSBusProtocol`.
+- **`src/probos/startup/infrastructure.py`** — Phase 1 startup pattern. `boot_infrastructure()` function signature, logging convention, `InfrastructureResult` return type. Note: `identity_registry.start()` here has NO `instance_id` — ship DID is unknown at Phase 1.
+- **`src/probos/startup/shutdown.py`** — Shutdown sequence. NATS drain/close goes after all publishers have stopped (after pools stop, after dream consolidation) but before working memory store and event log close. Anchor: after the `# Stop mesh and consensus services` block, before `# AD-573: Stop working memory store`.
 - **`src/probos/startup/results.py`** — `TypedDict` result types for startup phases.
-- **`src/probos/config.py`** — Pydantic `BaseModel` config pattern. `SystemConfig` at line 1019. Follow existing naming convention.
-- **`src/probos/__main__.py`** — `_ensure_ollama()` pattern (line 80) for pre-flight connectivity check. Follow this pattern for `_ensure_nats()`.
+- **`src/probos/startup/communication.py`** — Phase 4 startup. Ship commissioning happens here (`identity_registry.start(instance_id=...)`), not in Phase 1. NATS subject prefix must be updated after ship DID is known.
+- **`src/probos/config.py`** — Pydantic `BaseModel` config pattern. `SystemConfig` class with all config fields. Follow existing naming convention.
+- **`src/probos/__main__.py`** — `_ensure_ollama()` pattern for pre-flight connectivity check. Follow this pattern for `_check_nats()`.
 - **`config/system.yaml`** — Configuration file structure.
-- **`src/probos/runtime.py`** — `_emit_event()` at line 646, `add_event_listener()` at line 623. These are the current dispatch mechanisms that AD-637d will eventually migrate — understand but don't modify.
+- **`src/probos/runtime.py`** — `_emit_event()` and `add_event_listener()` are the current dispatch mechanisms that AD-637d will eventually migrate — understand but don't modify.
 
 ---
 
@@ -149,66 +150,12 @@ class NATSMessage:
             await self._msg.respond(payload)
 
 
-@runtime_checkable
-class NATSBusProtocol(Protocol):
-    """Interface segregation for NATS bus consumers (AD-514 pattern)."""
+# NOTE: No NATSBusProtocol defined here. The consumer-facing protocol lives in
+# protocols.py (narrow interface for service consumers). NATSBus and MockNATSBus
+# both structurally satisfy it — no separate "management protocol" needed.
 
-    @property
-    def connected(self) -> bool: ...
 
-    @property
-    def subject_prefix(self) -> str: ...
-
-    async def start(self) -> None: ...
-
-    async def stop(self) -> None: ...
-
-    async def publish(
-        self,
-        subject: str,
-        data: dict[str, Any],
-        headers: dict[str, str] | None = None,
-    ) -> None: ...
-
-    async def subscribe(
-        self,
-        subject: str,
-        callback: MessageCallback,
-        queue: str = "",
-    ) -> Any: ...
-
-    async def request(
-        self,
-        subject: str,
-        data: dict[str, Any],
-        timeout: float = 5.0,
-    ) -> NATSMessage | None: ...
-
-    async def js_publish(
-        self,
-        subject: str,
-        data: dict[str, Any],
-        headers: dict[str, str] | None = None,
-    ) -> None: ...
-
-    async def js_subscribe(
-        self,
-        subject: str,
-        callback: MessageCallback,
-        durable: str | None = None,
-        stream: str | None = None,
-    ) -> Any: ...
-
-    async def ensure_stream(
-        self,
-        name: str,
-        subjects: list[str],
-        max_msgs: int = -1,
-        max_age: float = 0,
-    ) -> None: ...
-```
-
-Then implement the `NATSBus` class:
+class NATSBus:
 
 ```python
 class NATSBus:
@@ -301,7 +248,6 @@ class NATSBus:
 
             if self._jetstream_enabled:
                 self._js = self._nc.jetstream()
-                await self._ensure_default_streams()
 
             logger.info(
                 "NATS connected to %s (JetStream=%s)",
@@ -507,45 +453,25 @@ class NATSBus:
         full_subjects = [self._full_subject(s) for s in subjects]
 
         try:
-            await self._js.find_stream_name_by_subject(full_subjects[0])
-            # Stream exists — update subjects if needed
-            logger.debug("JetStream stream '%s' already exists", name)
-        except Exception:
-            # Stream doesn't exist — create it
-            try:
-                config = StreamConfig(
-                    name=name,
-                    subjects=full_subjects,
-                    max_msgs=max_msgs,
-                    max_age=max_age,
-                )
-                await self._js.add_stream(config)
-                logger.info("JetStream stream '%s' created: %s", name, full_subjects)
-            except Exception as e:
-                logger.error("Failed to create stream '%s': %s", name, e)
+            config = StreamConfig(
+                name=name,
+                subjects=full_subjects,
+                max_msgs=max_msgs,
+                max_age=max_age,
+            )
+            await self._js.add_stream(config)
+            logger.info("JetStream stream '%s' ensured: %s", name, full_subjects)
+        except Exception as e:
+            # add_stream is idempotent — if stream exists with same config,
+            # this succeeds. Only errors on config conflicts or server issues.
+            logger.error("Failed to ensure stream '%s': %s", name, e)
 
-    async def _ensure_default_streams(self) -> None:
-        """Pre-create JetStream streams for known ProbOS domains."""
-        # Ward Room — durable delivery for all channel messages
-        await self.ensure_stream(
-            "wardroom",
-            ["wardroom.>"],
-            max_age=86400 * 7,  # 7 days retention
-        )
-
-        # System events — trust updates, circuit breaker, lifecycle
-        await self.ensure_stream(
-            "system_events",
-            ["system.event.>"],
-            max_age=86400,  # 24 hours retention
-        )
-
-        # Intent delivery — agent-to-agent intents
-        await self.ensure_stream(
-            "intents",
-            ["intent.>"],
-            max_age=3600,  # 1 hour retention
-        )
+    # NOTE: No _ensure_default_streams() on startup. Streams are created lazily
+    # by callers via ensure_stream() when they need durable delivery. This avoids
+    # the ship-DID timing problem: streams created in Phase 1 would use
+    # "probos.local.*" subjects, but the real DID prefix isn't known until Phase 4.
+    # Lazy creation is also more cloud-native — commercial overlay provisions
+    # streams via IaC, not application code.
 
     def health(self) -> dict[str, Any]:
         """Return NATS health status for VitalsMonitor integration."""
@@ -824,25 +750,34 @@ async def init_nats(config: "SystemConfig"):
 self.nats_bus = None  # AD-637: NATS event bus (set in startup)
 ```
 
-**8b. Add NATS init call.** In the `start()` method, add the NATS initialization **in Phase 1** (after `boot_infrastructure()` call, before Phase 2):
+**8b-1. Add NATS init call in Phase 1.** In the `start()` method, after `boot_infrastructure()` call and before Phase 2, add:
 
 ```python
 # Phase 1b: NATS Event Bus (AD-637)
 from probos.startup.nats import init_nats
 self.nats_bus = await init_nats(self._config)
-
-# Update subject prefix with ship DID if available
-if self.nats_bus and self.identity_registry:
-    ship_did = getattr(self.identity_registry, 'ship_did', None)
-    if ship_did:
-        self.nats_bus.set_subject_prefix(f"probos.{ship_did}")
 ```
+
+At this point NATS connects but uses the default `probos.local` prefix. The real ship DID prefix is set later.
+
+**8b-2. Update subject prefix after ship commissioning.** The ship DID is NOT available in Phase 1 — `identity_registry.start()` runs without `instance_id` in `infrastructure.py`. Ship commissioning happens later in Phase 4 (`communication.py`). Therefore, do NOT try to set the prefix in Phase 1. Instead, add a hook in the communication startup phase. Find where `identity_registry.start(instance_id=...)` is called in `src/probos/startup/communication.py` (the "Ship Commissioning (AD-441b)" block). **After** that second `identity_registry.start()` call, add:
+
+```python
+# AD-637: Update NATS subject prefix with ship DID
+if nats_bus and identity_registry:
+    cert = identity_registry.get_ship_certificate()
+    if cert:
+        nats_bus.set_subject_prefix(f"probos.{cert.ship_did}")
+        logger.info("NATS subject prefix updated to probos.%s", cert.ship_did)
+```
+
+This requires `nats_bus` to be passed into the communication startup function. Add `nats_bus` as an optional parameter to the communication boot function signature (follow the existing pattern for `identity_registry`, `ward_room`, etc.).
 
 ### 9. Wire NATS into shutdown
 
 **File:** `src/probos/startup/shutdown.py`
 
-Add NATS drain/close **after federation stop** (after line 264, before the dream consolidation block at line 266):
+Add NATS drain/close **after** pools stop AND dream consolidation — near the end of the shutdown sequence. Place it **after** the `# Stop mesh and consensus services` block (which stops gossip, signal_manager, hebbian_router, trust_network) and **before** the `# AD-573: Stop working memory store` block:
 
 ```python
 # Stop NATS event bus (AD-637) — drain after all publishers have stopped
@@ -901,21 +836,6 @@ Call it in `_boot_runtime()` near the Ollama check:
 await _check_nats(config, console)
 ```
 
-### 11. Add NATS health to VitalsMonitor
-
-**File:** `src/probos/agents/vitals_monitor.py`
-
-Search for the `report()` or `_collect_vitals()` method. Add NATS health to the vitals snapshot:
-
-```python
-# AD-637: NATS bus health
-nats_bus = getattr(runtime, 'nats_bus', None)
-if nats_bus:
-    vitals["nats"] = nats_bus.health()
-```
-
-This is a one-line addition — find where other service health is collected and add alongside.
-
 ---
 
 ## Tests
@@ -926,7 +846,8 @@ This is a one-line addition — find where other service health is collected and
 Verify `MockNATSBus` satisfies `NATSBusProtocol`.
 
 ```python
-from probos.mesh.nats_bus import MockNATSBus, NATSBusProtocol
+from probos.mesh.nats_bus import MockNATSBus
+from probos.protocols import NATSBusProtocol
 def test_mock_nats_bus_protocol_compliance():
     bus = MockNATSBus()
     assert isinstance(bus, NATSBusProtocol)
@@ -936,7 +857,8 @@ def test_mock_nats_bus_protocol_compliance():
 Verify `NATSBus` satisfies `NATSBusProtocol`.
 
 ```python
-from probos.mesh.nats_bus import NATSBus, NATSBusProtocol
+from probos.mesh.nats_bus import NATSBus
+from probos.protocols import NATSBusProtocol
 def test_nats_bus_protocol_compliance():
     bus = NATSBus()
     assert isinstance(bus, NATSBusProtocol)
@@ -996,13 +918,16 @@ Verify `MockNATSBus.published` list captures all published messages for test ins
 ### Test 20: `test_subject_prefix_update`
 Verify `set_subject_prefix()` changes the prefix for subsequent operations.
 
+### Test 21: `test_publish_without_stream_uses_core_nats`
+Verify that `js_publish()` falls back to core NATS `publish()` when JetStream is not available (i.e., `self._js is None`). Ensures no silent data loss when streams haven't been created.
+
 ---
 
 ## Verification Checklist
 
-1. `python -m pytest tests/test_ad637a_nats_foundation.py -v` — all 20 tests pass
+1. `python -m pytest tests/test_ad637a_nats_foundation.py -v` — all 21 tests pass
 2. `grep -rn "NATSBus" src/probos/` — found in `mesh/nats_bus.py`, `startup/nats.py`, `runtime.py`
-3. `grep -rn "NATSBusProtocol" src/probos/` — found in `mesh/nats_bus.py`, `protocols.py`
+3. `grep -rn "NATSBusProtocol" src/probos/` — found in `protocols.py` only (consumer-facing)
 4. `grep -rn "NatsConfig" src/probos/` — found in `config.py`
 5. `grep -rn "nats_bus" src/probos/startup/shutdown.py` — shutdown wiring present
 6. `grep -rn "_check_nats" src/probos/__main__.py` — pre-flight check wired
@@ -1019,14 +944,14 @@ Verify `set_subject_prefix()` changes the prefix for subsequent operations.
 | `pyproject.toml` | Add `nats-py>=2.9` dependency |
 | `src/probos/config.py` | Add `NatsConfig` class + `nats` field on `SystemConfig` |
 | `config/system.yaml` | Add `nats:` configuration section |
-| `src/probos/mesh/nats_bus.py` | **NEW** — `NATSMessage`, `NATSBusProtocol`, `NATSBus`, `MockNATSBus` |
-| `src/probos/protocols.py` | Add narrow `NATSBusProtocol` for consumers |
+| `src/probos/mesh/nats_bus.py` | **NEW** — `NATSMessage`, `NATSBus`, `MockNATSBus` |
+| `src/probos/protocols.py` | Add `NATSBusProtocol` for consumers |
 | `src/probos/startup/nats.py` | **NEW** — `init_nats()` startup function |
-| `src/probos/runtime.py` | Add `self.nats_bus` attribute + Phase 1b init + DID prefix update |
-| `src/probos/startup/shutdown.py` | Add NATS drain/close in shutdown sequence |
+| `src/probos/runtime.py` | Add `self.nats_bus` attribute + Phase 1b init |
+| `src/probos/startup/communication.py` | Add `nats_bus` parameter + DID prefix update after ship commissioning |
+| `src/probos/startup/shutdown.py` | Add NATS drain/close (after pools + dream consolidation, before working memory store) |
 | `src/probos/__main__.py` | Add `_check_nats()` pre-flight check |
-| `src/probos/agents/vitals_monitor.py` | Add NATS health to vitals collection |
-| `tests/test_ad637a_nats_foundation.py` | **NEW** — 20 tests |
+| `tests/test_ad637a_nats_foundation.py` | **NEW** — 21 tests |
 
 ## Engineering Principles
 
