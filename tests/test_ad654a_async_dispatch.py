@@ -145,6 +145,7 @@ class TestJetStreamConsumer:
     async def test_js_subscribe_agent_dispatch_creates_consumer(self, intent_bus, mock_nats_bus):
         """subscribe() creates a durable JetStream consumer."""
         mock_nats_bus.js_subscribe = AsyncMock(return_value=MagicMock())
+        intent_bus._defer_dispatch_consumers = False  # BF-223: simulate post-finalize
 
         async def handler(intent):
             return None
@@ -189,6 +190,7 @@ class TestJetStreamConsumer:
             return MagicMock()
 
         intent_bus._nats_bus.js_subscribe = capture_js_sub
+        intent_bus._defer_dispatch_consumers = False  # BF-223: simulate post-finalize
         intent_bus.subscribe("agent-001", handler)
         await asyncio.sleep(0.05)
 
@@ -221,6 +223,7 @@ class TestJetStreamConsumer:
             return MagicMock()
 
         intent_bus._nats_bus.js_subscribe = capture_js_sub
+        intent_bus._defer_dispatch_consumers = False  # BF-223: simulate post-finalize
         intent_bus.subscribe("agent-001", handler)
         await asyncio.sleep(0.05)
 
@@ -234,6 +237,7 @@ class TestJetStreamConsumer:
     async def test_js_consumer_uses_full_agent_id(self, intent_bus, mock_nats_bus):
         """Durable name uses full agent ID, not truncated."""
         mock_nats_bus.js_subscribe = AsyncMock(return_value=MagicMock())
+        intent_bus._defer_dispatch_consumers = False  # BF-223: simulate post-finalize
         full_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
         async def handler(intent):
@@ -291,6 +295,7 @@ class TestJetStreamConsumer:
             return MagicMock()
 
         intent_bus._nats_bus.js_subscribe = capture_js_sub
+        intent_bus._defer_dispatch_consumers = False  # BF-223: simulate post-finalize
         intent_bus.subscribe("agent-001", agent.handle)
         await asyncio.sleep(0.05)
 

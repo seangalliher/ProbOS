@@ -178,6 +178,13 @@ async def finalize_startup(
             )
             logger.info("AD-637c: WARDROOM JetStream stream + consumer wired")
 
+        # BF-223: Create per-agent JetStream dispatch consumers AFTER ship
+        # commissioning has set the stable DID-based NATS prefix. During
+        # startup, IntentBus.subscribe() defers dispatch consumers to avoid
+        # the prefix race (consumers created with stale "probos.local" prefix
+        # would never match messages published with the DID prefix).
+        await runtime.intent_bus.create_dispatch_consumers()
+
         # AD-625: Pre-cache communication proficiency profiles for gate modulation
         if hasattr(runtime, 'skill_service') and runtime.skill_service:
             runtime._comm_profiles = {}

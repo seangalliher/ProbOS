@@ -162,6 +162,23 @@ class NATSBus:
                             entry["subject"], entry["callback"], **entry["kwargs"]
                         )
                     else:
+                        # BF-223: JetStream durable consumers have their filter_subject
+                        # baked into server-side config. Re-subscribing with a new prefix
+                        # fails because NATS rejects the filter mismatch. Must delete the
+                        # old consumer first so js_subscribe() creates a fresh one.
+                        durable_name = entry["kwargs"].get("durable")
+                        stream_name = entry["kwargs"].get("stream")
+                        if durable_name and stream_name:
+                            try:
+                                await self.delete_consumer(stream_name, durable_name)
+                                logger.debug(
+                                    "BF-223: Deleted stale consumer %s/%s before re-subscribe",
+                                    stream_name, durable_name,
+                                )
+                            except Exception as e:
+                                logger.debug(
+                                    "BF-223: Consumer delete before re-subscribe: %s", e
+                                )
                         new_sub = await self.js_subscribe(
                             entry["subject"], entry["callback"], **entry["kwargs"]
                         )

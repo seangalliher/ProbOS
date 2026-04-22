@@ -40,6 +40,11 @@ class IntentBus:
         self._federation_fn: Callable[[IntentMessage], Awaitable[list[IntentResult]]] | None = None
         self._nats_bus: Any = None  # AD-637b: wired via set_nats_bus()
         self._pending_sub_tasks: set[asyncio.Task] = set()  # AD-637z: tracked NATS sub tasks
+        # BF-223: Defer JetStream dispatch consumer creation until after ship
+        # commissioning sets the correct NATS subject prefix (DID-based).
+        # During startup, subscribe() skips dispatch consumers; finalize.py
+        # calls create_dispatch_consumers() after prefix is stable.
+        self._defer_dispatch_consumers: bool = True
 
     def subscribe(self, agent_id: str, handler: IntentHandler, intent_names: list[str] | None = None) -> None:
         """Register an agent's intent handler.
@@ -67,15 +72,44 @@ class IntentBus:
                 task.add_done_callback(self._pending_sub_tasks.discard)
                 task.add_done_callback(self._on_nats_task_done)
                 # AD-654a: Also subscribe to JetStream dispatch subject
-                dispatch_task = loop.create_task(
-                    self._js_subscribe_agent_dispatch(agent_id, handler),
-                    name=f"js-dispatch-sub-{agent_id[:12]}",
-                )
-                self._pending_sub_tasks.add(dispatch_task)
-                dispatch_task.add_done_callback(self._pending_sub_tasks.discard)
-                dispatch_task.add_done_callback(self._on_nats_task_done)
+                # BF-223: Skip during startup — deferred until prefix is stable
+                if not self._defer_dispatch_consumers:
+                    dispatch_task = loop.create_task(
+                        self._js_subscribe_agent_dispatch(agent_id, handler),
+                        name=f"js-dispatch-sub-{agent_id[:12]}",
+                    )
+                    self._pending_sub_tasks.add(dispatch_task)
+                    dispatch_task.add_done_callback(self._pending_sub_tasks.discard)
+                    dispatch_task.add_done_callback(self._on_nats_task_done)
             except RuntimeError:
                 pass
+
+    async def create_dispatch_consumers(self) -> None:
+        """Create JetStream dispatch consumers for all subscribed agents.
+
+        BF-223: Called from finalize.py after ship commissioning sets the
+        correct DID-based NATS prefix. This ensures durable consumers are
+        created with the stable prefix, eliminating the prefix race.
+
+        Also clears _defer_dispatch_consumers so that agents created after
+        startup (e.g., via self-modification) get immediate dispatch consumers.
+        """
+        self._defer_dispatch_consumers = False
+        if not self._nats_bus or not self._nats_bus.connected:
+            logger.debug("BF-223: NATS not connected, skipping dispatch consumer creation")
+            return
+
+        count = 0
+        for agent_id, handler in self._subscribers.items():
+            try:
+                await self._js_subscribe_agent_dispatch(agent_id, handler)
+                count += 1
+            except Exception as e:
+                logger.warning(
+                    "BF-223: Dispatch consumer creation failed for %s: %s",
+                    agent_id[:12], e,
+                )
+        logger.info("BF-223: Created %d JetStream dispatch consumers (prefix-stable)", count)
 
     async def _nats_subscribe_agent(self, agent_id: str, handler: IntentHandler) -> None:
         """Subscribe an agent to their NATS intent subject for send() delivery."""
