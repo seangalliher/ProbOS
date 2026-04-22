@@ -185,7 +185,7 @@ class TestOntologyCrewMatchesLegacy:
         from probos.crew_utils import _WARD_ROOM_CREW
 
         svc = VesselOntologyService(ontology_dir, data_dir=Path(__file__).parent)
-        asyncio.get_event_loop().run_until_complete(svc.initialize())
+        asyncio.run(svc.initialize())
 
         ontology_crew = svc.get_crew_agent_types()
         legacy_crew = _WARD_ROOM_CREW

@@ -1469,7 +1469,7 @@ class TestHandleProposeImprovement:
             episodic_memory=None,
             event_emitter=MagicMock(),
             event_log=AsyncMock(),
-            config=MagicMock(spec=SystemConfig),
+            config=MagicMock(spec=SystemConfig, ward_room=MagicMock()),
         )
 
         # Use the router's handle_propose_improvement directly
@@ -1519,7 +1519,7 @@ class TestHandleProposeImprovement:
             episodic_memory=None,
             event_emitter=MagicMock(),
             event_log=AsyncMock(),
-            config=MagicMock(spec=SystemConfig),
+            config=MagicMock(spec=SystemConfig, ward_room=MagicMock()),
         )
         handler = rt.ward_room_router.handle_propose_improvement
 

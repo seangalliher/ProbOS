@@ -55,7 +55,7 @@ class TestRuntimeWiring:
         )
 
         # Call the callback
-        asyncio.get_event_loop().run_until_complete(rt._on_build_complete(build))
+        asyncio.run(rt._on_build_complete(build))
 
         # Can't easily check _emit_event without full init,
         # but we verify it doesn't crash

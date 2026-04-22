@@ -203,10 +203,10 @@ class TestTryAnchorRecall:
 
     @pytest.mark.asyncio
     async def test_no_signal_returns_none(self):
-        """Query with no anchor signals -> returns None."""
+        """Query with no anchor signals -> returns (None, '')."""
         agent = self._make_agent()
-        result = await agent._try_anchor_recall("what is the time", "agent-1")
-        assert result is None
+        episodes, _ = await agent._try_anchor_recall("what is the time", "agent-1")
+        assert episodes is None
         agent._runtime.episodic_memory.recall_by_anchor.assert_not_called()
 
     @pytest.mark.asyncio
@@ -217,9 +217,9 @@ class TestTryAnchorRecall:
         mock_ep.id = "ep-1"
         agent._runtime.episodic_memory.recall_by_anchor = AsyncMock(return_value=[mock_ep])
 
-        result = await agent._try_anchor_recall("what happened in engineering", "agent-1")
-        assert result is not None
-        assert len(result) == 1
+        episodes, _ = await agent._try_anchor_recall("what happened in engineering", "agent-1")
+        assert episodes is not None
+        assert len(episodes) == 1
         agent._runtime.episodic_memory.recall_by_anchor.assert_called_once()
         call_kwargs = agent._runtime.episodic_memory.recall_by_anchor.call_args.kwargs
         assert call_kwargs["department"] == "engineering"
@@ -229,19 +229,19 @@ class TestTryAnchorRecall:
         """recall_by_anchor returns [] -> returns None."""
         agent = self._make_agent()
         agent._runtime.episodic_memory.recall_by_anchor = AsyncMock(return_value=[])
-        result = await agent._try_anchor_recall("what happened in engineering", "agent-1")
-        assert result is None
+        episodes, _ = await agent._try_anchor_recall("what happened in engineering", "agent-1")
+        assert episodes is None
 
     @pytest.mark.asyncio
     async def test_anchor_recall_failure_returns_none(self):
-        """recall_by_anchor raises -> returns None (log-and-degrade)."""
+        """recall_by_anchor raises -> returns (None, ...) (log-and-degrade)."""
         agent = self._make_agent()
         agent._runtime.episodic_memory.recall_by_anchor = AsyncMock(
             side_effect=RuntimeError("db error")
         )
         # Should not raise
-        result = await agent._try_anchor_recall("what happened in engineering", "agent-1")
-        assert result is None
+        episodes, _ = await agent._try_anchor_recall("what happened in engineering", "agent-1")
+        assert episodes is None
 
     @pytest.mark.asyncio
     async def test_known_callsigns_passed(self):
@@ -252,9 +252,9 @@ class TestTryAnchorRecall:
         agent._runtime.episodic_memory.recall_by_anchor = AsyncMock(return_value=[mock_ep])
 
         # "from Worf" should be validated against known callsigns
-        result = await agent._try_anchor_recall("observations from Worf", "agent-1")
+        episodes, _ = await agent._try_anchor_recall("observations from Worf", "agent-1")
         agent._runtime.callsign_registry.all_callsigns.assert_called()
-        assert result is not None
+        assert episodes is not None
 
 
 # ===========================================================================

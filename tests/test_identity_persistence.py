@@ -139,7 +139,7 @@ class TestBF057IdentityPersistence:
         assert _existing == ""  # No existing identity → ceremony would run
 
         # Verify ceremony would produce the right name
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             rt.onboarding.run_naming_ceremony(agent)
         )
         assert result == "Forge"

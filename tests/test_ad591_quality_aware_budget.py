@@ -230,10 +230,10 @@ class TestQualityFloorStop:
             "agent-001", "test query",
             context_budget=99999,
             max_recall_episodes=99,
-            recall_quality_floor=0.55,
+            recall_quality_floor=0.56,
         )
-        # Third episode (composite ~0.24) should be excluded because it would
-        # drop mean below 0.55: (0.69 + 0.66 + 0.24) / 3 = 0.53 < 0.55
+        # Third episode (composite ~0.26) should be excluded because it would
+        # drop mean below 0.56: (0.71 + 0.68 + 0.26) / 3 = 0.55 < 0.56
         assert len(results) <= 2
 
     @pytest.mark.asyncio

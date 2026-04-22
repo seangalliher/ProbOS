@@ -165,7 +165,7 @@ class TestSeedProfiles:
     def test_load_seed_builder(self) -> None:
         from probos.crew_profile import load_seed_profile
         seed = load_seed_profile("builder")
-        assert seed.get("callsign") == "Scotty"
+        assert seed.get("callsign") == "Forge"
         assert seed["personality"]["conscientiousness"] == 0.9
 
     def test_load_seed_unknown_falls_back_to_default(self) -> None:

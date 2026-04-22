@@ -27,11 +27,13 @@ def _make_shell(session_agent_id="scout-123"):
     cr.load_from_profiles()
     mock_agent = MagicMock()
     mock_agent.id = session_agent_id
+    mock_agent.sovereign_id = None
     mock_agent.is_alive = True
     mock_reg = MagicMock()
     mock_reg.get_by_pool.return_value = [mock_agent]
     cr.bind_registry(mock_reg)
     runtime.callsign_registry = cr
+    runtime.registry.get = MagicMock(return_value=mock_agent)
 
     # IntentBus
     send_result = IntentResult(

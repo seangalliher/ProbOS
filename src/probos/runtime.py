@@ -1577,6 +1577,20 @@ class ProbOSRuntime:
         self.self_mod_manager = fin.self_mod_manager
         self.dream_adapter = fin.dream_adapter
 
+        # AD-654a: Wire up WardRoomPostPipeline for agent self-posting
+        from probos.ward_room_pipeline import WardRoomPostPipeline
+        self.ward_room_post_pipeline: WardRoomPostPipeline | None = None
+        if self.ward_room:
+            self.ward_room_post_pipeline = WardRoomPostPipeline(
+                ward_room=self.ward_room,
+                ward_room_router=self.ward_room_router,
+                proactive_loop=self.proactive_loop,
+                trust_network=self.trust_network,
+                callsign_registry=getattr(self, 'callsign_registry', None),
+                config=self.config,
+                runtime=self,
+            )
+
     # --- BF-071: Retention prune loops ---
 
     async def _event_log_prune_loop(self) -> None:

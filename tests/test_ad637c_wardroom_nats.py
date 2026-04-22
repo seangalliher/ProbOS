@@ -180,7 +180,7 @@ class TestWardRoomNATSEmission:
 
         assert "WARDROOM" in mock_nats_bus._streams
         stream = mock_nats_bus._streams["WARDROOM"]
-        assert stream["subjects"] == ["wardroom.events.>"]
+        assert stream["subjects"] == ["probos.test.wardroom.events.>"]
         assert stream["max_msgs"] == 10000
         assert stream["max_age"] == 3600
 

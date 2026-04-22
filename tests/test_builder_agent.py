@@ -1151,7 +1151,7 @@ class TestTransporterEvents:
             target_files=["src/foo.py"],
         ))
         mock_llm = AsyncMock(side_effect=Exception("no LLM"))
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             decompose_blueprint(bp, mock_llm, on_event=capture_event)
         )
         # Should have emitted transporter_decomposed
@@ -1168,7 +1168,7 @@ class TestTransporterEvents:
         ))
         mock_llm = AsyncMock(side_effect=Exception("no LLM"))
         # Should not raise — on_event defaults to None
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             decompose_blueprint(bp, mock_llm)
         )
         assert len(result.chunks) > 0
@@ -1189,7 +1189,7 @@ class TestTransporterEvents:
             error=None,
             content="===FILE: f1.py===\n===CREATE===\ndef foo(): pass\n===END==="
         )
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             execute_chunks(bp, mock_llm, on_event=capture_event)
         )
         event_types = [e[0] for e in events]
@@ -1208,7 +1208,7 @@ class TestTransporterEvents:
             error=None,
             content="===FILE: f1.py===\n===CREATE===\ndef foo(): pass\n===END==="
         )
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             execute_chunks(bp, mock_llm)
         )
         assert len(result.results) == 1
@@ -1230,7 +1230,7 @@ class TestTransporterEvents:
             error=None,
             content="===FILE: f1.py===\n===CREATE===\ndef foo(): pass\n===END==="
         )
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             execute_chunks(bp, mock_llm, on_event=capture_event)
         )
         wave_events = [e for e in events if e[0] == "transporter_wave_start"]
@@ -1252,7 +1252,7 @@ class TestTransporterEvents:
         ]
         mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.side_effect = Exception("LLM error")
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             execute_chunks(bp, mock_llm, on_event=capture_event)
         )
         chunk_events = [e for e in events if e[0] == "transporter_chunk_done"]
@@ -1275,7 +1275,7 @@ class TestTransporterEvents:
             error=None,
             content="===FILE: f1.py===\n===CREATE===\ndef foo(): pass\n===END==="
         )
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             execute_chunks(bp, mock_llm, on_event=capture_event)
         )
         done_events = [e for e in events if e[0] == "transporter_execution_done"]
@@ -1298,7 +1298,7 @@ class TestTransporterEvents:
         blocks = [{"path": "f.py", "content": "x = 1", "mode": "create", "after_line": None}]
         vr = ValidationResult(valid=True, checks_passed=5)
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             _emit_transporter_events(rt, "build-1", bp, blocks, vr)
         )
         event_types = [e[0] for e in emitted]
@@ -1358,7 +1358,7 @@ class TestTransporterBuild:
         )
         mock_llm.complete.return_value = mock_response
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             transporter_build(spec, mock_llm)
         )
         assert len(result) >= 1
@@ -1371,7 +1371,7 @@ class TestTransporterBuild:
         mock_llm = AsyncMock(spec=BaseLLMClient)
         mock_llm.complete.side_effect = Exception("LLM down")
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             transporter_build(spec, mock_llm)
         )
         assert result == []
@@ -1391,7 +1391,7 @@ class TestTransporterBuild:
         )
         mock_llm.complete.return_value = mock_response
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             transporter_build(spec, mock_llm, on_event=capture)
         )
         # Should have decompose + wave + chunk + execution events
@@ -1407,7 +1407,7 @@ class TestTransporterBuild:
         )
         mock_llm.complete.return_value = mock_response
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             transporter_build(spec, mock_llm)
         )
         # Should succeed without errors
@@ -1424,7 +1424,7 @@ class TestTransporterBuild:
         )
         mock_llm.complete.return_value = mock_response
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             transporter_build(spec, mock_llm)
         )
         # Blocks returned even with validation errors (test-fix loop handles it)
@@ -1443,7 +1443,7 @@ class TestBuilderTransporterIntegration:
             "file_changes": [{"path": "a.py", "content": "x=1", "mode": "create", "after_line": None}],
             "llm_output": "[Transporter]",
         }
-        result = asyncio.get_event_loop().run_until_complete(agent.act(decision))
+        result = asyncio.run(agent.act(decision))
         assert result["success"] is True
         assert result["result"]["change_count"] == 1
 
@@ -1454,7 +1454,7 @@ class TestBuilderTransporterIntegration:
         decision = {
             "llm_output": "===FILE: a.py===\n===CREATE===\ndef bar(): pass\n===END FILE===",
         }
-        result = asyncio.get_event_loop().run_until_complete(agent.act(decision))
+        result = asyncio.run(agent.act(decision))
         assert result["success"] is True
         assert result["result"]["change_count"] == 1
 

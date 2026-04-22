@@ -1818,6 +1818,22 @@ class ProactiveCognitiveLoop:
                 return get_gate_overrides(rec.proficiency)
         return None
 
+    # ------------------------------------------------------------------
+    # AD-654a: Public wrappers for WardRoomPostPipeline cross-module calls
+    # ------------------------------------------------------------------
+
+    async def extract_and_execute_actions(
+        self, agent: Any, text: str,
+    ) -> tuple[str, list[dict]]:
+        """Public wrapper for _extract_and_execute_actions (AD-654a)."""
+        return await self._extract_and_execute_actions(agent, text)
+
+    async def is_similar_to_recent_posts(
+        self, agent: Any, text: str, threshold: float = 0.5,
+    ) -> bool:
+        """Public wrapper for _is_similar_to_recent_posts (AD-654a)."""
+        return await self._is_similar_to_recent_posts(agent, text, threshold)
+
     async def _is_similar_to_recent_posts(self, agent: Any, text: str, threshold: float = 0.5) -> bool:
         """BF-032: Check if proposed post is too similar to agent's recent Ward Room posts.
 

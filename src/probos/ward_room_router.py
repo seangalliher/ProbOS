@@ -112,6 +112,20 @@ class WardRoomRouter:
             self._evict_stale_responses()
 
     # ------------------------------------------------------------------
+    # AD-654a: Public wrappers for WardRoomPostPipeline cross-module calls
+    # ------------------------------------------------------------------
+
+    async def extract_recreation_commands(
+        self, agent: Any, text: str, callsign: str,
+    ) -> str:
+        """Public wrapper for _extract_recreation_commands (AD-654a)."""
+        return await self._extract_recreation_commands(agent, text, callsign)
+
+    def update_cooldown(self, agent_id: str) -> None:
+        """Record ward-room cooldown timestamp for *agent_id* (AD-654a)."""
+        self._cooldowns[agent_id] = time.time()
+
+    # ------------------------------------------------------------------
     # BF-200: Cap notification posting
     # ------------------------------------------------------------------
 
@@ -446,7 +460,6 @@ class WardRoomRouter:
         """
         from probos.types import IntentMessage
         now = time.time()
-        responded_this_event = False
 
         # ---------------------------------------------------------------
         # BF-201: Total thread post cap (replaces per-agent and department gate)
@@ -527,112 +540,27 @@ class WardRoomRouter:
             return
 
         # ---------------------------------------------------------------
-        # Phase 2: Dispatch — parallel for Captain, sequential otherwise
+        # Phase 2: Dispatch — async fire-and-forget via JetStream (AD-654a)
         # ---------------------------------------------------------------
-        dispatch_results: list[tuple[str, object]] = []
-
-        if is_captain:
-            # BF-193: Parallel dispatch — all crew hear Captain simultaneously
-            async def _dispatch_one(aid: str, intent: IntentMessage):
-                try:
-                    return aid, await self._intent_bus.send(intent)
-                except Exception as e:
-                    logger.warning("Ward Room agent notification failed for %s: %s", aid, e)
-                    return aid, None
-
-            dispatch_results = list(await asyncio.gather(
-                *[_dispatch_one(aid, intent) for aid, intent in eligible],
-            ))
-        else:
-            # Non-Captain: sequential (prevents thread explosion)
-            for agent_id, intent in eligible:
-                try:
-                    result = await self._intent_bus.send(intent)
-                    dispatch_results.append((agent_id, result))
-                except Exception as e:
-                    logger.warning("Ward Room agent notification failed for %s: %s", agent_id, e)
-                    dispatch_results.append((agent_id, None))
+        # Agents receive notifications via durable JetStream consumers and
+        # post their own responses via WardRoomPostPipeline. The router's
+        # job ends at dispatch — no result collection needed.
+        for agent_id, intent in eligible:
+            await self._intent_bus.dispatch_async(intent)
 
         # ---------------------------------------------------------------
-        # Phase 3: Sequential result processing
+        # Phase 3: Removed (AD-654a)
         # ---------------------------------------------------------------
-        for agent_id, result in dispatch_results:
-            if not result or not result.result:
-                continue
-            response_text = str(result.result).strip()
-            # BF-199: Extract text from leaked chain JSON
-            from probos.utils.text_sanitize import sanitize_ward_room_text
-            response_text = sanitize_ward_room_text(response_text)
-            if not response_text or response_text == "[NO_RESPONSE]":
-                continue
+        # Agents now process responses and post via WardRoomPostPipeline.
+        # Router dispatch is complete. Round tracking for agent-to-agent
+        # loop prevention remains in route_event_coalesced eligibility checks.
 
-            # Get agent's callsign for attribution
-            agent = self._registry.get(agent_id)
-            agent_callsign = ""
-            if agent and self._callsign_registry:
-                agent_callsign = self._callsign_registry.get_callsign(agent.agent_type)
-
-            # BF-196: Unified action extraction — single pipeline shared with
-            # proactive loop.  Handles endorsements, replies, DMs, notebooks,
-            # rank gating, and markdown tag stripping in one place.  Replaces
-            # piecemeal per-tag extraction that drifted out of sync (BF-195).
-            if agent and self._proactive_loop:
-                response_text, _actions = await self._proactive_loop._extract_and_execute_actions(
-                    agent, response_text,
-                )
-                response_text = response_text.strip()
-            else:
-                # Fallback when proactive loop unavailable: endorsements only
-                response_text, endorsements = self.extract_endorsements(response_text)
-                if endorsements:
-                    await self.process_endorsements(endorsements, agent_id=agent_id)
-
-            # BF-197: Self-similarity guard — prevent near-duplicate posts
-            # via the router path (mirrors BF-032 in proactive loop).
-            if agent and self._proactive_loop:
-                if await self._proactive_loop._is_similar_to_recent_posts(
-                    agent, response_text,
-                ):
-                    logger.debug(
-                        "BF-197: Suppressed similar router response from %s",
-                        agent.agent_type,
-                    )
-                    continue
-
-            # BF-123: Recreation commands (router-specific, not in proactive pipeline)
-            if agent and self._proactive_loop:
-                response_text = await self._extract_recreation_commands(
-                    agent, response_text, agent_callsign,
-                )
-            if not response_text:
-                continue
-            # BF-174: Strip self-monitoring bracket markers
-            from probos.proactive import _strip_bracket_markers
-            response_text = _strip_bracket_markers(response_text)
-            if not response_text:
-                continue
-            await self._ward_room.create_post(
-                thread_id=thread_id,
-                author_id=agent_id,
-                body=response_text,
-                parent_id=data.get("post_id") if event_type == "ward_room_post_created" else None,
-                author_callsign=agent_callsign or (agent.agent_type if agent else "unknown"),
-            )
-            # BF-198: Record response so proactive loop doesn't double-post
-            self.record_agent_response(agent_id, thread_id)
-            # AD-625: Record communication exercise
-            _rt = getattr(self._proactive_loop, '_runtime', None) if self._proactive_loop else None
-            if _rt and hasattr(_rt, 'skill_service') and _rt.skill_service:
-                try:
-                    await _rt.skill_service.record_exercise(agent_id, "communication")
-                except Exception:
-                    logger.debug("Skill exercise recording failed for %s", agent_id, exc_info=True)
-            self._cooldowns[agent_id] = time.time()
-            round_participants.add(agent_id)
-            responded_this_event = True
-
-        # Increment round counter if any agent responded to an agent post
-        if is_agent_post and responded_this_event:
+        # AD-654a: Round tracking for agent-to-agent loop prevention.
+        # In async dispatch, we don't know exactly when agents respond.
+        # Increment the round counter on agent-authored events ONLY when
+        # at least one agent was dispatched to (otherwise round counter
+        # inflates on events where all agents are filtered out).
+        if is_agent_post and eligible:
             self._thread_rounds[thread_id] = current_round + 1
 
     async def _extract_recreation_commands(

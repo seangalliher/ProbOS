@@ -80,7 +80,7 @@ class SkillValidator:
                                  ast.FunctionDef, ast.ClassDef,
                                  ast.Assign, ast.AnnAssign)):
                 continue
-            if isinstance(node, ast.Expr) and isinstance(node.value, (ast.Constant, ast.Str)):
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
                 continue  # docstrings are fine
             errors.append(
                 f"Module-level side effect: {type(node).__name__} at line {node.lineno}"

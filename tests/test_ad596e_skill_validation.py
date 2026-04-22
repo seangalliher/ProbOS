@@ -659,7 +659,7 @@ def test_validate_skill_not_found():
     catalog = CognitiveSkillCatalog()
 
     import asyncio
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         catalog.validate_skill("nonexistent")
     )
     assert not result.valid

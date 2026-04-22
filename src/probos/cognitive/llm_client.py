@@ -289,8 +289,18 @@ class OpenAICompatibleClient(BaseLLMClient):
                     },
                     timeout=5.0,
                 )
-            return resp.status_code < 500
-        except (httpx.ConnectError, httpx.TimeoutException, OSError):
+            reachable = resp.status_code < 500
+            if not reachable:
+                logger.warning(
+                    "LLM health check failed: tier=%s, model=%s, status=%d",
+                    tier, tc["model"], resp.status_code,
+                )
+            return reachable
+        except (httpx.ConnectError, httpx.TimeoutException, OSError) as e:
+            logger.warning(
+                "LLM health check failed: tier=%s, model=%s, url=%s, error=%s: %s",
+                tier, tc["model"], tc["base_url"], type(e).__name__, e,
+            )
             return False
 
     async def complete(self, request: LLMRequest, *, priority: Priority = Priority.NORMAL) -> LLMResponse:
@@ -389,9 +399,15 @@ class OpenAICompatibleClient(BaseLLMClient):
                         while len(self._cache) > self._cache_max_entries:
                             self._cache.popitem(last=False)
                     # BF-069: Reset failure counter on successful completion
+                    prev_failures = self._consecutive_failures[attempt_tier]
                     self._consecutive_failures[attempt_tier] = 0
                     self._consecutive_429s[attempt_tier] = 0  # AD-617: Reset 429 backoff
                     self._last_success[attempt_tier] = time.monotonic()
+                    if prev_failures > 0:
+                        logger.info(
+                            "LLM tier %s recovered after %d consecutive failures (model=%s)",
+                            attempt_tier, prev_failures, model,
+                        )
                     if attempt_tier != tier:
                         logger.info(
                             "LLM tier fallback: %s → %s (model=%s)",
@@ -400,15 +416,25 @@ class OpenAICompatibleClient(BaseLLMClient):
                     return response
                 except httpx.ConnectError:
                     last_error = f"LLM endpoint unreachable at {tc['base_url']}"
-                    logger.warning("%s (tier=%s)", last_error, attempt_tier)
                     self._consecutive_failures[attempt_tier] += 1
                     self._last_failure[attempt_tier] = time.monotonic()
+                    logger.warning(
+                        "%s (tier=%s, model=%s, consecutive_failures=%d/%d)",
+                        last_error, attempt_tier, model,
+                        self._consecutive_failures[attempt_tier],
+                        self._UNREACHABLE_THRESHOLD,
+                    )
                     break  # Move to next tier
                 except httpx.TimeoutException:
                     last_error = f"LLM request timed out after {tc['timeout']:.0f}s"
-                    logger.warning("%s (model=%s, tier=%s)", last_error, model, attempt_tier)
                     self._consecutive_failures[attempt_tier] += 1
                     self._last_failure[attempt_tier] = time.monotonic()
+                    logger.warning(
+                        "%s (tier=%s, model=%s, consecutive_failures=%d/%d)",
+                        last_error, attempt_tier, model,
+                        self._consecutive_failures[attempt_tier],
+                        self._UNREACHABLE_THRESHOLD,
+                    )
                     break  # Move to next tier
                 except httpx.HTTPStatusError as e:
                     status_code = e.response.status_code
@@ -435,18 +461,27 @@ class OpenAICompatibleClient(BaseLLMClient):
                         continue
                     else:
                         last_error = f"LLM endpoint returned HTTP {status_code}"
-                        logger.warning(
-                            "LLM endpoint returned HTTP %d (tier=%s): %s",
-                            status_code, attempt_tier, e.response.text[:200],
-                        )
                         self._consecutive_failures[attempt_tier] += 1
                         self._last_failure[attempt_tier] = time.monotonic()
+                        logger.warning(
+                            "%s (tier=%s, model=%s, consecutive_failures=%d/%d): %s",
+                            last_error, attempt_tier, model,
+                            self._consecutive_failures[attempt_tier],
+                            self._UNREACHABLE_THRESHOLD,
+                            e.response.text[:200],
+                        )
                         break  # Move to next tier
                 except Exception as e:
                     last_error = f"{type(e).__name__}: {e}"
-                    logger.warning("LLM call failed (tier=%s): %s", attempt_tier, last_error)
                     self._consecutive_failures[attempt_tier] += 1
                     self._last_failure[attempt_tier] = time.monotonic()
+                    logger.warning(
+                        "LLM call failed (tier=%s, model=%s, consecutive_failures=%d/%d): %s",
+                        attempt_tier, model,
+                        self._consecutive_failures[attempt_tier],
+                        self._UNREACHABLE_THRESHOLD,
+                        last_error,
+                    )
                     break  # Move to next tier
 
         # Try cache (keyed by original tier)
@@ -637,8 +672,19 @@ class OpenAICompatibleClient(BaseLLMClient):
                 status = "operational"
             elif failures < self._UNREACHABLE_THRESHOLD:
                 status = "degraded"
+                logger.info(
+                    "LLM tier %s degraded: %d consecutive failures (threshold=%d)",
+                    tier, failures, self._UNREACHABLE_THRESHOLD,
+                )
             else:
                 status = "unreachable"
+                logger.warning(
+                    "LLM tier %s unreachable: %d consecutive failures (threshold=%d), "
+                    "last_success=%.1fs ago, last_failure=%.1fs ago",
+                    tier, failures, self._UNREACHABLE_THRESHOLD,
+                    time.monotonic() - self._last_success.get(tier, 0) if self._last_success.get(tier) else -1,
+                    time.monotonic() - self._last_failure.get(tier, 0) if self._last_failure.get(tier) else -1,
+                )
             tiers[tier] = {
                 "status": status,
                 "consecutive_failures": failures,

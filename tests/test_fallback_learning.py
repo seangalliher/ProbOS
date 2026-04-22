@@ -57,6 +57,8 @@ def _make_cognitive_agent(**overrides):
     agent._skills = {}
     agent._strategy_advisor = None
     agent._last_fallback_info = None
+    agent._pending_sub_task_chain = None
+    agent._sub_task_executor = None
     return agent
 
 

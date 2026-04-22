@@ -86,7 +86,7 @@ class TestGetThreadPostsTemporal:
             ("p2", "bob", "hello", 2.0),
         ])
         tm = FakeThreadManager(posts)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tm.get_thread_posts_temporal("t1")
         )
         # Flat list, no nesting
@@ -100,7 +100,7 @@ class TestGetThreadPostsTemporal:
             ("p2", "bob", "reply", 2.0),
         ])
         tm = FakeThreadManager(posts)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tm.get_thread_posts_temporal("t1")
         )
         assert result[0]["body"] == "thread body here"
@@ -112,7 +112,7 @@ class TestGetThreadPostsTemporal:
             ("p2", "bob", "reply to root", 2.0),
         ])
         tm = FakeThreadManager(posts)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tm.get_thread_posts_temporal("t1")
         )
         assert result[1]["parent_id"] == "p1"
@@ -143,7 +143,7 @@ class TestEchoChainDetection:
     def test_echo_chain_detected_three_agents(self, echo_posts):
         from probos.ward_room.thread_echo import ThreadEchoAnalyzer
         analyzer = ThreadEchoAnalyzer(FakeThreadManager(echo_posts), min_chain_length=3)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             analyzer.analyze("thread-1")
         )
         assert result.echo_detected is True
@@ -151,7 +151,7 @@ class TestEchoChainDetection:
     def test_echo_chain_detected_four_agents(self, echo_posts_4):
         from probos.ward_room.thread_echo import ThreadEchoAnalyzer
         analyzer = ThreadEchoAnalyzer(FakeThreadManager(echo_posts_4), min_chain_length=3)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             analyzer.analyze("thread-1")
         )
         assert result.echo_detected is True
@@ -160,7 +160,7 @@ class TestEchoChainDetection:
     def test_source_identification(self, echo_posts):
         from probos.ward_room.thread_echo import ThreadEchoAnalyzer
         analyzer = ThreadEchoAnalyzer(FakeThreadManager(echo_posts), min_chain_length=3)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             analyzer.analyze("thread-1")
         )
         assert result.source_callsign == "Alice"
@@ -169,7 +169,7 @@ class TestEchoChainDetection:
     def test_propagation_order(self, echo_posts):
         from probos.ward_room.thread_echo import ThreadEchoAnalyzer
         analyzer = ThreadEchoAnalyzer(FakeThreadManager(echo_posts), min_chain_length=3)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             analyzer.analyze("thread-1")
         )
         timestamps = [step.timestamp for step in result.propagation_chain]
@@ -178,7 +178,7 @@ class TestEchoChainDetection:
     def test_similarity_scores(self, echo_posts):
         from probos.ward_room.thread_echo import ThreadEchoAnalyzer
         analyzer = ThreadEchoAnalyzer(FakeThreadManager(echo_posts), min_chain_length=3)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             analyzer.analyze("thread-1")
         )
         for step in result.propagation_chain:
@@ -187,7 +187,7 @@ class TestEchoChainDetection:
     def test_independence_score_low_same_thread(self, echo_posts):
         from probos.ward_room.thread_echo import ThreadEchoAnalyzer
         analyzer = ThreadEchoAnalyzer(FakeThreadManager(echo_posts), min_chain_length=3)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             analyzer.analyze("thread-1")
         )
         # All posts in same thread → independence should be low
@@ -203,7 +203,7 @@ class TestNoEchoDetection:
             ("p2", "bob", "hello world echo", 2.0),
         ])
         analyzer = ThreadEchoAnalyzer(FakeThreadManager(posts), min_chain_length=3)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             analyzer.analyze("thread-1")
         )
         assert result.echo_detected is False
@@ -217,7 +217,7 @@ class TestNoEchoDetection:
             ("p3", "carol", "quantum physics entanglement research paper", 3.0),
         ])
         analyzer = ThreadEchoAnalyzer(FakeThreadManager(posts), min_chain_length=3)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             analyzer.analyze("thread-1")
         )
         assert result.echo_detected is False

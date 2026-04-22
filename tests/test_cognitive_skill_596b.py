@@ -83,9 +83,9 @@ class TestComposeSkillIntegration:
         set_skill_catalog(catalog)
 
         result = compose_instructions("builder", "")
-        assert "## Available Cognitive Skills" in result
-        assert "**code-review**" in result
-        assert "**design-check**" in result
+        assert "<available_skills>" in result
+        assert 'name="code-review"' in result
+        assert 'name="design-check"' in result
         assert "Review code for quality" in result
 
     def test_compose_no_catalog_no_skills_section(self):
@@ -185,9 +185,7 @@ class TestGatherContextSkills:
         agent.id = "test-agent"
         agent.agent_type = "builder"
 
-        context = asyncio.get_event_loop().run_until_complete(
-            loop._gather_context(agent, 0.5)
-        )
+        context = asyncio.run(loop._gather_context(agent, 0.5))
 
         assert "cognitive_skills" in context
         assert context["cognitive_skills"] == [
@@ -202,9 +200,7 @@ class TestGatherContextSkills:
         agent.id = "test-agent"
         agent.agent_type = "builder"
 
-        context = asyncio.get_event_loop().run_until_complete(
-            loop._gather_context(agent, 0.5)
-        )
+        context = asyncio.run(loop._gather_context(agent, 0.5))
 
         assert "cognitive_skills" not in context
 
@@ -219,9 +215,7 @@ class TestGatherContextSkills:
         agent.id = "test-agent"
         agent.agent_type = "builder"
 
-        asyncio.get_event_loop().run_until_complete(
-            loop._gather_context(agent, 0.7)
-        )
+        asyncio.run(loop._gather_context(agent, 0.7))
 
         # Verify department and rank were passed
         call_args = catalog.get_descriptions.call_args
@@ -355,9 +349,7 @@ class TestHandleIntentSkills:
         agent = self._make_agent(catalog=catalog)
 
         intent = IntentMessage(intent="custom_skill_intent", target_agent_id=None)
-        result = asyncio.get_event_loop().run_until_complete(
-            agent.handle_intent(intent)
-        )
+        result = asyncio.run(agent.handle_intent(intent))
 
         # Should NOT return None — skill was found
         # decide() was called (cognitive lifecycle ran)
@@ -369,9 +361,7 @@ class TestHandleIntentSkills:
         agent = self._make_agent(catalog=catalog)
 
         intent = IntentMessage(intent="unknown_intent", target_agent_id=None)
-        result = asyncio.get_event_loop().run_until_complete(
-            agent.handle_intent(intent)
-        )
+        result = asyncio.run(agent.handle_intent(intent))
 
         assert result is None
 
@@ -390,9 +380,7 @@ class TestHandleIntentSkills:
             intent="direct_message",
             target_agent_id="test-agent-001",
         )
-        result = asyncio.get_event_loop().run_until_complete(
-            agent.handle_intent(intent)
-        )
+        result = asyncio.run(agent.handle_intent(intent))
 
         # Should have gone through normal path, not skill path
         # catalog.find_by_intent should NOT have been called
@@ -411,9 +399,7 @@ class TestHandleIntentSkills:
         agent = self._make_agent(catalog=catalog)
 
         intent = IntentMessage(intent="skill_intent", target_agent_id=None)
-        asyncio.get_event_loop().run_until_complete(
-            agent.handle_intent(intent)
-        )
+        asyncio.run(agent.handle_intent(intent))
 
         # Check that decide() received observation with skill instructions
         obs = agent.decide.call_args[0][0]
@@ -426,9 +412,7 @@ class TestHandleIntentSkills:
         agent = self._make_agent(catalog=None)
 
         intent = IntentMessage(intent="unknown_intent", target_agent_id=None)
-        result = asyncio.get_event_loop().run_until_complete(
-            agent.handle_intent(intent)
-        )
+        result = asyncio.run(agent.handle_intent(intent))
 
         assert result is None
 
@@ -484,7 +468,7 @@ class TestOnboardingWiring:
         agent.callsign = None
         agent.sovereign_id = None
 
-        asyncio.get_event_loop().run_until_complete(svc.wire_agent(agent))
+        asyncio.run(svc.wire_agent(agent))
 
         assert agent._cognitive_skill_catalog == catalog
 
@@ -535,7 +519,7 @@ class TestOnboardingWiring:
         agent.callsign = None
         agent.sovereign_id = None
 
-        asyncio.get_event_loop().run_until_complete(svc.wire_agent(agent))
+        asyncio.run(svc.wire_agent(agent))
 
         # Check subscribe call includes skill intents
         call_args = svc._intent_bus.subscribe.call_args
@@ -586,7 +570,7 @@ class TestOnboardingWiring:
         agent.callsign = None
         agent.sovereign_id = None
 
-        asyncio.get_event_loop().run_until_complete(svc.wire_agent(agent))
+        asyncio.run(svc.wire_agent(agent))
 
         # Verify catalog was NOT set: wire_agent with None catalog should
         # not have called agent._cognitive_skill_catalog = ...

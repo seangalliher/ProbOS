@@ -308,7 +308,7 @@ class TestAgentDescriptors:
 
     def test_non_intent_agents_have_empty_descriptors(self):
         """Non-intent agents have empty intent_descriptors."""
-        for cls in [RedTeamAgent, CorruptedFileReaderAgent, SystemHeartbeatAgent]:
+        for cls in [RedTeamAgent, SystemHeartbeatAgent]:
             assert len(cls.intent_descriptors) == 0, (
                 f"{cls.__name__} should have empty intent_descriptors"
             )

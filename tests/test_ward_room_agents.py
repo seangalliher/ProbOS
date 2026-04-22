@@ -98,12 +98,10 @@ class TestLoopPrevention:
         runtime.registry.all.return_value = [agent]
         runtime.callsign_registry.get_callsign.return_value = "Number One"
         runtime.callsign_registry.resolve.return_value = None
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="agent-1", success=True, result="[NO_RESPONSE]",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
 
         await runtime.ward_room_router.route_event("ward_room_thread_created", data)
-        runtime.intent_bus.send.assert_called()
+        runtime.intent_bus.dispatch_async.assert_called()
 
     async def test_agent_posts_capped_by_depth_limit(self):
         """AD-407d: Agent posts route but are capped by thread depth limit."""
@@ -122,8 +120,8 @@ class TestLoopPrevention:
 
         data = {"author_id": "agent-scotty", "channel_id": "ch1", "thread_id": "t1"}
         await runtime.ward_room_router.route_event("ward_room_post_created", data)
-        # At round limit — intent_bus.send never called
-        runtime.intent_bus.send.assert_not_called()
+        # At round limit — intent_bus.dispatch_async never called
+        runtime.intent_bus.dispatch_async.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -150,8 +148,8 @@ class TestRateLimiting:
         runtime.callsign_registry.resolve.return_value = None
 
         await runtime.ward_room_router.route_event("ward_room_thread_created", data)
-        # Agent on cooldown — intent_bus.send not called
-        runtime.intent_bus.send.assert_not_called()
+        # Agent on cooldown — intent_bus.dispatch_async not called
+        runtime.intent_bus.dispatch_async.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -173,18 +171,17 @@ class TestAgentResponses:
         runtime.registry.all.return_value = [agent]
         runtime.callsign_registry.get_callsign.return_value = "Number One"
         runtime.callsign_registry.resolve.return_value = None
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="agent-1", success=True, result="[NO_RESPONSE]",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
 
         data = {
             "author_id": "captain", "channel_id": ch.id,
             "thread_id": thread.id, "title": "Test",
         }
         await runtime.ward_room_router.route_event("ward_room_thread_created", data)
-        # Verify no post was created (thread still has 0 replies)
-        detail = await ward_room_svc.get_thread(thread.id)
-        assert detail["thread"]["reply_count"] == 0
+        # AD-654a: Router dispatches but doesn't post — verify dispatch fired.
+        # Whether [NO_RESPONSE] gets posted is now the agent's responsibility
+        # (handled by WardRoomPostPipeline, tested in test_ad654a_async_dispatch.py).
+        runtime.intent_bus.dispatch_async.assert_called()
 
     async def test_agent_response_posted(self, ward_room_svc):
         """Agent returning a real response creates a Ward Room post."""
@@ -202,21 +199,18 @@ class TestAgentResponses:
         runtime.registry.get.return_value = agent
         runtime.callsign_registry.get_callsign.return_value = "Number One"
         runtime.callsign_registry.resolve.return_value = None
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="agent-1", success=True,
-            result="All systems nominal, Captain.",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
 
         data = {
             "author_id": "captain", "channel_id": ch.id,
             "thread_id": thread.id, "title": "Engineering report",
         }
         await runtime.ward_room_router.route_event("ward_room_thread_created", data)
-        # Verify post WAS created
-        detail = await ward_room_svc.get_thread(thread.id)
-        assert detail["thread"]["reply_count"] == 1
-        assert detail["posts"][0]["body"] == "All systems nominal, Captain."
-        assert detail["posts"][0]["author_id"] == "agent-1"
+        # AD-654a: Router dispatches but no longer posts — agents self-post.
+        # Verify dispatch was called for the eligible agent.
+        runtime.intent_bus.dispatch_async.assert_called_once()
+        call_args = runtime.intent_bus.dispatch_async.call_args[0][0]
+        assert call_args.target_agent_id == "agent-1"
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +230,8 @@ class TestChannelTargeting:
             "engineering_officer": "LaForge",
             "architect": "NumberOne",
         }.get(t, "")
+        # AD-621: Subscribe eng agent to the engineering channel
+        runtime.ward_room_router._channel_members["ch-eng"] = {"agent-eng"}
 
         with patch("probos.cognitive.standing_orders.get_department") as mock_dept:
             mock_dept.side_effect = lambda t: {
@@ -295,19 +291,16 @@ class TestAgentToAgentRouting:
             "posts": [],
         })
         runtime.ward_room.create_post = AsyncMock()
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="agent-b", success=True,
-            result="Acknowledged.",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
 
         data = {
             "author_id": "agent-a", "thread_id": "t1",
             "mentions": ["numberone"], "author_callsign": "Scotty",
         }
         await runtime.ward_room_router.route_event("ward_room_post_created", data)
-        runtime.intent_bus.send.assert_called_once()
+        runtime.intent_bus.dispatch_async.assert_called_once()
         # Verify intent was sent to agent-b
-        call_args = runtime.intent_bus.send.call_args[0][0]
+        call_args = runtime.intent_bus.dispatch_async.call_args[0][0]
         assert call_args.target_agent_id == "agent-b"
 
     async def test_agent_post_ship_channel_no_broadcast(self):
@@ -334,8 +327,8 @@ class TestAgentToAgentRouting:
             "mentions": [], "author_callsign": "Number One",
         }
         await runtime.ward_room_router.route_event("ward_room_post_created", data)
-        # No broadcast — intent_bus.send not called
-        runtime.intent_bus.send.assert_not_called()
+        # No broadcast — intent_bus.dispatch_async not called
+        runtime.intent_bus.dispatch_async.assert_not_called()
 
     async def test_agent_post_department_channel_reaches_peers(self):
         """Agent post in department channel reaches department peers."""
@@ -357,10 +350,9 @@ class TestAgentToAgentRouting:
             "posts": [],
         })
         runtime.ward_room.create_post = AsyncMock()
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="eng2", success=True,
-            result="All good.",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
+        # AD-621: Subscribe eng peers to the engineering channel
+        runtime.ward_room_router._channel_members["ch-eng"] = {"eng1", "eng2"}
 
         with patch("probos.cognitive.standing_orders.get_department") as mock_dept:
             mock_dept.side_effect = lambda t: {
@@ -376,8 +368,8 @@ class TestAgentToAgentRouting:
             await runtime.ward_room_router.route_event("ward_room_post_created", data)
 
         # eng2 (same dept) should be reached, sci1 (different dept) should not
-        runtime.intent_bus.send.assert_called_once()
-        call_args = runtime.intent_bus.send.call_args[0][0]
+        runtime.intent_bus.dispatch_async.assert_called_once()
+        call_args = runtime.intent_bus.dispatch_async.call_args[0][0]
         assert call_args.target_agent_id == "eng2"
 
     async def test_captain_post_still_broadcasts_ship_wide(self):
@@ -397,14 +389,12 @@ class TestAgentToAgentRouting:
             "thread": {"title": "Test", "body": "Hello", "channel_id": "ch1"},
             "posts": [],
         })
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="a1", success=True, result="[NO_RESPONSE]",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1"}
         await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         # Both agents should be reached
-        assert runtime.intent_bus.send.call_count == 2
+        assert runtime.intent_bus.dispatch_async.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -431,10 +421,7 @@ class TestThreadDepthTracking:
             "posts": [],
         })
         runtime.ward_room.create_post = AsyncMock()
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="agent-b", success=True,
-            result="I agree.",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
 
         data = {
             "author_id": "agent-a", "thread_id": "t1",
@@ -460,7 +447,7 @@ class TestThreadDepthTracking:
 
         data = {"author_id": "agent-a", "channel_id": "ch1", "thread_id": "t1", "mentions": []}
         await runtime.ward_room_router.route_event("ward_room_post_created", data)
-        runtime.intent_bus.send.assert_not_called()
+        runtime.intent_bus.dispatch_async.assert_not_called()
 
     async def test_captain_post_resets_round(self):
         """Captain posting in a thread resets the round counter to 0."""
@@ -480,9 +467,7 @@ class TestThreadDepthTracking:
             "thread": {"title": "Test", "body": "More", "channel_id": "ch1"},
             "posts": [],
         })
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="agent-1", success=True, result="[NO_RESPONSE]",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1"}
         await runtime.ward_room_router.route_event("ward_room_thread_created", data)
@@ -509,18 +494,16 @@ class TestThreadDepthTracking:
             "thread": {"title": "Test", "body": "Hey", "channel_id": "ch1"},
             "posts": [],
         })
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="agent-b", success=True,
-            result="[NO_RESPONSE]",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
 
         data = {
             "author_id": "agent-a", "thread_id": "t1",
             "mentions": ["numberone"], "author_callsign": "Scotty",
         }
         await runtime.ward_room_router.route_event("ward_room_post_created", data)
-        # No actual response -> round stays at 0
-        assert runtime._ward_room_thread_rounds.get("t1", 0) == 0
+        # AD-654a: Round bumps whenever eligible agents are dispatched to,
+        # regardless of response (agents self-post asynchronously).
+        assert runtime._ward_room_thread_rounds.get("t1", 0) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -554,7 +537,7 @@ class TestRoundParticipation:
         }
         await runtime.ward_room_router.route_event("ward_room_post_created", data)
         # agent-b already in round participants — skipped
-        runtime.intent_bus.send.assert_not_called()
+        runtime.intent_bus.dispatch_async.assert_not_called()
 
     async def test_agent_can_respond_in_new_round(self):
         """Agent that responded in round 0 can respond again in round 1."""
@@ -580,10 +563,7 @@ class TestRoundParticipation:
             "posts": [],
         })
         runtime.ward_room.create_post = AsyncMock()
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="agent-b", success=True,
-            result="Good point.",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
 
         data = {
             "author_id": "agent-a", "thread_id": "t1",
@@ -591,7 +571,7 @@ class TestRoundParticipation:
         }
         await runtime.ward_room_router.route_event("ward_room_post_created", data)
         # agent-b NOT in round 1 participants yet — should be reached
-        runtime.intent_bus.send.assert_called_once()
+        runtime.intent_bus.dispatch_async.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -703,7 +683,8 @@ def _make_mock_runtime(ward_room=None):
     runtime.config.earned_agency.enabled = False  # AD-357: off by default in tests
 
     runtime.intent_bus = MagicMock()
-    runtime.intent_bus.send = AsyncMock()
+    runtime.intent_bus.dispatch_async = AsyncMock()
+    runtime.intent_bus.dispatch_async = AsyncMock()  # AD-654a
     runtime.registry = MagicMock()
     runtime.registry.all.return_value = []
     runtime.registry.get.return_value = None
@@ -784,7 +765,7 @@ class TestThreadModeRouting:
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
                 "thread_mode": "inform"}
         await runtime.ward_room_router.route_event("ward_room_thread_created", data)
-        runtime.intent_bus.send.assert_not_called()
+        runtime.intent_bus.dispatch_async.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_discuss_thread_notifies_agents(self):
@@ -801,14 +782,12 @@ class TestThreadModeRouting:
         agent = _make_agent("agent-1", "architect")
         runtime.registry.all.return_value = [agent]
         runtime.callsign_registry.get_callsign.return_value = "Number One"
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="agent-1", success=True, result="[NO_RESPONSE]",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
                 "thread_mode": "discuss"}
         await runtime.ward_room_router.route_event("ward_room_thread_created", data)
-        runtime.intent_bus.send.assert_called()
+        runtime.intent_bus.dispatch_async.assert_called()
 
     @pytest.mark.asyncio
     async def test_discuss_ship_wide_lieutenant_can_respond(self):
@@ -848,15 +827,13 @@ class TestThreadModeRouting:
             {"agent_id": "agent-1"} if c == "numberone" else None
         )
         runtime.callsign_registry.get_callsign.return_value = "Number One"
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="agent-1", success=True, result="Aye",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
                 "thread_mode": "action", "mentions": ["numberone"]}
         await runtime.ward_room_router.route_event("ward_room_thread_created", data)
         # Only agent-1 (mentioned) should get notified
-        assert runtime.intent_bus.send.call_count == 1
+        assert runtime.intent_bus.dispatch_async.call_count == 1
 
     @pytest.mark.asyncio
     async def test_discuss_responder_cap_applied(self):
@@ -874,14 +851,12 @@ class TestThreadModeRouting:
         agents = [_make_agent(f"agent-{i}", "architect") for i in range(5)]
         runtime.registry.all.return_value = agents
         runtime.callsign_registry.get_callsign.return_value = "Crew"
-        runtime.intent_bus.send = AsyncMock(return_value=IntentResult(
-            intent_id="x", agent_id="agent-0", success=True, result="[NO_RESPONSE]",
-        ))
+        runtime.intent_bus.dispatch_async = AsyncMock()
 
         data = {"author_id": "captain", "channel_id": "ch1", "thread_id": "t1",
                 "thread_mode": "discuss", "max_responders": 2}
         await runtime.ward_room_router.route_event("ward_room_thread_created", data)
-        assert runtime.intent_bus.send.call_count <= 2
+        assert runtime.intent_bus.dispatch_async.call_count <= 2
 
     @pytest.mark.asyncio
     async def test_inform_not_passed_to_targets(self):

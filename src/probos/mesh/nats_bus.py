@@ -53,6 +53,11 @@ class NATSMessage:
         if self._msg and hasattr(self._msg, "nak"):
             await self._msg.nak(delay=delay)
 
+    async def term(self) -> None:
+        """Terminate JetStream message — permanently reject, no redelivery."""
+        if self._msg and hasattr(self._msg, "term"):
+            await self._msg.term()
+
     async def respond(self, data: dict[str, Any]) -> None:
         """Reply to a request-reply message."""
         if self._msg and hasattr(self._msg, "respond"):
@@ -407,6 +412,7 @@ class NATSBus:
         stream: str | None = None,
         max_ack_pending: int | None = None,
         ack_wait: int | None = None,
+        manual_ack: bool = False,
     ) -> Any:
         """Subscribe to a JetStream subject (durable consumer)."""
         if not self._js:
@@ -420,7 +426,8 @@ class NATSBus:
                 raw_data = json.loads(msg.data) if msg.data else {}
             except (json.JSONDecodeError, UnicodeDecodeError):
                 logger.debug("JetStream: invalid JSON on %s", msg.subject)
-                await msg.nak()
+                if not manual_ack:
+                    await msg.nak()
                 return
             wrapped = NATSMessage(
                 subject=msg.subject,
@@ -431,14 +438,16 @@ class NATSBus:
             )
             try:
                 await callback(wrapped)
-                await msg.ack()
+                if not manual_ack:
+                    await msg.ack()
             except Exception:
                 logger.error(
                     "JetStream subscriber error on %s",
                     msg.subject,
                     exc_info=True,
                 )
-                await msg.nak()
+                if not manual_ack:
+                    await msg.nak()
 
         try:
             subscribe_kwargs: dict[str, Any] = {
@@ -467,6 +476,7 @@ class NATSBus:
                             "stream": stream,
                             "max_ack_pending": max_ack_pending,
                             "ack_wait": ack_wait,
+                            "manual_ack": manual_ack if manual_ack else None,
                         }.items() if v is not None
                     },
                     "sub": sub,
@@ -522,6 +532,16 @@ class NATSBus:
             logger.info("JetStream stream '%s' ensured: %s", name, full_subjects)
         except Exception as e:
             logger.error("Failed to ensure stream '%s': %s", name, e)
+
+    async def delete_consumer(self, stream: str, durable_name: str) -> None:
+        """Delete a durable JetStream consumer (AD-654a cleanup)."""
+        if not self._js:
+            return
+        try:
+            await self._js.delete_consumer(stream, durable_name)
+            logger.debug("NATSBus: Deleted consumer %s from stream %s", durable_name, stream)
+        except Exception as e:
+            logger.debug("NATSBus: Consumer delete failed (%s/%s): %s", stream, durable_name, e)
 
     def health(self) -> dict[str, Any]:
         """Return NATS health status for VitalsMonitor integration."""
@@ -800,6 +820,7 @@ class MockNATSBus:
         stream: str | None = None,
         max_ack_pending: int | None = None,
         ack_wait: int | None = None,
+        manual_ack: bool = False,
     ) -> str:
         full = self._full_subject(subject)
         if full not in self._subs:
@@ -816,6 +837,7 @@ class MockNATSBus:
                         "stream": stream,
                         "max_ack_pending": max_ack_pending,
                         "ack_wait": ack_wait,
+                        "manual_ack": manual_ack if manual_ack else None,
                     }.items() if v is not None
                 },
                 "sub": full,
@@ -843,6 +865,10 @@ class MockNATSBus:
             "max_msgs": max_msgs,
             "max_age": max_age,
         }
+
+    async def delete_consumer(self, stream: str, durable_name: str) -> None:
+        """Delete a durable JetStream consumer (AD-654a cleanup) — mock no-op."""
+        pass
 
     def health(self) -> dict[str, Any]:
         return {

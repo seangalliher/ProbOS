@@ -593,7 +593,7 @@ class TestPromptFormatting:
                 "recent_posts": [{"body": "observation here", "age": "5m"}],
             },
         })
-        assert "Your Recent Activity (self-monitoring)" in prompt
+        assert "<recent_activity>" in prompt
         assert "observation here" in prompt
 
     @pytest.mark.asyncio

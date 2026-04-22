@@ -77,7 +77,7 @@ class TestVerifierConstruction:
     def test_no_providers_empty_results(self):
         from probos.cognitive.observable_state import ObservableStateVerifier
         verifier = ObservableStateVerifier([])
-        results = asyncio.get_event_loop().run_until_complete(
+        results = asyncio.run(
             verifier.verify_claims(["some claim"])
         )
         assert results == []
@@ -106,7 +106,7 @@ class TestRecreationProvider:
     def test_detects_game_claim(self):
         from probos.cognitive.observable_state import RecreationStateProvider
         provider = RecreationStateProvider(FakeRecreationService())
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             provider.check("the game is stuck", {})
         )
         assert result is not None
@@ -120,7 +120,7 @@ class TestRecreationProvider:
             player_games={"Alice": game},
         )
         provider = RecreationStateProvider(svc)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             provider.check("the game board is active", {"agents": ["Alice"]})
         )
         assert result is not None
@@ -130,7 +130,7 @@ class TestRecreationProvider:
         from probos.cognitive.observable_state import RecreationStateProvider
         svc = FakeRecreationService(active_games=[], player_games={})
         provider = RecreationStateProvider(svc)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             provider.check("the game is stuck waiting for a move", {})
         )
         assert result is not None
@@ -140,7 +140,7 @@ class TestRecreationProvider:
     def test_ignores_non_game_claim(self):
         from probos.cognitive.observable_state import RecreationStateProvider
         provider = RecreationStateProvider(FakeRecreationService())
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             provider.check("the database needs optimizing", {})
         )
         assert result is None
@@ -155,7 +155,7 @@ class TestTrustProvider:
     def test_detects_trust_claim(self):
         from probos.cognitive.observable_state import TrustStateProvider
         provider = TrustStateProvider(FakeTrustNetwork(scores={"a": 0.8}))
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             provider.check("trust anomaly detected in the network", {})
         )
         assert result is not None
@@ -164,7 +164,7 @@ class TestTrustProvider:
     def test_verifies_trust_score(self):
         from probos.cognitive.observable_state import TrustStateProvider
         provider = TrustStateProvider(FakeTrustNetwork(scores={"a": 0.9, "b": 0.85}))
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             provider.check("low trust detected among agents", {})
         )
         assert result is not None
@@ -174,7 +174,7 @@ class TestTrustProvider:
     def test_rejects_false_trust_claim(self):
         from probos.cognitive.observable_state import TrustStateProvider
         provider = TrustStateProvider(FakeTrustNetwork(scores={"a": 0.1, "b": 0.2}))
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             provider.check("low trust detected among agents", {})
         )
         assert result is not None
@@ -190,7 +190,7 @@ class TestHealthProvider:
     def test_detects_health_claim(self):
         from probos.cognitive.observable_state import SystemHealthProvider
         provider = SystemHealthProvider(FakeVitalsMonitor({"system_health": "healthy"}))
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             provider.check("system health shows degraded status", {})
         )
         assert result is not None
@@ -199,7 +199,7 @@ class TestHealthProvider:
     def test_verifies_system_health(self):
         from probos.cognitive.observable_state import SystemHealthProvider
         provider = SystemHealthProvider(FakeVitalsMonitor({"system_health": "healthy"}))
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             provider.check("critical system failure detected", {})
         )
         assert result is not None
@@ -223,7 +223,7 @@ class TestProviderExceptionHandling:
             FakeRecreationService(active_games=[], player_games={})
         )
         verifier = ObservableStateVerifier([failing, working])
-        results = asyncio.get_event_loop().run_until_complete(
+        results = asyncio.run(
             verifier.verify_claims(["the game is stuck"])
         )
         # Failing provider skipped, RecreationProvider answered
@@ -383,7 +383,7 @@ class TestBehavioralMetricsCorrectness:
             ]
         }]
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             engine._compute_convergence_correctness(threads)
         )
         # Even if no convergence detected (embedding threshold), verifier

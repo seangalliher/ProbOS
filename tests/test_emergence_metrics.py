@@ -613,7 +613,7 @@ class TestDreamIntegration:
         engine = _engine()
         wr = _mock_ward_room([])
         tn = MagicMock()
-        snap = asyncio.get_event_loop().run_until_complete(
+        snap = asyncio.run(
             engine.compute_emergence_metrics(wr, tn)
         )
         assert snap.emergence_capacity == 0.0

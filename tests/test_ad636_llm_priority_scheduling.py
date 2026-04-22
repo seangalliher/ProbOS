@@ -84,12 +84,13 @@ class TestPriorityLanes:
         # Actually checking the implementation...
         assert client._background_semaphore._value >= 1
 
-    def test_default_priority_is_background(self):
-        """complete() default priority should be 'background'."""
+    def test_default_priority_is_normal(self):
+        """complete() default priority should be Priority.NORMAL."""
         import inspect
         from probos.cognitive.llm_client import OpenAICompatibleClient
+        from probos.types import Priority
         sig = inspect.signature(OpenAICompatibleClient.complete)
-        assert sig.parameters['priority'].default == "background"
+        assert sig.parameters['priority'].default == Priority.NORMAL
 
     @pytest.mark.asyncio
     async def test_interactive_uses_interactive_semaphore(self):

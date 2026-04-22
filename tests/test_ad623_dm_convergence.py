@@ -80,7 +80,7 @@ def _make_router(
     return WardRoomRouter(
         ward_room=ward_room or MagicMock(),
         registry=registry,
-        intent_bus=MagicMock(),
+        intent_bus=AsyncMock(),
         trust_network=MagicMock(),
         ontology=None,
         callsign_registry=MagicMock(),
@@ -257,7 +257,7 @@ class TestRouterConvergenceGate:
         agent.is_alive = True
 
         router = _make_router([agent], ward_room=ward_room)
-        router._intent_bus.send = AsyncMock(return_value=MagicMock(result="[NO_RESPONSE]"))
+        router._intent_bus.dispatch_async = AsyncMock(return_value=None)
 
         with patch("probos.ward_room_router.is_crew_agent", return_value=True):
             router.find_targets = MagicMock(return_value=["couns_001"])
@@ -269,7 +269,7 @@ class TestRouterConvergenceGate:
             )
 
         # Intent bus SHOULD have been called (no convergence)
-        router._intent_bus.send.assert_called()
+        router._intent_bus.dispatch_async.assert_called()
 
     @pytest.mark.asyncio
     async def test_event_emitted_on_convergence(self) -> None:
@@ -364,7 +364,7 @@ class TestRouterConvergenceGate:
         agent.is_alive = True
 
         router = _make_router([agent], ward_room=ward_room)
-        router._intent_bus.send = AsyncMock(return_value=MagicMock(result="[NO_RESPONSE]"))
+        router._intent_bus.dispatch_async = AsyncMock(return_value=None)
 
         with patch("probos.ward_room_router.is_crew_agent", return_value=True):
             router.find_targets = MagicMock(return_value=["couns_001"])
@@ -376,7 +376,7 @@ class TestRouterConvergenceGate:
             )
 
         # Intent bus SHOULD have been called (fail open)
-        router._intent_bus.send.assert_called()
+        router._intent_bus.dispatch_async.assert_called()
 
 
 # ---------------------------------------------------------------------------

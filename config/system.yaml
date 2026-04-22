@@ -41,7 +41,7 @@ cognitive:
   # Fast tier — Sonnet via Copilot proxy
   llm_base_url_fast: "http://127.0.0.1:8080/v1"
   llm_api_key_fast: ""
-  llm_model_fast: "claude-sonnet-4-20250514"
+  llm_model_fast: "claude-sonnet-4.6"
   llm_timeout_fast: 300  # Match proxy REQUEST_TIMEOUT_MS (300s)
   llm_api_format_fast: "openai"
 
@@ -50,11 +50,11 @@ cognitive:
   # llm_model_fast: "qwen3.5:35b"
   # llm_api_format_fast: "ollama"
 
-  # Standard tier — Sonnet via Copilot proxy
-  llm_model_standard: "claude-sonnet-4-20250514"
+  # Standard tier — Sonnet 4.6 via Copilot proxy
+  llm_model_standard: "claude-sonnet-4.6"
 
-  # Deep tier — Opus via Copilot proxy
-  llm_model_deep: "claude-opus-4-20250514"
+  # Deep tier — Opus 4.6 via Copilot proxy
+  llm_model_deep: "claude-opus-4.6"
   llm_timeout_deep: 300
 
   # Per-tier sampling parameters (uncomment to override request defaults)

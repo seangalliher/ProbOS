@@ -1626,7 +1626,7 @@ class TestEndorsementActivation:
 
         captured_prompts = []
         mock_llm = AsyncMock(spec=BaseLLMClient)
-        async def capture_complete(request):
+        async def capture_complete(request, **kwargs):
             captured_prompts.append(request.system_prompt)
             return LLMResponse(content="[NO_RESPONSE]", tier="standard", model="test")
         mock_llm.complete = capture_complete
@@ -1666,7 +1666,7 @@ class TestEndorsementActivation:
 
         captured_prompts = []
         mock_llm = AsyncMock(spec=BaseLLMClient)
-        async def capture_complete(request):
+        async def capture_complete(request, **kwargs):
             captured_prompts.append(request.system_prompt)
             return LLMResponse(content="[NO_RESPONSE]", tier="standard", model="test")
         mock_llm.complete = capture_complete

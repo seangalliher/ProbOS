@@ -66,6 +66,14 @@ class IntentBus:
                 self._pending_sub_tasks.add(task)
                 task.add_done_callback(self._pending_sub_tasks.discard)
                 task.add_done_callback(self._on_nats_task_done)
+                # AD-654a: Also subscribe to JetStream dispatch subject
+                dispatch_task = loop.create_task(
+                    self._js_subscribe_agent_dispatch(agent_id, handler),
+                    name=f"js-dispatch-sub-{agent_id[:12]}",
+                )
+                self._pending_sub_tasks.add(dispatch_task)
+                dispatch_task.add_done_callback(self._pending_sub_tasks.discard)
+                dispatch_task.add_done_callback(self._on_nats_task_done)
             except RuntimeError:
                 pass
 
@@ -98,6 +106,60 @@ class IntentBus:
 
         sub = await self._nats_bus.subscribe(subject, _on_nats_intent)
 
+    async def _js_subscribe_agent_dispatch(self, agent_id: str, handler: IntentHandler) -> None:
+        """Subscribe agent to their JetStream dispatch subject (AD-654a).
+
+        Creates a durable consumer on intent.dispatch.{agent_id} within
+        the INTENT_DISPATCH stream. Messages queue while agent is busy
+        and are processed sequentially (max_ack_pending=1).
+
+        Uses manual_ack=True because cognitive chains need msg.term() on
+        error (not msg.nak()) — LLM calls that already ran must not retry.
+        """
+        subject = f"intent.dispatch.{agent_id}"
+
+        async def _on_dispatch(msg: Any) -> None:
+            """JetStream dispatch callback — deserialize and handle.
+
+            Uses manual ack: ack() on success, term() on error.
+            """
+            try:
+                intent = self._deserialize_intent(msg.data)
+                # AD-654a/BF-198: Record response BEFORE handler runs to close
+                # the proactive-loop race window.
+                _rt_ref = getattr(handler, "__self__", None)
+                if _rt_ref and hasattr(_rt_ref, "_runtime"):
+                    _rt = _rt_ref._runtime
+                    _router = getattr(_rt, "ward_room_router", None)
+                    _thread_id = intent.params.get("thread_id", "")
+                    if _router and _thread_id:
+                        _router.record_agent_response(intent.target_agent_id, _thread_id)
+                await handler(intent)
+                await msg.ack()
+            except Exception as e:
+                logger.warning(
+                    "AD-654a: Dispatch handler error for %s: %s",
+                    agent_id[:8], e,
+                )
+                # term() = permanently reject. Do NOT nak() — cognitive chains
+                # must not be retried (LLM already ran, would cause duplicates).
+                await msg.term()
+
+        # Durable name must be NATS-safe (alphanumeric + dash).
+        durable_name = f"agent-dispatch-{agent_id}"
+
+        sub = await self._nats_bus.js_subscribe(
+            subject,
+            _on_dispatch,
+            durable=durable_name,
+            stream="INTENT_DISPATCH",
+            max_ack_pending=1,
+            ack_wait=300,
+            manual_ack=True,
+        )
+        if sub:
+            logger.debug("AD-654a: JetStream dispatch consumer for %s", agent_id[:12])
+
     def unsubscribe(self, agent_id: str) -> None:
         """Remove an agent's subscription and intent index entries."""
         self._subscribers.pop(agent_id, None)
@@ -115,6 +177,16 @@ class IntentBus:
                 self._pending_sub_tasks.add(task)
                 task.add_done_callback(self._pending_sub_tasks.discard)
                 task.add_done_callback(self._on_nats_task_done)
+            except RuntimeError:
+                pass
+            # AD-654a: Clean up JetStream dispatch consumer
+            durable_name = f"agent-dispatch-{agent_id}"
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    self._nats_bus.delete_consumer("INTENT_DISPATCH", durable_name),
+                    name=f"cleanup-dispatch-{agent_id[:12]}",
+                )
             except RuntimeError:
                 pass
 
@@ -280,6 +352,68 @@ class IntentBus:
     async def publish(self, intent: IntentMessage, **kwargs: Any) -> list[IntentResult]:
         """Alias for broadcast() — used by WatchManager dispatch (runtime.py:689)."""
         return await self.broadcast(intent, **kwargs)
+
+    async def dispatch_async(self, intent: IntentMessage) -> None:
+        """Fire-and-forget dispatch to a specific agent via JetStream (AD-654a).
+
+        Publishes the intent to the agent's durable JetStream consumer.
+        No reply expected — the agent processes asynchronously and posts
+        its own response. Falls back to direct async handler invocation
+        when NATS/JetStream is unavailable.
+
+        Requires intent.target_agent_id to be set.
+        """
+        if not intent.target_agent_id:
+            raise ValueError("dispatch_async() requires target_agent_id")
+
+        # JetStream path when connected
+        if self._nats_bus and self._nats_bus.connected:
+            subject = f"intent.dispatch.{intent.target_agent_id}"
+            try:
+                await self._nats_bus.js_publish(subject, self._serialize_intent(intent))
+                logger.debug(
+                    "AD-654a: Dispatched %s → %s via JetStream",
+                    intent.intent, intent.target_agent_id[:12],
+                )
+                return
+            except Exception as e:
+                logger.warning(
+                    "AD-654a: JetStream dispatch failed for %s → %s: %s, falling back to direct",
+                    intent.intent, intent.target_agent_id[:12], e,
+                )
+                # Fall through to direct dispatch
+
+        # Direct-call fallback when NATS/JetStream unavailable
+        handler = self._subscribers.get(intent.target_agent_id)
+        if handler is None:
+            logger.debug("AD-654a: No handler for %s, dropping", intent.target_agent_id[:12])
+            return
+
+        # Soft cap on pending fallback tasks to prevent unbounded growth
+        _MAX_PENDING_TASKS = 200
+        if len(self._pending_sub_tasks) >= _MAX_PENDING_TASKS:
+            logger.warning(
+                "AD-654a: Pending task cap (%d) reached, dropping dispatch for %s",
+                _MAX_PENDING_TASKS, intent.target_agent_id[:12],
+            )
+            return
+
+        async def _run_handler() -> None:
+            try:
+                await handler(intent)
+            except Exception:
+                logger.warning(
+                    "AD-654a: Direct handler failed for %s",
+                    intent.target_agent_id[:12],
+                    exc_info=True,
+                )
+
+        task = asyncio.get_running_loop().create_task(
+            _run_handler(),
+            name=f"dispatch-async-{intent.target_agent_id[:12]}",
+        )
+        self._pending_sub_tasks.add(task)
+        task.add_done_callback(self._pending_sub_tasks.discard)
 
     def record_broadcast(self, intent_name: str) -> None:
         """Record a broadcast event with its intent name."""

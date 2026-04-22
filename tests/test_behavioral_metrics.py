@@ -497,7 +497,7 @@ class TestConvergenceCorrectness:
 
         with patch("probos.cognitive.behavioral_metrics.embed_text", return_value=[0.5] * 10), \
              patch("probos.cognitive.behavioral_metrics._cosine_similarity", return_value=0.9):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 engine._compute_convergence_correctness(threads)
             )
             assert result["total"] > 0
@@ -521,7 +521,7 @@ class TestConvergenceCorrectness:
 
         with patch("probos.cognitive.behavioral_metrics.embed_text", return_value=[0.5] * 10), \
              patch("probos.cognitive.behavioral_metrics._cosine_similarity", return_value=0.9):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 engine._compute_convergence_correctness(threads)
             )
             assert result["correctness_rate"] is None
@@ -546,7 +546,7 @@ class TestConvergenceCorrectness:
 
         with patch("probos.cognitive.behavioral_metrics.embed_text", return_value=[0.5] * 10), \
              patch("probos.cognitive.behavioral_metrics._cosine_similarity", return_value=0.2):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 engine._compute_convergence_correctness(threads)
             )
             assert result["total"] == 0

@@ -2165,6 +2165,44 @@ class CognitiveAgent(BaseAgent):
         """Package result as a dict (compatible with BaseAgent contract)."""
         return result
 
+    async def _self_post_ward_room_response(
+        self, intent: "IntentMessage", response_text: str,
+    ) -> None:
+        """AD-654a: Post own response to ward room after handling notification.
+
+        When activated via JetStream dispatch (AD-654a), the agent is
+        responsible for posting its own response — the router no longer
+        collects IntentResults and posts on agents' behalf.
+        """
+        _rt = getattr(self, "_runtime", None)
+        if not _rt or not getattr(_rt, "ward_room", None):
+            return
+
+        thread_id = intent.params.get("thread_id", "")
+        if not thread_id:
+            return
+
+        # Use runtime-stored pipeline (created in _apply_finalization)
+        pipeline = getattr(_rt, "ward_room_post_pipeline", None)
+        if not pipeline:
+            logger.debug("AD-654a: No ward_room_post_pipeline on runtime, skipping self-post")
+            return
+
+        try:
+            await pipeline.process_and_post(
+                agent=self,
+                response_text=response_text,
+                thread_id=thread_id,
+                event_type=intent.params.get("event_type", ""),
+                post_id=intent.params.get("post_id"),
+            )
+        except Exception:
+            logger.warning(
+                "AD-654a: Self-post failed for %s in thread %s",
+                self.id[:12], thread_id[:12],
+                exc_info=True,
+            )
+
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Skills first, then cognitive lifecycle.
 
@@ -2573,6 +2611,10 @@ class CognitiveAgent(BaseAgent):
                 except Exception:
                     pass  # Fire-and-forget
             self._last_fallback_info = None  # Consumed
+
+        # AD-654a: Agent self-posting for ward_room_notification
+        if intent.intent == "ward_room_notification" and success and report.get("result"):
+            await self._self_post_ward_room_response(intent, str(report["result"]))
 
         return IntentResult(
             intent_id=intent.id,

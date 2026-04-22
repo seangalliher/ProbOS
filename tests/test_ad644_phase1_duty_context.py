@@ -124,7 +124,7 @@ class TestAnalyzePromptDuty:
         assert "scheduled duty" in user
         assert "Perform a comprehensive review" in user
         assert AGENT_METRICS in user
-        assert "Silence is professionalism" not in user
+        assert "[NO_RESPONSE] is appropriate" not in user
 
     def test_analyze_prompt_without_duty(self):
         """Without active duty, prompt includes free-form framing."""
@@ -132,7 +132,7 @@ class TestAnalyzePromptDuty:
         _sys, user = _build_situation_review_prompt(ctx, [], "TestAgent", "engineering")
 
         assert "Proactive Review" in user
-        assert "Silence is professionalism" in user
+        assert "[NO_RESPONSE] is appropriate" in user
         assert AGENT_METRICS in user
         assert "Active Duty" not in user
 
@@ -149,7 +149,7 @@ class TestComposePromptDuty:
         ctx = _make_context(with_duty=True)
         sys_prompt, _user = _build_proactive_compose_prompt(ctx, [], "TestAgent", "engineering")
 
-        assert "performing a scheduled duty" in sys_prompt
+        assert "performing a **scheduled duty**" in sys_prompt
         assert "Perform a comprehensive review" in sys_prompt
         assert "quiet moment" not in sys_prompt
 
@@ -159,7 +159,7 @@ class TestComposePromptDuty:
         sys_prompt, _user = _build_proactive_compose_prompt(ctx, [], "TestAgent", "engineering")
 
         assert "quiet moment" in sys_prompt
-        assert "performing a scheduled duty" not in sys_prompt
+        assert "performing a **scheduled duty**" not in sys_prompt
 
 
 # ---------------------------------------------------------------------------

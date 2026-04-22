@@ -308,10 +308,10 @@ class TestDepartmentProtocols:
 
     def test_science_md_mentions_all_agents(self):
         content = (_STANDING_ORDERS_DIR / "science.md").read_text()
-        assert "Rahda" in content
-        assert "Dax" in content
-        assert "Brahms" in content
-        assert "Horizon" in content
+        assert "Data Analyst" in content
+        assert "Systems Analyst" in content
+        assert "Research Specialist" in content
+        assert "Scout" in content
 
 
 class TestSkillsTemplates:

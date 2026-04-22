@@ -36,6 +36,20 @@ def _make_config():
             enabled=True,
             naming_ceremony=True,
         ),
+        tiered_trust=SimpleNamespace(
+            enabled=True,
+            bridge_pools=["counselor"],
+            bridge_callsigns=["Meridian"],
+            chief_callsigns=["Bones", "LaForge", "Number One", "Worf", "O'Brien"],
+            bridge_alpha=4.5,
+            bridge_beta=1.0,
+            chief_alpha=3.0,
+            chief_beta=1.0,
+        ),
+        consensus=SimpleNamespace(
+            trust_prior_alpha=2.0,
+            trust_prior_beta=2.0,
+        ),
     )
     return cfg
 
@@ -146,9 +160,11 @@ class TestAutoWelcome:
         """With new crew flagged and ward_room available, posts 'New Crew Aboard'."""
         agent1 = SimpleNamespace(
             callsign="Kira", agent_type="data_analyst", _newly_commissioned=True,
+            id="sci_data_analyst_0_abc12345",
         )
         agent2 = SimpleNamespace(
             callsign="Lynx", agent_type="systems_analyst", _newly_commissioned=True,
+            id="sci_systems_analyst_0_def67890",
         )
 
         ward_room = AsyncMock()
@@ -188,6 +204,7 @@ class TestAutoWelcome:
         runtime.behavioral_monitor = None
         runtime.acm = None
         runtime.onboarding = MagicMock()
+        runtime.nats_bus = None
 
         config = MagicMock()
         config.proactive_cognitive.enabled = False
@@ -216,6 +233,7 @@ class TestAutoWelcome:
         """When runtime._cold_start is True, auto-welcome is skipped."""
         agent = SimpleNamespace(
             callsign="Kira", agent_type="data_analyst", _newly_commissioned=True,
+            id="sci_data_analyst_0_abc12345",
         )
 
         ward_room = AsyncMock()
@@ -255,6 +273,7 @@ class TestAutoWelcome:
         runtime.behavioral_monitor = None
         runtime.acm = None
         runtime.onboarding = MagicMock()
+        runtime.nats_bus = None
 
         config = MagicMock()
         config.proactive_cognitive.enabled = False
@@ -272,6 +291,7 @@ class TestAutoWelcome:
         """On warm boot with all identities restored, no auto-welcome."""
         agent = SimpleNamespace(
             callsign="Kira", agent_type="data_analyst",
+            id="sci_data_analyst_0_abc12345",
             # No _newly_commissioned flag — warm boot
         )
 
@@ -312,6 +332,7 @@ class TestAutoWelcome:
         runtime.behavioral_monitor = None
         runtime.acm = None
         runtime.onboarding = MagicMock()
+        runtime.nats_bus = None
 
         config = MagicMock()
         config.proactive_cognitive.enabled = False
@@ -329,6 +350,7 @@ class TestAutoWelcome:
         """The auto-welcome thread uses thread_mode='discuss'."""
         agent = SimpleNamespace(
             callsign="Atlas", agent_type="research_specialist", _newly_commissioned=True,
+            id="sci_research_specialist_0_ghi11111",
         )
 
         ward_room = AsyncMock()
@@ -368,6 +390,7 @@ class TestAutoWelcome:
         runtime.behavioral_monitor = None
         runtime.acm = None
         runtime.onboarding = MagicMock()
+        runtime.nats_bus = None
 
         config = MagicMock()
         config.proactive_cognitive.enabled = False

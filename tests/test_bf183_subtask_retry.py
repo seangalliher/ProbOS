@@ -175,8 +175,8 @@ class TestBudgetBoundary:
 
         with patch("probos.cognitive.sub_task.asyncio.wait_for", side_effect=mock_wait_for):
             with patch("probos.cognitive.sub_task.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-                # Need exactly 7000ms remaining (5000+2000)
-                chain_start = time.monotonic() - 23.0  # 23s elapsed → 7s remaining
+                # Need >7000ms remaining (5000+2000) — use 22s elapsed → 8s remaining
+                chain_start = time.monotonic() - 22.0  # 22s elapsed → 8s remaining
                 result = await executor._execute_single_step(
                     spec, 0, {}, [],
                     **_base_kwargs(chain_start_time=chain_start),

@@ -28,7 +28,7 @@ def _make_router(**overrides) -> WardRoomRouter:
     return WardRoomRouter(
         ward_room=ward_room,
         registry=registry,
-        intent_bus=overrides.pop("intent_bus", MagicMock()),
+        intent_bus=overrides.pop("intent_bus", AsyncMock()),
         trust_network=overrides.pop("trust_network", MagicMock()),
         ontology=None,
         callsign_registry=overrides.pop("callsign_registry", MagicMock()),
@@ -73,7 +73,7 @@ class TestThreadPostCap:
     async def test_thread_under_cap_routes_normally(self):
         """Test 3: Thread with 10 posts → agents receive intents."""
         router = _make_router()
-        router._intent_bus.send = AsyncMock(return_value=MagicMock(result="Response"))
+        router._intent_bus.dispatch_async = AsyncMock(return_value=None)
 
         thread_detail = {"posts": [{"id": f"p-{i}"} for i in range(10)]}
 
@@ -90,14 +90,14 @@ class TestThreadPostCap:
             current_round=0, round_participants=set(),
             thread_detail=thread_detail,
         )
-        assert router._intent_bus.send.call_count == 1
+        assert router._intent_bus.dispatch_async.call_count == 1
 
     @pytest.mark.asyncio
     async def test_thread_at_cap_blocks_all_agents(self):
         """Test 4: Thread with 50 posts → no agents receive intents."""
         ward_room = AsyncMock()
         router = _make_router(ward_room=ward_room)
-        router._intent_bus.send = AsyncMock(return_value=MagicMock(result="Response"))
+        router._intent_bus.dispatch_async = AsyncMock(return_value=None)
 
         thread_detail = {"posts": [{"id": f"p-{i}"} for i in range(50)]}
 
@@ -114,7 +114,7 @@ class TestThreadPostCap:
             current_round=0, round_participants=set(),
             thread_detail=thread_detail,
         )
-        assert router._intent_bus.send.call_count == 0
+        assert router._intent_bus.dispatch_async.call_count == 0
 
     @pytest.mark.asyncio
     async def test_thread_post_cap_posts_notification(self):
@@ -202,7 +202,7 @@ class TestDMExemption:
         # DM channel bypasses thread post cap — but still subject to dm_exchange_limit
         # Mock count_posts_by_author to return 0 so DM exchange limit doesn't block
         router._ward_room.count_posts_by_author = AsyncMock(return_value=0)
-        router._intent_bus.send = AsyncMock(return_value=MagicMock(result="Response"))
+        router._intent_bus.dispatch_async = AsyncMock(return_value=None)
 
         thread_detail = {"posts": [{"id": f"p-{i}"} for i in range(60)]}
 
@@ -219,7 +219,7 @@ class TestDMExemption:
             current_round=0, round_participants=set(),
             thread_detail=thread_detail,
         )
-        assert router._intent_bus.send.call_count == 1
+        assert router._intent_bus.dispatch_async.call_count == 1
 
 
 # ---------------------------------------------------------------------------

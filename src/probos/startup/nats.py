@@ -63,7 +63,13 @@ async def init_nats(config: "SystemConfig") -> "NATSBus | None":
                 max_msgs=10000,
                 max_age=3600,
             )
-            logger.info("Startup [nats]: JetStream streams ensured (SYSTEM_EVENTS, WARDROOM)")
+            await bus.ensure_stream(
+                "INTENT_DISPATCH",
+                ["intent.dispatch.>"],
+                max_msgs=10000,
+                max_age=300,       # 5 min retention — stale notifications are worthless
+            )
+            logger.info("Startup [nats]: JetStream streams ensured (SYSTEM_EVENTS, WARDROOM, INTENT_DISPATCH)")
     else:
         logger.warning(
             "Startup [nats]: connection failed — system will operate without NATS. "
