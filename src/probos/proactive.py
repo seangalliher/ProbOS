@@ -2087,7 +2087,7 @@ class ProactiveCognitiveLoop:
             if not notebook_content or not self._runtime._records_store:
                 continue
             try:
-                callsign = agent.callsign if hasattr(agent, 'callsign') else agent.agent_type
+                callsign = getattr(agent, 'callsign', '') or agent.agent_type  # BF-218
                 department = ""
                 if self._runtime.ontology:
                     dept = self._runtime.ontology.get_agent_department(agent.agent_type)

@@ -39,7 +39,7 @@ class IntentBus:
         self._window_seconds: float = 60.0
         self._federation_fn: Callable[[IntentMessage], Awaitable[list[IntentResult]]] | None = None
         self._nats_bus: Any = None  # AD-637b: wired via set_nats_bus()
-        self._nats_subs: dict[str, Any] = {}  # agent_id -> NATS subscription
+        self._pending_sub_tasks: set[asyncio.Task] = set()  # AD-637z: tracked NATS sub tasks
 
     def subscribe(self, agent_id: str, handler: IntentHandler, intent_names: list[str] | None = None) -> None:
         """Register an agent's intent handler.
@@ -55,9 +55,19 @@ class IntentBus:
                     self._intent_index[name] = set()
                 self._intent_index[name].add(agent_id)
 
-        # AD-637b: Create NATS subscription for targeted send()
+        # AD-637b/z: Create NATS subscription for targeted send()
         if self._nats_bus and self._nats_bus.connected:
-            asyncio.ensure_future(self._nats_subscribe_agent(agent_id, handler))
+            try:
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(
+                    self._nats_subscribe_agent(agent_id, handler),
+                    name=f"nats-sub-{agent_id[:12]}",
+                )
+                self._pending_sub_tasks.add(task)
+                task.add_done_callback(self._pending_sub_tasks.discard)
+                task.add_done_callback(self._on_nats_task_done)
+            except RuntimeError:
+                pass
 
     async def _nats_subscribe_agent(self, agent_id: str, handler: IntentHandler) -> None:
         """Subscribe an agent to their NATS intent subject for send() delivery."""
@@ -87,24 +97,34 @@ class IntentBus:
                     await msg.respond(self._serialize_result(error_result))
 
         sub = await self._nats_bus.subscribe(subject, _on_nats_intent)
-        self._nats_subs[agent_id] = sub
 
     def unsubscribe(self, agent_id: str) -> None:
         """Remove an agent's subscription and intent index entries."""
         self._subscribers.pop(agent_id, None)
         for agent_set in self._intent_index.values():
             agent_set.discard(agent_id)
-        # AD-637b: Clean up NATS subscription
-        nats_sub = self._nats_subs.pop(agent_id, None)
-        if nats_sub and hasattr(nats_sub, 'unsubscribe'):
-            asyncio.ensure_future(self._nats_unsubscribe(nats_sub))
+        # AD-637z: Clean up NATS subscription via NATSBus lifecycle management
+        if self._nats_bus:
+            subject = f"intent.{agent_id}"
+            try:
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(
+                    self._nats_bus.remove_tracked_subscription(subject),
+                    name=f"nats-unsub-{agent_id[:12]}",
+                )
+                self._pending_sub_tasks.add(task)
+                task.add_done_callback(self._pending_sub_tasks.discard)
+                task.add_done_callback(self._on_nats_task_done)
+            except RuntimeError:
+                pass
 
-    async def _nats_unsubscribe(self, sub: Any) -> None:
-        """Unsubscribe from NATS subject."""
-        try:
-            await sub.unsubscribe()
-        except Exception as e:
-            logger.debug("NATS unsubscribe error: %s", e)
+    def _on_nats_task_done(self, task: asyncio.Task) -> None:
+        """Log errors from NATS subscribe/unsubscribe tasks."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.warning("NATS sub/unsub task failed: %s", exc)
 
     @property
     def subscriber_count(self) -> int:
@@ -115,16 +135,18 @@ class IntentBus:
 
         AD-637b: Uses NATS request/reply when connected, direct-call fallback otherwise.
         Only one path is used per call — never both.
+
+        AD-637z: BF-221 lifted. Prefix re-subscription (set_subject_prefix)
+        ensures NATS subscriptions survive the Phase 7 DID assignment.
         """
         if not intent.target_agent_id:
             raise ValueError("send() requires target_agent_id")
 
-        # AD-637b: NATS path (when connected and agent has NATS subscription)
-        if (self._nats_bus and self._nats_bus.connected
-                and intent.target_agent_id in self._nats_subs):
+        # NATS path when connected
+        if self._nats_bus and self._nats_bus.connected:
             return await self._nats_send(intent)
 
-        # Direct-call fallback (original behavior, also used when NATS unavailable)
+        # Direct-call fallback when NATS disconnected
         handler = self._subscribers.get(intent.target_agent_id)
         if handler is None:
             return None
@@ -145,10 +167,15 @@ class IntentBus:
         subject = f"intent.{intent.target_agent_id}"
         try:
             reply = await asyncio.wait_for(
-                self._nats_bus.request(subject, self._serialize_intent(intent)),
+                self._nats_bus.request(
+                    subject,
+                    self._serialize_intent(intent),
+                    timeout=intent.ttl_seconds,
+                ),
                 timeout=intent.ttl_seconds,
             )
         except asyncio.TimeoutError:
+            logger.warning("NATS send timeout: %s → %s", intent.intent, intent.target_agent_id[:12])
             return IntentResult(
                 intent_id=intent.id,
                 agent_id=intent.target_agent_id or "",
@@ -345,6 +372,16 @@ class IntentBus:
     def set_nats_bus(self, nats_bus: Any) -> None:
         """Wire NATS transport (called after NATS connects in Phase 1b)."""
         self._nats_bus = nats_bus
+        # AD-637z: Register for prefix change notification (logging only —
+        # NATSBus handles re-subscription of all tracked subs automatically)
+        nats_bus.register_on_prefix_change(self._on_prefix_change)
+
+    async def _on_prefix_change(self, old_prefix: str, new_prefix: str) -> None:
+        """Log prefix change — NATSBus has already re-subscribed all agents."""
+        logger.info(
+            "IntentBus: NATS prefix changed %s → %s, %d agent subs re-subscribed by NATSBus",
+            old_prefix[:20], new_prefix[:20], len(self._subscribers),
+        )
 
     # ------------------------------------------------------------------
     # AD-637b: Serialization helpers

@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 
 
@@ -71,6 +71,46 @@ class IntentResult:
     error: str | None = None
     confidence: float = 0.0
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class Priority(StrEnum):
+    """Three-tier priority model (AD-637f).
+
+    CRITICAL: Captain messages, @mentions, DMs — reserved LLM slots, bypass quality gates.
+    NORMAL: Ward room participation, standard intents — default processing.
+    LOW: Proactive think cycles — observability label only; uses same background
+         semaphore as NORMAL. A functional deferral tier (third semaphore) would
+         require its own AD.
+    """
+    CRITICAL = "critical"
+    NORMAL = "normal"
+    LOW = "low"
+
+    @staticmethod
+    def classify(
+        *,
+        intent: str = "",
+        is_captain: bool = False,
+        was_mentioned: bool = False,
+    ) -> "Priority":
+        """Classify priority from observation context (AD-637f).
+
+        Single source of truth — used by both LLM scheduling (cognitive_agent.py)
+        and NATS header emission (communication.py, runtime.py).
+
+        Rules:
+        - Captain-originated or @mentioned → CRITICAL
+        - DMs (from anyone) → CRITICAL (conversational, latency-sensitive)
+        - Proactive think → LOW (observability label; same semaphore as NORMAL)
+        - Everything else → NORMAL
+        """
+        if is_captain or was_mentioned:
+            return Priority.CRITICAL
+        if intent == "direct_message":
+            return Priority.CRITICAL
+        if intent == "proactive_think":
+            return Priority.LOW
+        return Priority.NORMAL
 
 
 @dataclass

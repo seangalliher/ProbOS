@@ -103,6 +103,7 @@ from probos.types import (
     IntentMessage,
     IntentResult,
     NodeSelfModel,
+    Priority,
     QuorumPolicy,
     TaskDAG,
     TaskNode,
@@ -543,6 +544,8 @@ class ProbOSRuntime:
 
         # --- HXI event listeners (AD-254) ---
         self._event_listeners: list[tuple[Callable[..., Any], frozenset[str] | None]] = []
+        self._nats_publish_tasks: set[asyncio.Task] = set()  # AD-637d: prevents GC of publish tasks
+        self._nats_events_wired: bool = False  # AD-637z: gate for inline NATS event subscription
 
         self._started = False
         self._fresh_boot = False
@@ -629,16 +632,21 @@ class ProbOSRuntime:
         fn: Callable[..., Any],
         event_types: Iterable[str] | None = None,
     ) -> None:
-        """Register a listener for HXI events.
+        """Register a listener for system events.
 
-        Args:
-            fn: Callback receiving event dict. May be a coroutine function —
-                if so, it will be scheduled as an asyncio task.
-            event_types: If provided, listener only fires for these event types.
-                If None, listener receives ALL events (backwards compatible).
+        AD-637d: When NATS connected, creates NATS subscriptions for the
+        specified event types. Falls back to in-memory listener list when
+        NATS disconnected.
         """
         type_filter = frozenset(str(t) for t in event_types) if event_types else None
+        # Always append to local list (used as fallback when NATS disconnected)
         self._event_listeners.append((fn, type_filter))
+
+        # AD-637d/637z: Create NATS subscription only AFTER bulk wiring is done.
+        # Before _nats_events_wired, _setup_nats_event_subscriptions() handles all.
+        # After the flag is set, new listeners get their own NATS sub immediately.
+        if self._nats_events_wired and getattr(self, 'nats_bus', None) and self.nats_bus.connected:
+            self._create_nats_event_subscription(fn, type_filter)
 
     def remove_event_listener(self, fn: Callable[..., Any]) -> None:
         """Remove a previously registered event listener."""
@@ -646,13 +654,68 @@ class ProbOSRuntime:
             (f, tf) for f, tf in self._event_listeners if f is not fn
         ]
 
+    def _create_nats_event_subscription(
+        self,
+        fn: Callable[..., Any],
+        type_filter: frozenset[str] | None,
+    ) -> None:
+        """Create NATS subscription(s) for an event listener (AD-637d)."""
+        async def _nats_callback(msg: Any) -> None:
+            event = msg.data
+            try:
+                if asyncio.iscoroutinefunction(fn):
+                    await fn(event)
+                else:
+                    fn(event)
+            except Exception:
+                logger.debug("NATS event listener failed for %s",
+                             event.get("type", ""), exc_info=True)
+
+        async def _do_subscribe() -> None:
+            if type_filter:
+                for event_type in type_filter:
+                    subject = f"system.events.{event_type}"
+                    await self.nats_bus.js_subscribe(
+                        subject,
+                        _nats_callback,
+                        stream="SYSTEM_EVENTS",
+                    )
+            else:
+                await self.nats_bus.js_subscribe(
+                    "system.events.>",
+                    _nats_callback,
+                    stream="SYSTEM_EVENTS",
+                )
+
+        try:
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(_do_subscribe())
+            self._nats_publish_tasks.add(task)
+            task.add_done_callback(self._nats_publish_tasks.discard)
+        except RuntimeError:
+            pass  # No event loop — local-only listener
+
+    def _setup_nats_event_subscriptions(self) -> None:
+        """Wire existing event listeners to NATS subscriptions (AD-637d).
+
+        Called from finalize phase after SYSTEM_EVENTS stream is ensured.
+        Listeners registered during early startup phases (before NATS was
+        available) get retroactively wired to NATS subscriptions.
+        """
+        if not (getattr(self, 'nats_bus', None) and self.nats_bus.connected):
+            return
+        for fn, type_filter in self._event_listeners:
+            self._create_nats_event_subscription(fn, type_filter)
+        self._nats_events_wired = True
+
     def _emit_event(self, event_type: str | EventType, data: dict[str, Any] | None = None) -> None:
         """Fire-and-forget event to all registered listeners (AD-254).
 
-        Accepts typed ``BaseEvent`` instances, ``EventType`` enum values,
-        or legacy string + dict pairs (AD-527 backward compat).
-        AD-503: Supports type-filtered and async listeners.
+        AD-637d: When NATS connected, publishes to JetStream. Subscribers
+        receive via their NATS subscriptions. Falls back to in-memory dispatch
+        when NATS disconnected.
         """
+        # Step 1: Serialize event (unchanged)
         if isinstance(event_type, BaseEvent):
             event = event_type.to_dict()
         elif isinstance(event_type, EventType):
@@ -660,6 +723,32 @@ class ProbOSRuntime:
         else:
             event = {"type": event_type, "data": data or {}, "timestamp": time.time()}
         type_str = event.get("type", "")
+
+        # Step 2: Night Orders escalation (always local, synchronous)
+        # AD-471: Intentionally runs BEFORE dispatch — ensures escalation fires
+        # even if NATS publish or local dispatch fails.
+        self._check_night_order_escalation(type_str, event.get("data", {}))
+
+        # Step 3: Route — NATS or fallback (mutually exclusive, no-dual-delivery)
+        if getattr(self, 'nats_bus', None) and self.nats_bus.connected:
+            # AD-637d: JetStream publish
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                logger.warning("AD-637d: _emit_event called outside event loop, using fallback")
+                self._emit_event_local(event, type_str)
+                return
+            subject = f"system.events.{type_str}"
+            headers = {"X-Priority": Priority.NORMAL.value}
+            task = loop.create_task(self.nats_bus.js_publish(subject, event, headers=headers))
+            self._nats_publish_tasks.add(task)
+            task.add_done_callback(self._nats_publish_tasks.discard)
+        else:
+            # Fallback: in-memory dispatch (original behavior)
+            self._emit_event_local(event, type_str)
+
+    def _emit_event_local(self, event: dict[str, Any], type_str: str) -> None:
+        """In-memory event dispatch to registered listeners (fallback path, AD-637d)."""
         for fn, type_filter in self._event_listeners:
             if type_filter is not None and type_str not in type_filter:
                 continue
@@ -670,8 +759,6 @@ class ProbOSRuntime:
                     fn(event)
             except Exception:
                 logger.debug("Event listener failed for %s", type_str, exc_info=True)
-        # AD-471: Check Night Orders escalation on every event
-        self._check_night_order_escalation(event.get("type", ""), event.get("data", {}))
 
     def emit_event(self, event: BaseEvent | str, data: dict[str, Any] | None = None) -> None:
         """Public typed event emission (AD-527).  Delegates to _emit_event."""
@@ -1122,6 +1209,7 @@ class ProbOSRuntime:
             find_consensus_pools_fn=self._find_consensus_pools,
             build_self_model_fn=self._build_self_model,
             validate_remote_result_fn=self._validate_remote_result,
+            nats_bus=self.nats_bus,
         )
         self.pool_scaler = org.pool_scaler
         self.federation_bridge = org.federation_bridge
@@ -1449,7 +1537,7 @@ class ProbOSRuntime:
         if self.nats_bus and self.identity_registry:
             cert = self.identity_registry.get_ship_certificate()
             if cert:
-                self.nats_bus.set_subject_prefix(f"probos.{cert.ship_did}")
+                await self.nats_bus.set_subject_prefix(f"probos.{cert.ship_did}")
                 logger.info("AD-637: NATS subject prefix updated to probos.%s", cert.ship_did)
 
         # AD-596c (BF-596b fix): Wire cognitive skill catalog into standing orders

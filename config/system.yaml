@@ -36,13 +36,13 @@ cognitive:
   # Shared defaults (used when per-tier not specified)
   llm_base_url: "http://127.0.0.1:8080/v1"
   llm_api_key: ""
-  llm_timeout_seconds: 30
+  llm_timeout_seconds: 300  # Match proxy REQUEST_TIMEOUT_MS (300s)
 
   # Fast tier — Sonnet via Copilot proxy
   llm_base_url_fast: "http://127.0.0.1:8080/v1"
   llm_api_key_fast: ""
   llm_model_fast: "claude-sonnet-4-20250514"
-  llm_timeout_fast: 30
+  llm_timeout_fast: 300  # Match proxy REQUEST_TIMEOUT_MS (300s)
   llm_api_format_fast: "openai"
 
   # To switch back to Ollama, uncomment below and comment out the lines above:
@@ -369,12 +369,12 @@ circuit_breaker:
 sub_task:
   enabled: true
   chain_timeout_ms: 240000        # 80% of llm_timeout_deep (300s)
-  step_timeout_ms: 60000           # Aligned with llm_timeout_seconds (30s) with headroom
+  step_timeout_ms: 240000          # Match llm_timeout_seconds (300s) with 80% margin
   max_concurrent_chains: 4       # AD-636: cap simultaneous chain executions
 
 # --- NATS Event Bus (AD-637) ---
 nats:
-  enabled: false
+  enabled: true
   url: "nats://localhost:4222"
   connect_timeout_seconds: 5.0
   max_reconnect_attempts: 60

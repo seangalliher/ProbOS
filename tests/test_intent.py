@@ -231,9 +231,12 @@ class TestIntentBusNATS:
         bus.set_nats_bus(mock_nats_bus)
 
         bus.subscribe("agent-1", _make_handler("agent-1"))
-        await asyncio.sleep(0)  # let ensure_future complete
+        # AD-637z: tasks are tracked in _pending_sub_tasks, drain them
+        if bus._pending_sub_tasks:
+            await asyncio.gather(*bus._pending_sub_tasks, return_exceptions=True)
 
-        assert "agent-1" in bus._nats_subs
+        # AD-637z: NATSBus now owns subscription tracking via _active_subs
+        assert any(e["subject"] == "intent.agent-1" for e in mock_nats_bus._active_subs)
 
     @pytest.mark.asyncio
     async def test_unsubscribe_cleans_nats_subscription(self, signal_manager, mock_nats_bus):
@@ -242,11 +245,16 @@ class TestIntentBusNATS:
         bus.set_nats_bus(mock_nats_bus)
 
         bus.subscribe("agent-1", _make_handler("agent-1"))
-        await asyncio.sleep(0)
+        if bus._pending_sub_tasks:
+            await asyncio.gather(*bus._pending_sub_tasks, return_exceptions=True)
 
-        assert "agent-1" in bus._nats_subs
+        # AD-637z: NATSBus tracks the subscription
+        assert any(e["subject"] == "intent.agent-1" for e in mock_nats_bus._active_subs)
         bus.unsubscribe("agent-1")
-        assert "agent-1" not in bus._nats_subs
+        # Drain unsub task
+        if bus._pending_sub_tasks:
+            await asyncio.gather(*bus._pending_sub_tasks, return_exceptions=True)
+        assert not any(e["subject"] == "intent.agent-1" for e in mock_nats_bus._active_subs)
 
     @pytest.mark.asyncio
     async def test_publish_alias_calls_broadcast(self, intent_bus):

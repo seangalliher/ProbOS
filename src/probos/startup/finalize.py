@@ -155,17 +155,8 @@ async def finalize_startup(
         # AD-621: Populate membership cache after startup subscriptions
         await ward_room_router.populate_membership_cache()
 
-        # AD-637c: JetStream setup — stream ensure + consumer subscription
-        # Both are in finalize.py to avoid split-phase race conditions.
+        # AD-637c: JetStream consumer subscription (stream ensured in startup/nats.py)
         if getattr(runtime, 'nats_bus', None) and runtime.nats_bus.connected:
-            # Ensure WARDROOM stream exists
-            await runtime.nats_bus.ensure_stream(
-                "WARDROOM",
-                ["wardroom.events.>"],
-                max_msgs=10000,
-                max_age=3600,  # 1 hour retention
-            )
-
             # Subscribe router as durable JetStream consumer
             async def _on_wardroom_event(msg: Any) -> None:
                 """JetStream consumer callback — extract event_type and route."""
@@ -183,7 +174,7 @@ async def finalize_startup(
                 durable="wardroom-router",
                 stream="WARDROOM",
                 max_ack_pending=10,  # Matches AD-616 concurrency limit
-                ack_wait=120,  # Seconds — must exceed slow cognitive chain time
+                ack_wait=300,  # BF-220: Must exceed LLM timeout (300s) to prevent redelivery
             )
             logger.info("AD-637c: WARDROOM JetStream stream + consumer wired")
 
@@ -665,6 +656,14 @@ async def finalize_startup(
                         a._newly_commissioned = False
         except Exception:
             logger.debug("Auto-welcome announcement failed", exc_info=True)
+
+    # AD-637d: System Events subscription wiring (stream ensured in startup/nats.py)
+    # Placed after ALL add_event_listener() calls (game completion, Counselor, etc.)
+    # so _setup_nats_event_subscriptions() catches every registered listener.
+    if getattr(runtime, 'nats_bus', None) and runtime.nats_bus.connected:
+        runtime._setup_nats_event_subscriptions()
+        logger.info("AD-637d: SYSTEM_EVENTS %d listeners wired to NATS",
+                    len(runtime._event_listeners))
 
     logger.info("Startup [finalize]: complete")
     return FinalizationResult(

@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from probos.types import LLMRequest, LLMResponse
+from probos.types import LLMRequest, LLMResponse, Priority
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class BaseLLMClient(ABC):
     """Abstract LLM client interface."""
 
     @abstractmethod
-    async def complete(self, request: LLMRequest, *, priority: str = "background") -> LLMResponse:
+    async def complete(self, request: LLMRequest, *, priority: Priority = Priority.NORMAL) -> LLMResponse:
         """Send a completion request and return the response."""
 
     def get_health_status(self) -> dict[str, Any]:
@@ -293,18 +293,19 @@ class OpenAICompatibleClient(BaseLLMClient):
         except (httpx.ConnectError, httpx.TimeoutException, OSError):
             return False
 
-    async def complete(self, request: LLMRequest, *, priority: str = "background") -> LLMResponse:
+    async def complete(self, request: LLMRequest, *, priority: Priority = Priority.NORMAL) -> LLMResponse:
         """Send a completion request with fallback chain.
 
         Routes to the appropriate tier's endpoint and client.
         Fallback order: requested tier → next available tier → cache → error.
         Tier fallback: fast → standard → deep.
 
-        AD-636: priority="interactive" uses reserved slots (Captain DMs).
-        priority="background" uses remaining capacity (proactive, chains).
+        AD-636/637f: Priority.CRITICAL uses reserved interactive slots
+        (Captain DMs, @mentions). NORMAL and LOW share background capacity.
+        LOW is an observability label — same semaphore as NORMAL.
         """
-        # AD-636: Acquire priority-lane semaphore
-        sem = self._interactive_semaphore if priority == "interactive" else self._background_semaphore
+        # AD-637f: CRITICAL uses reserved interactive slots; NORMAL and LOW share background
+        sem = self._interactive_semaphore if priority == Priority.CRITICAL else self._background_semaphore
         try:
             await asyncio.wait_for(sem.acquire(), timeout=30.0)
         except asyncio.TimeoutError:
@@ -861,7 +862,7 @@ class MockLLMClient(BaseLLMClient):
         """Set the response for unmatched inputs."""
         self._default_response = response
 
-    async def complete(self, request: LLMRequest, *, priority: str = "background") -> LLMResponse:
+    async def complete(self, request: LLMRequest, *, priority: Priority = Priority.NORMAL) -> LLMResponse:
         """Match input against patterns and return canned response."""
         self._call_log.append(request)
 

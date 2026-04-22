@@ -238,6 +238,8 @@ class RecordsStore:
 
         Creates or updates notebooks/{callsign}/{topic_slug}.md
         """
+        if not callsign or not callsign.strip():  # BF-218: guard against empty callsign
+            raise ValueError("callsign must not be empty for notebook writes")
         path = f"notebooks/{callsign}/{topic_slug}.md"
         self._safe_path(path)  # Validate before delegating to write_entry
         return await self.write_entry(

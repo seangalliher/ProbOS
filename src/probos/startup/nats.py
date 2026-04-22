@@ -46,6 +46,24 @@ async def init_nats(config: "SystemConfig") -> "NATSBus | None":
             "Startup [nats]: connected (JetStream=%s)",
             config.nats.jetstream_enabled,
         )
+        # Ensure JetStream streams exist before any events fire.
+        # Subscriptions are wired later in finalize.py, but streams must
+        # exist now — agents publish system events during fleet startup
+        # (Phase 3), before finalize (Phase 5) runs.
+        if config.nats.jetstream_enabled:
+            await bus.ensure_stream(
+                "SYSTEM_EVENTS",
+                ["system.events.>"],
+                max_msgs=50000,
+                max_age=3600,
+            )
+            await bus.ensure_stream(
+                "WARDROOM",
+                ["wardroom.events.>"],
+                max_msgs=10000,
+                max_age=3600,
+            )
+            logger.info("Startup [nats]: JetStream streams ensured (SYSTEM_EVENTS, WARDROOM)")
     else:
         logger.warning(
             "Startup [nats]: connection failed — system will operate without NATS. "

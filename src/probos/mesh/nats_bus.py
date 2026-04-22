@@ -97,6 +97,9 @@ class NATSBus:
         self._subscriptions: list[Any] = []
         self._connected = False
         self._started = False
+        self._active_subs: list[dict[str, Any]] = []  # Tracked subs for prefix re-subscription
+        self._prefix_change_callbacks: list[Callable] = []
+        self._resubscribing: bool = False
 
     @property
     def connected(self) -> bool:
@@ -107,9 +110,89 @@ class NATSBus:
     def subject_prefix(self) -> str:
         return self._subject_prefix
 
-    def set_subject_prefix(self, prefix: str) -> None:
-        """Update subject prefix (e.g., after ship DID is known)."""
+    async def set_subject_prefix(self, prefix: str) -> None:
+        """Update subject prefix and re-subscribe all tracked subscriptions.
+
+        AD-637z: Subscriptions created via subscribe()/js_subscribe() are
+        tracked in _active_subs with un-prefixed subjects. On prefix change,
+        each is unsubscribed and re-created with the new prefix.
+
+        Note: publish_raw/subscribe_raw are intentionally NOT tracked.
+        Federation uses raw subjects to bypass per-ship prefix isolation.
+        """
+        if prefix == self._subject_prefix:
+            return
+        old_prefix = self._subject_prefix
         self._subject_prefix = prefix
+        logger.info("NATS subject prefix changed: %s → %s", old_prefix, prefix)
+
+        # Re-subscribe all tracked subscriptions with new prefix
+        if self.connected and self._active_subs:
+            self._resubscribing = True
+            try:
+                for entry in self._active_subs:
+                    old_sub = entry["sub"]
+                    if old_sub is not None:
+                        try:
+                            await old_sub.unsubscribe()
+                        except Exception as e:
+                            logger.debug("Unsubscribe during prefix change: %s", e)
+
+                    # Re-create with new prefix (subscribe/js_subscribe use _full_subject)
+                    if entry["kind"] == "core":
+                        new_sub = await self.subscribe(
+                            entry["subject"], entry["callback"], **entry["kwargs"]
+                        )
+                    else:
+                        new_sub = await self.js_subscribe(
+                            entry["subject"], entry["callback"], **entry["kwargs"]
+                        )
+                    entry["sub"] = new_sub
+            finally:
+                self._resubscribing = False
+
+        # Notify registered callbacks (notification only — NATSBus already re-subscribed)
+        for cb in self._prefix_change_callbacks:
+            try:
+                await cb(old_prefix, prefix)
+            except Exception as e:
+                logger.warning("Prefix change callback failed: %s", e)
+
+    def register_on_prefix_change(
+        self, callback: Callable[[str, str], Awaitable[None]]
+    ) -> None:
+        """Register a callback for subject prefix changes (notification only).
+
+        Callbacks fire AFTER NATSBus has re-subscribed everything. They are
+        for logging and bookkeeping — NOT for managing subscriptions.
+        """
+        self._prefix_change_callbacks.append(callback)
+
+    async def remove_tracked_subscription(self, subject: str) -> bool:
+        """Remove and unsubscribe a tracked subscription by un-prefixed subject.
+
+        Used by IntentBus.unsubscribe() to clean up agent subscriptions
+        without maintaining a parallel tracking dict.
+        Returns True if found and removed, False otherwise.
+        """
+        for i, entry in enumerate(self._active_subs):
+            if entry["subject"] == subject:
+                sub = entry["sub"]
+                if sub is not None:
+                    try:
+                        await sub.unsubscribe()
+                    except Exception as e:
+                        logger.debug("Tracked unsubscribe error: %s", e)
+                self._active_subs.pop(i)
+                return True
+        return False
+
+    def _strip_prefix(self, subject: str) -> str:
+        """Remove current prefix from subject for storage in _active_subs."""
+        prefix_dot = self._subject_prefix + "."
+        if subject.startswith(prefix_dot):
+            return subject[len(prefix_dot):]
+        return subject
 
     def _full_subject(self, subject: str) -> str:
         """Prepend subject prefix if not already present."""
@@ -192,6 +275,8 @@ class NATSBus:
         self._connected = False
         self._started = False
         self._subscriptions.clear()
+        self._active_subs.clear()
+        self._prefix_change_callbacks.clear()
         logger.info("NATS connection closed")
 
     async def publish(
@@ -242,6 +327,14 @@ class NATSBus:
 
         sub = await self._nc.subscribe(full_subject, queue=queue, cb=_handler)
         self._subscriptions.append(sub)
+        if not self._resubscribing:
+            self._active_subs.append({
+                "kind": "core",
+                "subject": self._strip_prefix(subject),
+                "callback": callback,
+                "kwargs": {"queue": queue} if queue else {},
+                "sub": sub,
+            })
         return sub
 
     async def request(
@@ -269,7 +362,7 @@ class NATSBus:
                 _msg=response,
             )
         except Exception as e:
-            logger.debug("NATS request to %s failed: %s", full_subject, e)
+            logger.warning("NATS request to %s failed: %s", full_subject, e)
             return None
 
     async def js_publish(
@@ -349,6 +442,21 @@ class NATSBus:
                 subscribe_kwargs["config"] = ConsumerConfig(**config_kwargs)
             sub = await self._js.subscribe(full_subject, **subscribe_kwargs)
             self._subscriptions.append(sub)
+            if not self._resubscribing:
+                self._active_subs.append({
+                    "kind": "js",
+                    "subject": self._strip_prefix(subject),
+                    "callback": callback,
+                    "kwargs": {
+                        k: v for k, v in {
+                            "durable": durable,
+                            "stream": stream,
+                            "max_ack_pending": max_ack_pending,
+                            "ack_wait": ack_wait,
+                        }.items() if v is not None
+                    },
+                    "sub": sub,
+                })
             return sub
         except Exception as e:
             logger.error("JetStream subscribe to %s failed: %s", full_subject, e)
@@ -376,7 +484,14 @@ class NATSBus:
                 max_msgs=max_msgs,
                 max_age=max_age,
             )
-            await self._js.add_stream(config)
+            try:
+                await self._js.add_stream(config)
+            except Exception as add_err:
+                # Stream exists with different config — update it
+                if "10058" in str(add_err) or "already in use" in str(add_err):
+                    await self._js.update_stream(config)
+                else:
+                    raise add_err
             logger.info("JetStream stream '%s' ensured: %s", name, full_subjects)
         except Exception as e:
             logger.error("Failed to ensure stream '%s': %s", name, e)
@@ -397,6 +512,52 @@ class NATSBus:
             "jetstream": self._js is not None,
             "subscriptions": len(self._subscriptions),
         }
+
+    async def publish_raw(
+        self,
+        subject: str,
+        data: dict[str, Any],
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        """Publish without subject prefix — for cross-ship federation subjects."""
+        if not self.connected:
+            return
+        payload = json.dumps(data).encode()
+        await self._nc.publish(subject, payload, headers=headers)
+
+    async def subscribe_raw(
+        self,
+        subject: str,
+        callback: MessageCallback,
+        queue: str = "",
+    ) -> Any:
+        """Subscribe without subject prefix — for cross-ship federation subjects."""
+        if not self.connected:
+            return None
+
+        async def _handler(msg: Any) -> None:
+            try:
+                raw_data = json.loads(msg.data) if msg.data else {}
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.debug("NATS: invalid JSON on %s", msg.subject)
+                return
+            wrapped = NATSMessage(
+                subject=msg.subject,
+                data=raw_data,
+                reply=msg.reply or "",
+                headers=dict(msg.headers) if msg.headers else {},
+                _msg=msg,
+            )
+            try:
+                await callback(wrapped)
+            except Exception:
+                logger.error(
+                    "NATS subscriber error on %s", msg.subject, exc_info=True
+                )
+
+        sub = await self._nc.subscribe(subject, queue=queue, cb=_handler)
+        self._subscriptions.append(sub)
+        return sub
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +580,9 @@ class MockNATSBus:
         self._queue_subs: dict[str, dict[str, list[MessageCallback]]] = {}
         self._streams: dict[str, dict[str, Any]] = {}
         self.published: list[tuple[str, dict[str, Any]]] = []  # Test inspection
+        self._active_subs: list[dict[str, Any]] = []
+        self._prefix_change_callbacks: list[Callable] = []
+        self._resubscribing: bool = False
 
     @property
     def connected(self) -> bool:
@@ -428,8 +592,65 @@ class MockNATSBus:
     def subject_prefix(self) -> str:
         return self._subject_prefix
 
-    def set_subject_prefix(self, prefix: str) -> None:
+    async def set_subject_prefix(self, prefix: str) -> None:
+        """Update prefix and rebuild subscriptions from _active_subs."""
+        if prefix == self._subject_prefix:
+            return
+        old_prefix = self._subject_prefix
         self._subject_prefix = prefix
+
+        # Rebuild _subs from _active_subs (un-prefixed source of truth)
+        new_subs: dict[str, list[MessageCallback]] = {}
+        for entry in self._active_subs:
+            full = self._full_subject(entry["subject"])
+            new_subs.setdefault(full, []).append(entry["callback"])
+            entry["sub"] = full  # update tracked sub to new full subject
+
+        # Preserve raw subscriptions (federation, not in _active_subs)
+        for key, cbs in self._subs.items():
+            if key not in new_subs:
+                # Check if this key was from the old prefix
+                old_dot = old_prefix + "."
+                if not key.startswith(old_dot):
+                    # Raw subscription — preserve as-is
+                    new_subs[key] = cbs
+        self._subs = new_subs
+
+        # Notify callbacks
+        for cb in self._prefix_change_callbacks:
+            try:
+                await cb(old_prefix, prefix)
+            except Exception:
+                pass
+
+    def register_on_prefix_change(
+        self, callback: Callable[[str, str], Awaitable[None]]
+    ) -> None:
+        self._prefix_change_callbacks.append(callback)
+
+    async def remove_tracked_subscription(self, subject: str) -> bool:
+        """Remove a tracked subscription by un-prefixed subject."""
+        for i, entry in enumerate(self._active_subs):
+            if entry["subject"] == subject:
+                # Remove from _subs dict
+                full = self._full_subject(subject)
+                if full in self._subs:
+                    # Remove the specific callback, not all subs on this subject
+                    try:
+                        self._subs[full].remove(entry["callback"])
+                    except ValueError:
+                        pass
+                    if not self._subs[full]:
+                        del self._subs[full]
+                self._active_subs.pop(i)
+                return True
+        return False
+
+    def _strip_prefix(self, subject: str) -> str:
+        prefix_dot = self._subject_prefix + "."
+        if subject.startswith(prefix_dot):
+            return subject[len(prefix_dot):]
+        return subject
 
     def _full_subject(self, subject: str) -> str:
         if subject.startswith(self._subject_prefix + "."):
@@ -445,6 +666,8 @@ class MockNATSBus:
         self._started = False
         self._subs.clear()
         self._queue_subs.clear()
+        self._active_subs.clear()
+        self._prefix_change_callbacks.clear()
 
     def _match_subject(self, pattern: str, subject: str) -> bool:
         """NATS subject matching: * = one token, > = one or more tokens."""
@@ -487,6 +710,14 @@ class MockNATSBus:
         if full not in self._subs:
             self._subs[full] = []
         self._subs[full].append(callback)
+        if not self._resubscribing:
+            self._active_subs.append({
+                "kind": "core",
+                "subject": self._strip_prefix(subject),
+                "callback": callback,
+                "kwargs": {"queue": queue} if queue else {},
+                "sub": full,
+            })
         return full  # subscription handle
 
     async def request(
@@ -541,7 +772,26 @@ class MockNATSBus:
         max_ack_pending: int | None = None,
         ack_wait: int | None = None,
     ) -> str:
-        return await self.subscribe(subject, callback)
+        full = self._full_subject(subject)
+        if full not in self._subs:
+            self._subs[full] = []
+        self._subs[full].append(callback)
+        if not self._resubscribing:
+            self._active_subs.append({
+                "kind": "js",
+                "subject": self._strip_prefix(subject),
+                "callback": callback,
+                "kwargs": {
+                    k: v for k, v in {
+                        "durable": durable,
+                        "stream": stream,
+                        "max_ack_pending": max_ack_pending,
+                        "ack_wait": ack_wait,
+                    }.items() if v is not None
+                },
+                "sub": full,
+            })
+        return full
 
     async def ensure_stream(
         self,
@@ -565,3 +815,31 @@ class MockNATSBus:
             "jetstream": True,
             "subscriptions": sum(len(cbs) for cbs in self._subs.values()),
         }
+
+    async def publish_raw(
+        self,
+        subject: str,
+        data: dict[str, Any],
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        """Publish without subject prefix — for cross-ship federation subjects."""
+        if not self._connected:
+            return
+        self.published.append((subject, data))
+        msg = NATSMessage(subject=subject, data=data, headers=headers or {})
+        for pattern, cbs in self._subs.items():
+            if self._match_subject(pattern, subject):
+                for cb in cbs:
+                    await cb(msg)
+
+    async def subscribe_raw(
+        self,
+        subject: str,
+        callback: MessageCallback,
+        queue: str = "",
+    ) -> str:
+        """Subscribe without subject prefix — for cross-ship federation subjects."""
+        if subject not in self._subs:
+            self._subs[subject] = []
+        self._subs[subject].append(callback)
+        return subject

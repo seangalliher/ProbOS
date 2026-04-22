@@ -13,7 +13,7 @@ from typing import Any, ClassVar
 
 from probos.events import EventType
 from probos.substrate.agent import BaseAgent
-from probos.types import AnchorFrame, IntentMessage, IntentResult, LLMRequest, Skill
+from probos.types import AnchorFrame, IntentMessage, IntentResult, LLMRequest, Priority, Skill
 from probos.utils import format_duration
 
 logger = logging.getLogger(__name__)
@@ -1422,8 +1422,13 @@ class CognitiveAgent(BaseAgent):
 
         # AD-431: Time the LLM call for journal
         _t0 = time.monotonic()
-        # AD-636: Interactive priority for Captain DMs
-        _priority = "interactive" if observation.get("intent") == "direct_message" else "background"
+        # AD-637f: Unified priority classification
+        _params = observation.get("params", {})
+        _priority = Priority.classify(
+            intent=observation.get("intent", ""),
+            is_captain=_params.get("author_id", "") == "captain",
+            was_mentioned=_params.get("was_mentioned", False),
+        )
         response = await self._llm_client.complete(request, priority=_priority)
         _latency_ms = (time.monotonic() - _t0) * 1000
 

@@ -37,6 +37,7 @@ async def organize_fleet(
     find_consensus_pools_fn: Callable[[], set[str]],
     build_self_model_fn: Callable[..., Any],
     validate_remote_result_fn: Callable[..., Any] | None,
+    nats_bus: Any | None = None,
 ) -> FleetOrganizationResult:
     """Register pool groups, start scaler, set up federation."""
     logger.info("Startup [fleet_organization]: starting")
@@ -136,28 +137,46 @@ async def organize_fleet(
         # PATCH(AD-517): Wire surge function into escalation manager
         escalation_manager._surge_fn = pool_scaler.request_surge
 
-    # Start federation if enabled
+    # Start federation if enabled (AD-637e: NATS-first, ZeroMQ fallback)
     federation_bridge = None
     federation_transport = None
     if config.federation.enabled:
         from probos.federation import FederationRouter, FederationBridge
-        from probos.federation.mock_transport import MockFederationTransport, MockTransportBus
 
-        # Use real transport if pyzmq available, else skip
+        peer_node_ids = [p.node_id for p in config.federation.peers]
         transport = None
-        try:
-            from probos.federation.transport import FederationTransport
 
-            transport = FederationTransport(
-                node_id=config.federation.node_id,
-                bind_address=config.federation.bind_address,
-                peers=config.federation.peers,
-            )
-            await transport.start()
-        except ImportError:
-            logger.warning("pyzmq not available; federation transport disabled")
-        except Exception as e:
-            logger.warning("Federation transport failed to start: %s", e)
+        # Try NATS transport first (AD-637e)
+        if nats_bus is not None and nats_bus.connected:
+            try:
+                from probos.federation.nats_transport import NATSFederationTransport
+
+                transport = NATSFederationTransport(
+                    node_id=config.federation.node_id,
+                    nats_bus=nats_bus,
+                    peer_node_ids=peer_node_ids,
+                )
+                await transport.start()
+                logger.info("AD-637e: Federation using NATS transport")
+            except Exception as e:
+                logger.warning("AD-637e: NATS federation transport failed, falling back to ZeroMQ: %s", e)
+                transport = None
+
+        # ZeroMQ fallback
+        if transport is None:
+            try:
+                from probos.federation.transport import FederationTransport
+
+                transport = FederationTransport(
+                    node_id=config.federation.node_id,
+                    bind_address=config.federation.bind_address,
+                    peers=config.federation.peers,
+                )
+                await transport.start()
+            except ImportError:
+                logger.warning("pyzmq not available; federation transport disabled")
+            except Exception as e:
+                logger.warning("Federation transport failed to start: %s", e)
 
         if transport is not None:
             router = FederationRouter()

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from probos.startup.results import CommunicationResult
+from probos.types import Priority
 
 if TYPE_CHECKING:
     from probos.config import SystemConfig
@@ -139,7 +140,19 @@ async def init_communication(
                     return
                 payload = {"event_type": event_type, **data}
                 subject = f"wardroom.events.{event_type}"
-                task = loop.create_task(nats_bus.js_publish(subject, payload))
+                # AD-637f: Priority header for observability
+                _author = data.get("author_id", "")
+                _mentions = data.get("mentions", [])
+                _is_captain = _author == "captain"
+                _was_mentioned = "captain" in [
+                    m.lower() for m in _mentions if isinstance(m, str)
+                ]
+                _priority = Priority.classify(
+                    is_captain=_is_captain,
+                    was_mentioned=_was_mentioned,
+                )
+                headers = {"X-Priority": _priority.value}
+                task = loop.create_task(nats_bus.js_publish(subject, payload, headers=headers))
                 _wardroom_publish_tasks.add(task)
                 task.add_done_callback(_wardroom_publish_tasks.discard)
             else:

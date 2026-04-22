@@ -358,7 +358,7 @@ class TestSubjectPrefixUpdate:
         await bus.publish("events.a", {"before": True})
         assert bus.published[0][0] == "probos.local.events.a"
 
-        bus.set_subject_prefix("probos.ship-abc123")
+        await bus.set_subject_prefix("probos.ship-abc123")
         await bus.publish("events.b", {"after": True})
         assert bus.published[1][0] == "probos.ship-abc123.events.b"
 
@@ -422,7 +422,7 @@ class TestShipDIDPrefixUpdate:
         if bus and mock_registry:
             cert = mock_registry.get_ship_certificate()
             if cert:
-                bus.set_subject_prefix(f"probos.{cert.ship_did}")
+                await bus.set_subject_prefix(f"probos.{cert.ship_did}")
 
         assert bus.subject_prefix == "probos.did:probos:abc123"
         mock_registry.get_ship_certificate.assert_called_once()
@@ -439,6 +439,6 @@ class TestShipDIDPrefixUpdate:
         if bus and mock_registry:
             cert = mock_registry.get_ship_certificate()
             if cert:
-                bus.set_subject_prefix(f"probos.{cert.ship_did}")
+                await bus.set_subject_prefix(f"probos.{cert.ship_did}")
 
         assert bus.subject_prefix == "probos.local"
