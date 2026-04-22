@@ -309,6 +309,11 @@ class ScoutAgent(CognitiveAgent):
         _duty = result.get("params", {}).get("duty")
         if intent_name == "proactive_think" and _duty and _duty.get("duty_id") == "scout_report":
             intent_name = "scout_search"  # Fall through to search pipeline below
+            # BF-225: Write renamed intent back so decide() sees "scout_search"
+            # (not "proactive_think"). _decide_via_llm() treats proactive_think
+            # as a conversation intent and strips domain-specific instructions —
+            # the classification format with ===SCOUT_REPORT=== blocks.
+            result["intent"] = intent_name
 
         if intent_name != "scout_search":
             return result
