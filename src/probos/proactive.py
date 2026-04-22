@@ -1256,9 +1256,15 @@ class ProactiveCognitiveLoop:
                                 {
                                     "type": a["type"],
                                     "author": a["author"],
-                                    # AD-629: Include post ID prefix for [ENDORSE post_id UP/DOWN]
+                                    # BF-224: Include both title AND body for threads.
+                                    # Previously used title-only via a.get("title", a.get("body", "")),
+                                    # so agents could never read thread body content.
                                     "body": (f"[{(a.get('post_id', a.get('id', '')) or '')[:8]}] " if a.get("post_id", a.get("id")) else "")
-                                        + (a.get("title", a.get("body", ""))[:500]),
+                                        + (
+                                            (a["title"] + "\n" + a["body"])[:500]
+                                            if a.get("title") and a.get("body")
+                                            else (a.get("title") or a.get("body", ""))[:500]
+                                        ),
                                     "net_score": a.get("net_score", 0),       # AD-426
                                     "post_id": a.get("post_id", a.get("id", "")),  # AD-426
                                     "thread_id": a.get("thread_id", ""),  # AD-437
@@ -1291,9 +1297,13 @@ class ProactiveCognitiveLoop:
                                 {
                                     "type": item["type"],
                                     "author": item.get("author", "unknown"),
-                                    # AD-629: Include post ID prefix for [ENDORSE post_id UP/DOWN]
+                                    # BF-224: Include both title AND body for threads
                                     "body": (f"[{(item.get('post_id', item.get('id', '')) or '')[:8]}] " if item.get("post_id", item.get("id")) else "")
-                                        + (item.get("body", "")[:500]),
+                                        + (
+                                            (item["title"] + "\n" + item["body"])[:500]
+                                            if item.get("title") and item.get("body")
+                                            else (item.get("title") or item.get("body", ""))[:500]
+                                        ),
                                     "channel": "All Hands",
                                     "net_score": item.get("net_score", 0),       # AD-426
                                     "post_id": item.get("post_id", item.get("id", "")),  # AD-426
@@ -1328,9 +1338,13 @@ class ProactiveCognitiveLoop:
                                 {
                                     "type": item["type"],
                                     "author": item.get("author", "unknown"),
-                                    # AD-629: Include post ID prefix for [ENDORSE post_id UP/DOWN]
+                                    # BF-224: Include both title AND body for threads
                                     "body": (f"[{(item.get('post_id', item.get('id', '')) or '')[:8]}] " if item.get("post_id", item.get("id")) else "")
-                                        + (item.get("body", "")[:500]),
+                                        + (
+                                            (item["title"] + "\n" + item["body"])[:500]
+                                            if item.get("title") and item.get("body")
+                                            else (item.get("title") or item.get("body", ""))[:500]
+                                        ),
                                     "channel": "Recreation",
                                     "net_score": item.get("net_score", 0),
                                     "post_id": item.get("post_id", item.get("id", "")),
