@@ -148,7 +148,7 @@ class TestMockNATSBus:
         await bus.ensure_stream("EVENTS", ["events.>"], max_msgs=1000)
 
         assert "EVENTS" in bus._streams
-        assert bus._streams["EVENTS"]["subjects"] == ["events.>"]
+        assert bus._streams["EVENTS"]["subjects"] == ["probos.test.events.>"]
         assert bus._streams["EVENTS"]["max_msgs"] == 1000
 
     @pytest.mark.asyncio

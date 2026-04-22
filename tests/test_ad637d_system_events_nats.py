@@ -248,7 +248,7 @@ class TestSystemEventsNATS:
 
         assert "SYSTEM_EVENTS" in bus._streams
         stream = bus._streams["SYSTEM_EVENTS"]
-        assert stream["subjects"] == ["system.events.>"]
+        assert stream["subjects"] == ["probos.test.system.events.>"]
         assert stream["max_msgs"] == 50000
         assert stream["max_age"] == 3600
 

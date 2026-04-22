@@ -100,6 +100,7 @@ class NATSBus:
         self._active_subs: list[dict[str, Any]] = []  # Tracked subs for prefix re-subscription
         self._prefix_change_callbacks: list[Callable] = []
         self._resubscribing: bool = False
+        self._stream_configs: list[dict[str, Any]] = []  # Track streams for prefix re-creation
 
     @property
     def connected(self) -> bool:
@@ -125,6 +126,18 @@ class NATSBus:
         old_prefix = self._subject_prefix
         self._subject_prefix = prefix
         logger.info("NATS subject prefix changed: %s → %s", old_prefix, prefix)
+
+        # Update stream subject filters to match new prefix
+        if self.connected and self._stream_configs:
+            for sc in self._stream_configs:
+                try:
+                    await self.ensure_stream(
+                        sc["name"], sc["subjects"],
+                        max_msgs=sc.get("max_msgs", -1),
+                        max_age=sc.get("max_age", 0),
+                    )
+                except Exception as e:
+                    logger.warning("Stream update on prefix change failed for %s: %s", sc["name"], e)
 
         # Re-subscribe all tracked subscriptions with new prefix
         if self.connected and self._active_subs:
@@ -277,6 +290,7 @@ class NATSBus:
         self._subscriptions.clear()
         self._active_subs.clear()
         self._prefix_change_callbacks.clear()
+        self._stream_configs.clear()
         logger.info("NATS connection closed")
 
     async def publish(
@@ -475,7 +489,20 @@ class NATSBus:
 
         from nats.js.api import StreamConfig
 
-        full_subjects = [self._full_subject(s) for s in subjects]
+        # Track un-prefixed subjects for re-creation on prefix change
+        stripped = [self._strip_prefix(s) for s in subjects]
+        existing = next((sc for sc in self._stream_configs if sc["name"] == name), None)
+        if existing:
+            existing["subjects"] = stripped
+            existing["max_msgs"] = max_msgs
+            existing["max_age"] = max_age
+        else:
+            self._stream_configs.append({
+                "name": name, "subjects": stripped,
+                "max_msgs": max_msgs, "max_age": max_age,
+            })
+
+        full_subjects = [self._full_subject(s) for s in stripped]
 
         try:
             config = StreamConfig(
@@ -583,6 +610,7 @@ class MockNATSBus:
         self._active_subs: list[dict[str, Any]] = []
         self._prefix_change_callbacks: list[Callable] = []
         self._resubscribing: bool = False
+        self._stream_configs: list[dict[str, Any]] = []
 
     @property
     def connected(self) -> bool:
@@ -668,6 +696,7 @@ class MockNATSBus:
         self._queue_subs.clear()
         self._active_subs.clear()
         self._prefix_change_callbacks.clear()
+        self._stream_configs.clear()
 
     def _match_subject(self, pattern: str, subject: str) -> bool:
         """NATS subject matching: * = one token, > = one or more tokens."""
@@ -800,8 +829,17 @@ class MockNATSBus:
         max_msgs: int = -1,
         max_age: float = 0,
     ) -> None:
+        stripped = [self._strip_prefix(s) for s in subjects]
+        existing = next((sc for sc in self._stream_configs if sc["name"] == name), None)
+        if existing:
+            existing["subjects"] = stripped
+        else:
+            self._stream_configs.append({
+                "name": name, "subjects": stripped,
+                "max_msgs": max_msgs, "max_age": max_age,
+            })
         self._streams[name] = {
-            "subjects": subjects,
+            "subjects": [self._full_subject(s) for s in stripped],
             "max_msgs": max_msgs,
             "max_age": max_age,
         }

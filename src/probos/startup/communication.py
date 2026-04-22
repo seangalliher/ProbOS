@@ -138,8 +138,10 @@ async def init_communication(
                 except RuntimeError:
                     logger.warning("AD-637c: Ward room emit called outside event loop, skipping NATS publish")
                     return
-                payload = {"event_type": event_type, **data}
-                subject = f"wardroom.events.{event_type}"
+                # Coerce EventType enum to string value (Python 3.11+ str(enum) returns name, not value)
+                event_str = event_type.value if hasattr(event_type, 'value') else str(event_type)
+                payload = {"event_type": event_str, **data}
+                subject = f"wardroom.events.{event_str}"
                 # AD-637f: Priority header for observability
                 _author = data.get("author_id", "")
                 _mentions = data.get("mentions", [])
