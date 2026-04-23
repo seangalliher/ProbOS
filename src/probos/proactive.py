@@ -706,9 +706,6 @@ class ProactiveCognitiveLoop:
         except Exception:
             logger.debug("AD-573: Working memory observation record failed", exc_info=True)
 
-        # AD-412: Check for structured improvement proposals
-        await self._extract_and_post_proposal(agent, response_text)
-
         # Post to Ward Room — find agent's department channel
         await self._post_to_ward_room(agent, response_text)
         self._last_proactive[agent.id] = time.monotonic()
@@ -1240,7 +1237,7 @@ class ProactiveCognitiveLoop:
                     for ch in channels:
                         if ch.channel_type == "department" and ch.department == dept:
                             dept_channel = ch
-                        elif ch.channel_type == "ship":
+                        elif ch.name == "All Hands":
                             all_hands_ch = ch
 
                     # Look back one cooldown window (what happened since last think)
@@ -1314,17 +1311,20 @@ class ProactiveCognitiveLoop:
                                 if (item.get("author_id", "") or item.get("author", "")) not in self_ids  # BF-032
                                 and not (wr_router and wr_router.has_agent_responded(agent.id, item.get("thread_id", "")))  # BF-198
                             ])
-                            # AD-425: Mark All Hands as seen
-                            try:
-                                await rt.ward_room.update_last_seen(agent.id, all_hands_ch.id)
-                            except Exception:
-                                logger.debug("update_last_seen failed", exc_info=True)
+                        # BF-226: Always mark All Hands as seen after checking,
+                        # even when no new non-inform activity exists. Otherwise
+                        # last_seen stays at crew creation time and unread count
+                        # grows unboundedly.
+                        try:
+                            await rt.ward_room.update_last_seen(agent.id, all_hands_ch.id)
+                        except Exception:
+                            logger.debug("update_last_seen failed", exc_info=True)
 
                     # AD-526a: Recreation channel activity
                     rec_ch = next((c for c in channels if c.name == "Recreation"), None)
                     if rec_ch:
                         rec_items = await rt.ward_room.get_recent_activity(
-                            rec_ch.id, limit=2, since=agent_last_seen.get(rec_ch.id)
+                            rec_ch.id, limit=2, since=since
                         )
                         rec_filtered = [
                             item for item in rec_items
@@ -1353,6 +1353,11 @@ class ProactiveCognitiveLoop:
                                 }
                                 for item in rec_filtered[:2]
                             ])
+                        # BF-226: Always mark Recreation as seen after checking.
+                        try:
+                            await rt.ward_room.update_last_seen(agent.id, rec_ch.id)
+                        except Exception:
+                            logger.debug("update_last_seen failed", exc_info=True)
             except Exception:
                 logger.debug("Ward Room context fetch failed for %s", agent.id, exc_info=True)
 
@@ -1920,73 +1925,6 @@ class ProactiveCognitiveLoop:
             logger.debug("Similarity check failed for %s", agent.id, exc_info=True)
             return False
 
-    async def _extract_and_post_proposal(self, agent: Any, text: str) -> None:
-        """AD-412: Extract [PROPOSAL] blocks and submit as improvement proposals."""
-        import re
-        pattern = r'\[PROPOSAL\]\s*\n(.*?)\n\[/PROPOSAL\]'
-        match = re.search(pattern, text, re.DOTALL)
-        if not match:
-            return
-
-        block = match.group(1)
-
-        # Parse structured fields
-        title = ""
-        rationale = ""
-        affected: list[str] = []
-        priority = "medium"
-
-        for line in block.split('\n'):
-            line = line.strip()
-            if line.lower().startswith("title:"):
-                title = line[6:].strip()
-            elif line.lower().startswith("affected systems:"):
-                raw = line[17:].strip()
-                affected = [s.strip() for s in raw.split(",") if s.strip()]
-            elif line.lower().startswith("priority:"):
-                p = line[9:].strip().lower()
-                if p in ("low", "medium", "high"):
-                    priority = p
-
-        # Rationale may span multiple lines — capture everything after "Rationale:"
-        # that isn't another field header
-        in_rationale = False
-        rationale_lines: list[str] = []
-        for line in block.split('\n'):
-            stripped = line.strip()
-            if stripped.lower().startswith("rationale:"):
-                rest = stripped[10:].strip()
-                if rest:
-                    rationale_lines.append(rest)
-                in_rationale = True
-            elif in_rationale:
-                if any(stripped.lower().startswith(f) for f in ("title:", "affected systems:", "priority:")):
-                    in_rationale = False
-                else:
-                    rationale_lines.append(stripped)
-        rationale = "\n".join(rationale_lines).strip()
-
-        if not title or not rationale:
-            return  # Incomplete proposal — skip silently
-
-        rt = self._runtime
-        try:
-            from probos.types import IntentMessage
-            intent = IntentMessage(
-                intent="propose_improvement",
-                params={
-                    "title": title,
-                    "rationale": rationale,
-                    "affected_systems": affected,
-                    "priority_suggestion": priority,
-                },
-                context=f"Proactive proposal from {getattr(agent, 'agent_type', 'unknown')}",
-            )
-            if rt.ward_room_router:
-                await rt.ward_room_router.handle_propose_improvement(intent, agent)
-        except Exception:
-            logger.debug("Failed to post improvement proposal from %s", getattr(agent, 'agent_type', 'unknown'), exc_info=True)
-
     async def _post_to_ward_room(self, agent: Any, text: str) -> None:
         """Create a Ward Room thread with the agent's proactive observation."""
         rt = self._runtime
@@ -2415,6 +2353,86 @@ class ProactiveCognitiveLoop:
                         getattr(agent, 'callsign', agent.agent_type), topic_slug)
         text = re.sub(read_nb_pattern, '', text).strip()
 
+        # --- Proposals (AD-412) — all ranks ---
+        proposal_pattern = r'\[PROPOSAL\]\s*\n(.*?)\n\s*\[/PROPOSAL\]'
+        proposal_match = re.search(proposal_pattern, text, re.DOTALL)
+        if proposal_match:
+            proposal_block = proposal_match.group(1)
+
+            # Parse structured fields
+            title = ""
+            rationale = ""
+            affected: list[str] = []
+            priority = "medium"
+
+            in_rationale = False
+            rationale_lines: list[str] = []
+            for line in proposal_block.split('\n'):
+                stripped = line.strip()
+                if stripped.lower().startswith("title:"):
+                    title = stripped[6:].strip()
+                    in_rationale = False
+                elif stripped.lower().startswith("affected systems:"):
+                    raw = stripped[17:].strip()
+                    affected = [s.strip() for s in raw.split(",") if s.strip()]
+                    in_rationale = False
+                elif stripped.lower().startswith("priority:"):
+                    p = stripped[9:].strip().lower()
+                    if p in ("low", "medium", "high"):
+                        priority = p
+                    in_rationale = False
+                elif stripped.lower().startswith("rationale:"):
+                    rest = stripped[10:].strip()
+                    if rest:
+                        rationale_lines.append(rest)
+                    in_rationale = True
+                elif in_rationale:
+                    rationale_lines.append(stripped)
+            rationale = "\n".join(rationale_lines).strip()
+
+            if title and rationale and rt.ward_room_router:
+                try:
+                    from probos.types import IntentMessage
+                    intent = IntentMessage(
+                        intent="propose_improvement",
+                        params={
+                            "title": title,
+                            "rationale": rationale,
+                            "affected_systems": affected,
+                            "priority_suggestion": priority,
+                        },
+                        context=f"Proactive proposal from {getattr(agent, 'agent_type', 'unknown')}",
+                    )
+                    await rt.ward_room_router.handle_propose_improvement(intent, agent)
+                    actions_executed.append({
+                        "type": "proposal",
+                        "title": title,
+                        "priority": priority,
+                    })
+                    logger.debug(
+                        "AD-412: Proposal extracted from %s: %s",
+                        getattr(agent, 'agent_type', 'unknown'), title,
+                    )
+                except Exception:
+                    logger.debug(
+                        "AD-412: Failed to post proposal from %s",
+                        getattr(agent, 'agent_type', 'unknown'), exc_info=True,
+                    )
+        elif re.search(r'\[PROPOSAL\]', text):
+            # [PROPOSAL] present but didn't match strict pattern — log for debugging
+            logger.debug(
+                "AD-412: Malformed [PROPOSAL] block from %s — requires newlines between tags",
+                getattr(agent, 'agent_type', 'unknown'),
+            )
+
+        # Strip proposal block from text regardless of submission success.
+        # Uses the same strict pattern — if the regex didn't match above,
+        # BF-203 catch-all below handles the orphaned [PROPOSAL] tag.
+        # [/PROPOSAL] is explicitly stripped here since BF-203's regex does NOT
+        # match [/UPPERCASE] closing tags.
+        text = re.sub(proposal_pattern, '', text, flags=re.DOTALL).strip()
+        text = re.sub(r'\[/PROPOSAL\]', '', text).strip()
+
         # AD-526a: Recreation actions — rank-gated via config
         rec_min_rank_str = "ensign"
         if hasattr(rt, 'config') and hasattr(rt.config, 'communications'):
@@ -2545,9 +2563,11 @@ class ProactiveCognitiveLoop:
             text = re.sub(move_pattern, '', text).strip()
 
         # BF-203: Strip unrecognized bracket command tags that the LLM hallucinated.
-        # Known tags (REPLY, DM, ENDORSE, NOTEBOOK, READ_NOTEBOOK, CHALLENGE, MOVE)
-        # are already extracted above. Any remaining [UPPERCASE_COMMAND ...] patterns
-        # are hallucinations that would leak into Ward Room posts as visible text.
+        # Known tags (REPLY, DM, ENDORSE, NOTEBOOK, READ_NOTEBOOK, CHALLENGE, MOVE,
+        # PROPOSAL with closing [/PROPOSAL]) are extracted above. BF-203's regex does
+        # NOT match [/UPPERCASE] closing-tag patterns, so any tag with a closing form
+        # must be fully stripped by its handler above — including the closing tag.
+        # Any remaining [UPPERCASE_COMMAND ...] patterns are hallucinations.
         text = re.sub(r'\[(?:[A-Z][A-Z_]+)(?:\s[^\]]{0,120})?\]', '', text).strip()
 
         return text, actions_executed

@@ -839,6 +839,7 @@ class TestProactiveWardRoomContext:
         all_hands.channel_type = "ship"
         all_hands.department = ""
         all_hands.id = "ch-allhands"
+        all_hands.name = "All Hands"
 
         rt.ward_room = AsyncMock()
         rt.ward_room.list_channels = AsyncMock(return_value=[dept_ch, all_hands])
@@ -1305,15 +1306,30 @@ class TestCooldownPersistence:
 # ---------------------------------------------------------------------------
 
 class TestProposalExtraction:
-    """AD-412: _extract_and_post_proposal parsing and posting."""
+    """AD-412 / BF-226: Proposal extraction via _extract_and_execute_actions."""
+
+    def _make_rt(self, handler_side_effect=None):
+        """Create a minimal runtime mock for proposal tests."""
+        rt = MagicMock(spec=ProbOSRuntime)
+        rt.ward_room = MagicMock()
+        rt.trust_network = MagicMock()
+        rt.trust_network.get_score.return_value = 0.0  # Ensign — skips rank-gated sections
+        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
+        if handler_side_effect:
+            rt.ward_room_router.handle_propose_improvement = AsyncMock(side_effect=handler_side_effect)
+        else:
+            rt.ward_room_router.handle_propose_improvement = AsyncMock(return_value={"success": True})
+        rt.config = MagicMock()
+        rt.config.communications = MagicMock()
+        rt.config.communications.dm_min_rank = "ensign"
+        rt.config.communications.recreation_min_rank = "ensign"
+        return rt
 
     @pytest.mark.asyncio
     async def test_extract_proposal_valid(self):
-        """Valid [PROPOSAL] block is parsed and posted."""
+        """Valid [PROPOSAL] block is parsed and posted via _extract_and_execute_actions."""
         loop = _make_loop()
-        rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
-        rt.ward_room_router.handle_propose_improvement = AsyncMock(return_value={"success": True})
+        rt = self._make_rt()
         loop.set_runtime(rt)
 
         agent = MagicMock(spec=BaseAgent)
@@ -1331,7 +1347,7 @@ class TestProposalExtraction:
             "That's my observation."
         )
 
-        await loop._extract_and_post_proposal(agent, text)
+        cleaned_text, actions = await loop._extract_and_execute_actions(agent, text)
 
         rt.ward_room_router.handle_propose_improvement.assert_called_once()
         call_args = rt.ward_room_router.handle_propose_improvement.call_args
@@ -1341,32 +1357,38 @@ class TestProposalExtraction:
         assert intent.params["affected_systems"] == ["KnowledgeStore", "CognitiveJournal"]
         assert intent.params["priority_suggestion"] == "high"
 
+        # BF-226: Tags must be stripped from output
+        assert "[PROPOSAL]" not in cleaned_text
+        assert "[/PROPOSAL]" not in cleaned_text
+
+        # actions_executed must contain proposal entry
+        proposal_actions = [a for a in actions if a.get("type") == "proposal"]
+        assert len(proposal_actions) == 1
+        assert proposal_actions[0]["title"] == "Optimize query caching"
+
     @pytest.mark.asyncio
     async def test_extract_proposal_no_block(self):
         """Text without [PROPOSAL] block is ignored."""
         loop = _make_loop()
-        rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
-        rt.ward_room_router.handle_propose_improvement = AsyncMock()
+        rt = self._make_rt()
         loop.set_runtime(rt)
 
         agent = MagicMock(spec=BaseAgent)
         agent.id = "test"
-        await loop._extract_and_post_proposal(agent, "Just a regular observation.")
+        cleaned_text, actions = await loop._extract_and_execute_actions(agent, "Just a regular observation.")
 
         rt.ward_room_router.handle_propose_improvement.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_extract_proposal_missing_title(self):
-        """Incomplete proposal (no title) is silently skipped."""
+        """Incomplete proposal (no title) is not posted but tags are stripped."""
         loop = _make_loop()
-        rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
-        rt.ward_room_router.handle_propose_improvement = AsyncMock()
+        rt = self._make_rt()
         loop.set_runtime(rt)
 
         agent = MagicMock(spec=BaseAgent)
         agent.id = "test"
+        agent.agent_type = "test_agent"
         text = (
             "[PROPOSAL]\n"
             "Rationale: Something is broken\n"
@@ -1375,20 +1397,21 @@ class TestProposalExtraction:
             "[/PROPOSAL]"
         )
 
-        await loop._extract_and_post_proposal(agent, text)
+        cleaned_text, actions = await loop._extract_and_execute_actions(agent, text)
         rt.ward_room_router.handle_propose_improvement.assert_not_called()
+        assert "[PROPOSAL]" not in cleaned_text
+        assert "[/PROPOSAL]" not in cleaned_text
 
     @pytest.mark.asyncio
     async def test_extract_proposal_missing_rationale(self):
-        """Incomplete proposal (no rationale) is silently skipped."""
+        """Incomplete proposal (no rationale) is not posted but tags are stripped."""
         loop = _make_loop()
-        rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
-        rt.ward_room_router.handle_propose_improvement = AsyncMock()
+        rt = self._make_rt()
         loop.set_runtime(rt)
 
         agent = MagicMock(spec=BaseAgent)
         agent.id = "test"
+        agent.agent_type = "test_agent"
         text = (
             "[PROPOSAL]\n"
             "Title: Fix something\n"
@@ -1397,16 +1420,106 @@ class TestProposalExtraction:
             "[/PROPOSAL]"
         )
 
-        await loop._extract_and_post_proposal(agent, text)
+        cleaned_text, actions = await loop._extract_and_execute_actions(agent, text)
         rt.ward_room_router.handle_propose_improvement.assert_not_called()
+        assert "[PROPOSAL]" not in cleaned_text
+        assert "[/PROPOSAL]" not in cleaned_text
 
     @pytest.mark.asyncio
-    async def test_extract_proposal_multiline_rationale(self):
+    async def test_proposal_stripped_from_ward_room_text(self):
+        """Proposal block stripped from returned text; observation preserved."""
+        loop = _make_loop()
+        rt = self._make_rt()
+        loop.set_runtime(rt)
+
+        agent = MagicMock(spec=BaseAgent)
+        agent.agent_type = "science_officer"
+        agent.id = "sci-001"
+
+        text = (
+            "I observed a pattern in the logs.\n"
+            "[PROPOSAL]\n"
+            "Title: Better log rotation\n"
+            "Rationale: Logs grow unboundedly in production\n"
+            "Priority: high\n"
+            "[/PROPOSAL]\n"
+            "End of report."
+        )
+
+        cleaned_text, actions = await loop._extract_and_execute_actions(agent, text)
+
+        assert "I observed a pattern in the logs." in cleaned_text
+        assert "End of report." in cleaned_text
+        assert "[PROPOSAL]" not in cleaned_text
+        assert "[/PROPOSAL]" not in cleaned_text
+        rt.ward_room_router.handle_propose_improvement.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_proposal_robust_whitespace(self):
+        """Regex handles various whitespace patterns."""
+        loop = _make_loop()
+        rt = self._make_rt()
+        loop.set_runtime(rt)
+
+        agent = MagicMock(spec=BaseAgent)
+        agent.agent_type = "ops_officer"
+        agent.id = "ops-001"
+
+        # Trailing spaces after tag, extra blank line before content
+        text = (
+            "[PROPOSAL]  \n"
+            "\n"
+            "Title: Handle whitespace\n"
+            "Rationale: Agents produce messy output  \n"
+            "Priority: low\n"
+            " [/PROPOSAL]"
+        )
+
+        cleaned_text, actions = await loop._extract_and_execute_actions(agent, text)
+
+        rt.ward_room_router.handle_propose_improvement.assert_called_once()
+        intent = rt.ward_room_router.handle_propose_improvement.call_args[0][0]
+        assert intent.params["title"] == "Handle whitespace"
+        assert "[PROPOSAL]" not in cleaned_text
+        assert "[/PROPOSAL]" not in cleaned_text
+
+    @pytest.mark.asyncio
+    async def test_proposal_not_killed_by_bf203(self):
+        """BF-226 regression: proposal extracted before BF-203 catch-all strips it."""
+        loop = _make_loop()
+        rt = self._make_rt()
+        loop.set_runtime(rt)
+
+        agent = MagicMock(spec=BaseAgent)
+        agent.agent_type = "comm_officer"
+        agent.id = "comm-001"
+
+        text = (
+            "Here is my report.\n"
+            "[PROPOSAL]\n"
+            "Title: Fix comms\n"
+            "Rationale: Communication latency is too high\n"
+            "Priority: high\n"
+            "[/PROPOSAL]\n"
+            "[RANDOM_TAG]\n"
+            "End of transmission."
+        )
+
+        cleaned_text, actions = await loop._extract_and_execute_actions(agent, text)
+
+        # Proposal extracted successfully
+        rt.ward_room_router.handle_propose_improvement.assert_called_once()
+        # BF-203 still strips hallucinated tags
+        assert "[RANDOM_TAG]" not in cleaned_text
+        # Neither proposal tag remains
+        assert "[PROPOSAL]" not in cleaned_text
+        assert "[/PROPOSAL]" not in cleaned_text
+
+    @pytest.mark.asyncio
+    async def test_proposal_multiline_rationale(self):
         """Multiline rationale is captured correctly."""
         loop = _make_loop()
-        rt = MagicMock(spec=ProbOSRuntime)
-        rt.ward_room_router = MagicMock(spec=WardRoomRouter)
-        rt.ward_room_router.handle_propose_improvement = AsyncMock(return_value={"success": True})
+        rt = self._make_rt()
         loop.set_runtime(rt)
 
         agent = MagicMock(spec=BaseAgent)
@@ -1424,12 +1537,141 @@ class TestProposalExtraction:
             "[/PROPOSAL]"
         )
 
-        await loop._extract_and_post_proposal(agent, text)
+        cleaned_text, actions = await loop._extract_and_execute_actions(agent, text)
 
         rt.ward_room_router.handle_propose_improvement.assert_called_once()
         intent = rt.ward_room_router.handle_propose_improvement.call_args[0][0]
         assert "low-weight memories" in intent.params["rationale"]
         assert "minimum threshold" in intent.params["rationale"]
+
+    @pytest.mark.asyncio
+    async def test_proposal_stripped_when_handler_raises(self):
+        """Tags stripped even when handle_propose_improvement raises."""
+        loop = _make_loop()
+        rt = self._make_rt(handler_side_effect=RuntimeError("boom"))
+        loop.set_runtime(rt)
+
+        agent = MagicMock(spec=BaseAgent)
+        agent.agent_type = "eng_officer"
+        agent.id = "eng-002"
+
+        text = (
+            "Report text.\n"
+            "[PROPOSAL]\n"
+            "Title: Something\n"
+            "Rationale: Because reasons\n"
+            "[/PROPOSAL]\n"
+            "More text."
+        )
+
+        cleaned_text, actions = await loop._extract_and_execute_actions(agent, text)
+
+        # Tags stripped regardless of handler failure
+        assert "[PROPOSAL]" not in cleaned_text
+        assert "[/PROPOSAL]" not in cleaned_text
+        # No proposal action recorded (exception prevented append)
+        proposal_actions = [a for a in actions if a.get("type") == "proposal"]
+        assert len(proposal_actions) == 0
+
+
+# ---------------------------------------------------------------------------
+# BF-226: update_last_seen unconditional tests
+# ---------------------------------------------------------------------------
+
+class TestLastSeenAlwaysUpdated:
+    """BF-226: update_last_seen must fire even when no new non-inform activity exists."""
+
+    @pytest.mark.asyncio
+    async def test_all_hands_last_seen_updates_without_activity(self):
+        """All Hands update_last_seen fires even with empty get_recent_activity."""
+        loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
+        loop._cooldown = 300
+        loop._agent_cooldowns = {}
+        loop._circuit_breaker = CognitiveCircuitBreaker()
+        loop._llm_status = "operational"
+        loop._llm_failure_count = 0
+
+        rt = MagicMock(spec=ProbOSRuntime)
+        rt.episodic_memory = None
+        rt.bridge_alerts = None
+        rt.event_log = None
+        rt.ontology = None
+
+        dept_ch = MagicMock()
+        dept_ch.channel_type = "department"
+        dept_ch.department = "engineering"
+        dept_ch.id = "ch-eng"
+
+        all_hands = MagicMock()
+        all_hands.channel_type = "ship"
+        all_hands.department = ""
+        all_hands.id = "ch-allhands"
+        all_hands.name = "All Hands"
+
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[dept_ch, all_hands])
+        # All Hands returns EMPTY activity — this is the BF-226 scenario
+        rt.ward_room.get_recent_activity = AsyncMock(return_value=[])
+        rt.ward_room.update_last_seen = AsyncMock()
+
+        loop._runtime = rt
+
+        agent = MagicMock(spec=BaseAgent)
+        agent.id = "eng-1"
+        agent.agent_type = "builder"
+
+        await loop._gather_context(agent, trust_score=0.7)
+        # BF-226: update_last_seen must still be called for All Hands
+        rt.ward_room.update_last_seen.assert_any_call("eng-1", "ch-allhands")
+
+    @pytest.mark.asyncio
+    async def test_recreation_last_seen_updates_without_activity(self):
+        """Recreation update_last_seen fires even with empty get_recent_activity."""
+        loop = ProactiveCognitiveLoop.__new__(ProactiveCognitiveLoop)
+        loop._cooldown = 300
+        loop._agent_cooldowns = {}
+        loop._circuit_breaker = CognitiveCircuitBreaker()
+        loop._llm_status = "operational"
+        loop._llm_failure_count = 0
+
+        rt = MagicMock(spec=ProbOSRuntime)
+        rt.episodic_memory = None
+        rt.bridge_alerts = None
+        rt.event_log = None
+        rt.ontology = None
+
+        dept_ch = MagicMock()
+        dept_ch.channel_type = "department"
+        dept_ch.department = "engineering"
+        dept_ch.id = "ch-eng"
+
+        all_hands = MagicMock()
+        all_hands.channel_type = "ship"
+        all_hands.department = ""
+        all_hands.id = "ch-allhands"
+        all_hands.name = "All Hands"
+
+        rec_ch = MagicMock()
+        rec_ch.channel_type = "recreation"
+        rec_ch.department = ""
+        rec_ch.id = "ch-rec"
+        rec_ch.name = "Recreation"
+
+        rt.ward_room = AsyncMock()
+        rt.ward_room.list_channels = AsyncMock(return_value=[dept_ch, all_hands, rec_ch])
+        # All channels return EMPTY activity
+        rt.ward_room.get_recent_activity = AsyncMock(return_value=[])
+        rt.ward_room.update_last_seen = AsyncMock()
+
+        loop._runtime = rt
+
+        agent = MagicMock(spec=BaseAgent)
+        agent.id = "eng-1"
+        agent.agent_type = "builder"
+
+        await loop._gather_context(agent, trust_score=0.7)
+        # BF-226: update_last_seen must be called for Recreation channel
+        rt.ward_room.update_last_seen.assert_any_call("eng-1", "ch-rec")
 
 
 # ---------------------------------------------------------------------------
