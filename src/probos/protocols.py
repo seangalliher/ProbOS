@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Sequence, TYPE_CHECKING, Protocol, runtime_checkable
 
+from probos.types import IntentMessage, Priority  # AD-654b: concrete types for queue protocol
+
 if TYPE_CHECKING:
     from probos.events import BaseEvent
 
@@ -109,6 +111,57 @@ class EventEmitterProtocol(Protocol):
     def remove_event_listener(self, fn: Callable[..., Any]) -> None: ...
 
 
+# ── Agent Cognitive Queue (AD-654b) ──────────────────────────────
+
+
+@runtime_checkable
+class AgentCognitiveQueueProtocol(Protocol):
+    """Priority-ordered cognitive work queue for a single agent (AD-654b).
+
+    Interposed between activation sources (JetStream, proactive loop)
+    and agent.handle_intent(). Items are dequeued by priority:
+    CRITICAL first, NORMAL next, LOW last.
+    """
+
+    def enqueue(
+        self,
+        intent: IntentMessage,
+        priority: Priority,
+        *,
+        js_msg: Any | None = None,
+    ) -> bool:
+        """Add a work item to the queue.
+
+        Args:
+            intent: IntentMessage to process.
+            priority: Priority enum value (CRITICAL/NORMAL/LOW).
+            js_msg: JetStream message for ack/term semantics. None for
+                    proactive-loop items (no JetStream backing).
+                    Typed as Any because the concrete type is nats.aio.msg.Msg
+                    and we don't want nats-py as a protocol layer dependency.
+
+        Returns:
+            True if enqueued, False if shed (queue full, lowest priority shed).
+        """
+        ...
+
+    def pending_count(self) -> int:
+        """Number of items currently in the queue."""
+        ...
+
+    def is_processing(self) -> bool:
+        """Whether the queue processor loop is actively running a cognitive chain."""
+        ...
+
+    async def start(self) -> None:
+        """Start the queue processor loop (asyncio.Task)."""
+        ...
+
+    async def shutdown(self) -> None:
+        """Stop the processor loop. In-flight handler gets grace period, then cancel."""
+        ...
+
+
 # ── Database abstraction (AD-542) ──────────────────────────────────
 
 
@@ -181,7 +234,7 @@ class NATSBusProtocol(Protocol):
     async def subscribe(self, subject: str, callback: Any, queue: str = "") -> Any: ...
     async def request(self, subject: str, data: dict[str, Any], timeout: float = 5.0) -> Any: ...
     async def js_publish(self, subject: str, data: dict[str, Any], headers: dict[str, str] | None = None) -> None: ...
-    async def js_subscribe(self, subject: str, callback: Any, durable: str | None = None, stream: str | None = None, max_ack_pending: int | None = None, ack_wait: int | None = None, manual_ack: bool = False) -> Any: ...
+    async def js_subscribe(self, subject: str, callback: Any, durable: str | None = None, stream: str | None = None, max_ack_pending: int | None = None, ack_wait: int | None = None, manual_ack: bool = False, max_deliver: int | None = None) -> Any: ...
     async def delete_consumer(self, stream: str, durable_name: str) -> None: ...
     async def publish_raw(self, subject: str, data: dict[str, Any], headers: dict[str, str] | None = None) -> None: ...
     async def subscribe_raw(self, subject: str, callback: Any, queue: str = "") -> Any: ...

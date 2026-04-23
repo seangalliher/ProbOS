@@ -526,6 +526,7 @@ class WardRoomRouter:
                     "author_id": author_id,
                     "author_callsign": data.get("author_callsign", ""),
                     "was_mentioned": agent_id in mentioned_agent_ids,
+                    "is_captain": is_captain,  # AD-654b: For Priority.classify()
                     "is_dm_channel": getattr(channel, 'channel_type', '') == "dm",
                 },
                 context=thread_context,

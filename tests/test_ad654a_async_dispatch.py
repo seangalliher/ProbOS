@@ -255,7 +255,11 @@ class TestJetStreamConsumer:
 
     @pytest.mark.asyncio
     async def test_js_consumer_records_response_before_handler(self, intent_bus):
-        """BF-198: record_agent_response() called BEFORE handler runs."""
+        """BF-198: record_agent_response() called BEFORE handler runs.
+
+        AD-654b: Uses injected _record_response callback instead of
+        handler.__self__ reach-through.
+        """
         call_order = []
 
         msg = MagicMock()
@@ -268,24 +272,18 @@ class TestJetStreamConsumer:
         msg.ack = AsyncMock()
         msg.term = AsyncMock()
 
-        mock_runtime = MagicMock()
-        mock_router = MagicMock()
-        mock_router.record_agent_response = MagicMock(
-            side_effect=lambda *a: call_order.append("record")
-        )
-        mock_runtime.ward_room_router = mock_router
+        # AD-654b: Inject response recording via set_record_response
+        def _record(agent_id, thread_id):
+            call_order.append("record")
 
-        class FakeAgent:
-            _runtime = mock_runtime
+        intent_bus.set_record_response(_record)
 
-            async def handle(self, intent):
-                call_order.append("handle")
-                return IntentResult(
-                    intent_id=intent.id, agent_id="agent-001",
-                    success=True, confidence=1.0,
-                )
-
-        agent = FakeAgent()
+        async def handle(intent):
+            call_order.append("handle")
+            return IntentResult(
+                intent_id=intent.id, agent_id="agent-001",
+                success=True, confidence=1.0,
+            )
 
         callbacks = []
 
@@ -296,7 +294,7 @@ class TestJetStreamConsumer:
 
         intent_bus._nats_bus.js_subscribe = capture_js_sub
         intent_bus._defer_dispatch_consumers = False  # BF-223: simulate post-finalize
-        intent_bus.subscribe("agent-001", agent.handle)
+        intent_bus.subscribe("agent-001", handle)
         await asyncio.sleep(0.05)
 
         assert len(callbacks) >= 1

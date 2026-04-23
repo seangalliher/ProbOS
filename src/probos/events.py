@@ -170,6 +170,12 @@ class EventType(str, Enum):
     # Tiered trust (AD-640)
     TIERED_TRUST_INITIALIZED = "tiered_trust_initialized"
 
+    # ── Agent Cognitive Queue (AD-654b) ─────────────────────────────
+    QUEUE_ITEM_ENQUEUED = "queue_item_enqueued"
+    QUEUE_ITEM_DEQUEUED = "queue_item_dequeued"
+    QUEUE_ITEM_SHED = "queue_item_shed"
+    QUEUE_OVERFLOW = "queue_overflow"
+
     # Sub-task protocol (AD-632a)
     SUB_TASK_COMPLETED = "sub_task_completed"
     SUB_TASK_CHAIN_COMPLETED = "sub_task_chain_completed"

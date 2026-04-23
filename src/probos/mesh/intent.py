@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Awaitable
 
-from probos.types import IntentMessage, IntentResult
+from probos.types import IntentMessage, IntentResult, Priority
 from probos.mesh.signal import SignalManager
 
 if TYPE_CHECKING:
@@ -45,6 +45,10 @@ class IntentBus:
         # During startup, subscribe() skips dispatch consumers; finalize.py
         # calls create_dispatch_consumers() after prefix is stable.
         self._defer_dispatch_consumers: bool = True
+        # AD-654b: Per-agent cognitive queues
+        self._agent_queues: dict[str, Any] = {}  # agent_id -> AgentCognitiveQueue
+        # AD-654b: Injected callback for response recording (replaces handler.__self__ reach-through)
+        self._record_response: Callable[[str, str], None] | None = None  # (agent_id, thread_id)
 
     def subscribe(self, agent_id: str, handler: IntentHandler, intent_names: list[str] | None = None) -> None:
         """Register an agent's intent handler.
@@ -153,35 +157,54 @@ class IntentBus:
         subject = f"intent.dispatch.{agent_id}"
 
         async def _on_dispatch(msg: Any) -> None:
-            """JetStream dispatch callback — deserialize and handle.
+            """JetStream dispatch callback — deserialize and enqueue.
 
-            Uses manual ack: ack() on success, term() on error.
+            AD-654b: Enqueues to cognitive queue instead of inline processing.
+            The queue manages ack/term, priority ordering, and handler dispatch.
             """
             try:
-                intent = self._deserialize_intent(msg.data)
+                intent_msg = self._deserialize_intent(msg.data)
                 # AD-654a/BF-198: Record response BEFORE handler runs to close
                 # the proactive-loop race window.
-                _rt_ref = getattr(handler, "__self__", None)
-                if _rt_ref and hasattr(_rt_ref, "_runtime"):
-                    _rt = _rt_ref._runtime
-                    _router = getattr(_rt, "ward_room_router", None)
-                    _thread_id = intent.params.get("thread_id", "")
-                    if _router and _thread_id:
-                        _router.record_agent_response(intent.target_agent_id, _thread_id)
-                await handler(intent)
-                await msg.ack()
+                # Uses injected callback instead of handler.__self__ reach-through.
+                if self._record_response:
+                    _thread_id = intent_msg.params.get("thread_id", "")
+                    if _thread_id:
+                        self._record_response(intent_msg.target_agent_id, _thread_id)
+
+                # AD-654b: Enqueue with priority classification
+                queue = self._get_agent_queue(agent_id)
+                if queue:
+                    priority = Priority.classify(
+                        intent=intent_msg.intent,
+                        is_captain=intent_msg.params.get("is_captain", False),
+                        was_mentioned=intent_msg.params.get("was_mentioned", False),
+                    )
+                    accepted = queue.enqueue(intent_msg, priority, js_msg=msg)
+                    if not accepted:
+                        # Queue rejected it (full + lower priority). term() it.
+                        await msg.term()
+                else:
+                    # No queue — fall back to direct handler.
+                    # This is normal for substrate agents (IntrospectAgent, VitalsMonitor, etc.)
+                    # which don't have cognitive queues. Log at debug, not warning.
+                    logger.debug("AD-654b: No queue for %s, direct dispatch", agent_id[:12])
+                    await handler(intent_msg)
+                    await msg.ack()
             except Exception as e:
                 logger.warning(
-                    "AD-654a: Dispatch handler error for %s: %s",
+                    "AD-654b: Dispatch callback error for %s: %s",
                     agent_id[:8], e,
                 )
-                # term() = permanently reject. Do NOT nak() — cognitive chains
-                # must not be retried (LLM already ran, would cause duplicates).
                 await msg.term()
 
         # Durable name must be NATS-safe (alphanumeric + dash).
         durable_name = f"agent-dispatch-{agent_id}"
 
+        # AD-654b: max_deliver=10 bounds nak() redelivery loops.
+        # With circuit breaker nak(delay=60) + max_deliver=10, a stuck breaker
+        # causes at most 10 redeliveries (~10 min) before JetStream auto-discards.
+        # Without this, nak loops are unbounded.
         sub = await self._nats_bus.js_subscribe(
             subject,
             _on_dispatch,
@@ -190,13 +213,15 @@ class IntentBus:
             max_ack_pending=1,
             ack_wait=300,
             manual_ack=True,
+            max_deliver=10,
         )
         if sub:
-            logger.debug("AD-654a: JetStream dispatch consumer for %s", agent_id[:12])
+            logger.debug("AD-654b: JetStream dispatch consumer for %s", agent_id[:12])
 
     def unsubscribe(self, agent_id: str) -> None:
         """Remove an agent's subscription and intent index entries."""
         self._subscribers.pop(agent_id, None)
+        self.unregister_queue(agent_id)  # AD-654b: clean up cognitive queue
         for agent_set in self._intent_index.values():
             agent_set.discard(agent_id)
         # AD-637z: Clean up NATS subscription via NATSBus lifecycle management
@@ -418,6 +443,26 @@ class IntentBus:
                 # Fall through to direct dispatch
 
         # Direct-call fallback when NATS/JetStream unavailable
+
+        # AD-654b: Try cognitive queue even when NATS is down.
+        # This PRECEDES the existing create_task fallback — if the queue
+        # accepts the item, return early. If no queue exists (substrate agents)
+        # or enqueue is rejected (full + lower priority), fall through to
+        # the create_task direct-dispatch path below.
+        queue = self._get_agent_queue(intent.target_agent_id)
+        if queue:
+            priority = Priority.classify(
+                intent=intent.intent,
+                is_captain=intent.params.get("is_captain", False),
+                was_mentioned=intent.params.get("was_mentioned", False),
+            )
+            # js_msg=None — no JetStream backing for fallback path
+            if queue.enqueue(intent, priority):
+                return
+            # enqueue returned False — fall through to create_task
+
+        # Existing AD-654a fallback: direct handler invocation for agents
+        # without cognitive queues (substrate agents) or when queue is full.
         handler = self._subscribers.get(intent.target_agent_id)
         if handler is None:
             logger.debug("AD-654a: No handler for %s, dropping", intent.target_agent_id[:12])
@@ -448,6 +493,29 @@ class IntentBus:
         )
         self._pending_sub_tasks.add(task)
         task.add_done_callback(self._pending_sub_tasks.discard)
+
+    # ── AD-654b: Cognitive queue management ─────────────────────────
+
+    def set_record_response(self, callback: Callable[[str, str], None]) -> None:
+        """AD-654b: Inject response recording callback.
+
+        Replaces the handler.__self__._runtime.ward_room_router reach-through
+        that violated Law of Demeter. Called from finalize.py with
+        ward_room_router.record_agent_response.
+        """
+        self._record_response = callback
+
+    def register_queue(self, agent_id: str, queue: Any) -> None:
+        """Register an agent's cognitive queue (AD-654b)."""
+        self._agent_queues[agent_id] = queue
+
+    def unregister_queue(self, agent_id: str) -> None:
+        """Remove an agent's cognitive queue (AD-654b)."""
+        self._agent_queues.pop(agent_id, None)
+
+    def _get_agent_queue(self, agent_id: str) -> Any | None:
+        """Get the cognitive queue for an agent (AD-654b)."""
+        return self._agent_queues.get(agent_id)
 
     def record_broadcast(self, intent_name: str) -> None:
         """Record a broadcast event with its intent name."""

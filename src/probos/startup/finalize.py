@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from probos.startup.results import FinalizationResult
 from probos.utils import format_duration
@@ -177,6 +177,56 @@ async def finalize_startup(
                 ack_wait=300,  # BF-220: Must exceed LLM timeout (300s) to prevent redelivery
             )
             logger.info("AD-637c: WARDROOM JetStream stream + consumer wired")
+
+        # ── AD-654b: Agent Cognitive Queues ──────────────────────────────
+        from probos.cognitive.queue import AgentCognitiveQueue
+        from probos.cognitive.circuit_breaker import BreakerState
+
+        _intent_bus = runtime.intent_bus
+
+        # AD-654b: Inject response recording callback (replaces handler.__self__ reach-through)
+        _wr_router = ward_room_router
+        _intent_bus.set_record_response(_wr_router.record_agent_response)
+
+        # Create per-agent cognitive queues for crew agents.
+        def _make_should_process(agent_ref: Any) -> Callable:
+            """Create dequeue-time guard for an agent.
+
+            Returns (allow, transient) tuple:
+            - (True, _) → process the item
+            - (False, True) → transient rejection, nak(delay=60) for redelivery
+            - (False, False) → permanent rejection, term()
+
+            Uses lazy lookup: runtime.proactive_loop resolved at dequeue time,
+            not at queue construction time. Safe against wiring-order changes.
+            """
+            def _guard(item: Any, js_msg: Any) -> tuple[bool, bool]:
+                # Lazy lookup — resolved at dequeue time, not construction time
+                _pl = getattr(runtime, 'proactive_loop', None)
+                if _pl:
+                    breaker = _pl.circuit_breaker
+                    status = breaker.get_status(agent_ref.id)
+                    if status.get("state") == BreakerState.OPEN.value:
+                        return (False, True)  # Transient — nak for redelivery
+                return (True, False)
+            return _guard
+
+        _queue_count = 0
+        for agent in runtime.registry.all():
+            if not is_crew_agent(agent, runtime.ontology):
+                continue
+
+            queue = AgentCognitiveQueue(
+                agent_id=agent.id,
+                handler=agent.handle_intent,
+                should_process=_make_should_process(agent),
+                emit_event=runtime._emit_event,
+            )
+            _intent_bus.register_queue(agent.id, queue)
+            await queue.start()
+            _queue_count += 1
+
+        logger.info("Startup [finalize]: AD-654b cognitive queues created for %d agents", _queue_count)
 
         # BF-223: Create per-agent JetStream dispatch consumers AFTER ship
         # commissioning has set the stable DID-based NATS prefix. During

@@ -134,8 +134,13 @@ class NATSBus:
 
         # Update stream subject filters to match new prefix
         if self.connected and self._stream_configs:
+            logger.info("set_subject_prefix: updating %d stream configs", len(self._stream_configs))
             for sc in self._stream_configs:
                 try:
+                    logger.info(
+                        "set_subject_prefix: updating stream %s subjects=%s",
+                        sc["name"], sc["subjects"],
+                    )
                     await self.ensure_stream(
                         sc["name"], sc["subjects"],
                         max_msgs=sc.get("max_msgs", -1),
@@ -143,6 +148,11 @@ class NATSBus:
                     )
                 except Exception as e:
                     logger.warning("Stream update on prefix change failed for %s: %s", sc["name"], e)
+        else:
+            logger.warning(
+                "set_subject_prefix: skipping stream update (connected=%s, configs=%d)",
+                self.connected, len(self._stream_configs),
+            )
 
         # Re-subscribe all tracked subscriptions with new prefix
         if self.connected and self._active_subs:
@@ -430,6 +440,7 @@ class NATSBus:
         max_ack_pending: int | None = None,
         ack_wait: int | None = None,
         manual_ack: bool = False,
+        max_deliver: int | None = None,  # AD-654b
     ) -> Any:
         """Subscribe to a JetStream subject (durable consumer)."""
         if not self._js:
@@ -472,13 +483,15 @@ class NATSBus:
                 "stream": stream,
                 "cb": _handler,
             }
-            if max_ack_pending is not None or ack_wait is not None:
+            if max_ack_pending is not None or ack_wait is not None or max_deliver is not None:
                 from nats.js.api import ConsumerConfig
                 config_kwargs: dict[str, Any] = {}
                 if max_ack_pending is not None:
                     config_kwargs["max_ack_pending"] = max_ack_pending
                 if ack_wait is not None:
                     config_kwargs["ack_wait"] = ack_wait
+                if max_deliver is not None:
+                    config_kwargs["max_deliver"] = max_deliver
                 subscribe_kwargs["config"] = ConsumerConfig(**config_kwargs)
             sub = await self._js.subscribe(full_subject, **subscribe_kwargs)
             self._subscriptions.append(sub)
@@ -494,6 +507,7 @@ class NATSBus:
                             "max_ack_pending": max_ack_pending,
                             "ack_wait": ack_wait,
                             "manual_ack": manual_ack if manual_ack else None,
+                            "max_deliver": max_deliver,
                         }.items() if v is not None
                     },
                     "sub": sub,
@@ -838,6 +852,7 @@ class MockNATSBus:
         max_ack_pending: int | None = None,
         ack_wait: int | None = None,
         manual_ack: bool = False,
+        max_deliver: int | None = None,  # AD-654b
     ) -> str:
         full = self._full_subject(subject)
         if full not in self._subs:
@@ -855,6 +870,7 @@ class MockNATSBus:
                         "max_ack_pending": max_ack_pending,
                         "ack_wait": ack_wait,
                         "manual_ack": manual_ack if manual_ack else None,
+                        "max_deliver": max_deliver,
                     }.items() if v is not None
                 },
                 "sub": full,
