@@ -571,9 +571,20 @@ class ProactiveCognitiveLoop:
         result = await agent.handle_intent(intent)
 
         if not result or not result.success or not result.result:
-            self._llm_failure_count += 1
-            # AD-576: Update LLM status state machine
-            await self._update_llm_status(failure=True)
+            # BF-228: Only count actual LLM errors toward LLM failure status,
+            # not empty responses or chain-level issues.
+            is_llm_error = (
+                not result
+                or (result and hasattr(result, 'error') and result.error and
+                    any(kw in str(result.error).lower() for kw in (
+                        "llm", "timeout", "connection", "unreachable",
+                        "rate limit", "api error", "httpx", "openai",
+                    )))
+            )
+            if is_llm_error:
+                self._llm_failure_count += 1
+                # AD-576: Update LLM status state machine
+                await self._update_llm_status(failure=True)
             # BF-069: Log failure details for visibility
             error_detail = ""
             if result and hasattr(result, 'error') and result.error:
@@ -709,7 +720,10 @@ class ProactiveCognitiveLoop:
         # Post to Ward Room — find agent's department channel
         await self._post_to_ward_room(agent, response_text)
         self._last_proactive[agent.id] = time.monotonic()
-        self._llm_failure_count = 0  # BF-069: reset on successful post
+        # BF-228: Decay failure count instead of hard reset — prevents flap cycles.
+        # One success reduces count by 1; requires sustained success to reach operational.
+        if self._llm_failure_count > 0:
+            self._llm_failure_count -= 1
 
         # AD-576: Update LLM status on recovery
         if self._llm_status != "operational":
@@ -3147,22 +3161,24 @@ class ProactiveCognitiveLoop:
     async def _update_llm_status(self, failure: bool) -> None:
         """AD-576: Update LLM status state machine and emit events on transitions.
 
-        State transitions:
-            operational -> degraded (failure_count >= 1)
-            degraded -> offline (failure_count >= 3, matches _UNREACHABLE_THRESHOLD)
-            any non-operational -> operational (on first success)
+        State transitions (BF-228: hysteresis — require 3+ failures before degraded):
+            operational -> degraded (failure_count >= 3, matches _UNREACHABLE_THRESHOLD)
+            degraded -> offline (failure_count >= 6, sustained degradation)
+            any non-operational -> operational (failure_count reaches 0 via decay)
         """
         old_status = self._llm_status
 
         if failure:
-            if self._llm_failure_count >= 3:
+            if self._llm_failure_count >= 6:
                 new_status = "offline"
-            else:
+            elif self._llm_failure_count >= 3:
                 new_status = "degraded"
-            if self._llm_offline_since == 0.0:
+            else:
+                new_status = old_status  # BF-228: stay in current state below threshold
+            if self._llm_offline_since == 0.0 and new_status != "operational":
                 self._llm_offline_since = time.monotonic()
         else:
-            new_status = "operational"
+            new_status = "operational" if self._llm_failure_count == 0 else old_status
             # Don't reset _llm_offline_since yet — bridge alert needs it for downtime calc
 
         if old_status == new_status:
