@@ -926,6 +926,13 @@ class ProbOSRuntime:
         """BF-108: True when LLM is MockLLMClient (no real LLM available)."""
         return type(self.llm_client).__name__ == "MockLLMClient"
 
+    @property
+    def billet_registry(self) -> Any:
+        """AD-595a: Billet resolution facade (delegates to ontology)."""
+        if self.ontology is None:
+            return None
+        return self.ontology.billet_registry
+
     def build_state_snapshot(self) -> dict[str, Any]:
         """Build a full state snapshot for HXI clients (AD-254)."""
         from probos.earned_agency import agency_from_rank

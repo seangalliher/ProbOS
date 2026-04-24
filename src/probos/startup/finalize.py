@@ -89,6 +89,13 @@ async def finalize_startup(
         lambda event_type, data: runtime._emit_event(event_type, data)
     )
 
+    # --- AD-595a: Wire BilletRegistry event callback ---
+    if runtime.ontology and runtime.ontology.billet_registry:
+        runtime.ontology.billet_registry.set_event_callback(
+            lambda event_type, data: runtime._emit_event(event_type, data)
+        )
+        logger.info("AD-595a: BilletRegistry wired")
+
     # --- AD-557: Wire emergence metrics dependencies ---
     if runtime.dream_scheduler and runtime.dream_scheduler.engine:
         engine = runtime.dream_scheduler.engine

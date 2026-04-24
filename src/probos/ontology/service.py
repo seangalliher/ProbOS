@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from probos.ontology.billet_registry import BilletRegistry
 from probos.ontology.departments import DepartmentService
 from probos.ontology.loader import OntologyLoader
 from probos.ontology.models import (
@@ -51,6 +52,7 @@ class VesselOntologyService:
     def __init__(self, config_dir: Path, data_dir: Path | None = None) -> None:
         self._loader = OntologyLoader(config_dir, data_dir)
         self._dept: DepartmentService | None = None
+        self._billet_registry: BilletRegistry | None = None  # AD-595a
         self._ranks: RankService | None = None
 
     async def initialize(self) -> None:
@@ -61,11 +63,18 @@ class VesselOntologyService:
             self._loader.posts,
             self._loader.assignments,
         )
+        # AD-595a: Build BilletRegistry eagerly (no lazy init — avoids race)
+        self._billet_registry = BilletRegistry(self._dept)
         self._ranks = RankService(
             self._loader.role_templates,
             self._loader.qualification_paths,
             self._loader.assignments,
         )
+
+    @property
+    def billet_registry(self) -> "BilletRegistry | None":
+        """AD-595a: Billet resolution facade."""
+        return self._billet_registry
 
     # -------------------------------------------------------------------
     # Vessel queries (kept on facade — trivial getters)

@@ -10,6 +10,25 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-595a — BilletRegistry Foundation
+
+**Date:** 2026-04-24
+**Status:** Complete
+**Issue:** #165
+**Parent:** AD-595 (Billet-Based Role Resolution)
+
+**Decision:** BilletRegistry is a read-side facade over DepartmentService (Interface Segregation) — it does NOT own billet data, DepartmentService remains source of truth for posts and assignments. Title-based resolution is case-insensitive via a lowercase title→post_id index built eagerly in the constructor. BilletHolder is a frozen dataclass to prevent accidental mutation that drifts from DepartmentService. Registry is eagerly initialized in `VesselOntologyService.initialize()` (not lazy) to avoid race conditions. Event callback is late-bound in `finalize.py` via `set_event_callback()` because the event bus isn't available during ontology construction. BILLET_ASSIGNED/BILLET_VACATED event types are reserved — actual emission deferred to AD-595b when assign/vacate mutators are added. Follows the Navy Watch Bill model: billets are permanent positions, agents rotate through them. 17 new tests.
+
+**Key decisions:**
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 1 | Facade, not replacement | DepartmentService is mature + tested; BilletRegistry adds title resolution and roster snapshots without duplicating data |
+| 2 | Frozen BilletHolder | Prevents snapshot mutation that silently drifts from source of truth |
+| 3 | Eager init, not lazy | Race conditions: multiple callers could trigger concurrent initialization |
+| 4 | Late-bound event callback | Event bus unavailable during Phase 3 ontology construction; wired in Phase 8 finalize |
+
+---
+
 ### AD-584d — Elaborative Encoding via Enriched Embeddings
 
 **Date:** 2026-04-24

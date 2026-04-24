@@ -50,7 +50,7 @@ Add two new event types in the `EventType` enum. Place them after the existing s
 ```python
     # Billet management (AD-595a)
     BILLET_ASSIGNED = "billet_assigned"
-    BILLET_VACATED = "billet_vacated"
+    BILLET_VACATED = "billet_vacated"    # Reserved for AD-595b's vacate() — added now to keep enum changes atomic with BILLET_ASSIGNED
 ```
 
 ---
@@ -108,13 +108,13 @@ class BilletRegistry:
     department_service : DepartmentService
         The underlying ontology department service.
     emit_event_fn : callable, optional
-        Callback ``(event_type: str, data: dict) -> None`` for billet events.
+        Callback ``(EventType, dict) -> None`` for billet events.
     """
 
     def __init__(
         self,
         department_service: Any,
-        emit_event_fn: Callable[..., Any] | None = None,
+        emit_event_fn: Callable[[EventType, dict[str, Any]], None] | None = None,
     ) -> None:
         self._dept = department_service
         self._emit_event_fn = emit_event_fn
@@ -122,7 +122,9 @@ class BilletRegistry:
         self._title_index: dict[str, str] = {}
         self._rebuild_title_index()
 
-    def set_event_callback(self, emit_fn: Callable[..., Any]) -> None:
+    def set_event_callback(
+        self, emit_fn: Callable[[EventType, dict[str, Any]], None],
+    ) -> None:
         """AD-595a: Set event emission callback (public API for late binding)."""
         self._emit_event_fn = emit_fn
 
@@ -130,7 +132,14 @@ class BilletRegistry:
         """Build lowercase title → post_id lookup from current posts."""
         self._title_index = {}
         for post in self._dept.get_posts():
-            self._title_index[post.title.lower()] = post.id
+            title_lower = post.title.lower()
+            if title_lower in self._title_index:
+                logger.warning(
+                    "BilletRegistry: title collision for %r (posts %s and %s) — "
+                    "title resolution will return the latter",
+                    post.title, self._title_index[title_lower], post.id,
+                )
+            self._title_index[title_lower] = post.id
 
     def resolve(self, title_or_id: str) -> BilletHolder | None:
         """Resolve a billet title or post_id to its current holder.
@@ -208,7 +217,7 @@ class BilletRegistry:
         """
         self._rebuild_title_index()
 
-    def _emit(self, event_type: "EventType", data: dict) -> None:
+    def _emit(self, event_type: EventType, data: dict[str, Any]) -> None:
         """Emit an event if the callback is set."""
         if self._emit_event_fn:
             self._emit_event_fn(event_type, data)
@@ -220,7 +229,13 @@ class BilletRegistry:
 
 **File:** `src/probos/ontology/service.py`
 
-### 3a: Initialize BilletRegistry eagerly in `initialize()`
+### 3a: Add import and initialize BilletRegistry eagerly in `initialize()`
+
+Add import at top of file (after existing ontology imports):
+
+```python
+from probos.ontology.billet_registry import BilletRegistry
+```
 
 Add `self._billet_registry = None` in `__init__()` (after line 50, near other instance attributes):
 
@@ -232,7 +247,6 @@ In the `initialize()` method, after `self._dept = DepartmentService(...)` (aroun
 
 ```python
         # AD-595a: Build BilletRegistry eagerly (no lazy init — avoids race)
-        from probos.ontology.billet_registry import BilletRegistry
         self._billet_registry = BilletRegistry(self._dept)
 ```
 
@@ -240,7 +254,7 @@ Add a plain property accessor (no lazy init, no wrapper):
 
 ```python
     @property
-    def billet_registry(self) -> "BilletRegistry":
+    def billet_registry(self) -> "BilletRegistry | None":
         """AD-595a: Billet resolution facade."""
         return self._billet_registry
 ```
@@ -251,36 +265,30 @@ Add a plain property accessor (no lazy init, no wrapper):
 
 **File:** `src/probos/runtime.py`
 
-### 4a: Add instance attribute
-
-In the `__init__` method, after the ontology attribute (around line 451):
-
-```python
-        # --- Billet Registry (AD-595a) ---
-        self._billet_registry: Any = None
-```
-
-### 4b: Add public property
+### 4a: Add property delegate (no instance attribute)
 
 Add a property near the other service properties:
 
 ```python
     @property
     def billet_registry(self) -> Any:
-        """AD-595a: Billet resolution facade."""
-        return self._billet_registry
+        """AD-595a: Billet resolution facade (delegates to ontology)."""
+        if self.ontology is None:
+            return None
+        return self.ontology.billet_registry
 ```
+
+No `self._billet_registry` instance attribute — the property delegates to `ontology.billet_registry` directly. This avoids duplicate references and private-attr writes from outside the class.
 
 **File:** `src/probos/startup/finalize.py`
 
-### 4c: Wire in finalize phase
+### 4b: Wire event callback in finalize phase
 
 Add after the ontology-related wiring in finalize.py (after the existing trust dampening wiring block, around line 90):
 
 ```python
-    # --- AD-595a: Wire BilletRegistry ---
-    if runtime.ontology:
-        runtime._billet_registry = runtime.ontology.billet_registry
+    # --- AD-595a: Wire BilletRegistry event callback ---
+    if runtime.ontology and runtime.ontology.billet_registry:
         runtime.ontology.billet_registry.set_event_callback(runtime.emit_event)
         logger.info("AD-595a: BilletRegistry wired")
 ```
@@ -514,9 +522,20 @@ class TestBilletRefresh:
         reg = BilletRegistry(dept_service)
         # Title index should already work
         assert reg.resolve("Chief Engineer") is not None
-        # Refresh should not break anything
+        # Simulate a new post being added to the underlying service
+        dept_service._posts["new_post"] = Post(
+            id="new_post",
+            title="New Post",
+            department_id="engineering",
+            reports_to="chief_engineer",
+            tier="crew",
+        )
+        # Before refresh, title resolution doesn't find the new post
+        assert reg.resolve("New Post") is None
+        # After refresh, it does
         reg.refresh()
-        assert reg.resolve("Chief Engineer") is not None
+        assert reg.resolve("New Post") is not None
+        assert reg.resolve("New Post").billet_id == "new_post"
 ```
 
 ---

@@ -184,6 +184,10 @@ class EventType(str, Enum):
     SUB_TASK_COMPLETED = "sub_task_completed"
     SUB_TASK_CHAIN_COMPLETED = "sub_task_chain_completed"
 
+    # Billet management (AD-595a)
+    BILLET_ASSIGNED = "billet_assigned"
+    BILLET_VACATED = "billet_vacated"    # Reserved for AD-595b's vacate() — added now to keep enum changes atomic with BILLET_ASSIGNED
+
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
     NODE_COMPLETE = "node_complete"
