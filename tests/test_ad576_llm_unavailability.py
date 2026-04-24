@@ -72,18 +72,18 @@ class TestLlmStatusStateMachine:
 
     @pytest.mark.asyncio
     async def test_status_transition_operational_to_degraded(self):
-        """First failure transitions operational -> degraded."""
+        """BF-228: 3+ failures transitions operational -> degraded."""
         loop, _ = _make_loop()
-        loop._llm_failure_count = 1
+        loop._llm_failure_count = 3
         await loop._update_llm_status(failure=True)
         assert loop._llm_status == "degraded"
 
     @pytest.mark.asyncio
     async def test_status_transition_degraded_to_offline(self):
-        """3+ failures transition degraded -> offline."""
+        """BF-228: 6+ failures transition degraded -> offline."""
         loop, _ = _make_loop()
         loop._llm_status = "degraded"
-        loop._llm_failure_count = 3
+        loop._llm_failure_count = 6
         await loop._update_llm_status(failure=True)
         assert loop._llm_status == "offline"
 
@@ -115,7 +115,7 @@ class TestLlmStatusStateMachine:
         """LLM_HEALTH_CHANGED event emitted on status transition."""
         events = []
         loop, _ = _make_loop(on_event=lambda d: events.append(d))
-        loop._llm_failure_count = 1
+        loop._llm_failure_count = 3
         await loop._update_llm_status(failure=True)
         assert len(events) == 1
         assert events[0]["type"] == EventType.LLM_HEALTH_CHANGED.value
@@ -134,7 +134,7 @@ class TestLlmBridgeAlerts:
         """Offline transition emits ALERT-severity bridge alert."""
         loop, rt = _make_loop()
         loop._llm_status = "degraded"
-        loop._llm_failure_count = 3
+        loop._llm_failure_count = 6
         loop._llm_offline_since = time.monotonic() - 10
         await loop._update_llm_status(failure=True)
 
@@ -148,7 +148,7 @@ class TestLlmBridgeAlerts:
     async def test_bridge_alert_on_degraded(self):
         """Degraded transition emits ADVISORY-severity bridge alert."""
         loop, rt = _make_loop()
-        loop._llm_failure_count = 1
+        loop._llm_failure_count = 3
         await loop._update_llm_status(failure=True)
 
         rt.ward_room_router.deliver_bridge_alert.assert_called_once()
@@ -178,7 +178,7 @@ class TestLlmBridgeAlerts:
         """No exception when runtime is None."""
         loop, _ = _make_loop()
         loop._runtime = None
-        loop._llm_failure_count = 1
+        loop._llm_failure_count = 3
         # Should not raise
         await loop._update_llm_status(failure=True)
         assert loop._llm_status == "degraded"
@@ -533,17 +533,17 @@ class TestLlmStatusIntegration:
 
     @pytest.mark.asyncio
     async def test_failure_cycle_full_flow(self):
-        """3 consecutive failures: operational -> degraded -> offline with events."""
+        """BF-228: 6 consecutive failures: operational -> degraded -> offline with events."""
         events = []
         loop, rt = _make_loop(on_event=lambda d: events.append(d))
 
-        # Simulate 3 failures
-        for i in range(3):
+        # Simulate 6 failures (BF-228: degraded at 3, offline at 6)
+        for i in range(6):
             loop._llm_failure_count = i + 1
             await loop._update_llm_status(failure=True)
 
         assert loop._llm_status == "offline"
-        # Two transitions: operational->degraded, degraded->offline
+        # Two transitions: operational->degraded (at 3), degraded->offline (at 6)
         health_events = [e for e in events if e.get("type") == EventType.LLM_HEALTH_CHANGED.value]
         assert len(health_events) == 2
         assert health_events[0]["data"]["old_status"] == "operational"
