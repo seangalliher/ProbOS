@@ -32,7 +32,7 @@ from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.cognitive.orientation import OrientationContext, derive_watch_section
-from probos.types import AnchorFrame, IntentMessage
+from probos.types import AnchorFrame, IntentMessage, Priority
 from probos.utils import format_duration
 
 if TYPE_CHECKING:
@@ -2171,7 +2171,7 @@ class ProactiveCognitiveLoop:
                                                 suppressed=_suppressed,
                                             )
                                             try:
-                                                await self._runtime._emit_event(evt.to_dict())
+                                                await self._runtime._emit_event(evt)
                                             except Exception:
                                                 logger.debug("AD-552: Event emission failed", exc_info=True)
                                         # AD-555: Record repetition alert for quality metrics
@@ -2272,7 +2272,7 @@ class ProactiveCognitiveLoop:
                                     report_path=conv_result.get("report_path", ""),
                                 )
                                 try:
-                                    await self._runtime._emit_event(evt.to_dict())
+                                    await self._runtime._emit_event(evt)
                                 except Exception:
                                     logger.debug("AD-554: Convergence event emission failed", exc_info=True)
 
@@ -2293,7 +2293,7 @@ class ProactiveCognitiveLoop:
                                         source="realtime",
                                     )
                                     try:
-                                        await self._runtime._emit_event(wc_evt.to_dict())
+                                        await self._runtime._emit_event(wc_evt)
                                     except Exception:
                                         logger.debug("AD-583: Wrong convergence event emission failed", exc_info=True)
                                 # Bridge Alert (ALERT severity)
@@ -2330,7 +2330,7 @@ class ProactiveCognitiveLoop:
                                     similarity=conv_result.get("divergence_similarity", 0.0),
                                 )
                                 try:
-                                    await self._runtime._emit_event(evt.to_dict())
+                                    await self._runtime._emit_event(evt)
                                 except Exception:
                                     logger.debug("AD-554: Divergence event emission failed", exc_info=True)
 
@@ -2575,6 +2575,65 @@ class ProactiveCognitiveLoop:
                 except Exception as e:
                     logger.warning("AD-526a: MOVE failed for %s: %s", callsign, e)
             text = re.sub(move_pattern, '', text).strip()
+
+        # --- ASSIGN (AD-654d) — Lieutenant+ only ---
+        assign_min_rank = Rank.LIEUTENANT
+        _RANK_ORDER_ASSIGN = [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]
+        can_assign = _RANK_ORDER_ASSIGN.index(rank) >= _RANK_ORDER_ASSIGN.index(assign_min_rank)
+
+        assign_pattern = r'\[ASSIGN\s+@([\w-]+)\]\s*(.*?)\s*\[/ASSIGN\]'
+        if can_assign:
+            for match in re.finditer(assign_pattern, text, re.DOTALL):
+                target_callsign = match.group(1)
+                task_description = match.group(2).strip()
+                if rt.dispatcher and rt.callsign_registry:
+                    resolved = rt.callsign_registry.resolve(target_callsign)
+                    target_agent_id = resolved.get("agent_id") if resolved else None
+                    if target_agent_id and target_agent_id != agent.id:
+                        from probos.activation import task_event_for_agent
+                        event = task_event_for_agent(
+                            agent_id=target_agent_id,
+                            source_type="agent",
+                            source_id=agent.id,
+                            event_type="task_assigned",
+                            priority=Priority.NORMAL,
+                            payload={
+                                "from_agent_id": agent.id,
+                                "from_callsign": getattr(agent, 'callsign', ''),
+                                "task_description": task_description,
+                            },
+                        )
+                        await rt.dispatcher.dispatch(event)
+                        actions_executed.append({"type": "assign", "target": target_callsign, "task": task_description})
+                        logger.info("AD-654d: %s assigned task to @%s", agent.id[:12], target_callsign)
+        text = re.sub(assign_pattern, '', text, flags=re.DOTALL).strip()
+
+        # --- HANDOFF (AD-654d) — any rank ---
+        handoff_pattern = r'\[HANDOFF\s+@([\w-]+)\]\s*(.*?)\s*\[/HANDOFF\]'
+        for match in re.finditer(handoff_pattern, text, re.DOTALL):
+            target_callsign = match.group(1)
+            handoff_context = match.group(2).strip()
+            if rt.dispatcher and rt.callsign_registry:
+                resolved = rt.callsign_registry.resolve(target_callsign)
+                target_agent_id = resolved.get("agent_id") if resolved else None
+                if target_agent_id and target_agent_id != agent.id:
+                    from probos.activation import task_event_for_agent
+                    event = task_event_for_agent(
+                        agent_id=target_agent_id,
+                        source_type="agent",
+                        source_id=agent.id,
+                        event_type="task_handoff",
+                        priority=Priority.CRITICAL,
+                        payload={
+                            "from_agent_id": agent.id,
+                            "from_callsign": getattr(agent, 'callsign', ''),
+                            "handoff_context": handoff_context,
+                        },
+                    )
+                    await rt.dispatcher.dispatch(event)
+                    actions_executed.append({"type": "handoff", "target": target_callsign, "context": handoff_context})
+                    logger.info("AD-654d: %s handed off to @%s", agent.id[:12], target_callsign)
+        text = re.sub(handoff_pattern, '', text, flags=re.DOTALL).strip()
 
         # BF-203: Strip unrecognized bracket command tags that the LLM hallucinated.
         # Known tags (REPLY, DM, ENDORSE, NOTEBOOK, READ_NOTEBOOK, CHALLENGE, MOVE,

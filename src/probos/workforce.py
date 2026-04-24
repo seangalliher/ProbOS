@@ -29,6 +29,7 @@ import aiosqlite
 
 from probos.events import EventType
 from probos.protocols import ConnectionFactory, DatabaseConnection, EventEmitterMixin
+from probos.types import Priority
 
 logger = logging.getLogger(__name__)
 
@@ -925,6 +926,7 @@ class WorkItemStore(EventEmitterMixin):
             self._connection_factory = default_factory
         self._tick_task: asyncio.Task[None] | None = None
         self._running = False
+        self._dispatcher: Any | None = None  # AD-654d: set via attach_dispatcher()
         # In-memory registries (populated from ACM at startup)
         self._resources: dict[str, BookableResource] = {}
         self._calendars: dict[str, AgentCalendar] = {}
@@ -950,6 +952,10 @@ class WorkItemStore(EventEmitterMixin):
                     logger.warning("Failed to load custom template: %s", td.get("template_id", "?"), exc_info=True)
 
     # -- Lifecycle --
+
+    def attach_dispatcher(self, dispatcher: Any) -> None:
+        """AD-654d: Late-bind dispatcher for work_item_assigned TaskEvent."""
+        self._dispatcher = dispatcher
 
     async def start(self) -> None:
         """Open DB, create schema, start tick loop."""
@@ -1268,6 +1274,30 @@ class WorkItemStore(EventEmitterMixin):
             "booking": booking.to_dict(),
             "resource": resource.to_dict(),
         })
+
+        # AD-654d: Emit TaskEvent to notify the assigned agent
+        if self._dispatcher and resource_id:
+            try:
+                from probos.activation import task_event_for_agent
+                event = task_event_for_agent(
+                    agent_id=resource_id,
+                    source_type="workforce",
+                    source_id=work_item_id,
+                    event_type="work_item_assigned",
+                    priority=Priority.NORMAL,
+                    payload={
+                        "work_item_id": work_item_id,
+                        "title": item.title,
+                        "description": item.description,
+                        "work_type": item.work_type,
+                        "status": "scheduled",
+                        "assigned_by": source,
+                    },
+                )
+                await self._dispatcher.dispatch(event)
+            except Exception:
+                logger.debug("AD-654d: work_item_assigned TaskEvent emission failed", exc_info=True)
+
         return booking
 
     async def claim_work_item(

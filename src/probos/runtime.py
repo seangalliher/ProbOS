@@ -441,6 +441,9 @@ class ProbOSRuntime:
         # --- Recreation Service (AD-526a) ---
         self.recreation_service: Any = None
 
+        # --- TaskEvent Dispatcher (AD-654c) ---
+        self.dispatcher: Any | None = None
+
         # --- Agent Capital Management (AD-427) ---
         self.acm: AgentCapitalService | None = None
 
@@ -1424,6 +1427,7 @@ class ProbOSRuntime:
             procedure_store=self._procedure_store,  # AD-533: persistent procedure storage
             runtime=self,  # AD-532e: for reactive event subscription
             activation_tracker=self._activation_tracker,  # AD-567d
+            records_store=self._records_store,  # BF-106: available from Phase 4
         )
         self.dream_scheduler = dream_result.dream_scheduler
         self._emergent_detector = dream_result.emergent_detector

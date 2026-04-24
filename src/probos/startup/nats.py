@@ -37,6 +37,7 @@ async def init_nats(config: "SystemConfig") -> "NATSBus | None":
         drain_timeout=config.nats.drain_timeout_seconds,
         subject_prefix=config.nats.subject_prefix,
         jetstream_enabled=config.nats.jetstream_enabled,
+        js_publish_timeout=config.nats.js_publish_timeout,
     )
 
     await bus.start()

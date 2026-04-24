@@ -638,6 +638,8 @@ class SocialVerificationConfig(BaseModel):
     cascade_enabled: bool = True
     cascade_independence_threshold: float = 0.3  # Below this = cascade risk
     cascade_cooldown_seconds: float = 300.0  # Dedup window for cascade alerts
+    # Provenance (AD-662)
+    anomaly_window_discount: float = 0.5  # 0.0-1.0: weight discount for anomaly window pairs
     # Privacy
     expose_episode_content: bool = False  # MUST stay False — privacy boundary
 
@@ -1032,6 +1034,10 @@ class NatsConfig(BaseModel):
 
     # Subject prefix — derived from ship DID at runtime, fallback for local
     subject_prefix: str = "probos.local"
+
+    # BF-230: JetStream publish timeout (seconds) — raised from nats-py default
+    # to tolerate CPU load spikes. Applied per-publish, not connection-level.
+    js_publish_timeout: float = 5.0
 
 
 class SystemConfig(BaseModel):

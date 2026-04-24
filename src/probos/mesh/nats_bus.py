@@ -11,12 +11,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
 # Type alias for subscriber callbacks
 MessageCallback = Callable[["NATSMessage"], Awaitable[None]]
+
+# BF-229: NATS subject tokens allow [A-Za-z0-9_\-] on all server versions.
+# Dots are token separators. Colons, spaces, and other chars are unsafe.
+_NATS_UNSAFE_CHAR = re.compile(r'[^A-Za-z0-9_\-.]')
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +94,7 @@ class NATSBus:
         drain_timeout: float = 5.0,
         subject_prefix: str = "probos.local",
         jetstream_enabled: bool = True,
+        js_publish_timeout: float = 5.0,
     ) -> None:
         self._url = url
         self._connect_timeout = connect_timeout
@@ -97,6 +103,7 @@ class NATSBus:
         self._drain_timeout = drain_timeout
         self._subject_prefix = subject_prefix
         self._jetstream_enabled = jetstream_enabled
+        self._js_publish_timeout = js_publish_timeout
         self._nc: Any = None  # nats.NATS client
         self._js: Any = None  # JetStream context
         self._subscriptions: list[Any] = []
@@ -123,34 +130,57 @@ class NATSBus:
         tracked in _active_subs with un-prefixed subjects. On prefix change,
         each is unsubscribed and re-created with the new prefix.
 
+        BF-229: Sanitizes the prefix — replaces NATS-unsafe characters
+        (colons, spaces, etc.) with underscores. Ship DIDs contain colons
+        (did:probos:<uuid>) which some NATS server versions reject in
+        subject tokens. NATSBus owns this constraint.
+
         Note: publish_raw/subscribe_raw are intentionally NOT tracked.
         Federation uses raw subjects to bypass per-ship prefix isolation.
         """
-        if prefix == self._subject_prefix:
+        sanitized = _NATS_UNSAFE_CHAR.sub('_', prefix)
+        if sanitized != prefix:
+            logger.info("BF-229: Prefix sanitized %s → %s", prefix, sanitized)
+        if sanitized == self._subject_prefix:
             return
         old_prefix = self._subject_prefix
-        self._subject_prefix = prefix
-        logger.info("NATS subject prefix changed: %s → %s", old_prefix, prefix)
+        self._subject_prefix = sanitized
+        logger.info("NATS subject prefix changed: %s → %s", old_prefix, sanitized)
 
-        # Update stream subject filters to match new prefix
+        # BF-231: Delete and recreate streams with new prefix.
+        # update_stream() can silently fail to change subject filters on some
+        # NATS server versions (especially when the old prefix is a completely
+        # different DID). Delete-and-recreate is reliable and safe — these are
+        # transient event buses with short max_age retention.
+        #
+        # BF-223 interaction: stream deletion cascades to consumer deletion on
+        # the NATS server, so BF-223's per-consumer delete_consumer() calls
+        # (lines 199-211) become no-ops. BF-223 is preserved as defense-in-
+        # depth for consumers on streams not tracked in _stream_configs.
         if self.connected and self._stream_configs:
-            logger.info("set_subject_prefix: updating %d stream configs", len(self._stream_configs))
+            logger.info(
+                "set_subject_prefix: recreating %d streams for new prefix",
+                len(self._stream_configs),
+            )
             for sc in self._stream_configs:
+                stream_name = sc["name"]
                 try:
-                    logger.info(
-                        "set_subject_prefix: updating stream %s subjects=%s",
-                        sc["name"], sc["subjects"],
-                    )
+                    await self._delete_stream(stream_name)
                     await self.ensure_stream(
-                        sc["name"], sc["subjects"],
+                        stream_name,
+                        sc["subjects"],
                         max_msgs=sc.get("max_msgs", -1),
                         max_age=sc.get("max_age", 0),
                     )
                 except Exception as e:
-                    logger.warning("Stream update on prefix change failed for %s: %s", sc["name"], e)
+                    logger.error(
+                        "BF-231: Stream recreate on prefix change failed for %s: %s — "
+                        "JetStream publishes will fail until ProbOS is restarted.",
+                        stream_name, e,
+                    )
         else:
             logger.warning(
-                "set_subject_prefix: skipping stream update (connected=%s, configs=%d)",
+                "set_subject_prefix: skipping stream recreate (connected=%s, configs=%d)",
                 self.connected, len(self._stream_configs),
             )
 
@@ -417,19 +447,51 @@ class NATSBus:
         data: dict[str, Any],
         headers: dict[str, str] | None = None,
     ) -> None:
-        """Publish to a JetStream subject (durable, at-least-once)."""
+        """Publish to a JetStream subject (durable, at-least-once).
+
+        BF-230: Retry once on transient failure, then fall back to core NATS.
+        Three-tier resilience:
+          1. JetStream publish with configurable timeout
+          2. One retry after 0.5s backoff (transient load spikes)
+          3. Fallback to core NATS publish (at-most-once, but not lost)
+        """
         if not self._js:
-            # Fallback to core NATS if JetStream not available
             await self.publish(subject, data, headers=headers)
             return
 
         full_subject = self._full_subject(subject)
         payload = json.dumps(data).encode()
 
+        for attempt in range(2):  # attempt 0 = first try, attempt 1 = retry
+            try:
+                await self._js.publish(
+                    full_subject, payload, headers=headers,
+                    timeout=self._js_publish_timeout,
+                )
+                return  # Success
+            except Exception as e:
+                if attempt == 0:
+                    logger.warning(
+                        "JetStream publish to %s failed (attempt 1/2, retrying): %s",
+                        full_subject, e,
+                    )
+                    await asyncio.sleep(0.5)
+                else:
+                    logger.warning(
+                        "JetStream publish to %s failed after retry, "
+                        "falling back to core NATS: %s",
+                        full_subject, e,
+                    )
+
+        # Fallback: core NATS (at-most-once delivery, but event not lost)
         try:
-            await self._js.publish(full_subject, payload, headers=headers)
-        except Exception as e:
-            logger.error("JetStream publish to %s failed: %s", full_subject, e)
+            await self.publish(subject, data, headers=headers)
+        except Exception as fallback_err:
+            logger.error(
+                "BF-230: JetStream AND core NATS publish failed for %s — "
+                "event dropped. Check NATS server health: %s",
+                full_subject, fallback_err,
+            )
 
     async def js_subscribe(
         self,
@@ -563,6 +625,7 @@ class NATSBus:
             logger.info("JetStream stream '%s' ensured: %s", name, full_subjects)
         except Exception as e:
             logger.error("Failed to ensure stream '%s': %s", name, e)
+            raise
 
     async def delete_consumer(self, stream: str, durable_name: str) -> None:
         """Delete a durable JetStream consumer (AD-654a cleanup)."""
@@ -573,6 +636,18 @@ class NATSBus:
             logger.debug("NATSBus: Deleted consumer %s from stream %s", durable_name, stream)
         except Exception as e:
             logger.debug("NATSBus: Consumer delete failed (%s/%s): %s", stream, durable_name, e)
+
+    async def _delete_stream(self, name: str) -> bool:
+        """BF-231: Delete a JetStream stream by name. Returns True if deleted."""
+        if not self._js:
+            return False
+        try:
+            await self._js.delete_stream(name)
+            logger.info("NATSBus: Deleted stream %s", name)
+            return True
+        except Exception as e:
+            logger.debug("NATSBus: Stream delete failed (%s): %s", name, e)
+            return False
 
     def health(self) -> dict[str, Any]:
         """Return NATS health status for VitalsMonitor integration."""
@@ -673,10 +748,11 @@ class MockNATSBus:
 
     async def set_subject_prefix(self, prefix: str) -> None:
         """Update prefix and rebuild subscriptions from _active_subs."""
-        if prefix == self._subject_prefix:
+        sanitized = _NATS_UNSAFE_CHAR.sub('_', prefix)
+        if sanitized == self._subject_prefix:
             return
         old_prefix = self._subject_prefix
-        self._subject_prefix = prefix
+        self._subject_prefix = sanitized
 
         # Rebuild _subs from _active_subs (un-prefixed source of truth)
         new_subs: dict[str, list[MessageCallback]] = {}

@@ -37,10 +37,17 @@ class MessageStore:
         self._identity_registry = identity_registry
         self._social_verification: Any = None  # AD-567f: late-bound
         self._content_firewall: Any = None  # AD-529: late-bound
+        self._dispatcher: Any | None = None  # AD-654d: late-bound
+        self._callsign_registry: Any | None = None  # AD-654d: late-bound
 
     def set_social_verification(self, svc: Any) -> None:
         """AD-567f: Late-bind social verification service."""
         self._social_verification = svc
+
+    def attach_dispatcher(self, dispatcher: Any, callsign_registry: Any) -> None:
+        """AD-654d: Late-bind dispatcher for mention TaskEvent emission."""
+        self._dispatcher = dispatcher
+        self._callsign_registry = callsign_registry
 
     def set_content_firewall(self, firewall: Any) -> None:
         """AD-529: Late-bind content contagion firewall."""
@@ -235,6 +242,33 @@ class MessageStore:
             "author_callsign": author_callsign,
             "mentions": extract_mentions(body),
         })
+
+        # AD-654d: Emit mention TaskEvent for each @mentioned agent
+        mentions = extract_mentions(body)
+        if mentions and self._dispatcher and self._callsign_registry:
+            for callsign in mentions:
+                resolved = self._callsign_registry.resolve(callsign)
+                if resolved and resolved.get("agent_id") and resolved["agent_id"] != author_id:
+                    try:
+                        from probos.activation import task_event_for_agent
+                        from probos.types import Priority
+                        event = task_event_for_agent(
+                            agent_id=resolved["agent_id"],
+                            source_type="ward_room",
+                            source_id=post.id,
+                            event_type="mention",
+                            priority=Priority.NORMAL,
+                            payload={
+                                "mentioned_by": author_id,
+                                "mentioned_by_callsign": author_callsign,
+                                "channel_id": thread_channel_id,
+                                "body_preview": body[:200],
+                            },
+                            thread_id=thread_id,
+                        )
+                        await self._dispatcher.dispatch(event)
+                    except Exception:
+                        logger.debug("AD-654d: mention TaskEvent emission failed", exc_info=True)
 
         # AD-506b: Emit peer repetition event if matches found
         if peer_matches and self._emit:

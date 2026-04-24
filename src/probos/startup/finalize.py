@@ -92,13 +92,18 @@ async def finalize_startup(
     # --- AD-557: Wire emergence metrics dependencies ---
     if runtime.dream_scheduler and runtime.dream_scheduler.engine:
         engine = runtime.dream_scheduler.engine
+        # BF-106: Late-bind Phase 7 dependencies via public setters
         if runtime.ward_room:
-            engine._ward_room = runtime.ward_room
+            engine.set_ward_room(runtime.ward_room)
         if runtime.ontology:
-            engine._get_department = lambda aid: runtime.ontology.get_agent_department(aid)
-        # AD-551: Wire records_store for notebook consolidation
+            engine.set_get_department(
+                lambda aid: runtime.ontology.get_agent_department(aid)
+            )
+        # BF-106: records_store is now constructor-injected (AD-551 wiring path,
+        # moved from finalize.py to init_dreaming). Setter is no-op if already
+        # set via constructor — only fires if Phase 4 had it as None.
         if hasattr(runtime, '_records_store') and runtime._records_store:
-            engine._records_store = runtime._records_store
+            engine.set_records_store(runtime._records_store)
 
     # --- BF-100: Wire EmergentDetector to DreamScheduler for dream suppression ---
     if runtime.dream_scheduler and getattr(runtime, '_emergent_detector', None):
@@ -228,6 +233,25 @@ async def finalize_startup(
 
         logger.info("Startup [finalize]: AD-654b cognitive queues created for %d agents", _queue_count)
 
+        # AD-654c: Create Dispatcher
+        from probos.activation.dispatcher import Dispatcher
+
+        dispatcher = Dispatcher(
+            registry=runtime.registry,
+            ontology=runtime.ontology,
+            get_queue=_intent_bus._get_agent_queue,
+            dispatch_async_fn=_intent_bus.dispatch_async,
+            emit_event=runtime._emit_event,
+        )
+        runtime.dispatcher = dispatcher
+        logger.info("Startup [finalize]: AD-654c Dispatcher created")
+
+        # AD-654d: Wire dispatcher into internal emitters
+        if runtime.work_item_store:
+            runtime.work_item_store.attach_dispatcher(runtime.dispatcher)
+        if runtime.ward_room:
+            runtime.ward_room.attach_dispatcher(runtime.dispatcher, runtime.callsign_registry)
+
         # BF-223: Create per-agent JetStream dispatch consumers AFTER ship
         # commissioning has set the stable DID-based NATS prefix. During
         # startup, IntentBus.subscribe() defers dispatch consumers to avoid
@@ -280,6 +304,8 @@ async def finalize_startup(
         ward_room=runtime.ward_room,
         records_store=runtime._records_store,
         emit_event_fn=runtime._emit_event,
+        dispatcher=runtime.dispatcher,                # AD-654d
+        callsign_registry=runtime.callsign_registry,  # AD-654d
     )
 
     # AD-632b: Wire SubTaskExecutor + QueryHandler for Level 3 cognitive escalation

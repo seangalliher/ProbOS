@@ -64,7 +64,7 @@ class TestPrepareDocument:
             ),
         )
         doc = EpisodicMemory._prepare_document(ep)
-        assert doc == "[science] [ward_room] [first] [direct_message] pool threshold analysis"
+        assert doc == "[science] [ward_room] [first] [direct_message] pool threshold analysis [Questions: What did science observe?]"
 
     def test_empty_fields_omitted(self):
         """Test 2: Only non-empty anchor fields appear in document."""
@@ -75,7 +75,7 @@ class TestPrepareDocument:
             anchors=AnchorFrame(department="science", channel="", watch_section="first", trigger_type=""),
         )
         doc = EpisodicMemory._prepare_document(ep)
-        assert doc == "[science] [first] something happened"
+        assert doc == "[science] [first] something happened [Questions: What did science observe?]"
 
     def test_no_anchors_returns_user_input(self):
         """Test 3: Episode with anchors=None returns user_input unchanged."""
@@ -91,7 +91,7 @@ class TestPrepareDocument:
 
         ep = _make_episode(user_input="", anchors=_full_anchor())
         doc = EpisodicMemory._prepare_document(ep)
-        assert doc == "[science] [ward_room] [first] [direct_message] "
+        assert doc == "[science] [ward_room] [first] [direct_message] [Questions: What did science observe?]"
 
     def test_format_consistency(self):
         """Test 5: Idempotent — same input always produces same output."""

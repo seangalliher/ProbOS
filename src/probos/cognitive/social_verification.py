@@ -95,27 +95,84 @@ def _time_separated(ep_a: Any, ep_b: Any, threshold: float = 60.0) -> bool:
     return abs(getattr(ep_a, "timestamp", 0) - getattr(ep_b, "timestamp", 0)) > threshold
 
 
-def compute_anchor_independence(episodes: list[Any]) -> float:
+def _share_artifact_ancestry(anchors_a: Any, anchors_b: Any) -> bool:
+    """Check if two anchor frames share source artifact ancestry (AD-662).
+
+    Two observations sharing the same source_origin_id are NOT independent —
+    they derive from the same root data, regardless of spatiotemporal separation.
+    Same source_origin_id AND same artifact_version is a stronger signal
+    (same artifact, same version). artifact_version alone is NOT sufficient
+    because version strings may collide across unrelated artifacts.
+
+    AD-662 preserves existing behavior for None/missing anchors — episodes
+    without anchors are not given the ancestry guard. A future AD may tighten this.
+    """
+    if anchors_a is None or anchors_b is None:
+        return False  # Can't determine ancestry without anchors — don't block
+
+    origin_a = getattr(anchors_a, "source_origin_id", "") or ""
+    origin_b = getattr(anchors_b, "source_origin_id", "") or ""
+
+    # Same source origin = shared ancestry
+    if origin_a and origin_b and origin_a == origin_b:
+        return True
+
+    return False
+
+
+def _in_anomaly_window(anchors: Any) -> bool:
+    """Check if an observation occurred during a known anomaly window (AD-662).
+
+    Observations during anomaly windows get reduced independence weight,
+    not outright rejection — the anomaly may not have affected this specific
+    observation.
+    """
+    if anchors is None:
+        return False
+    return bool(getattr(anchors, "anomaly_window_id", "") or "")
+
+
+def compute_anchor_independence(
+    episodes: list[Any],
+    anomaly_discount: float = 0.5,
+) -> float:
     """Compute anchor independence score for a set of episodes.
 
-    Returns 0.0-1.0: ratio of independently anchored episode pairs
-    to total episode pairs.
+    Returns 0.0-1.0: weighted ratio of independently anchored episode pairs
+    to total episode pairs (AD-662).
+
+    AD-662 additions:
+    - Pairs sharing artifact ancestry (same source_origin_id) are NOT
+      independent, regardless of spatiotemporal separation or time gap.
+    - Pairs where either episode occurred during an anomaly window
+      contribute ``anomaly_discount`` weight (default 0.5x) to the score.
     """
     if len(episodes) < 2:
         return 0.0
 
-    total_pairs = 0
-    independent_pairs = 0
+    total_weight = 0.0
+    independent_weight = 0.0
 
     for i in range(len(episodes)):
         for j in range(i + 1, len(episodes)):
-            total_pairs += 1
             a = getattr(episodes[i], "anchors", None)
             b = getattr(episodes[j], "anchors", None)
-            if _are_independently_anchored(a, b) or _time_separated(episodes[i], episodes[j]):
-                independent_pairs += 1
 
-    return independent_pairs / total_pairs if total_pairs > 0 else 0.0
+            # AD-662: Discount pairs involving anomaly window observations
+            pair_weight = 1.0
+            if _in_anomaly_window(a) or _in_anomaly_window(b):
+                pair_weight = anomaly_discount
+
+            total_weight += pair_weight
+
+            # AD-662: Shared ancestry is an absolute veto — overrides both
+            # spatiotemporal independence AND time separation
+            if _share_artifact_ancestry(a, b):
+                pass  # Not independent, regardless of other signals
+            elif _are_independently_anchored(a, b) or _time_separated(episodes[i], episodes[j]):
+                independent_weight += pair_weight
+
+    return independent_weight / total_weight if total_weight > 0 else 0.0
 
 
 class SocialVerificationService:
@@ -174,7 +231,7 @@ class SocialVerificationService:
                 confidence_values.append(conf)
 
         # 4. Compute anchor independence
-        independence = compute_anchor_independence(qualified)
+        independence = compute_anchor_independence(qualified, anomaly_discount=self._config.anomaly_window_discount)
 
         # 5. Aggregate metadata (privacy: no content)
         agent_set: set[str] = set()
@@ -211,6 +268,9 @@ class SocialVerificationService:
                         continue
                     a = getattr(ep, "anchors", None)
                     b = getattr(other, "anchors", None)
+                    # AD-662: Shared ancestry vetoes independence
+                    if _share_artifact_ancestry(a, b):
+                        continue
                     if _are_independently_anchored(a, b) or _time_separated(ep, other):
                         independent_count += 1
                         break
@@ -235,11 +295,26 @@ class SocialVerificationService:
 
         # 7. Anchor summary (aggregate metadata, never content)
         time_span = max(timestamps) - min(timestamps) if len(timestamps) >= 2 else 0.0
+
+        # AD-662: Collect provenance metadata
+        origin_ids: set[str] = set()
+        anomaly_flagged = 0
+        for ep in qualified:
+            anchors = getattr(ep, "anchors", None)
+            if anchors:
+                oid = getattr(anchors, "source_origin_id", "") or ""
+                if oid:
+                    origin_ids.add(oid)
+                if _in_anomaly_window(anchors):
+                    anomaly_flagged += 1
+
         anchor_summary: dict[str, Any] = {
             "shared_channels": sorted(channels),
             "shared_departments": matching_departments,
             "unique_participants": sorted(all_participants),
             "time_span_seconds": time_span,
+            "unique_source_origins": len(origin_ids),  # AD-662
+            "anomaly_window_episodes": anomaly_flagged,  # AD-662
         }
 
         result = CorroborationResult(
@@ -343,7 +418,7 @@ class SocialVerificationService:
             logger.debug("AD-567f: cascade author lookup failed")
 
         # Compute anchor independence
-        independence = compute_anchor_independence(matched_episodes)
+        independence = compute_anchor_independence(matched_episodes, anomaly_discount=self._config.anomaly_window_discount)
         prop_count = len(affected_agents)
 
         # Classify risk level

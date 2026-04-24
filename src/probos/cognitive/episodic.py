@@ -1494,14 +1494,21 @@ class EpisodicMemory:
 
     @staticmethod
     def _prepare_document(episode: "Episode") -> str:
-        """AD-605: Build enriched document text for ChromaDB embedding.
+        """AD-584d: Build enriched document text for ChromaDB embedding.
 
-        Concatenates anchor metadata into the document text so the embedding
-        captures structural context (department, channel, watch_section) in
-        addition to raw content. Improves semantic separation between episodes
-        from different contexts.
+        Concatenates anchor metadata, user_input, reflection, and heuristic
+        question seeds into the document text. This aligns the embedding with
+        FTS5 (which already indexes user_input + reflection) and adds
+        elaborative encoding via question seeding (Craik & Tulving 1975).
+
+        The output is embedding-only — never displayed to users or
+        reconstructed back to Episode. Content order (anchors → user_input →
+        reflection → questions) ensures structural context survives if the
+        embedding model truncates long documents.
         """
         parts: list[str] = []
+
+        # Structural context (AD-605)
         if episode.anchors:
             if episode.anchors.department:
                 parts.append(f"[{episode.anchors.department}]")
@@ -1511,8 +1518,55 @@ class EpisodicMemory:
                 parts.append(f"[{episode.anchors.watch_section}]")
             if episode.anchors.trigger_type:
                 parts.append(f"[{episode.anchors.trigger_type}]")
-        parts.append(episode.user_input or "")
+
+        # Core content — user_input + reflection (AD-584d)
+        if episode.user_input:
+            parts.append(episode.user_input)
+        if episode.reflection:
+            parts.append(episode.reflection)
+
+        # Question seeds — heuristic elaborative encoding (AD-584d)
+        questions = EpisodicMemory._generate_question_seeds(episode)
+        if questions:
+            parts.append("[Questions: " + " | ".join(questions) + "]")
+
         return " ".join(parts)
+
+    @staticmethod
+    def _generate_question_seeds(episode: "Episode") -> list[str]:
+        """AD-584d: Generate heuristic questions this episode could answer.
+
+        Elaborative encoding — deeper processing at write time improves
+        retrieval at recall time. Questions bridge the Q→A gap so that
+        query-like recall prompts have direct semantic overlap with the
+        stored document.
+
+        Returns 0-3 questions based on available metadata. No LLM call.
+
+        Note: Reflection content is NOT templated into questions — it's
+        already in the embedding via Section 1, and templating it produces
+        grammatically broken questions that hurt embedding quality.
+        """
+        questions: list[str] = []
+
+        # Intent-based question
+        intent_type = ""
+        if episode.dag_summary:
+            intent_type = episode.dag_summary.get("intent", "") or episode.dag_summary.get("intent_type", "")
+        if intent_type:
+            questions.append(f"What happened when {intent_type} was executed?")
+
+        # Outcome-based question (references specific result, not intent)
+        if episode.outcomes:
+            first_result = episode.outcomes[0].get("result", "")
+            if first_result:
+                questions.append(f"What was the outcome of {first_result}?")
+
+        # Department-based question (if no intent question generated)
+        if not intent_type and episode.anchors and episode.anchors.department:
+            questions.append(f"What did {episode.anchors.department} observe?")
+
+        return questions[:3]  # Cap at 3
 
     @staticmethod
     def _metadata_to_episode(

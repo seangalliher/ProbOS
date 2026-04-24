@@ -18,6 +18,8 @@ from probos.cognitive.social_verification import (
     SocialVerificationService,
     compute_anchor_independence,
     _are_independently_anchored,
+    _share_artifact_ancestry,
+    _in_anomaly_window,
 )
 from probos.config import SocialVerificationConfig
 from probos.types import AnchorFrame, Episode
@@ -206,6 +208,26 @@ class TestCorroboration:
         result2 = await svc2.check_corroboration("A", "test claim")
         assert result2.is_corroborated
 
+    @pytest.mark.asyncio
+    async def test_corroboration_shared_ancestry_reduces_independence(self):
+        """Two agents with same source_origin_id should have low independence."""
+        # Use _rich_anchors() to ensure episodes pass confidence gate (0.3),
+        # then override source_origin_id to test ancestry check
+        anchors_1 = dataclasses.replace(
+            _rich_anchors(1), source_origin_id="shared-artifact-001",
+        )
+        anchors_2 = dataclasses.replace(
+            _rich_anchors(2), source_origin_id="shared-artifact-001",
+        )
+        eps = [
+            _make_episode(agent_ids=["B"], anchors=anchors_1, timestamp=100.0, ep_id="ep-1"),
+            _make_episode(agent_ids=["C"], anchors=anchors_2, timestamp=110.0, ep_id="ep-2"),
+        ]
+        svc = _make_service(episodes=eps)
+        result = await svc.check_corroboration("agent-A", "test claim")
+        # Despite different duty_cycles and channels, shared ancestry → not independent
+        assert result.anchor_independence_score == 0.0
+
 
 # ===========================================================================
 # 2. CascadeRiskResult tests (7)
@@ -343,6 +365,30 @@ class TestCascadeRisk:
         )
         assert result is not None
         # Same thread = not independent → should flag cascade risk
+        assert result.anchor_independence_score == 0.0
+
+    @pytest.mark.asyncio
+    async def test_cascade_shared_ancestry_flags_risk(self):
+        """Peer matches sharing artifact ancestry should flag cascade risk."""
+        # Use _rich_anchors() base for confidence gate, override origin
+        anchors = dataclasses.replace(
+            _rich_anchors(1), source_origin_id="corrupted-artifact-001",
+        )
+        eps = [
+            _make_episode(agent_ids=["B"], ep_id="ep-B", anchors=anchors, timestamp=100.0),
+            _make_episode(agent_ids=["C"], ep_id="ep-C", anchors=anchors, timestamp=110.0),
+            _make_episode(agent_ids=["A"], ep_id="ep-A", anchors=anchors, timestamp=120.0),
+        ]
+        svc = _make_service(episodes=eps)
+        peer_matches = [
+            {"author_id": "B", "author_callsign": "Bravo", "timestamp": 100.0},
+            {"author_id": "C", "author_callsign": "Charlie", "timestamp": 110.0},
+        ]
+        result = await svc.check_cascade_risk(
+            "A", "Alpha", "post body", "ch-1", peer_matches=peer_matches,
+        )
+        assert result is not None
+        # Shared ancestry → not independent → cascade risk flagged
         assert result.anchor_independence_score == 0.0
 
 
@@ -561,3 +607,133 @@ class TestEvents:
         assert result is not None
         assert result.risk_level == "low"
         emit.assert_not_called()
+
+
+# ===========================================================================
+# 6. Source Provenance tests (AD-662) (11)
+# ===========================================================================
+
+class TestSourceProvenance:
+    """Tests for AD-662: Corroboration Source Provenance Validation."""
+
+    # --- _share_artifact_ancestry ---
+
+    def test_shared_origin_detected(self):
+        """Same source_origin_id = shared ancestry."""
+        a = AnchorFrame(source_origin_id="artifact-X", duty_cycle_id="dc-1")
+        b = AnchorFrame(source_origin_id="artifact-X", duty_cycle_id="dc-2")
+        assert _share_artifact_ancestry(a, b) is True
+
+    def test_different_origin_independent(self):
+        """Different source_origin_id = no shared ancestry."""
+        a = AnchorFrame(source_origin_id="artifact-X")
+        b = AnchorFrame(source_origin_id="artifact-Y")
+        assert _share_artifact_ancestry(a, b) is False
+
+    def test_shared_version_alone_not_sufficient(self):
+        """Same artifact_version WITHOUT same origin = NOT shared ancestry.
+        Version strings may collide across unrelated artifacts."""
+        a = AnchorFrame(source_origin_id="artifact-X", artifact_version="v1-abc123")
+        b = AnchorFrame(source_origin_id="artifact-Y", artifact_version="v1-abc123")
+        assert _share_artifact_ancestry(a, b) is False
+
+    def test_shared_origin_with_version(self):
+        """Same origin AND same version = shared ancestry (strongest signal)."""
+        a = AnchorFrame(source_origin_id="artifact-X", artifact_version="v1-abc123")
+        b = AnchorFrame(source_origin_id="artifact-X", artifact_version="v1-abc123")
+        assert _share_artifact_ancestry(a, b) is True
+
+    def test_empty_provenance_no_ancestry(self):
+        """Empty provenance fields = no ancestry detected (don't block)."""
+        a = AnchorFrame(duty_cycle_id="dc-1")
+        b = AnchorFrame(duty_cycle_id="dc-2")
+        assert _share_artifact_ancestry(a, b) is False
+
+    def test_none_anchors_no_ancestry(self):
+        """None anchors = no ancestry (can't determine)."""
+        assert _share_artifact_ancestry(None, None) is False
+        assert _share_artifact_ancestry(AnchorFrame(), None) is False
+
+    # --- _in_anomaly_window ---
+
+    def test_anomaly_window_detected(self):
+        """Non-empty anomaly_window_id = in anomaly window."""
+        a = AnchorFrame(anomaly_window_id="aw-001")
+        assert _in_anomaly_window(a) is True
+
+    def test_no_anomaly_window(self):
+        """Empty anomaly_window_id = not in anomaly window."""
+        a = AnchorFrame()
+        assert _in_anomaly_window(a) is False
+
+    # --- Integration: ancestry vetoes spatiotemporal independence ---
+
+    def test_independence_vetoed_by_shared_ancestry(self):
+        """Different duty cycles + channels BUT same origin = NOT independent."""
+        a = AnchorFrame(
+            duty_cycle_id="dc-1", channel_id="ch-1",
+            source_origin_id="artifact-X",
+        )
+        b = AnchorFrame(
+            duty_cycle_id="dc-2", channel_id="ch-2",
+            source_origin_id="artifact-X",
+        )
+        # Timestamps within 60s so time_separated doesn't bypass the veto
+        ep1 = _make_episode(agent_ids=["A"], anchors=a, timestamp=100.0, ep_id="ep-1")
+        ep2 = _make_episode(agent_ids=["B"], anchors=b, timestamp=110.0, ep_id="ep-2")
+        score = compute_anchor_independence([ep1, ep2])
+        assert score == 0.0
+
+    def test_independence_granted_with_different_ancestry(self):
+        """Different duty cycles + different origin = independent."""
+        a = AnchorFrame(
+            duty_cycle_id="dc-1", channel_id="ch-1",
+            source_origin_id="artifact-X",
+        )
+        b = AnchorFrame(
+            duty_cycle_id="dc-2", channel_id="ch-2",
+            source_origin_id="artifact-Y",
+        )
+        ep1 = _make_episode(agent_ids=["A"], anchors=a, timestamp=100.0, ep_id="ep-1")
+        ep2 = _make_episode(agent_ids=["B"], anchors=b, timestamp=110.0, ep_id="ep-2")
+        score = compute_anchor_independence([ep1, ep2])
+        assert score == 1.0
+
+    # --- Anomaly window scoring discount ---
+
+    def test_anomaly_window_discounts_independence_score(self):
+        """Episodes in anomaly window get discounted independence contribution."""
+        # Two normal episodes that are independently anchored
+        ep_normal_1 = _make_episode(
+            agent_ids=["A"], ep_id="ep-1",
+            anchors=AnchorFrame(duty_cycle_id="dc-1", channel_id="ch-1"),
+            timestamp=100.0,
+        )
+        ep_normal_2 = _make_episode(
+            agent_ids=["B"], ep_id="ep-2",
+            anchors=AnchorFrame(duty_cycle_id="dc-2", channel_id="ch-2"),
+            timestamp=110.0,
+        )
+        # An anomaly episode that is DEPENDENT (same duty cycle, close timestamp)
+        ep_anomaly = _make_episode(
+            agent_ids=["C"], ep_id="ep-3",
+            anchors=AnchorFrame(
+                duty_cycle_id="dc-1", channel_id="ch-1",
+                anomaly_window_id="aw-001",
+            ),
+            timestamp=105.0,
+        )
+
+        # Without anomaly episode: 1 pair (ep1-ep2), independent → score = 1.0
+        score_clean = compute_anchor_independence([ep_normal_1, ep_normal_2])
+        assert score_clean == 1.0
+
+        # With anomaly episode: 3 pairs
+        # ep1-ep2: independent, weight=1.0, contributes 1.0
+        # ep1-ep3: same duty_cycle, <60s → dependent, weight=0.5, contributes 0
+        # ep2-ep3: different duty_cycle → independent, weight=0.5, contributes 0.5
+        # total_weight = 1.0 + 0.5 + 0.5 = 2.0
+        # independent_weight = 1.0 + 0.0 + 0.5 = 1.5
+        # score = 1.5 / 2.0 = 0.75
+        score_with_anomaly = compute_anchor_independence([ep_normal_1, ep_normal_2, ep_anomaly])
+        assert score_with_anomaly == 0.75

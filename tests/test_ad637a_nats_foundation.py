@@ -7,6 +7,7 @@ NatsConfig, init_nats, ship DID prefix update, and integration behaviors.
 from __future__ import annotations
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -392,6 +393,117 @@ class TestJSPublishFallback:
 
 
 # ---------------------------------------------------------------------------
+# Tests: BF-230 — JetStream publish resilience
+# ---------------------------------------------------------------------------
+
+
+class TestJSPublishResilience:
+
+    @pytest.mark.asyncio
+    @patch("probos.mesh.nats_bus.asyncio.sleep", new_callable=AsyncMock)
+    async def test_retry_on_first_failure(self, mock_sleep):
+        """BF-230: js_publish retries once on transient failure."""
+        bus = NATSBus(jetstream_enabled=True, js_publish_timeout=5.0)
+        bus._connected = True
+
+        mock_js = MagicMock()
+        # First call fails, second succeeds
+        mock_js.publish = AsyncMock(
+            side_effect=[Exception("nats: no response from stream"), None]
+        )
+        bus._js = mock_js
+
+        await bus.js_publish("system.events.test", {"data": "value"})
+
+        assert mock_js.publish.call_count == 2
+        mock_sleep.assert_awaited_once_with(0.5)
+
+    @pytest.mark.asyncio
+    @patch("probos.mesh.nats_bus.asyncio.sleep", new_callable=AsyncMock)
+    async def test_fallback_to_core_after_retry_exhausted(self, mock_sleep):
+        """BF-230: Falls back to core NATS when JetStream fails twice."""
+        bus = NATSBus(jetstream_enabled=True, js_publish_timeout=5.0)
+        bus._connected = True
+        bus._nc = MagicMock()
+        bus._nc.is_connected = True
+        bus._nc.publish = AsyncMock()
+
+        mock_js = MagicMock()
+        mock_js.publish = AsyncMock(
+            side_effect=Exception("nats: no response from stream")
+        )
+        bus._js = mock_js
+
+        await bus.js_publish("system.events.test", {"data": "value"})
+
+        # JetStream tried twice
+        assert mock_js.publish.call_count == 2
+        # Fell back to core NATS
+        bus._nc.publish.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_timeout_passed_to_js_publish(self):
+        """BF-230: Configurable timeout is passed to nats-py."""
+        bus = NATSBus(jetstream_enabled=True, js_publish_timeout=10.0)
+        bus._connected = True
+
+        mock_js = MagicMock()
+        mock_js.publish = AsyncMock()
+        bus._js = mock_js
+
+        await bus.js_publish("system.events.test", {"data": "value"})
+
+        call_kwargs = mock_js.publish.call_args
+        assert call_kwargs.kwargs.get("timeout") == 10.0
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_success(self):
+        """BF-230: Successful publish does not retry."""
+        bus = NATSBus(jetstream_enabled=True, js_publish_timeout=5.0)
+        bus._connected = True
+
+        mock_js = MagicMock()
+        mock_js.publish = AsyncMock()
+        bus._js = mock_js
+
+        await bus.js_publish("system.events.test", {"data": "value"})
+
+        assert mock_js.publish.call_count == 1
+
+    @pytest.mark.asyncio
+    @patch("probos.mesh.nats_bus.asyncio.sleep", new_callable=AsyncMock)
+    async def test_total_failure_logs_error(self, mock_sleep, caplog):
+        """BF-230: When both JetStream and core NATS fail, event dropped with ERROR."""
+        bus = NATSBus(jetstream_enabled=True, js_publish_timeout=5.0)
+        bus._connected = True
+        bus._nc = MagicMock()
+        bus._nc.is_connected = True
+        bus._nc.publish = AsyncMock(side_effect=Exception("NATS down"))
+
+        mock_js = MagicMock()
+        mock_js.publish = AsyncMock(
+            side_effect=Exception("nats: no response from stream")
+        )
+        bus._js = mock_js
+
+        # Should not raise — fire-and-forget
+        with caplog.at_level(logging.ERROR):
+            await bus.js_publish("system.events.test", {"data": "value"})
+
+        # JetStream tried twice, core tried once
+        assert mock_js.publish.call_count == 2
+        assert bus._nc.publish.call_count == 1
+        # Verify ERROR log with BF-230 marker
+        assert "BF-230" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_default_timeout_is_5_seconds(self):
+        """BF-230: Default js_publish_timeout is 5.0s."""
+        bus = NATSBus()
+        assert bus._js_publish_timeout == 5.0
+
+
+# ---------------------------------------------------------------------------
 # Test 22: Ship DID prefix update in runtime (regression)
 # ---------------------------------------------------------------------------
 
@@ -424,7 +536,8 @@ class TestShipDIDPrefixUpdate:
             if cert:
                 await bus.set_subject_prefix(f"probos.{cert.ship_did}")
 
-        assert bus.subject_prefix == "probos.did:probos:abc123"
+        # BF-229: NATSBus sanitizes colons → underscores
+        assert bus.subject_prefix == "probos.did_probos_abc123"
         mock_registry.get_ship_certificate.assert_called_once()
 
     @pytest.mark.asyncio

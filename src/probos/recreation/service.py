@@ -28,10 +28,14 @@ class RecreationService:
         ward_room: Any = None,
         records_store: Any = None,
         emit_event_fn: Any = None,
+        dispatcher: Any | None = None,            # AD-654d
+        callsign_registry: Any | None = None,     # AD-654d: for callsign → agent_id
     ):
         self._ward_room = ward_room
         self._records_store = records_store
         self._emit = emit_event_fn
+        self._dispatcher = dispatcher
+        self._callsign_registry = callsign_registry
         # Registered game engines by type
         self._engines: dict[str, GameEngine] = {}
         # Active games by game_id
@@ -41,6 +45,13 @@ class RecreationService:
 
         # Register default engines
         self.register_engine(TicTacToeEngine())
+
+    def _resolve_callsign(self, callsign: str) -> str | None:
+        """AD-654d: Resolve a callsign to agent_id via CallsignRegistry."""
+        if not self._callsign_registry:
+            return None
+        resolved = self._callsign_registry.resolve(callsign)
+        return resolved.get("agent_id") if resolved else None
 
     def register_engine(self, engine: GameEngine) -> None:
         """Register a game engine by its game_type."""
@@ -141,6 +152,38 @@ class RecreationService:
                 })
             except Exception:
                 pass
+
+        # AD-654d: Emit move_required TaskEvent for the next player
+        if not engine.is_finished(new_state) and self._dispatcher:
+            next_player_callsign = new_state.get("current_player", "")
+            next_agent_id = self._resolve_callsign(next_player_callsign)
+            if next_agent_id:
+                try:
+                    from probos.activation import task_event_for_agent
+                    from probos.types import Priority
+                    event = task_event_for_agent(
+                        agent_id=next_agent_id,
+                        source_type="recreation",
+                        source_id=game_id,
+                        event_type="move_required",
+                        priority=Priority.NORMAL,
+                        payload={
+                            "game_id": game_id,
+                            "game_type": game_info["game_type"],
+                            "board": engine.render_board(new_state),
+                            "valid_moves": engine.get_valid_moves(new_state),
+                            "opponent": next(
+                                (p for p in (game_info["challenger"], game_info["opponent"])
+                                 if p != next_player_callsign), ""
+                            ),
+                            "your_symbol": new_state.get("symbols", {}).get(next_player_callsign, ""),
+                            "thread_id": game_info.get("thread_id", ""),
+                        },
+                        thread_id=game_info.get("thread_id"),
+                    )
+                    await self._dispatcher.dispatch(event)
+                except Exception:
+                    logger.debug("AD-654d: move_required TaskEvent emission failed", exc_info=True)
 
         # Check if game is finished
         if engine.is_finished(new_state):

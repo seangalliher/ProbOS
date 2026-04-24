@@ -176,6 +176,10 @@ class EventType(str, Enum):
     QUEUE_ITEM_SHED = "queue_item_shed"
     QUEUE_OVERFLOW = "queue_overflow"
 
+    # ── TaskEvent Dispatcher (AD-654c) ─────────────────────────────
+    TASK_EVENT_DISPATCHED = "task_event_dispatched"
+    TASK_EVENT_UNROUTABLE = "task_event_unroutable"
+
     # Sub-task protocol (AD-632a)
     SUB_TASK_COMPLETED = "sub_task_completed"
     SUB_TASK_CHAIN_COMPLETED = "sub_task_chain_completed"

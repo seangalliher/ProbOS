@@ -162,6 +162,23 @@ class AgentCognitiveQueueProtocol(Protocol):
         ...
 
 
+# ── TaskEvent Dispatcher (AD-654c) ────────────────────────────────
+
+
+@runtime_checkable
+class DispatcherProtocol(Protocol):
+    """Routes TaskEvents to agent cognitive queues (AD-654c).
+
+    Consumers depend on this narrow interface, not the concrete
+    Dispatcher class. Follows the existing Protocol pattern
+    (9 existing protocols in this file).
+    """
+
+    async def dispatch(self, event: "TaskEvent") -> "DispatchResult":
+        """Route a TaskEvent to the appropriate agent(s)."""
+        ...
+
+
 # ── Database abstraction (AD-542) ──────────────────────────────────
 
 

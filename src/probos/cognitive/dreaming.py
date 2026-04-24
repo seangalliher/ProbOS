@@ -107,6 +107,19 @@ class DreamingEngine:
         self._addressed_degradations: dict[str, float] = {}  # AD-532b: procedure_id -> timestamp
         self._extraction_candidates: dict[str, float] = {}  # AD-532e: intent_type -> timestamp
         self._reactive_cooldowns: dict[str, float] = {}  # AD-532e: agent_id -> last reactive check
+
+    def set_ward_room(self, ward_room: Any) -> None:
+        """BF-106: Late-bind ward_room (available after Phase 7)."""
+        self._ward_room = ward_room
+
+    def set_get_department(self, get_department: Any) -> None:
+        """BF-106: Late-bind department lookup (available after Phase 7)."""
+        self._get_department = get_department
+
+    def set_records_store(self, records_store: Any) -> None:
+        """BF-106: Late-bind records store. No-op if already set via constructor."""
+        if self._records_store is None:
+            self._records_store = records_store
         self._fallback_learning_queue: list[dict[str, Any]] = []  # AD-534b: fallback evidence for dream-time processing
         self._observed_threads: set[str] = set()  # AD-537: already-observed thread IDs
 

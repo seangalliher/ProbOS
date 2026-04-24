@@ -157,6 +157,13 @@ class WardRoomService(EventEmitterMixin):
         if self._messages:
             self._messages.set_social_verification(svc)
 
+    def attach_dispatcher(self, dispatcher: Any, callsign_registry: Any) -> None:
+        """AD-654d: Late-bind dispatcher into message/thread stores."""
+        if self._messages:
+            self._messages.attach_dispatcher(dispatcher, callsign_registry)
+        if self._threads:
+            self._threads.attach_dispatcher(dispatcher, callsign_registry)
+
     def set_echo_services(
         self,
         thread_echo_analyzer: Any = None,

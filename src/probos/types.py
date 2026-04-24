@@ -378,6 +378,11 @@ class AnchorFrame:
     thread_id: str = ""              # Ward Room thread ID for cross-reference
     event_log_window: float = 0.0    # Timestamp range for EventLog cross-verification
 
+    # SOURCE PROVENANCE — where did the observed data originate? (AD-662)
+    source_origin_id: str = ""       # ID of the root data artifact that generated this observation
+    artifact_version: str = ""       # Version/hash of the artifact observed (detects same-version dupes)
+    anomaly_window_id: str = ""      # If observed during a known anomaly window, its ID
+
 
 @dataclass(frozen=True)
 class RecallScore:
