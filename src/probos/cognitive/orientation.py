@@ -29,6 +29,7 @@ class OrientationContext:
     # Identity
     callsign: str = ""
     post: str = ""  # role title
+    billet_title: str = ""  # AD-595b: formal billet title from BilletRegistry
     department: str = ""
     department_chief: str = ""
     reports_to: str = ""

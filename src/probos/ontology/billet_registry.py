@@ -155,6 +155,63 @@ class BilletRegistry:
         """
         self._rebuild_title_index()
 
+    def assign(
+        self,
+        post_id: str,
+        agent_type: str,
+        callsign: str = "",
+    ) -> bool:
+        """Notify that an agent has been assigned to a billet.
+
+        Validates the post exists, then emits BILLET_ASSIGNED. Does NOT
+        mutate DepartmentService — the ontology already has the assignment.
+        This is purely event emission for downstream consumers.
+
+        Idempotent: safe to call multiple times for the same agent.
+
+        If ``callsign`` is empty, falls back to the assignment's stored
+        callsign from DepartmentService (set by naming ceremony or
+        organization.yaml seed). This avoids polluting the event stream
+        with agent_type strings when the real callsign is available.
+
+        Parameters
+        ----------
+        post_id : str
+            The post identifier from organization.yaml (e.g., "chief_engineer").
+        agent_type : str
+            The agent type filling the billet.
+        callsign : str
+            The agent's current callsign. Empty string means "look up from
+            the assignment's stored callsign."
+
+        Returns
+        -------
+        bool
+            True if the post exists and event was emitted, False otherwise.
+        """
+        post = self._dept.get_post(post_id)
+        if not post:
+            logger.warning(
+                "BilletRegistry.assign: unknown post_id %r for agent %s",
+                post_id, agent_type,
+            )
+            return False
+
+        # AD-595b: Fall back to the assignment's stored callsign if caller
+        # didn't provide one, rather than polluting events with agent_type.
+        if not callsign:
+            assignment = self._dept.get_assignment_for_agent(agent_type)
+            callsign = assignment.callsign if assignment else ""
+
+        self._emit(EventType.BILLET_ASSIGNED, {
+            "billet_id": post_id,
+            "title": post.title,
+            "department": post.department_id,
+            "agent_type": agent_type,
+            "callsign": callsign,
+        })
+        return True
+
     def _emit(self, event_type: EventType, data: dict[str, Any]) -> None:
         """Emit an event if the callback is set."""
         if self._emit_event_fn:

@@ -10,6 +10,17 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-595b — Naming Ceremony → BilletRegistry Integration
+
+**Date:** 2026-04-24
+**Status:** Complete
+**Issue:** #165
+**Parent:** AD-595 (Billet-Based Role Resolution)
+
+**AD-595b: Billet assignment coupled to naming ceremony.** Added `BilletRegistry.assign()` — validates post exists, emits `BILLET_ASSIGNED`. Does NOT write to DepartmentService (ontology already has the assignment). Billet assignment placed as a single block after identity issuance (AD-441c) rather than three separate blocks (cold/warm/non-crew) with tracking flags — simpler, covers all paths uniformly, and `assign()` is idempotent. OrientationContext.billet_title added so agents know their formal billet at cognitive grounding time, enriched via `dataclasses.replace()` on the frozen dataclass.
+
+---
+
 ### AD-595a — BilletRegistry Foundation
 
 **Date:** 2026-04-24

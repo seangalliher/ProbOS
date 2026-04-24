@@ -5,6 +5,7 @@ Handles wiring agents to mesh infrastructure and running naming ceremonies.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 from collections.abc import Callable
@@ -76,6 +77,7 @@ class AgentOnboardingService:
         self._orientation_service: Any = None  # AD-567g: Late-bound
         self._cognitive_skill_catalog: Any = None  # AD-596b: Late-bound
         self._skill_bridge: Any = None  # AD-596c: Late-bound
+        self._billet_registry: Any = None  # AD-595b: Late-bound
 
     def set_orientation_service(self, svc: Any) -> None:
         """AD-567g / BF-113: Set orientation service (public setter for LoD)."""
@@ -92,6 +94,10 @@ class AgentOnboardingService:
     def set_skill_bridge(self, bridge: Any) -> None:
         """AD-596c: Set skill bridge (public setter for LoD)."""
         self._skill_bridge = bridge
+
+    def set_billet_registry(self, registry: Any) -> None:
+        """AD-595b: Set billet registry (public setter for LoD)."""
+        self._billet_registry = registry
 
     async def wire_agent(self, agent: Any) -> None:
         """Connect an agent to the mesh infrastructure."""
@@ -257,6 +263,13 @@ class AgentOnboardingService:
                         if cs and at != agent.agent_type
                     ),
                 )
+                # AD-595b: Enrich orientation with billet title
+                if self._billet_registry and self._ontology:
+                    _post = self._ontology.get_post_for_agent(agent.agent_type)
+                    if _post:
+                        _holder = self._billet_registry.resolve(_post.id)
+                        if _holder and _holder.title:
+                            _ctx = dataclasses.replace(_ctx, billet_title=_holder.title)
                 if not _existing_identity_callsign:
                     _rendered = self._orientation_service.render_cold_start_orientation(_ctx)
                 else:
@@ -326,6 +339,16 @@ class AgentOnboardingService:
                     agent.did = ""
             except Exception as e:
                 logger.debug("Identity resolution skipped for %s: %s", agent.id, e)
+
+        # AD-595b: Notify BilletRegistry of billet assignment.
+        # Placed after identity issuance — billet assignment is a notification
+        # event, not data-critical. Covers all paths: cold-start naming,
+        # warm-boot identity restoration, and non-crew agents with posts.
+        if self._billet_registry and self._ontology:
+            _post = self._ontology.get_post_for_agent(agent.agent_type)
+            if _post:
+                _callsign = getattr(agent, 'callsign', '') or ""
+                self._billet_registry.assign(_post.id, agent.agent_type, callsign=_callsign)
 
         # AD-427: ACM onboarding for crew agents
         if self._acm and is_crew_agent(agent, self._ontology):

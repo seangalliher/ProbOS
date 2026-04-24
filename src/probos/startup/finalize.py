@@ -305,6 +305,10 @@ async def finalize_startup(
     if hasattr(runtime, 'skill_bridge') and runtime.skill_bridge:
         runtime.onboarding.set_skill_bridge(runtime.skill_bridge)
 
+    # AD-595b: Wire BilletRegistry into onboarding
+    if runtime.ontology and runtime.ontology.billet_registry:
+        runtime.onboarding.set_billet_registry(runtime.ontology.billet_registry)
+
     # AD-526a: Wire RecreationService with late-init dependencies
     from probos.recreation.service import RecreationService
     runtime.recreation_service = RecreationService(
