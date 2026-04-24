@@ -96,6 +96,12 @@ async def finalize_startup(
         )
         logger.info("AD-595a: BilletRegistry wired")
 
+    # AD-595c: Wire BilletRegistry into standing orders for template resolution
+    if runtime.ontology and runtime.ontology.billet_registry:
+        from probos.cognitive.standing_orders import set_billet_registry
+        set_billet_registry(runtime.ontology.billet_registry)
+        logger.info("AD-595c: Standing orders billet templating wired")
+
     # --- AD-557: Wire emergence metrics dependencies ---
     if runtime.dream_scheduler and runtime.dream_scheduler.engine:
         engine = runtime.dream_scheduler.engine

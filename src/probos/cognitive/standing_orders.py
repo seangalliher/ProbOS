@@ -13,6 +13,7 @@ Hierarchy (highest to lowest precedence for conflict resolution):
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from functools import lru_cache
 from typing import Any
@@ -200,9 +201,86 @@ def _build_personality_block(agent_type: str, department: str | None = None, cal
 
 
 def clear_cache() -> None:
-    """Clear the file cache (call after standing orders are updated)."""
+    """Clear the file cache (call after standing orders are updated).
+
+    Note: Billet template resolution (AD-595c) is not separately cached —
+    it runs as a post-processing pass on each compose_instructions() call.
+    compose_instructions() is called per decide() cycle, so the regex cost
+    is real (~30KB per agent per cycle). Currently sub-millisecond; if it
+    shows up in profiling, add a version-keyed cache.
+    """
     _load_file.cache_clear()
     _build_personality_block.cache_clear()
+
+
+# Module-level BilletRegistry reference, set at startup (AD-595c).
+# Module-level state — assumes single ProbOS runtime per process.
+# Tests must save/restore via try/finally.
+_billet_registry: "BilletRegistry | None" = None
+
+
+def set_billet_registry(registry: "BilletRegistry | None") -> None:
+    """Wire the BilletRegistry for template substitution (AD-595c).
+
+    Called from finalize.py at startup. Module-level state — single-runtime
+    assumption. Tests must save/restore.
+    """
+    global _billet_registry
+    _billet_registry = registry
+
+
+def _resolve_billet_templates(text: str, registry: "BilletRegistry") -> str:
+    """Replace {Billet Title} patterns with resolved callsigns.
+
+    - ``{Chief Engineer}`` → ``LaForge (Chief Engineer)`` if billet filled
+    - ``{Chief Engineer}`` → ``Chief Engineer (vacant)`` if billet vacant
+    - Non-matching ``{tokens}`` are left unchanged
+
+    Only processes tokens that are 2+ chars and don't contain code-like
+    characters (=, (, ), <, >, |, backtick) to avoid mangling code blocks
+    or markdown. Tokens inside backtick-fenced code blocks or inline
+    backtick spans are also skipped.
+    """
+    def _replace(match: re.Match) -> str:
+        token = match.group(1)
+        # Skip code-like tokens: contains =, (, ), <, >, |, backtick
+        if any(c in token for c in '=()<>|`'):
+            return match.group(0)
+        # Skip single-char tokens
+        if len(token.strip()) < 2:
+            return match.group(0)
+        # Skip if the match is inside backticks (inline code)
+        start = match.start()
+        line_start = text.rfind('\n', 0, start) + 1
+        prefix = text[line_start:start]
+        if '`' in prefix:
+            # Count backticks before match on same line — odd count means inside inline code
+            if prefix.count('`') % 2 == 1:
+                return match.group(0)
+        holder = registry.resolve(token.strip())
+        if holder is None:
+            return match.group(0)  # Not a known billet — leave unchanged
+        if holder.holder_callsign:
+            return f"{holder.holder_callsign} ({holder.title})"
+        return f"{holder.title} (vacant)"  # Vacant — explicit signal
+
+    # Match {content} but NOT inside backtick-fenced code blocks
+    # Process line by line, skip lines inside ``` blocks
+    lines = text.split('\n')
+    in_code_block = False
+    result_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('```') or stripped.startswith('~~~'):
+            in_code_block = not in_code_block
+            result_lines.append(line)
+            continue
+        if in_code_block:
+            result_lines.append(line)
+            continue
+        # Process billet templates outside code blocks
+        result_lines.append(re.sub(r'\{([^}]+)\}', _replace, line))
+    return '\n'.join(result_lines)
 
 
 def compose_instructions(
@@ -300,4 +378,10 @@ def compose_instructions(
             skill_lines.append("</available_skills>")
             parts.append("\n".join(skill_lines))
 
-    return "\n\n---\n\n".join(parts)
+    composed = "\n\n---\n\n".join(parts)
+
+    # AD-595c: Resolve billet templates
+    if _billet_registry is not None:
+        composed = _resolve_billet_templates(composed, _billet_registry)
+
+    return composed

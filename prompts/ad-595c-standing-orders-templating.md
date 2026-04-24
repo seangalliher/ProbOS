@@ -4,7 +4,7 @@
 **Status:** Ready for builder
 **Priority:** Medium
 **Depends:** AD-595a (BilletRegistry must be built first)
-**Files:** `src/probos/cognitive/standing_orders.py`, `tests/test_ad595c_billet_templating.py` (NEW)
+**Files:** `src/probos/cognitive/standing_orders.py`, `src/probos/startup/finalize.py`, `tests/test_ad595c_billet_templating.py` (NEW)
 
 ## Problem
 
@@ -17,7 +17,7 @@ After AD-595a gives us `BilletRegistry.resolve()`, standing orders can resolve b
 Add a **template substitution step** to `compose_instructions()` that processes `{Billet Title}` patterns in standing orders text:
 
 - `{Chief Engineer}` → `LaForge (Chief Engineer)` (if billet filled)
-- `{Chief Engineer}` → `Chief Engineer` (if billet vacant — graceful fallback)
+- `{Chief Engineer}` → `Chief Engineer (vacant)` (if billet vacant — explicit signal)
 
 The substitution happens **after** all tiers are loaded and concatenated, as a post-processing pass. This means:
 - No changes to standing orders `.md` files are required (existing hardcoded references keep working)
@@ -28,6 +28,10 @@ The substitution happens **after** all tiers are loaded and concatenated, as a p
 - `{Title}` — matches a billet title (case-insensitive lookup)
 - Only processes tokens inside `{}` that match a known billet title
 - Non-matching `{tokens}` are left unchanged (safe for markdown, code blocks, etc.)
+
+**Vacant billet UX:** Vacant billets render as `Title (vacant)` — not just the bare title. This gives agents an explicit signal that the billet is empty, so they know to escalate up the chain rather than attempting a message to a non-existent holder.
+
+**Known limitation:** Inline backtick-wrapped billet references (`` `{Chief Engineer}` ``) are detected and skipped. However, multi-backtick inline code spans are not handled. Standing orders authors should avoid putting `{Title}` inside inline code. This is documented in DECISIONS.md.
 
 ## What This Does NOT Change
 
@@ -45,31 +49,52 @@ The substitution happens **after** all tiers are loaded and concatenated, as a p
 
 **File:** `src/probos/cognitive/standing_orders.py`
 
-Add a new function after `clear_cache()` (after line 205) and before `compose_instructions()`:
+### 1a: Add `import re` at module top
+
+Add after the existing stdlib imports (after `import logging`, around line 15):
 
 ```python
-# Module-level BilletRegistry reference, set at startup (AD-595c)
-_billet_registry: Any = None
+import re
+```
+
+### 1b: Add module-level registry and setter
+
+Add after `clear_cache()` (after line 205) and before `compose_instructions()`:
+
+```python
+# Module-level BilletRegistry reference, set at startup (AD-595c).
+# Module-level state — assumes single ProbOS runtime per process.
+# Tests must save/restore via try/finally.
+_billet_registry: "BilletRegistry | None" = None
 
 
-def set_billet_registry(registry: Any) -> None:
-    """Wire the BilletRegistry for template substitution (AD-595c)."""
+def set_billet_registry(registry: "BilletRegistry | None") -> None:
+    """Wire the BilletRegistry for template substitution (AD-595c).
+
+    Called from finalize.py at startup. Module-level state — single-runtime
+    assumption. Tests must save/restore.
+    """
     global _billet_registry
     _billet_registry = registry
+```
 
+### 1c: Add the resolution function
 
-def _resolve_billet_templates(text: str, registry: Any) -> str:
+Add immediately after `set_billet_registry()`:
+
+```python
+def _resolve_billet_templates(text: str, registry: "BilletRegistry") -> str:
     """Replace {Billet Title} patterns with resolved callsigns.
 
-    - `{Chief Engineer}` → `LaForge (Chief Engineer)` if billet filled
-    - `{Chief Engineer}` → `Chief Engineer` if billet vacant or unknown
-    - Non-matching `{tokens}` are left unchanged
+    - ``{Chief Engineer}`` → ``LaForge (Chief Engineer)`` if billet filled
+    - ``{Chief Engineer}`` → ``Chief Engineer (vacant)`` if billet vacant
+    - Non-matching ``{tokens}`` are left unchanged
 
     Only processes tokens that are 2+ chars and don't contain code-like
-    characters (=, (, ), <, >) to avoid mangling code blocks or markdown.
+    characters (=, (, ), <, >, |, backtick) to avoid mangling code blocks
+    or markdown. Tokens inside backtick-fenced code blocks or inline
+    backtick spans are also skipped.
     """
-    import re
-
     def _replace(match: re.Match) -> str:
         token = match.group(1)
         # Skip code-like tokens: contains =, (, ), <, >, |, backtick
@@ -78,21 +103,29 @@ def _resolve_billet_templates(text: str, registry: Any) -> str:
         # Skip single-char tokens
         if len(token.strip()) < 2:
             return match.group(0)
+        # Skip if the match is inside backticks (inline code)
+        start = match.start()
+        line_start = text.rfind('\n', 0, start) + 1
+        prefix = text[line_start:start]
+        if '`' in prefix:
+            # Count backticks before match on same line — odd count means inside inline code
+            if prefix.count('`') % 2 == 1:
+                return match.group(0)
         holder = registry.resolve(token.strip())
         if holder is None:
             return match.group(0)  # Not a known billet — leave unchanged
         if holder.holder_callsign:
             return f"{holder.holder_callsign} ({holder.title})"
-        return holder.title  # Vacant — just the title
+        return f"{holder.title} (vacant)"  # Vacant — explicit signal
 
     # Match {content} but NOT inside backtick-fenced code blocks
-    # Simple approach: process line by line, skip lines inside ``` blocks
+    # Process line by line, skip lines inside ``` blocks
     lines = text.split('\n')
     in_code_block = False
     result_lines: list[str] = []
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith('```'):
+        if stripped.startswith('```') or stripped.startswith('~~~'):
             in_code_block = not in_code_block
             result_lines.append(line)
             continue
@@ -134,23 +167,23 @@ Change to:
 
 **File:** `src/probos/startup/finalize.py`
 
-In the finalize phase, immediately after the AD-595a BilletRegistry wiring block (around line 93 after AD-595a is built), add:
+In the finalize phase, immediately after the AD-595a BilletRegistry event callback wiring block (after line 96, after `logger.info("AD-595a: BilletRegistry wired")`), add:
 
 ```python
     # AD-595c: Wire BilletRegistry into standing orders for template resolution
-    if runtime._billet_registry:
+    if runtime.ontology and runtime.ontology.billet_registry:
         from probos.cognitive.standing_orders import set_billet_registry
-        set_billet_registry(runtime._billet_registry)
+        set_billet_registry(runtime.ontology.billet_registry)
         logger.info("AD-595c: Standing orders billet templating wired")
 ```
 
+**Note:** This uses `runtime.ontology.billet_registry` (the property delegate from AD-595a), NOT `runtime._billet_registry` (which doesn't exist).
+
 ---
 
-## Section 4: Add cache clearing for billet changes
+## Section 4: Update `clear_cache()` docstring
 
 **File:** `src/probos/cognitive/standing_orders.py`
-
-Update `clear_cache()` to note that billet resolution is not cached.
 
 Current (lines 202–205):
 ```python
@@ -165,9 +198,11 @@ Change to:
 def clear_cache() -> None:
     """Clear the file cache (call after standing orders are updated).
 
-    Note: Billet template resolution (AD-595c) is not cached — it runs
-    live on each compose_instructions() call. No cache invalidation needed
-    when billets change.
+    Note: Billet template resolution (AD-595c) is not separately cached —
+    it runs as a post-processing pass on each compose_instructions() call.
+    compose_instructions() is called per decide() cycle, so the regex cost
+    is real (~30KB per agent per cycle). Currently sub-millisecond; if it
+    shows up in profiling, add a version-keyed cache.
     """
     _load_file.cache_clear()
     _build_personality_block.cache_clear()
@@ -184,10 +219,12 @@ def clear_cache() -> None:
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
 
-from probos.cognitive.standing_orders import _resolve_billet_templates
+from probos.cognitive.standing_orders import (
+    _resolve_billet_templates,
+    set_billet_registry,
+)
 
 
 def _make_registry(billets: dict[str, tuple[str, str | None]]) -> MagicMock:
@@ -229,11 +266,11 @@ class TestBilletTemplateResolution:
         assert result == "Report to the LaForge (Chief Engineer)."
 
     def test_resolve_vacant_billet(self):
-        """Vacant billet resolves to just the title."""
+        """Vacant billet resolves to 'Title (vacant)'."""
         reg = _make_registry({"Chief Engineer": ("Chief Engineer", None)})
         text = "Report to the {Chief Engineer}."
         result = _resolve_billet_templates(text, reg)
-        assert result == "Report to the Chief Engineer."
+        assert result == "Report to the Chief Engineer (vacant)."
 
     def test_unknown_token_unchanged(self):
         """Non-billet tokens in {} are left unchanged."""
@@ -266,7 +303,7 @@ class TestBilletTemplateResolution:
         result = _resolve_billet_templates(text, reg)
         assert result == "Ask LaForge (Chief Engineer) for help."
 
-    def test_code_block_not_processed(self):
+    def test_code_block_backtick_not_processed(self):
         """Content inside ``` code blocks is not processed."""
         reg = _make_registry({"Chief Engineer": ("Chief Engineer", "LaForge")})
         text = "Report to {Chief Engineer}.\n```\n{Chief Engineer}\n```\nEnd."
@@ -275,6 +312,22 @@ class TestBilletTemplateResolution:
         assert lines[0] == "Report to LaForge (Chief Engineer)."
         assert lines[2] == "{Chief Engineer}"  # Inside code block — unchanged
         assert lines[4] == "End."
+
+    def test_code_block_tilde_not_processed(self):
+        """Content inside ~~~ code blocks is not processed."""
+        reg = _make_registry({"Chief Engineer": ("Chief Engineer", "LaForge")})
+        text = "Report to {Chief Engineer}.\n~~~\n{Chief Engineer}\n~~~\nEnd."
+        result = _resolve_billet_templates(text, reg)
+        lines = result.split('\n')
+        assert lines[0] == "Report to LaForge (Chief Engineer)."
+        assert lines[2] == "{Chief Engineer}"  # Inside tilde block — unchanged
+
+    def test_inline_backtick_not_processed(self):
+        """Content inside inline backticks is not processed."""
+        reg = _make_registry({"Chief Engineer": ("Chief Engineer", "LaForge")})
+        text = "Use `{Chief Engineer}` for the reference."
+        result = _resolve_billet_templates(text, reg)
+        assert result == "Use `{Chief Engineer}` for the reference."
 
     def test_empty_text(self):
         """Empty text returns empty."""
@@ -302,16 +355,40 @@ class TestBilletTemplateResolution:
         assert "LaForge (Chief Engineer)" in result
 
     def test_nested_braces_outer_preserved(self):
-        """Nested braces {{something}} — inner match occurs, outer brace preserved.
-
-        Known limitation: regex matches inner {something}, leaving stray outer braces.
-        This is acceptable since standing orders don't use Jinja-style {{}} syntax.
-        """
+        """Nested braces {{something}} — inner match occurs, outer brace preserved."""
         reg = _make_registry({})
         text = "Template {{variable}} here."
         result = _resolve_billet_templates(text, reg)
-        # {variable} is not a known billet, so the inner match is left unchanged
-        assert "{{variable}}" in result
+        assert result == "Template {{variable}} here."
+
+
+# --- set_billet_registry ---
+
+class TestSetBilletRegistry:
+
+    def test_set_billet_registry_stores_reference(self):
+        """set_billet_registry stores the registry in module state."""
+        from probos.cognitive import standing_orders
+
+        old_reg = standing_orders._billet_registry
+        try:
+            mock_reg = MagicMock()
+            set_billet_registry(mock_reg)
+            assert standing_orders._billet_registry is mock_reg
+        finally:
+            standing_orders._billet_registry = old_reg
+
+    def test_set_billet_registry_none_clears(self):
+        """set_billet_registry(None) clears the module state."""
+        from probos.cognitive import standing_orders
+
+        old_reg = standing_orders._billet_registry
+        try:
+            set_billet_registry(MagicMock())
+            set_billet_registry(None)
+            assert standing_orders._billet_registry is None
+        finally:
+            standing_orders._billet_registry = old_reg
 
 
 # --- Integration with compose_instructions ---
@@ -324,7 +401,6 @@ class TestComposeIntegration:
 
         reg = _make_registry({"Chief Engineer": ("Chief Engineer", "LaForge")})
 
-        # Wire registry
         old_reg = standing_orders._billet_registry
         try:
             standing_orders._billet_registry = reg
@@ -374,13 +450,13 @@ d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q
 ### PROGRESS.md
 Add line:
 ```
-AD-595c CLOSED. Standing orders billet templating. compose_instructions() now resolves {Billet Title} patterns to current callsigns via BilletRegistry: {Chief Engineer} → LaForge (Chief Engineer). Graceful fallback for vacant billets and unknown tokens. Code blocks excluded from processing. 13 new tests. Depends on AD-595a.
+AD-595c CLOSED. Standing orders billet templating. compose_instructions() now resolves {Billet Title} patterns to current callsigns via BilletRegistry: {Chief Engineer} → LaForge (Chief Engineer). Vacant billets render as Title (vacant). Code blocks and inline backticks excluded from processing. 18 new tests. Depends on AD-595a.
 ```
 
 ### DECISIONS.md
 Add entry:
 ```
-**AD-595c: Post-processing template substitution for billet references.** Standing orders `.md` files can use `{Billet Title}` syntax to reference billets dynamically. Resolution happens as a post-processing pass in `compose_instructions()`, after all tiers are concatenated. This means existing hardcoded references ("the Chief Engineer") still work, and the template syntax is opt-in. Code blocks are excluded from processing. No changes to existing standing orders files — this just enables future use. The substitution is not cached (runs live each call) since instructions are composed per-agent per-cycle.
+**AD-595c: Post-processing template substitution for billet references.** Standing orders `.md` files can use `{Billet Title}` syntax to reference billets dynamically. Resolution happens as a post-processing pass in `compose_instructions()`, after all tiers are concatenated. Existing hardcoded references ("the Chief Engineer") still work — template syntax is opt-in. Filled billets render as `Callsign (Title)`, vacant billets render as `Title (vacant)` — giving agents an explicit signal to escalate up the chain rather than messaging a non-existent holder. Code blocks (``` and ~~~) and inline backtick spans are excluded from processing. Known limitation: multi-backtick inline code spans (``` ``code`` ```) are not handled; authors should avoid `{Title}` inside inline code. The substitution runs per compose_instructions() call (called each decide() cycle) without caching — currently sub-millisecond on ~30KB text; if profiling shows cost, add version-keyed cache. Module-level `_billet_registry` state follows existing standing_orders.py module pattern (file caches are also module-scoped). No changes to existing standing orders files — this just enables future use.
 ```
 
 ### docs/development/roadmap.md
