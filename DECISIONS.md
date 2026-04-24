@@ -10,6 +10,17 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-595d — Qualification-Aware Billet Assignment
+
+**Date:** 2026-04-24
+**Status:** Complete
+**Issue:** #TBD
+**Parent:** AD-595 (Billet-Based Role Resolution)
+
+**AD-595d: Data model + check API, no production gate.** Billets can declare `required_qualifications` (list of test names from AD-539). `check_qualifications()` async method verifies agent results from QualificationStore. `assign_qualified()` combines check + assign in one call. `allow_untested` parameter handles cold-start (no test results yet → allow) vs promotion (must have passed → block). `assign()` is NOT modified — stays sync and unconditional. Production assignment path (`agent_onboarding.py`) still calls `assign()`, unchanged. Gate enforcement deferred to AD-595e (promotion workflow). This split avoids the incoherent middle ground of logging-but-not-blocking and lets the data model ship immediately.
+
+---
+
 ### AD-595c — Standing Orders Templating — Billet-Aware Instructions
 
 **Date:** 2026-04-24

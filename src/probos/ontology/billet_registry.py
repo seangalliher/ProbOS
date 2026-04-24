@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from probos.events import EventType
 from probos.ontology.models import Assignment, Post
+
+if TYPE_CHECKING:
+    from probos.cognitive.qualification import QualificationStore
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +56,11 @@ class BilletRegistry:
         self,
         department_service: Any,
         emit_event_fn: Callable[[EventType, dict[str, Any]], None] | None = None,
+        qualification_store: "QualificationStore | None" = None,  # AD-595d
     ) -> None:
         self._dept = department_service
         self._emit_event_fn = emit_event_fn
+        self._qualification_store: "QualificationStore | None" = qualification_store  # AD-595d
         # Build title→post_id index for title-based resolution
         self._title_index: dict[str, str] = {}
         self._rebuild_title_index()
@@ -65,6 +70,10 @@ class BilletRegistry:
     ) -> None:
         """AD-595a: Set event emission callback (public API for late binding)."""
         self._emit_event_fn = emit_fn
+
+    def set_qualification_store(self, store: Any) -> None:
+        """AD-595d: Set qualification store for billet qualification checks."""
+        self._qualification_store = store
 
     def _rebuild_title_index(self) -> None:
         """Build lowercase title → post_id lookup from current posts."""
@@ -154,6 +163,107 @@ class BilletRegistry:
         runtime billet creation.
         """
         self._rebuild_title_index()
+
+    async def check_qualifications(
+        self,
+        billet_id: str,
+        agent_type: str,
+        agent_id: str = "",
+        *,
+        allow_untested: bool = True,
+    ) -> tuple[bool, list[str]]:
+        """AD-595d: Check if an agent meets a billet's qualification requirements.
+
+        Parameters
+        ----------
+        billet_id : str
+            Post identifier to check requirements for.
+        agent_type : str
+            Agent type — used to look up agent_id if not provided.
+        agent_id : str
+            Agent's sovereign/unique ID for qualification store lookup.
+            If empty, looked up from current assignment.
+        allow_untested : bool
+            If True (default), agents with no test results for a required
+            qualification are allowed through (cold-start tolerance).
+            If False, missing test results count as failures (for promotion
+            or re-qualification checks).
+
+        Returns
+        -------
+        (qualified, missing) : tuple[bool, list[str]]
+            True if all requirements met (or no requirements), plus list
+            of missing/failed qualification test names.
+        """
+        post = self._dept.get_post(billet_id)
+        if not post or not post.required_qualifications:
+            return True, []
+
+        if not self._qualification_store:
+            # No store — can't check, allow by default
+            return True, []
+
+        # Resolve agent_id from assignment if not provided
+        if not agent_id:
+            assignment = self._dept.get_assignment_for_agent(agent_type)
+            agent_id = assignment.agent_id if assignment and assignment.agent_id else ""
+
+        if not agent_id:
+            # Still no agent_id — can't look up results, allow by default
+            return True, []
+
+        missing: list[str] = []
+        for test_name in post.required_qualifications:
+            result = await self._qualification_store.get_latest(agent_id, test_name)
+            if result is None:
+                if not allow_untested:
+                    missing.append(test_name)
+                # else: cold start — no test taken yet, allow
+            elif not result.passed:
+                missing.append(test_name)
+
+        return len(missing) == 0, missing
+
+    async def assign_qualified(
+        self,
+        billet_id: str,
+        agent_type: str,
+        agent_id: str = "",
+        callsign: str = "",
+        *,
+        allow_untested: bool = True,
+    ) -> tuple[bool, list[str]]:
+        """AD-595d: Check qualifications, then assign if qualified.
+
+        Combines check_qualifications() + assign() in one call.
+        If the agent doesn't meet requirements, the billet is NOT assigned.
+
+        Parameters
+        ----------
+        billet_id, agent_type, agent_id, callsign :
+            Same as assign() and check_qualifications().
+        allow_untested : bool
+            Passed through to check_qualifications(). Default True
+            (cold-start tolerance).
+
+        Returns
+        -------
+        (assigned, missing) : tuple[bool, list[str]]
+            True if assigned, plus list of missing qualifications (empty
+            if assigned, populated if rejected).
+        """
+        qualified, missing = await self.check_qualifications(
+            billet_id, agent_type, agent_id, allow_untested=allow_untested,
+        )
+        if not qualified:
+            logger.warning(
+                "AD-595d: %s not qualified for billet %s — missing: %s",
+                agent_type, billet_id, missing,
+            )
+            return False, missing
+
+        result = self.assign(billet_id, agent_type, callsign=callsign)
+        return result, []
 
     def assign(
         self,

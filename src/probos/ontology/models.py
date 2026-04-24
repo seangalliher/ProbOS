@@ -40,6 +40,7 @@ class Post:
     clearance: str = ""  # AD-620: RecallTier name (BASIC/ENHANCED/FULL/ORACLE). Empty = no billet clearance.
     capabilities: list[PostCapability] = field(default_factory=list)  # AD-648
     does_not_have: list[str] = field(default_factory=list)  # AD-648: negative grounding
+    required_qualifications: list[str] = field(default_factory=list)  # AD-595d: test names agent must pass
 
 
 @dataclass

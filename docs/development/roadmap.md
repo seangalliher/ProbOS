@@ -4863,7 +4863,8 @@ ProbOS `BilletRegistry`:
 > - **AD-595a: Billet Foundation** *(complete, OSS)* — `BilletRegistry` read-side facade over `DepartmentService` with `BilletHolder` frozen dataclass, title-based resolution (case-insensitive), `resolve()`/`resolve_agent_type()`/`resolve_callsign()`/`get_roster()`/`get_department_roster()`. Eagerly initialized in `VesselOntologyService`. `BILLET_ASSIGNED`/`BILLET_VACATED` event types reserved. 17 tests.
 > - **AD-595b: Naming Ceremony Integration** *(complete, OSS, depends: AD-595a)* — `run_naming_ceremony()` updates `BilletRegistry` after callsign assignment. Agent orientation includes billet title. `OrientationContext` gains `billet_title` field.
 > - **AD-595c: Standing Orders Templating** *(complete, OSS, depends: AD-595a)* — `compose_instructions()` gains template substitution: `{Chief Engineer}` → resolved callsign. Standing order `.md` files can reference billets dynamically. Fallback: role title if billet vacant.
-> - **AD-595d: Qualification Gating** *(planned, OSS, depends: AD-595a, AD-539)* — Billet assignment checks agent qualifications from AD-539 Qualification Programs. Prevents unqualified agents from filling gated billets. Connects to promotion mechanics.
+> - **AD-595d: Qualification-Aware Assignment** *(complete, OSS, depends: AD-595a, AD-539)* — `Post` gains `required_qualifications` field. `BilletRegistry` gains `check_qualifications()` (async, with `allow_untested` cold-start tolerance) and `assign_qualified()`. Data model + check API only — `assign()` unchanged.
+> - **AD-595e: Qualification Gate Enforcement** *(planned, OSS, depends: AD-595d)* — Wire `assign_qualified()` into promotion/assignment workflow. Production gate: Counselor/Captain approval checks qualifications before billet assignment. `allow_untested=False` for promotion, `True` for cold-start.
 
 **Implementation order:** AD-595a → AD-595b → AD-595c → AD-595d. Foundation first, then integration points.
 

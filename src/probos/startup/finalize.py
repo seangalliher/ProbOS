@@ -102,6 +102,13 @@ async def finalize_startup(
         set_billet_registry(runtime.ontology.billet_registry)
         logger.info("AD-595c: Standing orders billet templating wired")
 
+    # AD-595d: Wire QualificationStore into BilletRegistry
+    billet_reg = runtime.ontology.billet_registry if runtime.ontology else None
+    qual_store = getattr(runtime, '_qualification_store', None)
+    if billet_reg and qual_store:
+        billet_reg.set_qualification_store(qual_store)
+        logger.info("AD-595d: Qualification store wired into BilletRegistry")
+
     # --- AD-557: Wire emergence metrics dependencies ---
     if runtime.dream_scheduler and runtime.dream_scheduler.engine:
         engine = runtime.dream_scheduler.engine
