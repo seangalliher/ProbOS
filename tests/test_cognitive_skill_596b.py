@@ -460,6 +460,8 @@ class TestOnboardingWiring:
         svc._start_time_wall = 0.0
         svc._orientation_service = None
         svc._skill_bridge = None  # AD-596c
+        svc._billet_registry = None  # AD-595b
+        svc._qualification_store = None  # AD-595d
 
         agent = MagicMock()
         agent.id = "agent-001"
@@ -509,6 +511,8 @@ class TestOnboardingWiring:
         svc._start_time_wall = 0.0
         svc._orientation_service = None
         svc._skill_bridge = None  # AD-596c
+        svc._billet_registry = None  # AD-595b
+        svc._qualification_store = None  # AD-595d
 
         agent = MagicMock()
         agent.id = "agent-001"
@@ -562,6 +566,8 @@ class TestOnboardingWiring:
         svc._start_time_wall = 0.0
         svc._orientation_service = None
         svc._skill_bridge = None  # AD-596c
+        svc._billet_registry = None  # AD-595b
+        svc._qualification_store = None  # AD-595d
 
         agent = MagicMock()
         agent.id = "agent-001"
