@@ -52,25 +52,28 @@ async def init_nats(config: "SystemConfig") -> "NATSBus | None":
         # exist now — agents publish system events during fleet startup
         # (Phase 3), before finalize (Phase 5) runs.
         if config.nats.jetstream_enabled:
-            await bus.ensure_stream(
+            # BF-232: Use recreate_stream to clear stale subject filters from
+            # previous boots. ensure_stream's update_stream fallback silently
+            # fails to change subjects on some NATS versions.
+            await bus.recreate_stream(
                 "SYSTEM_EVENTS",
                 ["system.events.>"],
                 max_msgs=50000,
                 max_age=3600,
             )
-            await bus.ensure_stream(
+            await bus.recreate_stream(
                 "WARDROOM",
                 ["wardroom.events.>"],
                 max_msgs=10000,
                 max_age=3600,
             )
-            await bus.ensure_stream(
+            await bus.recreate_stream(
                 "INTENT_DISPATCH",
                 ["intent.dispatch.>"],
                 max_msgs=10000,
                 max_age=300,       # 5 min retention — stale notifications are worthless
             )
-            logger.info("Startup [nats]: JetStream streams ensured (SYSTEM_EVENTS, WARDROOM, INTENT_DISPATCH)")
+            logger.info("Startup [nats]: JetStream streams recreated (SYSTEM_EVENTS, WARDROOM, INTENT_DISPATCH)")
     else:
         logger.warning(
             "Startup [nats]: connection failed — system will operate without NATS. "

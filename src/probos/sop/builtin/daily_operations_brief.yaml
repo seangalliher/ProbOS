@@ -1,0 +1,99 @@
+bill: daily_operations_brief
+version: 1
+title: "Daily Operations Brief"
+description: >
+  Morning brief where each department chief reports status and
+  the Captain issues standing orders for the day.
+author: "Ship's Standing Orders"
+
+activation:
+  trigger: "schedule:0 8 * * *"
+  authority: "first_officer"
+
+roles:
+  first_officer:
+    department: "bridge"
+  engineering_chief:
+    department: "engineering"
+  security_chief:
+    department: "security"
+  science_chief:
+    department: "science"
+  operations_chief:
+    department: "operations"
+  medical_chief:
+    department: "medical"
+
+steps:
+  - id: call_to_brief
+    name: "Call Department Chiefs to Brief"
+    role: first_officer
+    action: post_to_channel
+    channel: "bridge"
+
+  - id: engineering_brief
+    name: "Engineering Status"
+    role: engineering_chief
+    action: cognitive_skill
+    outputs:
+      - name: status
+        type: text
+
+  - id: security_brief
+    name: "Security Status"
+    role: security_chief
+    action: cognitive_skill
+    outputs:
+      - name: status
+        type: text
+
+  - id: science_brief
+    name: "Science Status"
+    role: science_chief
+    action: cognitive_skill
+    outputs:
+      - name: status
+        type: text
+
+  - id: operations_brief
+    name: "Operations Status"
+    role: operations_chief
+    action: cognitive_skill
+    outputs:
+      - name: status
+        type: text
+
+  - id: medical_brief
+    name: "Medical Status"
+    role: medical_chief
+    action: cognitive_skill
+    outputs:
+      - name: status
+        type: text
+
+  - id: summary
+    name: "Compile Brief Summary"
+    role: first_officer
+    action: cognitive_skill
+    inputs:
+      - name: engineering
+        source: "step:engineering_brief.status"
+      - name: security
+        source: "step:security_brief.status"
+      - name: science
+        source: "step:science_brief.status"
+      - name: operations
+        source: "step:operations_brief.status"
+      - name: medical
+        source: "step:medical_brief.status"
+    outputs:
+      - name: brief_report
+        type: document
+
+expected_results:
+  - "All departments report current status"
+  - "First Officer compiles summary"
+
+standing_order_constraints:
+  - "Brief should complete within 15 minutes"
+  - "Absent department chiefs delegate to senior crew"

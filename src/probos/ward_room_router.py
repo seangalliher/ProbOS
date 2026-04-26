@@ -77,6 +77,16 @@ class WardRoomRouter:
         self._responded_threads: dict[tuple[str, str], float] = {}
         self._last_responded_eviction: float = time.time()
         self._cap_notices_posted: set[tuple[str, str]] = set()  # BF-200: (thread_id, cap_name)
+
+        # BF-236: Round-scoped post tracker — dispatch-level semantic dedup.
+        # Tracks which agents have already POSTED (not just been dispatched) in
+        # the current conversational round for each thread. Cleared on Captain
+        # repost alongside _round_participants. Key: (agent_id, thread_id).
+        # Separate from BF-198 _responded_threads (different invariant, different
+        # lifecycle — _responded_threads serves proactive-loop dedup with 600s
+        # eviction; this tracker resets per-round).
+        self._posted_in_round: dict[tuple[str, str], float] = {}
+        self._last_posted_in_round_eviction: float = time.time()
         # BF-188: Captain delivery coordination — agent-reply routing waits
         # until Captain's routing to all targets completes
         self._captain_delivery_done: asyncio.Event = asyncio.Event()
@@ -110,6 +120,52 @@ class WardRoomRouter:
         """BF-198: Periodic eviction — runs at most once per ``interval`` seconds."""
         if time.time() - self._last_responded_eviction >= interval:
             self._evict_stale_responses()
+
+    # ------------------------------------------------------------------
+    # BF-236: Round-scoped post tracker (dispatch-level semantic dedup)
+    # ------------------------------------------------------------------
+
+    def record_round_post(self, agent_id: str, thread_id: str) -> None:
+        """BF-236: Record that agent posted in the current round of a thread.
+
+        Called by WardRoomPostPipeline after create_post (Step 8).
+        """
+        if not agent_id or not thread_id:
+            return
+        self._posted_in_round[(agent_id, thread_id)] = time.time()
+
+    def has_posted_in_round(self, agent_id: str, thread_id: str) -> bool:
+        """BF-236: Check if agent already posted in the current round."""
+        if not agent_id or not thread_id:
+            return False
+        return (agent_id, thread_id) in self._posted_in_round
+
+    def _clear_round_posts_for_thread(self, thread_id: str) -> None:
+        """BF-236: Clear round-post records for a thread (Captain repost)."""
+        self._posted_in_round = {
+            k: v for k, v in self._posted_in_round.items()
+            if k[1] != thread_id
+        }
+
+    def _evict_stale_round_posts(self, max_age: float = 120.0) -> None:
+        """BF-236: Evict round-post records older than max_age seconds."""
+        cutoff = time.time() - max_age
+        self._posted_in_round = {
+            k: v for k, v in self._posted_in_round.items() if v > cutoff
+        }
+        self._last_posted_in_round_eviction = time.time()
+
+    def _maybe_evict_round_posts(self, interval: float = 60.0) -> None:
+        """BF-236: Periodic eviction — runs at most once per interval seconds.
+
+        Interval (60s) is half of max_age (120s) so stale entries are caught
+        within one round of typical conversation flow. Shorter ratio than
+        BF-198's 60s/600s because round-post records are transient (cleared
+        on Captain repost) and the 120s max_age only needs to cover a
+        long-tailed LLM handler followed by post.
+        """
+        if time.time() - self._last_posted_in_round_eviction >= interval:
+            self._evict_stale_round_posts()
 
     # ------------------------------------------------------------------
     # AD-654a: Public wrappers for WardRoomPostPipeline cross-module calls
@@ -252,6 +308,7 @@ class WardRoomRouter:
 
         # BF-198: Periodic eviction of stale responded-thread records
         self._maybe_evict_stale_responses()
+        self._maybe_evict_round_posts()  # BF-236
 
         # AD-416: Clean up tracking dicts when threads are pruned
         if event_type == "ward_room_pruned":
@@ -278,6 +335,9 @@ class WardRoomRouter:
                              if k.startswith(f"{thread_id}:")]
             for k in keys_to_clear:
                 del self._round_participants[k]
+            # BF-236: Clear round-post records so agents can respond to
+            # Captain follow-ups in the same thread.
+            self._clear_round_posts_for_thread(thread_id)
 
         # --- Get channel info ---
         channel_id = data.get("channel_id", "")
@@ -513,6 +573,19 @@ class WardRoomRouter:
 
             # Layer 3: Agent already responded in this round of this thread
             if not is_direct_target and is_agent_post and agent_id in round_participants:
+                continue
+
+            # BF-236: Semantic dispatch dedup — skip agent if it already posted
+            # in the current round of this thread. Recorded by pipeline after
+            # create_post. Cleared on Captain repost. Separate from BF-198's
+            # _responded_threads (proactive-loop dedup, 600s window). NOT gated
+            # on is_agent_post — duplicates occur on Captain-authored threads too.
+            # Explicit dispatch (@mention, DM) bypasses — same as cooldown/round gates.
+            if not is_direct_target and self.has_posted_in_round(agent_id, thread_id):
+                logger.debug(
+                    "BF-236: %s already posted in round for thread %s, skipping",
+                    agent_id[:12], thread_id[:8],
+                )
                 continue
 
             intent = IntentMessage(
@@ -1015,4 +1088,9 @@ class WardRoomRouter:
         self._cap_notices_posted = {
             (tid, cap) for tid, cap in self._cap_notices_posted
             if tid not in pruned_thread_ids
+        }
+        # BF-236: Clean up round-post records for pruned threads
+        self._posted_in_round = {
+            k: v for k, v in self._posted_in_round.items()
+            if k[1] not in pruned_thread_ids
         }

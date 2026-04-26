@@ -50,6 +50,17 @@ class IntentBus:
         # AD-654b: Injected callback for response recording (replaces handler.__self__ reach-through)
         self._record_response: Callable[[str, str], None] | None = None  # (agent_id, thread_id)
 
+        # BF-234: Consumer-side dedup — tracks recently-seen intent IDs to
+        # suppress transport-layer duplicates (JetStream redelivery, js_publish
+        # timeout-then-succeed). Keyed by intent_id, value is monotonic timestamp.
+        self._seen_intents: dict[str, float] = {}
+        self._last_seen_eviction: float = time.monotonic()
+        self._duplicate_suppressed_count: int = 0
+
+        # BF-234: Injected event emitter for duplicate-suppressed telemetry.
+        # Wired from finalize.py via set_emit_event().
+        self._emit_event_fn: Callable[[str, dict[str, Any]], None] | None = None
+
     def subscribe(self, agent_id: str, handler: IntentHandler, intent_names: list[str] | None = None) -> None:
         """Register an agent's intent handler.
 
@@ -164,6 +175,40 @@ class IntentBus:
             """
             try:
                 intent_msg = self._deserialize_intent(msg.data)
+
+                # BF-234: Consumer-side dedup gate — suppress transport-layer
+                # duplicates (JetStream redelivery, js_publish timeout-then-succeed).
+                # Only ward_room_notification intents need this; other intent types
+                # are idempotent or use request/reply (not fire-and-forget).
+                # NOTE: This is structural dedup (same intent.id delivered twice).
+                # BF-198 record_agent_response/has_agent_responded is semantic
+                # round-tracking (agent spoke in this thread) — different invariant.
+                if intent_msg.intent == "ward_room_notification":
+                    if self._is_duplicate_intent(intent_msg.id):
+                        _first_seen_ts = self._seen_intents[intent_msg.id]
+                        _age_ms = (time.monotonic() - _first_seen_ts) * 1000
+                        self._duplicate_suppressed_count += 1
+                        logger.warning(
+                            "BF-234: Suppressed duplicate ward_room_notification "
+                            "for %s (intent=%s, age=%.0fms, total_suppressed=%d)",
+                            agent_id[:12], intent_msg.id[:8], _age_ms,
+                            self._duplicate_suppressed_count,
+                        )
+                        if self._emit_event_fn:
+                            self._emit_event_fn(
+                                "wardroom.dispatch.duplicate_suppressed",
+                                {
+                                    "agent_id": agent_id,
+                                    "thread_id": intent_msg.params.get("thread_id", ""),
+                                    "intent_id": intent_msg.id,
+                                    "age_ms": round(_age_ms, 1),
+                                },
+                            )
+                        await msg.ack()
+                        return
+                    self._record_seen_intent(intent_msg.id)
+                    self._maybe_evict_seen_intents()  # periodic sweep — after gate, not before
+
                 # AD-654a/BF-198: Record response BEFORE handler runs to close
                 # the proactive-loop race window.
                 # Uses injected callback instead of handler.__self__ reach-through.
@@ -618,6 +663,52 @@ class IntentBus:
             "IntentBus: NATS prefix changed %s → %s, %d agent subs re-subscribed by NATSBus",
             old_prefix[:20], new_prefix[:20], len(self._subscribers),
         )
+
+    # ------------------------------------------------------------------
+    # BF-234: Consumer-side dispatch dedup
+    # ------------------------------------------------------------------
+
+    # Window must be ≥ JetStream ack_wait to catch duplicates queued behind
+    # a slow handler. With max_ack_pending=1, msg #2 waits until msg #1 acks
+    # (5–60s for a cognitive chain). 300s matches ack_wait=300 in
+    # _js_subscribe_agent_dispatch. Memory: ~84KB worst case at 12 agents ×
+    # 10 events/min × 600s eviction.
+    _WARD_ROOM_DISPATCH_DEDUP_WINDOW: float = 300.0  # seconds — matches ack_wait
+
+    def _is_duplicate_intent(self, intent_id: str) -> bool:
+        """BF-234: Check if intent_id was already seen within the dedup window."""
+        if not intent_id:
+            return False
+        last = self._seen_intents.get(intent_id)
+        if last is not None and (time.monotonic() - last) < self._WARD_ROOM_DISPATCH_DEDUP_WINDOW:
+            return True
+        return False
+
+    def _record_seen_intent(self, intent_id: str) -> None:
+        """BF-234: Record that intent_id has been consumed."""
+        if intent_id:
+            self._seen_intents[intent_id] = time.monotonic()
+
+    def _evict_stale_seen_intents(self, max_age: float = 600.0) -> None:
+        """BF-234: Evict seen-intent records older than ``max_age`` seconds."""
+        cutoff = time.monotonic() - max_age
+        self._seen_intents = {
+            k: v for k, v in self._seen_intents.items() if v > cutoff
+        }
+        self._last_seen_eviction = time.monotonic()
+
+    def _maybe_evict_seen_intents(self, interval: float = 300.0) -> None:
+        """BF-234: Periodic eviction — runs at most once per ``interval`` seconds."""
+        if time.monotonic() - self._last_seen_eviction >= interval:
+            self._evict_stale_seen_intents()
+
+    def get_duplicate_suppressed_count(self) -> int:
+        """BF-234: Return total number of transport-layer duplicates suppressed."""
+        return self._duplicate_suppressed_count
+
+    def set_emit_event(self, fn: Callable[[str, dict[str, Any]], None]) -> None:
+        """BF-234: Inject event emitter for duplicate-suppressed telemetry."""
+        self._emit_event_fn = fn
 
     # ------------------------------------------------------------------
     # AD-637b: Serialization helpers

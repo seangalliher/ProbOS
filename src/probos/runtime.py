@@ -131,6 +131,7 @@ if TYPE_CHECKING:
     from probos.cognitive.self_mod import SelfModificationPipeline
     from probos.cognitive.strategy_advisor import StrategyAdvisor
     from probos.conn import ConnManager
+    from probos.sop.runtime import BillRuntime  # AD-618d
     from probos.federation.bridge import FederationBridge
     from probos.federation.transport import FederationTransport
     from probos.identity import AgentIdentityRegistry
@@ -252,6 +253,7 @@ class ProbOSRuntime:
     _qa_reports: dict[str, Any]
     _knowledge_store: KnowledgeStore | None
     _records_store: RecordsStore | None
+    _bill_runtime: "BillRuntime | None"  # AD-618d
     _last_execution: dict[str, Any] | None
     _previous_execution: dict[str, Any] | None
     _pending_proposal: TaskDAG | None
@@ -488,6 +490,9 @@ class ProbOSRuntime:
 
         # --- Records store (AD-434) ---
         self._records_store: RecordsStore | None = None
+
+        # --- Bill System (AD-618d) ---
+        self._bill_runtime: BillRuntime | None = None
 
         # --- Execution history (for introspection) ---
         self._last_execution: dict[str, Any] | None = None
@@ -1474,6 +1479,7 @@ class ProbOSRuntime:
         self.task_tracker = struct.task_tracker
         self.service_profiles = struct.service_profiles
         self.directive_store = struct.directive_store
+        self._bill_runtime = struct.bill_runtime  # AD-618d
 
         # Phase 7: Communication & Services (AD-517)
         from probos.startup.communication import init_communication

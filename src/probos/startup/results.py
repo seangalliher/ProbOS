@@ -136,6 +136,7 @@ class StructuralServicesResult:
     task_tracker: "TaskTracker"
     service_profiles: "ServiceProfileStore"
     directive_store: "DirectiveStore | None"
+    bill_runtime: Any = None  # AD-618d
 
 
 @dataclass

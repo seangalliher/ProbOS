@@ -139,6 +139,11 @@ async def init_dreaming(
         dream_anomaly_min_strengthened=_edc.dream_anomaly_min_strengthened,
         dream_anomaly_min_pruned=_edc.dream_anomaly_min_pruned,
         dream_anomaly_min_trust_adj=_edc.dream_anomaly_min_trust_adj,
+        # AD-556: Per-agent adaptive trust anomaly detection
+        adaptive_window_size=_edc.adaptive_window_size,
+        adaptive_z_threshold=_edc.adaptive_z_threshold,
+        adaptive_debounce_count=_edc.adaptive_debounce_count,
+        adaptive_min_history=_edc.adaptive_min_history,
     )
     # Provide live agent roster so detector filters out defunct agents
     refresh_emergent_detector_roster_fn()

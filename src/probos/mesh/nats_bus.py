@@ -147,11 +147,8 @@ class NATSBus:
         self._subject_prefix = sanitized
         logger.info("NATS subject prefix changed: %s → %s", old_prefix, sanitized)
 
-        # BF-231: Delete and recreate streams with new prefix.
-        # update_stream() can silently fail to change subject filters on some
-        # NATS server versions (especially when the old prefix is a completely
-        # different DID). Delete-and-recreate is reliable and safe — these are
-        # transient event buses with short max_age retention.
+        # BF-232: Use recreate_stream which handles delete-then-create internally.
+        # Replaces BF-231's explicit _delete_stream + ensure_stream loop.
         #
         # BF-223 interaction: stream deletion cascades to consumer deletion on
         # the NATS server, so BF-223's per-consumer delete_consumer() calls
@@ -165,8 +162,7 @@ class NATSBus:
             for sc in self._stream_configs:
                 stream_name = sc["name"]
                 try:
-                    await self._delete_stream(stream_name)
-                    await self.ensure_stream(
+                    await self.recreate_stream(
                         stream_name,
                         sc["subjects"],
                         max_msgs=sc.get("max_msgs", -1),
@@ -627,6 +623,59 @@ class NATSBus:
             logger.error("Failed to ensure stream '%s': %s", name, e)
             raise
 
+    async def recreate_stream(
+        self,
+        name: str,
+        subjects: list[str],
+        max_msgs: int = -1,
+        max_age: float = 0,
+    ) -> None:
+        """BF-232: Delete-then-create a JetStream stream.
+
+        Unlike ensure_stream() (idempotent, non-destructive), this method
+        always deletes any existing stream before creating. Use when subject
+        filters may have changed (prefix change, new boot with stale server
+        state). Retained messages are lost — acceptable for transient event
+        buses with short max_age retention.
+
+        On add_stream failure after delete, the stream is left absent and the
+        config tracking entry is stale. Next set_subject_prefix() or
+        recreate_stream() call self-heals.
+        """
+        if not self._js:
+            return
+
+        from nats.js.api import StreamConfig
+
+        # Track un-prefixed subjects for re-creation on prefix change
+        stripped = [self._strip_prefix(s) for s in subjects]
+        existing = next((sc for sc in self._stream_configs if sc["name"] == name), None)
+        if existing:
+            existing["subjects"] = stripped
+            existing["max_msgs"] = max_msgs
+            existing["max_age"] = max_age
+        else:
+            self._stream_configs.append({
+                "name": name, "subjects": stripped,
+                "max_msgs": max_msgs, "max_age": max_age,
+            })
+
+        full_subjects = [self._full_subject(s) for s in stripped]
+
+        try:
+            await self._delete_stream(name)
+            config = StreamConfig(
+                name=name,
+                subjects=full_subjects,
+                max_msgs=max_msgs,
+                max_age=max_age,
+            )
+            await self._js.add_stream(config)
+            logger.info("JetStream stream '%s' recreated: %s", name, full_subjects)
+        except Exception as e:
+            logger.error("Failed to recreate stream '%s': %s", name, e)
+            raise
+
     async def delete_consumer(self, stream: str, durable_name: str) -> None:
         """Delete a durable JetStream consumer (AD-654a cleanup)."""
         if not self._js:
@@ -646,7 +695,11 @@ class NATSBus:
             logger.info("NATSBus: Deleted stream %s", name)
             return True
         except Exception as e:
-            logger.debug("NATSBus: Stream delete failed (%s): %s", name, e)
+            msg = str(e).lower()
+            if "not found" in msg or "10059" in msg:
+                logger.debug("NATSBus: Stream %s not found (already absent)", name)
+            else:
+                logger.warning("BF-232: Stream delete failed (%s): %s", name, e)
             return False
 
     def health(self) -> dict[str, Any]:
@@ -974,6 +1027,16 @@ class MockNATSBus:
             "max_msgs": max_msgs,
             "max_age": max_age,
         }
+
+    async def recreate_stream(
+        self,
+        name: str,
+        subjects: list[str],
+        max_msgs: int = -1,
+        max_age: float = 0,
+    ) -> None:
+        """BF-232: In-memory — same as ensure_stream (no server state to clear)."""
+        await self.ensure_stream(name, subjects, max_msgs=max_msgs, max_age=max_age)
 
     async def delete_consumer(self, stream: str, durable_name: str) -> None:
         """Delete a durable JetStream consumer (AD-654a cleanup) — mock no-op."""

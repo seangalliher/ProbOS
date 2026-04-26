@@ -1,0 +1,92 @@
+bill: research_consultation
+version: 1
+title: "Research Consultation"
+description: >
+  Structured research investigation using the Science Department's
+  analytical pyramid. Data flows up through the pyramid, synthesis
+  is reported to the requesting officer.
+author: "Ship's Standing Orders"
+
+activation:
+  trigger: "manual"
+  authority: "department_chief"
+
+roles:
+  requester:
+    department: "any"
+  data_analyst:
+    department: "science"
+    qualifications: ["data_analysis"]
+  systems_analyst:
+    department: "science"
+    qualifications: ["systems_analysis"]
+  research_specialist:
+    department: "science"
+    qualifications: ["research_methodology"]
+
+steps:
+  - id: receive_request
+    name: "Receive Research Request"
+    role: requester
+    action: receive_message
+    inputs:
+      - name: research_question
+        source: "activation_data"
+    outputs:
+      - name: research_scope
+        type: text
+
+  - id: data_gathering
+    name: "Gather Relevant Data"
+    role: data_analyst
+    action: cognitive_skill
+    inputs:
+      - name: scope
+        source: "step:receive_request.research_scope"
+    outputs:
+      - name: raw_findings
+        type: document
+
+  - id: pattern_analysis
+    name: "Identify Patterns and Correlations"
+    role: systems_analyst
+    action: cognitive_skill
+    inputs:
+      - name: findings
+        source: "step:data_gathering.raw_findings"
+    outputs:
+      - name: patterns
+        type: document
+
+  - id: synthesis
+    name: "Synthesize Research Report"
+    role: research_specialist
+    action: cognitive_skill
+    inputs:
+      - name: raw_data
+        source: "step:data_gathering.raw_findings"
+      - name: patterns
+        source: "step:pattern_analysis.patterns"
+    outputs:
+      - name: report
+        type: document
+
+  - id: deliver_report
+    name: "Deliver Report to Requester"
+    role: research_specialist
+    action: send_dm
+    # DM recipient is the agent filling the 'requester' role
+    inputs:
+      - name: report
+        source: "step:synthesis.report"
+
+expected_results:
+  - "Research question scoped by data analyst"
+  - "Data gathered and analyzed through analytical pyramid"
+  - "Synthesized report delivered to requester"
+  # Note: report archival is the responsibility of the delivering agent's
+  # cognitive_skill. A dedicated ARCHIVE action may be added in a future AD.
+
+standing_order_constraints:
+  - "Each analyst adds independent perspective — no parroting upstream"
+  - "Research specialist must cite specific data points, not just summarize"

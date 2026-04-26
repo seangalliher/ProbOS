@@ -41,6 +41,14 @@ async def finalize_startup(
     ward_room_router = None
     self_mod_manager = None
 
+    # BF-235: Defensive cache clear on any startup (cold or warm).
+    # Ensures no stale standing orders or personality blocks from a
+    # previous finalization pass within the same process. Also makes
+    # the test surface uniform — stasis tests and cold-start tests
+    # both start from a clean cache.
+    from probos.cognitive.standing_orders import clear_cache as clear_standing_orders_cache
+    clear_standing_orders_cache()
+
     # --- Proactive Cognitive Loop (Phase 28b) ---
     if config.proactive_cognitive.enabled and runtime.ward_room:
         from probos.conn import ConnManager
@@ -108,6 +116,36 @@ async def finalize_startup(
     if billet_reg and qual_store:
         billet_reg.set_qualification_store(qual_store)
         logger.info("AD-595d: Qualification store wired into BilletRegistry")
+
+    # --- AD-618d: Wire BillRuntime event callback + billet registry ---
+    if getattr(runtime, '_bill_runtime', None):
+        runtime._bill_runtime.set_event_callback(
+            lambda event_type, data: runtime._emit_event(event_type, data)
+        )
+        if runtime.ontology and runtime.ontology.billet_registry:
+            runtime._bill_runtime.set_billet_registry(
+                runtime.ontology.billet_registry
+            )
+        logger.info("AD-618d: BillRuntime wired (events + billet registry)")
+
+    # --- AD-618e: Wire BillJITBridge (Bill step → skill proficiency) ---
+    if (
+        getattr(runtime, '_bill_runtime', None)
+        and getattr(runtime, 'skill_bridge', None)
+        and getattr(runtime, 'cognitive_skill_catalog', None)
+        and getattr(runtime, 'skill_service', None)
+    ):
+        from probos.sop.jit_bridge import BillJITBridge
+        _jit_bridge = BillJITBridge(
+            skill_bridge=runtime.skill_bridge,
+            catalog=runtime.cognitive_skill_catalog,
+            skill_service=runtime.skill_service,
+        )
+        runtime.add_event_listener(
+            _jit_bridge.on_step_completed,
+            event_types={"bill_step_completed"},
+        )
+        logger.info("AD-618e: BillJITBridge wired (bill_step_completed → skill exercises)")
 
     # --- AD-557: Wire emergence metrics dependencies ---
     if runtime.dream_scheduler and runtime.dream_scheduler.engine:
@@ -212,6 +250,7 @@ async def finalize_startup(
         # AD-654b: Inject response recording callback (replaces handler.__self__ reach-through)
         _wr_router = ward_room_router
         _intent_bus.set_record_response(_wr_router.record_agent_response)
+        _intent_bus.set_emit_event(runtime.emit_event)  # BF-234: dedup telemetry
 
         # Create per-agent cognitive queues for crew agents.
         def _make_should_process(agent_ref: Any) -> Callable:
@@ -673,6 +712,24 @@ async def finalize_startup(
         except Exception:
             logger.debug("AD-573: Working memory restore failed", exc_info=True)
 
+    # BF-235: Always clear identity caches on stasis resume, regardless of
+    # whether warm-boot orientation rendering is enabled. The caches are stale
+    # because of the stasis boundary, not because of orientation policy.
+    if runtime._lifecycle_state == "stasis_recovery":
+        from probos.cognitive.standing_orders import clear_cache as clear_standing_orders_cache
+        clear_standing_orders_cache()
+        logger.info("BF-235: Cleared standing orders cache for stasis recovery")
+
+        # BF-235: Evict decision caches so next decide() uses fresh instructions.
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+        _evicted_total = 0
+        for agent in runtime.registry.all():
+            if is_crew_agent(agent, runtime.ontology):
+                _evicted = CognitiveAgent.evict_cache_for_type(agent.agent_type)
+                _evicted_total += _evicted
+        if _evicted_total:
+            logger.info("BF-235: Evicted %d decision cache entries for stasis recovery", _evicted_total)
+
     # AD-567g: Warm boot orientation for stasis recovery
     if (hasattr(runtime, '_orientation_service') and runtime._orientation_service
             and runtime._lifecycle_state == "stasis_recovery"
@@ -723,9 +780,12 @@ async def finalize_startup(
                         trust_score=_trust,
                         crew_names=_crew_names,
                     )
-                    agent.set_orientation(
-                        runtime._orientation_service.render_warm_boot_orientation(_ctx),
-                        _ctx,
+                    _rendered = runtime._orientation_service.render_warm_boot_orientation(_ctx)
+                    agent.set_orientation(_rendered, _ctx)
+                    logger.debug(
+                        "BF-235: %s orientation set — callsign=%s",
+                        agent.agent_type,
+                        getattr(agent, 'callsign', '?'),
                     )
             logger.info("AD-567g: Warm boot orientation set for crew agents")
         except Exception:

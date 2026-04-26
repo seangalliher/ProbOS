@@ -167,6 +167,16 @@ class EventType(str, Enum):
     BOOT_CAMP_GRADUATION = "boot_camp_graduation"
     BOOT_CAMP_TIMEOUT = "boot_camp_timeout"
 
+    # Bill System (AD-618b)
+    BILL_ACTIVATED = "bill_activated"
+    BILL_STEP_STARTED = "bill_step_started"
+    BILL_STEP_COMPLETED = "bill_step_completed"
+    BILL_STEP_FAILED = "bill_step_failed"
+    BILL_COMPLETED = "bill_completed"
+    BILL_FAILED = "bill_failed"
+    BILL_CANCELLED = "bill_cancelled"
+    BILL_ROLE_ASSIGNED = "bill_role_assigned"
+
     # Tiered trust (AD-640)
     TIERED_TRUST_INITIALIZED = "tiered_trust_initialized"
 

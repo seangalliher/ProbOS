@@ -7,6 +7,7 @@ import { CognitiveCanvas } from './components/CognitiveCanvas';
 import { FullKanban } from './components/bridge/FullKanban';
 import { FullSystem } from './components/bridge/FullSystem';
 import WorkBoard from './components/work/WorkBoard';
+import BillDashboard from './components/BillDashboard';
 import { GlassLayer } from './components/GlassLayer';
 import { IntentSurface } from './components/IntentSurface';
 import { DecisionSurface } from './components/DecisionSurface';
@@ -120,7 +121,7 @@ export default function App() {
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      {mainViewer === 'canvas' ? <CognitiveCanvas /> : mainViewer === 'kanban' ? <FullKanban /> : mainViewer === 'work' ? <WorkBoard /> : <FullSystem />}
+      {mainViewer === 'canvas' ? <CognitiveCanvas /> : mainViewer === 'kanban' ? <FullKanban /> : mainViewer === 'work' ? <WorkBoard /> : mainViewer === 'bills' ? <BillDashboard /> : <FullSystem />}
       <GlassLayer />
       <IntentSurface />
       <DecisionSurface />

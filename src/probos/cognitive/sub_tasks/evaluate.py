@@ -317,6 +317,32 @@ class EvaluateHandler:
         # Runs at ALL trust bands, even social obligation. Safety > obligation.
         _grounding_source = (context.get("context", "") + " "
                              + json.dumps(_get_analysis_result(prior_results)))
+
+        # BF-233: Include entity IDs the agent was explicitly given in its input.
+        # Without this, legitimate thread/channel/agent UUIDs from params are
+        # flagged as "ungrounded" confabulations — causing false suppression of
+        # ward room replies. Only IDs from the agent's own input context are
+        # whitelisted; truly fabricated hex IDs are still caught.
+        # Note: Full UUIDs are appended. The regex word-boundary tokenization
+        # extracts hyphen-delimited segments (e.g. "a6ec8b06" from
+        # "a6ec8b06-...-be2f4f7e5ee2"), and the `in` substring check below
+        # matches each segment against the full UUID in _grounding_source.
+        _entity_ids: list[str] = []
+        _params = context.get("params", {})
+        if isinstance(_params, dict):
+            for _k in ("thread_id", "channel_id", "author_id"):
+                _v = _params.get(_k, "")
+                if _v:
+                    _entity_ids.append(str(_v))
+        if context.get("_agent_id"):
+            _entity_ids.append(str(context["_agent_id"]))
+        if context.get("target_agent_id"):
+            _entity_ids.append(str(context["target_agent_id"]))
+        if context.get("intent_id"):
+            _entity_ids.append(str(context["intent_id"]))
+        if _entity_ids:
+            _grounding_source += " " + " ".join(_entity_ids).lower()
+
         # Hex IDs (6+ chars) in compose output that don't appear in source material
         _hex_ids = re.findall(r'\b[0-9a-f]{6,}\b', compose_output.lower())
         _ungrounded_ids = [h for h in _hex_ids if h not in _grounding_source.lower()]

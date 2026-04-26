@@ -28,6 +28,7 @@ AD-618a delivers three things:
 - Built-in bill YAML files (AD-618c)
 - HXI dashboard (AD-618d)
 - Cognitive JIT bridge (AD-618e)
+- Bill counts in `get_stats()` — `get_stats()` counts `*.md` files per subdirectory; `bills/` will always report 0 since bills are `.bill.yaml`. Deferred to AD-618b if needed.
 - Events (no BILL_CREATED event — deferred to AD-618b when bills actually run)
 
 ---
@@ -224,6 +225,9 @@ _VALID_ACTIONS = {a.value for a in StepAction}
 # Valid gateway types
 _VALID_GATEWAYS = {g.value for g in GatewayType}
 
+# Gateway types that require branches
+_BRANCHING_GATEWAYS = {GatewayType.XOR_GATEWAY, GatewayType.OR_GATEWAY}
+
 
 class BillValidationError(ValueError):
     """Raised when a Bill YAML file fails schema validation."""
@@ -259,7 +263,8 @@ def parse_bill(data: dict[str, Any], *, source: str = "<dict>") -> BillDefinitio
 
     # --- Roles ---
     roles: dict[str, BillRole] = {}
-    if "roles" in data and isinstance(data["roles"], dict):
+    has_roles_section = "roles" in data and isinstance(data["roles"], dict)
+    if has_roles_section:
         for role_id, role_data in data["roles"].items():
             if not isinstance(role_data, dict):
                 raise BillValidationError(
@@ -329,16 +334,26 @@ def parse_bill(data: dict[str, Any], *, source: str = "<dict>") -> BillDefinitio
         role = step_data.get("role", "")
         step_roles = step_data.get("roles", []) or []
 
-        # Validate role references
-        if role and roles and role not in roles:
+        # Validate role references — strict when roles section exists
+        if role and has_roles_section and role not in roles:
             raise BillValidationError(
                 f"{source}: step '{step_id}' references unknown role '{role}'"
             )
         for r in step_roles:
-            if roles and r not in roles:
+            if has_roles_section and r not in roles:
                 raise BillValidationError(
                     f"{source}: step '{step_id}' references unknown role '{r}'"
                 )
+
+        # Parse branches and condition
+        branches = step_data.get("branches", {}) or {}
+        condition = step_data.get("condition", "")
+
+        # Validate gateway-branches consistency
+        if gateway_type in _BRANCHING_GATEWAYS and not branches:
+            raise BillValidationError(
+                f"{source}: step '{step_id}' is {gateway_type.value} but has no branches"
+            )
 
         steps.append(BillStep(
             id=step_id,
@@ -355,8 +370,8 @@ def parse_bill(data: dict[str, Any], *, source: str = "<dict>") -> BillDefinitio
             gate=step_data.get("gate", ""),
             timeout=step_data.get("timeout", 0) or 0,
             gateway_type=gateway_type,
-            condition=step_data.get("condition", ""),
-            branches=step_data.get("branches", {}) or {},
+            condition=condition,
+            branches=branches,
         ))
 
     # --- Validate step ID uniqueness ---
@@ -375,6 +390,18 @@ def parse_bill(data: dict[str, Any], *, source: str = "<dict>") -> BillDefinitio
                 raise BillValidationError(
                     f"{source}: step '{step.id}' branch target '{target}' "
                     f"does not match any step ID"
+                )
+
+    # --- Validate condition references ---
+    for step in steps:
+        if step.condition and step.condition.startswith("step:"):
+            # Format: "step:{step_id}.{output_name}"
+            ref = step.condition[5:]  # strip "step:"
+            ref_step_id = ref.split(".")[0] if "." in ref else ref
+            if ref_step_id and ref_step_id not in step_id_set:
+                raise BillValidationError(
+                    f"{source}: step '{step.id}' condition references "
+                    f"unknown step '{ref_step_id}'"
                 )
 
     # --- Build BillDefinition ---
@@ -425,9 +452,15 @@ def parse_bill_file(path: str | Path) -> BillDefinition:
 
 **File:** `src/probos/knowledge/records_store.py`
 
+**IMPORTANT:** Bills are raw YAML files (`.bill.yaml`), NOT markdown documents with
+frontmatter. `write_entry()` wraps content in `---\n{frontmatter_yaml}---\n\n{content}`
+which would corrupt the bill YAML — `parse_bill_file()` calls `yaml.safe_load()` and
+would see the frontmatter dict, not the bill content. `list_entries()` globs `*.md`
+only, which would never find `.bill.yaml` files. Both methods are bypassed.
+
 ### 4a: Add `"bills"` to `_SUBDIRS`
 
-Current (line 15–23):
+Current (around line 15):
 ```python
 _SUBDIRS = (
     "captains-log",
@@ -440,16 +473,16 @@ _SUBDIRS = (
 )
 ```
 
-Change to:
+Change to (`_archived` stays last):
 ```python
 _SUBDIRS = (
-    "bills",        # AD-618a: Standard Operating Procedures
     "captains-log",
     "notebooks",
     "reports",
     "duty-logs",
     "operations",
     "manuals",
+    "bills",        # AD-618a: Standard Operating Procedures (raw YAML, not markdown)
     "_archived",
 )
 ```
@@ -469,9 +502,18 @@ Add after the `write_notebook()` method (search for `async def write_notebook` a
     ) -> str:
         """Write a Bill YAML file to Ship's Records (AD-618a).
 
+        Bypasses write_entry() — bills are raw YAML, not markdown with
+        frontmatter. write_entry() wraps content in ``---\\nfrontmatter\\n---``
+        which would corrupt the bill YAML and make it unparseable by
+        parse_bill_file(). Uses _safe_path() for traversal prevention,
+        writes directly, then git add + commit.
+
         Args:
             bill_id: Unique bill identifier (slug, e.g. "research-consultation").
-            content: Full YAML content of the bill.
+            content: Full YAML content of the bill. Not validated against the
+                bill schema — callers should use parse_bill() first if they
+                want pre-write validation. Raw write supports drafts and
+                authoring workflows.
             author: Who authored this bill.
             version: Bill version number.
 
@@ -479,18 +521,20 @@ Add after the `write_notebook()` method (search for `async def write_notebook` a
             Relative path of the created file.
         """
         filename = f"{bill_id}.bill.yaml"
-        path = f"bills/{filename}"
+        rel_path = f"bills/{filename}"
 
-        return await self.write_entry(
-            author=author,
-            path=path,
-            content=content,
-            message=f"[bill] {bill_id} v{version} — authored by {author}",
-            classification="ship",
-            status="active",
-            topic="sop",
-            tags=["bill", "sop", bill_id],
-        )
+        file_path = self._safe_path(rel_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+
+        if self._config.auto_commit:
+            await self._git("add", rel_path)
+            await self._commit(
+                f"[records] [bill] {bill_id} v{version} — authored by {author}"
+            )
+
+        logger.info("Bill written: %s by %s", rel_path, author)
+        return rel_path
 ```
 
 ### 4c: Add `list_bills()` method
@@ -501,10 +545,24 @@ Add after `write_bill()`:
     async def list_bills(self) -> list[dict]:
         """List all Bill files in Ship's Records (AD-618a).
 
+        Bypasses list_entries() — bills are .bill.yaml files, not .md.
+        list_entries() uses rglob("*.md") which would never find them.
+
         Returns:
-            List of dicts with 'path', 'frontmatter' keys for each bill.
+            List of dicts with 'path' and 'bill_id' keys for each bill.
         """
-        return await self.list_entries("bills")
+        bills_dir = self._safe_path("bills")
+        if not bills_dir.exists():
+            return []
+
+        results = []
+        for yaml_file in sorted(bills_dir.rglob("*.bill.yaml")):
+            rel_path = str(yaml_file.relative_to(self._repo_path)).replace("\\", "/")
+            # Extract bill_id from filename (e.g. "research-consultation.bill.yaml" → "research-consultation")
+            bill_id = yaml_file.name.removesuffix(".bill.yaml")
+            results.append({"path": rel_path, "bill_id": bill_id})
+
+        return results
 ```
 
 ---
@@ -838,10 +896,50 @@ class TestParserInvalid:
         with pytest.raises(BillValidationError, match="must be a mapping"):
             parse_bill(data)
 
-    def test_non_dict_yaml_root(self):
-        """YAML root that isn't a mapping raises error."""
-        with pytest.raises(BillValidationError, match="must be a mapping"):
-            parse_bill_file_from_string("- just a list")
+    def test_non_dict_yaml_root(self, tmp_path):
+        """YAML root that isn't a mapping raises error via parse_bill_file."""
+        bad_file = tmp_path / "list.bill.yaml"
+        bad_file.write_text("- just a list\n", encoding="utf-8")
+        with pytest.raises(BillValidationError, match="YAML root must be a mapping"):
+            parse_bill_file(bad_file)
+
+    def test_xor_gateway_without_branches(self):
+        """XOR gateway step without branches raises BillValidationError."""
+        data = _minimal_bill()
+        data["steps"] = [{"id": "s1", "name": "S1", "type": "xor_gateway"}]
+        with pytest.raises(BillValidationError, match="has no branches"):
+            parse_bill(data)
+
+    def test_or_gateway_without_branches(self):
+        """OR gateway step without branches raises BillValidationError."""
+        data = _minimal_bill()
+        data["steps"] = [{"id": "s1", "name": "S1", "type": "or_gateway"}]
+        with pytest.raises(BillValidationError, match="has no branches"):
+            parse_bill(data)
+
+    def test_condition_references_unknown_step(self):
+        """Condition referencing non-existent step raises BillValidationError."""
+        data = _minimal_bill()
+        data["steps"] = [
+            {"id": "s1", "name": "S1"},
+            {
+                "id": "gate",
+                "name": "Gate",
+                "type": "xor_gateway",
+                "condition": "step:nonexistent.result",
+                "branches": {"yes": "s1"},
+            },
+        ]
+        with pytest.raises(BillValidationError, match="unknown step 'nonexistent'"):
+            parse_bill(data)
+
+    def test_role_reference_with_roles_section_missing(self):
+        """Step with role ref when roles section is absent — no error (lenient)."""
+        data = _minimal_bill()
+        # No "roles" key → has_roles_section is False → no validation
+        data["steps"] = [{"id": "s1", "name": "S1", "role": "anyone"}]
+        bd = parse_bill(data)
+        assert bd.steps[0].role == "anyone"
 
 
 # --- File-based parsing ---
@@ -874,8 +972,55 @@ class TestParseFile:
         """parse_bill_file raises on invalid YAML."""
         bad_file = tmp_path / "bad.yaml"
         bad_file.write_text(":\n  invalid: [yaml\n", encoding="utf-8")
-        with pytest.raises(Exception):  # yaml.YAMLError
+        with pytest.raises(yaml.YAMLError):
             parse_bill_file(bad_file)
+
+    def test_write_read_round_trip(self, tmp_path):
+        """Write a bill YAML, read it back with parse_bill_file — lossless.
+
+        This is the critical integration test: verifies that the file format
+        produced by write_bill() (raw YAML, no frontmatter wrapping) is
+        parseable by parse_bill_file(). The original design used write_entry()
+        which wraps in markdown frontmatter, corrupting the YAML.
+        """
+        bill_data = _full_bill()
+        yaml_content = yaml.dump(bill_data, default_flow_style=False, sort_keys=False)
+
+        # Simulate write_bill() — raw YAML, no frontmatter
+        bill_file = tmp_path / "bills" / "research-consultation.bill.yaml"
+        bill_file.parent.mkdir(parents=True, exist_ok=True)
+        bill_file.write_text(yaml_content, encoding="utf-8")
+
+        # Read it back
+        bd = parse_bill_file(bill_file)
+        assert bd.bill == "research-consultation"
+        assert bd.version == 2
+        assert len(bd.roles) == 2
+        assert len(bd.steps) == 4
+        assert bd.steps[2].gateway_type == GatewayType.XOR_GATEWAY
+
+    def test_list_bills_finds_yaml_files(self, tmp_path):
+        """Glob for *.bill.yaml finds bill files (not *.md).
+
+        Verifies the list_bills() pattern finds .bill.yaml files.
+        The original design used list_entries() which globs *.md only.
+        """
+        bills_dir = tmp_path / "bills"
+        bills_dir.mkdir()
+        (bills_dir / "alpha.bill.yaml").write_text(
+            yaml.dump(_minimal_bill()), encoding="utf-8"
+        )
+        (bills_dir / "beta.bill.yaml").write_text(
+            yaml.dump(_minimal_bill()), encoding="utf-8"
+        )
+        # A .md file should NOT appear
+        (bills_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
+
+        found = sorted(bills_dir.rglob("*.bill.yaml"))
+        assert len(found) == 2
+        names = [f.name for f in found]
+        assert "alpha.bill.yaml" in names
+        assert "beta.bill.yaml" in names
 
 
 # --- Edge cases ---
@@ -909,20 +1054,20 @@ class TestEdgeCases:
         bd = parse_bill(data)
         assert bd.roles["r1"].count == "2"
 
-    def test_step_without_role_no_roles_defined(self):
-        """Steps without role reference are valid when no roles defined."""
-        data = _minimal_bill()
-        data["steps"] = [{"id": "s1", "name": "S1", "role": "anyone"}]
-        # No "roles" key → no validation
-        bd = parse_bill(data)
-        assert bd.steps[0].role == "anyone"
-
     def test_or_gateway(self):
-        """OR gateway type parses."""
+        """OR gateway type parses with branches."""
         data = _minimal_bill()
-        data["steps"] = [{"id": "s1", "name": "S1", "type": "or_gateway"}]
+        data["steps"] = [
+            {"id": "s1", "name": "S1"},
+            {
+                "id": "gate",
+                "name": "Gate",
+                "type": "or_gateway",
+                "branches": {"a": "s1"},
+            },
+        ]
         bd = parse_bill(data)
-        assert bd.steps[0].gateway_type == GatewayType.OR_GATEWAY
+        assert bd.steps[1].gateway_type == GatewayType.OR_GATEWAY
 
     def test_sub_bill_action(self):
         """sub_bill action and reference parse."""
@@ -937,29 +1082,128 @@ class TestEdgeCases:
         assert bd.steps[0].action == "sub_bill"
         assert bd.steps[0].sub_bill == "incident-response"
 
+    def test_condition_without_step_prefix_not_validated(self):
+        """Conditions not starting with 'step:' are not validated."""
+        data = _minimal_bill()
+        data["steps"] = [
+            {"id": "s1", "name": "S1"},
+            {
+                "id": "gate",
+                "name": "Gate",
+                "type": "xor_gateway",
+                "condition": "external:some_signal",
+                "branches": {"yes": "s1"},
+            },
+        ]
+        bd = parse_bill(data)
+        assert bd.steps[1].condition == "external:some_signal"
 
-# Helper for string-based YAML parsing tests
-def parse_bill_file_from_string(yaml_string: str):
-    """Parse YAML from string for testing."""
-    data = yaml.safe_load(yaml_string)
-    if not isinstance(data, dict):
-        raise BillValidationError("YAML root must be a mapping")
-    return parse_bill(data)
+    def test_parallel_gateway_no_branches_ok(self):
+        """Parallel (AND) gateway without branches is valid — not a decision point."""
+        data = _minimal_bill()
+        data["steps"] = [{"id": "s1", "name": "S1", "type": "parallel"}]
+        bd = parse_bill(data)
+        assert bd.steps[0].gateway_type == GatewayType.PARALLEL
 ```
+
+---
+
+## Section 6: RecordsStore Integration Tests
+
+**File:** `tests/test_records_store.py` (EDIT — append to existing file)
+
+**Update existing test:** In `test_initialize_creates_repo`, add `"bills"` to the subdir tuple so the canonical "what subdirs exist" assertion stays in sync:
+
+```python
+for subdir in ("captains-log", "notebooks", "reports", "duty-logs",
+               "operations", "manuals", "bills", "_archived"):
+```
+
+**Add new test class** at the end of the file, using the existing `store` fixture (works under the project's `asyncio_mode = "auto"` configuration):
+
+```python
+# ---------------------------------------------------------------------------
+# AD-618a: Bill integration tests
+# ---------------------------------------------------------------------------
+
+class TestBillIntegration:
+    @pytest.mark.asyncio
+    async def test_write_bill_creates_raw_yaml(self, store):
+        """write_bill() writes raw YAML (no frontmatter wrapping)."""
+        import yaml as _yaml
+        from probos.sop.parser import parse_bill_file
+
+        bill_yaml = _yaml.dump({
+            "bill": "test-bill",
+            "version": 1,
+            "title": "Test",
+            "steps": [],
+        }, default_flow_style=False)
+
+        rel_path = await store.write_bill("test-bill", bill_yaml)
+        assert rel_path == "bills/test-bill.bill.yaml"
+
+        # Verify raw YAML on disk — no frontmatter wrapping
+        file_path = store.repo_path / rel_path
+        assert file_path.exists()
+        raw = file_path.read_text(encoding="utf-8")
+        assert not raw.startswith("---\n")  # No frontmatter
+
+        # Round-trip: parse_bill_file should read it back
+        bd = parse_bill_file(file_path)
+        assert bd.bill == "test-bill"
+
+    @pytest.mark.asyncio
+    async def test_list_bills_after_write(self, store):
+        """list_bills() finds .bill.yaml files written by write_bill()."""
+        import yaml as _yaml
+
+        bill_yaml = _yaml.dump({
+            "bill": "alpha-bill",
+            "version": 1,
+            "steps": [],
+        }, default_flow_style=False)
+
+        await store.write_bill("alpha-bill", bill_yaml)
+        bills = await store.list_bills()
+        assert len(bills) == 1
+        assert bills[0]["bill_id"] == "alpha-bill"
+        assert bills[0]["path"] == "bills/alpha-bill.bill.yaml"
+
+    @pytest.mark.asyncio
+    async def test_list_bills_empty(self, store):
+        """list_bills() returns empty list when no bills exist."""
+        bills = await store.list_bills()
+        assert bills == []
+
+    @pytest.mark.asyncio
+    async def test_bills_dir_created_on_init(self, store):
+        """initialize() creates bills/ subdirectory."""
+        bills_dir = store.repo_path / "bills"
+        assert bills_dir.is_dir()
+```
+
+**Total new tests in this file: 4.**
 
 ---
 
 ## Verification
 
 ```bash
-# Targeted tests
+# Targeted tests — new file
 d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad618a_bill_schema.py -v
+
+# Integration tests — existing file, new class
+d:/ProbOS/.venv/Scripts/pytest.exe tests/test_records_store.py::TestBillIntegration -v
+
+# Existing records tests — verify no regression
+d:/ProbOS/.venv/Scripts/pytest.exe tests/test_records_store.py -v
 
 # Full suite
 d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q
 ```
 
-**Existing test impact:** No existing tests should be affected. This is purely additive — new package `src/probos/sop/`, new test file, and two new methods + one constant change in `records_store.py`. The `_SUBDIRS` change only adds a new directory at initialization time.
+**Existing test impact:** One existing test updated: `test_initialize_creates_repo` gains `"bills"` in its subdir tuple. Otherwise purely additive — new package `src/probos/sop/`, new test file, and two new methods + one constant change in `records_store.py`. The `_SUBDIRS` change only adds a new directory at initialization time. The new `write_bill()` and `list_bills()` methods do not touch `write_entry()` or `list_entries()` — they are independent code paths.
 
 ---
 
@@ -968,13 +1212,13 @@ d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q
 ### PROGRESS.md
 Add line:
 ```
-AD-618a CLOSED. Bill Schema + Parser — BillDefinition/BillStep/BillRole/BillActivation dataclasses with GatewayType (sequential/parallel/XOR/OR) and StepAction enums. YAML parser with schema validation (role references, branch targets, step ID uniqueness, action types). Ship's Records gains `bills/` subdirectory, `write_bill()`, and `list_bills()`. New `src/probos/sop/` package. 30 new tests. Foundation for AD-618b (runtime) and AD-618c (built-in bills).
+AD-618a CLOSED. Bill Schema + Parser — BillDefinition/BillStep/BillRole/BillActivation dataclasses with GatewayType (sequential/parallel/XOR/OR) and StepAction enums. YAML parser with schema validation (role references, branch targets, step ID uniqueness, action types, gateway-branch consistency, condition step references). Ship's Records gains `bills/` subdirectory with raw-YAML `write_bill()` (bypasses frontmatter wrapping) and `list_bills()` (globs `*.bill.yaml`, not `*.md`). New `src/probos/sop/` package. 50 new tests (46 schema/parser + 4 RecordsStore integration) including write→read round-trip. Foundation for AD-618b (runtime) and AD-618c (built-in bills).
 ```
 
 ### DECISIONS.md
 Add entry:
 ```
-**AD-618a: Bill Schema foundation — YAML-first, BPMN-vocabulary, no execution engine.** Bills are declarative YAML files parsed into BillDefinition dataclasses. Schema uses BPMN vocabulary (XOR/AND/OR gateways, parallel lanes, sub-processes) for multi-agent SOP definition. Parser validates role references, branch targets, step ID uniqueness, and action types. Bills are stored in Ship's Records (`bills/` subdirectory). Design principle: "Reference, not engine" — agents consult Bills with judgment, they are not puppeted by a state machine. No Bill events or runtime execution in AD-618a — those come in AD-618b.
+**AD-618a: Bill Schema foundation — YAML-first, BPMN-vocabulary, no execution engine.** Bills are declarative YAML files parsed into BillDefinition dataclasses. Schema uses BPMN vocabulary (XOR/AND/OR gateways, parallel lanes, sub-processes) for multi-agent SOP definition. Parser validates role references (strict when roles section present), branch targets, step ID uniqueness, action types, gateway-branch consistency (XOR/OR require branches), and condition step references (`step:{id}.{output}` validates step ID exists). Bills are stored in Ship's Records (`bills/` subdirectory) as raw YAML — `write_bill()` bypasses `write_entry()` (which wraps in markdown frontmatter, corrupting the YAML); `list_bills()` globs `*.bill.yaml` instead of `*.md`. Design principle: "Reference, not engine" — agents consult Bills with judgment, they are not puppeted by a state machine. No Bill events or runtime execution in AD-618a — those come in AD-618b.
 ```
 
 ### docs/development/roadmap.md

@@ -548,3 +548,66 @@ export interface CrewManifestEntry {
   trustScore: number;
   agentId: string;
 }
+
+// AD-618d: Bill System types
+
+export interface BillDefinitionView {
+  bill_id: string;
+  title: string;
+  description: string;
+  version: number;
+  activation: {
+    trigger: string;
+    authority: string;
+  } | null;
+  roles: BillRoleView[];
+  steps: BillStepView[];
+  step_count: number;
+  role_count: number;
+}
+
+export interface BillRoleView {
+  role_id: string;
+  department: string;
+  count: string;
+  qualifications: string[];
+}
+
+export interface BillStepView {
+  step_id: string;
+  name: string;
+  role: string;
+  action: string;
+  gateway_type: string;
+  timeout: number;
+}
+
+export interface BillInstanceView {
+  id: string;
+  bill_id: string;
+  bill_title: string;
+  bill_version: number;
+  status: 'pending' | 'active' | 'completed' | 'failed' | 'cancelled';
+  activated_by: string;
+  activated_at: number;
+  completed_at: number | null;
+  activation_data: Record<string, unknown>;
+  role_assignments: Record<string, BillRoleAssignmentView>;
+  step_states: Record<string, BillStepStateView>;
+}
+
+export interface BillRoleAssignmentView {
+  agent_id: string;
+  agent_type: string;
+  callsign: string;
+  department: string;
+}
+
+export interface BillStepStateView {
+  status: 'pending' | 'active' | 'completed' | 'skipped' | 'failed' | 'blocked';
+  assigned_agent_id: string | null;
+  assigned_agent_callsign: string | null;
+  started_at: number | null;
+  completed_at: number | null;
+  error: string | null;
+}

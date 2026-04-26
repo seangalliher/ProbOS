@@ -119,6 +119,11 @@ class EmergentDetector:
         trust_anomaly_min_count: int = 3,
         max_trust_anomalies_per_pass: int = 3,
         duty_correlation_window: float = 120.0,
+        # AD-556: Per-agent adaptive trust anomaly detection
+        adaptive_window_size: int = 30,
+        adaptive_z_threshold: float = 2.5,
+        adaptive_debounce_count: int = 2,
+        adaptive_min_history: int = 8,
         # BF-124: Configurable cooperation cluster thresholds
         cluster_edge_threshold: float = 0.3,
         cluster_min_size: int = 3,
@@ -150,6 +155,12 @@ class EmergentDetector:
         self._max_trust_anomalies_per_pass = max_trust_anomalies_per_pass
         self._duty_correlation_window = duty_correlation_window
 
+        # AD-556: Per-agent adaptive trust anomaly detection
+        self._adaptive_window_size = adaptive_window_size
+        self._adaptive_z_threshold = adaptive_z_threshold
+        self._adaptive_debounce_count = adaptive_debounce_count
+        self._adaptive_min_history = adaptive_min_history
+
         # BF-124: Cooperation cluster detection thresholds
         self._cluster_edge_threshold = cluster_edge_threshold
         self._cluster_min_size = cluster_min_size
@@ -162,6 +173,10 @@ class EmergentDetector:
 
         # BF-089: Temporal buffer — per-agent anomaly observation timestamps
         self._trust_anomaly_counts: dict[str, list[float]] = {}
+
+        # AD-556: Per-agent trust score history for adaptive z-score detection
+        self._agent_trust_history: dict[str, list[float]] = {}  # agent_id → recent scores
+        self._agent_anomaly_streak: dict[str, int] = {}  # agent_id → consecutive anomalous cycles
 
         # Live agent roster — set via set_live_agents() from runtime at startup.
         # When set, cooperation cluster detection filters out defunct agents.
@@ -561,6 +576,59 @@ class EmergentDetector:
         )
         return False
 
+    def _update_agent_trust_history(self, agent_id: str, score: float) -> None:
+        """AD-556: Update per-agent trust score history for adaptive detection."""
+        history = self._agent_trust_history.setdefault(agent_id, [])
+        history.append(score)
+        # Maintain rolling window
+        if len(history) > self._adaptive_window_size:
+            self._agent_trust_history[agent_id] = history[-self._adaptive_window_size:]
+
+    def _compute_agent_z_score(self, agent_id: str, current_score: float) -> float | None:
+        """AD-556: Compute z-score of current trust delta against agent's personal baseline.
+
+        Returns None if insufficient history for meaningful z-score.
+        """
+        history = self._agent_trust_history.get(agent_id, [])
+        if len(history) < self._adaptive_min_history:
+            return None  # Not enough data for personal baseline
+
+        # Compute deltas between consecutive history entries
+        deltas = [history[i] - history[i - 1] for i in range(1, len(history))]
+        if not deltas:
+            return None
+
+        delta_mean = sum(deltas) / len(deltas)
+        delta_variance = sum((d - delta_mean) ** 2 for d in deltas) / len(deltas)
+        delta_std = math.sqrt(delta_variance) if delta_variance > 0 else 0.0
+
+        if delta_std < 0.001:
+            # Agent has nearly zero variance — any non-trivial delta is anomalous
+            # Use absolute threshold instead of z-score
+            current_delta = current_score - history[-1] if history else 0.0
+            if abs(current_delta) > self._trust_min_deviation:
+                return 10.0  # Synthetic high z-score for stable agents with sudden change
+            return 0.0
+
+        # Z-score of the current delta relative to personal baseline
+        current_delta = current_score - history[-1] if history else 0.0
+        z = (current_delta - delta_mean) / delta_std
+        return abs(z)
+
+    def _check_adaptive_debounce(self, agent_id: str, z_score: float) -> bool:
+        """AD-556: Check if anomalous z-score persists across consecutive cycles.
+
+        Returns True if the anomaly should be promoted (debounce satisfied).
+        """
+        if z_score >= self._adaptive_z_threshold:
+            streak = self._agent_anomaly_streak.get(agent_id, 0) + 1
+            self._agent_anomaly_streak[agent_id] = streak
+            return streak >= self._adaptive_debounce_count
+        else:
+            # Reset streak — anomaly did not persist
+            self._agent_anomaly_streak.pop(agent_id, None)
+            return False
+
     def detect_trust_anomalies(self, duty_completions: list[tuple[str, float]] | None = None) -> list[EmergentPattern]:
         """Detect agents whose trust deviates significantly from the population."""
         now = time.monotonic()
@@ -637,10 +705,25 @@ class EmergentDetector:
                     direction = "high" if score > mean else "low"
                     severity = "significant" if deviation > self._trust_sigma_significant else "notable"
 
-                    # BF-089: Temporal buffer — require sustained anomaly before emitting
-                    anomaly_key = f"sigma:{agent_id}:{direction}"
-                    if not self._record_anomaly_observation(anomaly_key):
-                        continue
+                    # AD-556: Per-agent adaptive z-score gate
+                    z_score = self._compute_agent_z_score(agent_id, score)
+                    if z_score is not None:
+                        # Agent has enough personal history — use adaptive detection
+                        if not self._check_adaptive_debounce(agent_id, z_score):
+                            logger.debug(
+                                "AD-556: Trust anomaly for %s suppressed by adaptive gate "
+                                "(z=%.2f, threshold=%.1f, streak=%d/%d)",
+                                agent_id[:8], z_score, self._adaptive_z_threshold,
+                                self._agent_anomaly_streak.get(agent_id, 0),
+                                self._adaptive_debounce_count,
+                            )
+                            continue
+                    else:
+                        # AD-556: Not enough personal history — fall back to population-only detection
+                        # BF-089: Temporal buffer — require sustained anomaly before emitting
+                        anomaly_key = f"sigma:{agent_id}:{direction}"
+                        if not self._record_anomaly_observation(anomaly_key):
+                            continue
 
                     # AD-411: Suppress duplicate trust anomaly for same agent+direction
                     dedup_key = f"{agent_id}:{direction}"
@@ -659,6 +742,18 @@ class EmergentDetector:
                         }
                         for event in recent_events
                     ]
+                    # AD-556: Include per-agent z-score in evidence
+                    adaptive_info = {}
+                    if z_score is not None:
+                        history = self._agent_trust_history.get(agent_id, [])
+                        adaptive_info = {
+                            "personal_z_score": round(z_score, 2),
+                            "personal_history_len": len(history),
+                            "detection_mode": "adaptive",
+                        }
+                    else:
+                        adaptive_info = {"detection_mode": "population_only"}
+
                     patterns.append(EmergentPattern(
                         pattern_type="trust_anomaly",
                         description=f"Agent {agent_id[:8]} has {direction} trust ({score:.3f}) — {deviation:.1f}σ from mean ({mean:.3f})",
@@ -671,6 +766,7 @@ class EmergentDetector:
                             "deviation_sigma": deviation,
                             "direction": direction,
                             "causal_events": causal_events,
+                            **adaptive_info,
                         },
                         timestamp=now,
                         severity=severity,
@@ -758,6 +854,12 @@ class EmergentDetector:
                 "Trust anomaly detection: %d candidates, reporting top %d",
                 total, self._max_trust_anomalies_per_pass,
             )
+
+        # AD-556: Update per-agent trust score history AFTER detection
+        # (must happen after z-score computation so current score isn't in history yet)
+        for agent_id, record in raw.items():
+            agent_score = record["alpha"] / (record["alpha"] + record["beta"])
+            self._update_agent_trust_history(agent_id, agent_score)
 
         return patterns
 

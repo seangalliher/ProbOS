@@ -1,0 +1,123 @@
+bill: general_quarters
+version: 1
+title: "General Quarters"
+description: >
+  All-hands battle stations. Activates during ship-wide emergencies.
+  Every department chief reports readiness status. Captain confirms
+  ship is at condition one. Remains active until Captain secures.
+author: "Ship's Standing Orders"
+
+activation:
+  trigger: "alert:red"
+  authority: "captain"
+
+roles:
+  commanding_officer:
+    department: "bridge"
+    min_rank: "commander"
+  first_officer:
+    department: "bridge"
+  engineering_chief:
+    department: "engineering"
+  security_chief:
+    department: "security"
+  science_chief:
+    department: "science"
+  medical_chief:
+    department: "medical"
+  operations_chief:
+    department: "operations"
+
+steps:
+  - id: sound_general_quarters
+    name: "Sound General Quarters"
+    role: commanding_officer
+    action: post_to_channel
+    channel: "general"
+    outputs:
+      - name: alert_message
+        type: text
+
+  - id: engineering_report
+    name: "Engineering Readiness Report"
+    role: engineering_chief
+    action: cognitive_skill
+    outputs:
+      - name: engineering_status
+        type: enum
+        values: ["ready", "degraded", "offline"]
+
+  - id: security_report
+    name: "Security Readiness Report"
+    role: security_chief
+    action: cognitive_skill
+    outputs:
+      - name: security_status
+        type: enum
+        values: ["ready", "degraded", "offline"]
+
+  - id: science_report
+    name: "Science Readiness Report"
+    role: science_chief
+    action: cognitive_skill
+    outputs:
+      - name: science_status
+        type: enum
+        values: ["ready", "degraded", "offline"]
+
+  - id: medical_report
+    name: "Medical Readiness Report"
+    role: medical_chief
+    action: cognitive_skill
+    outputs:
+      - name: medical_status
+        type: enum
+        values: ["ready", "degraded", "offline"]
+
+  - id: operations_report
+    name: "Operations Readiness Report"
+    role: operations_chief
+    action: cognitive_skill
+    outputs:
+      - name: operations_status
+        type: enum
+        values: ["ready", "degraded", "offline"]
+
+  - id: readiness_assessment
+    name: "Readiness Assessment"
+    role: first_officer
+    action: cognitive_skill
+    type: sequential
+    inputs:
+      - name: eng_status
+        source: "step:engineering_report.engineering_status"
+      - name: sec_status
+        source: "step:security_report.security_status"
+      - name: sci_status
+        source: "step:science_report.science_status"
+      - name: med_status
+        source: "step:medical_report.medical_status"
+      - name: ops_status
+        source: "step:operations_report.operations_status"
+    outputs:
+      - name: ship_readiness
+        type: enum
+        values: ["condition_one", "condition_two", "not_ready"]
+
+  - id: captain_confirm
+    name: "Captain Confirms Condition"
+    role: commanding_officer
+    action: captain_approval
+    gate: captain_approval
+    inputs:
+      - name: readiness
+        source: "step:readiness_assessment.ship_readiness"
+
+expected_results:
+  - "All departments report readiness status"
+  - "First Officer assesses overall ship condition"
+  - "Captain confirms battle stations condition"
+
+standing_order_constraints:
+  - "All agents must report within 60 seconds"
+  - "Department chiefs may delegate to senior crew if unavailable"

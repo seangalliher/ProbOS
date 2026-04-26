@@ -2203,66 +2203,32 @@ class CognitiveAgent(BaseAgent):
                 exc_info=True,
             )
 
-    async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
-        """Skills first, then cognitive lifecycle.
+    async def _run_cognitive_lifecycle(
+        self,
+        intent: IntentMessage,
+        cognitive_skill_instructions: str | None = None,
+        skill_entries: list | None = None,
+    ) -> IntentResult:
+        """Execute the full cognitive lifecycle: perceive → decide → act → report.
 
-        Returns None (self-deselect) for intents not in _handled_intents,
-        unless it's a targeted direct_message (AD-397 1:1 sessions).
+        BF-239: Extracted from handle_intent so try/finally can wrap the
+        call site without re-indenting ~370 lines. All existing returns
+        (normal completion, compound procedure early return) are preserved.
+
+        Args:
+            intent: The IntentMessage being processed.
+            cognitive_skill_instructions: AD-596b cognitive skill instructions (if any).
+            skill_entries: AD-596b skill catalog entries matched for this intent (if any).
         """
-        # AD-397: always accept direct_message if targeted to this agent
-        # AD-407b: always accept ward_room_notification if targeted to this agent
-        is_direct = (
-            intent.intent in ("direct_message", "ward_room_notification", "proactive_think", "compound_step_replay")
-            and intent.target_agent_id == self.id
-        )
-
-        # Fast path: self-deselect for unrecognized intents before any LLM call
-        # AD-596b: Check cognitive skill catalog before self-deselecting
-        _cognitive_skill_instructions = None
-        if not is_direct and intent.intent not in self._handled_intents:
-            _catalog = getattr(self, '_cognitive_skill_catalog', None)
-            if _catalog:
-                _skill_entries = _catalog.find_by_intent(intent.intent)
-                if _skill_entries:
-                    _entry = _skill_entries[0]
-                    # AD-596c: Proficiency gate — check before loading instructions
-                    _bridge = getattr(self, '_skill_bridge', None)
-                    if _bridge:
-                        _profile = getattr(self, '_skill_profile', None)
-                        if not _bridge.check_proficiency_gate(self.id, _entry, _profile):
-                            return None  # Silent self-deselect — agent lacks proficiency
-                    _cognitive_skill_instructions = _catalog.get_instructions(_entry.name)
-                    if _cognitive_skill_instructions:
-                        logger.info(
-                            "AD-596b: Loaded cognitive skill '%s' for intent '%s' on %s",
-                            _entry.name, intent.intent, self.agent_type,
-                        )
-                    else:
-                        return None
-                else:
-                    return None
-            else:
-                return None
-
-        # AD-534c: compound step replay — zero-token, bypass full cognitive lifecycle
-        if intent.intent == "compound_step_replay" and intent.target_agent_id == self.id:
-            return await self._handle_compound_step_replay(intent)
-
-        # Skill dispatch — direct handler call, no LLM reasoning
-        if intent.intent in self._skills:
-            skill = self._skills[intent.intent]
-            return await skill.handler(intent, llm_client=self._llm_client)
-
-        # Cognitive lifecycle — LLM-guided reasoning
         observation = await self.perceive(intent)
 
         # AD-430c (Pillar 4): Enrich observation with relevant episodic memories
         observation = await self._recall_relevant_memories(intent, observation)
 
         # AD-596b: Inject cognitive skill instructions into observation context
-        if _cognitive_skill_instructions:
-            observation["cognitive_skill_instructions"] = _cognitive_skill_instructions
-            observation["cognitive_skill_name"] = _skill_entries[0].name
+        if cognitive_skill_instructions:
+            observation["cognitive_skill_instructions"] = cognitive_skill_instructions
+            observation["cognitive_skill_name"] = skill_entries[0].name
 
         decision = await self.decide(observation)
         decision["intent"] = intent.intent  # AD-398: propagate intent name to act()
@@ -2344,13 +2310,13 @@ class CognitiveAgent(BaseAgent):
                 logger.debug("AD-589: Counselor introspective update failed", exc_info=True)
 
         # AD-596c: Record cognitive skill exercise (fire-and-forget)
-        if _cognitive_skill_instructions and _skill_entries:
+        if cognitive_skill_instructions and skill_entries:
             _bridge = getattr(self, '_skill_bridge', None)
             if _bridge:
                 try:
                     import asyncio
                     asyncio.create_task(
-                        _bridge.record_skill_exercise(self.id, _skill_entries[0])
+                        _bridge.record_skill_exercise(self.id, skill_entries[0])
                     )
                 except Exception:
                     logger.debug("AD-596c: Exercise recording task creation failed", exc_info=True)
@@ -2624,6 +2590,122 @@ class CognitiveAgent(BaseAgent):
             error=report.get("error"),
             confidence=self.confidence,
         )
+
+    async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
+        """Skills first, then cognitive lifecycle.
+
+        Returns None (self-deselect) for intents not in _handled_intents,
+        unless it's a targeted direct_message (AD-397 1:1 sessions).
+        """
+        # AD-397: always accept direct_message if targeted to this agent
+        # AD-407b: always accept ward_room_notification if targeted to this agent
+        is_direct = (
+            intent.intent in ("direct_message", "ward_room_notification", "proactive_think", "compound_step_replay")
+            and intent.target_agent_id == self.id
+        )
+
+        # BF-239: Ward Room thread engagement gate — skip if already
+        # replied to this thread in the current round. Uses working memory
+        # engagement tracking (serial queue guarantees no race).
+        # @mentions and DMs bypass — same principle as BF-236/cooldown gates.
+        _bf239_thread_id = ""
+        if intent.intent == "ward_room_notification":
+            _bf239_thread_id = intent.params.get("thread_id", "")
+            _bf239_mentioned = intent.params.get("was_mentioned", False)
+            _bf239_is_dm = intent.params.get("is_dm_channel", False)
+            if _bf239_thread_id and not _bf239_mentioned and not _bf239_is_dm:
+                _wm = getattr(self, '_working_memory', None)
+                if _wm and _wm.has_thread_engagement(_bf239_thread_id):
+                    logger.debug(
+                        "BF-239: %s already engaged with thread %s, skipping",
+                        getattr(self, 'callsign', '') or self.agent_type,
+                        _bf239_thread_id[:8],
+                    )
+                    # [NO_RESPONSE] with current confidence — the agent handled
+                    # the intent (chose silence), it did not fail. No
+                    # update_confidence() call: no cognitive work was performed,
+                    # so Trust/Hebbian feedback should not see this event.
+                    return IntentResult(
+                        intent_id=intent.id,
+                        agent_id=self.id,
+                        success=True,
+                        result="[NO_RESPONSE]",
+                        confidence=self.confidence,
+                    )
+
+        # Fast path: self-deselect for unrecognized intents before any LLM call
+        # AD-596b: Check cognitive skill catalog before self-deselecting
+        _cognitive_skill_instructions = None
+        _skill_entries = None  # BF-239: must be defined for _run_cognitive_lifecycle call
+        if not is_direct and intent.intent not in self._handled_intents:
+            _catalog = getattr(self, '_cognitive_skill_catalog', None)
+            if _catalog:
+                _skill_entries = _catalog.find_by_intent(intent.intent)
+                if _skill_entries:
+                    _entry = _skill_entries[0]
+                    # AD-596c: Proficiency gate — check before loading instructions
+                    _bridge = getattr(self, '_skill_bridge', None)
+                    if _bridge:
+                        _profile = getattr(self, '_skill_profile', None)
+                        if not _bridge.check_proficiency_gate(self.id, _entry, _profile):
+                            return None  # Silent self-deselect — agent lacks proficiency
+                    _cognitive_skill_instructions = _catalog.get_instructions(_entry.name)
+                    if _cognitive_skill_instructions:
+                        logger.info(
+                            "AD-596b: Loaded cognitive skill '%s' for intent '%s' on %s",
+                            _entry.name, intent.intent, self.agent_type,
+                        )
+                    else:
+                        return None
+                else:
+                    return None
+            else:
+                return None
+
+        # AD-534c: compound step replay — zero-token, bypass full cognitive lifecycle
+        if intent.intent == "compound_step_replay" and intent.target_agent_id == self.id:
+            return await self._handle_compound_step_replay(intent)
+
+        # Skill dispatch — direct handler call, no LLM reasoning
+        if intent.intent in self._skills:
+            skill = self._skills[intent.intent]
+            return await skill.handler(intent, llm_client=self._llm_client)
+
+        # BF-239: Register ward room thread engagement before cognitive lifecycle.
+        # Recorded here (after skill dispatch, before lifecycle) so that:
+        # 1. The engagement exists before any await (perceive's LLM call)
+        # 2. Skill-dispatched intents don't get engagement-tracked
+        # Key namespaced as "ward_room:{thread_id}" to avoid collision
+        # with game engagements that use raw game_id as engagement_id.
+        if _bf239_thread_id:
+            # Function-local import: cognitive_agent.py does not import
+            # ActiveEngagement at module level (only AgentWorkingMemory,
+            # and that's also function-local at line 100). Keeping the
+            # pattern consistent avoids circular import risk.
+            from probos.cognitive.agent_working_memory import ActiveEngagement
+            _wm = getattr(self, '_working_memory', None)
+            if _wm:
+                _wm.add_engagement(ActiveEngagement(
+                    engagement_type="ward_room_reply",
+                    engagement_id=f"ward_room:{_bf239_thread_id}",
+                    summary=f"Replying to Ward Room thread {_bf239_thread_id[:8]}",
+                    state={"thread_id": _bf239_thread_id},
+                ))
+
+        try:
+            return await self._run_cognitive_lifecycle(
+                intent, _cognitive_skill_instructions, _skill_entries,
+            )
+        finally:
+            # BF-239: Remove ward room thread engagement on ALL exit paths.
+            # Covers: normal completion, compound procedure early return,
+            # and exceptions from perceive/decide/act/report.
+            # The engagement is the short-lived "I'm currently working on this" signal.
+            # Historical record preserved via _summarize_action (Section 5).
+            if _bf239_thread_id:
+                _wm = getattr(self, '_working_memory', None)
+                if _wm:
+                    _wm.remove_engagement(f"ward_room:{_bf239_thread_id}")
 
     def add_skill(self, skill: Skill) -> None:
         """Attach a skill to this cognitive agent.
@@ -2937,7 +3019,9 @@ class CognitiveAgent(BaseAgent):
             return f"Responded to Captain's DM: '{captain_text}' → '{output[:100]}'"
         if intent_type == "ward_room_notification":
             channel = intent.params.get("channel_name", "")
-            return f"Responded in Ward Room #{channel}: '{output[:100]}'"
+            thread_id = intent.params.get("thread_id", "")
+            _thread_tag = f" (thread {thread_id[:8]})" if thread_id else ""
+            return f"Responded in Ward Room #{channel}{_thread_tag}: '{output[:100]}'"
         if intent_type == "proactive_think":
             if "[NO_RESPONSE]" in output:
                 return ""  # Don't record silence

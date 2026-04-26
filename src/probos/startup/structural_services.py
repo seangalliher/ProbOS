@@ -148,6 +148,32 @@ async def init_structural_services(
     except Exception:
         logger.exception("DirectiveStore init failed (non-fatal)")
 
+    # --- Bill System (AD-618d) ---
+    from probos.sop.runtime import BillRuntime
+    from probos.sop.loader import load_builtin_bills, load_custom_bills
+
+    bill_runtime = BillRuntime(config=config.bill)
+    logger.info("AD-618d: BillRuntime created")
+
+    # Load and register built-in bills (AD-618c)
+    builtin_bills = load_builtin_bills()
+    for defn in builtin_bills.values():
+        bill_runtime.register_definition(defn)
+
+    # Load and register custom bills from Ship's Records
+    _custom_bills_dir = data_dir / "ship-records" / "bills"
+    custom_bills = load_custom_bills(_custom_bills_dir)
+    for defn in custom_bills.values():
+        bill_runtime.register_definition(defn)
+
+    if builtin_bills or custom_bills:
+        logger.info(
+            "AD-618d: Registered %d bill definition(s) (%d built-in, %d custom)",
+            len(builtin_bills) + len(custom_bills),
+            len(builtin_bills),
+            len(custom_bills),
+        )
+
     logger.info("Startup [structural_services]: complete")
     result = StructuralServicesResult(
         sif=sif,
@@ -157,5 +183,6 @@ async def init_structural_services(
         task_tracker=task_tracker,
         service_profiles=service_profiles,
         directive_store=directive_store,
+        bill_runtime=bill_runtime,
     )
     return result, semantic_layer

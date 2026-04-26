@@ -17,6 +17,7 @@ import type {
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
   GameState,  // AD-526b
   CrewManifestEntry,  // AD-513
+  BillDefinitionView, BillInstanceView,  // AD-618d
 } from './types';
 
 export interface GroupCenter {
@@ -212,7 +213,7 @@ export interface HXIState {
   buildQueue: BuildQueueItem[] | null;
   missionControlTasks: MissionControlTask[] | null;
   bridgeOpen: boolean;
-  mainViewer: 'canvas' | 'kanban' | 'system' | 'work';
+  mainViewer: 'canvas' | 'kanban' | 'system' | 'work' | 'bills';
   agentTasks: AgentTaskView[] | null;
   workItems: WorkItemView[] | null;
   workBookings: BookingView[] | null;
@@ -221,6 +222,10 @@ export interface HXIState {
   workTemplates: WorkItemTemplateView[] | null;
   expandedGlassTask: string | null;
   notifications: NotificationView[] | null;
+  // Bill System (AD-618d)
+  billDefinitions: BillDefinitionView[];
+  billInstances: BillInstanceView[];
+  billSelectedInstanceId: string | null;
   pendingRoutingPulse: { source: string; target: string } | null;
   pendingFeedbackPulse: 'good' | 'bad' | null;
 
@@ -342,6 +347,11 @@ export interface HXIState {
   forfeitGame: () => Promise<void>;
   closeGame: () => void;
   setGamePanelPos: (pos: { x: number; y: number }) => void;
+  // Bill System actions (AD-618d)
+  fetchBillDefinitions: () => Promise<void>;
+  fetchBillInstances: (status?: string) => Promise<void>;
+  activateBill: (billId: string, context?: Record<string, unknown>) => Promise<any>;
+  selectBillInstance: (instanceId: string | null) => void;
 }
 
 /** Derive MissionControlTasks from BuildQueueItems (AD-322). */
@@ -429,6 +439,9 @@ export const useStore = create<HXIState>((set, get) => ({
   workTemplates: null,
   expandedGlassTask: null,
   notifications: null,
+  billDefinitions: [],
+  billInstances: [],
+  billSelectedInstanceId: null,
   pendingRoutingPulse: null,
   pendingFeedbackPulse: null,
   connected: false,
@@ -900,6 +913,48 @@ export const useStore = create<HXIState>((set, get) => ({
 
   setGamePanelPos: (pos) => {
     set({ gamePanelPos: pos });
+  },
+
+  // Bill System (AD-618d)
+  fetchBillDefinitions: async () => {
+    try {
+      const res = await fetch('/api/bills/definitions');
+      if (res.ok) {
+        const data = await res.json();
+        set({ billDefinitions: data.definitions ?? [] });
+      }
+    } catch { /* log-and-degrade */ }
+  },
+
+  fetchBillInstances: async (status?: string) => {
+    try {
+      const url = status ? `/api/bills/instances?status=${status}` : '/api/bills/instances';
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        set({ billInstances: data.instances ?? [] });
+      }
+    } catch { /* log-and-degrade */ }
+  },
+
+  activateBill: async (billId: string, context?: Record<string, unknown>) => {
+    try {
+      const res = await fetch('/api/bills/activate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bill_id: billId, context: context ?? {} }),
+      });
+      if (res.ok) {
+        await get().fetchBillInstances();
+        const instance = await res.json();
+        return instance;
+      }
+    } catch { /* log-and-degrade */ }
+    return null;
+  },
+
+  selectBillInstance: (instanceId: string | null) => {
+    set({ billSelectedInstanceId: instanceId });
   },
 
   addChatMessage: (role, text, meta) => {
@@ -1715,6 +1770,19 @@ export const useStore = create<HXIState>((set, get) => ({
             },
           });
         }
+        break;
+      }
+
+      // Bill System events (AD-618d) — refetch on any lifecycle event
+      case 'bill_activated':
+      case 'bill_step_started':
+      case 'bill_step_completed':
+      case 'bill_step_failed':
+      case 'bill_completed':
+      case 'bill_failed':
+      case 'bill_cancelled':
+      case 'bill_role_assigned': {
+        get().fetchBillInstances();
         break;
       }
 

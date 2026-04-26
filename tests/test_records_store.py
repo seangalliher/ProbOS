@@ -56,7 +56,7 @@ class TestInitialize:
         assert repo.exists()
         assert (repo / ".git").exists()
         for subdir in ("captains-log", "notebooks", "reports", "duty-logs",
-                       "operations", "manuals", "_archived"):
+                       "operations", "manuals", "bills", "_archived"):
             assert (repo / subdir).exists(), f"Missing subdir: {subdir}"
         # .shiprecords.yaml should exist
         assert (repo / ".shiprecords.yaml").exists()
@@ -502,3 +502,64 @@ class TestProactiveNotebookTag:
         assert "[/NOTEBOOK]" not in cleaned
         # Action should be recorded
         assert any(a["type"] == "notebook_write" for a in actions)
+
+
+# ---------------------------------------------------------------------------
+# AD-618a: Bill integration tests
+# ---------------------------------------------------------------------------
+
+class TestBillIntegration:
+    @pytest.mark.asyncio
+    async def test_write_bill_creates_raw_yaml(self, store):
+        """write_bill() writes raw YAML (no frontmatter wrapping)."""
+        import yaml as _yaml
+        from probos.sop.parser import parse_bill_file
+
+        bill_yaml = _yaml.dump({
+            "bill": "test-bill",
+            "version": 1,
+            "title": "Test",
+            "steps": [],
+        }, default_flow_style=False)
+
+        rel_path = await store.write_bill("test-bill", bill_yaml)
+        assert rel_path == "bills/test-bill.bill.yaml"
+
+        # Verify raw YAML on disk — no frontmatter wrapping
+        file_path = store.repo_path / rel_path
+        assert file_path.exists()
+        raw = file_path.read_text(encoding="utf-8")
+        assert not raw.startswith("---\n")  # No frontmatter
+
+        # Round-trip: parse_bill_file should read it back
+        bd = parse_bill_file(file_path)
+        assert bd.bill == "test-bill"
+
+    @pytest.mark.asyncio
+    async def test_list_bills_after_write(self, store):
+        """list_bills() finds .bill.yaml files written by write_bill()."""
+        import yaml as _yaml
+
+        bill_yaml = _yaml.dump({
+            "bill": "alpha-bill",
+            "version": 1,
+            "steps": [],
+        }, default_flow_style=False)
+
+        await store.write_bill("alpha-bill", bill_yaml)
+        bills = await store.list_bills()
+        assert len(bills) == 1
+        assert bills[0]["bill_id"] == "alpha-bill"
+        assert bills[0]["path"] == "bills/alpha-bill.bill.yaml"
+
+    @pytest.mark.asyncio
+    async def test_list_bills_empty(self, store):
+        """list_bills() returns empty list when no bills exist."""
+        bills = await store.list_bills()
+        assert bills == []
+
+    @pytest.mark.asyncio
+    async def test_bills_dir_created_on_init(self, store):
+        """initialize() creates bills/ subdirectory."""
+        bills_dir = store.repo_path / "bills"
+        assert bills_dir.is_dir()

@@ -10,12 +10,19 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from probos.ward_room.service import WardRoomService
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PostBudget:
+    """BF-237: Tracks whether a create_post has fired in the current pipeline invocation."""
+    spent: bool = False
 
 
 class WardRoomPostPipeline:
@@ -81,9 +88,12 @@ class WardRoomPostPipeline:
             agent_callsign = self._callsign_registry.get_callsign(agent.agent_type)
 
         # Step 3: Action extraction (endorsements, replies, DMs, notebooks, recreation)
+        # BF-237: Budget tracks whether action extractor already posted.
+        budget = PostBudget()
         if agent and self._proactive_loop:
             response_text, _actions = await self._proactive_loop.extract_and_execute_actions(
                 agent, response_text,
+                post_budget=budget,
             )
             response_text = response_text.strip()
         elif self._router:
@@ -121,18 +131,41 @@ class WardRoomPostPipeline:
             return False
 
         # Step 7: Post to Ward Room
-        parent_id = post_id if event_type == "ward_room_post_created" else None
-        await self._ward_room.create_post(
-            thread_id=thread_id,
-            author_id=agent.id,
-            body=response_text,
-            parent_id=parent_id,
-            author_callsign=agent_callsign or agent.agent_type,
-        )
+        # BF-237: If action extractor already posted, suppress the main post.
+        if budget.spent:
+            logger.warning(
+                "BF-237: Suppressing main post for %s — action extractor already posted in this invocation",
+                agent.agent_type,
+            )
+            # BF-237: Emit telemetry event for observability
+            if self._runtime and getattr(self._runtime, 'event_log', None):
+                try:
+                    await self._runtime.event_log.log(
+                        category="pipeline",
+                        event="pipeline_post_budget_exceeded",
+                        agent_id=agent.id,
+                        agent_type=agent.agent_type,
+                        detail=f"thread_id={thread_id}",
+                    )
+                except Exception:
+                    logger.debug("BF-237: telemetry log failed", exc_info=True)
+        else:
+            parent_id = post_id if event_type == "ward_room_post_created" else None
+            await self._ward_room.create_post(
+                thread_id=thread_id,
+                author_id=agent.id,
+                body=response_text,
+                parent_id=parent_id,
+                author_callsign=agent_callsign or agent.agent_type,
+            )
 
         # Step 8: Record response (BF-198 anti-double-posting)
+        # UNCONDITIONAL — runs whether or not Step 7 posted. If the extractor
+        # already posted, BF-236's round tracker must still record it so the
+        # agent is correctly marked as "has posted in this round."
         if self._router:
             self._router.record_agent_response(agent.id, thread_id)
+            self._router.record_round_post(agent.id, thread_id)  # BF-236
 
         # Step 9: Skill exercise recording (AD-625)
         _rt = self._runtime

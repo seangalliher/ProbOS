@@ -19,6 +19,7 @@ _SUBDIRS = (
     "duty-logs",
     "operations",
     "manuals",
+    "bills",        # AD-618a: Standard Operating Procedures (raw YAML, not markdown)
     "_archived",
 )
 
@@ -254,6 +255,72 @@ class RecordsStore:
             tags=tags,
             metrics=metrics,
         )
+
+    async def write_bill(
+        self,
+        bill_id: str,
+        content: str,
+        author: str = "captain",
+        *,
+        version: int = 1,
+    ) -> str:
+        """Write a Bill YAML file to Ship's Records (AD-618a).
+
+        Bypasses write_entry() — bills are raw YAML, not markdown with
+        frontmatter. write_entry() wraps content in ``---\\nfrontmatter\\n---``
+        which would corrupt the bill YAML and make it unparseable by
+        parse_bill_file(). Uses _safe_path() for traversal prevention,
+        writes directly, then git add + commit.
+
+        Args:
+            bill_id: Unique bill identifier (slug, e.g. "research-consultation").
+            content: Full YAML content of the bill. Not validated against the
+                bill schema — callers should use parse_bill() first if they
+                want pre-write validation. Raw write supports drafts and
+                authoring workflows.
+            author: Who authored this bill.
+            version: Bill version number.
+
+        Returns:
+            Relative path of the created file.
+        """
+        filename = f"{bill_id}.bill.yaml"
+        rel_path = f"bills/{filename}"
+
+        file_path = self._safe_path(rel_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+
+        if self._config.auto_commit:
+            await self._git("add", rel_path)
+            await self._commit(
+                f"[records] [bill] {bill_id} v{version} — authored by {author}"
+            )
+
+        logger.info("Bill written: %s by %s", rel_path, author)
+        return rel_path
+
+    async def list_bills(self) -> list[dict]:
+        """List all Bill files in Ship's Records (AD-618a).
+
+        Bypasses list_entries() — bills are .bill.yaml files, not .md.
+        list_entries() uses rglob("*.md") which would never find them.
+
+        Returns:
+            List of dicts with 'path' and 'bill_id' keys for each bill.
+        """
+        bills_dir = self._safe_path("bills")
+        if not bills_dir.exists():
+            return []
+
+        results = []
+        for yaml_file in sorted(bills_dir.rglob("*.bill.yaml")):
+            rel_path = str(yaml_file.relative_to(self._repo_path)).replace("\\", "/")
+            # Extract bill_id from filename (e.g. "research-consultation.bill.yaml" → "research-consultation")
+            bill_id = yaml_file.name.removesuffix(".bill.yaml")
+            results.append({"path": rel_path, "bill_id": bill_id})
+
+        return results
 
     async def check_notebook_similarity(
         self,

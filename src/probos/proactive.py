@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from probos.config import DutyScheduleConfig, ProactiveCognitiveConfig
     from probos.knowledge.store import KnowledgeStore
     from probos.runtime import ProbOSRuntime
+    from probos.ward_room_pipeline import PostBudget
 
 logger = logging.getLogger(__name__)
 
@@ -1857,9 +1858,11 @@ class ProactiveCognitiveLoop:
 
     async def extract_and_execute_actions(
         self, agent: Any, text: str,
+        *,
+        post_budget: PostBudget | None = None,
     ) -> tuple[str, list[dict]]:
         """Public wrapper for _extract_and_execute_actions (AD-654a)."""
-        return await self._extract_and_execute_actions(agent, text)
+        return await self._extract_and_execute_actions(agent, text, post_budget=post_budget)
 
     async def is_similar_to_recent_posts(
         self, agent: Any, text: str, threshold: float = 0.5,
@@ -1996,6 +1999,8 @@ class ProactiveCognitiveLoop:
 
     async def _extract_and_execute_actions(
         self, agent: Any, text: str,
+        *,
+        post_budget: PostBudget | None = None,
     ) -> tuple[str, list[dict]]:
         """AD-437: Extract structured actions from proactive response and execute them.
 
@@ -2046,7 +2051,7 @@ class ProactiveCognitiveLoop:
         # --- Replies (Lieutenant+) --- BF-061
         if rank.value != Rank.ENSIGN.value:
             text, reply_actions = await self._extract_and_execute_replies(
-                agent, text
+                agent, text, post_budget=post_budget,
             )
             actions_executed.extend(reply_actions)
 
@@ -2558,15 +2563,25 @@ class ProactiveCognitiveLoop:
                                     _next = game_info['state']['current_player']
                                     # BF-212: @mention next player so they receive the notification
                                     body = f"```\n{board}\n```\nYour move, @{_next}"
-                                try:
-                                    await rt.ward_room.create_post(
-                                        thread_id=player_game["thread_id"],
-                                        author_id=agent.id,
-                                        body=body,
-                                        author_callsign=callsign,
+                                # BF-237: Enforce single-post budget
+                                if post_budget is not None and post_budget.spent:
+                                    logger.warning(
+                                        "BF-237: Suppressing additional [MOVE] board post from %s — post budget spent",
+                                        agent.agent_type,
                                     )
-                                except Exception:
-                                    logger.debug("AD-526a: Board update post failed", exc_info=True)
+                                else:
+                                    try:
+                                        await rt.ward_room.create_post(
+                                            thread_id=player_game["thread_id"],
+                                            author_id=agent.id,
+                                            body=body,
+                                            author_callsign=callsign,
+                                        )
+                                        # BF-237: Mark budget as spent
+                                        if post_budget is not None:
+                                            post_budget.spent = True
+                                    except Exception:
+                                        logger.debug("AD-526a: Board update post failed", exc_info=True)
 
                             # BF-125: Game-over WM cleanup handled by GAME_COMPLETED subscriber.
                             # In-progress state sync handled by proactive loop (line 1139-1165).
@@ -2773,6 +2788,8 @@ class ProactiveCognitiveLoop:
 
     async def _extract_and_execute_replies(
         self, agent: Any, text: str,
+        *,
+        post_budget: PostBudget | None = None,
     ) -> tuple[str, list[dict]]:
         """AD-437: Extract [REPLY thread_id]...[/REPLY] blocks and post as replies.
 
@@ -2865,12 +2882,25 @@ class ProactiveCognitiveLoop:
                 if not reply_body:
                     continue
 
+                # BF-237: Enforce single-post budget per pipeline invocation.
+                # Check BEFORE create_post so the second [REPLY] match in
+                # a multi-REPLY LLM response is suppressed, not posted.
+                if post_budget is not None and post_budget.spent:
+                    logger.warning(
+                        "BF-237: Suppressing additional [REPLY] from %s — post budget spent",
+                        agent.agent_type,
+                    )
+                    continue
+
                 await rt.ward_room.create_post(
                     thread_id=thread_id,
                     author_id=agent.id,
                     body=reply_body,
                     author_callsign=callsign or agent.agent_type,
                 )
+                # BF-237: Mark budget as spent after successful post
+                if post_budget is not None:
+                    post_budget.spent = True
                 # BF-198: Record reply so router won't double-respond
                 if rt.ward_room_router:
                     rt.ward_room_router.record_agent_response(agent.id, thread_id)

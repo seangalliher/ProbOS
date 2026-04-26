@@ -1,0 +1,134 @@
+bill: incident_response
+version: 1
+title: "Incident Response"
+description: >
+  Structured triage and remediation for ship-wide incidents.
+  Security leads identification, Engineering leads remediation,
+  post-mortem written to Ship's Records.
+author: "Ship's Standing Orders"
+
+activation:
+  trigger: "alert:amber"
+  authority: "department_chief"
+
+roles:
+  incident_commander:
+    department: "security"
+  engineering_lead:
+    department: "engineering"
+  science_support:
+    department: "science"
+  counselor:
+    department: "bridge"
+
+steps:
+  - id: identify
+    name: "Identify and Classify Incident"
+    role: incident_commander
+    action: cognitive_skill
+    inputs:
+      - name: incident_data
+        source: "activation_data"
+    outputs:
+      - name: classification
+        type: enum
+        values: ["critical", "major", "minor"]
+      - name: affected_systems
+        type: text
+
+  - id: triage_decision
+    name: "Triage Decision Point"
+    role: incident_commander
+    type: xor_gateway
+    condition: "step:identify.classification"
+    branches:
+      critical: contain_critical
+      major: contain_standard
+      minor: contain_standard
+
+  - id: contain_critical
+    name: "Critical Containment — Isolate Systems"
+    role: engineering_lead
+    action: cognitive_skill
+    inputs:
+      - name: systems
+        source: "step:identify.affected_systems"
+    outputs:
+      - name: containment_status
+        type: text
+
+  - id: contain_standard
+    name: "Standard Containment"
+    role: engineering_lead
+    action: cognitive_skill
+    inputs:
+      - name: systems
+        source: "step:identify.affected_systems"
+    outputs:
+      - name: containment_status
+        type: text
+
+  # FIX 1 (architect review): Both XOR branches emit the same output
+  # name (containment_status). root_cause lists both as input sources
+  # so the data graph is valid regardless of which branch executes.
+  # At runtime (AD-618e), the step resolver checks which source
+  # actually produced output and uses that one.
+  - id: root_cause
+    name: "Root Cause Analysis"
+    role: science_support
+    action: cognitive_skill
+    inputs:
+      - name: containment
+        source: "step:contain_critical.containment_status"
+      - name: containment_alt
+        source: "step:contain_standard.containment_status"
+    outputs:
+      - name: root_cause
+        type: document
+
+  - id: remediate
+    name: "Remediate and Verify"
+    role: engineering_lead
+    action: cognitive_skill
+    inputs:
+      - name: cause
+        source: "step:root_cause.root_cause"
+    outputs:
+      - name: remediation_status
+        type: enum
+        values: ["resolved", "mitigated", "ongoing"]
+
+  - id: post_mortem
+    name: "Write Post-Mortem Report"
+    role: incident_commander
+    action: cognitive_skill
+    inputs:
+      - name: classification
+        source: "step:identify.classification"
+      - name: root_cause
+        source: "step:root_cause.root_cause"
+      - name: remediation
+        source: "step:remediate.remediation_status"
+    outputs:
+      - name: report
+        type: document
+
+  - id: crew_wellness
+    name: "Crew Wellness Check"
+    role: counselor
+    action: cognitive_skill
+
+expected_results:
+  - "Incident classified and contained"
+  - "Root cause identified"
+  - "Remediation completed or mitigated"
+  - "Post-mortem documented in Ship's Records"
+  # Note: archival is the responsibility of the cognitive_skill action
+  # holder — the agent performing post_mortem is expected to call
+  # records storage internally. A dedicated WRITE_TO_RECORDS action
+  # may be added in a future AD-618 iteration.
+  - "Crew wellness assessed"
+
+standing_order_constraints:
+  - "Critical incidents require Captain notification within 5 minutes"
+  - "Post-mortem must be filed within 24 hours of resolution"

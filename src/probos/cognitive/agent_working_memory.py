@@ -313,6 +313,12 @@ class AgentWorkingMemory:
             if e.engagement_type == engagement_type
         ]
 
+    def has_thread_engagement(self, thread_id: str) -> bool:
+        """BF-239: Check if agent has an active ward_room_reply engagement for a thread."""
+        _key = f"ward_room:{thread_id}"
+        return _key in self._active_engagements and \
+            self._active_engagements[_key].engagement_type == "ward_room_reply"
+
     @staticmethod
     def _format_age(seconds: float) -> str:
         if seconds < 60:

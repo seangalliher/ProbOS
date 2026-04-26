@@ -746,6 +746,11 @@ class EmergentDetectorConfig(BaseModel):
     dream_anomaly_min_strengthened: int = 10  # ignore strengthened spikes below this count
     dream_anomaly_min_pruned: int = 5  # ignore pruning spikes below this count
     dream_anomaly_min_trust_adj: int = 10  # ignore trust adjustment spikes below this count
+    # AD-556: Per-agent adaptive trust anomaly detection
+    adaptive_window_size: int = 30     # Number of trust snapshots per agent for rolling window
+    adaptive_z_threshold: float = 2.5  # Z-score threshold for personal baseline anomaly
+    adaptive_debounce_count: int = 2   # Consecutive anomalous cycles required before escalation
+    adaptive_min_history: int = 8      # Minimum history entries before adaptive detection activates
 
 
 class EarnedAgencyConfig(BaseModel):
@@ -996,6 +1001,19 @@ class CommunicationBenchmarksConfig(BaseModel):
     ]
 
 
+class BillConfig(BaseModel):
+    """Configuration for the Bill System runtime (AD-618b)."""
+
+    # Maximum concurrent bill instances (0 = unlimited)
+    max_concurrent_instances: int = 10
+
+    # Default step timeout in seconds (0 = no timeout)
+    default_step_timeout_seconds: float = 300.0
+
+    # Whether to allow bills to activate with unfilled roles
+    allow_partial_assignment: bool = False
+
+
 class QualificationConfig(BaseModel):
     """Configuration for the Crew Qualification Battery (AD-566)."""
 
@@ -1090,6 +1108,7 @@ class SystemConfig(BaseModel):
     tiered_trust: TieredTrustConfig = TieredTrustConfig()  # AD-640
     chain_tuning: ChainTuningConfig = ChainTuningConfig()  # AD-639
     nats: NatsConfig = NatsConfig()  # AD-637
+    bill: BillConfig = BillConfig()  # AD-618b
 
 
 def load_config(path: str | Path) -> SystemConfig:
